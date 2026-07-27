@@ -13,11 +13,15 @@ const layoutComponent = "/index/index"
 
 const protectedSuperUsername = "coinsphere"
 
+// protectedRoleCodes 用 map 当"集合":把内置角色编码放进来(值填 true 只是占位),
+// 后面用来禁止修改/删除这些系统角色。
 var protectedRoleCodes = map[string]bool{"R_SUPER": true, "R_GUEST": true}
 
 // ---------- 查询 ----------
 
 // UserListQuery 用户分页过滤。
+// 注意 ID *int64、IsActive *bool 用的是指针:nil 表示"这个条件没填、不参与过滤",
+// 以此区分于 0 / false 这种"填了、但值恰好是零"的情况。见 GO入门笔记『复合类型』。
 type UserListQuery struct {
 	Current  int
 	Size     int
@@ -30,8 +34,14 @@ type UserListQuery struct {
 }
 
 // ListUsers 分页查询用户,附带角色编码。
+//
+// 这个方法演示了本文件通用的"分页查询"套路:先用 Model 起一个查询,按传入条件逐个 .Where 拼过滤,
+// 先 Count 出总数,再用 Offset/Limit 取当前页,最后把结果序列化成前端要的形状。
 func (a *App) ListUsers(query UserListQuery) (M, error) {
+	// q 是一个可复用的"查询构造器":GORM 链式调用每步都返回它,可以边判断边往上叠加条件。
+	// 只对非空/非 nil 的过滤项才 .Where,避免把空条件也拼进 SQL。见 GO入门笔记『框架:GORM』。
 	q := a.DB.Model(&db.SystemUser{})
+	// 指针字段要先判 != nil,再用 *query.ID 解引用取出它指向的值(* 顺着指针拿到真正的数字)。
 	if query.ID != nil {
 		q = q.Where("id = ?", *query.ID)
 	}
@@ -55,6 +65,7 @@ func (a *App) ListUsers(query UserListQuery) (M, error) {
 		return nil, err
 	}
 	var users []db.SystemUser
+	// Offset/Limit 就是分页:跳过前 (页码-1)*每页 条,再取 每页 条;Order 指定排序。.Find(&users) 取多行。
 	if err := q.Order("created_at DESC, id DESC").
 		Offset((query.Current - 1) * query.Size).Limit(query.Size).Find(&users).Error; err != nil {
 		return nil, err
@@ -65,6 +76,8 @@ func (a *App) ListUsers(query UserListQuery) (M, error) {
 	}
 	roleMap := a.listRoleCodesForUsers(userIDs)
 	records := make([]M, 0, len(users))
+	// 用 &users[i] 取切片里第 i 个元素的地址传给 serializeUser:传指针既避免复制整个结构体,
+	// 也保证拿到的就是切片里那一份。注意不要用 range 的循环变量取地址(所有轮次可能是同一个副本地址)。
 	for i := range users {
 		records = append(records, serializeUser(&users[i], roleMap[users[i].ID]))
 	}
@@ -83,6 +96,7 @@ type RoleListQuery struct {
 }
 
 // ListRoles 分页查询角色。
+// 套路同 ListUsers:拼 Where 过滤 → Count 总数 → Offset/Limit 取页 → Find 结果。
 func (a *App) ListRoles(query RoleListQuery) (M, error) {
 	q := a.DB.Model(&db.SystemRole{})
 	if query.ID != nil {
@@ -116,6 +130,9 @@ func (a *App) ListRoles(query RoleListQuery) (M, error) {
 }
 
 // GetMenuTree 按角色返回可访问菜单树。
+// 分两步查库:先查出这些角色能看到的菜单,再查这些菜单下能看到的按钮,
+// 最后交给 buildMenuTreePayload 拼成层级树。Distinct("menus.*") 是"整行去重"
+// (同一菜单可能因多个角色被 JOIN 出多次);role_id IN ? 传切片会展开成 SQL 的 IN (...)。
 func (a *App) GetMenuTree(principal *Principal) ([]M, error) {
 	if len(principal.RoleIDs) == 0 {
 		return []M{}, nil
@@ -144,6 +161,7 @@ func (a *App) GetMenuTree(principal *Principal) ([]M, error) {
 }
 
 // GetMenuManagementTree 返回管理端完整菜单树。
+// 与 GetMenuTree 不同:管理端不按角色过滤,直接取全部菜单和按钮,拼成完整树给后台配置用。
 func (a *App) GetMenuManagementTree() ([]M, error) {
 	var menus []db.SystemMenu
 	if err := a.DB.Order("sort ASC, id ASC").Find(&menus).Error; err != nil {
@@ -169,6 +187,8 @@ func (a *App) GetI18nDict(scope string) M {
 	var rows []db.SystemI18nText
 	a.DB.Where("locale IN ?", []string{"zh", "en"}).Find(&rows)
 	for _, row := range rows {
+		// result[row.Locale].(M) 是"类型断言":result 里的值类型是 any,这里断言它其实是个 M(子对象)。
+		// 逗号后面的 ok 为 true 才说明断言成功(这种写法不会 panic),然后往这个子对象里塞键值。
 		if localeMap, ok := result[row.Locale].(M); ok {
 			localeMap[row.I18nKey] = row.Text
 		}
@@ -179,6 +199,8 @@ func (a *App) GetI18nDict(scope string) M {
 // ---------- 命令 ----------
 
 // UserUpsertPayload 用户创建/更新载荷。
+// 反引号里的 `json:"username"` 是 struct tag(标签):告诉 JSON 库前端传来的字段名怎么对应到这里。
+// IsActive *bool 用指针,能区分"没传"(nil)和"传了 false"。[]string 是字符串切片。见 GO入门笔记『复合类型』。
 type UserUpsertPayload struct {
 	Username  string   `json:"username"`
 	Nickname  string   `json:"nickname"`
@@ -192,9 +214,12 @@ type UserUpsertPayload struct {
 	Password  string   `json:"password"`
 }
 
+// isActive 处理"可选布尔":没传(IsActive 为 nil)时默认 true,传了就用它的值(*p.IsActive 解引用)。
 func (p *UserUpsertPayload) isActive() bool { return p.IsActive == nil || *p.IsActive }
 
 // CreateUser 创建用户。
+// 顺序:先做各种校验(非空、密码长度、用户名唯一)→ 解析要分配的角色 → 哈希密码并组装
+// SystemUser 结构体入库(Create = INSERT)→ 最后写入"用户-角色"关联表。
 func (a *App) CreateUser(payload UserUpsertPayload, principal *Principal) (M, error) {
 	if strings.TrimSpace(payload.Username) == "" || strings.TrimSpace(payload.Nickname) == "" {
 		return nil, bizErr("用户名和昵称不能为空")
@@ -219,6 +244,8 @@ func (a *App) CreateUser(payload UserUpsertPayload, principal *Principal) (M, er
 	if fullName == "" {
 		fullName = payload.Nickname
 	}
+	// 结构体字面量:逐字段填好一个 SystemUser,再用 Create(&user) 入库(INSERT)。
+	// 密码永远存哈希值(HashPassword),绝不存明文。
 	user := db.SystemUser{
 		Username: payload.Username, PasswordHash: a.Hasher.HashPassword(payload.Password),
 		Nickname: payload.Nickname, FullName: fullName, Gender: normalizeGender(payload.Gender),
@@ -238,6 +265,8 @@ func (a *App) CreateUser(payload UserUpsertPayload, principal *Principal) (M, er
 }
 
 // UpdateUser 更新用户。
+// 除了字段校验,还带业务规则:内置超管不能在这里改、不能停用当前登录的账号。
+// Updates(fields) 只更新 map 里给出的那几列;密码留空则跳过、不改密码。
 func (a *App) UpdateUser(userID int64, payload UserUpsertPayload, principal *Principal) (M, error) {
 	var user db.SystemUser
 	if err := a.DB.First(&user, userID).Error; err != nil {
@@ -289,6 +318,7 @@ func (a *App) UpdateUser(userID int64, payload UserUpsertPayload, principal *Pri
 }
 
 // DeleteUser 删除用户。
+// 业务规则:内置超管、当前登录账号都不允许删除。user_roles 关联由数据库外键级联删除,不必手动清。
 func (a *App) DeleteUser(userID int64, principal *Principal) error {
 	var user db.SystemUser
 	if err := a.DB.First(&user, userID).Error; err != nil {
@@ -312,9 +342,11 @@ type RoleUpsertPayload struct {
 	IsEnabled   *bool  `json:"isEnabled"`
 }
 
+// isEnabled 同 isActive:可选布尔,没传默认 true。
 func (p *RoleUpsertPayload) isEnabled() bool { return p.IsEnabled == nil || *p.IsEnabled }
 
 // CreateRole 创建角色。
+// 名称、编码先去空格(编码还转大写),校验名称/编码都不重复后 Create 入库。
 func (a *App) CreateRole(payload RoleUpsertPayload) (M, error) {
 	roleName := strings.TrimSpace(payload.DisplayName)
 	roleCode := strings.ToUpper(strings.TrimSpace(payload.Code))
@@ -342,6 +374,7 @@ func (a *App) CreateRole(payload RoleUpsertPayload) (M, error) {
 }
 
 // UpdateRole 更新角色。
+// requireMutableRole 先挡住系统内置角色(不可改),再校验名称/编码唯一后 Updates。
 func (a *App) UpdateRole(roleID int64, payload RoleUpsertPayload) (M, error) {
 	role, err := a.requireMutableRole(roleID)
 	if err != nil {
@@ -376,6 +409,7 @@ func (a *App) UpdateRole(roleID int64, payload RoleUpsertPayload) (M, error) {
 }
 
 // DeleteRole 删除角色。
+// 系统内置角色不可删;已经分配给用户的角色要先解除关联(Count 一下 user_roles)再删。
 func (a *App) DeleteRole(roleID int64) error {
 	role, err := a.requireMutableRole(roleID)
 	if err != nil {
@@ -396,6 +430,7 @@ type RolePermissionPayload struct {
 }
 
 // SaveRolePermissions 保存角色的菜单与按钮权限。
+// 先校验菜单/按钮 ID 都合法、且按钮必须挂在被选中的菜单下,再在一个事务里"先删后插"整套关联。
 func (a *App) SaveRolePermissions(roleID int64, payload RolePermissionPayload) error {
 	if _, err := a.requireMutableRole(roleID); err != nil {
 		return err
@@ -428,6 +463,9 @@ func (a *App) SaveRolePermissions(roleID int64, payload RolePermissionPayload) e
 		}
 	}
 
+	// Transaction 开一个数据库事务:传进去的这个函数里,所有操作要么全部成功一起提交,
+	// 要么一旦返回非 nil 的 error 就整体回滚(不会只删一半)。事务内必须用参数 tx(而不是 a.DB)
+	// 来执行,才算在同一个事务里。这里"先按 role_id 删干净、再逐条 Create"是典型的"整表重置关联"写法。
 	return a.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("role_id = ?", roleID).Delete(&db.SystemRoleMenu{}).Error; err != nil {
 			return err
@@ -481,6 +519,8 @@ type MenuUpsertPayload struct {
 }
 
 // CreateMenu 创建菜单。
+// CreateMenu / UpdateMenu 都转调 upsertMenu:第一个参数为 nil 走"新增",非 nil 走"更新",
+// 这样新增和更新共用同一套校验逻辑(upsert = update + insert)。
 func (a *App) CreateMenu(payload MenuUpsertPayload) (M, error) {
 	return a.upsertMenu(nil, payload)
 }
@@ -525,6 +565,8 @@ func (a *App) upsertMenu(existing *db.SystemMenu, payload MenuUpsertPayload) (M,
 	if err != nil {
 		return nil, err
 	}
+	// permCodePtr 用 *string(字符串指针):权限码非空时才让它指向该字符串,为空时保持 nil,
+	// 存进数据库就是 NULL(而不是空串"")——这样"未设置"和"设为空"在库里能区分开。
 	var permCodePtr *string
 	if permissionCode != "" {
 		permCodePtr = &permissionCode
@@ -563,6 +605,8 @@ func (a *App) upsertMenu(existing *db.SystemMenu, payload MenuUpsertPayload) (M,
 }
 
 // DeleteMenu 删除菜单及其子树与相关 i18n。
+// 删一个菜单要连它下面整棵子树一起删。这里用一个 pending 队列做"广度遍历":不断取出一个菜单、
+// 查出它的直接子菜单 id 加进来,直到再没有后代,收集齐所有需要删除的菜单 id;最后在事务里一并删除。
 func (a *App) DeleteMenu(menuID int64) error {
 	var menu db.SystemMenu
 	if err := a.DB.First(&menu, menuID).Error; err != nil {
@@ -570,6 +614,8 @@ func (a *App) DeleteMenu(menuID int64) error {
 	}
 	allMenuIDs := []int64{menuID}
 	pending := []int64{menuID}
+	// pending[0] 取队首;pending = pending[1:] 把队首切掉(切片重新切一刀,不复制底层数组);
+	// append(pending, childIDs...) 把子节点追加到队尾。len(pending) 为 0 表示队列空、遍历结束。
 	for len(pending) > 0 {
 		current := pending[0]
 		pending = pending[1:]
@@ -625,6 +671,7 @@ func (a *App) UpdateButton(buttonID int64, payload MenuButtonUpsertPayload) (M, 
 	return a.upsertButton(&button, payload)
 }
 
+// upsertButton 与 upsertMenu 同理:existing 为 nil 走新增、非 nil 走更新;按钮必须挂在某个已存在的菜单下。
 func (a *App) upsertButton(existing *db.SystemMenuButton, payload MenuButtonUpsertPayload) (M, error) {
 	var menu db.SystemMenu
 	if err := a.DB.First(&menu, payload.MenuID).Error; err != nil {
@@ -698,6 +745,8 @@ func (a *App) DeleteButton(buttonID int64) error {
 
 // ---------- 内部辅助 ----------
 
+// requireMutableRole 取出角色并挡住"系统内置角色":很多改/删操作都先调它做前置校验,
+// 返回 (*角色, error) 两个值——拿到角色指针就能继续改,拿到 error 就说明不允许操作。
 func (a *App) requireMutableRole(roleID int64) (*db.SystemRole, error) {
 	var role db.SystemRole
 	if err := a.DB.First(&role, roleID).Error; err != nil {
@@ -722,6 +771,8 @@ func (a *App) resolveAssignableRoles(roleCodes []string) ([]db.SystemRole, error
 	return roles, nil
 }
 
+// resolveRoleCodes 把传入的角色编码去空格、去重(用 seen 这个 map 当"集合"过滤重复),
+// 再查库确认它们都真实存在且处于启用状态;数量对不上就报错。
 func (a *App) resolveRoleCodes(roleCodes []string, required bool) ([]db.SystemRole, error) {
 	unique := make([]string, 0, len(roleCodes))
 	seen := map[string]bool{}
@@ -749,6 +800,7 @@ func (a *App) resolveRoleCodes(roleCodes []string, required bool) ([]db.SystemRo
 	return roles, nil
 }
 
+// resolveParentMenu 校验父菜单:既不能把自己选成父级,也不能选自己的后代当父级(否则菜单树会成环)。
 func (a *App) resolveParentMenu(parentID *int64, editingMenuID int64) (*int64, error) {
 	if parentID == nil {
 		return nil, nil
@@ -760,6 +812,8 @@ func (a *App) resolveParentMenu(parentID *int64, editingMenuID int64) (*int64, e
 	if editingMenuID != 0 && parent.ID == editingMenuID {
 		return nil, bizErr("父级菜单不能选择自己")
 	}
+	// 从候选父节点顺着 ParentID 一路往上"爬"到根:每爬一层就检查是否撞见正在编辑的菜单,
+	// 撞见就说明选的是自己的后代,拒绝。current.ParentID != nil 表示还有上一层。
 	current := parent
 	for current.ParentID != nil {
 		if editingMenuID != 0 && *current.ParentID == editingMenuID {
@@ -794,10 +848,14 @@ func (a *App) validateI18nKey(i18nKey, bizType string, bizID int64) error {
 	return nil
 }
 
+// upsertI18nPair 对 zh / en 两条国际化文案做 upsert(有则更新、无则插入)。
+// range 遍历一个临时 map,一次处理两种语言(遍历顺序不定,但两条互不影响)。
 func (a *App) upsertI18nPair(bizType string, bizID int64, i18nKey string, texts I18nTextsPayload) error {
 	for locale, text := range map[string]string{"zh": strings.TrimSpace(texts.Zh), "en": strings.TrimSpace(texts.En)} {
 		var row db.SystemI18nText
 		err := a.DB.Where("biz_type = ? AND biz_id = ? AND locale = ?", bizType, bizID, locale).First(&row).Error
+		// 先查这条文案。若返回哨兵错误 gorm.ErrRecordNotFound(表示"没查到")就走 Create 新增;
+		// 是别的错误就直接返回;否则说明查到了,走 Updates 更新。用 == 直接比对这个特定错误值。
 		if err == gorm.ErrRecordNotFound {
 			row = db.SystemI18nText{BizType: bizType, BizID: bizID, I18nKey: i18nKey, Locale: locale, Text: text, UpdatedAt: time.Now()}
 			if err := a.DB.Create(&row).Error; err != nil {
@@ -815,6 +873,8 @@ func (a *App) upsertI18nPair(bizType string, bizID int64, i18nKey string, texts 
 	return nil
 }
 
+// replaceUserRoles 重置用户的角色关联:先按 user_id 删掉旧关联,再逐条插入新的(整体替换)。
+// 下面的 replaceMenuRoles / replaceButtonRoles 是同一套路,只是换成了菜单/按钮的关联表。
 func (a *App) replaceUserRoles(userID int64, roles []db.SystemRole) error {
 	if err := a.DB.Where("user_id = ?", userID).Delete(&db.SystemUserRole{}).Error; err != nil {
 		return err
@@ -851,6 +911,10 @@ func (a *App) replaceButtonRoles(buttonID int64, roles []db.SystemRole) error {
 	return nil
 }
 
+// listRoleCodesForUsers 一次查出"多个用户各自的角色编码",返回 map[用户ID] -> [角色编码列表]。
+// var rows []struct{...} 是"匿名结构体切片":临时定义一个只有 UserID、Code 两个字段的类型来接结果。
+// Table/Select/Joins/Scan 是 GORM 更贴近原生 SQL 的写法,Scan 把多行结果扫进 rows;
+// 之后按 UserID 归拢进 map(用 append 追加到该用户对应的切片上)。这样避免在循环里逐个查库(N+1)。
 func (a *App) listRoleCodesForUsers(userIDs []int64) map[int64][]string {
 	result := map[int64][]string{}
 	if len(userIDs) == 0 {
@@ -911,6 +975,9 @@ func (a *App) listRoleCodesForButtonIDs(buttonIDs []int64) map[int64][]string {
 	return result
 }
 
+// listI18nByBizIDs 批量取菜单/按钮的国际化文案。返回的 key 用 [2]any{bizType, bizID}:
+// 数组(定长、可比较)能直接当 map 的键,于是用"类型 + ID"两段组合精确定位一条文案。
+// 下面的 switch { ... }(不带条件)等价于 if/else 链:按传了哪些 id 拼不同的 Where 条件。
 func (a *App) listI18nByBizIDs(menuIDs, buttonIDs []int64) map[[2]any]M {
 	result := map[[2]any]M{}
 	var rows []db.SystemI18nText
@@ -944,6 +1011,12 @@ func (a *App) listI18nByBizIDs(menuIDs, buttonIDs []int64) map[[2]any]M {
 }
 
 // buildMenuTreePayload 构建前端菜单树结构。
+// 把"菜单行 + 按钮行"两张平表拼成前端要的层级菜单树,步骤:
+//   1) 先批量查出每个菜单/按钮的角色、国际化文案(集中查,避免在循环里逐条查库);
+//   2) actionMap:按 menuID 把按钮归到各自的菜单下;
+//   3) childrenMap:记录每个菜单有哪些直接子菜单;
+//   4) nodeMap:把每个菜单转成一个前端节点(带 meta 元信息);
+//   5) 最后按 ParentID 把子节点挂到父节点的 children 上,没有父的就是根节点。
 func (a *App) buildMenuTreePayload(menus []db.SystemMenu, buttons []db.SystemMenuButton) []M {
 	menuIDs := collectIDs(menus, func(m db.SystemMenu) int64 { return m.ID })
 	buttonIDs := collectIDs(buttons, func(b db.SystemMenuButton) int64 { return b.ID })
@@ -1025,6 +1098,9 @@ func (a *App) buildMenuTreePayload(menus []db.SystemMenu, buttons []db.SystemMen
 		}
 	}
 
+	// 组树:遍历所有菜单,若它有 ParentID 且父节点也在本次结果里,就把自己挂到父节点的 children;
+	// 否则当作根节点。nodeMap 里存的是 M(map,引用类型),所以往父节点的 children 里 append
+	// 改的就是共享的那一份,树的层级关系自然连了起来。
 	roots := []M{}
 	for _, menu := range menus {
 		node := nodeMap[menu.ID]
@@ -1042,6 +1118,8 @@ func (a *App) buildMenuTreePayload(menus []db.SystemMenu, buttons []db.SystemMen
 	return roots
 }
 
+// pruneEmptyChildren 递归清理:节点没有子节点时就删掉 children 字段(叶子不带空数组),
+// 有子节点则对每个孩子再递归处理一遍。"函数调用自己"就是递归,天然适合处理树这种自相似结构。
 func pruneEmptyChildren(node M) M {
 	children, ok := node["children"].([]M)
 	if !ok {
@@ -1070,6 +1148,7 @@ func extractI18n(pair M, fallbackTitle string) (string, M) {
 	return key, texts
 }
 
+// serializeUser 把数据库实体转成前端要的 JSON 对象(M);键名用小驼峰以对齐前端字段。
 func serializeUser(user *db.SystemUser, roleCodes []string) M {
 	if roleCodes == nil {
 		roleCodes = []string{}
@@ -1092,6 +1171,8 @@ func serializeRole(role *db.SystemRole) M {
 	}
 }
 
+// normalizeGender 把各种性别写法归一成 male/female/unknown。
+// switch 按 value 匹配:Go 的 case 默认不会"穿透"到下一个(不用写 break),命中一个就结束。
 func normalizeGender(gender string) string {
 	value := strings.ToLower(strings.TrimSpace(gender))
 	switch value {
@@ -1127,6 +1208,8 @@ func dedupeInt64(items []int64) []int64 {
 	return result
 }
 
+// collectIDs 是泛型工具:[T any] 表示对任意元素类型 T 都能用;第二个参数 id 是"函数作为参数"——
+// 调用方传一个"怎么从元素取出 int64 ID"的小函数进来。返回所有元素的 ID 组成的切片。见 GO入门笔记『泛型』。
 func collectIDs[T any](items []T, id func(T) int64) []int64 {
 	result := make([]int64, 0, len(items))
 	for _, item := range items {

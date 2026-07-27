@@ -5,6 +5,11 @@ import "time"
 
 // BlockbeatsNews 新闻数据行。
 type BlockbeatsNews struct {
+	// 一个 struct 就是一张数据库表,一个字段就是一列。反引号里的 `gorm:"..."` 是给 GORM 看的标签:
+	//   primaryKey;autoIncrement = 主键且自增;column:xxx = 指定列名(不写就用字段名转小写下划线);
+	//   size:1000 = 字符串列长度;type:text = 长文本;index = 建普通索引。
+	// 字段用指针类型(如 *int64、*time.Time)表示"可为 NULL / 可选";非指针字段则非空、缺省用零值。
+	// 字段首字母大写才会被 GORM(外部包)访问到(见 GO入门笔记『可见性』),所以字段名都大写开头。
 	ID              int64      `gorm:"primaryKey;autoIncrement"`
 	SourceMessageID *int64     `gorm:"index"`
 	PublishedAt     *time.Time `gorm:""`
@@ -15,10 +20,14 @@ type BlockbeatsNews struct {
 	ImageURL        string     `gorm:"column:image_url;size:1000"`
 }
 
+// TableName 方法让 GORM 用返回的字符串当表名,而不是按 struct 名自动推断(这样才能对齐原 Python 表名)。
+// 接收者写成 (BlockbeatsNews) 不带变量名,是因为方法体里用不到具体对象。下面每个模型都有一个同名方法。
 func (BlockbeatsNews) TableName() string { return "news_items" }
 
 // WorkflowDefinition 不可变的工作流定义版本。
 type WorkflowDefinition struct {
+	// 多个字段共用同一个 uniqueIndex 名(ux_workflow_def_code_version)并带 priority = 联合唯一索引:
+	// 这里约束 (code, version) 组合唯一。default:1 表示这一列在数据库里的默认值。
 	ID          int64  `gorm:"primaryKey;autoIncrement"`
 	Code        string `gorm:"size:120;uniqueIndex:ux_workflow_def_code_version,priority:1"`
 	Version     int    `gorm:"default:1;uniqueIndex:ux_workflow_def_code_version,priority:2"`
@@ -34,6 +43,9 @@ func (WorkflowDefinition) TableName() string { return "workflow_definitions" }
 
 // WorkflowRuntimeState 每个 workflow code 的激活状态。
 type WorkflowRuntimeState struct {
+	// "外键 ID 列 + 关联对象"成对出现,是 GORM 表关联的写法:
+	// ActiveWorkflowDefinitionID 是真正存进表里的外键列;ActiveWorkflowDefinition 是查询时可一并加载的关联对象(表里没有这一列)。
+	// foreignKey 指明用哪个字段做外键;constraint:OnDelete:SET NULL = 被引用行被删时,把这里的外键置为 NULL。
 	ID                         int64               `gorm:"primaryKey;autoIncrement"`
 	WorkflowCode               string              `gorm:"size:120;uniqueIndex"`
 	ActiveWorkflowDefinitionID *int64              `gorm:"column:active_workflow_definition_id"`
@@ -478,6 +490,7 @@ type RefreshTokenRecord struct {
 func (RefreshTokenRecord) TableName() string { return "refresh_tokens" }
 
 // AllModels 按依赖顺序返回全部模型,用于 AutoMigrate。
+// 返回 []any(any = 任意类型的切片)。顺序有讲究:被外键引用的表要先建,否则加外键约束时会失败。
 func AllModels() []any {
 	return []any{
 		&BlockbeatsNews{},

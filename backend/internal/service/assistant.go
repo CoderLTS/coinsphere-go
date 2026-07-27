@@ -1,3 +1,7 @@
+// 本文件:智能助手的"会话(session)"与"消息(message)"逻辑 ——
+// 新建/查找会话、拉取历史消息、把用户输入和 AI 的流式回复逐条落库。
+// 真正调用模型的底层在 aigateway.go,这里负责会话编排与消息拼装。
+
 package service
 
 import (
@@ -10,6 +14,9 @@ import (
 // ---------- 助手会话 ----------
 
 // AssistantStreamPayload 流式对话载荷。
+// struct + JSON tag:前端 POST 的 JSON 会按反引号里的 `json:"..."` 名字填进各字段
+//(见 GO入门笔记『复合类型』)。NewsID/EnableReasoning 用指针 *int64/*bool,
+// 是为了区分"前端没传"(nil)和"传了 0 / false"这两种情况。
 type AssistantStreamPayload struct {
 	AgentCode       string `json:"agentCode"`
 	Mode            string `json:"mode"` // chat | analyze | retry
@@ -18,6 +25,9 @@ type AssistantStreamPayload struct {
 	EnableReasoning *bool  `json:"enableReasoning"`
 }
 
+// (p *AssistantStreamPayload) 是方法接收者(见 GO入门笔记『方法与接收者』)。
+// 逻辑:字段没传(nil)时默认开启;否则用 *p.EnableReasoning 顺着指针取出布尔值。
+//(小写开头的 enableReasoning 只在本包内可见,见 GO入门笔记『module / package / import』。)
 func (p *AssistantStreamPayload) enableReasoning() bool {
 	return p.EnableReasoning == nil || *p.EnableReasoning
 }
@@ -39,7 +49,10 @@ func (a *App) ListAgentsForAssistant(principal *Principal) ([]M, error) {
 }
 
 // GetOrCreateSession 获取或创建当前用户会话。
+// (a *App) 是方法接收者;参数里 newsID, modelConfigID *int64 是"可选的 int64"(nil 表示没给)。
+// 返回 (M, error):M 是 map[string]any 的别名,用来拼给前端的 JSON(见 GO入门笔记『复合类型』)。
 func (a *App) GetOrCreateSession(principal *Principal, agentCode string, newsID, modelConfigID *int64, forceNew bool) (M, error) {
+	// := 短声明并接住 (结果, 错误);if err != nil 出错即返回(见 GO入门笔记『变量、函数、错误』)。
 	agent, err := a.requireEnabledAgent(agentCode)
 	if err != nil {
 		return nil, err
@@ -51,6 +64,7 @@ func (a *App) GetOrCreateSession(principal *Principal, agentCode string, newsID,
 	if err != nil {
 		return nil, err
 	}
+	// &news.ID 取字段地址得到一个 *int64。用指针是因为会话的 NewsID 这一列允许为空(NULL)。
 	var newsIDValue *int64
 	if news != nil {
 		newsIDValue = &news.ID
@@ -76,6 +90,9 @@ func (a *App) GetOrCreateSession(principal *Principal, agentCode string, newsID,
 	if news != nil && news.Title != "" {
 		title = news.Title
 	}
+	// 下面是"有则更新、无则新建"的经典分支:session 为 nil(没查到)就 Create 插入一条,
+	// 否则 Updates 更新既有会话。&db.AssistantSession{...} 是 struct 字面量并取地址交给 GORM
+	//(见 GO入门笔记『复合类型』『框架:GORM』)。
 	now := time.Now()
 	if session == nil {
 		session = &db.AssistantSession{
@@ -110,6 +127,8 @@ func (a *App) ListSessionMessages(principal *Principal, sessionID int64) ([]M, e
 	if err != nil {
 		return nil, err
 	}
+	// _ = agent:这里用不到 agent,但函数签名要求接住它;赋给 _ 表示"故意忽略",
+	// 否则 Go 会因为"变量声明了却没用"而编译不过(见 GO入门笔记『其它小语法』的 _)。
 	_ = agent
 	var messages []db.AssistantMessage
 	a.DB.Where("session_id = ?", session.ID).Order("created_at ASC, id ASC").Find(&messages)
@@ -132,6 +151,8 @@ func (a *App) ListSessions(principal *Principal, agentCode string, current, size
 	userID := principal.User.ID
 	var total int64
 	a.DB.Model(&db.AssistantSession{}).Where("user_id = ? AND agent_id = ?", userID, agent.ID).Count(&total)
+	// GORM 链式查询可以跨多行:Where 条件、Order 排序、Offset/Limit 分页(跳过前几条、每页取几条),
+	// 最后 Find 把结果写回 sessions(见 GO入门笔记『框架:GORM』)。? 是占位符,防 SQL 注入。
 	var sessions []db.AssistantSession
 	a.DB.Where("user_id = ? AND agent_id = ?", userID, agent.ID).
 		Order("last_message_at DESC, updated_at DESC, id DESC").
@@ -178,6 +199,8 @@ type StreamEvent struct {
 }
 
 // StreamSession 流式对话,通过 emit 逐事件输出。
+// emit func(StreamEvent) error 是一个"回调函数"参数:每产生一个事件(用户消息/推理/正文/结束),
+// 就调用 emit 推给前端。把函数当参数传,是 Go 里解耦"产生数据"和"如何发送"的常用手法。
 func (a *App) StreamSession(principal *Principal, sessionID int64, payload AssistantStreamPayload, emit func(StreamEvent) error) error {
 	session, agent, err := a.requireSessionWithAgent(principal, sessionID)
 	if err != nil {
@@ -190,6 +213,8 @@ func (a *App) StreamSession(principal *Principal, sessionID int64, payload Assis
 		return bizErr("当前会话绑定的模型已删除,请重新选择模型后创建新会话")
 	}
 
+	// emitError 是个匿名函数(闭包),封装"发一条 error 事件 + 一条 done 事件"的固定套路,
+	// 后面出错时直接调它。StreamEvent{...}、M{...} 都是 struct/map 字面量。
 	emitError := func(message string) error {
 		if err := emit(StreamEvent{Name: "error", Data: M{"code": 400, "msg": message}}); err != nil {
 			return err
@@ -199,6 +224,8 @@ func (a *App) StreamSession(principal *Principal, sessionID int64, payload Assis
 
 	var history []db.AssistantMessage
 	a.DB.Where("session_id = ?", session.ID).Order("created_at ASC, id ASC").Find(&history)
+	// range 遍历历史消息切片(_ 丢弃下标,只要值 item);continue 跳过不需要的记录。
+	// 把每条整理成 {role, content} 塞进 historyMessages,作为发给模型的上下文。
 	historyMessages := make([]M, 0, len(history))
 	for _, item := range history {
 		if item.Role != "user" && item.Role != "assistant" {
@@ -245,6 +272,8 @@ func (a *App) StreamSession(principal *Principal, sessionID int64, payload Assis
 		return emitError(err.Error())
 	}
 
+	// streamAiChat 每收到模型吐出的一小段就回调这个匿名函数:一边把片段 append 累加到切片里,
+	// 一边通过 emit 实时推给前端。等整条流结束后再把所有片段拼成完整消息落库。
 	var reasoningParts, contentParts []string
 	streamErr := streamAiChat(runtimeConfig, messages, func(chunk aiChunk) error {
 		if chunk.Reasoning != "" && payload.enableReasoning() {
@@ -269,6 +298,7 @@ func (a *App) StreamSession(principal *Principal, sessionID int64, payload Assis
 	if agent.DataSourceType == agentDataSourceNewsContext && (payload.Mode == "analyze" || payload.Mode == "retry") {
 		contentType = "analysis_result"
 	}
+	// strings.Join 把片段切片拼接成一整条字符串(第二个参数是分隔符,这里用空串)。
 	assistantMessage := db.AssistantMessage{
 		SessionID: session.ID, Role: "assistant", ContentType: contentType,
 		Content:   strings.TrimSpace(strings.Join(contentParts, "")),
@@ -320,7 +350,10 @@ func (a *App) resolveAgentNews(agent *db.AssistantAgent, newsID *int64) (*db.Blo
 	return &news, nil
 }
 
+// findSession 按条件查一条会话,查不到返回 nil。返回 *db.AssistantSession 指针,
+// 正是为了能用 nil 表示"没找到"(见 GO入门笔记『复合类型』的指针)。
 func (a *App) findSession(userID, agentID int64, newsID, modelConfigID *int64, byLatestMessage bool) *db.AssistantSession {
+	// GORM 查询可以"攒条件":先把 a.DB.Where(...) 存进 query,再按需 query = query.Where(...) 追加。
 	query := a.DB.Where("user_id = ? AND agent_id = ?", userID, agentID)
 	if newsID == nil {
 		query = query.Where("news_id IS NULL")

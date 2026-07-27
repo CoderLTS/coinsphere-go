@@ -14,6 +14,9 @@ import (
 
 // ---------- 认证 ----------
 
+// handleLogin 处理 POST /api/auth/login。签名是 (w, r)——没有 principal,因为登录接口本身不需要先登录。
+// (s *Server) 是方法接收者,表示这是 Server 的方法;下面把请求体解析成一个只用一次的匿名 struct。
+// 字段后 `json:"username"` 是标签,指明该字段对应 JSON 里的 "username" 键(见 GO入门笔记『复合类型』)。
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	payload, err := decodeBody[struct {
 		Username string `json:"username"`
@@ -47,6 +50,7 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	ok(w, data)
 }
 
+// handleMe 处理 GET /api/auth/me。多出的参数 principal 是鉴权中间件解析好、注入进来的当前登录用户。
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
 	ok(w, s.App.BuildUserInfo(principal))
 }
@@ -158,23 +162,30 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request, princi
 	respond(w, nil, s.App.DeleteUser(userID, principal), "用户删除成功")
 }
 
+// allowedAvatarTypes 是包级变量:把 MIME 类型映射到文件后缀。map[string]string 即"字符串→字符串"的字典。
+// 用 map 当白名单查表,比一长串 if-else 清爽。
 var allowedAvatarTypes = map[string]string{
 	"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif",
 }
 
+// handleUploadAvatar 处理头像上传(multipart/form-data 表单),把文件存到磁盘并返回可访问的 URL。
 func (s *Server) handleUploadAvatar(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	// 4 << 20 是位运算:4 左移 20 位 = 4*1024*1024 = 4MB,作为表单解析的内存缓冲上限。
 	if err := r.ParseMultipartForm(4 << 20); err != nil {
 		fail(w, "上传内容解析失败")
 		return
 	}
+	// FormFile 一次返回 3 个值:文件、文件头信息、错误。
 	file, header, err := r.FormFile("avatar")
 	if err != nil {
 		fail(w, "缺少 avatar 文件")
 		return
 	}
+	// defer 登记"函数返回前一定执行"的收尾动作,这里保证文件句柄最终被关闭(见 GO入门笔记『defer』)。
 	defer file.Close()
 
 	suffix := strings.ToLower(filepath.Ext(header.Filename))
+	// 从 map 取值的"逗号-ok"写法:okType 表示这个键是否存在;存在才用映射到的标准后缀覆盖。
 	if normalized, okType := allowedAvatarTypes[header.Header.Get("Content-Type")]; okType {
 		suffix = normalized
 	}
@@ -186,6 +197,7 @@ func (s *Server) handleUploadAvatar(w http.ResponseWriter, r *http.Request, prin
 		fail(w, "Only jpg/png/webp/gif avatars are supported")
 		return
 	}
+	// LimitReader 最多读 2MB+1 字节:多读 1 字节是为了下面能判断出"超过 2MB"。len() 取切片长度。
 	fileBytes, err := io.ReadAll(io.LimitReader(file, 2*1024*1024+1))
 	if err != nil || len(fileBytes) == 0 {
 		fail(w, "Uploaded file cannot be empty")
@@ -195,6 +207,7 @@ func (s *Server) handleUploadAvatar(w http.ResponseWriter, r *http.Request, prin
 		fail(w, "Avatar image must be 2MB or smaller")
 		return
 	}
+	// make([]byte, 16) 建一个长度 16 的字节切片;填入随机字节再转成十六进制,拼出不会重名的文件名。
 	randomBytes := make([]byte, 16)
 	_, _ = rand.Read(randomBytes)
 	fileName := hex.EncodeToString(randomBytes) + suffix
@@ -204,6 +217,7 @@ func (s *Server) handleUploadAvatar(w http.ResponseWriter, r *http.Request, prin
 		fail(w, "保存头像失败: "+err.Error())
 		return
 	}
+	// r.TLS != nil 说明是 HTTPS 连接(TLS 是那层加密),据此拼出正确的 URL 前缀。
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"

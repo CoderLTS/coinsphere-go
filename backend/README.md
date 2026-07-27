@@ -1,5 +1,7 @@
 # coinsphere Go 后端
 
+> 🔰 **Go 新手请先读 [`GO入门笔记.md`](./GO入门笔记.md)**:从零讲清本项目用到的 Go 语法和框架,代码里的中文注释会引用它的小节名。
+
 原 Python(FastAPI + Peewee + Redis + APScheduler)后端的 Go 重写版。**单二进制、单进程**,同一进程内运行 HTTP API、工作流调度器、执行器与事件分发,不再依赖 Redis 与独立的 orchestrator / worker 进程。
 
 ## 架构变化

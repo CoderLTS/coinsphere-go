@@ -2,6 +2,8 @@
 package perm
 
 // 权限码常量。
+// 一组常量用 const ( ... ) 打包声明。这里是显式的字符串常量(不是用 iota 自增的整数枚举),
+// 值本身就是权限码字符串;前后端都靠比对这个字符串来判断"能不能进某菜单 / 点某按钮"。
 const (
 	HomeView = "home.view"
 
@@ -59,6 +61,7 @@ const (
 )
 
 // MenuPermissionCodes 菜单名 -> 权限码(空串表示无权限码)。
+// map[string]string 是"字符串→字符串"的字典(见 GO入门笔记『map』):键是前端菜单名,值是进入它所需的权限码。
 var MenuPermissionCodes = map[string]string{
 	"Home":                 HomeView,
 	"SchedulerCenter":      "",
@@ -88,8 +91,10 @@ type ButtonSpec struct {
 }
 
 // ButtonSpecs 菜单名 -> 有序按钮列表(顺序决定 sort)。
+// 值类型是 []ButtonSpec(ButtonSpec 切片):一个菜单下有多个按钮;切片有序,声明顺序就是显示/排序顺序。
 var ButtonSpecs = map[string][]ButtonSpec{
 	"WorkflowDefinitions": {
+		// 每个 {..., ..., ...} 是一个 ButtonSpec 字面量,按字段声明顺序对应 Action / Code / Title 三个字段。
 		{"create", SchedulerWorkflowDefinitionsCreate, "新建工作流定义"},
 		{"update", SchedulerWorkflowDefinitionsUpdate, "编辑工作流定义"},
 		{"delete", SchedulerWorkflowDefinitionsDelete, "删除版本"},

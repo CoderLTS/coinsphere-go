@@ -1,3 +1,6 @@
+// 本文件:新闻数据的增删改查,以及从第三方 Blockbeats 快讯接口抓取、去重入库、
+// 首页概览统计。抓取部分同样是"客户端"用法:我们用 net/http 主动请求外部 API。
+
 package service
 
 import (
@@ -10,11 +13,14 @@ import (
 	"coinsphere/backend/internal/db"
 )
 
+// 抓取快讯用的第三方接口地址;const 声明的是运行期不可修改的常量。
 const blockbeatsAPIURL = "https://api.theblockbeats.news/v1/open-api/open-flash"
 
 // ---------- 新闻管理 CRUD ----------
 
 // NewsUpsertPayload 新闻创建/更新载荷。
+// struct 把一组字段打包成一个类型;反引号里的 `json:"title"` 是 struct tag,
+// 决定它和前端 JSON 里哪个键对应(见 GO入门笔记『复合类型』)。
 type NewsUpsertPayload struct {
 	Title       string `json:"title"`
 	Content     string `json:"content"`
@@ -25,11 +31,15 @@ type NewsUpsertPayload struct {
 }
 
 // ListNews 分页查询新闻。
+// (a *App) 是方法接收者;返回 (M, error) 是多返回值:结果 + 错误(见 GO入门笔记『方法与接收者』『变量、函数、错误』)。
 func (a *App) ListNews(current, size int, keyword string) (M, error) {
+	// q 是一个 GORM 查询构造器,可以按条件逐步叠加(见 GO入门笔记『框架:GORM』)。
+	// &db.BlockbeatsNews{} 传一个空结构体指针,GORM 借它知道要查哪张表。
 	q := a.DB.Model(&db.BlockbeatsNews{})
 	if keyword != "" {
 		q = q.Where("title LIKE ? OR content LIKE ?", "%"+keyword+"%", "%"+keyword+"%")
 	}
+	// var total int64 声明一个变量并自动赋零值 0;Count 把总行数写回 &total(传指针才能写回)。
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
 		return nil, err
@@ -38,6 +48,8 @@ func (a *App) ListNews(current, size int, keyword string) (M, error) {
 	if err := q.Order("published_at DESC, id DESC").Offset((current - 1) * size).Limit(size).Find(&records).Error; err != nil {
 		return nil, err
 	}
+	// make 预建切片,for ... range 遍历,append 逐条追加(见 GO入门笔记『复合类型』)。
+	// 用 &records[i] 取元素地址,避免拷贝整个结构体。
 	items := make([]M, 0, len(records))
 	for i := range records {
 		items = append(items, serializeNews(&records[i]))
@@ -51,13 +63,16 @@ func (a *App) CreateNews(payload NewsUpsertPayload) (M, error) {
 	if err != nil {
 		return nil, err
 	}
+	// maxID 用 *int64(指针),因为表可能为空、MAX 结果可能是 NULL —— 那时 maxID 会是 nil。
 	var maxID *int64
 	a.DB.Model(&db.BlockbeatsNews{}).Select("MAX(source_message_id)").Scan(&maxID)
+	// int64(100000000) 是类型转换,给手动创建的新闻一个从 1 亿起步的编号,和抓取来的错开。
 	next := int64(100000000)
 	if maxID != nil {
 		next = *maxID
 	}
 	next++
+	// struct 字面量:按"字段名: 值"逐个赋值,构造一条待插入的记录(见 GO入门笔记『复合类型』)。
 	record := db.BlockbeatsNews{
 		SourceMessageID: &next,
 		PublishedAt:     normalized.publishedAt,
@@ -147,6 +162,7 @@ func parseFlexibleTime(raw string) (time.Time, error) {
 }
 
 func serializeNews(record *db.BlockbeatsNews) M {
+	// SourceMessageID 是 *int64:非 nil 时用 * 取出值,nil 时保持 any 的零值(即 JSON 的 null)。
 	var sourceMessageID any
 	if record.SourceMessageID != nil {
 		sourceMessageID = *record.SourceMessageID
@@ -172,17 +188,24 @@ type blockbeatsItem struct {
 	Picture   string
 }
 
+// fetchBlockbeatsNews 抓取快讯列表,失败时自动重试,最多 3 次。
 func fetchBlockbeatsNews(size, page int) ([]blockbeatsItem, error) {
+	// fmt.Sprintf 用占位符拼出带查询参数的 URL(%d = 填入一个整数)。
 	url := fmt.Sprintf("%s?type=push&size=%d&page=%d", blockbeatsAPIURL, size, page)
+	// http.Client 是发请求的客户端;Timeout 限制单次请求最长 10 秒。
 	client := &http.Client{Timeout: 10 * time.Second}
 	var lastErr error
+	// 简单的重试循环:失败就 sleep 一会再试,attempt 从 0 递增到 2。
 	for attempt := 0; attempt < 3; attempt++ {
+		// client.Get 发一个 GET 请求;返回响应 resp 和错误 err。
 		resp, err := client.Get(url)
 		if err != nil {
 			lastErr = err
 			time.Sleep(time.Duration(attempt+1) * time.Second)
 			continue
 		}
+		// 注意:这里用 resp.Body.Close() 手动关闭,而不是 defer。因为循环里 defer 会一直堆到
+		// 函数结束才统一执行,可能同时占着多个连接;循环内应即时关闭,再进入下一轮。
 		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
 			resp.Body.Close()
 			lastErr = fmt.Errorf("blockbeats http %d", resp.StatusCode)
@@ -190,9 +213,12 @@ func fetchBlockbeatsNews(size, page int) ([]blockbeatsItem, error) {
 			continue
 		}
 		// 上游 data 字段可能是 {data:[...]} 或直接为数组,做兼容解析。
+		// 这里就地声明一个匿名 struct 变量。json.RawMessage 表示"先不解析这段 JSON、原样留着",
+		// 因为上游 data 字段有时是对象、有时是数组,拿到后再按两种形状分别尝试解析。
 		var payload struct {
 			Data json.RawMessage `json:"data"`
 		}
+		// 函数内部也能用 type 定义局部类型。blockbeatsRow 描述一行原始数据的字段。
 		type blockbeatsRow struct {
 			ID         *int64 `json:"id"`
 			CreateTime any    `json:"create_time"`
@@ -202,6 +228,8 @@ func fetchBlockbeatsNews(size, page int) ([]blockbeatsItem, error) {
 			Link       string `json:"link"`
 			Pic        string `json:"pic"`
 		}
+		// json.NewDecoder(resp.Body).Decode 直接从响应流里解析 JSON 到 &payload;
+		// 解析完立刻手动 Close 释放连接(同样因为身处循环中)。
 		err = json.NewDecoder(resp.Body).Decode(&payload)
 		resp.Body.Close()
 		if err != nil {
@@ -211,6 +239,7 @@ func fetchBlockbeatsNews(size, page int) ([]blockbeatsItem, error) {
 		var nested struct {
 			Data []blockbeatsRow `json:"data"`
 		}
+		// 先按 {data:[...]} 解析;不行再把它当成顶层就是数组来解析。json.Unmarshal 把字节解析进指针目标。
 		if len(payload.Data) > 0 {
 			if err := json.Unmarshal(payload.Data, &nested); err == nil && nested.Data != nil {
 				rows = nested.Data
@@ -238,8 +267,11 @@ func fetchBlockbeatsNews(size, page int) ([]blockbeatsItem, error) {
 	return nil, lastErr
 }
 
+// parseUnixAny 把"可能是数字也可能是字符串"的时间戳转成 *time.Time。
 func parseUnixAny(value any) *time.Time {
 	var seconds int64
+	// 类型 switch:value 是 any(任意类型),按它的真实类型分别处理;
+	// v 在每个 case 分支里就是对应的那个具体类型(见 GO入门笔记『interface』)。
 	switch v := value.(type) {
 	case float64:
 		seconds = int64(v)
@@ -282,8 +314,10 @@ func (a *App) syncLatestNews(pageSize, page int) (*newsSyncResult, error) {
 	for _, row := range rows {
 		ids = append(ids, row.MessageID)
 	}
+	// Pluck 只取某一列,把已存在的 source_message_id 收集到 existingIDs 切片。
 	var existingIDs []int64
 	a.DB.Model(&db.BlockbeatsNews{}).Where("source_message_id IN ?", ids).Pluck("source_message_id", &existingIDs)
+	// 用 map[int64]bool 当"集合"记录哪些 ID 已入库,后面就能 O(1) 判重、跳过重复(见 GO入门笔记『复合类型』)。
 	existing := map[int64]bool{}
 	for _, id := range existingIDs {
 		existing[id] = true
@@ -360,6 +394,8 @@ func (a *App) GetHomeOverview() (M, error) {
 	newsItems := make([]M, 0, len(recentNews))
 	for i := range recentNews {
 		item := recentNews[i]
+		// []rune(summary) 把字符串按"字符"拆开再数长度 —— 中文按字数算,而不是字节数
+		//(一个中文占多个字节,直接 len(字符串) 会偏大)。
 		summary := strings.ReplaceAll(strings.TrimSpace(item.Content), "\n", " ")
 		if len([]rune(summary)) > 120 {
 			summary = truncateRunes(summary, 120) + "..."

@@ -1,5 +1,7 @@
 package service
 
+// import:引入标准库(errors 错误、strings 字符串、time 时间)与本项目的包
+// (internal/db 数据库模型、internal/security 加密工具)。见 GO入门笔记『项目怎么组织』。
 import (
 	"errors"
 	"strings"
@@ -9,17 +11,22 @@ import (
 	"coinsphere/backend/internal/security"
 )
 
+// var 在函数外声明的是"包级变量",整个包都能用。errors.New 造一个固定的错误值(称"哨兵错误"),
+// 之后用 errors.Is 判断"是不是这个错误",比直接比较字符串更可靠。见 GO入门笔记『变量、函数、错误』。
 // errBacklogExceeded 同一并发键等待队列超限(HTTP 429)。
 var errBacklogExceeded = errors.New("Current start entry backlog exceeded the configured limit")
 
 // isBacklogExceeded 判断错误是否为积压超限。
 func isBacklogExceeded(err error) bool { return errors.Is(err, errBacklogExceeded) }
 
+// 命名的大小写决定可见性:isBacklogExceeded 小写=只在本包用;IsBacklogExceeded 大写=导出给别的包用。见 GO入门笔记『项目怎么组织』。
 // IsBacklogExceeded 导出给 API 层使用。
 func IsBacklogExceeded(err error) bool { return isBacklogExceeded(err) }
 
 // ---------- 概览与查询 ----------
 
+// 从这里开始是供 API 层调用的业务方法。(a *App) 是接收者(见 loops.go 已说明的"方法与接收者")。
+// 返回类型 (M, error):M 是本项目定义的类型别名(type M = map[string]any),专门用来拼 JSON 响应;error 表示错误。见 GO入门笔记『复合类型』『变量、函数、错误』。
 // GetSchedulerOverview 调度首页概览。
 func (a *App) GetSchedulerOverview() (M, error) {
 	definitions := a.listLatestDefinitions()
@@ -29,6 +36,7 @@ func (a *App) GetSchedulerOverview() (M, error) {
 	countsByStatus := a.countExecutionsByStatus([]string{"queued", "running", "retry_waiting"})
 
 	var totalExecutions int64
+	// range 一个 map:_ 丢弃键,只累加每个值。遍历 map 的顺序是随机的,这里只做求和不受影响。见 GO入门笔记『复合类型』。
 	for _, count := range executionCounts {
 		totalExecutions += count
 	}
@@ -41,6 +49,7 @@ func (a *App) GetSchedulerOverview() (M, error) {
 
 	var latestExecution db.WorkflowExecution
 	latestExecutedAt := ""
+	// First 取排序后的第一条(SELECT ... ORDER BY ... LIMIT 1)。查不到会返回错误,所以这里用 err == nil 表示"确实查到了才处理"。见 GO入门笔记『框架:GORM』。
 	if err := a.DB.Order("COALESCE(started_at, queued_at) DESC, id DESC").First(&latestExecution).Error; err == nil {
 		at := firstTime(latestExecution.FinishedAt, latestExecution.StartedAt, &latestExecution.QueuedAt)
 		latestExecutedAt = fmtTimeV(at)
@@ -57,6 +66,7 @@ func (a *App) GetSchedulerOverview() (M, error) {
 		Where("status = ? AND last_heartbeat_at IS NOT NULL AND last_heartbeat_at < ?", "running", staleBefore).
 		Count(&staleRunningCount)
 
+	// make([]M, 0) 造一个长度为 0 的空切片,后面用 append 往里追加元素。见 GO入门笔记『复合类型』。
 	definitionItems := make([]M, 0)
 	for i, definition := range definitions {
 		if i >= 8 {
@@ -105,7 +115,9 @@ func (a *App) GetSchedulerOverview() (M, error) {
 
 // GetRuntimeByDefinition 定义对应 workflow code 的运行态。
 func (a *App) GetRuntimeByDefinition(definitionID int64) (M, error) {
+	// definition, err := ... 一次接住"结果"和"错误"两个返回值。
 	definition, err := a.requireDefinition(definitionID)
+	// 出错就把 nil 和错误一起往上返回(Go 靠层层返回 error 传递失败,没有异常机制)。见 GO入门笔记『变量、函数、错误』。
 	if err != nil {
 		return nil, err
 	}
@@ -122,11 +134,15 @@ func (a *App) ActivateDefinition(definitionID int64, operatorUserID int64) (M, e
 	}
 	now := time.Now()
 	state := a.getRuntimeStateByCode(definition.Code)
+	// 典型的"没有就建、有就改":state==nil 表示查不到运行态记录。
 	if state == nil {
+		// &db.WorkflowRuntimeState{...} 直接造一个结构体并取它的地址(得到指针)。
+		// 字段里的 &definition.ID、&now 也是取地址:这些字段是指针类型,用来表达"可为空"。见 GO入门笔记『复合类型』。
 		state = &db.WorkflowRuntimeState{
 			WorkflowCode: definition.Code, ActiveWorkflowDefinitionID: &definition.ID,
 			ActivatedAt: &now, ActivatedBy: &operatorUserID, UpdatedAt: now,
 		}
+		// Create = INSERT 一行;.Error 取本次操作的错误。见 GO入门笔记『框架:GORM』。
 		if err := a.DB.Create(state).Error; err != nil {
 			return nil, err
 		}
@@ -152,6 +168,7 @@ func (a *App) DeactivateWorkflowCode(workflowCode string) (M, error) {
 	if state == nil {
 		return nil, bizErr("Workflow runtime state does not exist")
 	}
+	// 等价 SQL:DELETE FROM workflow_runtime_entries WHERE workflow_runtime_state_id = ?(删掉该 code 的全部运行入口)。见 GO入门笔记『框架:GORM』。
 	if err := a.DB.Where("workflow_runtime_state_id = ?", state.ID).Delete(&db.WorkflowRuntimeEntry{}).Error; err != nil {
 		return nil, err
 	}
@@ -171,6 +188,7 @@ func (a *App) SetEntryEnabled(definitionID int64, entryKey string, isEnabled boo
 		return nil, err
 	}
 	updates := map[string]any{"is_enabled": isEnabled, "updated_at": time.Now()}
+	// 不带表达式的 switch 等价于一串 if / else if:哪个 case 条件先为真就走哪个,且默认不"穿透"下一个 case。见 GO入门笔记『其它会撞见的小语法』。
 	switch {
 	case entry.StartType == "schedule":
 		if isEnabled {
@@ -199,6 +217,7 @@ func (a *App) SetEntryEnabled(definitionID int64, entryKey string, isEnabled boo
 }
 
 // RotateWebhookSecret 轮换 webhook 密钥。
+// RotateWebhookSecret 轮换 webhook 密钥:生成新明文 secret,数据库里只存它的哈希(secret_hash)与提示片段,明文只在本次响应里返回一次。
 func (a *App) RotateWebhookSecret(definitionID int64, entryKey string) (M, error) {
 	entry, err := a.requireRuntimeEntry(definitionID, entryKey)
 	if err != nil {
@@ -237,9 +256,11 @@ func (a *App) RunManualStarts(definitionID int64, startEntryKeys []string, trigg
 		return nil, err
 	}
 	graph := loadJSONObject(definition.GraphJSON)
+	// map[string]M{} 造一个空 map(键是 string、值是 M)。见 GO入门笔记『复合类型』。
 	manualStartNodes := map[string]M{}
 	nodes, _ := graph["nodes"].([]any)
 	for _, nodeAny := range nodes {
+		// node, ok := x.(T) 是"带检查的类型断言":ok 表示断言是否成功,失败就跳过这条,避免 panic(程序崩溃)。见 GO入门笔记『复合类型』。
 		node, ok := nodeAny.(map[string]any)
 		if !ok || asString(node["type"]) != "start.manual" {
 			continue
@@ -275,6 +296,7 @@ func (a *App) RunManualStarts(definitionID int64, startEntryKeys []string, trigg
 // RunRuntimeEntry 按 runtime entry 入队一次执行。
 func (a *App) RunRuntimeEntry(runtimeEntryID int64, triggerCtx M) (M, error) {
 	var entry db.WorkflowRuntimeEntry
+	// 链式 Preload 顺带把关联的运行态、定义一起查出来;First(&entry, id) 按主键查一条(SELECT ... WHERE id=? LIMIT 1)。见 GO入门笔记『框架:GORM』。
 	if err := a.DB.Preload("WorkflowRuntimeState").Preload("WorkflowDefinition").First(&entry, runtimeEntryID).Error; err != nil {
 		return nil, bizErr("Workflow runtime entry does not exist")
 	}
@@ -321,6 +343,7 @@ func (a *App) TriggerWebhook(workflowCode, entryKey, secret string, payload M, i
 	if !entry.IsEnabled {
 		return nil, bizErr("Webhook start entry is disabled")
 	}
+	// 校验密钥:把传入明文按同样算法哈希后,与库里存的 secret_hash 比对,不一致就拒绝(库里从不存明文)。
 	if secret == "" || entry.SecretHash == "" ||
 		security.HashWebhookSecret(a.Cfg.Auth.SecretKey, secret) != entry.SecretHash {
 		return nil, bizErr("Webhook secret is invalid")
@@ -343,6 +366,8 @@ func (a *App) TriggerWebhook(workflowCode, entryKey, secret string, payload M, i
 	return a.RunRuntimeEntry(entry.ID, triggerCtx)
 }
 
+// 这是"数据库即队列"的入队口:把一次触发变成 workflow_executions 表里一条 status='queued' 的记录。
+// 之后由 loops.go 的 dispatchLoop / claimNextExecution 用带条件的 UPDATE 把它认领走——整条队列就是这张表,不需要 Redis / 消息中间件。
 // enqueueStartNodeExecution 创建 queued 状态的执行记录(DB 即队列)。
 func (a *App) enqueueStartNodeExecution(definition *db.WorkflowDefinition, startNode M, triggerCtx M) (*db.WorkflowExecution, bool, error) {
 	config, _ := startNode["config"].(map[string]any)
@@ -360,17 +385,22 @@ func (a *App) enqueueStartNodeExecution(definition *db.WorkflowDefinition, start
 	triggerKey := strings.TrimSpace(asString(triggerCtx["triggerKey"]))
 	idempotencyKey := strings.TrimSpace(asString(triggerCtx["idempotencyKey"]))
 
+	// 幂等键去重:同一个 idempotencyKey 若已入过队,直接返回那条已存在的执行(第二个返回值 true 表示"这是重复")。
+	// 这让"同一次触发被重试 / 重复投递"只产生一条执行,是把分布式里"至少投递一次"变成"效果只一次"的关键。
 	if idempotencyKey != "" {
 		if duplicated := a.getExecutionByIdempotencyKey(triggerType, idempotencyKey); duplicated != nil {
 			return duplicated, true, nil
 		}
 	}
 
+	// concurrencyKey = 定义code:入口key,同一入口的执行共用它,用于限并发与限积压。
 	concurrencyKey := definition.Code + ":" + startEntryKey
 	var backlogCount int64
+	// 数一下该键还有多少条在排队 / 待重试(status IN ('queued','retry_waiting'));IN ? 里传一个切片当列表。见 GO入门笔记『框架:GORM』。
 	a.DB.Model(&db.WorkflowExecution{}).
 		Where("concurrency_key = ? AND status IN ?", concurrencyKey, []string{"queued", "retry_waiting"}).
 		Count(&backlogCount)
+	// 积压超过上限就拒绝入队(返回前面定义的哨兵错误),防止某个入口把队列撑爆。int64(...) 是类型转换。
 	if backlogCount >= int64(a.Cfg.Workflow.BacklogLimitPerKey) {
 		return nil, false, errBacklogExceeded
 	}
@@ -404,8 +434,11 @@ func (a *App) enqueueStartNodeExecution(definition *db.WorkflowDefinition, start
 	if outboxID := asInt64(triggerCtx["triggerOutboxId"]); outboxID > 0 {
 		execution.TriggerOutboxID = &outboxID
 	}
+	// Create = INSERT 这条执行记录。见 GO入门笔记『框架:GORM』。
 	if err := a.DB.Create(&execution).Error; err != nil {
 		// 唯一约束冲突时按幂等键复用已有执行。
+		// (幂等键在数据库上有唯一索引:即使两个请求同时抢着 INSERT,也只会有一条成功,另一条撞唯一约束而失败;
+		//  这里再查一次,把那条已成功的返回——这是比"先查后插"更可靠的一层去重兜底。)
 		if idempotencyKey != "" {
 			if duplicated := a.getExecutionByIdempotencyKey(triggerType, idempotencyKey); duplicated != nil {
 				return duplicated, true, nil
@@ -417,7 +450,9 @@ func (a *App) enqueueStartNodeExecution(definition *db.WorkflowDefinition, start
 	if err != nil {
 		return nil, false, err
 	}
+	// 入队成功,立刻叫醒派发循环去认领(不必干等下一个轮询周期)。见 loops.go 的 wakeDispatcher。
 	a.wakeDispatcher()
+	// 返回 (新建的执行, false=不是重复, nil=无错误)。
 	return created, false, nil
 }
 
@@ -434,12 +469,14 @@ func (a *App) reconcileRuntimeEntriesForState(state *db.WorkflowRuntimeState, pr
 	}
 	graph := loadJSONObject(definition.GraphJSON)
 
+	// 先把旧入口读出来存进 previousMap(键=entryKey,值=指向旧入口的指针),等下重建时好继承旧的启停状态 / 密钥。
 	var previousEntries []db.WorkflowRuntimeEntry
 	a.DB.Where("workflow_runtime_state_id = ?", state.ID).Find(&previousEntries)
 	previousMap := map[string]*db.WorkflowRuntimeEntry{}
 	for i := range previousEntries {
 		previousMap[previousEntries[i].EntryKey] = &previousEntries[i]
 	}
+	// 再全删旧入口,随后按当前 graph 重新逐个建出来(先清后建,保证与最新定义完全一致)。
 	if err := a.DB.Where("workflow_runtime_state_id = ?", state.ID).Delete(&db.WorkflowRuntimeEntry{}).Error; err != nil {
 		return err
 	}
@@ -452,6 +489,7 @@ func (a *App) reconcileRuntimeEntriesForState(state *db.WorkflowRuntimeState, pr
 			continue
 		}
 		nodeType := asString(node["type"])
+		// strings.HasPrefix:只处理以 "start." 开头的起始节点,其余跳过。
 		if !strings.HasPrefix(nodeType, "start.") {
 			continue
 		}
@@ -460,6 +498,7 @@ func (a *App) reconcileRuntimeEntriesForState(state *db.WorkflowRuntimeState, pr
 		if entryKey == "" {
 			return bizErr("Start node entryKey is required")
 		}
+		// SplitN(s, ".", 2) 按 "." 最多切成 2 段,[1] 取第二段:如 "start.schedule" → "schedule"。见 GO入门笔记『复合类型』。
 		startType := strings.SplitN(nodeType, ".", 2)[1]
 
 		previous := previousMap[entryKey]
@@ -519,6 +558,7 @@ func (a *App) registerScheduleEntry(entry *db.WorkflowRuntimeEntry) error {
 		return bizErr("Schedule start node does not exist in definition")
 	}
 	config, _ := startNode["config"].(map[string]any)
+	// 算出"从现在起的下一次触发时间"。schedulerLoop 正是靠比较 next_run_at 是否 <= now 来决定该不该触发。
 	nextRunAt, err := computeNextScheduleTime(config, time.Now())
 	if err != nil {
 		return err
@@ -537,11 +577,13 @@ func (a *App) registerScheduleEntry(entry *db.WorkflowRuntimeEntry) error {
 }
 
 // computeNextScheduleTime 依据调度配置计算下一次触发时间。
+// 返回 *time.Time:算出下次时间就返回它的地址;若永不再触发(如 once 已过期)就返回 nil。
 func computeNextScheduleTime(config map[string]any, after time.Time) (*time.Time, error) {
 	scheduleType := strings.TrimSpace(asString(config["scheduleType"]))
 	if scheduleType == "" {
 		scheduleType = "cron"
 	}
+	// 带表达式的 switch:按 scheduleType 的值选分支(cron 表达式 / 固定间隔 / 只跑一次)。见 GO入门笔记『其它会撞见的小语法』。
 	switch scheduleType {
 	case "cron":
 		schedule, err := parseQuartzCron(asString(config["cronExpression"]))
@@ -562,6 +604,7 @@ func computeNextScheduleTime(config map[string]any, after time.Time) (*time.Time
 		if unit == "" {
 			unit = "minutes"
 		}
+		// time.Duration 是时长类型;下面把数量 × 时间单位(time.Second 等)得到真正的时长。见 GO入门笔记『复合类型』。
 		var duration time.Duration
 		switch unit {
 		case "seconds":
@@ -594,6 +637,8 @@ func computeNextScheduleTime(config map[string]any, after time.Time) (*time.Time
 // ---------- 执行查询 ----------
 
 // WorkflowExecutionQuery 执行记录查询。
+// struct 是"把一组字段打包"的类型;字段首字母大写表示导出(能被别的包访问)。见 GO入门笔记『复合类型』『项目怎么组织』。
+// DefinitionID 是 *int64(指针):用 nil 表示"未指定这个过滤条件",以区别于"指定为 0"。
 type WorkflowExecutionQuery struct {
 	Current                int
 	Size                   int
@@ -611,8 +656,10 @@ func (a *App) ListExecutions(query WorkflowExecutionQuery) (M, error) {
 			return nil, err
 		}
 	}
+	// GORM 的查询是"链式构建":先拿到基础查询 q,再按条件一段段 q = q.Where(...) 累加,最后才真正执行(Count / Find)。
 	q := a.DB.Model(&db.WorkflowExecution{}).
 		Joins("LEFT JOIN workflow_definitions ON workflow_executions.workflow_definition_id = workflow_definitions.id")
+	// query.DefinitionID 是指针,!= nil 表示调用方指定了这个过滤;*query.DefinitionID 取出它指向的值。见 GO入门笔记『复合类型』。
 	if query.DefinitionID != nil {
 		q = q.Where("workflow_executions.workflow_definition_id = ?", *query.DefinitionID)
 	}
@@ -639,6 +686,7 @@ func (a *App) ListExecutions(query WorkflowExecutionQuery) (M, error) {
 		return nil, err
 	}
 	var executions []db.WorkflowExecution
+	// Offset / Limit 做分页:跳过前面 (页码-1)*每页数 条,再取 每页数 条(等价 SQL 的 OFFSET / LIMIT)。见 GO入门笔记『框架:GORM』。
 	if err := q.Preload("WorkflowDefinition").
 		Order("COALESCE(workflow_executions.started_at, workflow_executions.queued_at) DESC, workflow_executions.id DESC").
 		Offset((query.Current - 1) * query.Size).Limit(query.Size).
@@ -665,12 +713,15 @@ func (a *App) GetExecutionDetail(executionID int64) (M, error) {
 	}
 	data["graph"] = graph
 
+	// 下面反复用同一套路:查一批行 → make 一个 []M → for range 逐行转成 map(M)塞进去 → 交给前端。
 	var nodeLogs []db.WorkflowExecutionNode
 	a.DB.Where("workflow_execution_id = ?", executionID).Order("started_at ASC, id ASC").Find(&nodeLogs)
+	// make([]M, 0, len(...)):长度 0、预留容量 len,减少 append 时反复扩容。见 GO入门笔记『复合类型』。
 	nodeItems := make([]M, 0, len(nodeLogs))
 	for i := range nodeLogs {
 		item := nodeLogs[i]
 		var durationMs int64
+		// DurationMs 是指针(可空):非 nil 才解引用取值,避免对 nil 解引用而崩溃。见 GO入门笔记『复合类型』。
 		if item.DurationMs != nil {
 			durationMs = *item.DurationMs
 		}
@@ -724,8 +775,10 @@ func (a *App) GetExecutionDetail(executionID int64) (M, error) {
 
 // cleanupTerminalHistory 按批删除超出保留期的终态执行。
 func (a *App) cleanupTerminalHistory() int {
+	// AddDate(0, 0, -N) 把当前时间往前推 N 天,得到保留期的截止时间。
 	cutoff := time.Now().AddDate(0, 0, -a.Cfg.Workflow.ExecutionRetentionDays)
 	var ids []int64
+	// Pluck("id", &ids):只取某一列的值到切片(等价 SELECT id FROM ...),这里先捞出一批要删的主键。见 GO入门笔记『框架:GORM』。
 	a.DB.Model(&db.WorkflowExecution{}).
 		Where("status IN ? AND finished_at IS NOT NULL AND finished_at < ?", []string{"success", "failed"}, cutoff).
 		Order("finished_at ASC, id ASC").Limit(a.Cfg.Workflow.RetentionDeleteBatchSize).
@@ -733,6 +786,7 @@ func (a *App) cleanupTerminalHistory() int {
 	if len(ids) == 0 {
 		return 0
 	}
+	// 再按这批 id 批量删除(DELETE ... WHERE id IN (...));result.RowsAffected 是实际删除的行数。
 	result := a.DB.Where("id IN ?", ids).Delete(&db.WorkflowExecution{})
 	return int(result.RowsAffected)
 }
@@ -747,6 +801,7 @@ func (a *App) getExecutionByID(executionID int64) (*db.WorkflowExecution, error)
 	return &execution, nil
 }
 
+// getExecutionByIdempotencyKey 按 (触发类型, 幂等键) 查最近一条已存在的执行;查不到返回 nil。供入队时去重使用。
 func (a *App) getExecutionByIdempotencyKey(triggerType, idempotencyKey string) *db.WorkflowExecution {
 	if idempotencyKey == "" {
 		return nil
@@ -891,6 +946,8 @@ func (a *App) serializeExecutionSummary(execution *db.WorkflowExecution) M {
 	}
 }
 
+// buildSecretHint 生成密钥提示(前 4 + **** + 后 4),用于展示而不泄露完整明文。
+// []rune(s) 把字符串按"字符"(而非字节)切开,runes[:4] / runes[len-4:] 是切片区间取子串,对中文等多字节字符也安全。见 GO入门笔记『复合类型』。
 func buildSecretHint(secret string) string {
 	runes := []rune(secret)
 	if len(runes) <= 8 {

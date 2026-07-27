@@ -1,15 +1,23 @@
+// 本文件:AI 模型配置(增删改查)与智能体(Agent)的管理逻辑。
+// 模型的 API Key 是敏感信息,统一用 fernet 对称加密后存库,用时再解密
+//(见 GO入门笔记『框架:fernet』理念,这里不涉及密码学细节)。
+
 package service
 
+// import:引入本文件用到的其它包。标准库(如 encoding/json)直接写包名;
+// 本项目的包以 module 名 coinsphere/backend 开头(见 GO入门笔记『module / package / import』)。
 import (
 	"encoding/json"
 	"strings"
 	"time"
 
+	// db:数据库表结构定义;security:fernet 加解密与 Key 掩码工具。
 	"coinsphere/backend/internal/db"
 	"coinsphere/backend/internal/security"
 )
 
 // AI 协议类型与智能体数据源常量。
+// const (...) 可以一次声明一组常量;下面都是固定的字符串取值,免得代码里到处写字面量。
 const (
 	aiProviderOpenAICompatible = "openai_compatible"
 	aiProviderAnthropic        = "anthropic"
@@ -20,6 +28,8 @@ const (
 	agentDataSourceNewsContext   = "news_context"
 )
 
+// map[键类型]值类型 是 Go 的字典/哈希表(见 GO入门笔记『复合类型』)。
+// 这里用 map[string]bool 当"集合":要判断某个字符串是不是合法取值,查一下 map 即可。
 var aiProviderTypes = map[string]bool{
 	aiProviderOpenAICompatible: true, aiProviderAnthropic: true, aiProviderGemini: true,
 }
@@ -31,6 +41,9 @@ var agentDataSourceTypes = map[string]bool{
 var builtinAgentCodes = map[string]bool{"system_general": true, "news_analysis": true}
 
 // AiModelUpsertPayload 模型配置载荷。
+// struct 把一组字段打包成一个类型(见 GO入门笔记『复合类型』)。字段后反引号里的
+// `json:"provider"` 是 struct tag:JSON 库据此在前端 JSON 的键与该字段之间做映射。
+// 其中 IsEnabled 用 *bool(指针)是为了区分"前端没传该字段"(nil)和"传了 false"。
 type AiModelUpsertPayload struct {
 	Provider           string `json:"provider"`
 	ProviderName       string `json:"providerName"`
@@ -47,19 +60,31 @@ type AiModelUpsertPayload struct {
 }
 
 // ListAiModelConfigs 当前用户的模型配置列表。
+// (a *App) 是"方法接收者":把函数挂到 *App 类型上,方法内用 a 指代当前 App 实例
+//(见 GO入门笔记『方法与接收者』)。返回值 ([]M, error) 是 Go 的多返回值:结果 + 错误,
+// 约定 error 放最后(见 GO入门笔记『变量、函数、错误』)。M 是本项目 map[string]any 的别名,专门拿来拼 JSON。
 func (a *App) ListAiModelConfigs(principal *Principal) ([]M, error) {
+	// := 是短变量声明,自动推断类型,一次接住两个返回值;
+	// 紧跟的 if err != nil 是 Go 最常见的错误处理:出错就把 err 往上 return。
 	configs, err := a.listModelConfigs(principal.User.ID, false)
 	if err != nil {
 		return nil, err
 	}
+	// var xxx []T 声明一个切片(slice,可变长数组,见 GO入门笔记『复合类型』)。
+	// a.DB 是 GORM 数据库句柄;.Find(&agents) 把查询结果写回 agents —— 传指针 & 才能被写入
+	//(见 GO入门笔记『框架:GORM』)。
 	var agents []db.AssistantAgent
 	a.DB.Order("sort ASC, id ASC").Find(&agents)
 	agentMap := map[int64]*db.AssistantAgent{}
+	// for ... range 遍历切片,i 是下标。这里刻意用 &agents[i] 取每个元素的地址存进 map,
+	// 存进去的是切片里的元素本身(而不是 range 出来的副本)。
 	for i := range agents {
 		agentMap[agents[i].ID] = &agents[i]
 	}
 	bindingMap := a.listBoundAgentIDsByModelIDs(collectIDs(configs, func(c db.SystemAiModelConfig) int64 { return c.ID }))
 
+	// make([]M, 0, len) 预建一个长度 0、容量 len 的切片;append 逐个把元素追加进去。
+	// 预留容量能减少 append 过程中反复扩容的开销(见 GO入门笔记『复合类型』)。
 	result := make([]M, 0, len(configs))
 	for i := range configs {
 		result = append(result, a.serializeModelConfig(&configs[i], bindingMap, agentMap))
@@ -73,7 +98,11 @@ func (a *App) CreateAiModelConfig(payload AiModelUpsertPayload, principal *Princ
 	if err != nil {
 		return nil, err
 	}
+	// db.SystemAiModelConfig{...} 是 struct 字面量:按"字段名: 值"直接构造一个结构体
+	//(见 GO入门笔记『复合类型』)。下面用 &config 取它的地址传给 GORM。
 	config := db.SystemAiModelConfig{OwnerID: principal.User.ID, CreatedAt: time.Now()}
+	// a.DB.Create(&config) 相当于 SQL INSERT;GORM 会把新行的自增主键回填到 config.ID
+	//(见 GO入门笔记『框架:GORM』)。链式调用末尾的 .Error 才是这次操作是否出错。
 	if err := a.DB.Create(&config).Error; err != nil {
 		return nil, err
 	}
@@ -114,6 +143,8 @@ func (a *App) SetAiModelEnabled(configID int64, enabled bool, principal *Princip
 	if err != nil {
 		return err
 	}
+	// map[string]any{...} 里的 any 表示"任意类型的值"(见 GO入门笔记『复合类型』)。
+	// GORM 的 Updates 用它表示"只更新这几列",键就是数据库列名。
 	return a.DB.Model(config).Updates(map[string]any{"is_enabled": enabled, "updated_at": time.Now()}).Error
 }
 
@@ -153,9 +184,11 @@ func (a *App) BindAiModelAgents(configID int64, agentIDs []int64, principal *Pri
 			return bizErr("部分智能体不存在,无法完成绑定")
 		}
 	}
+	// 更新"模型-智能体"绑定关系的常见做法:先按 configID 全删旧绑定,再逐条插入新的。
 	if err := a.DB.Where("model_config_id = ?", configID).Delete(&db.AiModelAgentBinding{}).Error; err != nil {
 		return err
 	}
+	// range 返回 (下标, 值);这里用 _ 丢弃下标,只要值 agentID(见 GO入门笔记『其它小语法』的 _)。
 	for _, agentID := range unique {
 		if err := a.DB.Create(&db.AiModelAgentBinding{ModelConfigID: configID, AgentID: agentID, CreatedAt: time.Now()}).Error; err != nil {
 			return err
@@ -480,6 +513,8 @@ func (a *App) getAiRuntimeConfig(modelConfigID, ownerUserID int64, requireEnable
 	if requireEnabled && !config.IsEnabled {
 		return nil, bizErr("当前模型已停用,请重新选择可用模型")
 	}
+	// EncryptedAPIKey 存的是密文;a.Cipher.Decrypt 用 fernet 解密还原出明文 Key
+	//(见 GO入门笔记『框架:fernet』理念)。只有真正要调用模型时才解密。
 	apiKey, err := a.Cipher.Decrypt(config.EncryptedAPIKey)
 	if err != nil {
 		return nil, err
@@ -535,6 +570,8 @@ func (a *App) buildModelUpsert(payload AiModelUpsertPayload, existing *db.System
 	if existing != nil {
 		apiKeyCiphertext = existing.EncryptedAPIKey
 	}
+	// 有新 Key 就用 fernet 加密成密文再存库(见 GO入门笔记『框架:fernet』理念);
+	// 没传新 Key 时,更新场景沿用旧密文,新建场景则报错要求必填。
 	if apiKey != "" {
 		apiKeyCiphertext = a.Cipher.Encrypt(apiKey)
 	} else if existing == nil {
@@ -584,6 +621,8 @@ func buildAgentFields(payload AssistantAgentUpsertPayload) (map[string]any, erro
 			break
 		}
 	}
+	// json.Marshal 把 Go 值(这里是字符串切片)编码成 JSON 文本,存进数据库的 *_json 列。
+	// 末尾 `, _` 丢弃它返回的错误(见 GO入门笔记『其它小语法』的 _)。
 	startersJSON, _ := json.Marshal(starters)
 	sort := payload.Sort
 	if sort < 0 {
@@ -600,6 +639,8 @@ func buildAgentFields(payload AssistantAgentUpsertPayload) (map[string]any, erro
 }
 
 func (a *App) serializeModelConfig(config *db.SystemAiModelConfig, bindingMap map[int64][]int64, agents map[int64]*db.AssistantAgent) M {
+	// 反解出明文 Key 仅仅是为了给前端做掩码显示。if 可以带一个初始化语句:
+	// `if decrypted, err := ...; err == nil { }`,其中 decrypted/err 的作用域只限这个 if。
 	apiKey := ""
 	if config.EncryptedAPIKey != "" {
 		if decrypted, err := a.Cipher.Decrypt(config.EncryptedAPIKey); err == nil {
@@ -650,11 +691,14 @@ func parseJSONStringMap(text, fieldName string) (map[string]string, error) {
 	if strings.TrimSpace(text) == "" {
 		return map[string]string{}, nil
 	}
+	// json.Unmarshal 是反向操作:把 JSON 文本解析进 Go 值(注意传 &raw 指针,才能被写回)。
 	var raw map[string]any
 	if err := json.Unmarshal([]byte(text), &raw); err != nil {
 		return nil, bizErr("%s 不是合法的 JSON", fieldName)
 	}
 	result := map[string]string{}
+	// range 一个 map 得到 (键, 值)。value 的静态类型是 any,
+	// value.(string) 是"类型断言":尝试把它当 string 取出,ok 表示它是否真的是 string。
 	for key, value := range raw {
 		if text, ok := value.(string); ok {
 			result[key] = text

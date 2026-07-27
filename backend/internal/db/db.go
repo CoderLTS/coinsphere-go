@@ -17,8 +17,12 @@ import (
 )
 
 // Open 按配置的 driver 打开数据库连接并完成建表。
+// 本项目用 GORM 这个 ORM 框架:把 Go struct 当数据库表来读写,基本不用手写 SQL(见 GO入门笔记『框架:GORM』)。
 func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
+	// gorm.Dialector 是"数据库方言"接口(interface):只约定要实现哪些方法,不关心具体是谁。
+	// sqlite/mysql/postgres 各自返回一个满足该接口的对象,于是下面一套代码就能支持三种数据库(见 GO入门笔记『接口』)。
 	var dialector gorm.Dialector
+	// switch 按 driver 选方言;Go 的 case 默认不"穿透"到下一个,不用手写 break。
 	switch cfg.Driver {
 	case "sqlite":
 		if cfg.Path == "" {
@@ -66,6 +70,8 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		return nil, fmt.Errorf("unsupported database driver: %s", cfg.Driver)
 	}
 
+	// gorm.Open 用选好的方言真正建立连接,返回 *gorm.DB —— 之后所有数据库操作都通过它。
+	// 顺带配置查询日志:慢于 500ms 的 SQL 才告警;查不到记录(First 未命中)是正常业务分支,不刷日志。
 	gdb, err := gorm.Open(dialector, &gorm.Config{
 		Logger: logger.New(
 			log.New(os.Stderr, "\r\n", log.LstdFlags),
@@ -80,16 +86,20 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		return nil, fmt.Errorf("open %s database: %w", cfg.Driver, err)
 	}
 
+	// postgres 独有:若指定了 schema,先确保它存在。%q 会给标识符自动加引号。
 	if cfg.Driver == "postgres" && cfg.Schema != "" {
 		if err := gdb.Exec(fmt.Sprintf(`CREATE SCHEMA IF NOT EXISTS %q`, cfg.Schema)).Error; err != nil {
 			return nil, fmt.Errorf("create schema: %w", err)
 		}
 	}
 
+	// 从 GORM 取出底层标准库的 *sql.DB,用来设置连接池参数。
 	sqlDB, err := gdb.DB()
 	if err != nil {
 		return nil, err
 	}
+	// 连接池:sqlite 是单文件数据库,多个连接同时写会报 "database is locked",
+	// 所以把最大连接数限成 1(写操作串行);mysql/postgres 是真正的并发数据库,给更大的池并回收空闲连接。
 	if cfg.Driver == "sqlite" {
 		// ponytail: SQLite 单写连接避免 database-is-locked;换 mysql/pg 获得真正并发。
 		sqlDB.SetMaxOpenConns(1)
@@ -99,6 +109,8 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		sqlDB.SetConnMaxIdleTime(5 * time.Minute)
 	}
 
+	// AutoMigrate 按 struct 定义自动建表 / 补列(改了 models.go 重启即生效)。
+	// AllModels() 返回模型切片,后面的 ... 把切片"展开"成一个个不定参数传进去。
 	if err := gdb.AutoMigrate(AllModels()...); err != nil {
 		return nil, fmt.Errorf("auto migrate: %w", err)
 	}

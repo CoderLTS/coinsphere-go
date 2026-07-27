@@ -1,5 +1,8 @@
 package service
 
+// 本文件用到的库:标准库负责加密签名(crypto/*)、发邮件(net/smtp)、发 HTTP 请求(net/http)、
+// 正则(regexp)、JSON(encoding/json)等;最后一组 coinsphere/backend/internal/db 是本项目的数据库模型包。
+// 标准库与本项目包之间空一行分组,是 Go 的惯例。见 GO入门笔记『import』
 import (
 	"bytes"
 	"crypto/hmac"
@@ -18,6 +21,8 @@ import (
 	"coinsphere/backend/internal/db"
 )
 
+// channelTypeLabels 渠道类型代号 → 中文名(包级变量,程序启动即存在)。
+// map[string]string 表示"键是 string、值是 string"的字典;这里把内部代号翻译成给人看的标签。见 GO入门笔记『复合类型』
 var channelTypeLabels = map[string]string{
 	"in_app":           "站内通知",
 	"dingtalk_webhook": "钉钉机器人",
@@ -31,11 +36,17 @@ var deliveryStatusLabels = map[string]string{
 	"skipped_offline": "离线跳过",
 }
 
+// templateVarPattern 预编译的正则,匹配模板里的 {{ 变量名 }} 占位符(渲染通知标题/内容时替换成真实值)。
+// regexp.MustCompile 在程序启动时把正则编译一次;若正则写错会直接 panic —— 适合这种写死、必然正确的模式。
 var templateVarPattern = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}`)
 
 // ---------- 渠道管理 ----------
 
 // NotifyChannelUpsertPayload 渠道载荷。
+// 这是"请求体结构":前端提交的 JSON 会被反序列化(解析)进这个 struct。反引号里的 `json:"channelType"` 是 struct tag(标签),
+// 告诉 JSON 库该字段对应 JSON 里的哪个键。见 GO入门笔记『复合类型』
+// *bool / *string 这类"指针字段"用于可选值:普通 bool 分不清"传了 false"和"没传",用指针就能靠 nil 表示"前端没提供",
+// 从而在更新时"只改前端确实传了的字段"。
 type NotifyChannelUpsertPayload struct {
 	ChannelType  string  `json:"channelType"`
 	DisplayName  string  `json:"displayName"`
@@ -46,12 +57,18 @@ type NotifyChannelUpsertPayload struct {
 }
 
 // GetNotifyOverviewSummary 配置概览的通知摘要。
+// 返回类型 M 是本项目别名:type M = map[string]any(见 app.go),即"键为字符串、值任意"的字典,用来拼 JSON 响应。
+// (a *App) 是方法接收者,a 即当前 App 实例;a.DB 是 GORM 的数据库句柄(*gorm.DB)。见 GO入门笔记『框架:GORM』
 func (a *App) GetNotifyOverviewSummary() M {
+	// var 声明变量并给"零值";先建一个空记录,等 GORM 把查询结果写回它。
 	var latest db.SystemNotifyDelivery
+	// 链式查询:Order 排序 → First(&latest) 取第一条并写回;末尾 .Error 是本次错误,==nil 表示查到了。传 &latest(指针)让 GORM 把结果写回。
 	latestFound := a.DB.Order("created_at DESC, id DESC").First(&latest).Error == nil
+	// []db.SystemNotifyChannel 是"渠道切片"(一堆渠道);Find(&channels) 查出全部并写回。
 	var channels []db.SystemNotifyChannel
 	a.DB.Find(&channels)
 	enabledCount := 0
+	// for _, v := range slice 遍历切片:_ 丢弃下标,channel 是每个元素。range 是本文件第一次出现。见 GO入门笔记『复合类型』
 	for _, channel := range channels {
 		if channel.IsEnabled {
 			enabledCount++
@@ -77,9 +94,12 @@ func (a *App) ListNotifyChannels(principal *Principal) []M {
 	var channels []db.SystemNotifyChannel
 	a.DB.Order("updated_at DESC, id DESC").Find(&channels)
 	result := make([]M, 0, len(channels))
+	// 用 for i := range + channel := &channels[i](取第 i 个元素的地址),而不是 for _, channel := range channels。
+	// 因为 range 的第二返回值是元素"副本",改它不影响原切片;要拿到指向真实元素的指针,就得用 &channels[i]。见 GO入门笔记『复合类型』
 	for i := range channels {
 		channel := &channels[i]
 		if !principal.HasRole("R_SUPER") {
+			// 数据隔离:owned 判断"这条渠道是不是我的"。先判指针非 nil,再用 *p 解引用取值比较(顺序不能反,否则解引用 nil 会崩)。
 			owned := channel.OwnerID != nil && *channel.OwnerID == principal.User.ID
 			if !channel.IsBuiltin && !owned {
 				continue
@@ -91,7 +111,9 @@ func (a *App) ListNotifyChannels(principal *Principal) []M {
 }
 
 // CreateNotifyChannel 创建渠道。
+// 返回 (M, error):Go 的多返回值,约定最后一个是 error。成功返回 (对象, nil),失败返回 (nil, 错误)。见 GO入门笔记『错误处理』
 func (a *App) CreateNotifyChannel(payload NotifyChannelUpsertPayload, principal *Principal) (M, error) {
+	// strings.TrimSpace 去掉首尾空白;bizErr 造一个业务错误返回给前端。
 	channelType := strings.TrimSpace(payload.ChannelType)
 	if channelType != "dingtalk_webhook" && channelType != "smtp_email" {
 		return nil, bizErr("当前仅支持创建钉钉和邮件渠道")
@@ -105,6 +127,7 @@ func (a *App) CreateNotifyChannel(payload NotifyChannelUpsertPayload, principal 
 		return nil, err
 	}
 	secretText := "{}"
+	// SecretJSON 是 *string(可选):先判非 nil,再用 *payload.SecretJSON 解引用取出内容。
 	if payload.SecretJSON != nil && strings.TrimSpace(*payload.SecretJSON) != "" {
 		secretText = *payload.SecretJSON
 	}
@@ -119,6 +142,7 @@ func (a *App) CreateNotifyChannel(payload NotifyChannelUpsertPayload, principal 
 		SettingsJSON: settingsJSON, EncryptedSecretsJSON: encryptedSecret,
 		Remark: payload.Remark, CreatedAt: now, UpdatedAt: now,
 	}
+	// Create(&channel) = INSERT 一行;传指针,GORM 会把自增主键 ID 等写回 channel。见 GO入门笔记『框架:GORM』
 	if err := a.DB.Create(&channel).Error; err != nil {
 		return nil, err
 	}
@@ -255,6 +279,9 @@ type DeliveryHistoryQuery struct {
 
 // ListDeliveryHistory 投递历史分页(非超管仅看自己)。
 func (a *App) ListDeliveryHistory(principal *Principal, query DeliveryHistoryQuery) (M, error) {
+	// GORM 查询可"先攒条件、最后执行":先建 q(此时还没查库),后面按需 q = q.Where(...) 叠加条件。
+	// Joins 手写多表 LEFT JOIN,把渠道 / 用户 / 执行 / 工作流定义等关联表接进来,供筛选和展示。
+	// 语句里的 ? 是占位符,真实值单独传、由 GORM 转义 —— 防 SQL 注入。见 GO入门笔记『框架:GORM』
 	q := a.DB.Model(&db.SystemNotifyDelivery{}).
 		Joins("LEFT JOIN notification_channels ON notification_deliveries.channel_id = notification_channels.id").
 		Joins("LEFT JOIN users ON notification_deliveries.recipient_user_id = users.id").
@@ -282,10 +309,13 @@ func (a *App) ListDeliveryHistory(principal *Principal, query DeliveryHistoryQue
 			like, like, like, like, like, like,
 		)
 	}
+	// 分页第一步:先用同样的条件 Count 出总条数 total(前端据此算总页数)。
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
 		return nil, err
 	}
+	// 分页第二步:Preload 顺带把关联对象一次查出来(避免逐条再查的 N+1 问题);
+	// Offset((页码-1)*每页) 跳过前面几页,Limit(每页) 只取本页这一批 —— 这就是标准的"分页"写法。
 	var deliveries []db.SystemNotifyDelivery
 	if err := q.Preload("Channel").Preload("RecipientUser").
 		Preload("WorkflowExecution").Preload("WorkflowExecution.WorkflowDefinition").
@@ -302,6 +332,7 @@ func (a *App) ListDeliveryHistory(principal *Principal, query DeliveryHistoryQue
 }
 
 // ListInAppNotifications 站内通知分页。
+// 前端"通知面板"的数据源:只查该用户、渠道 in_app、状态 success 的记录,分页返回并附未读数(分页写法见上面 ListDeliveryHistory)。
 func (a *App) ListInAppNotifications(userID int64, current, size int) (M, error) {
 	q := a.DB.Model(&db.SystemNotifyDelivery{}).
 		Where("recipient_user_id = ? AND channel_type = ? AND status = ?", userID, "in_app", "success")
@@ -321,6 +352,7 @@ func (a *App) ListInAppNotifications(userID int64, current, size int) (M, error)
 	for i := range deliveries {
 		records = append(records, a.serializeDelivery(&deliveries[i]))
 	}
+	// result 是 M(map),可直接用 result["键"]=值 再塞一个未读数字段进去。
 	result := pagedResult(records, current, size, total)
 	result["unreadCount"] = a.countUnreadInApp(userID)
 	return result, nil
@@ -328,12 +360,15 @@ func (a *App) ListInAppNotifications(userID int64, current, size int) (M, error)
 
 // MarkInAppRead 标记单条已读。
 func (a *App) MarkInAppRead(userID, deliveryID int64) error {
+	// Updates(map) 只更新 map 里列出的这几列(is_read、read_at),其余列不动 = 一条 UPDATE。见 GO入门笔记『框架:GORM』
+	// Where 里带 recipient_user_id 是越权保护:只能改自己的通知。
 	result := a.DB.Model(&db.SystemNotifyDelivery{}).
 		Where("id = ? AND recipient_user_id = ? AND channel_type = ?", deliveryID, userID, "in_app").
 		Updates(map[string]any{"is_read": true, "read_at": time.Now()})
 	if result.Error != nil {
 		return result.Error
 	}
+	// RowsAffected 是本次实际影响的行数;为 0 说明没匹配到 —— 要么通知不存在,要么不是你的。
 	if result.RowsAffected == 0 {
 		return bizErr("通知不存在或无权操作")
 	}
@@ -360,8 +395,10 @@ func (a *App) countUnreadInApp(userID int64) int64 {
 }
 
 // SendTestInAppNotification 发送站内测试通知。
+// 演示站内通知的完整两步:① 先把通知写进数据库(留痕、供通知面板查询);② 再通过 Hub 实时推给前端。
 func (a *App) SendTestInAppNotification(userID int64) M {
 	now := time.Now()
+	// channelID 声明为 *int64(指针),这样"查不到内置渠道"时保持 nil = 不关联渠道。
 	var channelID *int64
 	var builtin db.SystemNotifyChannel
 	if err := a.DB.Where("channel_type = ? AND is_builtin = ?", "in_app", true).First(&builtin).Error; err == nil {
@@ -387,6 +424,8 @@ func (a *App) SendTestInAppNotification(userID int64) M {
 		"isRead": false, "readAt": "", "sentAt": fmtTimeV(now), "createdAt": fmtTimeV(now),
 	}
 	unreadCount := a.countUnreadInApp(userID)
+	// 【与 realtime.go 的关系】a.Hub 就是 realtime.go 里的连接注册表;SendToUser 把这条消息实时推给该用户所有在线连接,
+	// 前端收到 type=notice.created 就即时弹通知、刷新红点数。数据库存历史,Hub 负责"实时"。
 	a.Hub.SendToUser(userID, M{"type": "notice.created", "record": record, "unreadCount": unreadCount})
 	return M{"record": record, "unreadCount": unreadCount}
 }
@@ -545,6 +584,8 @@ func (a *App) dispatchExternalChannel(
 	return ok
 }
 
+// dispatchInAppChannel 派发一条站内通知,返回投递结果("success"/"skipped_offline"/"failed")。
+// 这是工作流"通知节点"推站内消息的核心:同样是"先写库留痕,再用 Hub 实时推送"。
 func (a *App) dispatchInAppChannel(
 	execution *db.WorkflowExecution, nodeLog *db.WorkflowExecutionNode, outboxEventID *int64,
 	targetType string, targetID, userID int64, title, content string,
@@ -554,6 +595,7 @@ func (a *App) dispatchInAppChannel(
 	if err := a.DB.Where("channel_type = ? AND is_builtin = ?", "in_app", true).First(&builtin).Error; err == nil {
 		channelID = &builtin.ID
 	}
+	// 用户当前不在线(没有任何 WebSocket 连接)就没法实时推:落一条 skipped_offline 记录,等他下次进面板看历史。
 	if !a.Hub.IsOnline(userID) {
 		a.DB.Create(&db.SystemNotifyDelivery{
 			WorkflowExecutionID: &execution.ID, WorkflowExecutionNodeID: &nodeLog.ID,
@@ -594,6 +636,7 @@ func (a *App) dispatchInAppChannel(
 		},
 		"unreadCount": unreadCount,
 	}
+	// 【与 realtime.go 的关系】推送成功就把这条投递标记 success;失败(比如刚好断线)标记 failed。
 	if a.Hub.SendToUser(userID, payload) {
 		a.DB.Model(&delivery).Updates(map[string]any{"status": "success", "sent_at": time.Now()})
 		return "success"
@@ -723,6 +766,8 @@ func sendDingTalk(channel *notifyRuntimeChannel, msgType, title, content string)
 		baseURL = "https://oapi.dingtalk.com/robot/send"
 	}
 	webhookURL := baseURL + "?access_token=" + url.QueryEscape(accessToken)
+	// 钉钉"加签"安全模式:用密钥对"时间戳\n密钥"做 HMAC-SHA256,再 base64 + URL 编码成 sign 拼到 URL 上;
+	// 钉钉服务端用同样算法校验,确认请求来自持有密钥者(防 webhook 被盗用)。这是标准库 crypto/hmac 的典型用法。
 	if secret != "" {
 		timestamp := fmt.Sprintf("%d", time.Now().UnixMilli())
 		mac := hmac.New(sha256.New, []byte(secret))
@@ -737,12 +782,15 @@ func sendDingTalk(channel *notifyRuntimeChannel, msgType, title, content string)
 		body = M{"msgtype": "text", "text": M{"content": content}}
 	}
 	body["at"] = M{"atMobiles": []string{}, "isAtAll": false}
+	// json.Marshal 把 body(map)序列化成 JSON 字节;raw, _ := 里的 _ 丢弃错误(内容可控,基本不会失败)。
 	raw, _ := json.Marshal(body)
+	// http.Client 是发 HTTP 请求的客户端,设 8 秒超时防卡死;Post 发一个 POST 请求。
 	client := &http.Client{Timeout: 8 * time.Second}
 	resp, err := client.Post(webhookURL, "application/json", bytes.NewReader(raw))
 	if err != nil {
 		return false, dumpJSON(M{"errcode": 500, "errmsg": err.Error()})
 	}
+	// defer resp.Body.Close():函数返回前一定关闭响应体、释放连接;忘了关会泄漏连接。见 GO入门笔记『defer』
 	defer resp.Body.Close()
 	var payload M
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
@@ -1142,6 +1190,9 @@ func asString(value any) string {
 	return fmt.Sprint(value)
 }
 
+// asInt64 把"任意类型 any"尽量转成 int64。
+// switch v := x.(type) 是"类型 switch":JSON 解析出来的数字可能是 float64 / json.Number / string 等,这里按实际类型分别转换。
+// x.(T) 这种写法叫"类型断言"(判断并取出接口底层的具体类型)。见 GO入门笔记『interface』
 func asInt64(value any) int64 {
 	switch typed := value.(type) {
 	case int64:

@@ -1,5 +1,6 @@
 package api
 
+// import:标准库(net/http、os、path/filepath)在上,本项目内部包(perm 权限码、service 业务逻辑)在下。
 import (
 	"net/http"
 	"os"
@@ -9,16 +10,23 @@ import (
 	"coinsphere/backend/internal/service"
 )
 
+// registerRoutes 把每个 URL 登记到路由表 mux。理解一行就理解全部:
+//   mux.HandleFunc("方法 /路径", 处理函数) —— 例如 "GET /api/..."。这是 Go 1.22+ net/http 的新路由写法(见 GO入门笔记『框架:net/http』)。
+//   路径里的 {definitionId} 之类是"路径参数",处理函数用 r.PathValue("definitionId") 取出。
+//   处理函数外面套一层 s.requireAuth / s.requirePermission(...),就是给这个接口加上"登录/权限"检查(中间件,见 api.go)。
 // registerRoutes 注册全部路由(与原 FastAPI 路由一一对应)。
 func (s *Server) registerRoutes(mux *http.ServeMux) {
+	// 处理函数的固定签名是 func(w http.ResponseWriter, r *http.Request);这里直接写了一个匿名函数当处理器。
 	// 健康检查。
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		ok(w, M{"status": "ok"})
 	})
 
 	// 静态目录。
+	// os.MkdirAll 建目录(已存在也不报错);0o755 是八进制的目录权限;开头的 _ = 忽略返回的 error。
 	_ = os.MkdirAll(s.StaticDir, 0o755)
 	_ = os.MkdirAll(filepath.Join(s.UploadsDir, "avatars"), 0o755)
+	// mux.Handle 与 HandleFunc 类似,但收的是 http.Handler 对象;FileServer 把磁盘目录当静态资源伺服,StripPrefix 先去掉 URL 前缀再找文件。
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir(s.StaticDir))))
 	mux.Handle("GET /uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(s.UploadsDir))))
 
@@ -37,6 +45,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	}))
 
 	// 数据管理。
+	// 第二个参数 perm.DataNewsView 是 perm 包里定义的权限码常量;requirePermission 会检查当前用户是否持有它。
+	// 像 {newsId} 这样的花括号段是路径参数,对应 handler 里的 r.PathValue("newsId")。
 	mux.HandleFunc("GET /api/data/news", s.requirePermission(perm.DataNewsView, s.handleListNews))
 	mux.HandleFunc("POST /api/data/news", s.requirePermission(perm.DataNewsCreate, s.handleCreateNews))
 	mux.HandleFunc("PUT /api/data/news/{newsId}", s.requirePermission(perm.DataNewsUpdate, s.handleUpdateNews))
@@ -85,6 +95,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/scheduler/workflow-definitions/{definitionId}/executions", s.requirePermission(perm.SchedulerWorkflowExecutionsView, s.handleListDefinitionExecutions))
 	mux.HandleFunc("GET /api/scheduler/workflow-executions", s.requirePermission(perm.SchedulerWorkflowExecutionsView, s.handleListAllExecutions))
 	mux.HandleFunc("GET /api/scheduler/workflow-executions/{executionId}", s.requirePermission(perm.SchedulerWorkflowExecutionsView, s.handleGetExecutionDetail))
+	// 这条 webhook 没有套 requireAuth/requirePermission:它给外部系统回调,靠请求头里的密钥(secret)鉴权,而非登录 token。
 	mux.HandleFunc("POST /api/scheduler/webhooks/{workflowCode}/{entryKey}", s.handleWebhookTrigger)
 
 	// 配置中心。
@@ -125,5 +136,6 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/notifications/in-app/read-all", s.requireAuth(s.handleReadAllInApp))
 	mux.HandleFunc("POST /api/notifications/in-app/tests", s.requireAuth(s.handleTestInApp))
 	mux.HandleFunc("POST /api/notifications/in-app/{deliveryId}/read", s.requireAuth(s.handleReadInApp))
+	// WebSocket 路由同样不套中间件:浏览器建 WS 连接不便带 Authorization 头,所以 token 放 URL 查询串里,在 handler 内部校验。
 	mux.HandleFunc("GET /ws/notifications", s.handleNotificationsWS)
 }

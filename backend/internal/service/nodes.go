@@ -1,3 +1,15 @@
+// nodes.go —— 两张"注册表",把"类型编码"映射到"处理函数"。
+//
+// 注册表模式(registry pattern)是本文件的核心:与其写一大串 if/switch 判断"是什么类型就干什么",
+// 不如把每种类型和它的处理函数成对登记进一张表,用时按编码查表、拿到函数直接调用。
+// 新增一种类型只要往表里加一条,别处不用改。
+//
+// 本文件有两张表:
+//   1. taskDefinitions        —— 可执行"任务"(如抓新闻),供 task.run 节点调用;
+//   2. workflowNodeDefinitions —— 工作流"节点"类型(开始/任务/条件/循环/HTTP/通知…),
+//                                 engine.go 跑图时就靠它按节点 type 找到对应处理函数。
+// 所谓"代码即真源":这些能力直接写死在代码里,不依赖数据库配置。
+
 package service
 
 import (
@@ -16,6 +28,11 @@ import (
 // ---------- 任务定义注册表(代码即真源) ----------
 
 // taskDefinition 一个可执行任务能力。
+//
+// 重点看 Execute 字段:类型是 func(a *App, inputs M) (M, error) —— 一个"函数类型"。
+// 结构体里可以直接存一个"函数值",这正是注册表的关键:把"这种任务怎么执行"的那段代码
+// 当成数据挂在字段上,需要时取出来调用。见 GO入门笔记『变量、函数、错误』。
+// (M 是本项目别名 = map[string]any;ParameterSchema 用 JSON Schema 描述该任务接收哪些参数。)
 type taskDefinition struct {
 	Code            string
 	Label           string
@@ -24,6 +41,10 @@ type taskDefinition struct {
 	Execute         func(a *App, inputs M) (M, error)
 }
 
+// taskDefinitions 是所有内置任务的清单(注册表本体)。
+// []*taskDefinition 表示"taskDefinition 指针的切片";里面每个 {...} 就是一条登记,
+// 元素类型是指针,所以本可写 &taskDefinition{...},Go 允许省略前面的 &taskDefinition。
+// 目前只登记了一种任务:抓取 Blockbeats 快讯。
 var taskDefinitions = []*taskDefinition{
 	{
 		Code:        "blockbeats_news_fetch",
@@ -36,6 +57,8 @@ var taskDefinitions = []*taskDefinition{
 				"page":     M{"type": "integer", "title": "页码", "default": 1, "minimum": 1},
 			},
 		},
+		// 这里给 Execute 字段赋了一个"匿名函数"(函数字面量),就是这种任务真正执行的逻辑:
+		// 读分页参数(缺省给默认值)→ 调 syncLatestNews 抓取 → 返回统计结果。
 		Execute: func(a *App, inputs M) (M, error) {
 			pageSize := int(asInt64(inputs["pageSize"]))
 			if pageSize <= 0 {
@@ -59,6 +82,7 @@ var taskDefinitions = []*taskDefinition{
 	},
 }
 
+// getTaskDefinition 按 code 在注册表里查任务:for range 逐条扫描,找到就返回,找不到返回业务错误。
 func getTaskDefinition(code string) (*taskDefinition, error) {
 	for _, definition := range taskDefinitions {
 		if definition.Code == code {
@@ -70,6 +94,7 @@ func getTaskDefinition(code string) (*taskDefinition, error) {
 
 // ListTaskDefinitions 任务定义列表(节点面板用)。
 func (a *App) ListTaskDefinitions() []M {
+	// make([]M, 0, n):新建长度 0、预留容量 n 的切片;下面用 append 一条条填。
 	result := make([]M, 0, len(taskDefinitions))
 	for _, definition := range taskDefinitions {
 		result = append(result, M{
@@ -82,6 +107,7 @@ func (a *App) ListTaskDefinitions() []M {
 
 // ListTaskDefinitionPage 任务定义管理页分页。
 func (a *App) ListTaskDefinitionPage(current, size int, keyword string) M {
+	// 先 copy 一份再排序,避免打乱全局 taskDefinitions 的顺序。
 	items := make([]*taskDefinition, len(taskDefinitions))
 	copy(items, taskDefinitions)
 	sort.Slice(items, func(i, j int) bool {
@@ -89,6 +115,7 @@ func (a *App) ListTaskDefinitionPage(current, size int, keyword string) M {
 	})
 	keywordText := strings.ToLower(strings.TrimSpace(keyword))
 	if keywordText != "" {
+		// items[:0] 是常见惯用法:复用同一底层数组做"原地筛选",把命中的元素依次写回开头。
 		filtered := items[:0]
 		for _, item := range items {
 			if strings.Contains(strings.ToLower(item.Code), keywordText) ||
@@ -99,6 +126,7 @@ func (a *App) ListTaskDefinitionPage(current, size int, keyword string) M {
 		}
 		items = filtered
 	}
+	// 按页码算出切片的起止下标,并夹到合法范围内;items[start:end] 就是本页数据(左闭右开)。
 	total := len(items)
 	start := (current - 1) * size
 	if start < 0 {
@@ -128,6 +156,8 @@ func (a *App) UpdateTaskDefinitionDefaultParams(code string, params M, operatorU
 	if err := validatePartialParams(params, definition.ParameterSchema); err != nil {
 		return nil, err
 	}
+	// GORM 查询:Where 里 ? 是占位符(值单独传,防 SQL 注入),First 查一条并写回 &existing。
+	// .Error == nil 表示确实查到了记录。见 GO入门笔记『框架:GORM』。
 	var existing db.TaskDefinitionConfig
 	existingFound := a.DB.Where("task_definition_code = ?", code).First(&existing).Error == nil
 	existingOverrides := M{}
@@ -140,6 +170,7 @@ func (a *App) UpdateTaskDefinitionDefaultParams(code string, params M, operatorU
 	}
 	nextOverrides := buildConfiguredOverrides(definition.ParameterSchema, mergedEffective)
 	now := time.Now()
+	// 三种情况:有覆盖值且记录已存在 → 更新;有覆盖值但没记录 → 新建;没有任何覆盖值 → 删掉旧记录。
 	if len(nextOverrides) > 0 {
 		if existingFound {
 			a.DB.Model(&existing).Updates(map[string]any{
@@ -161,6 +192,9 @@ func (a *App) UpdateTaskDefinitionDefaultParams(code string, params M, operatorU
 }
 
 // buildExecutionInputs 合并 schema 默认值、全局覆盖与节点输入。
+//
+// 合并有优先级:先铺 schema 默认值,再盖全局覆盖,最后盖节点运行时输入 ——
+// 后写的覆盖先写的,所以运行时输入优先级最高。
 func (a *App) buildExecutionInputs(code string, taskParams, runtimeInputs M) (M, error) {
 	definition, err := getTaskDefinition(code)
 	if err != nil {
@@ -204,6 +238,7 @@ func (a *App) serializeTaskDefinitionItem(definition *taskDefinition) M {
 	}
 }
 
+// extractSchemaDefaultParams 从 schema 的 properties 里,把每个字段声明的 default 值挑出来。
 func extractSchemaDefaultParams(schema M) M {
 	defaults := M{}
 	properties, _ := schema["properties"].(M)
@@ -309,6 +344,7 @@ func validateFieldValue(key string, value any, fieldSchema map[string]any) error
 	return nil
 }
 
+// matchesSchemaType 判断一个值是否符合 schema 声明的类型(type 为数组时"满足其一即可")。
 func matchesSchemaType(value, expectedType any) bool {
 	if typeList, ok := expectedType.([]any); ok {
 		for _, item := range typeList {
@@ -318,6 +354,8 @@ func matchesSchemaType(value, expectedType any) bool {
 		}
 		return false
 	}
+	// switch 按类型名分派;Go 的 case 默认不"穿透"到下一个,不用手写 break。见 GO入门笔记『其它会撞见的小语法』。
+	// 每个 case 里再用类型断言 value.(T) 检查这个值实际是不是对应的 Go 类型。
 	switch asString(expectedType) {
 	case "string":
 		_, ok := value.(string)
@@ -350,6 +388,9 @@ func matchesSchemaType(value, expectedType any) bool {
 	}
 }
 
+// toFloat 尽量把一个 any 值转成 float64;第二个返回值表示能不能转成。
+// switch value.(type) 是"类型 switch":按值的真实类型分支,进入 case 后 typed 就已是那个具体类型。
+// 见 GO入门笔记『其它会撞见的小语法』。
 func toFloat(value any) (float64, bool) {
 	switch typed := value.(type) {
 	case float64:
@@ -376,6 +417,12 @@ func toFloatAny(value any) (float64, bool) {
 // ---------- 工作流节点注册表 ----------
 
 // nodeExecResult 节点执行结果。
+//
+// engine.go 跑图时会读这几个字段决定下一步:
+//   Output         节点输出数据(存成输出快照,也可被下游引用);
+//   SelectedBranch 条件节点选中的分支名(*string 指针:nil 表示"没选分支");
+//   ForeachItems   循环节点要逐个遍历的数组(非 nil 就触发 foreach);
+//   Terminate      是否就此结束整张图(结束节点置 true)。
 type nodeExecResult struct {
 	Output         M
 	SelectedBranch *string
@@ -384,6 +431,10 @@ type nodeExecResult struct {
 }
 
 // nodeExecContext 节点执行上下文。
+//
+// engine.go 每执行一个节点,就把这个"上下文包"传给它的 Execute:里面有 App、当前执行/节点日志、
+// 整张图、共享状态、触发上下文等。注意 PublishEvent 是一个函数类型字段 —— 引擎注入的回调,
+// 节点想发领域事件时调它就行,不必关心底层怎么发。
 type nodeExecContext struct {
 	App          *App
 	Definition   *db.WorkflowDefinition
@@ -397,6 +448,8 @@ type nodeExecContext struct {
 	PublishEvent func(eventType, aggregateType string, payload, metadata M) (int64, error)
 }
 
+// workflowNodeDefinition 一种工作流节点类型的登记项:把类型编码 TypeCode 和它的处理函数 Execute 绑在一起。
+// Execute 的类型 func(ctx *nodeExecContext) (*nodeExecResult, error) 就是所有节点统一的"处理器"签名。
 type workflowNodeDefinition struct {
 	TypeCode     string
 	Label        string
@@ -410,6 +463,7 @@ var baseStartProperties = M{
 	"inputBindings": M{"type": "object", "title": "默认输入绑定"},
 }
 
+// mergeProps 合并两份 schema 属性(base 打底,extra 覆盖同名键),生成新 map,不改动传入的两个。
 func mergeProps(base M, extra M) M {
 	merged := M{}
 	for key, value := range base {
@@ -421,6 +475,8 @@ func mergeProps(base M, extra M) M {
 	return merged
 }
 
+// startNodeExecute 所有 start.* 开始节点共用的处理函数:只是把触发信息原样输出。
+// 下面登记表里多处直接把这个函数名当值填给 Execute 字段 —— 函数作为值复用的典型例子。
 func startNodeExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 	config, _ := ctx.Node["config"].(map[string]any)
 	return &nodeExecResult{Output: M{
@@ -430,6 +486,17 @@ func startNodeExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 	}}, nil
 }
 
+// workflowNodeDefinitions 是工作流所有内置节点类型的注册表。engine.go 按节点的 type 到这里查处理器。
+// 内置类型一览:
+//   start.manual/schedule/event/webhook  四种"开始"节点(手动/定时/事件/Webhook 触发),共用 startNodeExecute;
+//   task.run          执行一个任务定义(调 taskDefinitions 里的 Execute);
+//   event.publish     发布一条领域事件;
+//   notify            发送通知(站内信/钉钉/邮件);
+//   http.request      发起一次 HTTP 请求;
+//   condition.branch  条件判断,输出 true/false 分支;
+//   foreach           遍历数组,对下游子图逐个执行;
+//   delay.wait        等待若干毫秒;
+//   end               结束节点,终止整张图。
 var workflowNodeDefinitions = []*workflowNodeDefinition{
 	{
 		TypeCode: "start.manual", Label: "手动开始",
@@ -486,6 +553,8 @@ var workflowNodeDefinitions = []*workflowNodeDefinition{
 		},
 		Execute: func(ctx *nodeExecContext) (*nodeExecResult, error) {
 			config, _ := ctx.Node["config"].(map[string]any)
+			// task.run 节点:按配置里的 taskDefinitionCode 到任务注册表查出任务,合并输入后执行,
+			// 结果写进 sharedState["taskResult"] 供下游引用。这就是两张注册表衔接的地方。
 			definitionCode := strings.TrimSpace(asString(config["taskDefinitionCode"]))
 			if definitionCode == "" {
 				return nil, bizErr("Task node is missing taskDefinitionCode")
@@ -644,7 +713,9 @@ var workflowNodeDefinitions = []*workflowNodeDefinition{
 			if err != nil {
 				return nil, err
 			}
+			// defer 登记"函数返回前一定执行"的收尾动作,这里确保响应体最终被关闭(不管后面从哪条路 return)。见 GO入门笔记『defer』。
 			defer response.Body.Close()
+			// io.LimitReader 限制最多读 4MB,避免超大响应把内存撑爆。
 			raw, _ := io.ReadAll(io.LimitReader(response.Body, 4*1024*1024))
 			if response.StatusCode < 200 || response.StatusCode >= 300 {
 				return nil, bizErr("HTTP request failed with status %d: %s", response.StatusCode, truncateRunes(string(raw), 500))
@@ -681,6 +752,8 @@ var workflowNodeDefinitions = []*workflowNodeDefinition{
 			if matched {
 				branch = "true"
 			}
+			// SelectedBranch: &branch —— 用 & 取 branch 的地址,填进 *string 字段;
+			// engine.go 看到它非 nil,就只沿着 branchKey 等于 "true"/"false" 的边继续走。
 			return &nodeExecResult{Output: M{"matched": matched}, SelectedBranch: &branch}, nil
 		},
 	},
@@ -715,6 +788,7 @@ var workflowNodeDefinitions = []*workflowNodeDefinition{
 				ctx.SharedState["loopConfig"] = loopConfig
 			}
 			loopConfig[asString(ctx.Node["id"])] = M{"itemKey": itemKey, "indexKey": indexKey}
+			// 把要遍历的数组放进 ForeachItems 返回;engine.go 收到后会对每个元素跑一遍下游子图。
 			return &nodeExecResult{Output: M{"count": len(items)}, ForeachItems: items}, nil
 		},
 	},
@@ -739,11 +813,13 @@ var workflowNodeDefinitions = []*workflowNodeDefinition{
 		TypeCode: "end", Label: "结束",
 		ConfigSchema: M{"type": "object", "properties": M{}},
 		Execute: func(ctx *nodeExecContext) (*nodeExecResult, error) {
+			// Terminate: true 告诉引擎:到此结束整张图,后面的边都不再走。
 			return &nodeExecResult{Output: M{"ended": true}, Terminate: true}, nil
 		},
 	},
 }
 
+// getNodeDefinition 按 typeCode 在节点注册表里查处理器。engine.go 跑图时就靠它把"节点类型"变成"要调用的函数"。
 func getNodeDefinition(typeCode string) (*workflowNodeDefinition, error) {
 	for _, definition := range workflowNodeDefinitions {
 		if definition.TypeCode == typeCode {
@@ -764,6 +840,8 @@ func (a *App) ListNodeDefinitions() []M {
 	return result
 }
 
+// setNodeOutput 把某个节点的输出按"节点 id"存进 sharedState["nodeOutputs"],方便下游按 id 取用。
+// (第一次用时若该 map 还不存在,就先建一个 —— 惰性初始化。)
 func setNodeOutput(ctx *nodeExecContext, output M) {
 	nodeOutputs, _ := ctx.SharedState["nodeOutputs"].(map[string]any)
 	if nodeOutputs == nil {
@@ -773,6 +851,7 @@ func setNodeOutput(ctx *nodeExecContext, output M) {
 	nodeOutputs[asString(ctx.Node["id"])] = output
 }
 
+// compareValues 按 operator 比较两个值:truthy 看真假,eq 按文本比,其余(gt/gte/lt/lte)按数字比。
 func compareValues(actual, expected any, operator string) bool {
 	if operator == "truthy" {
 		return isTruthy(actual)
@@ -799,6 +878,7 @@ func compareValues(actual, expected any, operator string) bool {
 	}
 }
 
+// isTruthy 判断一个值是否"为真"(仿脚本语言:nil/空串/0/空数组/空 map 都算假)。
 func isTruthy(value any) bool {
 	switch typed := value.(type) {
 	case nil:

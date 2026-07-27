@@ -32,6 +32,8 @@ func NewPasswordHasher(iterations int) *PasswordHasher {
 	return &PasswordHasher{iterations: iterations}
 }
 
+// HashPassword 把明文密码转成不可逆的哈希串入库:每次生成随机盐,再用 PBKDF2 迭代上万次。
+// 目的是即便数据库泄露也难以暴力还原密码。输出格式与原 Python 版 pbkdf2_sha256 完全一致,老用户数据可直接沿用。
 func (h *PasswordHasher) HashPassword(raw string) string {
 	saltBytes := make([]byte, 16)
 	_, _ = rand.Read(saltBytes)
@@ -40,6 +42,8 @@ func (h *PasswordHasher) HashPassword(raw string) string {
 	return fmt.Sprintf("pbkdf2_sha256$%d$%s$%s", h.iterations, salt, digest)
 }
 
+// VerifyPassword 校验密码:从库里存的哈希串拆出盐和迭代次数,用同样参数把用户输入再算一遍,
+// 再用 hmac.Equal 做"恒定时间比较"(无论对错都耗时相同,避免通过响应快慢猜密码)。
 func (h *PasswordHasher) VerifyPassword(raw, hashed string) bool {
 	parts := strings.SplitN(hashed, "$", 4)
 	if len(parts) != 4 || parts[0] != "pbkdf2_sha256" {
@@ -91,6 +95,8 @@ func (m *TokenManager) CreateRefreshToken(userID int64) AuthToken {
 	return m.create(userID, "refresh", m.refreshTTL)
 }
 
+// create 签发一个 JWT(登录令牌):由 header.payload.signature 三段组成,用点号连接,各段做 base64 编码。
+// signature 是用服务端密钥对前两段做的 HS256 签名;别人改了内容但没有密钥,就算不出能对上的签名 → token 判为无效。
 func (m *TokenManager) create(userID int64, tokenType string, ttl time.Duration) AuthToken {
 	tokenID := randomHex(16)
 	issuedAt := time.Now().Unix()
@@ -112,6 +118,7 @@ func (m *TokenManager) create(userID int64, tokenType string, ttl time.Duration)
 	}
 }
 
+// VerifyToken 反向校验令牌:先用同一密钥重算签名比对(防篡改),再依次检查类型、是否过期、载荷是否合法。
 func (m *TokenManager) VerifyToken(token, expectedType string) (*TokenPayload, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
@@ -175,6 +182,8 @@ func NewSecretCipher(secretKey string) (*SecretCipher, error) {
 	return &SecretCipher{key: key}, nil
 }
 
+// Encrypt / Decrypt 用 Fernet 做对称加密:同一把密钥既能加密也能解密,
+// 用来把 API Key、通知渠道密钥等敏感配置以密文形式存库。密钥由 secret_key 的 SHA256 派生,和 Python 版保持一致。
 func (c *SecretCipher) Encrypt(plain string) string {
 	normalized := strings.TrimSpace(plain)
 	if normalized == "" {
