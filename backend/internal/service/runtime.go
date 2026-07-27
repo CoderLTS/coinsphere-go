@@ -233,7 +233,7 @@ func (a *App) RotateWebhookSecret(definitionID int64, entryKey string) (M, error
 	}
 	now := time.Now()
 	if err := a.DB.Model(entry).Updates(map[string]any{
-		"secret_hash":         security.HashWebhookSecret(a.Cfg.Auth.SecretKey, secret),
+		"secret_hash":         security.HashWebhookSecret(a.Cfg.Auth.WebhookPepper, secret),
 		"secret_hint":         buildSecretHint(secret),
 		"secret_rotated_at":   now,
 		"registration_status": registrationStatus,
@@ -343,9 +343,9 @@ func (a *App) TriggerWebhook(workflowCode, entryKey, secret string, payload M, i
 	if !entry.IsEnabled {
 		return nil, bizErr("Webhook start entry is disabled")
 	}
-	// 校验密钥:把传入明文按同样算法哈希后,与库里存的 secret_hash 比对,不一致就拒绝(库里从不存明文)。
+	// 校验密钥:把传入明文按同样算法哈希后,与库里存的 secret_hash 做恒定时间比对,不一致就拒绝(库里从不存明文)。见评审 #3/#9。
 	if secret == "" || entry.SecretHash == "" ||
-		security.HashWebhookSecret(a.Cfg.Auth.SecretKey, secret) != entry.SecretHash {
+		!security.SecureCompare(security.HashWebhookSecret(a.Cfg.Auth.WebhookPepper, secret), entry.SecretHash) {
 		return nil, bizErr("Webhook secret is invalid")
 	}
 	normalizedIdempotency := strings.TrimSpace(idempotencyKey)

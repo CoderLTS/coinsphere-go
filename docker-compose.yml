@@ -9,7 +9,12 @@ services:
     restart: unless-stopped
     environment:
       TZ: ${TZ:-Asia/Shanghai}
-      COINSPHERE_AUTH__SECRET_KEY: ${COINSPHERE_AUTH__SECRET_KEY:-coinsphere-dev-secret}
+      # 必填:未设置则 compose 直接报错(见评审 #1)。生成随机值:openssl rand -hex 32
+      COINSPHERE_AUTH__SECRET_KEY: ${COINSPHERE_AUTH__SECRET_KEY:?请设置 COINSPHERE_AUTH__SECRET_KEY(.env 或环境变量,如 openssl rand -hex 32)}
+      # 可选强化:内置超管初始密码 / 敏感配置加密密钥 / webhook pepper(留空各自回落到 secret_key)
+      # COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD: ${COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD:-}
+      # COINSPHERE_AUTH__ENCRYPTION_KEY: ${COINSPHERE_AUTH__ENCRYPTION_KEY:-}
+      # COINSPHERE_AUTH__WEBHOOK_PEPPER: ${COINSPHERE_AUTH__WEBHOOK_PEPPER:-}
       # 默认 sqlite(数据落在 backend-data 卷)。切 postgres/mysql 见 backend/README.md,例如:
       # COINSPHERE_DATABASE__DRIVER: postgres
       # COINSPHERE_DATABASE__HOST: your-db-host

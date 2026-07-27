@@ -27,9 +27,10 @@ type M = map[string]any
 
 // Server HTTP 服务。
 type Server struct {
-	App        *service.App
-	StaticDir  string
-	UploadsDir string
+	App          *service.App
+	StaticDir    string
+	UploadsDir   string
+	loginLimiter *rateLimiter // 登录/刷新限流(见评审 #6)
 }
 
 // NewServer 是本项目约定的"构造函数":新建 Server,把所有 URL 与处理函数登记到路由表,返回给 main 启动 HTTP 服务。
@@ -37,7 +38,12 @@ type Server struct {
 // NewServer 创建服务并注册全部路由。
 func NewServer(app *service.App, staticDir, uploadsDir string) *http.ServeMux {
 	// &Server{...} 新建 Server 并用 & 取地址得到指针;:= 是函数内的短变量声明,自动推断类型(见 GO入门笔记『变量声明』)。
-	s := &Server{App: app, StaticDir: staticDir, UploadsDir: uploadsDir}
+	s := &Server{
+		App:          app,
+		StaticDir:    staticDir,
+		UploadsDir:   uploadsDir,
+		loginLimiter: newRateLimiter(app.Cfg.Auth.LoginRateLimitPerMinute),
+	}
 	// http.NewServeMux() 创建标准库的路由表(见 GO入门笔记『框架:net/http』)。
 	mux := http.NewServeMux()
 	// s.registerRoutes(mux):用 . 调用 s 上的方法;s 是指针,Go 会自动解引用。

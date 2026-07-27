@@ -164,6 +164,11 @@ func HashToken(token string) string {
 	return hex.EncodeToString(digest[:])
 }
 
+// SecureCompare 恒定时间比较两个等长摘要/字符串,避免通过比较耗时的侧信道泄露信息(见评审 #9)。
+func SecureCompare(a, b string) bool {
+	return hmac.Equal([]byte(a), []byte(b))
+}
+
 func (m *TokenManager) sign(input string) string {
 	mac := hmac.New(sha256.New, m.secret)
 	mac.Write([]byte(input))

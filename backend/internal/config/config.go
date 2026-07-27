@@ -18,6 +18,9 @@ const (
 	configPathEnv = envPrefix + "CONFIG_PATH"
 )
 
+// DefaultInsecureSecret 仓库自带的占位签名密钥;生产必须覆盖,否则 Validate 拒绝启动(见评审 #1)。
+const DefaultInsecureSecret = "coinsphere-dev-secret"
+
 // DatabaseConfig 数据库连接配置,driver 决定方言。
 type DatabaseConfig struct {
 	// struct(结构体)= 一组字段打包;字段后反引号里的 `yaml:"driver"` 是 struct tag(标签),
@@ -43,10 +46,16 @@ type ServerConfig struct {
 
 // AuthConfig 认证配置。
 type AuthConfig struct {
-	SecretKey             string `yaml:"secret_key"`
-	AccessTokenTTLMinutes int    `yaml:"access_token_ttl_minutes"`
-	RefreshTokenTTLDays   int    `yaml:"refresh_token_ttl_days"`
-	PasswordIterations    int    `yaml:"password_iterations"`
+	SecretKey string `yaml:"secret_key"`
+	// EncryptionKey / WebhookPepper 留空时在 normalize 里回落到 SecretKey(向后兼容);
+	// 想做密钥分离(见评审 #3)就各配一个独立随机值。
+	EncryptionKey           string `yaml:"encryption_key"`
+	WebhookPepper           string `yaml:"webhook_pepper"`
+	BootstrapAdminPassword  string `yaml:"bootstrap_admin_password"` // 内置超管初始密码,留空默认 coinsphere(见评审 #2)
+	AccessTokenTTLMinutes   int    `yaml:"access_token_ttl_minutes"`
+	RefreshTokenTTLDays     int    `yaml:"refresh_token_ttl_days"`
+	PasswordIterations      int    `yaml:"password_iterations"`
+	LoginRateLimitPerMinute int    `yaml:"login_rate_limit_per_minute"` // 每 IP 每分钟登录/刷新上限,<=0 用默认 10(见评审 #6)
 }
 
 // WorkflowConfig 工作流运行时配置。
@@ -131,7 +140,7 @@ func defaultConfig() *AppConfig {
 		Database: DatabaseConfig{Driver: "sqlite", Path: "data/coinsphere.db", Schema: "coinsphere"},
 		Server:   ServerConfig{Host: "0.0.0.0", Port: 6987},
 		Auth: AuthConfig{
-			SecretKey:             "coinsphere-dev-secret",
+			SecretKey:             DefaultInsecureSecret,
 			AccessTokenTTLMinutes: 1440,
 			RefreshTokenTTLDays:   7,
 			PasswordIterations:    390000,
@@ -185,6 +194,30 @@ func (c *AppConfig) normalize(baseDir string) {
 	if c.Workflow.MaxAttempts < 1 {
 		c.Workflow.MaxAttempts = 1
 	}
+	// 认证兜底:加密密钥 / webhook pepper 留空时回落到签名密钥(向后兼容),其余给默认值。
+	if c.Auth.EncryptionKey == "" {
+		c.Auth.EncryptionKey = c.Auth.SecretKey
+	}
+	if c.Auth.WebhookPepper == "" {
+		c.Auth.WebhookPepper = c.Auth.SecretKey
+	}
+	if c.Auth.BootstrapAdminPassword == "" {
+		c.Auth.BootstrapAdminPassword = "coinsphere"
+	}
+	if c.Auth.LoginRateLimitPerMinute <= 0 {
+		c.Auth.LoginRateLimitPerMinute = 10
+	}
+}
+
+// Validate 启动前安全校验:签名密钥必须显式配置且不是仓库默认值,否则任何人可用公开默认密钥伪造登录令牌(评审 #1)。
+// 本地开发想临时用默认值,设环境变量 COINSPHERE_ALLOW_INSECURE_SECRET=1 放行。
+func (c *AppConfig) Validate() error {
+	if c.Auth.SecretKey == "" || c.Auth.SecretKey == DefaultInsecureSecret {
+		if os.Getenv("COINSPHERE_ALLOW_INSECURE_SECRET") != "1" {
+			return fmt.Errorf("auth.secret_key 未设置或仍为默认值,存在令牌伪造风险:请用环境变量 COINSPHERE_AUTH__SECRET_KEY 或 config.yml 配一个随机密钥(如 `openssl rand -hex 32`);本地开发可临时设 COINSPHERE_ALLOW_INSECURE_SECRET=1 放行")
+		}
+	}
+	return nil
 }
 
 // applyEnvOverrides 把 COINSPHERE_A__B=value 写入嵌套配置树。

@@ -46,6 +46,10 @@ type App struct {
 	Cipher *security.SecretCipher
 	Hub    *Hub
 
+	// dummyHash 预先算好的“假密码哈希”:登录时若用户不存在/停用,也拿它跑一次校验,
+	// 让各分支耗时一致,消除通过响应快慢枚举用户名的可能(见评审 #7)。
+	dummyHash string
+
 	// WorkerID 当前进程的工作节点标识,会写进执行记录,便于区分"是哪个节点执行的"。
 	WorkerID string
 
@@ -77,21 +81,24 @@ type App struct {
 func NewApp(gdb *gorm.DB, cfg *config.AppConfig, workerID string) (*App, error) {
 	// := 是短变量声明(自动推断类型,只能在函数内部用);这里一次接住两个返回值:cipher 和 err。
 	// 紧跟的 if err != nil 是 Go 最典型的错误处理:出错就带着错误提前 return,不靠抛异常。
-	cipher, err := security.NewSecretCipher(cfg.Auth.SecretKey)
+	cipher, err := security.NewSecretCipher(cfg.Auth.EncryptionKey)
 	if err != nil {
 		return nil, err
 	}
+	// 复用同一个 hasher:既装进 App.Hasher,也用它预算一份假哈希填 dummyHash(见评审 #7)。
+	hasher := security.NewPasswordHasher(cfg.Auth.PasswordIterations)
 	// &App{...} 是"结构体字面量 + 取地址(&)":当场把各字段填好,并返回它的指针 *App。
 	// 字段名后跟冒号按名赋值,顺序随意。make(chan struct{}, 1) 造一个容量为 1 的带缓冲 channel。
 	// 结尾的 nil 占据 error 返回值的位置,表示"没有错误"。
 	return &App{
 		DB:             gdb,
 		Cfg:            cfg,
-		Hasher:         security.NewPasswordHasher(cfg.Auth.PasswordIterations),
+		Hasher:         hasher,
 		Tokens:         security.NewTokenManager(cfg.Auth.SecretKey, cfg.Auth.AccessTokenTTLMinutes, cfg.Auth.RefreshTokenTTLDays),
 		Cipher:         cipher,
 		Hub:            NewHub(),
 		WorkerID:       workerID,
+		dummyHash:      hasher.HashPassword(security.RandomToken()),
 		runningKeys:    map[string]int{},
 		dispatcherWake: make(chan struct{}, 1),
 		stop:           make(chan struct{}),

@@ -14,6 +14,9 @@ frontend/   Vue 3 + Vite 前端(原 fronted/,权限走 backend 模式)
 ```powershell
 # 1) 后端(默认读 backend/config.yml,SQLite,监听 :6987)
 cd backend
+# ⚠️ 首次运行需要一个真实签名密钥,否则拒绝启动(见 backend/README.md 安全说明):
+#    正式用:在 config.yml 或环境变量设 COINSPHERE_AUTH__SECRET_KEY(如 openssl rand -hex 32)
+#    本地图快:$env:COINSPHERE_ALLOW_INSECURE_SECRET = '1'   # 临时放行默认密钥
 go build -o coinsphere-server.exe .
 .\coinsphere-server.exe
 
@@ -23,7 +26,7 @@ pnpm install
 pnpm dev
 ```
 
-默认超管账号:`coinsphere` / `coinsphere`(后端首次启动自动建表 + 写种子数据)。
+默认超管账号:`coinsphere` / `coinsphere`(后端首次启动自动建表 + 写种子数据),**首登后请尽快改密**;可用 `COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD` 指定强初始密码。
 
 ## 生产部署(Docker 一键起)
 
@@ -31,8 +34,10 @@ pnpm dev
 前端生产环境 `VITE_API_URL = /`,与 nginx 同源,故无需改前端代码。
 
 ```bash
+# 必须先给一个签名密钥(未设置则 compose 直接报错):
+export COINSPHERE_AUTH__SECRET_KEY=$(openssl rand -hex 32)
 docker compose up -d --build
-# 浏览器打开 http://localhost:8080,默认超管 coinsphere / coinsphere
+# 浏览器打开 http://localhost:8080,默认超管 coinsphere / coinsphere(首登后尽快改密)
 ```
 
 - 入口只有 `web`(默认 `8080`,可用 `COINSPHERE_WEB_PORT` 改);`backend` 不对外暴露,仅经 nginx 反代。

@@ -31,8 +31,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(s.UploadsDir))))
 
 	// 认证。
-	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
-	mux.HandleFunc("POST /api/auth/refresh", s.handleRefresh)
+	// 登录/刷新套一层 s.rateLimit(...) 限流,挡暴力尝试(见评审 #6);logout 吊销 refresh 令牌(见评审 #4)。
+	mux.HandleFunc("POST /api/auth/login", s.rateLimit(s.handleLogin))
+	mux.HandleFunc("POST /api/auth/refresh", s.rateLimit(s.handleRefresh))
+	mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
 	mux.HandleFunc("GET /api/auth/me", s.requireGuestOrAuth(s.handleMe))
 
 	// 首页。

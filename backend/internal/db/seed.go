@@ -113,7 +113,7 @@ var agentItems = []agentItem{
 }
 
 // Seed 写入内置角色、用户、菜单、i18n、智能体、渠道与内置工作流。幂等。
-func Seed(gdb *gorm.DB, hasher *security.PasswordHasher) error {
+func Seed(gdb *gorm.DB, hasher *security.PasswordHasher, adminPassword string) error {
 	// 入参里的 *gorm.DB、*security.PasswordHasher 都是“指针”(*类型 表示指向该类型的指针),
 	// 传指针可避免复制、并共享同一个数据库连接。函数只返回一个 error:nil 表示成功。
 	// Transaction(事务):把括号里的整段操作当成“要么全成功、要么全回滚”的整体;传进去的
@@ -127,7 +127,7 @@ func Seed(gdb *gorm.DB, hasher *security.PasswordHasher) error {
 		if err != nil {
 			return err
 		}
-		user, err := seedSuperUser(tx, hasher)
+		user, err := seedSuperUser(tx, hasher, adminPassword)
 		if err != nil {
 			return err
 		}
@@ -202,7 +202,7 @@ func seedRoles(tx *gorm.DB) (map[string]*SystemRole, error) {
 }
 
 // seedSuperUser 写入内置超级管理员账号(仅当它还不存在时)。
-func seedSuperUser(tx *gorm.DB, hasher *security.PasswordHasher) (*SystemUser, error) {
+func seedSuperUser(tx *gorm.DB, hasher *security.PasswordHasher, adminPassword string) (*SystemUser, error) {
 	now := time.Now()
 	// json.Marshal 把一个 Go 值序列化成 JSON 文本(返回 []byte)。数据库没有“数组”类型,
 	// 常用一段 JSON 字符串代替;末尾的 _ 丢弃了 error。后面 string(tags) 再把 []byte 转成字符串。
@@ -210,10 +210,10 @@ func seedSuperUser(tx *gorm.DB, hasher *security.PasswordHasher) (*SystemUser, e
 	var user SystemUser
 	err := tx.Where("username = ?", "coinsphere").First(&user).Error
 	if err == gorm.ErrRecordNotFound {
-		// 内置“超级管理员”账号:用户名 coinsphere、初始密码也是 coinsphere,但绝不明文存库——
+		// 内置“超级管理员”账号:用户名 coinsphere,初始密码取自配置(默认 coinsphere),但绝不明文存库——
 		// 先经 hasher.HashPassword 哈希成不可逆摘要再写入。这个账号拥有后台全部权限。
 		user = SystemUser{
-			Username: "coinsphere", PasswordHash: hasher.HashPassword("coinsphere"),
+			Username: "coinsphere", PasswordHash: hasher.HashPassword(adminPassword),
 			Nickname: "超级管理员", FullName: "coinsphere", Gender: "male",
 			Phone: "13800000000", Email: "admin@coinsphere.local",
 			IsActive: true, JobTitle: "System Owner", Location: "Shanghai", Company: "coinsphere",

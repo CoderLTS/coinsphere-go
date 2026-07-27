@@ -46,17 +46,16 @@ const guestRoleCode = "R_GUEST"
 // → ④ 把 refresh 令牌落库(便于以后校验/吊销)→ ⑤ 记录最后登录时间 → ⑥ 返回两个令牌。
 // (a *App) 表示这是 App 的方法,通过 a 拿到共享的 DB、Hasher、Tokens 等依赖。
 func (a *App) Login(username, password string) (M, error) {
-	// var user ... 先声明一个"零值"结构体,用来接收查询结果。
-	// GORM:.Where("username = ?", username) 里的 ? 是占位符(值单独传、自动转义,能防 SQL 注入);
-	// .First(&user) 相当于 SELECT ... WHERE username=? LIMIT 1,并把结果写回 user;查不到时 .Error 非空。
-	// 见 GO入门笔记『框架:GORM』。
+	// 无论用户是否存在/是否停用,都恰好跑一次 VerifyPassword,让各失败分支耗时一致,消除计时枚举(见评审 #7)。
 	var user db.SystemUser
-	if err := a.DB.Where("username = ?", username).First(&user).Error; err != nil {
-		return nil, bizErr("用户名或密码错误")
+	lookupErr := a.DB.Where("username = ?", username).First(&user).Error
+	hashToCheck := a.dummyHash // 用户不存在时拿预算好的假哈希凑等量耗时
+	if lookupErr == nil {
+		hashToCheck = user.PasswordHash
 	}
-	// ! 是逻辑取反;VerifyPassword 用数据库里存的哈希来校验用户输入的明文密码。
-	// 注意:"用户不存在"和"密码错误"故意返回同一句提示,不让攻击者判断到底哪一步错了。
-	if !user.IsActive || !a.Hasher.VerifyPassword(password, user.PasswordHash) {
+	passwordOK := a.Hasher.VerifyPassword(password, hashToCheck)
+	// “用户不存在”“已停用”“密码错误”故意返回同一句提示,不让攻击者判断到底哪一步错了。
+	if lookupErr != nil || !user.IsActive || !passwordOK {
 		return nil, bizErr("用户名或密码错误")
 	}
 	accessToken := a.Tokens.CreateAccessToken(user.ID)
@@ -89,16 +88,43 @@ func (a *App) RefreshAccessToken(refreshToken string) (M, error) {
 	if err != nil {
 		return nil, err
 	}
+	// 按 token id 查记录(先不加 is_revoked 过滤,以便识别“复用已吊销令牌”)。
 	var record db.RefreshTokenRecord
-	if err := a.DB.Where("id = ? AND is_revoked = ?", payload.TokenID, false).First(&record).Error; err != nil {
+	if err := a.DB.Where("id = ?", payload.TokenID).First(&record).Error; err != nil {
 		return nil, security.ErrInvalidToken
 	}
-	// ExpiresAt.After(now) 判断令牌是否还没过期;|| 两侧任一条件不满足(已过期 或 哈希对不上)都视为无效。
-	if !record.ExpiresAt.After(time.Now()) || record.TokenHash != security.HashToken(refreshToken) {
+	// 复用检测:已吊销的 refresh 又被拿来换 token,视为令牌泄露 → 吊销该用户全部 refresh,强制重新登录(见评审 #5)。
+	if record.IsRevoked {
+		a.DB.Model(&db.RefreshTokenRecord{}).Where("user_id = ?", record.UserID).Update("is_revoked", true)
 		return nil, security.ErrInvalidToken
 	}
+	// ExpiresAt.After(now) 判断是否还没过期;哈希用恒定时间比较(见评审 #9)。任一不满足都视为无效。
+	if !record.ExpiresAt.After(time.Now()) || !security.SecureCompare(record.TokenHash, security.HashToken(refreshToken)) {
+		return nil, security.ErrInvalidToken
+	}
+	// 轮换:先把新 refresh 落库成功,再吊销旧的——顺序保证中途失败也不会把用户锁死(见评审 #5)。
+	newRefresh := a.Tokens.CreateRefreshToken(payload.UserID)
+	newRecord := db.RefreshTokenRecord{
+		ID: newRefresh.TokenID, UserID: payload.UserID,
+		TokenHash: security.HashToken(newRefresh.Value),
+		ExpiresAt: newRefresh.ExpiresAt, CreatedAt: time.Now(),
+	}
+	if err := a.DB.Save(&newRecord).Error; err != nil {
+		return nil, err
+	}
+	a.DB.Model(&db.RefreshTokenRecord{}).Where("id = ?", record.ID).Update("is_revoked", true)
 	accessToken := a.Tokens.CreateAccessToken(payload.UserID)
-	return M{"token": accessToken.Value}, nil
+	return M{"token": accessToken.Value, "refreshToken": newRefresh.Value}, nil
+}
+
+// Logout 主动吊销一个 refresh 令牌(退出登录/踢下线)。即便令牌无效也返回成功,避免泄露信息(见评审 #4)。
+func (a *App) Logout(refreshToken string) error {
+	payload, err := a.Tokens.VerifyToken(refreshToken, "refresh")
+	if err != nil {
+		return nil
+	}
+	a.DB.Model(&db.RefreshTokenRecord{}).Where("id = ?", payload.TokenID).Update("is_revoked", true)
+	return nil
 }
 
 // AuthenticateAccessToken 校验 access token 并组装权限上下文。

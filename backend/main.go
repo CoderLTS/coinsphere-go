@@ -36,6 +36,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
+	// 安全校验:签名密钥若未配置/仍为默认值则拒绝启动(见评审 #1),避免令牌被伪造。
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("invalid config: %v", err)
+	}
 
 	// 第 3 步:按配置打开数据库(内部会按 driver 选方言并自动建表,见 db 包)。
 	gdb, err := db.Open(cfg.Database)
@@ -44,8 +48,12 @@ func main() {
 	}
 	// 第 4 步:准备密码哈希器,并写入种子数据(内置管理员、菜单与权限等)。
 	hasher := security.NewPasswordHasher(cfg.Auth.PasswordIterations)
-	if err := db.Seed(gdb, hasher); err != nil {
+	if err := db.Seed(gdb, hasher, cfg.Auth.BootstrapAdminPassword); err != nil {
 		log.Fatalf("seed database: %v", err)
+	}
+	// 提醒:内置超管若仍用默认初始密码,登录后应尽快改掉(见评审 #2)。
+	if cfg.Auth.BootstrapAdminPassword == "coinsphere" {
+		log.Printf("[warn] 内置超管仍使用默认初始密码,请登录后尽快修改,或用 COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD 指定强密码")
 	}
 	log.Printf("database ready: driver=%s", cfg.Database.Driver)
 

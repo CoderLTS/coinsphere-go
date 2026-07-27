@@ -50,6 +50,17 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	ok(w, data)
 }
 
+// handleLogout 处理 POST /api/auth/logout:吊销请求体里的 refresh 令牌(见评审 #4)。无请求体或令牌无效也返回成功。
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	payload, err := decodeBody[struct {
+		RefreshToken string `json:"refreshToken"`
+	}](r)
+	if err == nil {
+		_ = s.App.Logout(payload.RefreshToken)
+	}
+	ok(w, M{})
+}
+
 // handleMe 处理 GET /api/auth/me。多出的参数 principal 是鉴权中间件解析好、注入进来的当前登录用户。
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
 	ok(w, s.App.BuildUserInfo(principal))
