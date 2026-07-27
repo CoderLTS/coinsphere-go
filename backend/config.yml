@@ -1,0 +1,46 @@
+# coinsphere Go 后端配置。
+# 数据库支持 sqlite / mysql / postgres,通过 driver 切换。
+# 任意配置可用环境变量覆盖:COINSPHERE_<段>__<键>,如 COINSPHERE_DATABASE__DRIVER=postgres
+
+database:
+  driver: sqlite            # sqlite | mysql | postgres
+  path: data/coinsphere.db  # sqlite 文件路径
+  # ---- mysql / postgres 连接参数 ----
+  # host: 127.0.0.1
+  # port: 5432
+  # user: coinsphere
+  # password: secret
+  # database: coinsphere
+  # schema: coinsphere      # 仅 postgres 生效
+
+server:
+  host: 0.0.0.0
+  port: 6987
+  public_base_url: "http://127.0.0.1:6987"
+
+auth:
+  secret_key: "coinsphere-dev-secret"
+  access_token_ttl_minutes: 1440
+  refresh_token_ttl_days: 7
+  password_iterations: 390000
+
+workflow:
+  executor_concurrency: 4
+  heartbeat_interval_seconds: 10
+  execution_stale_timeout_seconds: 900
+  poll_interval_ms: 1000
+  outbox_poll_interval_ms: 1000
+  outbox_batch_size: 100
+  execution_retention_days: 30
+  retention_delete_batch_size: 1000
+  max_input_snapshot_bytes: 65536
+  max_output_snapshot_bytes: 131072
+  schedule_reconcile_interval_seconds: 30
+  stale_recovery_interval_seconds: 15
+  backlog_limit_per_key: 1000
+  semaphore_limit_per_key: 1
+  max_attempts: 4
+  retry_backoff_seconds: [30, 120, 600]
+
+log:
+  level: info

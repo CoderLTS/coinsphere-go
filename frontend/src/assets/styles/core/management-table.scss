@@ -1,0 +1,171 @@
+@mixin page-shell($selector) {
+  #{$selector} {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+}
+
+@mixin table-card(
+  $selector,
+  $body-padding: 0 24px 24px,
+  $header-padding: 20px 24px 16px,
+  $with-header-border: true
+) {
+  #{$selector} {
+    overflow: hidden;
+    border: 1px solid var(--art-card-border);
+    border-radius: calc(var(--custom-radius) / 2 + 2px);
+    background: var(--default-box-color);
+    box-shadow: 0 0 4px rgba(0, 0, 0, 0.04);
+
+    :deep(.el-card__header) {
+      padding: $header-padding;
+      background: transparent;
+
+      @if $with-header-border {
+        border-bottom: 1px solid var(--art-card-border);
+      } @else {
+        border-bottom: 0;
+      }
+    }
+
+    :deep(.el-card__body) {
+      padding: $body-padding;
+      background: transparent;
+    }
+
+    :deep(.el-table),
+    :deep(.el-table__inner-wrapper),
+    :deep(.el-table__header-wrapper),
+    :deep(.el-table__body-wrapper),
+    :deep(.el-table tr),
+    :deep(.el-table td.el-table__cell),
+    :deep(.el-table th.el-table__cell) {
+      background: transparent;
+      color: var(--el-text-color-regular);
+    }
+
+    :deep(.el-table) {
+      --el-table-bg-color: transparent;
+      --el-table-tr-bg-color: transparent;
+      --el-table-row-hover-bg-color: var(--el-fill-color-light);
+      --el-table-header-bg-color: transparent;
+      --el-table-border-color: var(--art-card-border);
+      --el-text-color-regular: var(--el-text-color-regular);
+      --el-text-color-secondary: var(--el-text-color-secondary);
+      --el-fill-color-lighter: var(--el-fill-color-light);
+    }
+
+    :deep(.el-table__fixed-right),
+    :deep(.el-table__fixed-right-patch),
+    :deep(.el-table__fixed-right .el-table__row),
+    :deep(.el-table__fixed-right td.el-table__cell),
+    :deep(.el-table__fixed-right th.el-table__cell),
+    :deep(.el-table__fixed-right .cell),
+    :deep(.el-table-fixed-column--right),
+    :deep(.el-table-fixed-column--right .cell) {
+      background: none !important;
+      background-color: var(--default-box-color) !important;
+      background-image: none !important;
+      backdrop-filter: none !important;
+      opacity: 1 !important;
+    }
+
+    :deep(.el-table__fixed-right) {
+      z-index: 3;
+      border-left: 1px solid var(--art-card-border);
+      box-shadow: -10px 0 18px rgba(15, 23, 42, 0.06);
+    }
+
+    :deep(.el-table__fixed-right::before) {
+      display: none;
+    }
+  }
+}
+
+@mixin page-header(
+  $selector: '.page-header',
+  $copy-selector: '.page-header__copy',
+  $actions-selector: '.page-header__actions'
+) {
+  #{$selector} {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  #{$copy-selector} h2 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--el-text-color-primary);
+  }
+
+  #{$copy-selector} p {
+    margin: 8px 0 0;
+    max-width: 760px;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--el-text-color-secondary);
+  }
+
+  #{$actions-selector} {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+}
+
+@mixin table-actions(
+  $actions-selector: '.table-actions',
+  $surface-selector: '.actions-surface',
+  $cell-selector: '.actions-column .cell',
+  $icon-selector: '.icon-action'
+) {
+  #{$actions-selector} {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+  }
+
+  #{$surface-selector} {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 46px;
+    margin: -12px -10px;
+    padding: 12px 10px;
+    background-color: var(--default-box-color);
+    background-image: none;
+    position: relative;
+    z-index: 1;
+  }
+
+  :deep(#{$cell-selector}) {
+    overflow: hidden;
+    padding: 0 !important;
+    background: none !important;
+    background-color: var(--default-box-color) !important;
+    background-image: none !important;
+    opacity: 1 !important;
+  }
+
+  #{$icon-selector} {
+    margin: 0;
+  }
+}
+
+@mixin pagination-wrap($selector: '.pagination-wrap') {
+  #{$selector} {
+    display: flex;
+    justify-content: flex-end;
+    padding-top: 20px;
+  }
+}

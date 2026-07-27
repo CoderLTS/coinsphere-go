@@ -1,0 +1,1395 @@
+<!-- 工作流编辑器页面或组件：WorkflowNodeEditorCard。 -->
+<template>
+  <div class="node-editor-card" @pointerdown.stop @click.stop>
+    <ElButton class="node-editor-card__commit" type="primary" native-type="button" @click="handleRequestCommit">
+      保存
+    </ElButton>
+
+    <div class="node-editor-card__scroll">
+      <div class="node-editor-card__body">
+        <ElAlert
+          v-for="issue in issues"
+          :key="issue.id"
+          class="node-editor-card__issue"
+          type="error"
+          :closable="false"
+          :title="issue.message"
+        />
+
+        <ElAlert
+          v-for="(error, index) in errors"
+          :key="`draft-${index}`"
+          class="node-editor-card__issue"
+          type="warning"
+          :closable="false"
+          :title="error"
+        />
+
+        <ElForm label-position="top">
+          <ElFormItem label="节点名称">
+            <ElInput v-model="localForm.label" placeholder="请输入节点名称" @blur="handleTextBlur(['label'])" />
+          </ElFormItem>
+
+          <ElFormItem label="节点类型">
+            <ElInput :model-value="nodeTypeLabel" disabled />
+            <div class="node-editor-card__field-hint">{{ nodeTypeCodeHint }}</div>
+          </ElFormItem>
+
+          <template v-if="localForm.kind === 'start'">
+            <ElAlert type="info" :closable="false" :title="startNodeHint" />
+
+            <ElFormItem label="入口标识 Entry Key">
+              <ElInput
+                v-model="localForm.config.entryKey"
+                placeholder="例如 manual.default"
+                @blur="handleTextBlur(['config', 'entryKey'])"
+              />
+            </ElFormItem>
+
+            <ElFormItem label="入口展示名">
+              <ElInput
+                v-model="localForm.config.displayName"
+                placeholder="用于运行时入口展示"
+                @blur="handleTextBlur(['config', 'displayName'])"
+              />
+            </ElFormItem>
+
+            <ElFormItem label="默认输入绑定 JSON">
+              <ElInput
+                v-model="startInputBindingsJson"
+                type="textarea"
+                :rows="4"
+                placeholder='{"source":"manual"}'
+                @blur="normalizeJsonObjectField('inputBindings', startInputBindingsJson)"
+              />
+            </ElFormItem>
+
+            <template v-if="localForm.typeCode === 'start.schedule'">
+              <ElFormItem label="计划类型">
+                <ElSelect v-model="localForm.config.scheduleType" @change="emitModel">
+                  <ElOption label="Cron" value="cron" />
+                  <ElOption label="间隔执行" value="interval" />
+                  <ElOption label="单次执行" value="once" />
+                </ElSelect>
+              </ElFormItem>
+
+              <ElFormItem v-if="localForm.config.scheduleType === 'cron'" label="Cron 表达式">
+                <ElInput
+                  v-model="localForm.config.cronExpression"
+                  placeholder="例如 0 */5 * * * *"
+                  @blur="handleTextBlur(['config', 'cronExpression'])"
+                />
+              </ElFormItem>
+
+              <template v-else-if="localForm.config.scheduleType === 'interval'">
+                <ElFormItem label="间隔数值">
+                  <ElInputNumber
+                    v-model="localForm.config.value"
+                    class="node-editor-card__full"
+                    :min="1"
+                    :step="1"
+                    @change="emitModel"
+                  />
+                </ElFormItem>
+
+                <ElFormItem label="间隔单位">
+                  <ElSelect v-model="localForm.config.unit" @change="emitModel">
+                    <ElOption label="秒" value="seconds" />
+                    <ElOption label="分钟" value="minutes" />
+                    <ElOption label="小时" value="hours" />
+                    <ElOption label="天" value="days" />
+                  </ElSelect>
+                </ElFormItem>
+              </template>
+
+              <ElFormItem v-else-if="localForm.config.scheduleType === 'once'" label="执行时间">
+                <ElInput
+                  v-model="localForm.config.runAt"
+                  placeholder="例如 2026-04-06T10:00:00+08:00"
+                  @blur="handleTextBlur(['config', 'runAt'])"
+                />
+              </ElFormItem>
+            </template>
+
+            <template v-else-if="localForm.typeCode === 'start.event'">
+              <ElFormItem label="事件类型">
+                <ElInput
+                  v-model="localForm.config.eventType"
+                  placeholder="例如 news.items.synced"
+                  @blur="handleTextBlur(['config', 'eventType'])"
+                />
+              </ElFormItem>
+
+              <ElFormItem label="过滤条件 JSON">
+                <ElInput
+                  v-model="eventFiltersJson"
+                  type="textarea"
+                  :rows="4"
+                  placeholder='[{"path":"payload.source","equals":"blockbeats"}]'
+                  @blur="normalizeJsonArrayField('filters', eventFiltersJson)"
+                />
+              </ElFormItem>
+            </template>
+
+            <template v-else-if="localForm.typeCode === 'start.webhook'">
+              <ElAlert
+                type="info"
+                :closable="false"
+                title="Webhook Secret 会在工作流版本激活后由运行态生成并管理，这里只配置声明式入口。"
+              />
+            </template>
+          </template>
+
+          <template v-else-if="localForm.kind === 'task'">
+            <ElFormItem label="任务定义">
+              <ElSelect
+                v-model="localForm.config.taskDefinitionCode"
+                placeholder="请选择任务定义"
+                filterable
+                clearable
+                @change="handleTaskDefinitionChange"
+              >
+                <ElOption v-for="item in taskDefinitions" :key="item.code" :label="item.label" :value="item.code" />
+              </ElSelect>
+            </ElFormItem>
+
+            <ElFormItem label="输入路径">
+              <ElInput
+                v-model="localForm.config.inputsPath"
+                placeholder="默认 inputs"
+                @blur="handleTextBlur(['config', 'inputsPath'])"
+              />
+            </ElFormItem>
+
+            <template v-if="selectedTaskDefinition">
+              <ElAlert
+                v-if="supportedTaskParameterFields.length"
+                type="info"
+                :closable="false"
+                title="任务节点参数会覆盖任务定义默认值；留空表示当前节点不显式设置，继续使用默认值或运行输入。"
+              />
+
+              <ElFormItem
+                v-for="field in supportedTaskParameterFields"
+                :key="field.key"
+                :label="field.label"
+              >
+                <div class="node-editor-card__param-control">
+                  <ElSelect
+                    v-if="field.type === 'enum'"
+                    :model-value="getTaskParameterValue(field)"
+                    class="node-editor-card__param-input"
+                    clearable
+                    placeholder="未设置时使用默认值"
+                    @update:model-value="setTaskParameterValue(field, $event)"
+                  >
+                    <ElOption
+                      v-for="option in field.enumOptions"
+                      :key="`${field.key}-${String(option.value)}`"
+                      :label="option.label"
+                      :value="option.value"
+                    />
+                  </ElSelect>
+
+                  <ElInput
+                    v-else-if="field.type === 'string'"
+                    :model-value="getTaskParameterValue(field)"
+                    class="node-editor-card__param-input"
+                    clearable
+                    placeholder="留空时使用默认值"
+                    @update:model-value="setTaskParameterValue(field, $event)"
+                  />
+
+                  <ElInputNumber
+                    v-else-if="field.type === 'integer' || field.type === 'number'"
+                    :model-value="getTaskParameterValue(field)"
+                    class="node-editor-card__param-input"
+                    :min="typeof field.schema.minimum === 'number' ? field.schema.minimum : undefined"
+                    :max="typeof field.schema.maximum === 'number' ? field.schema.maximum : undefined"
+                    :step="field.type === 'integer' ? 1 : 0.1"
+                    @update:model-value="setTaskParameterValue(field, $event)"
+                  />
+
+                  <div v-else-if="field.type === 'boolean'" class="node-editor-card__param-boolean">
+                    <ElSwitch
+                      :model-value="Boolean(getTaskParameterValue(field))"
+                      @update:model-value="setTaskParameterValue(field, $event)"
+                    />
+                    <ElButton
+                      v-if="hasExplicitTaskParameter(field.key)"
+                      link
+                      type="primary"
+                      native-type="button"
+                      @click="clearTaskParameter(field.key)"
+                    >
+                      恢复默认
+                    </ElButton>
+                  </div>
+
+                  <ElButton
+                    v-if="field.type !== 'boolean' && hasExplicitTaskParameter(field.key)"
+                    link
+                    type="primary"
+                    native-type="button"
+                    @click="clearTaskParameter(field.key)"
+                  >
+                    恢复默认
+                  </ElButton>
+                </div>
+                <div class="node-editor-card__field-hint">{{ buildTaskParameterHint(field) }}</div>
+              </ElFormItem>
+
+              <ElAlert
+                v-if="unsupportedTaskParameterFields.length"
+                type="warning"
+                :closable="false"
+                :title="unsupportedTaskParameterAlert"
+              />
+            </template>
+
+            <ElDescriptions v-if="selectedTaskDefinition" :column="1" border size="small">
+              <ElDescriptionsItem label="任务说明">
+                {{ selectedTaskDefinition.description || '--' }}
+              </ElDescriptionsItem>
+              <ElDescriptionsItem label="参数 Schema">
+                <pre>{{ prettyJson(selectedTaskDefinition.parameterSchema) }}</pre>
+              </ElDescriptionsItem>
+            </ElDescriptions>
+          </template>
+
+          <template v-else-if="localForm.kind === 'condition'">
+            <ElFormItem label="字段路径">
+              <ElInput
+                v-model="localForm.config.path"
+                placeholder="例如 taskResult.insertedCount"
+                @blur="handleTextBlur(['config', 'path'])"
+              />
+            </ElFormItem>
+
+            <ElFormItem label="比较运算">
+              <ElSelect v-model="localForm.config.operator" @change="emitModel">
+                <ElOption label="等于" value="eq" />
+                <ElOption label="大于" value="gt" />
+                <ElOption label="大于等于" value="gte" />
+                <ElOption label="小于" value="lt" />
+                <ElOption label="小于等于" value="lte" />
+                <ElOption label="Truthy" value="truthy" />
+              </ElSelect>
+            </ElFormItem>
+
+            <ElFormItem label="比较值">
+              <ElInput
+                v-model="localForm.config.value"
+                placeholder="用于与实际值比较"
+                @blur="handleTextBlur(['config', 'value'])"
+              />
+            </ElFormItem>
+          </template>
+
+          <template v-else-if="localForm.kind === 'foreach'">
+            <ElFormItem label="数组路径">
+              <ElInput
+                v-model="localForm.config.itemsPath"
+                placeholder="例如 taskResult.insertedItems"
+                @blur="handleTextBlur(['config', 'itemsPath'])"
+              />
+            </ElFormItem>
+
+            <ElFormItem label="元素变量名">
+              <ElInput
+                v-model="localForm.config.itemKey"
+                placeholder="默认 currentItem"
+                @blur="handleTextBlur(['config', 'itemKey'])"
+              />
+            </ElFormItem>
+
+            <ElFormItem label="索引变量名">
+              <ElInput
+                v-model="localForm.config.indexKey"
+                placeholder="默认 currentIndex"
+                @blur="handleTextBlur(['config', 'indexKey'])"
+              />
+            </ElFormItem>
+          </template>
+
+          <template v-else-if="localForm.kind === 'notify'">
+            <ElFormItem label="通知渠道">
+              <ElCheckboxGroup v-model="notifyChannelTypes" @change="handleNotifyChannelTypesChange">
+                <ElCheckbox label="站内通知" value="in_app" />
+                <ElCheckbox label="钉钉 Webhook" value="dingtalk_webhook" />
+                <ElCheckbox label="邮件" value="smtp_email" />
+              </ElCheckboxGroup>
+            </ElFormItem>
+
+            <ElFormItem label="标题模板">
+              <ElInput
+                v-model="localForm.config.titleTemplate"
+                placeholder="请输入标题模板"
+                @blur="handleTextBlur(['config', 'titleTemplate'])"
+              />
+            </ElFormItem>
+
+            <ElFormItem label="内容模板">
+              <ElInput
+                v-model="localForm.config.contentTemplate"
+                type="textarea"
+                :rows="5"
+                placeholder="请输入通知内容模板"
+                @blur="handleTextBlur(['config', 'contentTemplate'])"
+              />
+            </ElFormItem>
+
+            <ElFormItem label="消息格式">
+              <ElSelect v-model="notifyMessageFormat" @change="handleNotifyMessageFormatChange">
+                <ElOption label="Markdown 富文本" value="markdown" />
+                <ElOption label="纯文本" value="plain_text" />
+              </ElSelect>
+            </ElFormItem>
+
+            <ElAlert
+              type="info"
+              :closable="false"
+              title="支持 {{ taskResult.xxx }}、{{ trigger.xxx }} 等模板变量。通知目标按用户或角色多选。"
+            />
+
+            <ElAlert
+              v-if="props.notifyOptionsLoading"
+              type="info"
+              :closable="false"
+              title="正在加载用户和角色列表..."
+            />
+
+            <div class="target-panel">
+              <div class="target-panel__header">
+                <strong>通知目标</strong>
+                <ElButton
+                  size="small"
+                  plain
+                  native-type="button"
+                  :disabled="props.notifyOptionsLoading || !canAddNotifyTarget"
+                  @click="addNotifyTarget"
+                >
+                  添加目标
+                </ElButton>
+              </div>
+
+              <div v-if="notifyTargetRows.length" class="target-panel__list">
+                <div v-for="(target, index) in notifyTargetRows" :key="target.rowId" class="target-panel__item">
+                  <div class="target-panel__item-header">
+                    <div class="target-panel__title">
+                      <span class="target-panel__index">目标 {{ index + 1 }}</span>
+                      <span class="target-panel__title-hint">
+                        {{ target.targetType === 'role' ? '按角色接收通知' : '按用户接收通知' }}
+                      </span>
+                    </div>
+                    <ElButton
+                      class="target-panel__remove"
+                      size="small"
+                      plain
+                      type="danger"
+                      native-type="button"
+                      @click="removeNotifyTarget(target.rowId)"
+                    >
+                      删除
+                    </ElButton>
+                  </div>
+
+                  <div class="target-panel__item-grid">
+                    <div class="target-panel__field-group target-panel__field-group--type">
+                      <div class="target-panel__field-label">目标类型</div>
+                      <ElSelect
+                        v-model="target.targetType"
+                        class="target-panel__field target-panel__field--type"
+                        @change="handleNotifyTargetTypeChange(target.rowId, target.targetType)"
+                      >
+                        <ElOption label="用户" value="user" :disabled="isNotifyTargetTypeDisabled(target.rowId, 'user')" />
+                        <ElOption label="角色" value="role" :disabled="isNotifyTargetTypeDisabled(target.rowId, 'role')" />
+                      </ElSelect>
+                    </div>
+
+                    <div class="target-panel__field-group target-panel__field-group--targets">
+                      <div class="target-panel__field-label">目标对象</div>
+                      <ElSelect
+                        v-model="target.targetIds"
+                        class="target-panel__field target-panel__field--targets"
+                        multiple
+                        filterable
+                        clearable
+                        popper-class="target-panel__select-popper"
+                        :loading="props.notifyOptionsLoading"
+                        :disabled="props.notifyOptionsLoading"
+                        :placeholder="target.targetType === 'role' ? '请选择角色' : '请选择用户'"
+                        @change="handleNotifyTargetIdsChange(target.rowId, target.targetIds)"
+                      >
+                        <ElOption
+                          v-for="option in resolveNotifyTargetOptions(target.targetType)"
+                          :key="`${target.targetType}-${option.value}`"
+                          :label="option.label"
+                          :value="option.value"
+                        >
+                          <span class="target-panel__option-label">{{ option.label }}</span>
+                        </ElOption>
+                      </ElSelect>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <ElEmpty v-else description="请至少添加一个通知目标" :image-size="40" />
+            </div>
+          </template>
+
+          <template v-else-if="localForm.kind === 'event'">
+            <ElFormItem label="事件类型">
+              <ElInput
+                v-model="localForm.config.eventType"
+                placeholder="例如 news.items.synced"
+                @blur="handleTextBlur(['config', 'eventType'])"
+              />
+            </ElFormItem>
+
+            <ElFormItem label="聚合类型">
+              <ElInput
+                v-model="localForm.config.aggregateType"
+                placeholder="默认 workflow_execution"
+                @blur="handleTextBlur(['config', 'aggregateType'])"
+              />
+            </ElFormItem>
+
+            <ElFormItem label="事件载荷路径">
+              <ElInput
+                v-model="localForm.config.payloadPath"
+                placeholder="例如 taskResult"
+                @blur="handleTextBlur(['config', 'payloadPath'])"
+              />
+            </ElFormItem>
+
+            <ElFormItem label="元数据路径">
+              <ElInput
+                v-model="localForm.config.metadataPath"
+                placeholder="可选"
+                @blur="handleTextBlur(['config', 'metadataPath'])"
+              />
+            </ElFormItem>
+          </template>
+
+          <template v-else-if="localForm.kind === 'http'">
+            <ElFormItem label="请求地址">
+              <ElInput
+                v-model="localForm.config.url"
+                placeholder="https://example.com/webhook"
+                @blur="handleTextBlur(['config', 'url'])"
+              />
+            </ElFormItem>
+
+            <ElFormItem label="请求方法">
+              <ElSelect v-model="localForm.config.method" @change="emitModel">
+                <ElOption label="GET" value="GET" />
+                <ElOption label="POST" value="POST" />
+                <ElOption label="PUT" value="PUT" />
+              </ElSelect>
+            </ElFormItem>
+
+            <ElFormItem label="请求体路径">
+              <ElInput
+                v-model="localForm.config.payloadPath"
+                placeholder="例如 taskResult"
+                @blur="handleTextBlur(['config', 'payloadPath'])"
+              />
+            </ElFormItem>
+
+            <ElFormItem label="请求头 JSON">
+              <ElInput
+                v-model="httpHeadersJson"
+                type="textarea"
+                :rows="4"
+                placeholder='{"Content-Type":"application/json"}'
+                @blur="normalizeHeadersJsonField(httpHeadersJson)"
+              />
+            </ElFormItem>
+
+            <ElFormItem label="超时毫秒">
+              <ElInputNumber
+                v-model="localForm.config.timeoutMs"
+                class="node-editor-card__full"
+                :min="0"
+                :step="500"
+                @change="emitModel"
+              />
+            </ElFormItem>
+          </template>
+
+          <template v-else-if="localForm.kind === 'delay'">
+            <ElFormItem label="等待毫秒">
+              <ElInputNumber
+                v-model="localForm.config.durationMs"
+                class="node-editor-card__full"
+                :min="0"
+                :step="1000"
+                @change="emitModel"
+              />
+            </ElFormItem>
+          </template>
+
+          <template v-else-if="localForm.kind === 'end'">
+            <ElAlert type="success" :closable="false" title="结束节点没有额外配置，执行链路会在此终止。" />
+          </template>
+        </ElForm>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+  import type { TaskDefinitionItem } from '@/api/scheduler'
+  import type {
+    WorkflowDomainNode,
+    WorkflowEditorIssue,
+    WorkflowNodeFormModel,
+    WorkflowNotifyTargetOption
+  } from '../types'
+
+  interface Props {
+    node: WorkflowDomainNode
+    model: WorkflowNodeFormModel | null
+    taskDefinitions: TaskDefinitionItem[]
+    notifyUserOptions?: WorkflowNotifyTargetOption[]
+    notifyRoleOptions?: WorkflowNotifyTargetOption[]
+    notifyOptionsLoading?: boolean
+    issues: WorkflowEditorIssue[]
+    errors?: string[]
+  }
+
+  interface Emits {
+    (e: 'update:model', value: WorkflowNodeFormModel): void
+    (e: 'request-commit'): void
+    (e: 'request-discard'): void
+    (e: 'request-close'): void
+    (e: 'request-remove'): void
+  }
+
+  interface NotifyTargetRow {
+    rowId: string
+    targetType: 'user' | 'role'
+    targetIds: number[]
+  }
+
+  type TaskParameterFieldType = 'string' | 'integer' | 'number' | 'boolean' | 'enum' | 'unsupported'
+
+  interface TaskParameterFieldMeta {
+    key: string
+    label: string
+    schema: Record<string, any>
+    type: TaskParameterFieldType
+    enumOptions: Array<{
+      label: string
+      value: any
+    }>
+  }
+
+  const props = withDefaults(defineProps<Props>(), {
+    errors: () => [],
+    notifyUserOptions: () => [],
+    notifyRoleOptions: () => [],
+    notifyOptionsLoading: false
+  })
+  const emit = defineEmits<Emits>()
+
+  const NODE_TYPE_LABELS: Record<string, string> = {
+    'start.manual': '开始节点（手动触发）',
+    'start.schedule': '开始节点（定时触发）',
+    'start.event': '开始节点（事件触发）',
+    'start.webhook': '开始节点（Webhook 触发）',
+    'task.run': '任务执行节点',
+    'condition.branch': '条件判断节点',
+    foreach: '遍历节点',
+    notify: '通知节点',
+    'event.publish': '发布事件节点',
+    'http.request': 'HTTP 请求节点',
+    'delay.wait': '等待节点',
+    end: '结束节点'
+  }
+
+  const NODE_KIND_LABELS: Record<string, string> = {
+    start: '开始节点',
+    task: '任务节点',
+    condition: '判断节点',
+    foreach: '遍历节点',
+    notify: '通知节点',
+    event: '事件节点',
+    http: 'HTTP 节点',
+    delay: '等待节点',
+    end: '结束节点'
+  }
+
+  const NOTIFY_TARGET_TYPES = ['user', 'role'] as const
+  const NOTIFY_CHANNEL_TYPES = ['in_app', 'dingtalk_webhook', 'smtp_email'] as const
+  const NOTIFY_MESSAGE_FORMATS = ['markdown', 'plain_text'] as const
+  const TASK_PARAMETER_BASE_TYPES = ['string', 'integer', 'number', 'boolean'] as const
+
+  const cloneModel = (value: WorkflowNodeFormModel | null): WorkflowNodeFormModel => ({
+    id: value?.id || props.node.id,
+    label: value?.label || props.node.data.title,
+    typeCode: value?.typeCode || props.node.data.typeCode,
+    kind: value?.kind || props.node.data.kind,
+    config: JSON.parse(JSON.stringify(value?.config || props.node.data.config || {}))
+  })
+
+  const localForm = reactive<WorkflowNodeFormModel>(cloneModel(props.model))
+  const notifyChannelTypes = ref<string[]>([])
+  const notifyMessageFormat = ref('markdown')
+  const notifyTargetRows = ref<NotifyTargetRow[]>([])
+  const startInputBindingsJson = ref('{}')
+  const eventFiltersJson = ref('[]')
+  const httpHeadersJson = ref('{}')
+  const localModelSnapshot = ref('')
+  const lastEmittedSnapshot = ref('')
+
+  const nodeTypeLabel = computed(
+    () => NODE_TYPE_LABELS[localForm.typeCode] || NODE_KIND_LABELS[localForm.kind] || localForm.typeCode || '--'
+  )
+  const nodeTypeCodeHint = computed(() => (localForm.typeCode ? `类型编码：${localForm.typeCode}` : ''))
+
+  const startNodeHint = computed(() => {
+    if (localForm.typeCode === 'start.schedule') {
+      return '定时开始节点只声明计划配置，真正注册状态由运行态统一管理。'
+    }
+    if (localForm.typeCode === 'start.event') {
+      return '事件开始节点只声明监听事件和过滤条件，命中一次就会创建一条独立执行记录。'
+    }
+    if (localForm.typeCode === 'start.webhook') {
+      return 'Webhook 开始节点只声明入口，Secret 在版本激活后由运行态生成和轮换。'
+    }
+    return '手动开始节点用于声明可供人工启动的入口。'
+  })
+
+  const selectedTaskDefinition = computed(
+    () => props.taskDefinitions.find((item) => item.code === localForm.config.taskDefinitionCode) || null
+  )
+
+  const resolveTaskParameterType = (schema: Record<string, any>): TaskParameterFieldType => {
+    const enumValues = Array.isArray(schema.enum) ? schema.enum : []
+    if (enumValues.length) return 'enum'
+    const rawType = schema.type
+    const typeList = Array.isArray(rawType) ? rawType.map((item) => String(item || '')) : [String(rawType || '')]
+    return (TASK_PARAMETER_BASE_TYPES.find((item) => typeList.includes(item)) || 'unsupported') as TaskParameterFieldType
+  }
+
+  const formatTaskParameterOptionLabel = (value: unknown) => {
+    if (typeof value === 'boolean') return value ? 'true' : 'false'
+    return String(value)
+  }
+
+  const readTaskParameterSchemaProperties = () => {
+    const properties = selectedTaskDefinition.value?.parameterSchema?.properties
+    if (!properties || typeof properties !== 'object' || Array.isArray(properties)) return {}
+    return properties as Record<string, Record<string, any>>
+  }
+
+  const readTaskParameterConfig = () => {
+    const value = localForm.config.taskParams
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+    return value as Record<string, any>
+  }
+
+  const ensureTaskParameterConfig = () => {
+    const current = readTaskParameterConfig()
+    if (current === localForm.config.taskParams) return current
+    localForm.config.taskParams = { ...current }
+    return localForm.config.taskParams as Record<string, any>
+  }
+
+  const taskParameterFields = computed<TaskParameterFieldMeta[]>(() =>
+    Object.entries(readTaskParameterSchemaProperties()).map(([key, schema]) => ({
+      key,
+      label: String(schema.title || key),
+      schema,
+      type: resolveTaskParameterType(schema),
+      enumOptions: Array.isArray(schema.enum)
+        ? schema.enum.map((value) => ({
+            label: formatTaskParameterOptionLabel(value),
+            value
+          }))
+        : []
+    }))
+  )
+
+  const supportedTaskParameterFields = computed(() =>
+    taskParameterFields.value.filter((field) => field.type !== 'unsupported')
+  )
+
+  const unsupportedTaskParameterFields = computed(() =>
+    taskParameterFields.value.filter((field) => field.type === 'unsupported')
+  )
+
+  const unsupportedTaskParameterAlert = computed(() => {
+    if (!unsupportedTaskParameterFields.value.length) return ''
+    const labels = unsupportedTaskParameterFields.value.map((field) => field.label).join('、')
+    return `以下参数类型当前只展示 schema，暂不支持可视化编辑：${labels}`
+  })
+
+  const createNotifyTargetRow = (value?: Partial<NotifyTargetRow>): NotifyTargetRow => ({
+    rowId: `notify-target-${Math.random().toString(36).slice(2, 10)}`,
+    targetType: NOTIFY_TARGET_TYPES.includes(value?.targetType as 'user' | 'role')
+      ? (value?.targetType as 'user' | 'role')
+      : 'user',
+    targetIds: Array.isArray(value?.targetIds)
+      ? Array.from(
+          new Set(
+            value.targetIds
+              .map((item) => Number(item))
+              .filter((item) => Number.isInteger(item) && item > 0)
+          )
+        )
+      : []
+  })
+
+  const normalizeNotifyChannelTypes = (value: unknown): string[] => {
+    const list = Array.isArray(value) ? value : []
+    return Array.from(
+      new Set(
+        list
+          .map((item) => String(item || '').trim())
+          .filter((item): item is string => (NOTIFY_CHANNEL_TYPES as readonly string[]).includes(item))
+      )
+    )
+  }
+
+  const normalizeNotifyMessageFormat = (value: unknown): string => {
+    const text = String(value || '').trim()
+    return (NOTIFY_MESSAGE_FORMATS as readonly string[]).includes(text) ? text : 'markdown'
+  }
+
+  const normalizeNotifyRowsFromConfig = (value: unknown): NotifyTargetRow[] => {
+    if (!Array.isArray(value)) return []
+    const grouped = new Map<'user' | 'role', number[]>()
+
+    value.forEach((item) => {
+      if (!item || typeof item !== 'object') return
+      const target = item as Record<string, unknown>
+      const targetType = String(target.targetType || '').trim() as 'user' | 'role'
+      const targetIdValue = Number(target.targetId)
+      if (!NOTIFY_TARGET_TYPES.includes(targetType)) return
+      if (!Number.isInteger(targetIdValue) || targetIdValue <= 0) return
+      const current = grouped.get(targetType) || []
+      current.push(targetIdValue)
+      grouped.set(targetType, current)
+    })
+
+    return Array.from(grouped.entries()).map(([targetType, targetIds]) =>
+      createNotifyTargetRow({
+        targetType,
+        targetIds
+      })
+    )
+  }
+
+  const hasExplicitTaskParameter = (key: string) =>
+    Object.prototype.hasOwnProperty.call(readTaskParameterConfig(), key)
+
+  const getTaskParameterValue = (field: TaskParameterFieldMeta) => {
+    const taskParams = readTaskParameterConfig()
+    if (Object.prototype.hasOwnProperty.call(taskParams, field.key)) {
+      return taskParams[field.key]
+    }
+    if (field.type === 'boolean' && typeof field.schema.default === 'boolean') {
+      return field.schema.default
+    }
+    return undefined
+  }
+
+  const normalizeTaskParameterValue = (field: TaskParameterFieldMeta, value: unknown) => {
+    if (value === undefined || value === null) return undefined
+    if (field.type === 'enum') {
+      return value === '' ? undefined : value
+    }
+    if (field.type === 'string') {
+      const text = String(value)
+      return text.trim() ? text.trim() : undefined
+    }
+    if (field.type === 'integer') {
+      const numeric = Number(value)
+      return Number.isInteger(numeric) ? numeric : undefined
+    }
+    if (field.type === 'number') {
+      const numeric = Number(value)
+      return Number.isFinite(numeric) ? numeric : undefined
+    }
+    if (field.type === 'boolean') {
+      return Boolean(value)
+    }
+    return undefined
+  }
+
+  const setTaskParameterValue = (field: TaskParameterFieldMeta, value: unknown) => {
+    const taskParams = ensureTaskParameterConfig()
+    const normalized = normalizeTaskParameterValue(field, value)
+    if (normalized === undefined) {
+      delete taskParams[field.key]
+      if (!Object.keys(taskParams).length) {
+        delete localForm.config.taskParams
+      }
+    } else {
+      taskParams[field.key] = normalized
+    }
+    emitModel()
+  }
+
+  const clearTaskParameter = (key: string) => {
+    const taskParams = readTaskParameterConfig()
+    if (!Object.prototype.hasOwnProperty.call(taskParams, key)) return
+    delete taskParams[key]
+    if (!Object.keys(taskParams).length) {
+      delete localForm.config.taskParams
+    }
+    emitModel()
+  }
+
+  const formatTaskParameterDefault = (value: unknown) => {
+    if (value === undefined) return ''
+    if (typeof value === 'string') return value
+    return JSON.stringify(value)
+  }
+
+  const buildTaskParameterHint = (field: TaskParameterFieldMeta) => {
+    const hintParts: string[] = []
+    if (field.schema.description) {
+      hintParts.push(String(field.schema.description))
+    }
+    if (field.schema.default !== undefined) {
+      hintParts.push(`Schema 默认值：${formatTaskParameterDefault(field.schema.default)}`)
+    }
+    if (typeof field.schema.minimum === 'number' || typeof field.schema.maximum === 'number') {
+      const bounds = [
+        typeof field.schema.minimum === 'number' ? `最小 ${field.schema.minimum}` : '',
+        typeof field.schema.maximum === 'number' ? `最大 ${field.schema.maximum}` : ''
+      ].filter(Boolean)
+      if (bounds.length) hintParts.push(bounds.join('，'))
+    }
+    hintParts.push(
+      hasExplicitTaskParameter(field.key)
+        ? '当前节点已显式覆盖该参数。'
+        : '未显式设置时，会继续使用任务定义默认值和运行输入。'
+    )
+    return hintParts.join(' / ')
+  }
+
+  const syncJsonTextRefs = () => {
+    startInputBindingsJson.value = JSON.stringify(
+      localForm.config.inputBindings &&
+        typeof localForm.config.inputBindings === 'object' &&
+        !Array.isArray(localForm.config.inputBindings)
+        ? localForm.config.inputBindings
+        : {},
+      null,
+      2
+    )
+    eventFiltersJson.value = JSON.stringify(Array.isArray(localForm.config.filters) ? localForm.config.filters : [], null, 2)
+    httpHeadersJson.value = String(localForm.config.headersJson || '{}')
+  }
+
+  const syncNotifyRowsToConfig = () => {
+    if (localForm.kind !== 'notify') return
+    localForm.config.channelTypes = [...notifyChannelTypes.value]
+    localForm.config.messageFormat = notifyMessageFormat.value
+    localForm.config.targets = notifyTargetRows.value.flatMap((item) =>
+      item.targetIds.map((targetId) => ({
+        targetType: item.targetType,
+        targetId
+      }))
+    )
+  }
+
+  const syncNotifyConfigToRows = () => {
+    if (localForm.kind !== 'notify') {
+      notifyChannelTypes.value = []
+      notifyMessageFormat.value = 'markdown'
+      notifyTargetRows.value = []
+      return
+    }
+
+    notifyChannelTypes.value = normalizeNotifyChannelTypes(localForm.config.channelTypes)
+    notifyMessageFormat.value = normalizeNotifyMessageFormat(localForm.config.messageFormat)
+    localForm.config.channelTypes = [...notifyChannelTypes.value]
+    localForm.config.messageFormat = notifyMessageFormat.value
+    localForm.config.titleTemplate = String(localForm.config.titleTemplate ?? '')
+    localForm.config.contentTemplate = String(localForm.config.contentTemplate ?? '')
+    notifyTargetRows.value = normalizeNotifyRowsFromConfig(localForm.config.targets)
+    syncNotifyRowsToConfig()
+  }
+
+  const usedNotifyTargetTypes = computed(() => new Set(notifyTargetRows.value.map((item) => item.targetType)))
+  const canAddNotifyTarget = computed(() => usedNotifyTargetTypes.value.size < NOTIFY_TARGET_TYPES.length)
+
+  const resolveNotifyTargetOptions = (targetType: 'user' | 'role') =>
+    targetType === 'role' ? props.notifyRoleOptions : props.notifyUserOptions
+
+  const handleTaskDefinitionChange = (value: string | number | boolean) => {
+    const nextCode = String(value || '').trim()
+    localForm.config.taskDefinitionCode = nextCode
+    const definition = props.taskDefinitions.find((item) => item.code === nextCode) || null
+    if (!definition) {
+      delete localForm.config.taskParams
+      emitModel()
+      return
+    }
+    const properties = definition.parameterSchema?.properties
+    const allowedKeys =
+      properties && typeof properties === 'object' && !Array.isArray(properties)
+        ? new Set(Object.keys(properties))
+        : new Set<string>()
+    const nextParams = Object.fromEntries(
+      Object.entries(readTaskParameterConfig()).filter(([key]) => allowedKeys.has(key))
+    )
+    if (Object.keys(nextParams).length) {
+      localForm.config.taskParams = nextParams
+    } else {
+      delete localForm.config.taskParams
+    }
+    emitModel()
+  }
+
+  const updateLocalForm = (value: WorkflowNodeFormModel | null) => {
+    const next = cloneModel(value)
+    localForm.id = next.id
+    localForm.label = next.label
+    localForm.typeCode = next.typeCode
+    localForm.kind = next.kind
+    localForm.config = next.config
+    if (
+      localForm.kind === 'task' &&
+      localForm.config.taskParams !== undefined &&
+      (!localForm.config.taskParams || typeof localForm.config.taskParams !== 'object' || Array.isArray(localForm.config.taskParams))
+    ) {
+      delete localForm.config.taskParams
+    }
+    syncNotifyConfigToRows()
+    syncJsonTextRefs()
+    const snapshot = JSON.stringify(cloneModel(localForm))
+    localModelSnapshot.value = snapshot
+    lastEmittedSnapshot.value = snapshot
+  }
+
+  const emitModel = () => {
+    syncNotifyRowsToConfig()
+    const snapshot = JSON.stringify(cloneModel(localForm))
+    if (snapshot === lastEmittedSnapshot.value) return
+    localModelSnapshot.value = snapshot
+    lastEmittedSnapshot.value = snapshot
+    emit('update:model', cloneModel(localForm))
+  }
+
+  const handleRequestCommit = () => {
+    emitModel()
+    emit('request-commit')
+  }
+
+  const normalizeTextAtPath = (path: string[]) => {
+    let cursor: Record<string, any> = localForm as any
+    for (let index = 0; index < path.length - 1; index += 1) {
+      cursor = cursor?.[path[index]]
+      if (!cursor) return
+    }
+    const finalKey = path[path.length - 1]
+    if (typeof cursor?.[finalKey] === 'string') {
+      cursor[finalKey] = cursor[finalKey].trim()
+    }
+    emitModel()
+  }
+
+  const handleTextBlur = (path: string[]) => {
+    normalizeTextAtPath(path)
+  }
+
+  const normalizeJsonObjectField = (targetKey: string, sourceValue: string) => {
+    const text = String(sourceValue || '').trim()
+    if (!text) {
+      localForm.config[targetKey] = {}
+      syncJsonTextRefs()
+      emitModel()
+      return
+    }
+    try {
+      const parsed = JSON.parse(text)
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('invalid object')
+      }
+      localForm.config[targetKey] = parsed
+    } catch {
+      syncJsonTextRefs()
+      return
+    }
+    syncJsonTextRefs()
+    emitModel()
+  }
+
+  const normalizeJsonArrayField = (targetKey: string, sourceValue: string) => {
+    const text = String(sourceValue || '').trim()
+    if (!text) {
+      localForm.config[targetKey] = []
+      syncJsonTextRefs()
+      emitModel()
+      return
+    }
+    try {
+      const parsed = JSON.parse(text)
+      if (!Array.isArray(parsed)) {
+        throw new Error('invalid array')
+      }
+      localForm.config[targetKey] = parsed
+    } catch {
+      syncJsonTextRefs()
+      return
+    }
+    syncJsonTextRefs()
+    emitModel()
+  }
+
+  const normalizeHeadersJsonField = (sourceValue: string) => {
+    const text = String(sourceValue || '').trim()
+    if (!text) {
+      localForm.config.headersJson = '{}'
+      syncJsonTextRefs()
+      emitModel()
+      return
+    }
+    try {
+      const parsed = JSON.parse(text)
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('invalid object')
+      }
+      localForm.config.headersJson = JSON.stringify(parsed, null, 2)
+    } catch {
+      syncJsonTextRefs()
+      return
+    }
+    syncJsonTextRefs()
+    emitModel()
+  }
+
+  const handleNotifyChannelTypesChange = (value: Array<string | number | boolean>) => {
+    notifyChannelTypes.value = normalizeNotifyChannelTypes(value)
+    localForm.config.channelTypes = [...notifyChannelTypes.value]
+    emitModel()
+  }
+
+  const handleNotifyMessageFormatChange = (value: string) => {
+    notifyMessageFormat.value = normalizeNotifyMessageFormat(value)
+    localForm.config.messageFormat = notifyMessageFormat.value
+    emitModel()
+  }
+
+  const addNotifyTarget = () => {
+    const nextType = NOTIFY_TARGET_TYPES.find((item) => !usedNotifyTargetTypes.value.has(item))
+    if (!nextType) return
+    notifyTargetRows.value = [...notifyTargetRows.value, createNotifyTargetRow({ targetType: nextType, targetIds: [] })]
+    syncNotifyRowsToConfig()
+    emitModel()
+  }
+
+  const removeNotifyTarget = (rowId: string) => {
+    notifyTargetRows.value = notifyTargetRows.value.filter((item) => item.rowId !== rowId)
+    syncNotifyRowsToConfig()
+    emitModel()
+  }
+
+  const isNotifyTargetTypeDisabled = (rowId: string, targetType: 'user' | 'role') =>
+    notifyTargetRows.value.some((item) => item.rowId !== rowId && item.targetType === targetType)
+
+  const handleNotifyTargetTypeChange = (rowId: string, value: string) => {
+    const nextType = NOTIFY_TARGET_TYPES.includes(value as 'user' | 'role') ? (value as 'user' | 'role') : 'user'
+    const currentRow = notifyTargetRows.value.find((item) => item.rowId === rowId) || null
+    if (!currentRow) return
+    if (isNotifyTargetTypeDisabled(rowId, nextType)) {
+      notifyTargetRows.value = notifyTargetRows.value.map((item) =>
+        item.rowId === rowId ? { ...item, targetType: currentRow.targetType } : item
+      )
+      return
+    }
+    notifyTargetRows.value = notifyTargetRows.value.map((item) =>
+      item.rowId === rowId ? { ...item, targetType: nextType, targetIds: [] } : item
+    )
+    syncNotifyRowsToConfig()
+    emitModel()
+  }
+
+  const handleNotifyTargetIdsChange = (rowId: string, value: number[]) => {
+    notifyTargetRows.value = notifyTargetRows.value.map((item) =>
+      item.rowId === rowId
+        ? {
+            ...item,
+            targetIds: Array.from(
+              new Set(
+                (Array.isArray(value) ? value : [])
+                  .map((entry) => Number(entry))
+                  .filter((entry) => Number.isInteger(entry) && entry > 0)
+              )
+            )
+          }
+        : item
+    )
+    syncNotifyRowsToConfig()
+    emitModel()
+  }
+
+  const prettyJson = (value: Record<string, any>) => JSON.stringify(value || {}, null, 2)
+
+  watch(
+    () => [props.node.id, JSON.stringify(cloneModel(props.model))],
+    ([, incomingSnapshot]) => {
+      if (incomingSnapshot === localModelSnapshot.value) return
+      updateLocalForm(props.model)
+    },
+    { immediate: true }
+  )
+</script>
+
+<style scoped lang="scss">
+  .node-editor-card {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid rgba(203, 213, 225, 0.86);
+    border-radius: 22px;
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 28px 48px rgba(15, 23, 42, 0.16);
+    backdrop-filter: blur(18px);
+  }
+
+  .node-editor-card__commit {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 3;
+    height: 28px;
+    min-height: 28px;
+    padding: 0 12px;
+    border: 1px solid rgba(37, 99, 235, 0.16);
+    border-radius: 999px;
+    background: linear-gradient(180deg, #4f8cff 0%, #3b7cff 100%);
+    box-shadow: 0 8px 16px rgba(59, 124, 255, 0.2);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+
+    &:hover {
+      background: linear-gradient(180deg, #4684f6 0%, #316ff0 100%);
+      box-shadow: 0 10px 18px rgba(49, 111, 240, 0.24);
+      transform: translateY(-1px);
+    }
+
+    &:active {
+      transform: translateY(0);
+      box-shadow: 0 6px 12px rgba(49, 111, 240, 0.18);
+    }
+  }
+
+  .node-editor-card__field-hint {
+    margin-top: 6px;
+    color: #94a3b8;
+    font-size: 12px;
+    line-height: 18px;
+    word-break: break-all;
+  }
+
+  .node-editor-card__scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .node-editor-card__body {
+    min-height: min-content;
+    padding: 42px 12px 12px;
+  }
+
+  .node-editor-card__issue {
+    margin-bottom: 10px;
+  }
+
+  .node-editor-card__full {
+    width: 100%;
+  }
+
+  .node-editor-card__param-control {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .node-editor-card__param-input {
+    flex: 1;
+    width: 100%;
+  }
+
+  .node-editor-card__param-boolean {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .target-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 6px 8px;
+    border: 1px solid rgba(226, 232, 240, 0.92);
+    border-radius: 14px;
+    background: rgba(248, 250, 252, 0.94);
+  }
+
+  .target-panel__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .target-panel__list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .target-panel__item {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 8px;
+    border: 1px solid rgba(226, 232, 240, 0.82);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.88);
+  }
+
+  .target-panel__item-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .target-panel__item-grid {
+    display: grid;
+    grid-template-columns: 92px minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+  }
+
+  .target-panel__index {
+    color: var(--el-text-color-primary);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  .target-panel__field {
+    width: 100%;
+  }
+
+  .target-panel__title {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .target-panel__title-hint {
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .target-panel__field-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .target-panel__field-group--type {
+    width: 92px;
+  }
+
+  .target-panel__field-label {
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .target-panel__field--type {
+    max-width: 92px;
+  }
+
+  .target-panel__field--targets {
+    min-width: 0;
+  }
+
+  .target-panel__remove {
+    flex-shrink: 0;
+  }
+
+  .target-panel__option-label {
+    display: block;
+    line-height: 18px;
+    white-space: normal;
+    word-break: break-word;
+  }
+
+  @media (width <= 768px) {
+    .target-panel__item-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  :deep(.el-form-item) {
+    margin-bottom: 12px;
+  }
+
+  :deep(.el-textarea__inner) {
+    max-height: 160px;
+  }
+
+  :deep(.target-panel__field .el-select__tags) {
+    max-width: calc(100% - 36px);
+  }
+
+  :deep(.target-panel__field--targets .el-select__wrapper) {
+    min-height: 40px;
+    height: auto;
+    align-items: flex-start;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+
+  :deep(.target-panel__field .el-tag) {
+    max-width: 100%;
+  }
+
+  :deep(.target-panel__field .el-tag__content) {
+    white-space: normal;
+    word-break: break-word;
+    line-height: 16px;
+  }
+
+  :deep(.target-panel__select-popper .el-select-dropdown__item) {
+    height: auto;
+    min-height: 34px;
+    white-space: normal;
+    line-height: 18px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+</style>

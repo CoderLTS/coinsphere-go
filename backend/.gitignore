@@ -1,0 +1,6 @@
+data/
+volumes/
+*.exe
+*.exe~
+*.log
+*.pid

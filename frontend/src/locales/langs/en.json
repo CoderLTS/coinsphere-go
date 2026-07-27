@@ -1,0 +1,888 @@
+﻿{
+  "httpMsg": {
+    "unauthorized": "Unauthorized access, please login again",
+    "forbidden": "Access to this resource is forbidden",
+    "notFound": "The requested resource does not exist",
+    "methodNotAllowed": "Request method not allowed",
+    "requestTimeout": "Request timeout, please try again later",
+    "internalServerError": "Internal server error, please try again later",
+    "badGateway": "Bad gateway error, please try again later",
+    "serviceUnavailable": "Service temporarily unavailable, please try again later",
+    "gatewayTimeout": "Gateway timeout, please try again later",
+    "requestCancelled": "Request cancelled",
+    "networkError": "Network connection error, please check your connection",
+    "requestFailed": "Request failed",
+    "requestConfigError": "Request configuration error"
+  },
+  "topBar": {
+    "search": {
+      "title": "Search"
+    },
+    "user": {
+      "userCenter": "User center",
+      "docs": "Document",
+      "github": "Github",
+      "lockScreen": "Lock screen",
+      "logout": "Log out",
+      "guest": "Guest",
+      "toLogin": "Sign in"
+    },
+    "guide": {
+      "title": "Click here to view",
+      "theme": "Theme style",
+      "menu": "Open top menu",
+      "description": "More configurations"
+    }
+  },
+  "common": {
+    "tips": "Prompt",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "logOutTips": "Do you want to log out?",
+    "noMore": "No more",
+    "refresh": "Refresh",
+    "noData": "No data",
+    "noTasks": "No tasks",
+    "running": "Running",
+    "stopped": "Stopped"
+  },
+  "search": {
+    "placeholder": "Search page",
+    "historyTitle": "Search history",
+    "switchKeydown": "Navigate",
+    "selectKeydown": "Select",
+    "exitKeydown": "Close"
+  },
+  "setting": {
+    "menuType": {
+      "title": "Menu Layout",
+      "list": [
+        "Vertical",
+        "Horizontal",
+        "Mixed",
+        "Dual"
+      ]
+    },
+    "theme": {
+      "title": "Theme Style",
+      "list": [
+        "Light",
+        "Dark",
+        "System"
+      ]
+    },
+    "menu": {
+      "title": "Menu Style"
+    },
+    "color": {
+      "title": "Theme Color"
+    },
+    "box": {
+      "title": "Box Style",
+      "list": [
+        "Border",
+        "Shadow"
+      ]
+    },
+    "container": {
+      "title": "Container Width",
+      "list": [
+        "Full",
+        "Boxed"
+      ]
+    },
+    "basics": {
+      "title": "Basic Config",
+      "list": {
+        "multiTab": "Show work tab",
+        "accordion": "Sidebar opens accordion",
+        "collapseSidebar": "Show sidebar button",
+        "reloadPage": "Show reload page button",
+        "fastEnter": "Show fast enter",
+        "breadcrumb": "Show crumb navigation",
+        "language": "Show multilingual selection",
+        "progressBar": "Show top progress bar",
+        "weakMode": "Color Weakness Mode",
+        "watermark": "Global watermark",
+        "menuWidth": "Menu width",
+        "tabStyle": "Tab style",
+        "pageTransition": "Page animation",
+        "borderRadius": "Custom radius"
+      }
+    },
+    "tabStyle": {
+      "default": "Default",
+      "card": "Card",
+      "google": "Chrome"
+    },
+    "transition": {
+      "list": {
+        "none": "None",
+        "fade": "Fade",
+        "slideLeft": "Slide Left",
+        "slideBottom": "Slide Bottom",
+        "slideTop": "Slide Top"
+      }
+    },
+    "actions": {
+      "resetConfig": "Reset Config",
+      "copyConfig": "Copy Config",
+      "copySuccess": "Configuration copied to clipboard, paste it into src/config/setting.ts file",
+      "copyFailed": "Copy failed, please try again",
+      "resetFailed": "Reset failed, please refresh the page and try again"
+    }
+  },
+  "notice": {
+    "title": "Notice",
+    "btnTest": "Test",
+    "btnRead": "Mark as read",
+    "bar": [
+      "Notice",
+      "Message",
+      "Todo"
+    ],
+    "text": [
+      "No"
+    ],
+    "viewAll": "View all"
+  },
+  "worktab": {
+    "btn": {
+      "refresh": "Refresh",
+      "fixed": "Fixed",
+      "unfixed": "Unfixed",
+      "closeLeft": "Close left",
+      "closeRight": "Close right",
+      "closeOther": "Close other",
+      "closeAll": "Close all"
+    }
+  },
+  "login": {
+    "leftView": {
+      "title": "A backend system of beauty and efficiency",
+      "subTitle": "A sleek and practical interface for a great user experience"
+    },
+    "title": "Welcome back",
+    "subTitle": "Please enter your account and password to login",
+    "roles": {
+      "super": "Super Admin",
+      "admin": "Admin",
+      "user": "User"
+    },
+    "placeholder": {
+      "username": "Please enter your account",
+      "password": "Please enter your password",
+      "slider": "Please slide to verify"
+    },
+    "sliderText": "Please slide to verify",
+    "sliderSuccessText": "Verification successful",
+    "rememberPwd": "Remember password",
+    "forgetPwd": "Forgot password",
+    "btnText": "Login",
+    "noAccount": "No account yet?",
+    "register": "Register",
+    "success": {
+      "title": "Login successful",
+      "message": "Welcome back"
+    }
+  },
+  "forgetPassword": {
+    "title": "Forgot password?",
+    "subTitle": "Enter your email to reset your password",
+    "placeholder": "Please enter your email",
+    "submitBtnText": "Submit",
+    "backBtnText": "Back"
+  },
+  "register": {
+    "title": "Create account",
+    "subTitle": "Welcome to join us, please fill in the following information to complete the registration",
+    "placeholder": {
+      "username": "Please enter your account",
+      "password": "Please enter your password",
+      "confirmPassword": "Please enter your password again"
+    },
+    "rule": {
+      "confirmPasswordRequired": "Please enter your password again",
+      "passwordMismatch": "The two passwords are inconsistent!",
+      "usernameLength": "The length is 3 to 20 characters",
+      "passwordLength": "The password length cannot be less than 6 digits",
+      "agreementRequired": "Please agree to the privacy policy"
+    },
+    "agreeText": "I agree",
+    "privacyPolicy": "Privacy policy",
+    "submitBtnText": "Register",
+    "hasAccount": "Already have an account?",
+    "toLogin": "To login"
+  },
+  "lockScreen": {
+    "pwdError": "Password error",
+    "lock": {
+      "inputPlaceholder": "Please input lock screen password",
+      "btnText": "Lock"
+    },
+    "unlock": {
+      "inputPlaceholder": "Please input unlock password",
+      "btnText": "Unlock",
+      "backBtnText": "Back to login"
+    }
+  },
+  "greeting": {
+    "dawn": "Good morning!",
+    "morning": "Good morning!",
+    "afternoon": "Good afternoon!",
+    "evening": "Good evening!"
+  },
+  "exceptionPage": {
+    "403": "Sorry, you do not have permission to access this page",
+    "404": "Sorry, the page you are trying to access does not exist",
+    "500": "Sorry, there was an error on the server",
+    "gohome": "Go Home"
+  },
+  "menus": {
+    "login": {
+      "title": "Login"
+    },
+    "register": {
+      "title": "Register"
+    },
+    "forgetPassword": {
+      "title": "Forget Password"
+    },
+    "outside": {
+      "title": "Outside"
+    },
+    "dashboard": {
+      "title": "Dashboard",
+      "overview": "Overview"
+    },
+    "result": {
+      "title": "Result Page",
+      "success": "Success",
+      "fail": "Fail"
+    },
+    "exception": {
+      "title": "Exception",
+      "forbidden": "403",
+      "notFound": "404",
+      "serverError": "500"
+    },
+    "system": {
+      "title": "System Settings",
+      "user": "User Manage",
+      "role": "Role Manage",
+      "userCenter": "User Center",
+      "menu": "Menu Manage"
+    },
+    "scheduler": {
+      "title": "Scheduler",
+      "overview": "Task Overview",
+      "tasks": "Task List"
+    },
+    "data": {
+      "title": "Data Management",
+      "news": "News Data",
+      "push": "Push Data",
+      "analysis": "AI Analysis"
+    },
+    "config": {
+      "title": "Configuration",
+      "overview": "Configuration Overview",
+      "aiModels": "Model Config",
+      "assistantAgents": "Assistant Agents",
+      "notifyChannels": "Notification Channels",
+      "notifyRules": "Notification Rules"
+    }
+  },
+  "table": {
+    "form": {
+      "reset": "Reset",
+      "submit": "Submit"
+    },
+    "searchBar": {
+      "reset": "Reset",
+      "search": "Search",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "searchInputPlaceholder": "Please enter",
+      "searchSelectPlaceholder": "Please select"
+    },
+    "selection": "Select",
+    "sizeOptions": {
+      "small": "Compact",
+      "default": "Default",
+      "large": "Loose"
+    },
+    "column": {
+      "selection": "Select",
+      "expand": "Expand",
+      "index": "Index"
+    },
+    "zebra": "Zebra",
+    "border": "Border",
+    "headerBackground": "Header BG"
+  },
+  "permissions": {
+    "add": "Add",
+    "edit": "Edit",
+    "delete": "Delete",
+    "assign": "Assign Permission",
+    "toggleTask": "Toggle Task",
+    "viewAnalysis": "View Analysis"
+  },
+  "assistant": {
+    "title": "Smart Assistant",
+    "newsContextFallback": "Current News",
+    "agentDescriptionEmpty": "Choose an agent to start the conversation",
+    "placeholderGeneral": "Type your question…",
+    "placeholderNews": "Ask a follow-up about this news…",
+    "emptyGeneral": "Your general conversation history will appear here",
+    "emptyNews": "Use AI Analysis from the news page and the result will appear here",
+    "reasoning": "Reasoning",
+    "reasoningToggle": "Deep Think",
+    "reasoningOn": "On",
+    "reasoningOff": "Off",
+    "history": "History",
+    "deleteSession": "Delete Session",
+    "deleteSessionConfirm": "Delete \"{title}\"? This action cannot be undone.",
+    "deleteSessionSuccess": "Session deleted",
+    "historyEmpty": "No history for the current agent yet",
+    "historyEmptyPreview": "No message preview yet",
+    "generating": "Generating response...",
+    "newsScope": "News Context",
+    "modelPlaceholder": "Select a model",
+    "noModels": "No available AI model",
+    "noModelsTitle": "No enabled model configured yet",
+    "noModelsDescription": "Go to Configuration / Model Config, enable a model, and then start asking questions.",
+    "modelSelectionRequired": "Please choose a model first",
+    "generalTip": "Press Enter to send",
+    "newsTip": "You can continue asking about impact, risk, and trade setup",
+    "goModelConfig": "Open Model Config",
+    "errors": {
+      "loadConversation": "Failed to load the assistant conversation. Please try again later.",
+      "loadModels": "Failed to load the available models. Please try again later.",
+      "stream": "The assistant is temporarily unavailable. Please try again later.",
+      "loadHistory": "Failed to load the session history. Please try again later.",
+      "deleteSession": "Failed to delete the session. Please try again later.",
+      "agentUnavailable": "The current agent does not exist or has been disabled.",
+      "newsContextRequired": "The news analysis agent must be opened from the news page."
+    }
+  },
+  "aiConfig": {
+    "title": "Model Config",
+    "description": "Manage the current user's own model connections here. Only enabled models can be used by the assistant and news analysis agents.",
+    "table": {
+      "displayName": "Display Name",
+      "provider": "Provider / Protocol",
+      "modelName": "Model Name",
+      "baseUrl": "Base URL",
+      "boundAgents": "Bound Agents",
+      "status": "Status",
+      "sessionCount": "Sessions",
+      "validation": "Validation",
+      "validatedAt": "Validated At",
+      "updatedAt": "Updated At",
+      "action": "Action",
+      "noBoundAgents": "No bound agents"
+    },
+    "actions": {
+      "validate": "Validate",
+      "bindAgent": "Bind Agents"
+    },
+    "agentDialog": {
+      "title": "Bind Agents",
+      "description": "A model can be bound to multiple agents. If no binding is configured, the system falls back to the user's enabled models by priority.",
+      "field": "Agent",
+      "placeholder": "Please select",
+      "disabled": "Disabled"
+    },
+    "dialog": {
+      "addTitle": "Add AI Model",
+      "editTitle": "Edit AI Model"
+    },
+    "form": {
+      "providerType": "Protocol",
+      "preset": "Provider Preset",
+      "presetPlaceholder": "Select a preset",
+      "providerLabel": "Provider Name",
+      "displayName": "Display Name",
+      "modelName": "Model Name",
+      "baseUrl": "Base URL",
+      "apiKey": "API Key",
+      "apiKeyPlaceholder": "Enter the API key",
+      "apiKeyKeepHint": "Leave empty to keep the current key",
+      "timeoutMs": "Timeout (ms)",
+      "priority": "Priority",
+      "enabled": "Enabled",
+      "headersJson": "Custom Headers JSON",
+      "headersJsonPlaceholder": "{\"Authorization\":\"Bearer xxx\"}",
+      "extraBodyJson": "Extra Body JSON",
+      "extraBodyJsonPlaceholder": "{\"temperature\":0.3}",
+      "remark": "Remark",
+      "remarkPlaceholder": "Optional notes for the team"
+    },
+    "validation": {
+      "providerType": "Please choose a protocol",
+      "providerLabel": "Please enter the provider name",
+      "displayName": "Please enter the display name",
+      "modelName": "Please enter the model name",
+      "baseUrl": "Please enter the base URL",
+      "apiKey": "Please enter the API key",
+      "jsonObject": "JSON root must be an object",
+      "jsonInvalid": "Please enter valid JSON",
+      "statusSuccess": "Validated",
+      "statusFailed": "Failed",
+      "statusUnknown": "Not validated"
+    },
+    "deleteConfirm": "Delete model \"{name}\"? Existing history will be kept, but new requests will not be able to use this model."
+  },
+  "assistantAgent": {
+    "title": "Assistant Agents",
+    "description": "Manage global assistant templates here. Agents define the system prompt, welcome message, starter prompts, and context source.",
+    "dataSources": {
+      "none": "Pure chat",
+      "system_context": "System context",
+      "news_context": "News context"
+    },
+    "table": {
+      "displayName": "Agent",
+      "dataSourceType": "Data Source",
+      "bindingCount": "Bound Models",
+      "sessionCount": "Sessions",
+      "status": "Status",
+      "updatedAt": "Updated At",
+      "action": "Action",
+      "builtin": "Built-in",
+      "noDescription": "No description"
+    },
+    "dialog": {
+      "addTitle": "Add Agent",
+      "editTitle": "Edit Agent"
+    },
+    "form": {
+      "code": "Agent Code",
+      "displayName": "Agent Name",
+      "avatar": "Avatar",
+      "uploadAvatar": "Upload Avatar",
+      "restoreDefaultAvatar": "Restore Default",
+      "avatarUploadTip": "Supports jpg/png/webp/gif up to 2MB",
+      "avatarFormatError": "Only jpg, png, webp, and gif avatar images are supported",
+      "avatarSizeError": "Avatar image must be 2MB or smaller",
+      "description": "Description",
+      "descriptionPlaceholder": "Describe what this agent is best at",
+      "welcomeMessage": "Welcome Message",
+      "welcomeMessagePlaceholder": "Shown when the assistant opens for the first time",
+      "systemPrompt": "System Prompt",
+      "systemPromptPlaceholder": "Define the identity, boundaries, and output style of this agent",
+      "starterPrompts": "Starter Prompts",
+      "starterPromptsPlaceholder": "One prompt per line. Only the first 6 will be kept.",
+      "dataSourceType": "Data Source",
+      "sort": "Sort",
+      "enabled": "Enabled"
+    },
+    "validation": {
+      "code": "Please enter the agent code",
+      "displayName": "Please enter the agent name",
+      "dataSourceType": "Please choose a data source",
+      "systemPrompt": "Please enter the system prompt"
+    },
+    "deleteConfirm": "Delete agent \"{name}\"? This action cannot be undone."
+  },
+  "configOverview": {
+    "title": "Configuration Overview",
+    "description": "Review model readiness, assistant templates, provider distribution, and notification health before changing configuration.",
+    "actions": {
+      "goModels": "Open Model Config",
+      "goAgents": "Open Assistant Agents",
+      "goNotifyChannels": "Open Notification Channels",
+      "goNotifyRules": "Open Notification Rules"
+    },
+    "summary": {
+      "total": {
+        "label": "Total Models",
+        "description": "All model endpoints currently registered in coinsphere"
+      },
+      "enabled": {
+        "label": "Enabled Models",
+        "description": "Models that can be used by the assistant right now"
+      },
+      "validated": {
+        "label": "Validated Models",
+        "description": "Models that passed the latest connectivity validation"
+      },
+      "notifyRules": {
+        "label": "Enabled Notification Rules",
+        "description": "Notification rules that can dispatch messages when a source event fires"
+      },
+      "agents": {
+        "label": "Enabled Agents",
+        "description": "Agents currently available to the assistant and news analysis entry"
+      },
+      "bindings": {
+        "label": "Model Bindings",
+        "description": "Total bindings between user models and assistant agents"
+      }
+    },
+    "agentPanel": {
+      "title": "Assistant Templates",
+      "description": "Review enabled agents, their data source strategy, and how many models are bound to them.",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "bindingCount": "{count} bound models"
+    },
+    "providerMix": {
+      "title": "Provider Mix",
+      "description": "View how current model deployments are distributed across providers and protocols."
+    },
+    "notificationPanel": {
+      "title": "Notification Health",
+      "description": "Track the ready-to-send notification channels, enabled notification rules, and the latest delivery outcome.",
+      "channelCount": "Configured channels",
+      "channelDescription": "Total notification channel instances configured in the notification center",
+      "ruleCount": "Enabled notification rules",
+      "ruleDescription": "Rules currently ready to dispatch after a source event is triggered",
+      "latestDelivery": "Latest delivery",
+      "latestDeliveryEmpty": "No delivery record yet",
+      "deliverySuccess": "Success",
+      "deliveryFailed": "Failed",
+      "deliveryUnknown": "Unknown"
+    },
+    "healthTable": {
+      "title": "Model Health Table",
+      "description": "Track availability, validation status, bound agents, and update time in a single table.",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "noBoundAgents": "No bound agents",
+      "columns": {
+        "model": "Display Name",
+        "provider": "Provider",
+        "modelName": "Model Name",
+        "status": "Status",
+        "validation": "Validation",
+        "validatedAt": "Validated At",
+        "boundAgents": "Bound Agents",
+        "sessionCount": "Sessions",
+        "updatedAt": "Updated At"
+      }
+    }
+  },
+  "notifyChannel": {
+    "title": "Notification Channels",
+    "description": "Manage specific delivery channel instances such as DingTalk robots and SMTP email accounts. One channel type can have multiple configurations.",
+    "table": {
+      "displayName": "Channel Name",
+      "channelType": "Channel Type",
+      "owner": "Owner",
+      "targetSummary": "Target Summary",
+      "status": "Status",
+      "testStatus": "Test Status",
+      "lastTestedAt": "Last Tested At",
+      "updatedAt": "Updated At",
+      "action": "Action"
+    },
+    "status": {
+      "success": "Success",
+      "failed": "Failed",
+      "unknown": "Not Tested"
+    },
+    "dialog": {
+      "addTitle": "Add Notification Channel",
+      "editTitle": "Edit Notification Channel"
+    },
+    "form": {
+      "channelType": "Channel Type",
+      "displayName": "Channel Name",
+      "owner": "Owner",
+      "typeDescription": "Channel Description",
+      "webhookBaseUrl": "Webhook URL",
+      "accessToken": "Access Token",
+      "secret": "Secret",
+      "host": "SMTP Host",
+      "port": "Port",
+      "username": "Username",
+      "password": "Password",
+      "fromEmail": "From Email",
+      "fromName": "From Name",
+      "recipients": "Recipients",
+      "recipientsPlaceholder": "Separate multiple recipients with commas or line breaks",
+      "useTls": "Use TLS",
+      "enabled": "Enabled",
+      "remark": "Remark",
+      "remarkPlaceholder": "Optional notes for the team",
+      "secretPlaceholder": "Enter the secret value",
+      "secretKeepHint": "Leave empty to keep the current secret",
+      "secretOptionalPlaceholder": "Optional signature secret",
+      "secretOptionalKeepHint": "Leave empty to keep the current secret value"
+    },
+    "validation": {
+      "channelType": "Please choose a channel type",
+      "displayName": "Please enter the channel name",
+      "webhookBaseUrl": "Please enter the webhook base URL",
+      "accessToken": "Please enter the access token",
+      "host": "Please enter the SMTP host",
+      "username": "Please enter the SMTP username",
+      "password": "Please enter the SMTP password",
+      "fromEmail": "Please enter the sender email",
+      "recipients": "Please enter at least one recipient"
+    },
+    "deleteConfirm": "Delete channel \"{name}\"? This operation cannot be undone."
+  },
+  "notifyRule": {
+    "title": "Notification Rules",
+    "description": "Manage which source events should trigger notifications, which channels they should go to, and what notification templates should be rendered.",
+    "table": {
+      "ruleName": "Rule Name",
+      "source": "Message Source",
+      "targets": "Targets",
+      "channelTypes": "Channel Types",
+      "contentFormat": "Format",
+      "status": "Status",
+      "updatedAt": "Updated At",
+      "action": "Action",
+      "noChannel": "No channel"
+    },
+    "dialog": {
+      "addTitle": "Add Notification Rule",
+      "editTitle": "Edit Notification Rule"
+    },
+    "form": {
+      "ruleName": "Rule Name",
+      "sourceCode": "Message Source",
+      "targets": "Targets",
+      "channelIds": "Notification Channels",
+      "contentFormat": "Content Format",
+      "titleTemplate": "Title Template",
+      "titleTemplatePlaceholder": "Example: New news arrived: {{news.title}}",
+      "contentTemplate": "Content Template",
+      "contentTemplatePlaceholder": "Use variables such as {{news.title}}, {{news.link}}, and {{system.time}}",
+      "variables": "Available Variables",
+      "enabled": "Enabled",
+      "remark": "Remark",
+      "remarkPlaceholder": "Optional notes for the team"
+    },
+    "variablePanel": {
+      "title": "Variable Reference",
+      "description": "Variables are provided by the selected message source and rendered with Mustache syntax."
+    },
+    "targetTypes": {
+      "user": "User",
+      "role": "Role"
+    },
+    "channelTypes": {
+      "inApp": "In-App Notification",
+      "dingtalk": "DingTalk Bot",
+      "smtp": "SMTP Email"
+    },
+    "actions": {
+      "addTarget": "Add Target"
+    },
+    "validation": {
+      "ruleName": "Please enter the rule name",
+      "sourceCode": "Please choose a message source",
+      "targets": "Please configure at least one notification target",
+      "targetRequired": "Notification target is required",
+      "channelTypes": "Please choose at least one channel type for the target",
+      "duplicateTarget": "The same user or role cannot be configured more than once",
+      "channelIds": "Please choose at least one notification channel",
+      "titleTemplate": "Please enter the title template",
+      "contentTemplate": "Please enter the content template"
+    },
+    "deleteConfirm": "Delete rule \"{name}\"? This operation cannot be undone."
+  },
+  "pushData": {
+    "title": "Push Data",
+    "description": "Review actual delivery history triggered by news messages, task failures, and other sources, including recipients, channels, statuses, and timestamps.",
+    "filters": {
+      "keyword": "Keyword",
+      "keywordPlaceholder": "Search title, rule name, or recipient",
+      "sourceCode": "Message Source",
+      "channelType": "Channel Type",
+      "status": "Delivery Status"
+    },
+    "table": {
+      "title": "Content",
+      "source": "Message Source",
+      "ruleName": "Rule Name",
+      "recipient": "Recipient",
+      "channel": "Channel",
+      "status": "Status",
+      "sentAt": "Sent At",
+      "createdAt": "Created At"
+    },
+    "sources": {
+      "newsCreated": "News Message",
+      "taskFailed": "Task Failure"
+    },
+    "channels": {
+      "inApp": "In-App Notification",
+      "dingtalk": "DingTalk Bot",
+      "smtp": "SMTP Email"
+    },
+    "status": {
+      "pending": "Pending",
+      "success": "Delivered",
+      "failed": "Failed",
+      "skippedOffline": "Skipped Offline"
+    }
+  },
+  "home": {
+    "title": "Welcome to the coinsphere home view",
+    "description": "The home page gathers the key signals for scheduled tasks and news data so you can judge system health before diving into operations.",
+    "actions": {
+      "taskOverview": "Open Task Overview",
+      "taskList": "Open Task List",
+      "newsData": "Open News Data",
+      "login": "Sign in to unlock more"
+    },
+    "recentNews": "Recent News Highlights",
+    "viewAll": "View All",
+    "taskPulse": "Task Pulse",
+    "executeCount": "Executed {count} times",
+    "operationSignals": "Operational Signals",
+    "summary": {
+      "newsTotal": {
+        "label": "Total News",
+        "description": "Total news records currently stored in the data center"
+      },
+      "newsToday": {
+        "label": "Last 24 Hours",
+        "description": "News records added during the latest day"
+      },
+      "activeTasks": {
+        "label": "Active Tasks",
+        "description": "Scheduled tasks that are currently enabled"
+      }
+    },
+    "signals": {
+      "scheduler": {
+        "title": "Scheduler",
+        "description": "{count} tasks are currently running. Keep an eye on execution counts and recent errors."
+      },
+      "news": {
+        "title": "News Intake",
+        "hasData": "The latest news record was stored at {time}.",
+        "empty": "There is no news data yet. Check the sync task or add records manually."
+      }
+    },
+    "guest": {
+      "title": "Guest Mode",
+      "description": "You are currently browsing as a guest. Sign in to access scheduler, data management, and system pages."
+    }
+  },
+  "scheduler": {
+    "overview": {
+      "title": "Task Overview",
+      "description": "Observe the scheduler from running ratio, warning distribution, and execution heat so the team can see what needs attention first.",
+      "goTaskList": "Open Task List",
+      "statusBreakdown": "Status Breakdown",
+      "executionRanking": "Execution Heat",
+      "taskCards": "Key Task Cards",
+      "insights": "Insights",
+      "attention": {
+        "healthy": "Healthy",
+        "warning": "Needs Attention",
+        "paused": "Paused"
+      },
+      "card": {
+        "executeCount": "Run Count",
+        "lastRun": "Last Run"
+      },
+      "summary": {
+        "total": {
+          "label": "Total Tasks",
+          "description": "All tasks currently connected to the scheduler center"
+        },
+        "activeRatio": {
+          "label": "Running Ratio",
+          "description": "Share of tasks that are currently enabled"
+        },
+        "warning": {
+          "label": "Warnings",
+          "description": "Tasks that still carry the latest error information"
+        },
+        "health": {
+          "label": "Health Score",
+          "emptyDescription": "No recent execution record yet"
+        }
+      }
+    },
+    "task": {
+      "title": "Task List",
+      "description": "Review scheduling state, run counts, latest execution times, and errors in one place, with direct task toggles.",
+      "columns": {
+        "name": "Task Name",
+        "schedule": "Schedule",
+        "status": "Status",
+        "executeCount": "Run Count",
+        "lastExecute": "Last Run",
+        "nextRun": "Next Run",
+        "lastError": "Latest Error",
+        "action": "Action"
+      },
+      "start": "Start",
+      "stop": "Stop",
+      "goOverview": "Open Task Overview"
+    }
+  },
+  "data": {
+    "news": {
+      "title": "News Data",
+      "description": "Manage stored news records in one place with search, manual create, edit, delete, and direct AI analysis entry.",
+      "keywordLabel": "Keyword",
+      "keywordPlaceholder": "Search by title or summary",
+      "addNews": "Add News",
+      "sourceLink": "Source Link",
+      "analysis": "AI Analysis",
+      "analysisNoModel": "No usable model is configured yet. Please enable one in Model Config first.",
+      "deleteConfirm": "Delete \"{title}\"? This action cannot be undone.",
+      "columns": {
+        "picture": "Cover",
+        "messageId": "Message ID",
+        "title": "Title",
+        "summary": "Summary",
+        "publishTime": "Published At",
+        "source": "Source",
+        "action": "Action"
+      },
+      "summary": {
+        "total": {
+          "label": "Total Records",
+          "description": "All news records currently stored in the database"
+        },
+        "current": {
+          "label": "Current Page",
+          "description": "Number of records loaded on this page"
+        },
+        "keyword": {
+          "label": "Filter State",
+          "description": "Whether the current list is filtered by keyword",
+          "filtered": "Filtered",
+          "all": "All"
+        }
+      },
+      "form": {
+        "title": "Title",
+        "titlePlaceholder": "Enter the news title",
+        "publishTime": "Published At",
+        "publishTimePlaceholder": "Select published time",
+        "sourceUrl": "Source URL",
+        "sourceUrlPlaceholder": "Enter the original source URL",
+        "link": "Link URL",
+        "linkPlaceholder": "Enter the public link URL",
+        "picture": "Cover Image",
+        "picturePlaceholder": "Enter the cover image URL",
+        "content": "Content",
+        "contentPlaceholder": "Enter the news content"
+      },
+      "dialog": {
+        "addTitle": "Add News",
+        "editTitle": "Edit News"
+      },
+      "validation": {
+        "title": "Please enter the news title",
+        "content": "Please enter the news content",
+        "publishTime": "Please select the published time"
+      }
+    }
+  }
+}
+
