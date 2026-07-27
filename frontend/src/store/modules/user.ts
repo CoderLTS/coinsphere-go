@@ -157,6 +157,15 @@ export const useUserStore = defineStore(
      * 如果是同一账号重新登录，保留工作台标签页
      */
     const logOut = () => {
+      // 先请求后端吊销 refresh 令牌(端到端登出，见评审 #4);best-effort，失败不影响本地登出。
+      // 用动态 import 而非顶部静态引入,避免与 http 客户端(其静态引入了本 store)形成循环依赖。
+      const revokeToken = refreshToken.value
+      if (revokeToken) {
+        import('@/api/auth')
+          .then(({ logout }) => logout(revokeToken))
+          .catch(() => {})
+      }
+
       // 保存当前用户 ID，用于下次登录时判断是否为同一用户
       const currentUserId = info.value.userId
       if (currentUserId && accessMode.value === 'authenticated') {

@@ -19,3 +19,15 @@ export function fetchGetUserInfo() {
     url: '/api/auth/me'
   })
 }
+
+/**
+ * 退出登录：请求后端吊销该 refresh 令牌(端到端登出，见评审 #4)。
+ * showErrorMessage:false —— 登出属 best-effort，失败不弹错误提示。
+ */
+export function logout(refreshToken: string) {
+  return request.post<null>({
+    url: '/api/auth/logout',
+    params: { refreshToken },
+    showErrorMessage: false
+  })
+}
