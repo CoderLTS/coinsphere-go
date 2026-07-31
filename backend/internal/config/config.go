@@ -76,6 +76,20 @@ type WorkflowConfig struct {
 	SemaphoreLimitPerKey             int   `yaml:"semaphore_limit_per_key"`
 	MaxAttempts                      int   `yaml:"max_attempts"`
 	RetryBackoffSeconds              []int `yaml:"retry_backoff_seconds"`
+	// GraphNodeConcurrency 单张(子)图内同时执行的节点数上限,<=0 时 normalize 补成 8。
+	GraphNodeConcurrency int `yaml:"graph_node_concurrency"`
+	// DisableNodeInputSnapshot 关闭"每进一个节点就把整张共享状态序列化落库"。
+	// 大图 / foreach 多元素时这项写入成本很高;关掉后仍保留节点的输出快照与失败信息。
+	DisableNodeInputSnapshot bool `yaml:"disable_node_input_snapshot"`
+}
+
+// AssistantConfig 智能助手运行配置。
+type AssistantConfig struct {
+	// HistoryMaxMessages 每次调用模型时最多携带多少条历史消息。
+	// 不设上限的话,会话越长每次请求越贵,最终会撞上模型的上下文窗口。<=1 时 normalize 补成 40。
+	HistoryMaxMessages int `yaml:"history_max_messages"`
+	// AgentNodeTimeoutMs 工作流里 assistant.agent 节点单次调用的超时(毫秒)。<=0 时补成 120000。
+	AgentNodeTimeoutMs int `yaml:"agent_node_timeout_ms"`
 }
 
 // LogConfig 日志配置。
@@ -86,11 +100,12 @@ type LogConfig struct {
 
 // AppConfig 完整配置树。
 type AppConfig struct {
-	Database DatabaseConfig `yaml:"database"`
-	Server   ServerConfig   `yaml:"server"`
-	Auth     AuthConfig     `yaml:"auth"`
-	Workflow WorkflowConfig `yaml:"workflow"`
-	Log      LogConfig      `yaml:"log"`
+	Database  DatabaseConfig  `yaml:"database"`
+	Server    ServerConfig    `yaml:"server"`
+	Auth      AuthConfig      `yaml:"auth"`
+	Workflow  WorkflowConfig  `yaml:"workflow"`
+	Assistant AssistantConfig `yaml:"assistant"`
+	Log       LogConfig       `yaml:"log"`
 }
 
 // Load 读取配置文件并应用环境变量覆盖。
@@ -162,6 +177,11 @@ func defaultConfig() *AppConfig {
 			SemaphoreLimitPerKey:             1,
 			MaxAttempts:                      4,
 			RetryBackoffSeconds:              []int{30, 120, 600},
+			GraphNodeConcurrency:             8,
+		},
+		Assistant: AssistantConfig{
+			HistoryMaxMessages: 40,
+			AgentNodeTimeoutMs: 120000,
 		},
 		Log: LogConfig{Level: "info"},
 	}
@@ -193,6 +213,15 @@ func (c *AppConfig) normalize(baseDir string) {
 	}
 	if c.Workflow.MaxAttempts < 1 {
 		c.Workflow.MaxAttempts = 1
+	}
+	if c.Workflow.GraphNodeConcurrency < 1 {
+		c.Workflow.GraphNodeConcurrency = 8
+	}
+	if c.Assistant.HistoryMaxMessages <= 1 {
+		c.Assistant.HistoryMaxMessages = 40
+	}
+	if c.Assistant.AgentNodeTimeoutMs <= 0 {
+		c.Assistant.AgentNodeTimeoutMs = 120000
 	}
 	// 认证兜底:加密密钥 / webhook pepper 留空时回落到签名密钥(向后兼容),其余给默认值。
 	if c.Auth.EncryptionKey == "" {

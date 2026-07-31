@@ -1,11 +1,10 @@
 package service
 
 // import:引入本文件用到的标准库与项目内部包。见 GO入门笔记『项目怎么组织』。
-// log = 打印日志;strings = 字符串工具;time = 时间与时长(time.Duration)。
+// log = 打印日志;time = 时间与时长(time.Duration)。
 // coinsphere/backend/internal/db = 本项目的数据库模型包(GORM 的表结构定义)。
 import (
 	"log"
-	"strings"
 	"time"
 
 	"coinsphere/backend/internal/db"
@@ -436,7 +435,7 @@ func (a *App) processExecution(execution *db.WorkflowExecution) {
 	close(heartbeatStop)
 
 	if runErr != nil {
-		a.finalizeFailure(execution, attempt, result, runErr.Error())
+		a.finalizeFailure(execution, attempt, result, runErr)
 		return
 	}
 	a.finalizeSuccess(execution, attempt, result)
@@ -464,8 +463,13 @@ func (a *App) finalizeSuccess(execution *db.WorkflowExecution, attempt int, resu
 }
 
 // finalizeFailure 把执行写成失败终态:可重试且未超次数则转 retry_waiting 并排下次重试时间,否则判 failed。
-func (a *App) finalizeFailure(execution *db.WorkflowExecution, attempt int, result *runResult, errorMessage string) {
-	failureCategory, retriable := classifyFailure(errorMessage)
+// runErr 是跑图抛出的原始错误对象(不只是文本):可重试性优先由错误自身携带的标注决定,见 failure.go。
+func (a *App) finalizeFailure(execution *db.WorkflowExecution, attempt int, result *runResult, runErr error) {
+	errorMessage := ""
+	if runErr != nil {
+		errorMessage = runErr.Error()
+	}
+	failureCategory, retriable := classifyFailure(runErr, errorMessage)
 	finishedAt := time.Now()
 	startedAt := finishedAt
 	if result != nil {
@@ -537,18 +541,7 @@ func (a *App) computeNextRetryAt(attempt int) time.Time {
 	return time.Now().Add(time.Duration(backoffs[index]) * time.Second)
 }
 
-// classifyFailure 判断错误是否"基础设施类、可重试"。返回两个值:(错误分类, 是否可重试)。见 GO入门笔记『变量、函数、错误』。
-// 注意它没有接收者 (a *App),是包内的普通函数,不挂在 App 类型上。
-func classifyFailure(errorMessage string) (string, bool) {
-	text := strings.ToLower(errorMessage)
-	// for _, marker := range []string{...}:遍历一个"字面量切片";_ 丢弃下标,只要值 marker。见 GO入门笔记『复合类型』。
-	for _, marker := range []string{"timeout", "connection", "429", "502", "503", "504"} {
-		if strings.Contains(text, marker) {
-			return "infra_retryable", true
-		}
-	}
-	return "business_failed", false
-}
+// classifyFailure 已迁到 failure.go:改为"错误类型驱动 + 文本兜底",不再纯靠子串匹配。
 
 // ---------- 事件 outbox 循环 ----------
 

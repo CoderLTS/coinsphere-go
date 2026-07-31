@@ -456,6 +456,24 @@ func (a *App) enqueueStartNodeExecution(definition *db.WorkflowDefinition, start
 	return created, false, nil
 }
 
+// buildStartInputs 拼出一次执行的初始输入:先铺开始节点配置里的 inputBindings(默认输入绑定),
+// 再用本次触发带来的 inputs 覆盖同名键——后写的覆盖先写的,所以触发方传的值优先级最高。
+func buildStartInputs(startNode M, triggerCtx M) M {
+	config := rawNodeConfig(startNode)
+	result := M{}
+	if base, ok := config["inputBindings"].(map[string]any); ok {
+		for key, value := range base {
+			result[key] = value
+		}
+	}
+	if extra, ok := triggerCtx["inputs"].(map[string]any); ok {
+		for key, value := range extra {
+			result[key] = value
+		}
+	}
+	return result
+}
+
 // ---------- 入口对齐与调度注册 ----------
 
 // reconcileRuntimeEntriesForState 依据激活定义重建 runtime entries。

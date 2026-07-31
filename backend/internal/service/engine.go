@@ -1,35 +1,41 @@
-// engine.go —— 工作流"图执行引擎"。
+// engine.go —— 工作流"图执行引擎"(并发 DAG 版)。
 //
-// 一个工作流被画成一张"有向图":一堆节点(node)用边(edge)连起来,像流程图。
-// 本文件负责:从起始节点出发、沿着边把这张图"跑"一遍,每到一个节点就调用它对应的
-// 处理函数(处理函数登记在 nodes.go 里)。节点的先后顺序由边的方向决定 —— 顺着箭头往下走。
+// 一个工作流被画成一张"有向无环图(DAG)":一堆节点(node)用边(edge)连起来。
+// 本文件负责从起点出发把这张图"跑"一遍,每到一个节点就调用它对应的处理函数(登记在 nodes.go 里)。
 //
-// 跑图时会做三件"记账":
-//   1. 给每个节点记一条执行日志(WorkflowExecutionNode),含"输入快照"和"输出快照";
-//   2. 给每条走过的边记一条流转日志(WorkflowExecutionTransition);
-//   3. 结束后按成功/失败发布标准领域事件(succeeded / failed / finished)。
+// 执行模型是"就绪队列",不是简单的深度递归:
+//   - 每个节点记一个"未决入边计数",入口节点入度为 0 先跑;
+//   - 节点跑完点亮出边(分支节点只点中选分支,其余出边算"跳过");一条边有结论就给目标减一次计数;
+//   - 计数归零时:有任一入边被点亮就运行该节点,否则(全被跳过)该节点也跳过、并把跳过继续向下传播;
+//   - 多入边的"汇聚(join)"节点因此天然只跑一次、且等所有活跃分支到齐;
+//   - 相互独立的就绪节点用 errgroup 真并发执行,任一节点出错就取消整组、抛出首个错误。
 //
-// 注意:本文件只管"把图跑完、并把错误往上抛";至于失败要不要重试、execution 的终态
-// 状态机怎么推进,由调用方负责。
+// 循环节点(foreach)的循环体是一段"封闭"的自包含子图:外部进不来、内部出不去(校验器保证),
+// 按元素串行跑一遍,子图内部仍可并发;循环跑完再点亮 branch="next" 的出边继续主流程。
+//
+// 跑图时会做三件"记账":节点执行日志、边流转日志、终态后发布标准领域事件。
+// 本文件只管"把图跑完、并把错误往上抛";失败是否重试、execution 终态状态机如何推进,由调用方负责。
 
 package service
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sort"
+	"sync"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"coinsphere/backend/internal/db"
 )
 
 // runResult 一次跑图结束后的上下文。
 //
-// struct(结构体)就是把一组相关字段打包成一个整体,类似别的语言的"对象/记录"。见 GO入门笔记『复合类型』。
-// 字段类型前的 * 表示"指针"(只存地址、不整块复制,也能用 nil 表示"还没有值");
-// M 是本项目别名 = map[string]any,即"字符串键 → 任意值"的字典,专门装 JSON 那种动态数据。
 // 字段含义:Execution 本次执行、Definition 工作流定义、RuntimeEntry 运行时入口(均为指针);
 // TriggerCtx 触发上下文;SharedState 跑图全程共享的"变量表",节点之间靠它传数据。
+// 注意:跑图期间对 SharedState 的并发读写都经 runState(见 nodes.go)加锁;跑完后(已无并发)可直接读它。
 type runResult struct {
 	Execution    *db.WorkflowExecution
 	Definition   *db.WorkflowDefinition
@@ -41,23 +47,15 @@ type runResult struct {
 }
 
 // runExecutionGraph 只负责跑图,不推进 execution 终态状态机。
-//
-// 函数签名里 (a *App) 是"接收者",表示这是 App 类型的一个方法,方法内用 a 指代当前 App
-// (相当于别的语言的 this/self)。见 GO入门笔记『方法与接收者』。
-// 返回值 (*runResult, error) 是"多返回值":Go 习惯把结果和错误一起返回。见 GO入门笔记『变量、函数、错误』。
 func (a *App) runExecutionGraph(executionID int64) (*runResult, error) {
-	// := 是短变量声明(自动推断类型);这里一次接住两个返回值:结果 execution 和错误 err。
 	execution, err := a.getExecutionByID(executionID)
-	// Go 没有 try/except,而是靠"err 是不是 nil"判断出错;出错就提前 return。见 GO入门笔记『变量、函数、错误』。
 	if err != nil {
 		return nil, err
 	}
 	definition := execution.WorkflowDefinition
-	// 指针可能是 nil(空),取用前先判空;bizErr 是本项目的"业务错误"构造器,用于返回可读的报错。
 	if definition == nil {
 		return nil, bizErr("Workflow definition does not exist")
 	}
-	// GraphJSON 是存在数据库里的一段 JSON 文本;loadJSONObject 把它解析成 M(map)方便按键取值。
 	graph := loadJSONObject(definition.GraphJSON)
 	startedAt := firstTime(execution.StartedAt, execution.ClaimedAt, &execution.QueuedAt)
 	triggerCtx := extractTriggerContext(execution.ContextSnapshotJSON)
@@ -68,8 +66,7 @@ func (a *App) runExecutionGraph(executionID int64) (*runResult, error) {
 	inputs := loadJSONObject(execution.InputSnapshotJSON)
 
 	runtimeEntry := a.getRuntimeEntryByDefinitionAndKey(definition.ID, execution.StartEntryKey)
-	// sharedState 是跑图全程的"共享变量表"(M{...} 是 map 字面量,直接列出键值对)。
-	// 后续每个节点都能读写它:inputs 是初始输入,trigger 是触发信息,
+	// sharedState 是跑图全程的"共享变量表":inputs 是初始输入,trigger 是触发信息,
 	// taskResult/nodeOutputs 会在节点执行时被填进去,供下游节点引用。
 	sharedState := M{
 		"inputs": inputs,
@@ -86,13 +83,17 @@ func (a *App) runExecutionGraph(executionID int64) (*runResult, error) {
 		"runtimeEntry": serializeRuntimeEntryLite(runtimeEntry),
 		"taskResult":   M{},
 		"nodeOutputs":  M{},
+		// 父工作流传下来的调用链(workflow.call 节点用它检测循环调用);顶层执行时是空数组。
+		workflowCallChainKey: loadWorkflowCallChain(triggerCtx),
 	}
 
-	// &runResult{...} 用 & 取地址,得到一个指向新建 runResult 的指针(*runResult)。见 GO入门笔记『复合类型』。
 	result := &runResult{
 		Execution: execution, Definition: definition, RuntimeEntry: runtimeEntry,
 		TriggerCtx: triggerCtx, SharedState: sharedState, StartedAt: startedAt,
 	}
+	// state 把 sharedState 包成并发安全的读写表:真并发下多个节点 goroutine 会同时读写它。
+	// result.SharedState 仍指向同一张底层 map,跑完图后(已无并发)调用方直接读它即可。
+	state := newRunState(sharedState)
 
 	// 跑图前先做两道校验:图本身是否合法、能否找到起始节点。任一失败都记好结束时间再把错误抛出去。
 	if err := validateWorkflowGraph(graph); err != nil {
@@ -109,8 +110,8 @@ func (a *App) runExecutionGraph(executionID int64) (*runResult, error) {
 		"[engine] execution started: execution_id=%d workflow_code=%s entry=%s trigger=%s",
 		execution.ID, definition.Code, execution.StartEntryKey, triggerType,
 	)
-	// 核心:从起始节点开始真正"跑图"(见下面的 runGraph)。失败就记结束时间、打日志、把错误抛给调用方。
-	if err := a.runGraph(result, graph, asString(startNode["id"])); err != nil {
+	// 核心:从起始节点开始真正"跑图"。失败就记结束时间、打日志、把错误抛给调用方。
+	if err := a.runGraph(result, state, graph, asString(startNode["id"])); err != nil {
 		result.FinishedAt = time.Now()
 		log.Printf("[engine] execution failed: execution_id=%d workflow_code=%s err=%v", execution.ID, definition.Code, err)
 		return result, err
@@ -120,233 +121,481 @@ func (a *App) runExecutionGraph(executionID int64) (*runResult, error) {
 	return result, nil
 }
 
-// runGraph 深度遍历执行节点,并落节点/边日志。
+// ---------- 图索引 ----------
+
+// graphEdge 一条连线的结构化形式。
 //
-// 这是整个执行引擎的"主循环"所在:先把图的节点和边整理成便于查找的索引,
-// 再从 startNodeID 出发,沿着边"深度优先"地一个个执行下去(见下面的 executeFrom)。
-func (a *App) runGraph(result *runResult, graph M, startNodeID string) error {
-	// graph["nodes"] 的值类型是 any(即空接口 interface{},可装任意类型,见 GO入门笔记『接口』)。
-	// .([]any) 是"类型断言":断言它其实是一个切片;逗号后面本可接一个 bool 表示是否成功,这里用 _ 丢弃。
+// 图存在库里是 JSON,取出来每条边都是一张 map[string]any,想拿 target 得写 asString(edge["target"])。
+// 建索引时统一转成这个结构体,后面全是字段访问,引擎里就不再散落类型断言了。
+type graphEdge struct {
+	ID     string
+	Source string
+	Target string
+	Branch string
+}
+
+// graphIndex 一张图的只读索引:节点按 id 查,边按源/目标两个方向各建一张表。
+type graphIndex struct {
+	nodes    map[string]M
+	outEdges map[string][]*graphEdge // 源节点 id → 出边
+	inEdges  map[string][]*graphEdge // 目标节点 id → 入边
+}
+
+// buildGraphIndex 把 JSON 形态的图整理成索引。出边按 edge id 排序,让调度顺序稳定可复现
+// (并发下最终完成顺序仍可能交错,但"谁先被调度"是确定的)。
+func buildGraphIndex(graph M) *graphIndex {
+	index := &graphIndex{
+		nodes:    map[string]M{},
+		outEdges: map[string][]*graphEdge{},
+		inEdges:  map[string][]*graphEdge{},
+	}
 	nodesAny, _ := graph["nodes"].([]any)
-	// nodeMap:把"节点 id → 节点"建成索引,之后按 id 找节点就很快。map 是键值字典。
-	nodeMap := map[string]M{}
-	// for ... range 遍历切片:下标用不到就写 _,只取每个元素 nodeAny。见 GO入门笔记『复合类型』。
 	for _, nodeAny := range nodesAny {
-		// 再断言每个元素确实是 map[string]any;ok 为真才收进索引(跳过脏数据)。
 		if node, ok := nodeAny.(map[string]any); ok {
-			nodeMap[asString(node["id"])] = node
+			index.nodes[asString(node["id"])] = node
 		}
 	}
-	// adjacency 是"邻接表":源节点 id → 从它出发的所有边。这就是图里"边"的存储方式。
 	edgesAny, _ := graph["edges"].([]any)
-	adjacency := map[string][]M{}
 	for _, edgeAny := range edgesAny {
-		if edge, ok := edgeAny.(map[string]any); ok {
-			source := asString(edge["source"])
-			// append 往切片末尾追加元素;adjacency[source] 不存在时会被当成空切片,可直接 append。
-			adjacency[source] = append(adjacency[source], edge)
+		raw, ok := edgeAny.(map[string]any)
+		if !ok {
+			continue
+		}
+		edge := &graphEdge{
+			ID:     asString(raw["id"]),
+			Source: asString(raw["source"]),
+			Target: asString(raw["target"]),
+			Branch: edgeBranchKey(raw),
+		}
+		index.outEdges[edge.Source] = append(index.outEdges[edge.Source], edge)
+		index.inEdges[edge.Target] = append(index.inEdges[edge.Target], edge)
+	}
+	for _, edgeList := range index.outEdges {
+		sort.Slice(edgeList, func(i, j int) bool { return edgeList[i].ID < edgeList[j].ID })
+	}
+	return index
+}
+
+// nodeType 查某节点的类型编码;节点不存在时返回空串。
+func (g *graphIndex) nodeType(nodeID string) string { return asString(g.nodes[nodeID]["type"]) }
+
+// reachable 从给定起点集合出发,返回所有可达节点的集合(用 map 当集合)。
+func (g *graphIndex) reachable(startIDs ...string) map[string]bool {
+	visited := map[string]bool{}
+	stack := append([]string{}, startIDs...)
+	for len(stack) > 0 {
+		nodeID := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if nodeID == "" || visited[nodeID] {
+			continue
+		}
+		visited[nodeID] = true
+		for _, edge := range g.outEdges[nodeID] {
+			stack = append(stack, edge.Target)
 		}
 	}
-	// 把每个节点的出边按 edge id 排序,保证每次跑图的分支顺序一致(结果可复现)。
-	// sort.Slice 的第二个参数是一个匿名"比较函数":Go 里函数本身也是值,可以直接当参数传进去(回调)。
-	for _, edgeList := range adjacency {
-		sort.Slice(edgeList, func(i, j int) bool {
-			return asString(edgeList[i]["id"]) < asString(edgeList[j]["id"])
-		})
+	return visited
+}
+
+// splitLoopEdges 把循环节点的出边分成"循环体入口"与"循环后继"两类。
+// branch=="next" 的是循环跑完之后才走的后继边;其余(通常只有一条、且没有 branch)是循环体入口。
+func (g *graphIndex) splitLoopEdges(loopNodeID string) (body *graphEdge, next []*graphEdge) {
+	for _, edge := range g.outEdges[loopNodeID] {
+		if edge.Branch == loopNextBranch {
+			next = append(next, edge)
+			continue
+		}
+		if body == nil {
+			body = edge
+		}
+	}
+	return body, next
+}
+
+// loopBodySet 算出一个循环节点的"循环体"节点集合:从体入口可达,再减去从循环后继可达的部分。
+// 相减是为了应对"循环体与循环后继最终汇聚到同一个收尾节点"——那个汇聚点归主流程,
+// 由循环后继边推进,循环体内跑到它就自然停住,不会被每个元素重复触发。
+func (g *graphIndex) loopBodySet(loopNodeID string) map[string]bool {
+	body, next := g.splitLoopEdges(loopNodeID)
+	if body == nil {
+		return map[string]bool{}
+	}
+	bodySet := g.reachable(body.Target)
+	if len(next) > 0 {
+		nextTargets := make([]string, 0, len(next))
+		for _, edge := range next {
+			nextTargets = append(nextTargets, edge.Target)
+		}
+		for nodeID := range g.reachable(nextTargets...) {
+			delete(bodySet, nodeID)
+		}
+	}
+	return bodySet
+}
+
+// ---------- 并发 DAG 执行器 ----------
+
+// resolution 一条入边的"结论":目标节点 + 这条边是被点亮(fired)还是被跳过。
+type resolution struct {
+	node  string
+	fired bool
+}
+
+// graphRun 打包一次跑图全程共享的东西(索引、循环体划分等),供主流程与各循环体复用。
+// 索引类字段建好后只读;traversalIndex 是跨分支共享的流转序号,用 transitionMu 保护自增。
+type graphRun struct {
+	app    *App
+	result *runResult
+	state  *runState
+	graph  M
+	*graphIndex
+	loopBody map[string]map[string]bool // 循环节点 id → 其循环体节点集合
+
+	// slots 是"同时真正在执行的节点数"上限,用带缓冲 channel 当令牌桶:
+	// 拿到令牌才执行节点,执行完立刻还回去。
+	//
+	// 为什么不用 errgroup.SetLimit:节点是在别的节点的 goroutine 里被调度出来的
+	// (advance → scheduleRun → group.Go)。SetLimit 会让 Go() 在槽位满时阻塞,
+	// 而调用它的那个父节点自己正占着一个槽 —— 大家互相等着对方先还槽,直接死锁。
+	// 令牌只在"执行节点"这段持有、跑循环体前就归还,所以不会出现"持token等token"。
+	slots chan struct{}
+
+	transitionMu   sync.Mutex
+	traversalIndex int
+}
+
+// acquireSlot 取一个执行令牌;整图被取消时立刻放弃。
+func (r *graphRun) acquireSlot(ctx context.Context) error {
+	select {
+	case r.slots <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (r *graphRun) releaseSlot() { <-r.slots }
+
+// runGraph 建索引、划分循环体,再从起点跑整张 DAG。
+func (a *App) runGraph(result *runResult, state *runState, graph M, startNodeID string) error {
+	index := buildGraphIndex(graph)
+
+	// 只有"从本次执行起点可达"的节点才会被跑(多入口图里只跑选中入口那一支)。
+	reachable := index.reachable(startNodeID)
+	// 把每个循环节点的循环体子图切出去:它们由各自的循环节点驱动,不进主流程调度。
+	loopBody := map[string]map[string]bool{}
+	bodyNodes := map[string]bool{}
+	for nodeID := range reachable {
+		if nodeKindOf(index.nodeType(nodeID)) != nodeKindLoop {
+			continue
+		}
+		body := index.loopBodySet(nodeID)
+		loopBody[nodeID] = body
+		for id := range body {
+			bodyNodes[id] = true
+		}
+	}
+	// 主流程集合 = 可达集合 − 所有循环体节点。
+	mainSet := map[string]bool{}
+	for nodeID := range reachable {
+		if !bodyNodes[nodeID] {
+			mainSet[nodeID] = true
+		}
 	}
 
-	// traversalIndex:记录"走过的第几条边",给流转日志排序用。
-	traversalIndex := 0
-	execution := result.Execution
+	slotCount := a.Cfg.Workflow.GraphNodeConcurrency
+	if slotCount < 1 {
+		slotCount = 8
+	}
+	run := &graphRun{
+		app: a, result: result, state: state, graph: graph,
+		graphIndex: index, loopBody: loopBody,
+		slots: make(chan struct{}, slotCount),
+	}
+	return run.runDAG(context.Background(), startNodeID, mainSet)
+}
 
-	// logTransition 是一个赋给变量的匿名函数(闭包):它能记住外面的 traversalIndex 等变量。
-	// 每走过一条边就往数据库插一条流转日志,并存下当时的 payload 快照。
-	// a.DB.Create(&行) 是 GORM 的插入操作(& 传指针,把这条记录写进表)。见 GO入门笔记『框架:GORM』。
-	logTransition := func(edge M, payload M, iterationIndex *int, branchKey string) {
-		traversalIndex++
-		a.DB.Create(&db.WorkflowExecutionTransition{
-			WorkflowExecutionID: execution.ID,
-			EdgeID:              asString(edge["id"]),
-			SourceNodeID:        asString(edge["source"]),
-			TargetNodeID:        asString(edge["target"]),
-			TraversalIndex:      traversalIndex,
-			IterationIndex:      iterationIndex,
-			BranchKey:           truncateRunes(branchKey, 32),
-			PayloadSnapshotJSON: serializeSnapshot(payload, a.Cfg.Workflow.MaxOutputSnapshotBytes),
-			CreatedAt:           time.Now(),
-		})
+// runDAG 在给定节点集合内跑一段 DAG:startNodeID 是入口(集合内入度为 0)。
+// 就绪的独立节点用 errgroup 并发执行;返回首个错误(或 nil)。循环体也复用它(串行调用、各跑一遍)。
+func (r *graphRun) runDAG(parentCtx context.Context, startNodeID string, nodeSet map[string]bool) error {
+	if !nodeSet[startNodeID] {
+		return nil
+	}
+	// pending[n] = n 的入边里 source 也在本集合内的条数(跨集合入边不等待)。
+	pending := map[string]int{}
+	for nodeID := range nodeSet {
+		count := 0
+		for _, edge := range r.inEdges[nodeID] {
+			if nodeSet[edge.Source] {
+				count++
+			}
+		}
+		pending[nodeID] = count
 	}
 
-	// executeFrom 是真正的"执行主循环":访问一个节点 → 执行它 → 再顺着它的出边递归执行下游节点,
-	// 就这样深度优先地把整张图走完(像顺着流程图一路往下点)。
-	// 这里先用 var 声明、再赋值,是 Go 写"递归匿名函数"的固定套路:
-	// 只有先声明了名字,函数体内部才能引用自己(executeFrom 调 executeFrom)。
-	var executeFrom func(nodeID string) error
-	executeFrom = func(nodeID string) error {
-		// 按 id 取节点;map 里取不到 key 会得到零值(这里是 nil),据此判断节点不存在。
-		node := nodeMap[nodeID]
-		if node == nil {
-			return bizErr("Workflow node does not exist: %s", nodeID)
-		}
-		nodeType := asString(node["type"])
-		// 进入节点就先写一条"运行中"的节点日志,并保存此刻 sharedState 的"输入快照"
-		// (serializeSnapshot 把它转成 JSON,超过配置上限会截断,避免存爆)。
-		nodeLog := db.WorkflowExecutionNode{
-			WorkflowExecutionID: execution.ID, NodeID: nodeID, NodeType: nodeType,
-			Status: "running", StartedAt: time.Now(),
-			InputSnapshotJSON: serializeSnapshot(result.SharedState, a.Cfg.Workflow.MaxOutputSnapshotBytes),
-		}
-		// GORM 插入后用 .Error 字段拿错误;插入失败就中止本节点。
-		if err := a.DB.Create(&nodeLog).Error; err != nil {
-			return err
-		}
+	// mu 保护下面这几张调度状态表;errgroup 提供并发与"出错即取消"的 ctx。
+	var mu sync.Mutex
+	scheduled := map[string]bool{}
+	firedIn := map[string]bool{}
+	skipped := map[string]bool{}
+	group, ctx := errgroup.WithContext(parentCtx)
+	// 注意:这里刻意不调 group.SetLimit —— 并发上限由 graphRun.slots 令牌桶控制,原因见那里的注释。
 
-		// publishEvent 也是一个闭包,待会儿传给节点用:节点想发领域事件时就调它。
-		// 里面用 for range 遍历 map(得到 key, value),把调用方传入的 payload/metadata 合并到基础字段上。
-		publishEvent := func(eventType, aggregateType string, payload, metadata M) (int64, error) {
-			mergedPayload := a.buildEventBasePayload(result.Definition, result.RuntimeEntry, execution.ID, result.TriggerCtx)
-			for key, value := range payload {
-				mergedPayload[key] = value
+	var scheduleRun func(nodeID string)
+
+	// advance:锁内处理若干"入边结论",把"跳过"沿图向下传播(纯计数,不跑节点);
+	// 算出哪些节点该运行后,脱锁再逐个 scheduleRun(避免持锁 spawn 造成死锁)。
+	advance := func(seed []resolution) {
+		mu.Lock()
+		toRun := []string{}
+		queue := append([]resolution{}, seed...)
+		for len(queue) > 0 {
+			item := queue[len(queue)-1]
+			queue = queue[:len(queue)-1]
+			target := item.node
+			if !nodeSet[target] {
+				continue
 			}
-			mergedMetadata := M{
-				"triggerType":  orString(asString(result.TriggerCtx["triggerType"]), execution.TriggerType),
-				"workflowCode": result.Definition.Code,
+			if item.fired {
+				firedIn[target] = true
 			}
-			for key, value := range metadata {
-				mergedMetadata[key] = value
+			pending[target]--
+			if pending[target] > 0 {
+				continue
 			}
-			return a.publishDomainEvent(
-				eventType, aggregateType, fmt.Sprint(execution.ID),
-				mergedPayload, mergedMetadata, &execution.ID, &nodeLog.ID,
-			)
-		}
-
-		// 关键一步:按节点类型从"节点注册表"(定义在 nodes.go)里查出对应处理器 definitionImpl,
-		// 再调用它的 Execute 把这个节点真正执行掉。Execute 拿到一个上下文 struct,
-		// 里面装了共享状态、当前节点,以及上面的 publishEvent 回调等。
-		definitionImpl, err := getNodeDefinition(nodeType)
-		var nodeResult *nodeExecResult
-		// 只有查到了处理器(err == nil)才执行;查不到就带着错误往下走,进入失败分支。
-		if err == nil {
-			nodeResult, err = definitionImpl.Execute(&nodeExecContext{
-				App: a, Definition: result.Definition, RuntimeEntry: result.RuntimeEntry,
-				Execution: execution, NodeLog: &nodeLog, Node: node, Graph: graph,
-				SharedState: result.SharedState, TriggerCtx: result.TriggerCtx,
-				PublishEvent: publishEvent,
-			})
-		}
-		// 节点执行完:算出耗时,按成功/失败两条路更新刚才那条节点日志。
-		finishedAt := time.Now()
-		durationMs := finishedAt.Sub(nodeLog.StartedAt).Milliseconds()
-		// 失败:标记 failed 并记下错误消息,然后 return err —— 这个错误会一路往上冒
-		// (runGraph → runExecutionGraph → 调用方),整张图就此中止。
-		if err != nil {
-			a.DB.Model(&nodeLog).Updates(map[string]any{
-				"status": "failed", "finished_at": finishedAt, "duration_ms": durationMs,
-				"error_message": err.Error(),
-			})
-			log.Printf("[engine] node failed: execution_id=%d node_id=%s err=%v", execution.ID, nodeID, err)
-			return err
-		}
-		// 成功:标记 success,并把节点输出存成"输出快照"(同样按上限截断)。
-		a.DB.Model(&nodeLog).Updates(map[string]any{
-			"status": "success", "finished_at": finishedAt, "duration_ms": durationMs,
-			"output_snapshot_json": serializeSnapshot(nodeResult.Output, a.Cfg.Workflow.MaxOutputSnapshotBytes),
-		})
-
-		// Terminate 为真表示这是"结束"节点:到此为止,不再往下走。
-		if nodeResult.Terminate {
-			return nil
-		}
-
-		// nextEdges:当前节点的所有出边(下游走向)。
-		nextEdges := adjacency[nodeID]
-		// 若节点选了某个分支(如条件节点选了 "true"/"false"),只保留匹配该分支的边。
-		// SelectedBranch 是 *string 指针,非 nil 才有选择;*nodeResult.SelectedBranch 是解引用取出字符串。
-		// make([]M, 0, n):新建长度 0、预留 n 容量的切片,后续 append 更省内存分配。
-		if nodeResult.SelectedBranch != nil {
-			filtered := make([]M, 0, len(nextEdges))
-			for _, edge := range nextEdges {
-				if edgeBranchKey(edge) == *nodeResult.SelectedBranch {
-					filtered = append(filtered, edge)
+			// 该节点所有集合内入边都结清了:有点亮的就跑,全跳过就连它一起跳并继续向下传播。
+			if firedIn[target] {
+				if !scheduled[target] {
+					scheduled[target] = true
+					toRun = append(toRun, target)
+				}
+			} else if !skipped[target] {
+				skipped[target] = true
+				for _, edge := range r.outEdges[target] {
+					queue = append(queue, resolution{node: edge.Target, fired: false})
 				}
 			}
-			nextEdges = filtered
 		}
-
-		// 遍历节点(foreach):ForeachItems 非 nil 表示要对一个数组逐个跑一遍下游子图。
-		if nodeResult.ForeachItems != nil {
-			if len(nextEdges) == 0 {
-				return nil
-			}
-			nextEdge := nextEdges[0]
-			nextNodeID := asString(nextEdge["target"])
-			loopConfigAll, _ := result.SharedState["loopConfig"].(map[string]any)
-			loopConfig, _ := loopConfigAll[nodeID].(map[string]any)
-			itemKey := orString(asString(loopConfig["itemKey"]), "currentItem")
-			indexKey := orString(asString(loopConfig["indexKey"]), "currentIndex")
-			// 从 map 取值的"逗号 ok"写法:第二个返回值表示这个键原来是否存在。
-			// 先把旧值记下来,循环结束后好还原,避免嵌套循环互相覆盖。
-			previousItem, hasPreviousItem := result.SharedState[itemKey]
-			previousIndex, hasPreviousIndex := result.SharedState[indexKey]
-			// range 一个切片给出下标 index 和元素 item;这里每个元素都跑一遍下游。
-			for index, item := range nodeResult.ForeachItems {
-				result.SharedState[itemKey] = item
-				result.SharedState[indexKey] = index
-				iteration := index
-				logTransition(nextEdge, M{
-					"output": nodeResult.Output, "loopItem": item, "loopIndex": index,
-					"itemKey": itemKey, "indexKey": indexKey,
-				}, &iteration, edgeBranchKey(nextEdge))
-				// 递归执行下游节点;子图里任何一步出错都立即中止整轮循环。
-				if err := executeFrom(nextNodeID); err != nil {
-					return err
-				}
-			}
-			// 循环收尾:原来有旧值就还原,原来没有就用 delete 从 map 里删掉这个键。
-			if hasPreviousItem {
-				result.SharedState[itemKey] = previousItem
-			} else {
-				delete(result.SharedState, itemKey)
-			}
-			if hasPreviousIndex {
-				result.SharedState[indexKey] = previousIndex
-			} else {
-				delete(result.SharedState, indexKey)
-			}
-			return nil
+		mu.Unlock()
+		for _, nodeID := range toRun {
+			scheduleRun(nodeID)
 		}
+	}
 
-		// 普通情况:把当前节点的每一条出边都走一遍 —— 先记流转日志,再递归进入目标节点。
-		// 这层 for + 递归就构成了"深度优先"遍历整张图。iterationIndex 传 nil 表示这不是循环里的一步。
-		for _, edge := range nextEdges {
+	scheduleRun = func(nodeID string) {
+		group.Go(func() error {
+			return r.processNode(ctx, nodeID, advance)
+		})
+	}
+
+	// 点火:入口节点直接运行(集合内入度为 0)。
+	mu.Lock()
+	scheduled[startNodeID] = true
+	mu.Unlock()
+	scheduleRun(startNodeID)
+	return group.Wait()
+}
+
+// processNode 运行一个节点:落"运行中"日志 → 查处理器执行 → 落成功/失败日志 → 点亮出边交给 advance。
+func (r *graphRun) processNode(ctx context.Context, nodeID string, advance func([]resolution)) error {
+	// 整组已被取消(别的分支失败/超时)就别再跑。
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	node := r.nodes[nodeID]
+	if node == nil {
+		return bizErr("Workflow node does not exist: %s", nodeID)
+	}
+	nodeLog, err := r.openNodeLog(nodeID, asString(node["type"]))
+	if err != nil {
+		return err
+	}
+
+	nodeResult, execErr := r.runNodeBody(ctx, node, nodeLog)
+	if execErr != nil {
+		r.closeNodeLog(nodeLog, nil, execErr)
+		return execErr
+	}
+	r.closeNodeLog(nodeLog, nodeResult, nil)
+
+	// 循环节点:对数组逐个跑一遍循环体子图(元素间串行,子图内部仍可并发),跑完再推进循环后继。
+	// 注意此时执行令牌已经归还 —— 循环体里的节点要自己去取令牌,父节点不能占着不放。
+	if nodeResult.ForeachItems != nil {
+		return r.runForeach(ctx, nodeID, nodeResult, advance)
+	}
+
+	// 普通/分支节点:逐条出边判定"点亮/跳过"(分支节点只点中选分支),点亮的记流转日志,再交给 advance 推进下游。
+	advance(r.fireEdges(nodeID, r.outEdges[nodeID], nodeResult))
+	return nil
+}
+
+// runNodeBody 在"执行令牌"的保护下跑一个节点的处理器:令牌限制同时干活的节点数,
+// 出了这个函数就立刻归还,所以后面跑循环体、推进下游都不占用配额。
+func (r *graphRun) runNodeBody(ctx context.Context, node M, nodeLog *db.WorkflowExecutionNode) (*nodeExecResult, error) {
+	if err := r.acquireSlot(ctx); err != nil {
+		return nil, err
+	}
+	defer r.releaseSlot()
+	return r.executeNode(ctx, node, nodeLog)
+}
+
+// openNodeLog 进入节点时写一条"运行中"日志,并按配置决定要不要留一份当下共享状态的输入快照。
+// 输入快照是全量状态序列化,大图 / 多元素循环时成本可观,可用 disable_node_input_snapshot 关掉。
+func (r *graphRun) openNodeLog(nodeID, nodeType string) (*db.WorkflowExecutionNode, error) {
+	nodeLog := &db.WorkflowExecutionNode{
+		WorkflowExecutionID: r.result.Execution.ID, NodeID: nodeID, NodeType: nodeType,
+		Status: "running", StartedAt: time.Now(),
+	}
+	if !r.app.Cfg.Workflow.DisableNodeInputSnapshot {
+		nodeLog.InputSnapshotJSON = r.state.snapshotJSON(r.app.Cfg.Workflow.MaxOutputSnapshotBytes)
+	}
+	if err := r.app.DB.Create(nodeLog).Error; err != nil {
+		return nil, err
+	}
+	return nodeLog, nil
+}
+
+// closeNodeLog 收尾一条节点日志:成功写输出快照,失败写错误信息。
+func (r *graphRun) closeNodeLog(nodeLog *db.WorkflowExecutionNode, nodeResult *nodeExecResult, execErr error) {
+	finishedAt := time.Now()
+	updates := map[string]any{
+		"finished_at": finishedAt,
+		"duration_ms": finishedAt.Sub(nodeLog.StartedAt).Milliseconds(),
+	}
+	if execErr != nil {
+		updates["status"] = "failed"
+		updates["error_message"] = execErr.Error()
+		log.Printf("[engine] node failed: execution_id=%d node_id=%s err=%v",
+			r.result.Execution.ID, nodeLog.NodeID, execErr)
+	} else {
+		updates["status"] = "success"
+		updates["output_snapshot_json"] = serializeSnapshot(nodeResult.Output, r.app.Cfg.Workflow.MaxOutputSnapshotBytes)
+	}
+	r.app.DB.Model(nodeLog).Updates(updates)
+}
+
+// executeNode 按节点类型查处理器并执行。查不到处理器就直接把错误返回(交给失败分支处理)。
+func (r *graphRun) executeNode(ctx context.Context, node M, nodeLog *db.WorkflowExecutionNode) (*nodeExecResult, error) {
+	definition, err := getNodeDefinition(asString(node["type"]))
+	if err != nil {
+		return nil, err
+	}
+	return definition.Execute(&nodeExecContext{
+		Ctx: ctx, App: r.app, Definition: r.result.Definition, RuntimeEntry: r.result.RuntimeEntry,
+		Execution: r.result.Execution, NodeLog: nodeLog, Node: node, Graph: r.graph,
+		State: r.state, TriggerCtx: r.result.TriggerCtx,
+		PublishEvent: r.eventPublisher(nodeLog),
+	})
+}
+
+// eventPublisher 造一个注入给节点的发事件回调:节点只管给 payload/metadata,
+// 公共字段(执行 id、定义信息、触发类型)由这里补齐。
+func (r *graphRun) eventPublisher(nodeLog *db.WorkflowExecutionNode) func(string, string, M, M) (int64, error) {
+	execution := r.result.Execution
+	return func(eventType, aggregateType string, payload, metadata M) (int64, error) {
+		mergedPayload := r.app.buildEventBasePayload(r.result.Definition, r.result.RuntimeEntry, execution.ID, r.result.TriggerCtx)
+		for key, value := range payload {
+			mergedPayload[key] = value
+		}
+		mergedMetadata := M{
+			"triggerType":  orString(asString(r.result.TriggerCtx["triggerType"]), execution.TriggerType),
+			"workflowCode": r.result.Definition.Code,
+		}
+		for key, value := range metadata {
+			mergedMetadata[key] = value
+		}
+		return r.app.publishDomainEvent(
+			eventType, aggregateType, fmt.Sprint(execution.ID),
+			mergedPayload, mergedMetadata, &execution.ID, &nodeLog.ID,
+		)
+	}
+}
+
+// fireEdges 逐条判定出边"点亮还是跳过":分支节点只点亮 branchKey 与所选分支相符的那条,
+// 其余节点全部点亮。点亮的边顺带记一条流转日志。返回给 advance 的入边结论列表。
+func (r *graphRun) fireEdges(nodeID string, edges []*graphEdge, nodeResult *nodeExecResult) []resolution {
+	resolutions := make([]resolution, 0, len(edges))
+	for _, edge := range edges {
+		fired := nodeResult.SelectedBranch == nil || edge.Branch == *nodeResult.SelectedBranch
+		if fired {
 			payload := M{"output": nodeResult.Output}
-			branchKey := edgeBranchKey(edge)
+			branchKey := edge.Branch
 			if nodeResult.SelectedBranch != nil {
 				payload["selectedBranch"] = *nodeResult.SelectedBranch
 				branchKey = *nodeResult.SelectedBranch
 			}
-			logTransition(edge, payload, nil, branchKey)
-			if err := executeFrom(asString(edge["target"])); err != nil {
-				return err
-			}
+			r.logTransition(edge, payload, nil, branchKey)
 		}
+		resolutions = append(resolutions, resolution{node: edge.Target, fired: fired})
+	}
+	return resolutions
+}
+
+// runForeach 对循环节点的数组逐个元素跑一遍循环体子图(元素间串行);循环变量写进共享状态,跑完还原。
+// 全部元素跑完后再点亮 branch="next" 的出边,让主流程继续往下走(没有这类边就到此为止)。
+func (r *graphRun) runForeach(ctx context.Context, foreachID string, nodeResult *nodeExecResult, advance func([]resolution)) error {
+	bodyEdge, nextEdges := r.splitLoopEdges(foreachID)
+	if bodyEdge == nil {
 		return nil
 	}
+	bodySet := r.loopBody[foreachID]
+	itemKey := orString(nodeResult.ItemKey, "currentItem")
+	indexKey := orString(nodeResult.IndexKey, "currentIndex")
+	// 先记下循环变量的旧值,循环收尾时还原,避免污染外层状态。
+	// ponytail: 循环变量存共享状态里;并行的多个 foreach 若用同名 itemKey/indexKey 会相互覆盖 ——
+	//           需要并行跑多个 foreach 时给它们配不同变量名。彻底隔离需把循环变量改成每次执行的独立作用域。
+	previousItem, hadItem := r.state.load(itemKey)
+	previousIndex, hadIndex := r.state.load(indexKey)
+	defer r.state.restore(itemKey, previousItem, hadItem)
+	defer r.state.restore(indexKey, previousIndex, hadIndex)
+	for index, item := range nodeResult.ForeachItems {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		r.state.set(itemKey, item)
+		r.state.set(indexKey, index)
+		iteration := index
+		r.logTransition(bodyEdge, M{
+			"output": nodeResult.Output, "loopItem": item, "loopIndex": index,
+			"itemKey": itemKey, "indexKey": indexKey,
+		}, &iteration, bodyEdge.Branch)
+		if err := r.runDAG(ctx, bodyEdge.Target, bodySet); err != nil {
+			return err
+		}
+	}
+	// 循环体是封闭的,不会自己接回主流程;要在遍历之后继续,靠的是这些 branch="next" 的出边。
+	if len(nextEdges) > 0 {
+		advance(r.fireEdges(foreachID, nextEdges, &nodeExecResult{Output: nodeResult.Output}))
+	}
+	return nil
+}
 
-	// 从起始节点点火,整张图的执行就此展开。
-	return executeFrom(startNodeID)
+// logTransition 每点亮一条边就落一条流转日志。traversalIndex 在锁内自增,保证并发下序号单调递增。
+func (r *graphRun) logTransition(edge *graphEdge, payload M, iterationIndex *int, branchKey string) {
+	r.transitionMu.Lock()
+	r.traversalIndex++
+	index := r.traversalIndex
+	r.transitionMu.Unlock()
+	r.app.DB.Create(&db.WorkflowExecutionTransition{
+		WorkflowExecutionID: r.result.Execution.ID,
+		EdgeID:              edge.ID,
+		SourceNodeID:        edge.Source,
+		TargetNodeID:        edge.Target,
+		TraversalIndex:      index,
+		IterationIndex:      iterationIndex,
+		BranchKey:           truncateRunes(branchKey, 32),
+		PayloadSnapshotJSON: serializeSnapshot(payload, r.app.Cfg.Workflow.MaxOutputSnapshotBytes),
+		CreatedAt:           time.Now(),
+	})
 }
 
 // ---------- 标准事件发布 ----------
 //
 // 下面几个函数负责在执行"到达终态"后对外广播领域事件:成功走 succeeded、失败走 failed,
 // 另有一条 recovered 路径专门处理"僵尸执行被回收"的情况;每种终态都会再补一条 finished 事件。
-// 这就是本文件对"结果/错误"的分类与通告。
 
 // buildEventBasePayload 拼出所有工作流事件都带的公共字段(执行 id、定义信息、触发类型等)。
 func (a *App) buildEventBasePayload(definition *db.WorkflowDefinition, runtimeEntry *db.WorkflowRuntimeEntry, executionID int64, triggerCtx M) M {
-	// 一行同时给两个变量赋初值(多重赋值);runtimeEntry 可能为 nil,存在才覆盖。
 	startEntryKey, startNodeType := "", ""
 	if runtimeEntry != nil {
 		startEntryKey = runtimeEntry.EntryKey
@@ -469,22 +718,6 @@ func findStartNode(graph M, startNodeID, startEntryKey string) M {
 	return findStartNodeByEntryKey(graph, startEntryKey, "")
 }
 
-func buildStartInputs(startNode M, triggerCtx M) M {
-	config, _ := startNode["config"].(map[string]any)
-	result := M{}
-	if base, ok := config["inputBindings"].(map[string]any); ok {
-		for key, value := range base {
-			result[key] = value
-		}
-	}
-	if extra, ok := triggerCtx["inputs"].(map[string]any); ok {
-		for key, value := range extra {
-			result[key] = value
-		}
-	}
-	return result
-}
-
 func serializeRuntimeEntryLite(runtimeEntry *db.WorkflowRuntimeEntry) M {
 	if runtimeEntry == nil {
 		return M{}
@@ -529,5 +762,3 @@ func firstTime(values ...*time.Time) time.Time {
 }
 
 func int64Text(value int64) string { return fmt.Sprint(value) }
-
-func timeNow() time.Time { return time.Now() }

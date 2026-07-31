@@ -207,7 +207,3 @@ func findStartNodeByEntryKey(graph M, entryKey, requiredType string) M {
 	}
 	return nil
 }
-
-// isStartNodeType 判断某节点类型是否属于"起始节点"。startNodeTypes 是个 map[string]bool(见 workflowdef.go);
-// map 查不存在的键会返回值类型的零值(bool 的零值是 false),所以直接返回查表结果即可。
-func isStartNodeType(nodeType string) bool { return startNodeTypes[nodeType] }

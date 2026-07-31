@@ -7,20 +7,26 @@ package service
 import (
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"coinsphere/backend/internal/db"
 )
 
-// startNodeTypes 用 map[string]bool 当“集合”用:键是允许的起始节点类型,值恒为 true。
-// 判断某类型是否是起点,只要看 startNodeTypes[t] 是否为 true(map 里不存在的键取值就是 false)。
-var startNodeTypes = map[string]bool{
-	"start.manual": true, "start.schedule": true, "start.event": true, "start.webhook": true,
-}
+// startNodeTypes 已删除:哪些类型算"起始节点"由节点注册表(nodes.go 的 Kind)说了算,
+// 不再在这里另维护一份名单,否则加一种开始节点就要改两处。
 
 // ---------- 图校验 ----------
 
 // validateWorkflowGraph 落库与执行前的图结构校验。
+//
+// 校验分两层:
+//   - 通用图规则:节点 id 唯一、边两端存在、无自环、无环、全连通、非起始节点必须可达;
+//   - 按节点"图语义"(Kind,见 nodes.go)分派的规则:起始节点要 entryKey、终止节点不能有出边、
+//     分支节点必须覆盖声明的全部分支、循环节点的循环体必须封闭。
+//
+// 关键点是第二层查的是注册表,不是写死的类型名。新增一种节点类型只要在 registerNode 里声明
+// Kind / Branches,这里自动适配,不用改本文件。
 func validateWorkflowGraph(graph M) error {
 	// 参数类型 M 是别名 map[string]any(见 app.go),即“字符串键 → 任意值”的 JSON 对象。
 	// graph["nodes"] 取出的值类型是 any,.([]any) 是“类型断言”:把它断言成 []any(any 的 slice)。
@@ -37,9 +43,10 @@ func validateWorkflowGraph(graph M) error {
 	}
 
 	// make([]M, 0, n) 建一个空 slice 并预留容量 n;nodeMap 用来按 id 快速定位节点。
-	nodes := make([]M, 0, len(nodesAny))
 	nodeMap := map[string]M{}
 	nodeIDs := make([]string, 0, len(nodesAny))
+	// nodeDefs 缓存每个节点查到的注册表登记项,后面按 Kind 分派规则时直接用。
+	nodeDefs := map[string]*workflowNodeDefinition{}
 	// range 遍历 slice,_ 丢弃下标、nodeAny 是元素。见 GO入门笔记『struct、指针、slice、map』。
 	for _, nodeAny := range nodesAny {
 		// 把每个元素断言成 map,再用 asString(把 any 安全转成字符串)取出 id 并去掉首尾空白。
@@ -51,20 +58,28 @@ func validateWorkflowGraph(graph M) error {
 		if _, exists := nodeMap[nodeID]; exists {
 			return bizErr("Workflow node id must be unique")
 		}
-		nodes = append(nodes, node)
+		// 类型必须是注册表里登记过的,否则这张图存下来也跑不了 —— 与其跑到一半才炸,不如现在拦住。
+		definition, err := getNodeDefinition(asString(node["type"]))
+		if err != nil {
+			return err
+		}
+		// 配置里 schema 声明为必填的项也在这里查,同样是"提前发现"而不是运行期才发现。
+		if err := assertNodeConfig(nodeID, node, definition); err != nil {
+			return err
+		}
 		nodeMap[nodeID] = node
+		nodeDefs[nodeID] = definition
 		nodeIDs = append(nodeIDs, nodeID)
 	}
 
 	startNodes := []string{}
-	endNodes := []string{}
+	terminalCount := 0
 	for _, nodeID := range nodeIDs {
-		nodeType := asString(nodeMap[nodeID]["type"])
-		if startNodeTypes[nodeType] {
+		switch nodeDefs[nodeID].kind() {
+		case nodeKindStart:
 			startNodes = append(startNodes, nodeID)
-		}
-		if nodeType == "end" {
-			endNodes = append(endNodes, nodeID)
+		case nodeKindTerminal:
+			terminalCount++
 		}
 	}
 	if len(startNodes) == 0 {
@@ -75,7 +90,7 @@ func validateWorkflowGraph(graph M) error {
 	if err := assertStartEntries(nodeMap, startNodes); err != nil {
 		return err
 	}
-	if len(endNodes) == 0 {
+	if terminalCount == 0 {
 		return bizErr("Workflow must contain at least one end node")
 	}
 
@@ -84,7 +99,6 @@ func validateWorkflowGraph(graph M) error {
 	adjacency := map[string][]M{}
 	incoming := map[string]int{}
 	outgoing := map[string]int{}
-	edges := make([]M, 0, len(edgesAny))
 	for _, edgeAny := range edgesAny {
 		edge, _ := edgeAny.(map[string]any)
 		source := strings.TrimSpace(asString(edge["source"]))
@@ -98,7 +112,6 @@ func validateWorkflowGraph(graph M) error {
 		adjacency[source] = append(adjacency[source], edge)
 		incoming[target]++
 		outgoing[source]++
-		edges = append(edges, edge)
 	}
 
 	startSet := map[string]bool{}
@@ -112,38 +125,29 @@ func validateWorkflowGraph(graph M) error {
 		}
 	}
 
+	// 真 DAG 支持“汇聚(join)”:任意节点都可有多条入边(引擎会等所有活跃分支到齐再跑它一次)。
+	// 这里只需保证非起始节点至少有一条入边(不是孤岛);多入边不再受限。
 	for _, nodeID := range nodeIDs {
-		count := incoming[nodeID]
-		if !startSet[nodeID] && count == 0 {
+		if !startSet[nodeID] && incoming[nodeID] == 0 {
 			return bizErr("Every non-start node must be reachable")
-		}
-		if count > 1 && !allowMultiIncomingFromStarts(nodeID, edges, nodeMap) {
-			return bizErr("Current workflow model only allows multi-incoming when all sources are start nodes")
 		}
 	}
 
-	// 按节点类型分别校验其“出边”是否合法:end 不能再有出边;condition.branch 必须同时有
-	// true 和 false 两条分支;foreach(遍历)当前只允许恰好一条后继边。
+	// 按节点的图语义分类分派出边规则。
 	for _, nodeID := range nodeIDs {
-		nodeType := asString(nodeMap[nodeID]["type"])
+		definition := nodeDefs[nodeID]
 		edgesFromNode := adjacency[nodeID]
-		if nodeType == "end" && len(edgesFromNode) > 0 {
-			return bizErr("End node cannot have outgoing edges")
-		}
-		if nodeType == "condition.branch" {
-			branchKeys := map[string]bool{}
-			for _, edge := range edgesFromNode {
-				branchKeys[strings.TrimSpace(edgeBranchKey(edge))] = true
+		switch definition.kind() {
+		case nodeKindTerminal:
+			if len(edgesFromNode) > 0 {
+				return bizErr("End node cannot have outgoing edges")
 			}
-			if len(edgesFromNode) < 2 || !branchKeys["true"] || !branchKeys["false"] || len(branchKeys) != 2 {
-				return bizErr("Condition node must contain true and false branches")
+		case nodeKindBranch:
+			if err := assertBranchEdges(definition, rawNodeConfig(nodeMap[nodeID]), edgesFromNode); err != nil {
+				return err
 			}
-		}
-		if nodeType == "foreach" {
-			if len(edgesFromNode) != 1 {
-				return bizErr("Foreach node currently supports exactly one successor")
-			}
-			if err := assertForeachBranchValid(nodeID, nodeMap, adjacency); err != nil {
+		case nodeKindLoop:
+			if err := assertLoopEdges(nodeID, nodeDefs, adjacency); err != nil {
 				return err
 			}
 		}
@@ -165,11 +169,148 @@ func validateWorkflowGraph(graph M) error {
 	return nil
 }
 
+// assertNodeConfig 校验节点配置里 schema 声明为 required 的项都填了。
+// 只查"有没有填",值本身的类型/范围校验留给节点自己运行时判断(schema 在这里只当必填清单用)。
+func assertNodeConfig(nodeID string, node M, definition *workflowNodeDefinition) error {
+	required := schemaRequiredKeys(definition.ConfigSchema)
+	if len(required) == 0 {
+		return nil
+	}
+	config := rawNodeConfig(node)
+	for _, key := range required {
+		value, exists := config[key]
+		if !exists || value == nil {
+			return bizErr("Node config is missing required field: %s.%s (node %s)", definition.TypeCode, key, nodeID)
+		}
+		// 字符串类必填项还要求非空白,否则"填了个空格"也能蒙混过关。
+		if text, ok := value.(string); ok && strings.TrimSpace(text) == "" {
+			return bizErr("Node config is missing required field: %s.%s (node %s)", definition.TypeCode, key, nodeID)
+		}
+	}
+	return nil
+}
+
+// schemaRequiredKeys 从 JSON Schema 里取 required 清单。schema 可能是代码里直接写的 []string,
+// 也可能是从 JSON 反序列化来的 []any,两种都认。
+func schemaRequiredKeys(schema M) []string {
+	switch typed := schema["required"].(type) {
+	case []string:
+		return typed
+	case []any:
+		keys := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if key := asString(item); key != "" {
+				keys = append(keys, key)
+			}
+		}
+		return keys
+	default:
+		return nil
+	}
+}
+
+// assertBranchEdges 校验分支节点的出边:必须恰好覆盖它声明的那些分支,不缺也不多。
+//
+// 分支清单可能是静态的(condition.branch 固定 true/false),也可能来自节点自己的配置
+// (condition.switch 的每个 case 一条分支),都由 resolveBranches 统一算出来。
+func assertBranchEdges(definition *workflowNodeDefinition, config M, edgesFromNode []M) error {
+	declaredList := definition.resolveBranches(config)
+	if len(declaredList) < 2 {
+		return bizErr("Node %s must declare at least two branches in its config", definition.TypeCode)
+	}
+	declared := map[string]bool{}
+	for _, branch := range declaredList {
+		declared[branch] = true
+	}
+	seen := map[string]bool{}
+	for _, edge := range edgesFromNode {
+		branch := strings.TrimSpace(edgeBranchKey(edge))
+		if !declared[branch] {
+			return bizErr("Node %s has an edge with unknown branch: %s", definition.TypeCode, branch)
+		}
+		if seen[branch] {
+			return bizErr("Node %s has duplicated branch edges: %s", definition.TypeCode, branch)
+		}
+		seen[branch] = true
+	}
+	if len(seen) != len(declared) {
+		return bizErr("Node %s must contain all branches: %s", definition.TypeCode, strings.Join(declaredList, ", "))
+	}
+	return nil
+}
+
+// assertLoopEdges 校验循环节点的出边与循环体。
+//
+// 出边分两类:branch=="next" 的是"循环跑完再继续"的后继(可选、最多一条),
+// 其余必须恰好一条,作为循环体入口。
+//
+// 循环体必须是"封闭"的:外面进不来、里面出不去。这不是洁癖 —— 引擎把循环体当独立子图按元素反复跑,
+// 若体外的边能连进体内,汇聚(join)语义和循环语义就会打架;若体内的边能连到体外,
+// 那个体外节点会被漏掉(它的入边计数永远等不到结论),整条主流程会安静地少跑一段。
+func assertLoopEdges(loopNodeID string, nodeDefs map[string]*workflowNodeDefinition, adjacency map[string][]M) error {
+	var bodyEdge M
+	bodyEdgeCount, nextEdgeCount := 0, 0
+	for _, edge := range adjacency[loopNodeID] {
+		if strings.TrimSpace(edgeBranchKey(edge)) == loopNextBranch {
+			nextEdgeCount++
+			continue
+		}
+		bodyEdgeCount++
+		if bodyEdge == nil {
+			bodyEdge = edge
+		}
+	}
+	if bodyEdgeCount != 1 {
+		return bizErr("Foreach node requires exactly one loop body successor")
+	}
+	if nextEdgeCount > 1 {
+		return bizErr(`Foreach node supports at most one "next" successor`)
+	}
+
+	// 循环体 = 从体入口可达 − 从 next 后继可达。相减是为了让"循环体与循环后继汇聚到同一收尾节点"
+	// 的写法成立:那个汇聚点归主流程,循环体跑到它就停。
+	bodySet := dfsReachable(adjacency, []string{asString(bodyEdge["target"])})
+	if nextEdgeCount > 0 {
+		nextTargets := []string{}
+		for _, edge := range adjacency[loopNodeID] {
+			if strings.TrimSpace(edgeBranchKey(edge)) == loopNextBranch {
+				nextTargets = append(nextTargets, asString(edge["target"]))
+			}
+		}
+		for nodeID := range dfsReachable(adjacency, nextTargets) {
+			delete(bodySet, nodeID)
+		}
+	}
+	if len(bodySet) == 0 {
+		return bizErr("Foreach loop body cannot be empty")
+	}
+
+	for nodeID := range bodySet {
+		if nodeDefs[nodeID] != nil && nodeDefs[nodeID].kind() == nodeKindLoop {
+			return bizErr("Nested foreach is not supported")
+		}
+	}
+	// 双向封闭性:体外 → 体内、体内 → 体外都不允许(循环节点自己的那条体入口边除外)。
+	for source, edgeList := range adjacency {
+		sourceInBody := bodySet[source]
+		for _, edge := range edgeList {
+			targetInBody := bodySet[asString(edge["target"])]
+			if !sourceInBody && targetInBody && source != loopNodeID {
+				return bizErr("Foreach body cannot be entered from outside the loop")
+			}
+			if sourceInBody && !targetInBody {
+				return bizErr(`Foreach body cannot exit the loop; use a "next" edge on the foreach node instead`)
+			}
+		}
+	}
+	return nil
+}
+
 // assertStartEntries 校验每个起始节点都有唯一、合法的 entryKey(触发入口标识)。
 func assertStartEntries(nodeMap map[string]M, startNodes []string) error {
 	entryKeys := map[string]bool{}
 	for _, nodeID := range startNodes {
-		config, _ := nodeMap[nodeID]["config"].(map[string]any)
+		config := rawNodeConfig(nodeMap[nodeID])
 		entryKey := strings.TrimSpace(asString(config["entryKey"]))
 		if entryKey == "" {
 			return bizErr("Each start node must define entryKey")
@@ -191,54 +332,6 @@ func assertStartEntries(nodeMap map[string]M, startNodes []string) error {
 	return nil
 }
 
-// allowMultiIncomingFromStarts 判断某节点的多条入边是否“全部来自起始节点”——只有这种多入度才允许。
-func allowMultiIncomingFromStarts(nodeID string, edges []M, nodeMap map[string]M) bool {
-	sources := []string{}
-	for _, edge := range edges {
-		if asString(edge["target"]) == nodeID {
-			sources = append(sources, asString(edge["source"]))
-		}
-	}
-	if len(sources) == 0 {
-		return false
-	}
-	for _, source := range sources {
-		node := nodeMap[source]
-		if node == nil || !startNodeTypes[asString(node["type"])] {
-			return false
-		}
-	}
-	return true
-}
-
-// assertForeachBranchValid 校验 foreach 分支体:内部不能再嵌套 foreach,且分支必须以 end 节点收尾。
-func assertForeachBranchValid(foreachNodeID string, nodeMap map[string]M, adjacency map[string][]M) error {
-	target := asString(adjacency[foreachNodeID][0]["target"])
-	// 用一个 slice 当“栈”做深度优先遍历:stack[len-1] 取栈顶,stack[:len-1] 弹出栈顶(切片再切片)。
-	stack := []string{target}
-	visited := map[string]bool{}
-	for len(stack) > 0 {
-		nodeID := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		if visited[nodeID] {
-			continue
-		}
-		visited[nodeID] = true
-		nodeType := asString(nodeMap[nodeID]["type"])
-		if nodeType == "foreach" {
-			return bizErr("Nested foreach is not supported")
-		}
-		nextEdges := adjacency[nodeID]
-		if len(nextEdges) == 0 && nodeType != "end" {
-			return bizErr("Foreach branch must end with an end node")
-		}
-		for _, edge := range nextEdges {
-			stack = append(stack, asString(edge["target"]))
-		}
-	}
-	return nil
-}
-
 // assertNoEventPublishFeedback 防止“自触发死循环”:start.event 监听某事件时,其下游不能再
 // 发布(event.publish)同一种事件类型,否则会无限自我触发。
 func assertNoEventPublishFeedback(nodeMap map[string]M, adjacency map[string][]M, startNodes []string) error {
@@ -247,7 +340,7 @@ func assertNoEventPublishFeedback(nodeMap map[string]M, adjacency map[string][]M
 		if asString(startNode["type"]) != "start.event" {
 			continue
 		}
-		config, _ := startNode["config"].(map[string]any)
+		config := rawNodeConfig(startNode)
 		eventType := strings.TrimSpace(asString(config["eventType"]))
 		if eventType == "" {
 			return bizErr("start.event node must define eventType")
@@ -266,8 +359,7 @@ func assertNoEventPublishFeedback(nodeMap map[string]M, adjacency map[string][]M
 			visited[nodeID] = true
 			node := nodeMap[nodeID]
 			if asString(node["type"]) == "event.publish" {
-				nodeConfig, _ := node["config"].(map[string]any)
-				if strings.TrimSpace(asString(nodeConfig["eventType"])) == eventType {
+				if strings.TrimSpace(asString(rawNodeConfig(node)["eventType"])) == eventType {
 					return bizErr("start.event downstream graph cannot publish the same event type")
 				}
 			}
@@ -520,7 +612,7 @@ func (a *App) createVersionRow(code string, version int, payload WorkflowDefinit
 		Code: code, Version: version, DisplayName: displayName,
 		Description: strings.TrimSpace(payload.Description),
 		GraphJSON:   dumpJSON(graph), IsBuiltin: isBuiltin,
-		CreatedBy: &operatorUserID, CreatedAt: timeNow(),
+		CreatedBy: &operatorUserID, CreatedAt: time.Now(),
 	}
 	// Create(&definition):INSERT 一行;GORM 会把自增主键回填到 definition.ID(&definition 传指针正为此)。
 	if err := a.DB.Create(&definition).Error; err != nil {
