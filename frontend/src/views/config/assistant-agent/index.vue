@@ -2,7 +2,12 @@
 <template>
   <div class="art-full-height">
     <ElCard class="art-table-card">
-      <ArtTableHeader :showZebra="false" :loading="loading" v-model:columns="columnChecks" @refresh="loadPageData">
+      <ArtTableHeader
+        :showZebra="false"
+        :loading="loading"
+        v-model:columns="columnChecks"
+        @refresh="loadPageData"
+      >
         <template #left>
           <ElSpace wrap>
             <ElButton v-if="hasAuth('config.assistant_agents.create')" @click="openAddDialog">
@@ -115,7 +120,8 @@
       label: t('assistantAgent.table.dataSourceType'),
       minWidth: 140,
       align: 'center',
-      formatter: (row) => h(ElTag, { effect: 'plain' }, () => getDataSourceLabel(row.dataSourceType))
+      formatter: (row) =>
+        h(ElTag, { effect: 'plain' }, () => getDataSourceLabel(row.dataSourceType))
     },
     {
       prop: 'bindingCount',
@@ -209,11 +215,15 @@
   }
 
   const handleDelete = async (row: AssistantAgentItem) => {
-    await ElMessageBox.confirm(t('assistantAgent.deleteConfirm', { name: row.displayName }), t('common.tips'), {
-      type: 'warning',
-      confirmButtonText: t('common.confirm'),
-      cancelButtonText: t('common.cancel')
-    })
+    await ElMessageBox.confirm(
+      t('assistantAgent.deleteConfirm', { name: row.displayName }),
+      t('common.tips'),
+      {
+        type: 'warning',
+        confirmButtonText: t('common.confirm'),
+        cancelButtonText: t('common.cancel')
+      }
+    )
     await fetchDeleteAssistantAgent(row.id)
     await loadPageData()
   }

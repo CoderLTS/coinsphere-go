@@ -37,7 +37,7 @@ export interface NotifyDeliveryItem {
   createdAt: string
 }
 
-export interface NotifyDeliveryList extends Api.Common.PaginatedResponse<NotifyDeliveryItem> {}
+export type NotifyDeliveryList = Api.Common.PaginatedResponse<NotifyDeliveryItem>
 
 export function fetchNewsList(params: Api.Data.NewsSearchParams) {
   return request.get<Api.Data.NewsList>({

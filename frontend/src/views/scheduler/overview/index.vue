@@ -101,7 +101,9 @@
       key: 'executions',
       label: '累计执行',
       value: overview.stats.executionCount,
-      description: overview.stats.latestExecutedAt ? `最近执行：${overview.stats.latestExecutedAt}` : '暂无执行记录'
+      description: overview.stats.latestExecutedAt
+        ? `最近执行：${overview.stats.latestExecutedAt}`
+        : '暂无执行记录'
     },
     {
       key: 'queued',

@@ -76,7 +76,9 @@ export const staticRoutes: AppRouteRecordRaw[] = [
           isHideTab: true,
           isHide: true,
           activePath: '/scheduler/definition',
-          actionList: [{ title: '保存定义', permissionCode: 'scheduler.workflow_definitions.create' }]
+          actionList: [
+            { title: '保存定义', permissionCode: 'scheduler.workflow_definitions.create' }
+          ]
         }
       },
       {
@@ -89,7 +91,9 @@ export const staticRoutes: AppRouteRecordRaw[] = [
           isHideTab: true,
           isHide: true,
           activePath: '/scheduler/definition',
-          actionList: [{ title: '保存定义', permissionCode: 'scheduler.workflow_definitions.update' }]
+          actionList: [
+            { title: '保存定义', permissionCode: 'scheduler.workflow_definitions.update' }
+          ]
         }
       },
       {
@@ -102,7 +106,9 @@ export const staticRoutes: AppRouteRecordRaw[] = [
           isHideTab: true,
           isHide: true,
           activePath: '/scheduler/definition',
-          actionList: [{ title: '保存定义', permissionCode: 'scheduler.workflow_definitions.update' }]
+          actionList: [
+            { title: '保存定义', permissionCode: 'scheduler.workflow_definitions.update' }
+          ]
         }
       },
       {

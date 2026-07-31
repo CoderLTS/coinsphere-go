@@ -161,9 +161,7 @@ export const useUserStore = defineStore(
       // 用动态 import 而非顶部静态引入,避免与 http 客户端(其静态引入了本 store)形成循环依赖。
       const revokeToken = refreshToken.value
       if (revokeToken) {
-        import('@/api/auth')
-          .then(({ logout }) => logout(revokeToken))
-          .catch(() => {})
+        import('@/api/auth').then(({ logout }) => logout(revokeToken)).catch(() => {})
       }
 
       // 保存当前用户 ID，用于下次登录时判断是否为同一用户

@@ -9,7 +9,9 @@
         <div class="hero-actions">
           <ElButton v-if="isGuest" type="primary" @click="goLogin">登录</ElButton>
           <template v-else>
-            <ElButton type="primary" @click="router.push('/scheduler/definition')">工作流定义</ElButton>
+            <ElButton type="primary" @click="router.push('/scheduler/definition')"
+              >工作流定义</ElButton
+            >
             <ElButton @click="router.push('/scheduler/execution')">执行记录</ElButton>
             <ElButton @click="router.push('/data/news')">新闻数据</ElButton>
           </template>
@@ -62,7 +64,11 @@
           <div v-if="loading" class="panel-state"><ElSkeleton :rows="4" animated /></div>
           <div v-else-if="!overview.definitions.length" class="panel-empty">暂无工作流</div>
           <div v-else class="definition-list">
-            <article v-for="item in overview.definitions" :key="item.workflowDefinitionId" class="definition-item">
+            <article
+              v-for="item in overview.definitions"
+              :key="item.workflowDefinitionId"
+              class="definition-item"
+            >
               <div class="definition-item__head">
                 <div>
                   <strong>{{ item.workflowDefinitionName }}</strong>
@@ -106,8 +112,18 @@
   const isGuest = computed(() => userStore.accessMode === 'guest')
 
   const summaryCards = computed(() => [
-    { key: 'newsTotal', label: '新闻总数', value: overview.stats.newsTotal, description: '当前新闻数据总量' },
-    { key: 'newsToday', label: '今日新增', value: overview.stats.newsToday, description: '最近 24 小时新增新闻' },
+    {
+      key: 'newsTotal',
+      label: '新闻总数',
+      value: overview.stats.newsTotal,
+      description: '当前新闻数据总量'
+    },
+    {
+      key: 'newsToday',
+      label: '今日新增',
+      value: overview.stats.newsToday,
+      description: '最近 24 小时新增新闻'
+    },
     {
       key: 'activeDefinitions',
       label: '激活定义',

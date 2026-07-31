@@ -88,7 +88,16 @@
         </ElTableColumn>
         <ElTableColumn label="校验结果" min-width="110" align="center">
           <template #default="{ row }">
-            <ElTag :type="row.lastValidationStatus === 'success' ? 'success' : row.lastValidationStatus === 'failed' ? 'danger' : 'info'" effect="plain">
+            <ElTag
+              :type="
+                row.lastValidationStatus === 'success'
+                  ? 'success'
+                  : row.lastValidationStatus === 'failed'
+                    ? 'danger'
+                    : 'info'
+              "
+              effect="plain"
+            >
               {{ row.lastValidationStatus || 'unknown' }}
             </ElTag>
           </template>
@@ -133,10 +142,30 @@
   const enabledAgentCount = computed(() => overview.agents.filter((item) => item.isEnabled).length)
 
   const summaryCards = computed(() => [
-    { key: 'models', label: '模型总数', value: overview.models.length, description: '当前用户可用的模型配置数量' },
-    { key: 'enabledModels', label: '启用模型', value: enabledModelCount.value, description: '当前处于启用状态的模型' },
-    { key: 'agents', label: '智能体', value: overview.agents.length, description: '系统内可维护的智能体模板' },
-    { key: 'enabledAgents', label: '启用智能体', value: enabledAgentCount.value, description: '当前可被使用的智能体模板' },
+    {
+      key: 'models',
+      label: '模型总数',
+      value: overview.models.length,
+      description: '当前用户可用的模型配置数量'
+    },
+    {
+      key: 'enabledModels',
+      label: '启用模型',
+      value: enabledModelCount.value,
+      description: '当前处于启用状态的模型'
+    },
+    {
+      key: 'agents',
+      label: '智能体',
+      value: overview.agents.length,
+      description: '系统内可维护的智能体模板'
+    },
+    {
+      key: 'enabledAgents',
+      label: '启用智能体',
+      value: enabledAgentCount.value,
+      description: '当前可被使用的智能体模板'
+    },
     {
       key: 'channels',
       label: '通知渠道',

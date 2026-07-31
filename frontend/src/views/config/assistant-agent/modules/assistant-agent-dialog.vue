@@ -1,6 +1,12 @@
 <!-- 助手代理配置页面或组件：assistant-agent-dialog。 -->
 <template>
-  <ElDialog v-model="dialogVisible" :title="dialogTitle" width="760px" align-center destroy-on-close>
+  <ElDialog
+    v-model="dialogVisible"
+    :title="dialogTitle"
+    width="760px"
+    align-center
+    destroy-on-close
+  >
     <ElForm ref="formRef" :model="formData" :rules="rules" label-width="108px">
       <ElRow :gutter="16">
         <ElCol :span="12">
@@ -46,7 +52,9 @@
                   :disabled="uploadingAvatar"
                   @change="handleAvatarChange"
                 >
-                  <ElButton :loading="uploadingAvatar">{{ t('assistantAgent.form.uploadAvatar') }}</ElButton>
+                  <ElButton :loading="uploadingAvatar">{{
+                    t('assistantAgent.form.uploadAvatar')
+                  }}</ElButton>
                 </ElUpload>
                 <ElButton text :disabled="uploadingAvatar || !formData.avatar" @click="clearAvatar">
                   {{ t('assistantAgent.form.restoreDefaultAvatar') }}
@@ -72,15 +80,30 @@
       </ElRow>
 
       <ElFormItem :label="t('assistantAgent.form.description')" prop="description">
-        <ElInput v-model="formData.description" type="textarea" :rows="3" :placeholder="t('assistantAgent.form.descriptionPlaceholder')" />
+        <ElInput
+          v-model="formData.description"
+          type="textarea"
+          :rows="3"
+          :placeholder="t('assistantAgent.form.descriptionPlaceholder')"
+        />
       </ElFormItem>
 
       <ElFormItem :label="t('assistantAgent.form.welcomeMessage')" prop="welcomeMessage">
-        <ElInput v-model="formData.welcomeMessage" type="textarea" :rows="3" :placeholder="t('assistantAgent.form.welcomeMessagePlaceholder')" />
+        <ElInput
+          v-model="formData.welcomeMessage"
+          type="textarea"
+          :rows="3"
+          :placeholder="t('assistantAgent.form.welcomeMessagePlaceholder')"
+        />
       </ElFormItem>
 
       <ElFormItem :label="t('assistantAgent.form.systemPrompt')" prop="systemPrompt">
-        <ElInput v-model="formData.systemPrompt" type="textarea" :rows="7" :placeholder="t('assistantAgent.form.systemPromptPlaceholder')" />
+        <ElInput
+          v-model="formData.systemPrompt"
+          type="textarea"
+          :rows="7"
+          :placeholder="t('assistantAgent.form.systemPromptPlaceholder')"
+        />
       </ElFormItem>
 
       <ElFormItem :label="t('assistantAgent.form.starterPrompts')" prop="starterPromptsText">
@@ -96,7 +119,9 @@
     <template #footer>
       <div class="dialog-footer">
         <ElButton @click="dialogVisible = false">{{ t('common.cancel') }}</ElButton>
-        <ElButton type="primary" :loading="props.submitting" @click="handleSubmit">{{ t('common.confirm') }}</ElButton>
+        <ElButton type="primary" :loading="props.submitting" @click="handleSubmit">{{
+          t('common.confirm')
+        }}</ElButton>
       </div>
     </template>
   </ElDialog>
@@ -105,7 +130,11 @@
 <script setup lang="ts">
   import { ElMessage, type FormInstance, type FormRules, type UploadFile } from 'element-plus'
   import defaultAssistantAvatar from '@/assets/images/avatar/avatar10.webp'
-  import type { AssistantAgentItem, AssistantAgentMeta, AssistantAgentUpsertPayload } from '@/api/config'
+  import type {
+    AssistantAgentItem,
+    AssistantAgentMeta,
+    AssistantAgentUpsertPayload
+  } from '@/api/config'
   import { fetchUploadAvatarAsset } from '@/api/system'
   import { useI18n } from 'vue-i18n'
 
@@ -141,7 +170,9 @@
   })
 
   const isEdit = computed(() => Boolean(props.agentData?.id))
-  const dialogTitle = computed(() => isEdit.value ? t('assistantAgent.dialog.editTitle') : t('assistantAgent.dialog.addTitle'))
+  const dialogTitle = computed(() =>
+    isEdit.value ? t('assistantAgent.dialog.editTitle') : t('assistantAgent.dialog.addTitle')
+  )
   const dataSourceOptions = computed(() => props.meta?.dataSourceOptions || [])
 
   const formData = reactive<AssistantAgentUpsertPayload>({
@@ -159,9 +190,15 @@
 
   const rules = reactive<FormRules>({
     code: [{ required: true, message: t('assistantAgent.validation.code'), trigger: 'blur' }],
-    displayName: [{ required: true, message: t('assistantAgent.validation.displayName'), trigger: 'blur' }],
-    dataSourceType: [{ required: true, message: t('assistantAgent.validation.dataSourceType'), trigger: 'change' }],
-    systemPrompt: [{ required: true, message: t('assistantAgent.validation.systemPrompt'), trigger: 'blur' }]
+    displayName: [
+      { required: true, message: t('assistantAgent.validation.displayName'), trigger: 'blur' }
+    ],
+    dataSourceType: [
+      { required: true, message: t('assistantAgent.validation.dataSourceType'), trigger: 'change' }
+    ],
+    systemPrompt: [
+      { required: true, message: t('assistantAgent.validation.systemPrompt'), trigger: 'blur' }
+    ]
   })
 
   const resetForm = () => {

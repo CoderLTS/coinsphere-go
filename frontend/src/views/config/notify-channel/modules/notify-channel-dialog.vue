@@ -91,7 +91,12 @@
           </ElCol>
           <ElCol :span="12">
             <ElFormItem :label="t('notifyChannel.form.port')" prop="port">
-              <ElInputNumber v-model="formData.port" :min="1" :max="65535" controls-position="right" />
+              <ElInputNumber
+                v-model="formData.port"
+                :min="1"
+                :max="65535"
+                controls-position="right"
+              />
             </ElFormItem>
           </ElCol>
         </ElRow>
@@ -173,7 +178,11 @@
 <script setup lang="ts">
   import type { FormInstance, FormRules } from 'element-plus'
   import { useI18n } from 'vue-i18n'
-import type { NotifyChannelItem, NotifyChannelMeta, NotifyChannelUpsertPayload } from '@/api/config'
+  import type {
+    NotifyChannelItem,
+    NotifyChannelMeta,
+    NotifyChannelUpsertPayload
+  } from '@/api/config'
 
   interface Props {
     visible: boolean
@@ -228,14 +237,18 @@ import type { NotifyChannelItem, NotifyChannelMeta, NotifyChannelUpsertPayload }
     isEdit.value ? t('notifyChannel.dialog.editTitle') : t('notifyChannel.dialog.addTitle')
   )
   const secretPlaceholder = computed(() =>
-    isEdit.value ? t('notifyChannel.form.secretKeepHint') : t('notifyChannel.form.secretPlaceholder')
+    isEdit.value
+      ? t('notifyChannel.form.secretKeepHint')
+      : t('notifyChannel.form.secretPlaceholder')
   )
   const optionalSecretPlaceholder = computed(() =>
-    isEdit.value ? t('notifyChannel.form.secretOptionalKeepHint') : t('notifyChannel.form.secretOptionalPlaceholder')
+    isEdit.value
+      ? t('notifyChannel.form.secretOptionalKeepHint')
+      : t('notifyChannel.form.secretOptionalPlaceholder')
   )
 
-  const channelTypeOptions = computed(
-    () => (props.meta?.channelTypes || []).filter((item) => item.value !== 'in_app')
+  const channelTypeOptions = computed(() =>
+    (props.meta?.channelTypes || []).filter((item) => item.value !== 'in_app')
   )
   const ownerOptions = computed(() => props.meta?.owners || [])
   const currentChannelType = computed(() =>
@@ -310,8 +323,12 @@ import type { NotifyChannelItem, NotifyChannelMeta, NotifyChannelUpsertPayload }
   }
 
   const rules = reactive<FormRules<ChannelFormState>>({
-    channelType: [{ required: true, message: t('notifyChannel.validation.channelType'), trigger: 'change' }],
-    displayName: [{ required: true, message: t('notifyChannel.validation.displayName'), trigger: 'blur' }],
+    channelType: [
+      { required: true, message: t('notifyChannel.validation.channelType'), trigger: 'change' }
+    ],
+    displayName: [
+      { required: true, message: t('notifyChannel.validation.displayName'), trigger: 'blur' }
+    ],
     webhookBaseUrl: [
       {
         validator: (_rule, value, callback) => {
@@ -503,5 +520,3 @@ import type { NotifyChannelItem, NotifyChannelMeta, NotifyChannelUpsertPayload }
     }
   }
 </style>
-
-

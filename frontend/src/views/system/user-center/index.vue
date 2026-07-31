@@ -5,7 +5,7 @@
       <ElCol :xs="24" :lg="8">
         <ElCard shadow="never" class="profile-card">
           <div class="profile-card__banner"></div>
-      <img class="profile-card__avatar" :src="userAvatar" alt="用户头像" />
+          <img class="profile-card__avatar" :src="userAvatar" alt="用户头像" />
           <div class="profile-card__name">{{ userInfo.username || '未登录用户' }}</div>
           <div class="profile-card__role">{{ roleText }}</div>
           <div class="profile-card__desc">{{ profileDescription }}</div>
@@ -39,7 +39,12 @@
             <ElDescriptionsItem label="邮箱">{{ userInfo.email || '--' }}</ElDescriptionsItem>
             <ElDescriptionsItem label="角色">
               <ElSpace wrap>
-                <ElTag v-for="role in userInfo.roleCodes || []" :key="role" type="primary" effect="plain">
+                <ElTag
+                  v-for="role in userInfo.roleCodes || []"
+                  :key="role"
+                  type="primary"
+                  effect="plain"
+                >
                   {{ role }}
                 </ElTag>
                 <span v-if="!userInfo.roleCodes?.length">--</span>
@@ -69,7 +74,9 @@
           </template>
           <div class="explain-block">
             <p>当前控制台采用后端菜单模式，路由、菜单和权限码都由后端返回，前端只负责渲染。</p>
-            <p>新增页面时，需要同时补菜单配置、接口权限码和后端路由校验，才能形成完整 RBAC 闭环。</p>
+            <p
+              >新增页面时，需要同时补菜单配置、接口权限码和后端路由校验，才能形成完整 RBAC 闭环。</p
+            >
           </div>
         </ElCard>
       </ElCol>

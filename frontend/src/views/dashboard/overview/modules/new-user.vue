@@ -25,7 +25,7 @@
         <ElTableColumn label="头像" prop="avatar" width="150px">
           <template #default="scope">
             <div style="display: flex; align-items: center">
-            <img class="size-9 rounded-lg" :src="scope.row.avatar" alt="用户头像" />
+              <img class="size-9 rounded-lg" :src="scope.row.avatar" alt="用户头像" />
               <span class="ml-2">{{ scope.row.username }}</span>
             </div>
           </template>

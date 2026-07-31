@@ -1,2 +1,23 @@
+# 统一行尾：工作区一律 LF。
+#
+# 背景：本机 git 的 core.autocrlf=true，签出时会把 LF 换成 CRLF，而 .prettierrc 里
+# endOfLine 是 "auto"。两者叠加的结果是 eslint(prettier 插件) 在整个仓库刷出几百条
+# "Insert ␍" 假报错，真正的问题（未使用变量、语法错误）被淹没，lint 等于失效。
+#
+# 这里显式声明 eol=lf，让签出后的工作区就是 LF，与提交内容一致，不再受 autocrlf 影响。
+* text=auto eol=lf
+
+# 二进制文件不做任何行尾转换。
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.pdf binary
+
 *.html linguist-detectable=false
 *.vue linguist-detectable=true

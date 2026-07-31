@@ -12,7 +12,12 @@
     />
 
     <ElCard class="art-table-card">
-      <ArtTableHeader :showZebra="false" :loading="loading" v-model:columns="columnChecks" @refresh="loadRecords" />
+      <ArtTableHeader
+        :showZebra="false"
+        :loading="loading"
+        v-model:columns="columnChecks"
+        @refresh="loadRecords"
+      />
 
       <ArtTable
         :loading="loading"
@@ -120,7 +125,8 @@
     return 'info'
   }
 
-  const previewText = (row: NotifyDeliveryItem) => row.messageTitle || row.messageContent || row.errorMessage || '--'
+  const previewText = (row: NotifyDeliveryItem) =>
+    row.messageTitle || row.messageContent || row.errorMessage || '--'
   const clipText = (value: string, maxLength: number) =>
     value.length > maxLength ? `${value.slice(0, maxLength)}...` : value
 
@@ -132,7 +138,10 @@
       formatter: (row) =>
         h(
           ElTooltip,
-          { content: [row.messageTitle, row.messageContent].filter(Boolean).join('\n\n') || '--', placement: 'top' },
+          {
+            content: [row.messageTitle, row.messageContent].filter(Boolean).join('\n\n') || '--',
+            placement: 'top'
+          },
           {
             default: () => h('span', { class: 'content-preview' }, clipText(previewText(row), 28))
           }
@@ -172,7 +181,11 @@
       minWidth: 120,
       align: 'center',
       formatter: (row) =>
-        h(ElTag, { size: 'small', type: statusType(row.deliveryStatus), effect: 'plain' }, () => row.deliveryStatusLabel)
+        h(
+          ElTag,
+          { size: 'small', type: statusType(row.deliveryStatus), effect: 'plain' },
+          () => row.deliveryStatusLabel
+        )
     },
     {
       prop: 'sentAt',

@@ -440,6 +440,30 @@ function useTableImpl<TApiFn extends (params: any) => Promise<any>>(
   // 智能防抖搜索函数
   const debouncedGetDataByPage = createSmartDebounce(getDataByPage, debounceTime)
 
+  // 替换搜索参数：适用于表单查询，避免旧字段残留
+  const replaceSearchParams = (params?: Partial<TParams>): void => {
+    const paramsRecord = searchParams as Record<string, unknown>
+    const currentSize = pagination.size || ((paramsRecord[sizeKey] as number) ?? 10)
+
+    Object.keys(searchParams).forEach((key) => {
+      if (key !== pageKey && key !== sizeKey) {
+        delete paramsRecord[key]
+      }
+    })
+
+    Object.assign(
+      searchParams,
+      {
+        [pageKey]: 1,
+        [sizeKey]: currentSize
+      },
+      params || {}
+    )
+
+    pagination.current = 1
+    pagination.size = currentSize
+  }
+
   // 重置搜索参数
   const resetSearchParams = async (): Promise<void> => {
     // 取消防抖的搜索
@@ -661,6 +685,8 @@ function useTableImpl<TApiFn extends (params: any) => Promise<any>>(
     // 搜索相关 - 统一前缀
     /** 搜索参数 */
     searchParams,
+    /** 替换搜索参数（适用于表单查询，避免旧字段残留） */
+    replaceSearchParams,
     /** 重置搜索参数 */
     resetSearchParams,
 
