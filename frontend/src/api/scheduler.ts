@@ -26,7 +26,8 @@ export interface TaskDefinitionManagementItem {
   updatedBy?: number | null
 }
 
-export interface TaskDefinitionManagementList extends Api.Common.PaginatedResponse<TaskDefinitionManagementItem> {}
+export type TaskDefinitionManagementList =
+  Api.Common.PaginatedResponse<TaskDefinitionManagementItem>
 
 export interface TaskDefinitionQueryParams {
   current: number
@@ -38,10 +39,35 @@ export interface TaskDefinitionDefaultParamsPayload {
   params: Record<string, any>
 }
 
+/** 工作流可编排的智能体选项。requiresRefId / supportsAnalyze 决定节点表单显示哪些输入项。 */
+export interface WorkflowAgentOption {
+  code: string
+  label: string
+  description: string
+  dataSourceType: string
+  dataSourceLabel?: string
+  requiresRefId: boolean
+  supportsAnalyze: boolean
+}
+
+/** 后端声明的节点"图语义"：决定这个节点在画布上怎么连线（端口、分支、校验）。 */
+export type WorkflowNodeGraphKind = 'plain' | 'start' | 'branch' | 'loop' | 'terminal'
+
 export interface WorkflowNodeDefinitionItem {
   typeCode: string
   label: string
   configSchema: Record<string, any>
+  /** 图语义分类，后端注册表下发；老后端没有这个字段时按 plain 处理。 */
+  kind?: WorkflowNodeGraphKind
+  /** 分支节点必须存在的分支键，如 ['true','false']。 */
+  branches?: string[]
+  /**
+   * 非空表示分支不是固定的，而是从节点 config 的这个数组字段逐项取 key（多路 switch 用）。
+   * 与 extraBranches 一起，决定这个节点实例该有几个出口。
+   */
+  branchesConfigKey?: string
+  /** 动态分支之外总是存在的分支（如 switch 的 default）。 */
+  extraBranches?: string[]
 }
 
 export interface WorkflowNodeItem {
@@ -228,7 +254,7 @@ export interface WorkflowExecutionDetail extends WorkflowExecutionItem {
   transitionLogs: WorkflowExecutionTransitionLog[]
 }
 
-export interface WorkflowExecutionList extends Api.Common.PaginatedResponse<WorkflowExecutionItem> {}
+export type WorkflowExecutionList = Api.Common.PaginatedResponse<WorkflowExecutionItem>
 
 export interface WorkflowExecutionQueryParams {
   current: number
@@ -309,6 +335,13 @@ export function fetchNodeDefinitions() {
   })
 }
 
+/** 工作流编辑器里 assistant.agent 节点的智能体下拉选项。 */
+export function fetchWorkflowAgentOptions() {
+  return request.get<WorkflowAgentOption[]>({
+    url: '/api/scheduler/agent-options'
+  })
+}
+
 export function fetchWorkflowDefinitionList() {
   return request.get<WorkflowDefinitionItem[]>({
     url: '/api/scheduler/workflow-definitions'
@@ -329,7 +362,10 @@ export function fetchCreateWorkflowDefinition(params: WorkflowDefinitionUpsertPa
   })
 }
 
-export function fetchUpdateWorkflowDefinition(definitionId: number, params: WorkflowDefinitionUpsertPayload) {
+export function fetchUpdateWorkflowDefinition(
+  definitionId: number,
+  params: WorkflowDefinitionUpsertPayload
+) {
   return request.put<WorkflowDefinitionItem>({
     url: `/api/scheduler/workflow-definitions/${definitionId}`,
     params,

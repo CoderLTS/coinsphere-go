@@ -1,7 +1,14 @@
 <!-- 工作流编辑器页面或组件：WorkflowCanvas。 -->
 <template>
-  <div ref="shellRef" :class="['workflow-canvas', { 'workflow-canvas--materials-hidden': !props.materialsVisible }]">
-    <div ref="graphRef" class="workflow-canvas__graph" @pointerdown.capture="handleGraphPointerDown"></div>
+  <div
+    ref="shellRef"
+    :class="['workflow-canvas', { 'workflow-canvas--materials-hidden': !props.materialsVisible }]"
+  >
+    <div
+      ref="graphRef"
+      class="workflow-canvas__graph"
+      @pointerdown.capture="handleGraphPointerDown"
+    ></div>
 
     <div class="workflow-canvas__toolbar-slot">
       <slot name="toolbar" />
@@ -14,15 +21,23 @@
 
       <div ref="stencilRef" class="workflow-canvas__stencil-body"></div>
       <div v-if="stencilScrollbar.visible" class="workflow-canvas__stencil-scrollbar">
-        <div class="workflow-canvas__stencil-scrollbar-thumb" :style="stencilScrollbarThumbStyle"></div>
+        <div
+          class="workflow-canvas__stencil-scrollbar-thumb"
+          :style="stencilScrollbarThumbStyle"
+        ></div>
       </div>
     </div>
 
-    <div v-if="showNodeEditor && selectedNode && nodeEditorStyle" class="workflow-canvas__overlay" :style="nodeEditorStyle">
+    <div
+      v-if="showNodeEditor && selectedNode && nodeEditorStyle"
+      class="workflow-canvas__overlay"
+      :style="nodeEditorStyle"
+    >
       <WorkflowNodeEditorCard
         :node="selectedNode"
         :model="nodeDraftModel"
         :task-definitions="taskDefinitions"
+        :agent-options="agentOptions"
         :notify-user-options="notifyUserOptions"
         :notify-role-options="notifyRoleOptions"
         :notify-options-loading="notifyOptionsLoading"
@@ -36,7 +51,11 @@
       />
     </div>
 
-    <div v-if="showEdgeBubble && selectedEdge && edgeBubbleStyle" class="workflow-canvas__overlay" :style="edgeBubbleStyle">
+    <div
+      v-if="showEdgeBubble && selectedEdge && edgeBubbleStyle"
+      class="workflow-canvas__overlay"
+      :style="edgeBubbleStyle"
+    >
       <WorkflowEdgeBubble
         :edge="selectedEdge"
         @confirm="$emit('commit-edge-draft', $event)"
@@ -53,7 +72,11 @@
         <div class="workflow-canvas__context-menu-title">
           {{ nodeContextMenuNode?.data.title || '节点菜单' }}
         </div>
-        <button type="button" class="workflow-canvas__context-menu-item" @click="emitNodeContextAction('edit')">
+        <button
+          type="button"
+          class="workflow-canvas__context-menu-item"
+          @click="emitNodeContextAction('edit')"
+        >
           编辑属性
         </button>
         <button
@@ -90,12 +113,32 @@
 
 <script setup lang="ts">
   import { ElEmpty, ElSkeleton } from 'element-plus'
-  import { Edge, Graph, History, Keyboard, Selection, Shape, Snapline, Stencil } from '@antv/x6'
+  import { Edge, Graph, History, Keyboard, Selection, Snapline } from '@antv/x6'
   import type { CSSProperties } from 'vue'
-  import type { TaskDefinitionItem } from '@/api/scheduler'
-  import ArtMenuRight, { type MenuItemType } from '@/components/core/others/art-menu-right/index.vue'
-  import { ensureWorkflowGraphEdgeRegistered, ensureWorkflowNodeShapeRegistered } from './workflow-graph-shapes'
-  import { createDomainEdgeFromForm, createStencilNode, mapDomainGraphToX6, mapX6GraphToDomain } from '../workflow-editor.mapper'
+  import type { TaskDefinitionItem, WorkflowAgentOption } from '@/api/scheduler'
+  import ArtMenuRight from '@/components/core/others/art-menu-right/index.vue'
+  import {
+    ensureWorkflowGraphEdgeRegistered,
+    ensureWorkflowNodeShapeRegistered
+  } from './workflow-graph-shapes'
+  import {
+    createConnectionValidator,
+    getPortDisplayColor,
+    graphKindOfCell,
+    validateMagnet
+  } from '../canvas-connection-rules'
+  import { LOOP_NEXT_BRANCH } from '../node-registry'
+  import {
+    createDomainEdgeFromForm,
+    mapDomainGraphToX6,
+    mapX6GraphToDomain
+  } from '../workflow-editor.mapper'
+  import {
+    STENCIL_PANEL_WIDTH,
+    ensureStencilShapeRegistered,
+    useWorkflowStencil
+  } from './useWorkflowStencil'
+  import { useCanvasContextMenu } from './useCanvasContextMenu'
   import type {
     WorkflowActiveCellType,
     WorkflowDomainEdge,
@@ -121,6 +164,7 @@
     materialGroups: WorkflowMaterialGroup[]
     issues: WorkflowEditorIssue[]
     taskDefinitions: TaskDefinitionItem[]
+    agentOptions: WorkflowAgentOption[]
     notifyUserOptions: WorkflowNotifyTargetOption[]
     notifyRoleOptions: WorkflowNotifyTargetOption[]
     notifyOptionsLoading: boolean
@@ -136,7 +180,10 @@
   }
 
   interface Emits {
-    (e: 'request-activate-cell', payload: { cellId: string | null; cellType: WorkflowActiveCellType }): void
+    (
+      e: 'request-activate-cell',
+      payload: { cellId: string | null; cellType: WorkflowActiveCellType }
+    ): void
     (e: 'graph-commit', payload: WorkflowGraphCommitPayload): void
     (e: 'zoom-change', value: number): void
     (e: 'material-drop', payload: WorkflowMaterialDropPayload): void
@@ -157,84 +204,14 @@
   const emit = defineEmits<Emits>()
 
   let shapeRegistered = false
-  const STENCIL_PANEL_WIDTH = 252
-  const STENCIL_GRAPH_WIDTH = 232
-  const STENCIL_COLUMN_WIDTH = 216
-  const STENCIL_CARD_WIDTH = 208
-  const STENCIL_CARD_HEIGHT = 66
-  const STENCIL_ROW_HEIGHT = 88
-  const STENCIL_SCROLLBAR_TOP_INSET = 6
-  const STENCIL_SCROLLBAR_BOTTOM_INSET = 10
+  // JSON 定义面板的宽度，算画布可视区内边距时要减掉它。
   const JSON_PANEL_WIDTH = 380
 
   const ensureShapesRegistered = () => {
     if (shapeRegistered) return
 
     ensureWorkflowNodeShapeRegistered()
-
-    Graph.registerNode(
-      'workflow-stencil-card',
-      {
-        inherit: 'rect',
-        width: STENCIL_CARD_WIDTH,
-        height: STENCIL_CARD_HEIGHT,
-        markup: [
-          { tagName: 'rect', selector: 'body' },
-          { tagName: 'rect', selector: 'iconRect' },
-          { tagName: 'text', selector: 'iconLabel' },
-          { tagName: 'text', selector: 'title' },
-          { tagName: 'text', selector: 'desc' }
-        ],
-        attrs: {
-          body: {
-            stroke: '#5f95ff',
-            strokeWidth: 1,
-            fill: '#fff',
-            rx: 8,
-            ry: 8
-          },
-          iconRect: {
-            width: 32,
-            height: 32,
-            rx: 8,
-            ry: 8,
-            refX: 12,
-            refY: 17,
-            fill: '#f0f5ff'
-          },
-          iconLabel: {
-            refX: 28,
-            refY: 33,
-            textAnchor: 'middle',
-            textVerticalAnchor: 'middle',
-            fontSize: 12,
-            fontWeight: 600,
-            fill: '#1d39c4'
-          },
-          title: {
-            refX: 56,
-            refY: 24,
-            textAnchor: 'start',
-            textVerticalAnchor: 'middle',
-            fontSize: 14,
-            fontWeight: 600,
-            fill: '#141414',
-            textWrap: { width: 140, height: 20, ellipsis: '…' }
-          },
-          desc: {
-            refX: 56,
-            refY: 43,
-            textAnchor: 'start',
-            textVerticalAnchor: 'middle',
-            fontSize: 12,
-            fill: 'rgba(0,0,0,0.65)',
-            textWrap: { width: 140, height: 28, ellipsis: '…' }
-          }
-        }
-      },
-      true
-    )
-
+    ensureStencilShapeRegistered()
     ensureWorkflowGraphEdgeRegistered()
 
     shapeRegistered = true
@@ -244,11 +221,9 @@
   const graphRef = ref<HTMLDivElement | null>(null)
   const stencilRef = ref<HTMLDivElement | null>(null)
   const ready = ref(false)
-  const insertionCount = ref(0)
 
   const graphInstance = shallowRef<Graph | null>(null)
   const selectionPlugin = shallowRef<Selection | null>(null)
-  const stencilInstance = shallowRef<Stencil | null>(null)
   const nodeContextMenuRef = ref<InstanceType<typeof ArtMenuRight> | null>(null)
   const edgeContextMenuRef = ref<InstanceType<typeof ArtMenuRight> | null>(null)
   const applyingExternalGraph = ref(false)
@@ -256,17 +231,9 @@
   const suppressRemovedCellId = ref<string | null>(null)
   const nodeEditorStyle = ref<CSSProperties | null>(null)
   const edgeBubbleStyle = ref<CSSProperties | null>(null)
-  const stencilScrollContainer = shallowRef<HTMLElement | null>(null)
-  const edgeContextMenuCellId = ref<string | null>(null)
   const positionDirty = ref(false)
   const suppressBlankClick = ref(false)
   const hoveredNodeId = ref<string | null>(null)
-  const nodeContextMenu = reactive({
-    visible: false,
-    cellId: null as string | null,
-    x: 0,
-    y: 0
-  })
   const blankPanState = reactive({
     pressed: false,
     armed: false,
@@ -280,25 +247,64 @@
   })
   let blankPanHoldTimer: number | null = null
   let detachBlankPanListeners: (() => void) | null = null
-  let detachStencilScrollSync: (() => void) | null = null
 
-  const stencilScrollbar = reactive({
-    visible: false,
-    thumbTop: 0,
-    thumbHeight: 0
+  // 右键菜单与物料面板各自成体系，逻辑放在同目录的两个 composable 里，
+  // 本组件只负责把画布相关的引用接过去。
+  const contextMenu = useCanvasContextMenu({
+    nodeMenuRef: nodeContextMenuRef,
+    edgeMenuRef: edgeContextMenuRef,
+    shellRef,
+    nodes: () => props.graph.nodes,
+    onNodeAction: (payload) => emit('request-node-context-action', payload),
+    onEdgeEdit: (cellId) => emit('request-open-edge-editor', cellId),
+    onActivateCell: (cellId, cellType) => emit('request-activate-cell', { cellId, cellType })
   })
+  const {
+    nodeMenu: nodeContextMenu,
+    nodeMenuItems: nodeContextMenuItems,
+    edgeMenuItems: edgeContextMenuItems,
+    nodeMenuNode: nodeContextMenuNode,
+    nodeMenuStyle: nodeContextMenuStyle,
+    openNodeMenu: openNodeContextMenu,
+    openEdgeMenu: openEdgeContextMenu,
+    hideNodeMenu: hideNodeContextMenu,
+    hideEdgeMenu: hideEdgeContextMenu,
+    emitNodeAction: emitNodeContextAction,
+    handleWindowPointerDown,
+    handleNodeMenuSelect: handleNodeContextMenuSelect,
+    handleEdgeMenuSelect: handleEdgeContextMenuSelect
+  } = contextMenu
 
-  const stencilScrollbarThumbStyle = computed<CSSProperties>(() => ({
-    top: `${stencilScrollbar.thumbTop}px`,
-    height: `${stencilScrollbar.thumbHeight}px`
-  }))
+  const stencil = useWorkflowStencil({
+    stencilRef,
+    graphInstance,
+    materialGroups: () => props.materialGroups,
+    materialsVisible: () => props.materialsVisible,
+    viewportCenter: () => getViewportCenterClientPoint(),
+    onInsert: (payload) => emit('material-drop', payload)
+  })
+  const {
+    scrollbar: stencilScrollbar,
+    thumbStyle: stencilScrollbarThumbStyle,
+    materialCount,
+    createStencil,
+    updateScrollbar: updateStencilScrollbar,
+    destroyStencil
+  } = stencil
 
-  const materialCount = computed(() => props.materialGroups.reduce((total, group) => total + group.items.length, 0))
   const getTranslateState = () => {
     const current = graphInstance.value?.translate()
     return {
-      tx: Number((current as { tx?: number; x?: number } | undefined)?.tx ?? (current as { x?: number } | undefined)?.x ?? 0),
-      ty: Number((current as { ty?: number; y?: number } | undefined)?.ty ?? (current as { y?: number } | undefined)?.y ?? 0)
+      tx: Number(
+        (current as { tx?: number; x?: number } | undefined)?.tx ??
+          (current as { x?: number } | undefined)?.x ??
+          0
+      ),
+      ty: Number(
+        (current as { ty?: number; y?: number } | undefined)?.ty ??
+          (current as { y?: number } | undefined)?.y ??
+          0
+      )
     }
   }
 
@@ -376,45 +382,15 @@
     return null
   })
 
-  const showNodeEditor = computed(() => !!selectedNode.value && props.draftState.cellType === 'node' && !!props.draftState.model)
-  const showEdgeBubble = computed(() => !!selectedEdge.value && props.edgeEditorCellId === selectedEdge.value.id)
-  const nodeDraftModel = computed(() => (props.draftState.model as WorkflowNodeFormModel | null) || null)
-  const nodeContextMenuItems = computed<MenuItemType[]>(() => [
-    {
-      key: 'edit',
-      label: '编辑属性',
-      icon: 'ri:edit-line'
-    },
-    {
-      key: 'delete',
-      label: '删除节点',
-      icon: 'ri:delete-bin-line'
-    }
-  ])
-  const edgeContextMenuItems = computed<MenuItemType[]>(() => [
-    {
-      key: 'edit',
-      label: '编辑属性',
-      icon: 'ri:edit-line'
-    }
-  ])
-  const nodeContextMenuNode = computed<WorkflowDomainNode | null>(() => {
-    if (!nodeContextMenu.cellId) return null
-    return props.graph.nodes.find((node) => node.id === nodeContextMenu.cellId) || null
-  })
-  const nodeContextMenuStyle = computed<CSSProperties | null>(() => {
-    if (!nodeContextMenu.visible || !shellRef.value) return null
-
-    const menuWidth = 196
-    const menuHeight = 118
-    const shellWidth = shellRef.value.clientWidth
-    const shellHeight = shellRef.value.clientHeight
-
-    return {
-      left: `${Math.max(12, Math.min(nodeContextMenu.x, shellWidth - menuWidth - 12))}px`,
-      top: `${Math.max(76, Math.min(nodeContextMenu.y, shellHeight - menuHeight - 12))}px`
-    }
-  })
+  const showNodeEditor = computed(
+    () => !!selectedNode.value && props.draftState.cellType === 'node' && !!props.draftState.model
+  )
+  const showEdgeBubble = computed(
+    () => !!selectedEdge.value && props.edgeEditorCellId === selectedEdge.value.id
+  )
+  const nodeDraftModel = computed(
+    () => (props.draftState.model as WorkflowNodeFormModel | null) || null
+  )
 
   const selectedNodeIssues = computed(() => {
     if (!selectedNode.value) return []
@@ -479,20 +455,17 @@
     ;(graphInstance.value as any)?.cleanHistory?.()
   }
 
-  const getNodeTypeCode = (cell: any) => String(cell?.getData()?.typeCode || '')
-  const isStartNode = (cell: any) => getNodeTypeCode(cell).startsWith('start.')
-  const isEndNode = (cell: any) => getNodeTypeCode(cell) === 'end'
-  const isConditionNode = (cell: any) => getNodeTypeCode(cell) === 'condition.branch'
-  const isForeachNode = (cell: any) => getNodeTypeCode(cell) === 'foreach'
   const isPortConnected = (nodeId: string, portId: string) => {
     const graph = graphInstance.value
     const node = graph?.getCellById(nodeId)
     if (!graph || !node?.isNode()) return false
-    return graph.getConnectedEdges(node).some(
-      (edge) =>
-        (edge.getSourceCellId() === nodeId && edge.getSourcePortId() === portId) ||
-        (edge.getTargetCellId() === nodeId && edge.getTargetPortId() === portId)
-    )
+    return graph
+      .getConnectedEdges(node)
+      .some(
+        (edge) =>
+          (edge.getSourceCellId() === nodeId && edge.getSourcePortId() === portId) ||
+          (edge.getTargetCellId() === nodeId && edge.getTargetPortId() === portId)
+      )
   }
 
   const setPortVisible = (nodeId: string, portId: string, visible: boolean) => {
@@ -503,21 +476,19 @@
     node.setPortProp(portId, 'attrs/portLabel/style/visibility', visible ? 'visible' : 'hidden')
   }
 
-  const setPortColor = (nodeId: string, portId: string, stroke: string, fill = '#ffffff', labelColor?: string) => {
+  const setPortColor = (
+    nodeId: string,
+    portId: string,
+    stroke: string,
+    fill = '#ffffff',
+    labelColor?: string
+  ) => {
     const graph = graphInstance.value
     const node = graph?.getCellById(nodeId)
     if (!node?.isNode()) return
     node.setPortProp(portId, 'attrs/portBody/stroke', stroke)
     node.setPortProp(portId, 'attrs/portBody/fill', fill)
     node.setPortProp(portId, 'attrs/portLabel/fill', labelColor || stroke)
-  }
-
-  const getPortDisplayColor = (portId: string, connected: boolean) => {
-    if (connected) return { stroke: '#5f95ff', fill: '#5f95ff', label: '#2563eb' }
-    if (portId === 'true') return { stroke: '#22c55e', fill: '#ffffff', label: '#15803d' }
-    if (portId === 'false') return { stroke: '#ef4444', fill: '#ffffff', label: '#b91c1c' }
-    if (portId === 'body') return { stroke: '#ca8a04', fill: '#ffffff', label: '#a16207' }
-    return { stroke: '#c2c8d5', fill: '#ffffff', label: '#64748b' }
   }
 
   const syncPortDot = (nodeId: string, portId: string, visible: boolean, connected?: boolean) => {
@@ -553,113 +524,35 @@
     })
   }
 
-  const getIncomingCount = (cellId: string, skipEdgeId?: string | null) => {
-    return (graphInstance.value?.getIncomingEdges(cellId) || []).filter((edge) => edge.id !== skipEdgeId).length
-  }
-
-  const allowMultiIncomingFromStarts = (
-    targetCellId: string,
-    sourceCellId: string,
-    skipEdgeId?: string | null
-  ) => {
-    const graph = graphInstance.value
-    if (!graph) return false
-
-    const existingIncomingEdges = (graph.getIncomingEdges(targetCellId) || []).filter((edge) => edge.id !== skipEdgeId)
-    if (!existingIncomingEdges.length) return true
-
-    const currentSourceCell = graph.getCellById(sourceCellId)
-    if (!currentSourceCell || !currentSourceCell.isNode() || !isStartNode(currentSourceCell)) {
-      return false
-    }
-
-    return existingIncomingEdges.every((incomingEdge) => {
-      const incomingSourceId = incomingEdge.getSourceCellId()
-      if (!incomingSourceId) return false
-      const incomingSourceCell = graph.getCellById(incomingSourceId)
-      return !!incomingSourceCell && incomingSourceCell.isNode() && isStartNode(incomingSourceCell)
-    })
-  }
-
-  const isSourcePortOccupied = (cellId: string, portId: string, skipEdgeId?: string | null) => {
-    return (graphInstance.value?.getOutgoingEdges(cellId) || []).some(
-      (edge) => edge.id !== skipEdgeId && edge.getSourcePortId() === portId
-    )
-  }
-
-  const wouldIntroduceCycle = (sourceCellId: string, targetCellId: string, skipEdgeId?: string | null) => {
-    const graph = graphInstance.value
-    if (!graph) return false
-
-    const adjacency = new Map<string, string[]>()
-    graph.getNodes().forEach((node) => adjacency.set(node.id, []))
-    graph.getEdges().forEach((currentEdge) => {
-      if (currentEdge.id === skipEdgeId || currentEdge.id === props.pendingEdgeDraft?.id) return
-      const sourceId = currentEdge.getSourceCellId()
-      const targetId = currentEdge.getTargetCellId()
-      if (!sourceId || !targetId) return
-      adjacency.get(sourceId)?.push(targetId)
-    })
-
-    const stack = [targetCellId]
-    const visited = new Set<string>()
-    while (stack.length) {
-      const currentId = stack.pop() as string
-      if (currentId === sourceCellId) return true
-      if (visited.has(currentId)) continue
-      visited.add(currentId)
-      ;(adjacency.get(currentId) || []).forEach((nextId) => stack.push(nextId))
-    }
-
-    return false
-  }
-
   const buildEdgeFormFromCell = (edge: Edge): WorkflowEdgeFormModel => {
     const sourcePort = String(edge.getSourcePortId() || '')
     const data = edge.getData() || {}
+    const sourceCell = graphInstance.value?.getCellById(String(edge.getSourceCellId() || ''))
+    // 分支节点的出口名就是 branch；循环节点只有 NEXT 那条算 branch，BODY 不带（与后端一致）。
+    const kind = sourceCell ? graphKindOfCell(sourceCell) : 'plain'
+    const branchFromPort =
+      kind === 'branch'
+        ? sourcePort
+        : kind === 'loop' && sourcePort === LOOP_NEXT_BRANCH
+          ? LOOP_NEXT_BRANCH
+          : ''
     return {
       id: edge.id,
       source: String(edge.getSourceCellId() || ''),
       target: String(edge.getTargetCellId() || ''),
       sourcePort,
       targetPort: String(edge.getTargetPortId() || 'in'),
-      branch: ['true', 'false'].includes(sourcePort) ? sourcePort : String(data.branch || ''),
+      branch: branchFromPort || String(data.branch || ''),
       label: String(data.label || '')
     }
   }
 
-  const validateConnection = (args: any) => {
-    const { sourceCell, targetCell, sourcePort, targetPort, edge } = args
-    if (!sourceCell || !targetCell || !sourcePort || !targetPort) return false
-    if (sourceCell.id === targetCell.id) return false
-    if (isStartNode(targetCell)) return false
-    if (isEndNode(sourceCell)) return false
-    if (targetPort !== 'in') return false
-    if (wouldIntroduceCycle(sourceCell.id, targetCell.id, edge?.id)) return false
-
-    if (getIncomingCount(targetCell.id, edge?.id) > 0 && !allowMultiIncomingFromStarts(targetCell.id, sourceCell.id, edge?.id)) {
-      return false
-    }
-
-    if (isConditionNode(sourceCell)) {
-      if (!['true', 'false'].includes(sourcePort)) return false
-      if (isSourcePortOccupied(sourceCell.id, sourcePort, edge?.id)) return false
-      return true
-    }
-
-    if (isForeachNode(sourceCell)) {
-      if (sourcePort !== 'body') return false
-      if (isSourcePortOccupied(sourceCell.id, sourcePort, edge?.id)) return false
-      return true
-    }
-
-    return sourcePort === 'out'
-  }
-
-  const validateMagnet = ({ magnet }: { magnet: Element | null }) => {
-    if (!magnet) return false
-    return magnet.getAttribute('magnet') !== 'passive'
-  }
+  // 连线规则集中在 canvas-connection-rules.ts：那里按后端下发的图语义判断，
+  // 不再在本文件里写死 condition.branch / foreach 这些具体类型编码。
+  const validateConnection = createConnectionValidator(
+    () => graphInstance.value,
+    () => props.pendingEdgeDraft?.id
+  )
 
   const createEdge = () => {
     const graph = graphInstance.value
@@ -722,7 +615,10 @@
       const edge = graph.getCellById(selectedEdge.value.id)
       if (edge?.isEdge()) {
         const bbox = edge.getBBox()
-        const center = graph.localToClient({ x: bbox.x + bbox.width / 2, y: bbox.y + bbox.height / 2 }) as {
+        const center = graph.localToClient({
+          x: bbox.x + bbox.width / 2,
+          y: bbox.y + bbox.height / 2
+        }) as {
           x: number
           y: number
         }
@@ -749,7 +645,9 @@
     if (blankPanState.pointerId >= 0) {
       try {
         graphRef.value?.releasePointerCapture(blankPanState.pointerId)
-      } catch {}
+      } catch {
+        // 指针已经被释放过，忽略即可
+      }
     }
     blankPanState.pointerId = -1
     detachBlankPanListeners?.()
@@ -760,7 +658,13 @@
   }
 
   const startBlankPanning = (rawEvent: PointerEvent) => {
-    if (rawEvent.button !== 0 || blankPanState.active || blankPanState.armed || !graphInstance.value) return
+    if (
+      rawEvent.button !== 0 ||
+      blankPanState.active ||
+      blankPanState.armed ||
+      !graphInstance.value
+    )
+      return
 
     blankPanState.pressed = true
     blankPanState.pointerId = rawEvent.pointerId
@@ -774,7 +678,9 @@
     blankPanState.startTy = ty
     try {
       graphRef.value?.setPointerCapture(rawEvent.pointerId)
-    } catch {}
+    } catch {
+      // 浏览器拒绝捕获指针时退化成普通拖拽，不影响功能
+    }
 
     const handlePointerMove = (event: PointerEvent) => {
       if (event.pointerId !== blankPanState.pointerId) return
@@ -974,194 +880,6 @@
     )
   }
 
-  const hideNodeContextMenu = () => {
-    nodeContextMenu.visible = false
-    nodeContextMenu.cellId = null
-    nodeContextMenuRef.value?.hide()
-  }
-
-  const hideEdgeContextMenu = () => {
-    edgeContextMenuCellId.value = null
-    edgeContextMenuRef.value?.hide()
-  }
-
-  const openNodeContextMenu = (cellId: string, event: MouseEvent) => {
-    nodeContextMenu.visible = false
-    nodeContextMenu.cellId = cellId
-    nodeContextMenuRef.value?.show(event)
-  }
-
-  const openEdgeContextMenu = (cellId: string, event: MouseEvent) => {
-    edgeContextMenuCellId.value = cellId
-    emit('request-activate-cell', { cellId, cellType: 'edge' })
-    edgeContextMenuRef.value?.show(event)
-  }
-
-  const emitNodeContextAction = (action: WorkflowNodeContextActionPayload['action']) => {
-    if (!nodeContextMenu.cellId) return
-    emit('request-node-context-action', {
-      cellId: nodeContextMenu.cellId,
-      action
-    })
-    hideNodeContextMenu()
-  }
-
-  const handleWindowPointerDown = (event: PointerEvent) => {
-    const target = event.target as HTMLElement | null
-    if (target?.closest('.context-menu')) return
-    hideNodeContextMenu()
-    hideEdgeContextMenu()
-  }
-
-  const handleNodeContextMenuSelect = (item: MenuItemType) => {
-    if (item.key === 'edit' || item.key === 'delete') {
-      emitNodeContextAction(item.key)
-    }
-  }
-
-  const handleEdgeContextMenuSelect = (item: MenuItemType) => {
-    if (item.key !== 'edit' || !edgeContextMenuCellId.value) return
-    emit('request-open-edge-editor', edgeContextMenuCellId.value)
-    hideEdgeContextMenu()
-  }
-
-  const loadStencil = () => {
-    const stencil = stencilInstance.value
-    if (!stencil) return
-
-    props.materialGroups.forEach((group) => {
-      const nodes = group.items.map((item) => createStencilNode(item))
-      stencil.load(nodes as any, group.key)
-    })
-  }
-
-  const updateStencilScrollbar = () => {
-    const container = stencilScrollContainer.value
-    if (!container || !props.materialsVisible) {
-      stencilScrollbar.visible = false
-      return
-    }
-
-    const viewportHeight = container.clientHeight
-    const contentHeight = container.scrollHeight
-    const trackHeight = Math.max(0, viewportHeight - STENCIL_SCROLLBAR_TOP_INSET - STENCIL_SCROLLBAR_BOTTOM_INSET)
-
-    if (contentHeight <= viewportHeight + 1 || viewportHeight <= 0 || trackHeight <= 0) {
-      stencilScrollbar.visible = false
-      return
-    }
-
-    const thumbHeight = Math.max(36, Math.round((trackHeight * viewportHeight) / contentHeight))
-    const maxThumbOffset = Math.max(0, trackHeight - thumbHeight)
-    const maxScrollTop = Math.max(1, contentHeight - viewportHeight)
-    const thumbTop = Math.round((container.scrollTop / maxScrollTop) * maxThumbOffset)
-
-    stencilScrollbar.visible = true
-    stencilScrollbar.thumbHeight = thumbHeight
-    stencilScrollbar.thumbTop = thumbTop
-  }
-
-  const bindStencilScrollbar = () => {
-    detachStencilScrollSync?.()
-    detachStencilScrollSync = null
-    stencilScrollContainer.value = null
-
-    const container = stencilRef.value?.querySelector('.x6-widget-stencil-content') as HTMLElement | null
-    if (!container) {
-      stencilScrollbar.visible = false
-      return
-    }
-
-    stencilScrollContainer.value = container
-
-    const sync = () => {
-      window.requestAnimationFrame(() => {
-        updateStencilScrollbar()
-      })
-    }
-
-    const resizeObserver = new ResizeObserver(sync)
-    resizeObserver.observe(container)
-    if (stencilRef.value) {
-      resizeObserver.observe(stencilRef.value)
-    }
-
-    container.addEventListener('scroll', sync, { passive: true })
-    window.addEventListener('resize', sync)
-    sync()
-
-    detachStencilScrollSync = () => {
-      container.removeEventListener('scroll', sync)
-      window.removeEventListener('resize', sync)
-      resizeObserver.disconnect()
-    }
-  }
-
-  const bindStencilClickInsert = (stencil: Stencil) => {
-    const graphs = Object.values(((stencil as any).graphs || {}) as Record<string, Graph>)
-    graphs.forEach((groupGraph) => {
-      groupGraph.on('node:click', ({ node }) => {
-        const typeCode = String(node.getData()?.stencilTypeCode || '')
-        if (!typeCode) return
-        const graph = graphInstance.value
-        if (!graph) return
-        const centerPoint = graph.clientToLocal(getViewportCenterClientPoint()) as { x: number; y: number }
-        const offset = insertionCount.value * 24
-        insertionCount.value = (insertionCount.value + 1) % 6
-        emit('material-drop', {
-          typeCode,
-          source: 'click',
-          position: {
-            x: centerPoint.x + offset,
-            y: centerPoint.y + offset
-          }
-        })
-      })
-    })
-  }
-
-  const createStencil = () => {
-    if (!graphInstance.value || !stencilRef.value || !props.materialGroups.length) return
-    ;(stencilInstance.value as any)?.dispose?.()
-    stencilRef.value.innerHTML = ''
-
-    const stencil = new Stencil({
-      title: '鑺傜偣鐗╂枡',
-      target: graphInstance.value,
-      stencilGraphWidth: STENCIL_GRAPH_WIDTH,
-      stencilGraphHeight: 480,
-      stencilGraphOptions: {
-        async: false,
-        panning: true,
-        interacting: false
-      },
-      collapsable: false,
-      groups: props.materialGroups.map((group) => ({
-        title: group.title,
-        name: group.key,
-        collapsable: true,
-        collapsed: false,
-        graphHeight: Math.max(STENCIL_ROW_HEIGHT, group.items.length * STENCIL_ROW_HEIGHT),
-        layoutOptions: { rowHeight: STENCIL_ROW_HEIGHT }
-      })),
-      layoutOptions: {
-        columns: 1,
-        columnWidth: STENCIL_COLUMN_WIDTH,
-        rowHeight: STENCIL_ROW_HEIGHT,
-        dx: 6,
-        dy: 0
-      }
-    })
-
-    stencilRef.value.appendChild(stencil.container)
-    stencilInstance.value = stencil
-    bindStencilClickInsert(stencil)
-    loadStencil()
-    nextTick(() => {
-      bindStencilScrollbar()
-    })
-  }
-
   const fitView = () => {
     const graph = graphInstance.value
     const shell = shellRef.value
@@ -1172,7 +890,10 @@
     const padding = getViewportPadding()
     const viewportWidth = Math.max(120, shell.clientWidth - padding.left - padding.right)
     const viewportHeight = Math.max(120, shell.clientHeight - padding.top - padding.bottom)
-    const scale = Math.max(0.42, Math.min(viewportWidth / bounds.width, viewportHeight / bounds.height, 1))
+    const scale = Math.max(
+      0.42,
+      Math.min(viewportWidth / bounds.width, viewportHeight / bounds.height, 1)
+    )
 
     graph.zoom(scale, {
       absolute: true,
@@ -1555,7 +1276,7 @@
         return
       }
       await nextTick()
-      bindStencilScrollbar()
+      updateStencilScrollbar()
     }
   )
 
@@ -1642,7 +1363,7 @@
     await waitForPaint()
     applyingExternalGraph.value = false
     fitView()
-    bindStencilScrollbar()
+    updateStencilScrollbar()
     syncVisualSelection()
     syncPortVisibility()
     updateZoomText()
@@ -1655,8 +1376,7 @@
     window.removeEventListener('pointerdown', handleWindowPointerDown)
     window.removeEventListener('resize', updateOverlayPositions)
     stopBlankPanning()
-    detachStencilScrollSync?.()
-    ;(stencilInstance.value as any)?.dispose?.()
+    destroyStencil()
     graphInstance.value?.dispose()
   })
 </script>
@@ -1668,7 +1388,11 @@
     height: 100%;
     overflow: hidden;
     background:
-      radial-gradient(circle at top center, rgba(255, 255, 255, 0.92) 0%, rgba(251, 253, 255, 0) 38%),
+      radial-gradient(
+        circle at top center,
+        rgba(255, 255, 255, 0.92) 0%,
+        rgba(251, 253, 255, 0) 38%
+      ),
       linear-gradient(180deg, #fbfdff 0%, #f5f8fd 100%);
   }
 
@@ -1808,7 +1532,9 @@
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
-    transition: background-color 0.15s ease, color 0.15s ease;
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease;
 
     &:hover {
       background: #eef4ff;
@@ -2013,3 +1739,7 @@
   }
 </style>
 
+<!-- 画布节点卡片样式：X6 渲染的节点不带组件 scope，必须走全局样式。 -->
+<style lang="scss">
+  @use '@/views/scheduler/workflow/editor/components/workflow-node-card.scss';
+</style>

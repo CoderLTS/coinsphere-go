@@ -9,9 +9,17 @@ import type {
 
 export type WorkflowEditorMode = 'create' | 'edit'
 
-export type WorkflowNodeKind =
+/**
+ * 节点的「表单形态」：决定属性面板用哪套编辑界面，纯前端概念。
+ *
+ * 注意别和后端下发的 WorkflowNodeGraphKind（plain/start/branch/loop/terminal）搞混：
+ * 那个是「图语义」，决定节点在画布上有几个出口、校验时按哪套规则查，来源是后端注册表（见 node-registry.ts）。
+ * 一个节点两者都有，比如 condition.branch 的 formKind 是 'condition'、graphKind 是 'branch'。
+ */
+export type WorkflowNodeFormKind =
   | 'start'
   | 'task'
+  | 'agent'
   | 'condition'
   | 'foreach'
   | 'notify'
@@ -19,6 +27,8 @@ export type WorkflowNodeKind =
   | 'http'
   | 'delay'
   | 'end'
+  /** 没有定制表单的节点：属性面板按后端下发的 configSchema 自动渲染。 */
+  | 'generic'
 
 export type WorkflowActiveCellType = 'node' | 'edge' | null
 
@@ -30,7 +40,7 @@ export interface WorkflowEditorMetaForm {
 
 export interface WorkflowMaterialItem {
   typeCode: string
-  kind: WorkflowNodeKind
+  kind: WorkflowNodeFormKind
   group: string
   title: string
   description: string
@@ -60,7 +70,7 @@ export interface WorkflowDomainPort {
 
 export interface WorkflowDomainNodeData {
   typeCode: string
-  kind: WorkflowNodeKind
+  kind: WorkflowNodeFormKind
   title: string
   subtitle: string
   color: string
@@ -162,7 +172,7 @@ export interface WorkflowNodeFormModel {
   id: string
   label: string
   typeCode: string
-  kind: WorkflowNodeKind
+  kind: WorkflowNodeFormKind
   config: Record<string, any>
 }
 

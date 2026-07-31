@@ -1,0 +1,286 @@
+/**
+ * 画布节点卡片样式。
+ *
+ * 这份样式服务于 workflow-graph-shapes.ts 渲染出来的 HTML 结构。它是「全局」样式，
+ * 不能写成 scoped：节点由 X6 渲染进画布容器，不带任何组件的 scope 属性。
+ * 编辑器画布与执行详情画布都 @use 这个文件，两处外观自动保持一致。
+ *
+ * 配色分两层：
+ *   --wf-node-accent  物料给这类节点定的主题色，由 shapes 里以内联变量传进来（与执行状态无关）；
+ *   [data-state]      节点当前的视觉状态（异常 / 执行中 / 成功 / 未保存 / 选中…），
+ *                     每种状态只在这里定义一次边框、图标底色、状态条配色和阴影。
+ *
+ * 颜色优先取 Element Plus / 项目主题的 CSS 变量，取不到再退回字面色值，
+ * 这样切换暗色模式时卡片会跟着走，而不是永远一张白底卡片。
+ */
+
+.wf-node {
+  --wf-node-accent: #64748b;
+  --wf-node-border: var(--el-border-color, #bcd0ff);
+  --wf-node-shadow: none;
+  --wf-node-icon-bg: color-mix(in srgb, var(--wf-node-accent) 12%, transparent);
+  --wf-node-icon-fg: var(--wf-node-accent);
+  --wf-node-status-bg: transparent;
+  --wf-node-status-fg: var(--el-color-primary, #2563eb);
+  --wf-node-body-fg: var(--el-text-color-regular, #595959);
+
+  position: relative;
+  box-sizing: border-box;
+  width: 260px;
+  height: 96px;
+  overflow: hidden;
+  font-family: Inter, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: var(--el-bg-color-overlay, #ffffff);
+  border: 1.5px solid var(--wf-node-border);
+  border-radius: 12px;
+  box-shadow: var(--wf-node-shadow);
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    opacity 0.18s ease;
+}
+
+.wf-node[data-dimmed='true'] {
+  opacity: 0.82;
+}
+
+/* 左侧色条：一眼区分节点大类，比只有右上角一个文字角标好认。 */
+.wf-node__accent {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: var(--wf-node-accent);
+  opacity: 0.55;
+}
+
+/* 分支与循环节点右侧要放两个以上出口端口，给它们留出内边距，别让文字压到端口上。 */
+.wf-node[data-kind='branch'],
+.wf-node[data-kind='loop'] {
+  --wf-node-accent-width: 4px;
+}
+
+.wf-node[data-kind='branch'] .wf-node__accent,
+.wf-node[data-kind='loop'] .wf-node__accent {
+  width: 4px;
+  opacity: 0.9;
+}
+
+.wf-node[data-kind='branch'] .wf-node__inner,
+.wf-node[data-kind='loop'] .wf-node__inner {
+  padding-right: 20px;
+}
+
+.wf-node__inner {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  padding: 12px;
+}
+
+.wf-node__head {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+}
+
+.wf-node__icon {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--wf-node-icon-fg);
+  background: var(--wf-node-icon-bg);
+  border-radius: 8px;
+}
+
+.wf-node__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 20px;
+  color: var(--el-text-color-primary, #141414);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wf-node__badge {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--el-color-primary, #5f95ff);
+  white-space: nowrap;
+  background: var(--el-color-primary-light-9, #f5f7ff);
+  border-radius: 8px;
+}
+
+.wf-node[data-kind='terminal'] .wf-node__badge {
+  color: var(--el-color-danger, #ff7875);
+  background: var(--el-color-danger-light-9, #fff1f0);
+}
+
+.wf-node__body {
+  display: flex;
+  flex: 1;
+  gap: 8px;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.wf-node__body-label {
+  flex: 0 0 auto;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--el-text-color-secondary, #8c8c8c);
+  white-space: nowrap;
+}
+
+.wf-node__body-text {
+  display: -webkit-box;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--wf-node-body-fg);
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.wf-node__foot {
+  display: flex;
+  justify-content: flex-end;
+  min-height: 18px;
+}
+
+.wf-node__status {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.wf-node__status[data-empty='true'] {
+  visibility: hidden;
+}
+
+.wf-node__status-text {
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  color: var(--wf-node-status-fg);
+  background: var(--wf-node-status-bg);
+  border-radius: 8px;
+}
+
+.wf-node__check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: #ffffff;
+  background: var(--el-color-success, #22c55e);
+  border-radius: 999px;
+  transform: translateY(-1px);
+
+  svg {
+    width: 10px;
+    height: 10px;
+  }
+}
+
+/* ---------- 状态配色表 ---------- */
+/* 每种状态只在这里出现一次；shapes 里不再判断颜色，只负责决定 data-state 是什么。 */
+
+.wf-node[data-state='issue'] {
+  --wf-node-border: var(--el-color-danger, #ef4444);
+  --wf-node-icon-fg: var(--el-color-danger, #ef4444);
+  --wf-node-status-bg: var(--el-color-danger-light-9, #fff1f0);
+  --wf-node-status-fg: var(--el-color-danger, #ef4444);
+  --wf-node-body-fg: var(--el-color-danger, #dc2626);
+  --wf-node-shadow: 0 0 0 1px rgb(239 68 68 / 8%);
+}
+
+.wf-node[data-state='failed'] {
+  --wf-node-border: var(--el-color-danger, #ef4444);
+  --wf-node-icon-bg: var(--el-color-danger-light-9, #fff1f0);
+  --wf-node-icon-fg: var(--el-color-danger, #ef4444);
+  --wf-node-status-bg: var(--el-color-danger-light-9, #fff1f0);
+  --wf-node-status-fg: var(--el-color-danger, #ef4444);
+  --wf-node-body-fg: var(--el-color-danger, #dc2626);
+  --wf-node-shadow: 0 0 0 2px rgb(239 68 68 / 14%), 0 14px 28px rgb(239 68 68 / 14%);
+}
+
+.wf-node[data-state='running'] {
+  --wf-node-border: var(--el-color-warning, #f59e0b);
+  --wf-node-icon-bg: var(--el-color-warning-light-9, #fff7ed);
+  --wf-node-icon-fg: #d97706;
+  --wf-node-status-bg: var(--el-color-warning-light-9, #fff7ed);
+  --wf-node-status-fg: #b45309;
+  --wf-node-shadow: 0 0 0 2px rgb(245 158 11 / 12%), 0 14px 28px rgb(245 158 11 / 12%);
+}
+
+.wf-node[data-state='retryWaiting'] {
+  --wf-node-border: #fb923c;
+  --wf-node-icon-bg: var(--el-color-warning-light-9, #fff7ed);
+  --wf-node-icon-fg: #c2410c;
+  --wf-node-status-bg: var(--el-color-warning-light-9, #fff7ed);
+  --wf-node-status-fg: #c2410c;
+  --wf-node-shadow: 0 0 0 2px rgb(251 146 60 / 12%), 0 14px 28px rgb(251 146 60 / 12%);
+}
+
+.wf-node[data-state='queued'] {
+  --wf-node-border: #60a5fa;
+  --wf-node-icon-bg: var(--el-color-primary-light-9, #eff6ff);
+  --wf-node-icon-fg: var(--el-color-primary, #2563eb);
+  --wf-node-status-bg: var(--el-color-primary-light-9, #eff6ff);
+  --wf-node-status-fg: var(--el-color-primary, #2563eb);
+  --wf-node-shadow: 0 0 0 2px rgb(96 165 250 / 12%), 0 14px 28px rgb(96 165 250 / 12%);
+}
+
+.wf-node[data-state='success'] {
+  --wf-node-border: var(--el-color-success, #22c55e);
+  --wf-node-icon-bg: var(--el-color-success-light-9, #ecfdf5);
+  --wf-node-icon-fg: #16a34a;
+  --wf-node-status-bg: var(--el-color-success-light-9, #ecfdf5);
+  --wf-node-status-fg: #15803d;
+  --wf-node-shadow: 0 0 0 2px rgb(34 197 94 / 12%), 0 14px 28px rgb(34 197 94 / 12%);
+}
+
+.wf-node[data-state='dirty'] {
+  --wf-node-border: #5f95ff;
+  --wf-node-status-bg: var(--el-color-primary-light-9, #eff6ff);
+  --wf-node-status-fg: var(--el-color-primary, #2563eb);
+  --wf-node-shadow: 0 0 0 1px rgb(95 149 255 / 8%);
+}
+
+.wf-node[data-state='selected'] {
+  --wf-node-border: var(--el-color-primary, #2563eb);
+  --wf-node-shadow: 0 0 0 3px rgb(37 99 235 / 22%), 0 16px 32px rgb(37 99 235 / 16%);
+}
+
+/* 无状态时开始/结束节点仍保留一点自己的底色，好和中间的处理节点区分开。 */
+.wf-node[data-state='idle'][data-kind='start'] {
+  --wf-node-icon-bg: #eef2ff;
+  --wf-node-icon-fg: #5f95ff;
+}
+
+.wf-node[data-state='idle'][data-kind='terminal'] {
+  --wf-node-border: #ffb4b0;
+  --wf-node-icon-bg: var(--el-color-danger-light-9, #fff1f0);
+  --wf-node-icon-fg: #ff7875;
+}

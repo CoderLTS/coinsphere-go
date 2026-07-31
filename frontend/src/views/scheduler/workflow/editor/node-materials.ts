@@ -1,11 +1,11 @@
 /** 工作流编辑器辅助模块：node-materials。 */
 import type { WorkflowNodeDefinitionItem } from '@/api/scheduler'
-import type { WorkflowMaterialGroup, WorkflowMaterialItem, WorkflowNodeKind } from './types'
+import type { WorkflowMaterialGroup, WorkflowMaterialItem, WorkflowNodeFormKind } from './types'
 
 const MATERIAL_META: Record<
   string,
   {
-    kind: WorkflowNodeKind
+    kind: WorkflowNodeFormKind
     group: string
     description: string
     color: string
@@ -63,6 +63,55 @@ const MATERIAL_META: Record<
     color: '#ca8a04',
     iconText: 'F'
   },
+  'condition.switch': {
+    kind: 'generic',
+    group: '控制',
+    description: '按值路由到任意多个分支，都不命中走 default',
+    color: '#f59e0b',
+    iconText: 'S'
+  },
+  'state.set': {
+    kind: 'generic',
+    group: '数据',
+    description: '给共享状态赋值，支持 {{路径}} 模板',
+    color: '#0891b2',
+    iconText: 'V'
+  },
+  'state.append': {
+    kind: 'generic',
+    group: '数据',
+    description: '往数组变量追加一项，用于汇总 foreach 每轮的结果',
+    color: '#0e7490',
+    iconText: '+'
+  },
+  'array.filter': {
+    kind: 'generic',
+    group: '数据',
+    description: '按条件过滤数组',
+    color: '#155e75',
+    iconText: 'F'
+  },
+  'log.message': {
+    kind: 'generic',
+    group: '控制',
+    description: '打一条执行日志，方便排查流程',
+    color: '#64748b',
+    iconText: 'L'
+  },
+  'workflow.call': {
+    kind: 'generic',
+    group: '集成',
+    description: '调用另一个已激活的工作流',
+    color: '#4f46e5',
+    iconText: 'W'
+  },
+  'assistant.agent': {
+    kind: 'agent',
+    group: '智能体',
+    description: '调用一个智能体处理内容，结果写入共享状态',
+    color: '#0ea5e9',
+    iconText: 'A'
+  },
   notify: {
     kind: 'notify',
     group: '通知',
@@ -100,9 +149,11 @@ const MATERIAL_META: Record<
   }
 }
 
-const GROUP_ORDER = ['开始', '任务', '控制', '事件', '通知', '集成', '结束']
+/** 已知分组的展示顺序；不在这张表里的分组（新节点带来的）排在后面，不会被丢掉。 */
+const GROUP_ORDER = ['开始', '任务', '智能体', '控制', '数据', '事件', '通知', '集成', '结束']
+const FALLBACK_GROUP = '其他'
 
-export function inferNodeKind(typeCode: string): WorkflowNodeKind {
+export function inferNodeFormKind(typeCode: string): WorkflowNodeFormKind {
   return MATERIAL_META[typeCode]?.kind || 'task'
 }
 
@@ -118,7 +169,7 @@ export function buildWorkflowMaterialGroups(
     return {
       typeCode: definition.typeCode,
       kind: meta?.kind || 'task',
-      group: meta?.group || '其他',
+      group: meta?.group || FALLBACK_GROUP,
       title: definition.label,
       description: meta?.description || definition.typeCode,
       color: meta?.color || '#64748b',
@@ -128,9 +179,18 @@ export function buildWorkflowMaterialGroups(
     }
   })
 
-  return GROUP_ORDER.map((groupTitle) => ({
+  // 分组顺序 = 已知顺序 + 数据里实际出现过的其它分组。
+  // 早先这里直接 map(GROUP_ORDER)，后端新注册的节点因为落进 '其他' 分组，会被整个过滤掉、
+  // 在物料面板里凭空消失且不报错 —— 所以改成按实际数据补齐分组。
+  const seenGroups = Array.from(new Set(materialItems.map((item) => item.group)))
+  const orderedGroups = [
+    ...GROUP_ORDER.filter((group) => seenGroups.includes(group)),
+    ...seenGroups.filter((group) => !GROUP_ORDER.includes(group))
+  ]
+
+  return orderedGroups.map((groupTitle) => ({
     key: groupTitle,
     title: groupTitle,
     items: materialItems.filter((item) => item.group === groupTitle)
-  })).filter((group) => group.items.length > 0)
+  }))
 }
