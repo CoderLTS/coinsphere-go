@@ -92,7 +92,7 @@ func (s *Server) handleValidateAiModel(w http.ResponseWriter, r *http.Request, p
 		fail(w, err.Error())
 		return
 	}
-	data, err := s.App.ValidateAiModelConfig(configID, principal)
+	data, err := s.App.ValidateAiModelConfig(r.Context(), configID, principal)
 	if err != nil {
 		fail(w, err.Error())
 		return
@@ -340,7 +340,7 @@ func (s *Server) handleAssistantStream(w http.ResponseWriter, r *http.Request, p
 		flusher.Flush()
 		return nil
 	}
-	if err := s.App.StreamSession(principal, sessionID, *payload, emit); err != nil {
+	if err := s.App.StreamSession(r.Context(), principal, sessionID, *payload, emit); err != nil {
 		// 流已经开始输出,只能以 error 事件收尾。
 		_ = emit(service.StreamEvent{Name: "error", Data: M{"code": 400, "msg": err.Error()}})
 		_ = emit(service.StreamEvent{Name: "done", Data: M{}})

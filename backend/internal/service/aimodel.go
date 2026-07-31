@@ -7,6 +7,7 @@ package service
 // import:引入本文件用到的其它包。标准库(如 encoding/json)直接写包名;
 // 本项目的包以 module 名 coinsphere/backend 开头(见 GO入门笔记『module / package / import』)。
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"time"
@@ -22,20 +23,15 @@ const (
 	aiProviderOpenAICompatible = "openai_compatible"
 	aiProviderAnthropic        = "anthropic"
 	aiProviderGemini           = "gemini"
-
-	agentDataSourceNone          = "none"
-	agentDataSourceSystemContext = "system_context"
-	agentDataSourceNewsContext   = "news_context"
 )
+
+// 智能体数据源的编码常量与注册表在 agentsource.go —— 那边是"代码即真源"的登记处,
+// 这里不再另抄一份名单。
 
 // map[键类型]值类型 是 Go 的字典/哈希表(见 GO入门笔记『复合类型』)。
 // 这里用 map[string]bool 当"集合":要判断某个字符串是不是合法取值,查一下 map 即可。
 var aiProviderTypes = map[string]bool{
 	aiProviderOpenAICompatible: true, aiProviderAnthropic: true, aiProviderGemini: true,
-}
-
-var agentDataSourceTypes = map[string]bool{
-	agentDataSourceNone: true, agentDataSourceSystemContext: true, agentDataSourceNewsContext: true,
 }
 
 var builtinAgentCodes = map[string]bool{"system_general": true, "news_analysis": true}
@@ -61,7 +57,7 @@ type AiModelUpsertPayload struct {
 
 // ListAiModelConfigs 当前用户的模型配置列表。
 // (a *App) 是"方法接收者":把函数挂到 *App 类型上,方法内用 a 指代当前 App 实例
-//(见 GO入门笔记『方法与接收者』)。返回值 ([]M, error) 是 Go 的多返回值:结果 + 错误,
+// (见 GO入门笔记『方法与接收者』)。返回值 ([]M, error) 是 Go 的多返回值:结果 + 错误,
 // 约定 error 放最后(见 GO入门笔记『变量、函数、错误』)。M 是本项目 map[string]any 的别名,专门拿来拼 JSON。
 func (a *App) ListAiModelConfigs(principal *Principal) ([]M, error) {
 	// := 是短变量声明,自动推断类型,一次接住两个返回值;
@@ -149,7 +145,7 @@ func (a *App) SetAiModelEnabled(configID int64, enabled bool, principal *Princip
 }
 
 // ValidateAiModelConfig 连通性校验。
-func (a *App) ValidateAiModelConfig(configID int64, principal *Principal) (M, error) {
+func (a *App) ValidateAiModelConfig(ctx context.Context, configID int64, principal *Principal) (M, error) {
 	if _, err := a.requireModelConfig(configID, principal.User.ID); err != nil {
 		return nil, err
 	}
@@ -157,7 +153,7 @@ func (a *App) ValidateAiModelConfig(configID int64, principal *Principal) (M, er
 	if err != nil {
 		return nil, err
 	}
-	ok, message := validateAiConfig(runtime)
+	ok, message := validateAiConfig(ctx, runtime)
 	status := "failed"
 	if ok {
 		status = "success"
@@ -385,11 +381,8 @@ func (a *App) GetAssistantAgentMeta() M {
 		})
 	}
 	return M{
-		"dataSourceOptions": []M{
-			{"value": agentDataSourceNone, "label": "无额外数据源"},
-			{"value": agentDataSourceSystemContext, "label": "系统上下文"},
-			{"value": agentDataSourceNewsContext, "label": "新闻上下文"},
-		},
+		// 数据源选项直接来自注册表(见 agentsource.go),加一种数据源前端下拉自动就有。
+		"dataSourceOptions": listAgentDataSourceOptions(),
 		"agentOptions":      options,
 		"builtinAgentCodes": []string{"news_analysis", "system_general"},
 	}
@@ -609,7 +602,7 @@ func buildAgentFields(payload AssistantAgentUpsertPayload) (map[string]any, erro
 	if systemPrompt == "" {
 		return nil, bizErr("系统提示词不能为空")
 	}
-	if !agentDataSourceTypes[dataSourceType] {
+	if getAgentDataSource(dataSourceType) == nil {
 		return nil, bizErr("不支持的智能体数据来源类型")
 	}
 	starters := make([]string, 0, len(payload.StarterPrompts))
