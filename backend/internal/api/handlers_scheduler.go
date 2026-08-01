@@ -50,6 +50,11 @@ func (s *Server) handleListNodeDefinitions(w http.ResponseWriter, r *http.Reques
 	ok(w, s.App.ListNodeDefinitions())
 }
 
+// handleListWorkflowAgentOptions 工作流编辑器里 assistant.agent 节点的智能体下拉选项。
+func (s *Server) handleListWorkflowAgentOptions(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	ok(w, s.App.ListWorkflowAgentOptions())
+}
+
 func (s *Server) handleListWorkflowDefinitions(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
 	data, err := s.App.ListWorkflowDefinitions()
 	respond(w, data, err, "")

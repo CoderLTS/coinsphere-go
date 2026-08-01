@@ -25,7 +25,7 @@
  * ## 使用方式
  *
  * ```typescript
-* const params: Api.Auth.LoginParams = { username: 'coinsphere', password: 'coinsphere' }
+ * const params: Api.Auth.LoginParams = { username: 'coinsphere', password: 'coinsphere' }
  * const response: Api.Auth.UserInfo = await fetchUserInfo()
  * ```
  *
@@ -259,7 +259,10 @@ declare namespace Api {
     /** 角色搜索参数 */
     type RoleSearchParams = Partial<
       Pick<RoleListItem, 'id' | 'displayName' | 'code' | 'description' | 'isEnabled'> &
-        Api.Common.CommonSearchParams
+        Api.Common.CommonSearchParams & {
+          startTime: string | null
+          endTime: string | null
+        }
     >
 
     interface RoleUpsertPayload {
@@ -855,7 +858,7 @@ declare namespace Api {
       transitionLogs: Api.Scheduler.WorkflowExecutionTransitionLog[]
     }
 
-    interface WorkflowExecutionList extends Api.Common.PaginatedResponse<WorkflowExecutionItem> {}
+    type WorkflowExecutionList = Api.Common.PaginatedResponse<WorkflowExecutionItem>
 
     interface WorkflowManualRunPayload {
       startEntryKeys: string[]
@@ -921,4 +924,3 @@ declare namespace Api {
     }
   }
 }
-

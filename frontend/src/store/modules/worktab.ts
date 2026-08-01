@@ -442,7 +442,10 @@ export const useWorktabStore = defineStore(
          * 这里只命中 catch-all 404 或隐藏标签页时，都视为无效缓存标签，
          * 避免旧版本残留路径被错误恢复成“404”工作标签。
          */
-        const isResolvedRouteUsable = (tab: Partial<WorkTab>, route: ReturnType<Router['resolve']>): boolean => {
+        const isResolvedRouteUsable = (
+          tab: Partial<WorkTab>,
+          route: ReturnType<Router['resolve']>
+        ): boolean => {
           const matchedRoute = route.matched[route.matched.length - 1]
           if (!matchedRoute) {
             return false

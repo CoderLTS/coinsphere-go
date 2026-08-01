@@ -146,13 +146,15 @@
 
   const triggerTypeLabel = (value: string) =>
     (
-      {
+      ({
         manual: '手动触发',
         schedule: '定时触发',
         event: '事件触发',
         webhook: 'Webhook 触发'
-      } as Record<string, string>
-    )[value] || value || '--'
+      }) as Record<string, string>
+    )[value] ||
+    value ||
+    '--'
 
   const statusTagType = (status: string) => {
     if (status === 'failed') return 'danger'
@@ -163,14 +165,16 @@
 
   const formatStatusLabel = (status: string) =>
     (
-      {
+      ({
         queued: '排队中',
         running: '运行中',
         retry_waiting: '等待重试',
         success: '成功',
         failed: '失败'
-      } as Record<string, string>
-    )[status] || status || '--'
+      }) as Record<string, string>
+    )[status] ||
+    status ||
+    '--'
 
   const renderViewButton = (row: WorkflowExecutionItem) =>
     h(
@@ -221,7 +225,9 @@
       minWidth: 100,
       align: 'center',
       formatter: (row) =>
-        h(ElTag, { type: statusTagType(row.status), effect: 'plain' }, () => formatStatusLabel(row.status))
+        h(ElTag, { type: statusTagType(row.status), effect: 'plain' }, () =>
+          formatStatusLabel(row.status)
+        )
     },
     {
       prop: 'startedAt',
@@ -263,7 +269,8 @@
 
   const hasInflightExecutions = computed(() =>
     executionList.value.records.some(
-      (item) => item.status === 'queued' || item.status === 'running' || item.status === 'retry_waiting'
+      (item) =>
+        item.status === 'queued' || item.status === 'running' || item.status === 'retry_waiting'
     )
   )
 

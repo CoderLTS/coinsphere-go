@@ -2,12 +2,7 @@
 <template>
   <div class="workflow-execution-detail" :style="pageStyle">
     <div class="workflow-execution-detail__layout" v-loading="loading">
-      <ElResult
-        v-if="loadError"
-        icon="warning"
-        title="执行详情加载失败"
-        :sub-title="loadError"
-      >
+      <ElResult v-if="loadError" icon="warning" title="执行详情加载失败" :sub-title="loadError">
         <template #extra>
           <ElSpace>
             <ElButton @click="handleBack">返回执行记录</ElButton>
@@ -30,41 +25,36 @@
             class="workflow-execution-detail__toolbar workflow-execution-detail__overlay-card"
             :style="toolbarStyle"
           >
-          <div class="workflow-execution-detail__header-main">
-            <div class="workflow-execution-detail__header-copy">
-              <div class="workflow-execution-detail__title">{{ executionDetail.workflowDefinitionName }}</div>
-            </div>
+            <div class="workflow-execution-detail__header-main">
+              <div class="workflow-execution-detail__header-copy">
+                <div class="workflow-execution-detail__title">{{
+                  executionDetail.workflowDefinitionName
+                }}</div>
+              </div>
 
-            <div class="workflow-execution-detail__header-status">
-              <ElTag :type="statusTagType(executionDetail.status)" effect="plain">
-                {{ statusLabel(executionDetail.status) }}
-              </ElTag>
-              <ElTag type="info" effect="plain">
-                {{ triggerTypeLabel(executionDetail.triggerType) }}
-              </ElTag>
-              <ElTag v-if="executionDetail.finishedAt" type="info" effect="plain">
-                耗时 {{ formatDuration(executionDetail.durationMs) }}
-              </ElTag>
-              <ElTooltip :content="inspectorVisible ? '隐藏执行总览' : '显示执行总览'" placement="bottom">
-                <ElTag
-                  type="info"
-                  effect="plain"
-                  :class="[
-                    'workflow-execution-detail__toggle-tag',
-                    { 'workflow-execution-detail__toggle-tag--active': inspectorVisible }
-                  ]"
-                  @click="inspectorVisible = !inspectorVisible"
-                >
-                  {{ inspectorVisible ? '隐藏执行总览' : '显示执行总览' }}
+              <div class="workflow-execution-detail__header-status">
+                <ElTag :type="statusTagType(executionDetail.status)" effect="plain">
+                  {{ statusLabel(executionDetail.status) }}
                 </ElTag>
-              </ElTooltip>
+                <ElTag type="info" effect="plain">
+                  {{ triggerTypeLabel(executionDetail.triggerType) }}
+                </ElTag>
+                <ElTag v-if="executionDetail.finishedAt" type="info" effect="plain">
+                  耗时 {{ formatDuration(executionDetail.durationMs) }}
+                </ElTag>
+              </div>
             </div>
-          </div>
+          </section>
 
-        </section>
-
-          <div class="workflow-execution-detail__panel-toggle workflow-execution-detail__overlay-card">
-            <ElTooltip :content="inspectorVisible ? '隐藏详情面板' : '显示详情面板'" placement="bottom">
+          <!-- 详情面板只保留这一个开关。早先标题栏里还有一个可点的 Tag 控制同一个状态，
+               两处文案还不一样（"隐藏执行总览" / "收起面板"），看着像两个功能。 -->
+          <div
+            class="workflow-execution-detail__panel-toggle workflow-execution-detail__overlay-card"
+          >
+            <ElTooltip
+              :content="inspectorVisible ? '隐藏详情面板' : '显示详情面板'"
+              placement="bottom"
+            >
               <ElButton
                 plain
                 class="workflow-execution-detail__panel-btn"
@@ -79,241 +69,286 @@
           </div>
 
           <div class="workflow-execution-detail__body">
-          <div class="workflow-execution-detail__canvas-pane">
-            <WorkflowExecutionCanvas
-              :graph="domainGraph"
-              :node-logs="executionDetail.nodeLogs"
-              :transition-logs="executionDetail.transitionLogs"
-              :start-node-id="executionDetail.startNodeId"
-              @selection-change="handleSelectionChange"
-            />
-          </div>
-
-          <aside
-            v-show="inspectorVisible"
-            class="workflow-execution-detail__inspector workflow-execution-detail__inspector--left workflow-execution-detail__overlay-card"
-          >
-            <div class="workflow-execution-detail__inspector-header">
-              <div class="workflow-execution-detail__inspector-title">{{ inspectorTitle }}</div>
-              <ElButton
-                v-if="selectedCellId"
-                link
-                type="primary"
-                @click="clearSelection"
-              >
-                清除选中
-              </ElButton>
+            <div class="workflow-execution-detail__canvas-pane">
+              <WorkflowExecutionCanvas
+                :graph="domainGraph"
+                :node-logs="executionDetail.nodeLogs"
+                :transition-logs="executionDetail.transitionLogs"
+                :start-node-id="executionDetail.startNodeId"
+                @selection-change="handleSelectionChange"
+              />
             </div>
 
-            <ElScrollbar class="workflow-execution-detail__inspector-scroll">
-              <div class="workflow-execution-detail__inspector-body">
-                <template v-if="selectedNode">
-                  <div class="workflow-execution-detail__section">
-                    <div class="workflow-execution-detail__section-title">节点概览</div>
-                    <ElDescriptions :column="1" border size="small">
-                      <ElDescriptionsItem label="节点名称">{{ selectedNode.data.title }}</ElDescriptionsItem>
-                      <ElDescriptionsItem label="节点类型">{{ selectedNode.data.typeCode }}</ElDescriptionsItem>
-                      <ElDescriptionsItem label="执行次数">{{ selectedNodeLogs.length }}</ElDescriptionsItem>
-                      <ElDescriptionsItem label="执行状态">
-                        <ElTag :type="statusTagType(selectedNodeStatus)" effect="plain">
-                          {{ statusLabel(selectedNodeStatus) }}
-                        </ElTag>
-                      </ElDescriptionsItem>
-                    </ElDescriptions>
-                  </div>
-
-                  <div class="workflow-execution-detail__section">
-                    <div class="workflow-execution-detail__section-title">节点配置</div>
-                    <div class="workflow-execution-detail__json-block">
-                      <pre>{{ formatJsonText(selectedNode.data.config) }}</pre>
-                    </div>
-                  </div>
-
-                  <ElAlert
-                    v-if="selectedNodeLogs.some((item) => item.errorMessage)"
-                    class="workflow-execution-detail__alert"
-                    type="error"
-                    :closable="false"
-                    :title="selectedNodeLogs.find((item) => item.errorMessage)?.errorMessage || '节点执行失败'"
-                  />
-
-                  <div
-                    v-for="(log, index) in selectedNodeLogs"
-                    :key="log.id"
-                    class="workflow-execution-detail__section workflow-execution-detail__log-card"
-                  >
-                    <div class="workflow-execution-detail__section-title">
-                      {{ selectedNodeLogs.length > 1 ? `第 ${index + 1} 次节点执行` : '节点执行详情' }}
-                    </div>
-
-                    <ElDescriptions :column="1" border size="small">
-                      <ElDescriptionsItem label="开始时间">{{ log.startedAt || '--' }}</ElDescriptionsItem>
-                      <ElDescriptionsItem label="结束时间">{{ log.finishedAt || '--' }}</ElDescriptionsItem>
-                      <ElDescriptionsItem label="耗时">{{ formatDuration(log.durationMs) }}</ElDescriptionsItem>
-                      <ElDescriptionsItem label="状态">
-                        <ElTag :type="statusTagType(log.status)" effect="plain">
-                          {{ statusLabel(log.status) }}
-                        </ElTag>
-                      </ElDescriptionsItem>
-                    </ElDescriptions>
-
-                    <div class="workflow-execution-detail__json-group">
-                      <div class="workflow-execution-detail__json-block">
-                        <div class="workflow-execution-detail__json-title">输入快照</div>
-                        <pre>{{ formatJsonText(log.inputSnapshotJson) }}</pre>
-                      </div>
-                      <div class="workflow-execution-detail__json-block">
-                        <div class="workflow-execution-detail__json-title">输出快照</div>
-                        <pre>{{ formatJsonText(log.outputSnapshotJson) }}</pre>
-                      </div>
-                    </div>
-                  </div>
-                </template>
-
-                <template v-else-if="selectedEdge">
-                  <div class="workflow-execution-detail__section">
-                    <div class="workflow-execution-detail__section-title">边流转概览</div>
-                    <ElDescriptions :column="1" border size="small">
-                      <ElDescriptionsItem label="源节点">{{ selectedEdgeSourceTitle }}</ElDescriptionsItem>
-                      <ElDescriptionsItem label="目标节点">{{ selectedEdgeTargetTitle }}</ElDescriptionsItem>
-                      <ElDescriptionsItem label="连线标签">{{ selectedEdge.data.label || '--' }}</ElDescriptionsItem>
-                      <ElDescriptionsItem label="命中次数">{{ selectedEdgeTransitions.length }}</ElDescriptionsItem>
-                    </ElDescriptions>
-                  </div>
-
-                  <ElEmpty
-                    v-if="!selectedEdgeTransitions.length"
-                    description="这条边在本次执行中没有被实际命中"
-                  />
-
-                  <div
-                    v-for="(transition, index) in selectedEdgeTransitions"
-                    :key="transition.id"
-                    class="workflow-execution-detail__section workflow-execution-detail__log-card"
-                  >
-                    <div class="workflow-execution-detail__section-title">
-                      {{ transitionTitle(transition, index) }}
-                    </div>
-
-                    <ElDescriptions :column="1" border size="small">
-                      <ElDescriptionsItem label="流转顺序">{{ transition.traversalIndex }}</ElDescriptionsItem>
-                      <ElDescriptionsItem label="循环轮次">
-                        {{ transition.iterationIndex ?? '--' }}
-                      </ElDescriptionsItem>
-                      <ElDescriptionsItem label="分支标识">
-                        {{ transition.branchKey || '--' }}
-                      </ElDescriptionsItem>
-                      <ElDescriptionsItem label="记录时间">
-                        {{ transition.createdAt || '--' }}
-                      </ElDescriptionsItem>
-                    </ElDescriptions>
-
-                    <div class="workflow-execution-detail__json-block">
-                      <div class="workflow-execution-detail__json-title">边上传递的数据</div>
-                      <pre>{{ formatJsonText(transition.payloadSnapshotJson) }}</pre>
-                    </div>
-                  </div>
-                </template>
-
-                <template v-else>
-                  <div class="workflow-execution-detail__section">
-                    <div class="workflow-execution-detail__section-title">执行总览</div>
-                    <ElDescriptions :column="1" border size="small">
-                      <ElDescriptionsItem label="工作流">{{ executionDetail.workflowDefinitionName }}</ElDescriptionsItem>
-                      <ElDescriptionsItem label="定义版本">
-                        {{ executionDetail.workflowDefinitionCode }} / v{{ executionDetail.workflowDefinitionVersion }}
-                      </ElDescriptionsItem>
-                      <ElDescriptionsItem label="开始入口">{{ executionDetail.startEntryKey || '--' }}</ElDescriptionsItem>
-                      <ElDescriptionsItem label="开始时间">{{ executionDetail.startedAt || executionDetail.queuedAt || '--' }}</ElDescriptionsItem>
-                      <ElDescriptionsItem label="结束时间">{{ executionDetail.finishedAt || '--' }}</ElDescriptionsItem>
-                      <ElDescriptionsItem label="执行耗时">{{ formatDuration(executionDetail.durationMs) }}</ElDescriptionsItem>
-                      <ElDescriptionsItem label="触发方式">
-                        {{ triggerTypeLabel(executionDetail.triggerType) }}
-                      </ElDescriptionsItem>
-                      <ElDescriptionsItem label="执行状态">
-                        <ElTag :type="statusTagType(executionDetail.status)" effect="plain">
-                          {{ statusLabel(executionDetail.status) }}
-                        </ElTag>
-                      </ElDescriptionsItem>
-                      <ElDescriptionsItem label="当前尝试次数">
-                        {{ executionDetail.attemptCount }}/{{ executionDetail.maxAttempts }}
-                      </ElDescriptionsItem>
-                      <ElDescriptionsItem label="当前 Worker">
-                        {{ executionDetail.workerId || '--' }}
-                      </ElDescriptionsItem>
-                      <ElDescriptionsItem label="下次重试时间">
-                        {{ executionDetail.nextRetryAt || '--' }}
-                      </ElDescriptionsItem>
-                      <ElDescriptionsItem label="失败分类">
-                        {{ executionDetail.failureCategory || '--' }}
-                      </ElDescriptionsItem>
-                      <ElDescriptionsItem label="节点执行数">
-                        {{ executedNodeCount }}/{{ domainGraph.nodes.length }}
-                      </ElDescriptionsItem>
-                      <ElDescriptionsItem label="边流转数">
-                        {{ executionDetail.transitionLogs.length }}/{{ domainGraph.edges.length }}
-                      </ElDescriptionsItem>
-                      <ElDescriptionsItem label="边流转日志">
-                        {{ executionDetail.transitionLogs.length ? `${executionDetail.transitionLogs.length} 条` : '暂无流转日志' }}
-                      </ElDescriptionsItem>
-                    </ElDescriptions>
-                  </div>
-
-                  <div class="workflow-execution-detail__section">
-                    <div class="workflow-execution-detail__section-title">尝试历史</div>
-                    <ElEmpty
-                      v-if="!executionDetail.attempts.length"
-                      description="当前执行还没有落库的 attempt 历史"
-                    />
-                    <ElTable v-else :data="executionDetail.attempts" stripe size="small">
-                      <ElTableColumn prop="attempt" label="尝试" width="72" align="center" />
-                      <ElTableColumn prop="workerId" label="Worker" min-width="150" show-overflow-tooltip />
-                      <ElTableColumn label="状态" width="110" align="center">
-                        <template #default="{ row }">
-                          <ElTag :type="statusTagType(row.status)" effect="plain">
-                            {{ statusLabel(row.status) }}
-                          </ElTag>
-                        </template>
-                      </ElTableColumn>
-                      <ElTableColumn prop="startedAt" label="开始时间" min-width="160" />
-                      <ElTableColumn prop="finishedAt" label="结束时间" min-width="160" />
-                      <ElTableColumn prop="failureCategory" label="失败分类" min-width="120" />
-                    </ElTable>
-                  </div>
-
-                  <ElAlert
-                    v-if="!executionDetail.transitionLogs.length"
-                    class="workflow-execution-detail__alert"
-                    type="info"
-                    :closable="false"
-                    title="当前执行没有边级流转日志，图上未命中边会自动保持弱化显示。"
-                  />
-
-                  <div class="workflow-execution-detail__section">
-                    <div class="workflow-execution-detail__section-title">执行输入</div>
-                    <div class="workflow-execution-detail__json-block">
-                      <pre>{{ formatJsonText(executionDetail.inputSnapshotJson) }}</pre>
-                    </div>
-                  </div>
-
-                  <div class="workflow-execution-detail__section">
-                    <div class="workflow-execution-detail__section-title">执行上下文</div>
-                    <div class="workflow-execution-detail__json-block">
-                      <pre>{{ formatJsonText(executionDetail.contextSnapshotJson) }}</pre>
-                    </div>
-                  </div>
-
-                  <div class="workflow-execution-detail__section">
-                    <div class="workflow-execution-detail__section-title">执行结果</div>
-                    <div class="workflow-execution-detail__json-block">
-                      <pre>{{ formatJsonText(executionDetail.resultSnapshotJson) }}</pre>
-                    </div>
-                  </div>
-                </template>
+            <aside
+              v-show="inspectorVisible"
+              class="workflow-execution-detail__inspector workflow-execution-detail__inspector--left workflow-execution-detail__overlay-card"
+            >
+              <div class="workflow-execution-detail__inspector-header">
+                <div class="workflow-execution-detail__inspector-title">{{ inspectorTitle }}</div>
+                <ElButton v-if="selectedCellId" link type="primary" @click="clearSelection">
+                  清除选中
+                </ElButton>
               </div>
-            </ElScrollbar>
-          </aside>
-        </div>
+
+              <ElScrollbar class="workflow-execution-detail__inspector-scroll">
+                <div class="workflow-execution-detail__inspector-body">
+                  <template v-if="selectedNode">
+                    <div class="workflow-execution-detail__section">
+                      <div class="workflow-execution-detail__section-title">节点概览</div>
+                      <ElDescriptions :column="1" border size="small">
+                        <ElDescriptionsItem label="节点名称">{{
+                          selectedNode.data.title
+                        }}</ElDescriptionsItem>
+                        <ElDescriptionsItem label="节点类型">{{
+                          selectedNode.data.typeCode
+                        }}</ElDescriptionsItem>
+                        <ElDescriptionsItem label="执行次数">{{
+                          selectedNodeLogs.length
+                        }}</ElDescriptionsItem>
+                        <ElDescriptionsItem label="执行状态">
+                          <ElTag :type="statusTagType(selectedNodeStatus)" effect="plain">
+                            {{ statusLabel(selectedNodeStatus) }}
+                          </ElTag>
+                        </ElDescriptionsItem>
+                      </ElDescriptions>
+                    </div>
+
+                    <div class="workflow-execution-detail__section">
+                      <div class="workflow-execution-detail__section-title">节点配置</div>
+                      <div class="workflow-execution-detail__json-block">
+                        <pre>{{ formatJsonText(selectedNode.data.config) }}</pre>
+                      </div>
+                    </div>
+
+                    <ElAlert
+                      v-if="selectedNodeLogs.some((item) => item.errorMessage)"
+                      class="workflow-execution-detail__alert"
+                      type="error"
+                      :closable="false"
+                      :title="
+                        selectedNodeLogs.find((item) => item.errorMessage)?.errorMessage ||
+                        '节点执行失败'
+                      "
+                    />
+
+                    <div
+                      v-for="(log, index) in selectedNodeLogs"
+                      :key="log.id"
+                      class="workflow-execution-detail__section workflow-execution-detail__log-card"
+                    >
+                      <div class="workflow-execution-detail__section-title">
+                        {{
+                          selectedNodeLogs.length > 1
+                            ? `第 ${index + 1} 次节点执行`
+                            : '节点执行详情'
+                        }}
+                      </div>
+
+                      <ElDescriptions :column="1" border size="small">
+                        <ElDescriptionsItem label="开始时间">{{
+                          log.startedAt || '--'
+                        }}</ElDescriptionsItem>
+                        <ElDescriptionsItem label="结束时间">{{
+                          log.finishedAt || '--'
+                        }}</ElDescriptionsItem>
+                        <ElDescriptionsItem label="耗时">{{
+                          formatDuration(log.durationMs)
+                        }}</ElDescriptionsItem>
+                        <ElDescriptionsItem label="状态">
+                          <ElTag :type="statusTagType(log.status)" effect="plain">
+                            {{ statusLabel(log.status) }}
+                          </ElTag>
+                        </ElDescriptionsItem>
+                      </ElDescriptions>
+
+                      <div class="workflow-execution-detail__json-group">
+                        <div class="workflow-execution-detail__json-block">
+                          <div class="workflow-execution-detail__json-title">输入快照</div>
+                          <pre>{{ formatJsonText(log.inputSnapshotJson) }}</pre>
+                        </div>
+                        <div class="workflow-execution-detail__json-block">
+                          <div class="workflow-execution-detail__json-title">输出快照</div>
+                          <pre>{{ formatJsonText(log.outputSnapshotJson) }}</pre>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+
+                  <template v-else-if="selectedEdge">
+                    <div class="workflow-execution-detail__section">
+                      <div class="workflow-execution-detail__section-title">边流转概览</div>
+                      <ElDescriptions :column="1" border size="small">
+                        <ElDescriptionsItem label="源节点">{{
+                          selectedEdgeSourceTitle
+                        }}</ElDescriptionsItem>
+                        <ElDescriptionsItem label="目标节点">{{
+                          selectedEdgeTargetTitle
+                        }}</ElDescriptionsItem>
+                        <ElDescriptionsItem label="连线标签">{{
+                          selectedEdge.data.label || '--'
+                        }}</ElDescriptionsItem>
+                        <ElDescriptionsItem label="命中次数">{{
+                          selectedEdgeTransitions.length
+                        }}</ElDescriptionsItem>
+                      </ElDescriptions>
+                    </div>
+
+                    <ElEmpty
+                      v-if="!selectedEdgeTransitions.length"
+                      description="这条边在本次执行中没有被实际命中"
+                    />
+
+                    <div
+                      v-for="(transition, index) in selectedEdgeTransitions"
+                      :key="transition.id"
+                      class="workflow-execution-detail__section workflow-execution-detail__log-card"
+                    >
+                      <div class="workflow-execution-detail__section-title">
+                        {{ transitionTitle(transition, index) }}
+                      </div>
+
+                      <ElDescriptions :column="1" border size="small">
+                        <ElDescriptionsItem label="流转顺序">{{
+                          transition.traversalIndex
+                        }}</ElDescriptionsItem>
+                        <ElDescriptionsItem label="循环轮次">
+                          {{ transition.iterationIndex ?? '--' }}
+                        </ElDescriptionsItem>
+                        <ElDescriptionsItem label="分支标识">
+                          {{ transition.branchKey || '--' }}
+                        </ElDescriptionsItem>
+                        <ElDescriptionsItem label="记录时间">
+                          {{ transition.createdAt || '--' }}
+                        </ElDescriptionsItem>
+                      </ElDescriptions>
+
+                      <div class="workflow-execution-detail__json-block">
+                        <div class="workflow-execution-detail__json-title">边上传递的数据</div>
+                        <pre>{{ formatJsonText(transition.payloadSnapshotJson) }}</pre>
+                      </div>
+                    </div>
+                  </template>
+
+                  <template v-else>
+                    <div class="workflow-execution-detail__section">
+                      <div class="workflow-execution-detail__section-title">执行总览</div>
+                      <ElDescriptions :column="1" border size="small">
+                        <ElDescriptionsItem label="工作流">{{
+                          executionDetail.workflowDefinitionName
+                        }}</ElDescriptionsItem>
+                        <ElDescriptionsItem label="定义版本">
+                          {{ executionDetail.workflowDefinitionCode }} / v{{
+                            executionDetail.workflowDefinitionVersion
+                          }}
+                        </ElDescriptionsItem>
+                        <ElDescriptionsItem label="开始入口">{{
+                          executionDetail.startEntryKey || '--'
+                        }}</ElDescriptionsItem>
+                        <ElDescriptionsItem label="开始时间">{{
+                          executionDetail.startedAt || executionDetail.queuedAt || '--'
+                        }}</ElDescriptionsItem>
+                        <ElDescriptionsItem label="结束时间">{{
+                          executionDetail.finishedAt || '--'
+                        }}</ElDescriptionsItem>
+                        <ElDescriptionsItem label="执行耗时">{{
+                          formatDuration(executionDetail.durationMs)
+                        }}</ElDescriptionsItem>
+                        <ElDescriptionsItem label="触发方式">
+                          {{ triggerTypeLabel(executionDetail.triggerType) }}
+                        </ElDescriptionsItem>
+                        <ElDescriptionsItem label="执行状态">
+                          <ElTag :type="statusTagType(executionDetail.status)" effect="plain">
+                            {{ statusLabel(executionDetail.status) }}
+                          </ElTag>
+                        </ElDescriptionsItem>
+                        <ElDescriptionsItem label="当前尝试次数">
+                          {{ executionDetail.attemptCount }}/{{ executionDetail.maxAttempts }}
+                        </ElDescriptionsItem>
+                        <ElDescriptionsItem label="当前 Worker">
+                          {{ executionDetail.workerId || '--' }}
+                        </ElDescriptionsItem>
+                        <ElDescriptionsItem label="下次重试时间">
+                          {{ executionDetail.nextRetryAt || '--' }}
+                        </ElDescriptionsItem>
+                        <ElDescriptionsItem label="失败分类">
+                          {{ executionDetail.failureCategory || '--' }}
+                        </ElDescriptionsItem>
+                        <ElDescriptionsItem label="节点执行数">
+                          {{ executedNodeCount }}/{{ domainGraph.nodes.length }}
+                        </ElDescriptionsItem>
+                        <ElDescriptionsItem label="边流转数">
+                          {{ executionDetail.transitionLogs.length }}/{{ domainGraph.edges.length }}
+                        </ElDescriptionsItem>
+                        <ElDescriptionsItem label="边流转日志">
+                          {{
+                            executionDetail.transitionLogs.length
+                              ? `${executionDetail.transitionLogs.length} 条`
+                              : '暂无流转日志'
+                          }}
+                        </ElDescriptionsItem>
+                      </ElDescriptions>
+                    </div>
+
+                    <div class="workflow-execution-detail__section">
+                      <div class="workflow-execution-detail__section-title">尝试历史</div>
+                      <ElEmpty
+                        v-if="!executionDetail.attempts.length"
+                        description="当前执行还没有落库的 attempt 历史"
+                      />
+                      <ElTable v-else :data="executionDetail.attempts" stripe size="small">
+                        <ElTableColumn prop="attempt" label="尝试" width="72" align="center" />
+                        <ElTableColumn
+                          prop="workerId"
+                          label="Worker"
+                          min-width="150"
+                          show-overflow-tooltip
+                        />
+                        <ElTableColumn label="状态" width="110" align="center">
+                          <template #default="{ row }">
+                            <ElTag :type="statusTagType(row.status)" effect="plain">
+                              {{ statusLabel(row.status) }}
+                            </ElTag>
+                          </template>
+                        </ElTableColumn>
+                        <ElTableColumn prop="startedAt" label="开始时间" min-width="160" />
+                        <ElTableColumn prop="finishedAt" label="结束时间" min-width="160" />
+                        <ElTableColumn prop="failureCategory" label="失败分类" min-width="120" />
+                      </ElTable>
+                    </div>
+
+                    <ElAlert
+                      v-if="!executionDetail.transitionLogs.length"
+                      class="workflow-execution-detail__alert"
+                      type="info"
+                      :closable="false"
+                      title="当前执行没有边级流转日志，图上未命中边会自动保持弱化显示。"
+                    />
+
+                    <div class="workflow-execution-detail__section">
+                      <div class="workflow-execution-detail__section-title">执行输入</div>
+                      <div class="workflow-execution-detail__json-block">
+                        <pre>{{ formatJsonText(executionDetail.inputSnapshotJson) }}</pre>
+                      </div>
+                    </div>
+
+                    <div class="workflow-execution-detail__section">
+                      <div class="workflow-execution-detail__section-title">执行上下文</div>
+                      <div class="workflow-execution-detail__json-block">
+                        <pre>{{ formatJsonText(executionDetail.contextSnapshotJson) }}</pre>
+                      </div>
+                    </div>
+
+                    <div class="workflow-execution-detail__section">
+                      <div class="workflow-execution-detail__section-title">执行结果</div>
+                      <div class="workflow-execution-detail__json-block">
+                        <pre>{{ formatJsonText(executionDetail.resultSnapshotJson) }}</pre>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </ElScrollbar>
+            </aside>
+          </div>
         </div>
       </template>
     </div>
@@ -324,11 +359,24 @@
   import { ArrowLeft, Hide, View } from '@element-plus/icons-vue'
   import { ElMessage } from 'element-plus'
   import type { WorkflowExecutionTransitionLog, WorkflowNodeDefinitionItem } from '@/api/scheduler'
-  import { fetchNodeDefinitions, fetchWorkflowExecutionDetail, type WorkflowExecutionDetail } from '@/api/scheduler'
+  import {
+    fetchNodeDefinitions,
+    fetchWorkflowExecutionDetail,
+    type WorkflowExecutionDetail
+  } from '@/api/scheduler'
   import { useAutoLayoutHeight } from '@/hooks/core/useLayoutHeight'
   import WorkflowExecutionCanvas from './components/WorkflowExecutionCanvas.vue'
-  import { flattenMaterials, mapServerGraphToDomain } from '@/views/scheduler/workflow/editor/workflow-editor.mapper'
-  import type { WorkflowActiveCellType, WorkflowDomainGraphModel, WorkflowDomainNode, WorkflowDomainEdge } from '@/views/scheduler/workflow/editor/types'
+  import {
+    flattenMaterials,
+    mapServerGraphToDomain
+  } from '@/views/scheduler/workflow/editor/workflow-editor.mapper'
+  import { syncNodeDefinitions } from '@/views/scheduler/workflow/editor/node-registry'
+  import type {
+    WorkflowActiveCellType,
+    WorkflowDomainGraphModel,
+    WorkflowDomainNode,
+    WorkflowDomainEdge
+  } from '@/views/scheduler/workflow/editor/types'
 
   defineOptions({ name: 'SchedulerWorkflowExecutionDetailPage' })
 
@@ -353,8 +401,12 @@
     width: '720px'
   }))
 
-  const nodeMap = computed(() => new Map((domainGraph.value?.nodes || []).map((item) => [item.id, item])))
-  const edgeMap = computed(() => new Map((domainGraph.value?.edges || []).map((item) => [item.id, item])))
+  const nodeMap = computed(
+    () => new Map((domainGraph.value?.nodes || []).map((item) => [item.id, item]))
+  )
+  const edgeMap = computed(
+    () => new Map((domainGraph.value?.edges || []).map((item) => [item.id, item]))
+  )
 
   const executedNodeCount = computed(() => {
     // 节点执行数按 nodeId 去重，避免 foreach / 重复命中导致同一节点被重复计数。
@@ -363,7 +415,8 @@
   })
 
   const inspectorTitle = computed(() => {
-    if (selectedCellType.value === 'node' && selectedNode.value) return `节点详情 · ${selectedNode.value.data.title}`
+    if (selectedCellType.value === 'node' && selectedNode.value)
+      return `节点详情 · ${selectedNode.value.data.title}`
     if (selectedCellType.value === 'edge' && selectedEdge.value) return '连线流转详情'
     return '执行总览'
   })
@@ -375,7 +428,9 @@
 
   const selectedNodeLogs = computed(() => {
     if (!selectedNode.value) return []
-    return (executionDetail.value?.nodeLogs || []).filter((item) => item.nodeId === selectedNode.value?.id)
+    return (executionDetail.value?.nodeLogs || []).filter(
+      (item) => item.nodeId === selectedNode.value?.id
+    )
   })
 
   const selectedNodeStatus = computed(() => {
@@ -394,11 +449,17 @@
 
   const selectedEdgeTransitions = computed(() => {
     if (!selectedEdge.value) return []
-    return (executionDetail.value?.transitionLogs || []).filter((item) => item.edgeId === selectedEdge.value?.id)
+    return (executionDetail.value?.transitionLogs || []).filter(
+      (item) => item.edgeId === selectedEdge.value?.id
+    )
   })
 
-  const selectedEdgeSourceTitle = computed(() => nodeMap.value.get(selectedEdge.value?.source || '')?.data.title || '--')
-  const selectedEdgeTargetTitle = computed(() => nodeMap.value.get(selectedEdge.value?.target || '')?.data.title || '--')
+  const selectedEdgeSourceTitle = computed(
+    () => nodeMap.value.get(selectedEdge.value?.source || '')?.data.title || '--'
+  )
+  const selectedEdgeTargetTitle = computed(
+    () => nodeMap.value.get(selectedEdge.value?.target || '')?.data.title || '--'
+  )
 
   const handleBack = () => {
     if (window.history.length > 1) {
@@ -413,7 +474,10 @@
     selectedCellType.value = null
   }
 
-  const handleSelectionChange = (payload: { cellId: string | null; cellType: WorkflowActiveCellType }) => {
+  const handleSelectionChange = (payload: {
+    cellId: string | null
+    cellType: WorkflowActiveCellType
+  }) => {
     // 画布只负责回传“当前选中了什么”，详情面板由当前页面统一切换。
     selectedCellId.value = payload.cellId
     selectedCellType.value = payload.cellType
@@ -424,14 +488,16 @@
 
   const statusLabel = (status: string) =>
     (
-      {
+      ({
         queued: '排队中',
         running: '运行中',
         retry_waiting: '等待重试',
         success: '成功',
         failed: '失败'
-      } as Record<string, string>
-    )[status] || status || '--'
+      }) as Record<string, string>
+    )[status] ||
+    status ||
+    '--'
 
   const statusTagType = (status: string) => {
     if (status === 'failed') return 'danger'
@@ -442,13 +508,15 @@
 
   const triggerTypeLabel = (value: string) =>
     (
-      {
+      ({
         manual: '手动触发',
         schedule: '定时触发',
         event: '事件触发',
         webhook: 'Webhook 触发'
-      } as Record<string, string>
-    )[value] || value || '--'
+      }) as Record<string, string>
+    )[value] ||
+    value ||
+    '--'
 
   const formatDuration = (value?: number | null) => {
     if (!value && value !== 0) return '--'
@@ -525,6 +593,8 @@
         fetchNodeDefinitions().catch(() => [] as WorkflowNodeDefinitionItem[])
       ])
       executionDetail.value = detail
+      // 详情画布共用编辑器那套映射，注册表镜像也得同步，端口与分支才画得对。
+      syncNodeDefinitions(nodeDefinitions)
       domainGraph.value = mapServerGraphToDomain(
         detail.graph || { nodes: [], edges: [] },
         nodeDefinitions,
@@ -661,17 +731,6 @@
   .workflow-execution-detail__panel-btn {
     gap: 6px;
     padding: 0 12px;
-  }
-
-  .workflow-execution-detail__toggle-tag {
-    cursor: pointer;
-    user-select: none;
-  }
-
-  .workflow-execution-detail__toggle-tag--active {
-    color: var(--el-color-primary);
-    border-color: var(--el-color-primary-light-5);
-    background: var(--el-color-primary-light-9);
   }
 
   .workflow-execution-detail__icon-btn:hover,

@@ -10,7 +10,12 @@
     />
 
     <ElCard class="art-table-card">
-      <ArtTableHeader :showZebra="false" :loading="loading" v-model:columns="columnChecks" @refresh="loadNews">
+      <ArtTableHeader
+        :showZebra="false"
+        :loading="loading"
+        v-model:columns="columnChecks"
+        @refresh="loadNews"
+      >
         <template #left>
           <ElSpace wrap>
             <ElButton v-auth="'data.news.create'" @click="openAddDialog">
@@ -47,12 +52,7 @@
   import type { Component } from 'vue'
   import { useI18n } from 'vue-i18n'
   import { fetchAssistantModelOptions } from '@/api/assistant'
-  import {
-    fetchCreateNews,
-    fetchDeleteNews,
-    fetchNewsList,
-    fetchUpdateNews
-  } from '@/api/data'
+  import { fetchCreateNews, fetchDeleteNews, fetchNewsList, fetchUpdateNews } from '@/api/data'
   import { useAuth } from '@/hooks/core/useAuth'
   import { useTableColumns } from '@/hooks/core/useTableColumns'
   import { mittBus } from '@/utils/sys'

@@ -25,7 +25,10 @@
           @click="$emit('add', item.typeCode)"
           @dragstart="handleDragStart($event, item.typeCode)"
         >
-          <div class="material-card__badge" :style="{ background: `${item.color}18`, color: item.color }">
+          <div
+            class="material-card__badge"
+            :style="{ background: `${item.color}18`, color: item.color }"
+          >
             {{ item.iconText }}
           </div>
           <div class="material-card__content">

@@ -9,7 +9,11 @@ import {
 import { useUserStore } from './user'
 
 type WsPayload =
-  | { type: 'notice.created'; record: Api.Notifications.InAppNoticeItem | Record<string, any>; unreadCount?: number }
+  | {
+      type: 'notice.created'
+      record: Api.Notifications.InAppNoticeItem | Record<string, any>
+      unreadCount?: number
+    }
   | { type: 'notice.unread'; unreadCount: number }
   | { type: 'pong' }
 
@@ -133,7 +137,10 @@ export const useNotificationStore = defineStore('notificationStore', () => {
     if (userStore.accessMode !== 'authenticated' || !userStore.accessToken) {
       return
     }
-    if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+    if (
+      socket &&
+      (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)
+    ) {
       return
     }
     manualClose = false
@@ -191,7 +198,9 @@ export const useNotificationStore = defineStore('notificationStore', () => {
   }
 })
 
-function normalizeNoticeRecord(raw: Api.Notifications.InAppNoticeItem | Record<string, any>): Api.Notifications.InAppNoticeItem {
+function normalizeNoticeRecord(
+  raw: Api.Notifications.InAppNoticeItem | Record<string, any>
+): Api.Notifications.InAppNoticeItem {
   const record = raw as Record<string, any>
   return {
     id: Number(record.id || 0),

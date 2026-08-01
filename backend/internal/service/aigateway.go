@@ -1,6 +1,13 @@
 // 本文件:作为"客户端"去调用外部 AI 服务(OpenAI 兼容 / Anthropic / Gemini)。
 // 与 internal/api 包正好相反 —— api 包当"服务器"接收别人的请求;这里是我们主动用标准库
 // net/http 向对方接口发请求,再解析返回的流式结果(见 GO入门笔记『框架:net/http』)。
+//
+// 结构上分三层:
+//   1. aiProvider 接口 —— 每种协议只负责"请求怎么拼""一个 SSE 事件怎么解析";
+//   2. 公共流程 —— 发请求、判状态码、按 SSE 切事件,三种协议共用一份;
+//   3. streamAiChat / validateAiConfig —— 对外的两个入口。
+//
+// 这样加第四种协议 = 实现一个 aiProvider + 在 aiProviders 里登记一行,不用复制流程代码。
 
 package service
 
@@ -9,12 +16,20 @@ import (
 	// net/http:发起 HTTP 请求(客户端用法);encoding/json:JSON 编解码。
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+)
+
+// anthropic 协议要求显式给出 max_tokens;没配就用这个默认值(可被模型配置里的"请求体 JSON"覆盖)。
+const (
+	anthropicVersion          = "2023-06-01"
+	anthropicDefaultMaxTokens = 4096
 )
 
 // aiRuntimeConfig 解密后的模型运行配置。
@@ -41,100 +56,97 @@ func (c *aiRuntimeConfig) httpClient() *http.Client {
 	if timeout < 5*time.Second {
 		timeout = 5 * time.Second
 	}
-	// Client.Timeout 限制单次请求的总耗时,是本项目控制超时的方式;
-	// 另一种常见做法是用 context 设 deadline(见 GO入门笔记『并发』的 context)。
-	// &http.Client{...} 用 struct 字面量创建对象并取地址返回。
+	// Client.Timeout 限制单次请求的总耗时。真正的"中途取消"靠请求上挂的 context:
+	// 用户关掉页面时 ctx 被取消,底层连接立刻断开,不会继续从模型侧拉流(也就不再计费)。
 	return &http.Client{Timeout: timeout}
 }
 
-// aiChunk 一段流式输出。
-type aiChunk struct {
-	Reasoning string
-	Content   string
+// endpoint 拼接接口地址,顺手去掉 BaseURL 末尾多余的斜杠。
+func (c *aiRuntimeConfig) endpoint(path string) string {
+	return strings.TrimRight(c.BaseURL, "/") + path
 }
 
-// 函数在 Go 里也是一种"值",可以起个类型名。chunkHandler 就是"接收一个 aiChunk、返回 error
-// 的函数"这种类型 —— 后面把"每收到一段输出该怎么处理"当作回调传进来。
-type chunkHandler func(chunk aiChunk) error
-
-// streamAiChat 按协议类型流式调用模型。
-// switch 按 cfg.ProviderType 的值分支;Go 的 case 默认不"穿透",不用写 break
-//(见 GO入门笔记『其它小语法』)。messages []M 是切片,onChunk 是上面定义的回调函数类型。
-func streamAiChat(cfg *aiRuntimeConfig, messages []M, onChunk chunkHandler) error {
-	switch cfg.ProviderType {
-	case aiProviderOpenAICompatible:
-		return streamOpenAICompatible(cfg, messages, onChunk)
-	case aiProviderAnthropic:
-		return streamAnthropic(cfg, messages, onChunk)
-	case aiProviderGemini:
-		return streamGemini(cfg, messages, onChunk)
-	default:
-		return bizErr("暂不支持的模型协议类型: %s", cfg.ProviderType)
+// applyCustomHeaders 把用户在模型配置里填的额外请求头塞进请求(放最后,允许覆盖默认头)。
+func (c *aiRuntimeConfig) applyCustomHeaders(req *http.Request) {
+	for key, value := range c.Headers {
+		req.Header.Set(key, value)
 	}
 }
 
-// validateAiConfig 连通性校验。
-func validateAiConfig(cfg *aiRuntimeConfig) (bool, string) {
-	var err error
-	switch cfg.ProviderType {
-	case aiProviderOpenAICompatible:
-		err = openAIValidate(cfg)
-	case aiProviderAnthropic:
-		err = anthropicValidate(cfg)
-	case aiProviderGemini:
-		err = geminiValidate(cfg)
-	default:
-		err = bizErr("暂不支持的模型协议类型: %s", cfg.ProviderType)
-	}
-	if err != nil {
-		return false, err.Error()
-	}
-	return true, "连接校验成功"
-}
-
-// ---------- OpenAI 兼容 ----------
-
-func openAIBody(cfg *aiRuntimeConfig, messages []M, stream bool) M {
-	body := M{"model": cfg.ModelName, "messages": messages}
-	if stream {
-		body["stream"] = true
-	} else {
-		body["max_tokens"] = 1
-	}
-	for key, value := range cfg.ExtraBody {
+// withExtraBody 把用户配置的"请求体 JSON"合并进请求体。
+//
+// 注意合并顺序:ExtraBody 在最后,所以用户配的键可以覆盖我们的默认值
+// (比如把 OpenAI 的 stream_options 关掉、把 Anthropic 的 max_tokens 调大)。
+// 三种协议都走这个函数 —— 早先只有 OpenAI 分支合并了 ExtraBody,
+// 同一个配置项换个协议就静默失效。
+func (c *aiRuntimeConfig) withExtraBody(body M) M {
+	for key, value := range c.ExtraBody {
 		body[key] = value
 	}
 	return body
 }
 
-func openAIRequest(cfg *aiRuntimeConfig, body M) (*http.Request, error) {
-	// json.Marshal 把请求体(map)编码成 JSON 字节切片 raw;末尾 _ 丢弃错误返回值。
-	raw, _ := json.Marshal(body)
-	// http.NewRequest 构造一个"客户端请求":POST 方法、目标 URL、请求体。
-	// bytes.NewReader(raw) 把字节切片包装成 io.Reader(可被逐步读取的数据源)。
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(cfg.BaseURL, "/")+"/chat/completions", bytes.NewReader(raw))
-	if err != nil {
-		return nil, err
-	}
-	// 设置请求头:声明请求体是 JSON,并用 Bearer Token 携带 API Key 做鉴权。
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-	// 再把用户自定义的额外请求头逐个塞进去(range 遍历 map 得到 键, 值)。
-	for key, value := range cfg.Headers {
-		req.Header.Set(key, value)
-	}
-	return req, nil
+// aiUsage 一次调用的 token 消耗。三家协议字段名不同,统一归一到这里。
+type aiUsage struct {
+	PromptTokens     int64
+	CompletionTokens int64
+	TotalTokens      int64
 }
 
-func streamOpenAICompatible(cfg *aiRuntimeConfig, messages []M, onChunk chunkHandler) error {
-	req, err := openAIRequest(cfg, openAIBody(cfg, messages, true))
+// aiChunk 一段流式输出。Usage 只在流的末尾出现一次(没有就是 nil)。
+type aiChunk struct {
+	Reasoning string
+	Content   string
+	Usage     *aiUsage
+}
+
+func (c aiChunk) isEmpty() bool { return c.Reasoning == "" && c.Content == "" && c.Usage == nil }
+
+// 函数在 Go 里也是一种"值",可以起个类型名。chunkHandler 就是"接收一个 aiChunk、返回 error
+// 的函数"这种类型 —— 后面把"每收到一段输出该怎么处理"当作回调传进来。
+type chunkHandler func(chunk aiChunk) error
+
+// aiProvider 一种模型协议的适配器。三个方法各管一件事,公共的发请求/判状态/解析 SSE 不在这里。
+type aiProvider interface {
+	// buildStreamRequest 组装一次流式对话请求。
+	buildStreamRequest(ctx context.Context, cfg *aiRuntimeConfig, messages []M) (*http.Request, error)
+	// buildProbeRequest 组装一次"连通性探活"请求,用于配置页的测试连接。
+	buildProbeRequest(ctx context.Context, cfg *aiRuntimeConfig) (*http.Request, error)
+	// parseEvent 从一个 SSE 事件里取出增量内容;返回空 aiChunk 表示这个事件没有可用内容。
+	parseEvent(event string, payload M) (aiChunk, error)
+}
+
+// 协议注册表。加一种协议 = 实现 aiProvider + 在这里登记一行。
+var aiProviders = map[string]aiProvider{
+	aiProviderOpenAICompatible: openAIProvider{},
+	aiProviderAnthropic:        anthropicProvider{},
+	aiProviderGemini:           geminiProvider{},
+}
+
+func resolveAiProvider(providerType string) (aiProvider, error) {
+	if provider, ok := aiProviders[providerType]; ok {
+		return provider, nil
+	}
+	return nil, bizErr("暂不支持的模型协议类型: %s", providerType)
+}
+
+// streamAiChat 按协议类型流式调用模型。
+//
+// ctx 一路传到底层 HTTP 请求:调用方(SSE handler)把 r.Context() 传进来,
+// 用户一关页面 ctx 就被取消,这里的请求随即中断,不会继续拉流。
+func streamAiChat(ctx context.Context, cfg *aiRuntimeConfig, messages []M, onChunk chunkHandler) error {
+	provider, err := resolveAiProvider(cfg.ProviderType)
 	if err != nil {
 		return err
 	}
-	// client.Do(req) 真正把请求发出去,返回响应 resp。
-	resp, err := cfg.httpClient().Do(req)
+	req, err := provider.buildStreamRequest(ctx, cfg, messages)
 	if err != nil {
 		return err
+	}
+	resp, err := cfg.httpClient().Do(req)
+	if err != nil {
+		// 连接失败 / 超时 / 被取消都属于基础设施问题,标成可重试(见 failure.go)。
+		return retryableErr(err)
 	}
 	// defer:登记"函数返回前一定执行"的收尾(见 GO入门笔记『defer』)。
 	// 响应体是一条网络流,必须 Close 才能释放连接;defer 保证无论从哪个分支返回都会关。
@@ -142,190 +154,242 @@ func streamOpenAICompatible(cfg *aiRuntimeConfig, messages []M, onChunk chunkHan
 	if err := ensureSuccessResponse(resp); err != nil {
 		return err
 	}
-	// 把响应体交给 iterateSSE 逐段解析;第二个参数是一个匿名函数(回调),
-	// 每解析出一段就调用它。匿名函数内部可以直接引用外层的 onChunk 等变量。
-	return iterateSSE(resp.Body, func(event string, payload M) error {
-		if event == "error" {
-			return bizErr("%s", extractProviderError(payload))
+	return iterateSSE(ctx, resp.Body, func(event string, payload M) error {
+		chunk, err := provider.parseEvent(event, payload)
+		if err != nil {
+			return err
 		}
-		// 返回的 JSON 已被解析成 map[string]any,取字段要用类型断言把 any 还原成具体类型:
-		// payload["choices"].([]any) 试着把它当数组取出,取不到时 _ 处为 false、值为零值。
-		choices, _ := payload["choices"].([]any)
-		if len(choices) == 0 {
+		if chunk.isEmpty() {
 			return nil
 		}
-		choice, _ := choices[0].(map[string]any)
-		delta, _ := choice["delta"].(map[string]any)
-		reasoning, _ := delta["reasoning_content"].(string)
-		content, _ := delta["content"].(string)
-		if reasoning != "" || content != "" {
-			return onChunk(aiChunk{Reasoning: reasoning, Content: content})
-		}
-		return nil
+		return onChunk(chunk)
 	})
 }
 
-func openAIValidate(cfg *aiRuntimeConfig) error {
-	body := openAIBody(cfg, []M{{"role": "user", "content": "ping"}}, false)
-	req, err := openAIRequest(cfg, body)
+// validateAiConfig 连通性校验。
+func validateAiConfig(ctx context.Context, cfg *aiRuntimeConfig) (bool, string) {
+	provider, err := resolveAiProvider(cfg.ProviderType)
 	if err != nil {
-		return err
+		return false, err.Error()
+	}
+	req, err := provider.buildProbeRequest(ctx, cfg)
+	if err != nil {
+		return false, err.Error()
 	}
 	resp, err := cfg.httpClient().Do(req)
 	if err != nil {
-		return err
+		return false, err.Error()
 	}
 	defer resp.Body.Close()
-	return ensureSuccessResponse(resp)
+	if err := ensureSuccessResponse(resp); err != nil {
+		return false, err.Error()
+	}
+	return true, "连接校验成功"
 }
 
-// ---------- Anthropic ----------
-
-const anthropicVersion = "2023-06-01"
-
-func anthropicRequest(cfg *aiRuntimeConfig, body M) (*http.Request, error) {
-	raw, _ := json.Marshal(body)
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(cfg.BaseURL, "/")+"/v1/messages", bytes.NewReader(raw))
+// jsonRequest 造一个带 JSON 请求体的 POST 请求,并挂上 ctx。
+func jsonRequest(ctx context.Context, method, url string, body M) (*http.Request, error) {
+	// json.Marshal 把请求体(map)编码成 JSON 字节切片 raw。
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	// bytes.NewReader(raw) 把字节切片包装成 io.Reader(可被逐步读取的数据源)。
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(raw))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", cfg.APIKey)
-	req.Header.Set("anthropic-version", anthropicVersion)
-	for key, value := range cfg.Headers {
-		req.Header.Set(key, value)
-	}
 	return req, nil
 }
 
-func streamAnthropic(cfg *aiRuntimeConfig, messages []M, onChunk chunkHandler) error {
+// ---------- OpenAI 兼容 ----------
+
+type openAIProvider struct{}
+
+func (openAIProvider) buildStreamRequest(ctx context.Context, cfg *aiRuntimeConfig, messages []M) (*http.Request, error) {
+	body := cfg.withExtraBody(M{
+		"model":    cfg.ModelName,
+		"messages": messages,
+		"stream":   true,
+		// 让服务端在流末尾补一个带 usage 的分片,用来统计 token。
+		// 少数严格的兼容实现可能不认这个字段,可以在模型配置的"请求体 JSON"里写
+		// {"stream_options": null} 关掉(ExtraBody 最后合并,能覆盖这里)。
+		"stream_options": M{"include_usage": true},
+	})
+	req, err := jsonRequest(ctx, http.MethodPost, cfg.endpoint("/chat/completions"), body)
+	if err != nil {
+		return nil, err
+	}
+	// Bearer Token 鉴权。
+	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	cfg.applyCustomHeaders(req)
+	return req, nil
+}
+
+// 探活用 GET /models:不产生推理,不计费。早先是发一条 max_tokens=1 的真实生成请求,
+// 每点一次"测试连接"都要花钱。
+func (openAIProvider) buildProbeRequest(ctx context.Context, cfg *aiRuntimeConfig) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.endpoint("/models"), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	cfg.applyCustomHeaders(req)
+	return req, nil
+}
+
+func (openAIProvider) parseEvent(event string, payload M) (aiChunk, error) {
+	if event == "error" {
+		return aiChunk{}, bizErr("%s", extractProviderError(payload))
+	}
+	chunk := aiChunk{}
+	// 返回的 JSON 已被解析成 map[string]any,取字段要用类型断言把 any 还原成具体类型:
+	// payload["choices"].([]any) 试着把它当数组取出,取不到时 _ 处为 false、值为零值。
+	if choices, _ := payload["choices"].([]any); len(choices) > 0 {
+		choice, _ := choices[0].(map[string]any)
+		delta, _ := choice["delta"].(map[string]any)
+		chunk.Reasoning, _ = delta["reasoning_content"].(string)
+		chunk.Content, _ = delta["content"].(string)
+	}
+	if usage, ok := payload["usage"].(map[string]any); ok {
+		chunk.Usage = &aiUsage{
+			PromptTokens:     asInt64(usage["prompt_tokens"]),
+			CompletionTokens: asInt64(usage["completion_tokens"]),
+			TotalTokens:      asInt64(usage["total_tokens"]),
+		}
+	}
+	return chunk, nil
+}
+
+// ---------- Anthropic ----------
+
+type anthropicProvider struct{}
+
+func (anthropicProvider) newRequest(ctx context.Context, cfg *aiRuntimeConfig, body M) (*http.Request, error) {
+	req, err := jsonRequest(ctx, http.MethodPost, cfg.endpoint("/v1/messages"), body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("x-api-key", cfg.APIKey)
+	req.Header.Set("anthropic-version", anthropicVersion)
+	cfg.applyCustomHeaders(req)
+	return req, nil
+}
+
+func (p anthropicProvider) buildStreamRequest(ctx context.Context, cfg *aiRuntimeConfig, messages []M) (*http.Request, error) {
 	systemPrompt, requestMessages := splitSystemMessages(messages)
-	body := M{"model": cfg.ModelName, "max_tokens": 2048, "stream": true, "messages": requestMessages}
+	body := M{
+		"model":      cfg.ModelName,
+		"max_tokens": anthropicDefaultMaxTokens,
+		"stream":     true,
+		"messages":   requestMessages,
+	}
 	if systemPrompt != "" {
 		body["system"] = systemPrompt
 	}
-	req, err := anthropicRequest(cfg, body)
-	if err != nil {
-		return err
-	}
-	resp, err := cfg.httpClient().Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if err := ensureSuccessResponse(resp); err != nil {
-		return err
-	}
-	return iterateSSE(resp.Body, func(event string, payload M) error {
-		if event == "error" {
-			return bizErr("%s", extractProviderError(payload))
-		}
-		if event != "content_block_delta" {
-			return nil
-		}
-		delta, _ := payload["delta"].(map[string]any)
-		switch delta["type"] {
-		case "text_delta":
-			if text, _ := delta["text"].(string); text != "" {
-				return onChunk(aiChunk{Content: text})
-			}
-		case "thinking_delta":
-			if thinking, _ := delta["thinking"].(string); thinking != "" {
-				return onChunk(aiChunk{Reasoning: thinking})
-			}
-		}
-		return nil
+	return p.newRequest(ctx, cfg, cfg.withExtraBody(body))
+}
+
+func (p anthropicProvider) buildProbeRequest(ctx context.Context, cfg *aiRuntimeConfig) (*http.Request, error) {
+	// Anthropic 没有免费的探活端点,只能发一条 max_tokens=1 的最小请求。
+	return p.newRequest(ctx, cfg, M{
+		"model": cfg.ModelName, "max_tokens": 1,
+		"messages": []M{{"role": "user", "content": "ping"}},
 	})
 }
 
-func anthropicValidate(cfg *aiRuntimeConfig) error {
-	body := M{"model": cfg.ModelName, "max_tokens": 1, "messages": []M{{"role": "user", "content": "ping"}}}
-	req, err := anthropicRequest(cfg, body)
-	if err != nil {
-		return err
+func (anthropicProvider) parseEvent(event string, payload M) (aiChunk, error) {
+	if event == "error" {
+		return aiChunk{}, bizErr("%s", extractProviderError(payload))
 	}
-	resp, err := cfg.httpClient().Do(req)
-	if err != nil {
-		return err
+	switch event {
+	case "content_block_delta":
+		delta, _ := payload["delta"].(map[string]any)
+		switch delta["type"] {
+		case "text_delta":
+			text, _ := delta["text"].(string)
+			return aiChunk{Content: text}, nil
+		case "thinking_delta":
+			thinking, _ := delta["thinking"].(string)
+			return aiChunk{Reasoning: thinking}, nil
+		}
+	case "message_start":
+		// 输入 token 在流的开头给出。
+		message, _ := payload["message"].(map[string]any)
+		if usage, ok := message["usage"].(map[string]any); ok {
+			return aiChunk{Usage: &aiUsage{PromptTokens: asInt64(usage["input_tokens"])}}, nil
+		}
+	case "message_delta":
+		// 输出 token 在流的末尾给出。
+		if usage, ok := payload["usage"].(map[string]any); ok {
+			return aiChunk{Usage: &aiUsage{CompletionTokens: asInt64(usage["output_tokens"])}}, nil
+		}
 	}
-	defer resp.Body.Close()
-	return ensureSuccessResponse(resp)
+	return aiChunk{}, nil
 }
 
 // ---------- Gemini ----------
 
-func streamGemini(cfg *aiRuntimeConfig, messages []M, onChunk chunkHandler) error {
+type geminiProvider struct{}
+
+// Gemini 的鉴权走 x-goog-api-key 请求头。早先是把 key 拼进 URL 的查询参数,
+// 那样密钥会出现在网关 access log、反向代理日志和任何 URL 采集里。
+func (geminiProvider) newRequest(ctx context.Context, cfg *aiRuntimeConfig, path string, body M) (*http.Request, error) {
+	req, err := jsonRequest(ctx, http.MethodPost, cfg.endpoint(path), body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("x-goog-api-key", cfg.APIKey)
+	cfg.applyCustomHeaders(req)
+	return req, nil
+}
+
+func (p geminiProvider) buildStreamRequest(ctx context.Context, cfg *aiRuntimeConfig, messages []M) (*http.Request, error) {
 	systemPrompt, contents := geminiContents(messages)
 	body := M{"contents": contents}
 	if systemPrompt != "" {
 		body["systemInstruction"] = M{"parts": []M{{"text": systemPrompt}}}
 	}
-	raw, _ := json.Marshal(body)
-	// fmt.Sprintf 用占位符拼字符串(%s = 填入一个字符串)。注意 Gemini 的鉴权方式不同:
-	// API Key 直接拼进 URL 的 key= 查询参数,而不是放在请求头里。
-	url := fmt.Sprintf(
-		"%s/v1beta/models/%s:streamGenerateContent?alt=sse&key=%s",
-		strings.TrimRight(cfg.BaseURL, "/"), cfg.ModelName, cfg.APIKey,
-	)
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(raw))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	for key, value := range cfg.Headers {
-		req.Header.Set(key, value)
-	}
-	resp, err := cfg.httpClient().Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if err := ensureSuccessResponse(resp); err != nil {
-		return err
-	}
-	return iterateSSE(resp.Body, func(event string, payload M) error {
-		if event == "error" {
-			return bizErr("%s", extractProviderError(payload))
-		}
-		candidates, _ := payload["candidates"].([]any)
-		for _, candidateAny := range candidates {
-			candidate, _ := candidateAny.(map[string]any)
-			content, _ := candidate["content"].(map[string]any)
-			parts, _ := content["parts"].([]any)
-			for _, partAny := range parts {
-				part, _ := partAny.(map[string]any)
-				if text, _ := part["text"].(string); text != "" {
-					if err := onChunk(aiChunk{Content: text}); err != nil {
-						return err
-					}
-				}
-			}
-		}
-		return nil
+	// fmt.Sprintf 用占位符拼字符串(%s = 填入一个字符串)。
+	path := fmt.Sprintf("/v1beta/models/%s:streamGenerateContent?alt=sse", cfg.ModelName)
+	return p.newRequest(ctx, cfg, path, cfg.withExtraBody(body))
+}
+
+func (p geminiProvider) buildProbeRequest(ctx context.Context, cfg *aiRuntimeConfig) (*http.Request, error) {
+	path := fmt.Sprintf("/v1beta/models/%s:generateContent", cfg.ModelName)
+	return p.newRequest(ctx, cfg, path, M{
+		"contents": []M{{"role": "user", "parts": []M{{"text": "ping"}}}},
 	})
 }
 
-func geminiValidate(cfg *aiRuntimeConfig) error {
-	body := M{"contents": []M{{"role": "user", "parts": []M{{"text": "ping"}}}}}
-	raw, _ := json.Marshal(body)
-	url := fmt.Sprintf(
-		"%s/v1beta/models/%s:generateContent?key=%s",
-		strings.TrimRight(cfg.BaseURL, "/"), cfg.ModelName, cfg.APIKey,
-	)
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(raw))
-	if err != nil {
-		return err
+func (geminiProvider) parseEvent(event string, payload M) (aiChunk, error) {
+	if event == "error" {
+		return aiChunk{}, bizErr("%s", extractProviderError(payload))
 	}
-	req.Header.Set("Content-Type", "application/json")
-	for key, value := range cfg.Headers {
-		req.Header.Set(key, value)
+	chunk := aiChunk{}
+	var builder strings.Builder
+	candidates, _ := payload["candidates"].([]any)
+	for _, candidateAny := range candidates {
+		candidate, _ := candidateAny.(map[string]any)
+		content, _ := candidate["content"].(map[string]any)
+		parts, _ := content["parts"].([]any)
+		for _, partAny := range parts {
+			part, _ := partAny.(map[string]any)
+			if text, _ := part["text"].(string); text != "" {
+				builder.WriteString(text)
+			}
+		}
 	}
-	resp, err := cfg.httpClient().Do(req)
-	if err != nil {
-		return err
+	chunk.Content = builder.String()
+	if usage, ok := payload["usageMetadata"].(map[string]any); ok {
+		chunk.Usage = &aiUsage{
+			PromptTokens:     asInt64(usage["promptTokenCount"]),
+			CompletionTokens: asInt64(usage["candidatesTokenCount"]),
+			TotalTokens:      asInt64(usage["totalTokenCount"]),
+		}
 	}
-	defer resp.Body.Close()
-	return ensureSuccessResponse(resp)
+	return chunk, nil
 }
 
 func geminiContents(messages []M) (string, []M) {
@@ -364,8 +428,9 @@ func splitSystemMessages(messages []M) (string, []M) {
 
 // iterateSSE 解析 SSE 行流为 (event, JSON payload)。
 // 参数 reader io.Reader 是"任何能被读取的数据源"(接口,见 GO入门笔记『interface』);
-// handle 是处理每个事件的回调函数。
-func iterateSSE(reader io.Reader, handle func(event string, payload M) error) error {
+// handle 是处理每个事件的回调函数。每读一行都检查一次 ctx:整条流可能很长,
+// 用户中途关掉页面时要能立刻停下来。
+func iterateSSE(ctx context.Context, reader io.Reader, handle func(event string, payload M) error) error {
 	// bufio.Scanner 把流按行切开、一行行读;Buffer 设定单行最大缓冲,避免超长行报错。
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
@@ -391,6 +456,9 @@ func iterateSSE(reader io.Reader, handle func(event string, payload M) error) er
 
 	// scanner.Scan() 每读到下一行返回 true,读完返回 false;scanner.Text() 取当前行内容。
 	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			if err := flush(); err != nil {
@@ -415,22 +483,46 @@ func iterateSSE(reader io.Reader, handle func(event string, payload M) error) er
 	return flush()
 }
 
-// ensureSuccessResponse 检查 HTTP 状态码:2xx 视为成功,否则读出错误信息返回。
+// aiHTTPError 模型服务返回的非 2xx 响应。
+// 带上状态码,调用方就能按 401/403/429 这些明确信号给用户话术,
+// 不用再去错误文本里搜 "free tier" 这种关键词。
+type aiHTTPError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *aiHTTPError) Error() string { return e.Message }
+
+// asAiHTTPError 从错误链里取出 aiHTTPError;取不到返回 nil。
+func asAiHTTPError(err error) *aiHTTPError {
+	var target *aiHTTPError
+	if errors.As(err, &target) {
+		return target
+	}
+	return nil
+}
+
+// ensureSuccessResponse 检查 HTTP 状态码:2xx 视为成功,否则读出错误信息并标注可否重试。
 func ensureSuccessResponse(resp *http.Response) error {
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
 	}
 	// io.LimitReader 限制最多读 64KB,防止错误响应过大;io.ReadAll 把剩余内容一次性读完。
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	message := strings.TrimSpace(string(raw))
 	var payload M
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		text := strings.TrimSpace(string(raw))
-		if text == "" {
-			text = fmt.Sprintf("HTTP %d", resp.StatusCode)
-		}
-		return bizErr("%s", text)
+	if err := json.Unmarshal(raw, &payload); err == nil {
+		message = extractProviderError(payload)
 	}
-	return bizErr("%s", extractProviderError(payload))
+	if message == "" {
+		message = fmt.Sprintf("HTTP %d", resp.StatusCode)
+	}
+	httpErr := &aiHTTPError{StatusCode: resp.StatusCode, Message: message}
+	// 429(限流)与 5xx(服务端故障)过一会儿可能就好了;其余 4xx 是请求本身的问题。
+	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+		return retryableErr(httpErr)
+	}
+	return permanentErr(httpErr)
 }
 
 func extractProviderError(payload M) string {

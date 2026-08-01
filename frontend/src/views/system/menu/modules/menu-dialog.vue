@@ -89,17 +89,31 @@
           <ElInput v-model.trim="form.activePath" placeholder="用于隐藏详情页高亮父菜单" />
         </ElFormItem>
         <ElRow :gutter="16">
-          <ElCol :span="8"><ElFormItem label="启用"><ElSwitch v-model="form.isEnable" /></ElFormItem></ElCol>
-          <ElCol :span="8"><ElFormItem label="缓存"><ElSwitch v-model="form.keepAlive" /></ElFormItem></ElCol>
-          <ElCol :span="8"><ElFormItem label="隐藏菜单"><ElSwitch v-model="form.isHide" /></ElFormItem></ElCol>
+          <ElCol :span="8"
+            ><ElFormItem label="启用"><ElSwitch v-model="form.isEnable" /></ElFormItem
+          ></ElCol>
+          <ElCol :span="8"
+            ><ElFormItem label="缓存"><ElSwitch v-model="form.keepAlive" /></ElFormItem
+          ></ElCol>
+          <ElCol :span="8"
+            ><ElFormItem label="隐藏菜单"><ElSwitch v-model="form.isHide" /></ElFormItem
+          ></ElCol>
         </ElRow>
         <ElRow :gutter="16">
-          <ElCol :span="8"><ElFormItem label="隐藏标签"><ElSwitch v-model="form.isHideTab" /></ElFormItem></ElCol>
-          <ElCol :span="8"><ElFormItem label="内嵌页面"><ElSwitch v-model="form.isIframe" /></ElFormItem></ElCol>
-          <ElCol :span="8"><ElFormItem label="固定标签"><ElSwitch v-model="form.fixedTab" /></ElFormItem></ElCol>
+          <ElCol :span="8"
+            ><ElFormItem label="隐藏标签"><ElSwitch v-model="form.isHideTab" /></ElFormItem
+          ></ElCol>
+          <ElCol :span="8"
+            ><ElFormItem label="内嵌页面"><ElSwitch v-model="form.isIframe" /></ElFormItem
+          ></ElCol>
+          <ElCol :span="8"
+            ><ElFormItem label="固定标签"><ElSwitch v-model="form.fixedTab" /></ElFormItem
+          ></ElCol>
         </ElRow>
         <ElRow :gutter="16">
-          <ElCol :span="8"><ElFormItem label="全屏页面"><ElSwitch v-model="form.isFullPage" /></ElFormItem></ElCol>
+          <ElCol :span="8"
+            ><ElFormItem label="全屏页面"><ElSwitch v-model="form.isFullPage" /></ElFormItem
+          ></ElCol>
         </ElRow>
       </template>
 
@@ -327,7 +341,10 @@
           })
         }
         if (node.children?.length) {
-          walk(node.children.filter((child) => !child.meta?.isAuthButton), depth + 1)
+          walk(
+            node.children.filter((child) => !child.meta?.isAuthButton),
+            depth + 1
+          )
         }
       })
     }

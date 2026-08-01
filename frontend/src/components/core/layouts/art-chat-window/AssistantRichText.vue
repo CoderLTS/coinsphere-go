@@ -291,7 +291,9 @@
     }
 
     const currentSequence = ++renderSequence
-    const blocks = Array.from(container.querySelectorAll<HTMLElement>('.assistant-mermaid[data-mermaid-index]'))
+    const blocks = Array.from(
+      container.querySelectorAll<HTMLElement>('.assistant-mermaid[data-mermaid-index]')
+    )
 
     for (const block of blocks) {
       const blockIndex = Number(block.dataset.mermaidIndex ?? '-1')
@@ -301,7 +303,9 @@
       }
 
       const loadingPanel = createMermaidPanel(blockIndex, false)
-      loadingPanel.canvas.innerHTML = buildMermaidLoading('\u6b63\u5728\u6e32\u67d3 Mermaid \u56fe...')
+      loadingPanel.canvas.innerHTML = buildMermaidLoading(
+        '\u6b63\u5728\u6e32\u67d3 Mermaid \u56fe...'
+      )
       block.replaceChildren(loadingPanel.panel)
 
       try {
@@ -357,17 +361,23 @@
 
     try {
       await navigator.clipboard.writeText(source)
-      ElMessage.success('\u004d\u0065\u0072\u006d\u0061\u0069\u0064\u0020\u4ee3\u7801\u5df2\u590d\u5236')
+      ElMessage.success(
+        '\u004d\u0065\u0072\u006d\u0061\u0069\u0064\u0020\u4ee3\u7801\u5df2\u590d\u5236'
+      )
     } catch (error) {
       console.error('Copy Mermaid code failed.', error)
-      ElMessage.error('\u590d\u5236\u0020\u004d\u0065\u0072\u006d\u0061\u0069\u0064\u0020\u4ee3\u7801\u5931\u8d25')
+      ElMessage.error(
+        '\u590d\u5236\u0020\u004d\u0065\u0072\u006d\u0061\u0069\u0064\u0020\u4ee3\u7801\u5931\u8d25'
+      )
     }
   }
 
   const exportMermaidImage = async (panel: HTMLElement, blockIndex: number) => {
     const svg = panel.querySelector<SVGSVGElement>('svg')
     if (!svg) {
-      ElMessage.warning('\u5f53\u524d\u0020\u004d\u0065\u0072\u006d\u0061\u0069\u0064\u0020\u56fe\u6682\u4e0d\u53ef\u5bfc\u51fa')
+      ElMessage.warning(
+        '\u5f53\u524d\u0020\u004d\u0065\u0072\u006d\u0061\u0069\u0064\u0020\u56fe\u6682\u4e0d\u53ef\u5bfc\u51fa'
+      )
       return
     }
 
@@ -423,10 +433,14 @@
       link.download = `mermaid-${blockIndex + 1}.png`
       link.click()
       URL.revokeObjectURL(downloadUrl)
-      ElMessage.success('\u004d\u0065\u0072\u006d\u0061\u0069\u0064\u0020\u56fe\u7247\u5df2\u5bfc\u51fa')
+      ElMessage.success(
+        '\u004d\u0065\u0072\u006d\u0061\u0069\u0064\u0020\u56fe\u7247\u5df2\u5bfc\u51fa'
+      )
     } catch (error) {
       console.error('Export Mermaid image failed.', error)
-      ElMessage.error('\u5bfc\u51fa\u0020\u004d\u0065\u0072\u006d\u0061\u0069\u0064\u0020\u56fe\u7247\u5931\u8d25')
+      ElMessage.error(
+        '\u5bfc\u51fa\u0020\u004d\u0065\u0072\u006d\u0061\u0069\u0064\u0020\u56fe\u7247\u5931\u8d25'
+      )
     } finally {
       URL.revokeObjectURL(url)
     }

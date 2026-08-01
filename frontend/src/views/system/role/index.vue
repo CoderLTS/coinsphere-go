@@ -106,7 +106,7 @@
     loading,
     pagination,
     getData,
-    searchParams,
+    replaceSearchParams,
     resetSearchParams,
     handleSizeChange,
     handleCurrentChange,
@@ -170,31 +170,35 @@
           formatter: (row: RoleListItem) =>
             row.isSystem
               ? h('span', { class: 'text-[var(--el-text-color-secondary)] text-xs' }, '系统内置')
-              : h('div', { class: 'table-actions' }, [
-                  hasAuth('system.roles.assign_permissions')
-                    ? renderIconAction({
-                        icon: Key,
-                        title: '分配权限',
-                        type: 'primary',
-                        onClick: () => showPermissionDialog(row)
-                      })
-                    : null,
-                  hasAuth('system.roles.update')
-                    ? renderIconAction({
-                        icon: Edit,
-                        title: '编辑',
-                        onClick: () => showDialog('edit', row)
-                      })
-                    : null,
-                  hasAuth('system.roles.delete')
-                    ? renderIconAction({
-                        icon: Delete,
-                        title: '删除',
-                        type: 'danger',
-                        onClick: () => deleteRole(row)
-                      })
-                    : null
-                ].filter(Boolean))
+              : h(
+                  'div',
+                  { class: 'table-actions' },
+                  [
+                    hasAuth('system.roles.assign_permissions')
+                      ? renderIconAction({
+                          icon: Key,
+                          title: '分配权限',
+                          type: 'primary',
+                          onClick: () => showPermissionDialog(row)
+                        })
+                      : null,
+                    hasAuth('system.roles.update')
+                      ? renderIconAction({
+                          icon: Edit,
+                          title: '编辑',
+                          onClick: () => showDialog('edit', row)
+                        })
+                      : null,
+                    hasAuth('system.roles.delete')
+                      ? renderIconAction({
+                          icon: Delete,
+                          title: '删除',
+                          type: 'danger',
+                          onClick: () => deleteRole(row)
+                        })
+                      : null
+                  ].filter(Boolean)
+                )
         }
       ]
     }
@@ -209,7 +213,7 @@
   const handleSearch = (params: RoleSearchFormParams) => {
     const { daterange, ...filtersParams } = params
     const [startTime, endTime] = Array.isArray(daterange) ? daterange : [null, null]
-    Object.assign(searchParams, { ...filtersParams, startTime, endTime })
+    replaceSearchParams({ ...filtersParams, startTime, endTime })
     getData()
   }
 

@@ -1,5 +1,5 @@
 /** 工作流编辑器辅助模块：workflow-editor.validator。 */
-import type { TaskDefinitionItem } from '@/api/scheduler'
+import type { TaskDefinitionItem, WorkflowAgentOption } from '@/api/scheduler'
 import type {
   WorkflowDomainEdge,
   WorkflowDomainGraphModel,
@@ -9,8 +9,11 @@ import type {
   WorkflowEdgeFormModel,
   WorkflowNodeFormModel
 } from './types'
+import { getNodeBranches, getNodeGraphKind } from './node-registry'
 
-const createIssue = (partial: Omit<WorkflowEditorIssue, 'id' | 'source'> & { id?: string }): WorkflowEditorIssue => ({
+const createIssue = (
+  partial: Omit<WorkflowEditorIssue, 'id' | 'source'> & { id?: string }
+): WorkflowEditorIssue => ({
   id: partial.id || `client-${Math.random().toString(36).slice(2, 10)}`,
   source: 'client',
   ...partial
@@ -19,7 +22,14 @@ const createIssue = (partial: Omit<WorkflowEditorIssue, 'id' | 'source'> & { id?
 const dedupeIssues = (issues: WorkflowEditorIssue[]) => {
   const seen = new Set<string>()
   return issues.filter((issue) => {
-    const key = [issue.scope, issue.level, issue.nodeId || '', issue.edgeId || '', issue.field || '', issue.message].join(':')
+    const key = [
+      issue.scope,
+      issue.level,
+      issue.nodeId || '',
+      issue.edgeId || '',
+      issue.field || '',
+      issue.message
+    ].join(':')
     if (seen.has(key)) return false
     seen.add(key)
     return true
@@ -27,6 +37,10 @@ const dedupeIssues = (issues: WorkflowEditorIssue[]) => {
 }
 
 const isStartNode = (node: WorkflowDomainNode) => node.data.typeCode.startsWith('start.')
+
+/** foreach 的 NEXT 连线：循环全部跑完后才走的后继边（BODY 连的才是循环体）。 */
+const isForeachNextEdge = (edge: WorkflowDomainEdge) =>
+  edge.data.branch === 'next' || edge.sourcePort === 'next'
 
 const buildAdjacency = (graph: WorkflowDomainGraphModel) => {
   const nodeMap = new Map(graph.nodes.map((node) => [node.id, node]))
@@ -120,10 +134,14 @@ export function validateWorkflowDraft(graph: WorkflowDomainGraphModel): Workflow
   const endNodes = nodes.filter((node) => node.data.typeCode === 'end')
 
   if (!startNodes.length) {
-    issues.push(createIssue({ scope: 'graph', level: 'error', message: '工作流至少需要一个开始节点。' }))
+    issues.push(
+      createIssue({ scope: 'graph', level: 'error', message: '工作流至少需要一个开始节点。' })
+    )
   }
   if (!endNodes.length) {
-    issues.push(createIssue({ scope: 'graph', level: 'error', message: '工作流至少需要一个结束节点。' }))
+    issues.push(
+      createIssue({ scope: 'graph', level: 'error', message: '工作流至少需要一个结束节点。' })
+    )
   }
 
   const entryKeyMap = new Map<string, string>()
@@ -180,22 +198,8 @@ export function validateWorkflowDraft(graph: WorkflowDomainGraphModel): Workflow
       )
     }
 
-    if (nodeIncoming.length > 1) {
-      const allFromStarts = nodeIncoming.every((edge) => {
-        const sourceNode = nodeMap.get(edge.source)
-        return !!sourceNode && isStartNode(sourceNode)
-      })
-      if (!allFromStarts) {
-        issues.push(
-          createIssue({
-            scope: 'node',
-            level: 'error',
-            nodeId: node.id,
-            message: '当前仅允许多个开始节点汇聚到同一后续节点。'
-          })
-        )
-      }
-    }
+    // 多入边（汇聚 join）是被支持的：引擎会等所有活跃分支到齐再把该节点跑一次。
+    // 这里不再限制入边来源。
 
     if (node.data.typeCode === 'end' && nodeOutgoing.length > 0) {
       issues.push(
@@ -208,28 +212,54 @@ export function validateWorkflowDraft(graph: WorkflowDomainGraphModel): Workflow
       )
     }
 
-    if (node.data.typeCode === 'condition.branch') {
-      const branches = new Set(nodeOutgoing.map((edge) => edge.data.branch || edge.sourcePort || ''))
-      if (!branches.has('true') || !branches.has('false') || nodeOutgoing.length !== 2) {
+    // 分支节点：出边必须恰好覆盖它声明的分支。分支清单来自后端注册表，
+    // 多路 switch 的分支还会随节点配置变化，所以要把 config 一起传进去。
+    if (getNodeGraphKind(node.data.typeCode) === 'branch') {
+      const declared = getNodeBranches(node.data.typeCode, node.data.config)
+      const seen = new Set(nodeOutgoing.map((edge) => edge.data.branch || edge.sourcePort || ''))
+      const missing = declared.filter((branch) => !seen.has(branch))
+      const unknown = Array.from(seen).filter((branch) => !declared.includes(branch))
+      if (declared.length < 2) {
         issues.push(
           createIssue({
             scope: 'node',
             level: 'error',
             nodeId: node.id,
-            message: '条件节点必须同时包含 true 和 false 两条分支。'
+            message: '分支节点至少需要配置两个分支。'
+          })
+        )
+      } else if (missing.length || unknown.length || nodeOutgoing.length !== declared.length) {
+        issues.push(
+          createIssue({
+            scope: 'node',
+            level: 'error',
+            nodeId: node.id,
+            message: `分支节点必须为每个分支各连一条线：${declared.join(' / ')}`
           })
         )
       }
     }
 
     if (node.data.typeCode === 'foreach') {
-      if (nodeOutgoing.length !== 1) {
+      const bodyEdges = nodeOutgoing.filter((edge) => !isForeachNextEdge(edge))
+      const nextEdges = nodeOutgoing.filter(isForeachNextEdge)
+      if (bodyEdges.length !== 1) {
         issues.push(
           createIssue({
             scope: 'node',
             level: 'error',
             nodeId: node.id,
-            message: 'foreach 节点当前只支持一个后继节点。'
+            message: 'foreach 节点必须且只能有一条 BODY 循环体连线。'
+          })
+        )
+      }
+      if (nextEdges.length > 1) {
+        issues.push(
+          createIssue({
+            scope: 'node',
+            level: 'error',
+            nodeId: node.id,
+            message: 'foreach 节点最多只能有一条 NEXT 循环后继连线。'
           })
         )
       }
@@ -244,7 +274,13 @@ export function validateWorkflowDraft(graph: WorkflowDomainGraphModel): Workflow
     if (cycleFound) return
     if (visiting.has(nodeId)) {
       cycleFound = true
-      issues.push(createIssue({ scope: 'graph', level: 'error', message: '当前版本仅支持 DAG，不允许出现环。' }))
+      issues.push(
+        createIssue({
+          scope: 'graph',
+          level: 'error',
+          message: '当前版本仅支持 DAG，不允许出现环。'
+        })
+      )
       return
     }
     if (visited.has(nodeId)) return
@@ -278,22 +314,47 @@ export function validateWorkflowDraft(graph: WorkflowDomainGraphModel): Workflow
     }
   })
 
-  const ensureForeachBranch = (foreachNodeId: string) => {
-    const firstTarget = outgoing.get(foreachNodeId)?.[0]?.target
-    if (!firstTarget) return
+  // foreach 循环体必须是「封闭」的一段子图：外面的连线进不来、里面的连线出不去。
+  // 引擎把循环体当独立子图按元素反复跑：外部连进来会让汇聚(join)语义和循环语义打架；
+  // 内部连出去则会让那个体外节点永远等不到入边结论，主流程会安静地少跑一段。
+  // 想在「循环跑完之后」继续，用 foreach 节点的 NEXT 连线。
+  const ensureForeachBody = (foreachNodeId: string) => {
+    const nodeOutgoing = outgoing.get(foreachNodeId) || []
+    const bodyEntry = nodeOutgoing.find((edge) => !isForeachNextEdge(edge))?.target
+    if (!bodyEntry) return
 
-    const stack = [firstTarget]
-    const seen = new Set<string>()
+    const collect = (entries: string[]) => {
+      const seen = new Set<string>()
+      const stack = [...entries]
+      while (stack.length) {
+        const currentId = stack.pop() as string
+        if (!currentId || seen.has(currentId)) continue
+        seen.add(currentId)
+        ;(adjacency.get(currentId) || []).forEach((nextId) => stack.push(nextId))
+      }
+      return seen
+    }
 
-    while (stack.length) {
-      const currentId = stack.pop() as string
-      if (seen.has(currentId)) continue
-      seen.add(currentId)
+    // 循环体 = 从 BODY 入口可达 − 从 NEXT 后继可达（两边汇聚到同一收尾节点时，该节点归主流程）。
+    const bodySet = collect([bodyEntry])
+    collect(nodeOutgoing.filter(isForeachNextEdge).map((edge) => edge.target)).forEach((id) =>
+      bodySet.delete(id)
+    )
 
-      const currentNode = nodeMap.get(currentId)
-      if (!currentNode) continue
+    if (!bodySet.size) {
+      issues.push(
+        createIssue({
+          scope: 'node',
+          level: 'error',
+          nodeId: foreachNodeId,
+          message: 'foreach 循环体不能为空。'
+        })
+      )
+      return
+    }
 
-      if (currentNode.data.typeCode === 'foreach') {
+    for (const nodeId of bodySet) {
+      if (nodeMap.get(nodeId)?.data.typeCode === 'foreach') {
         issues.push(
           createIssue({
             scope: 'node',
@@ -304,27 +365,39 @@ export function validateWorkflowDraft(graph: WorkflowDomainGraphModel): Workflow
         )
         return
       }
+    }
 
-      const nextEdges = outgoing.get(currentId) || []
-      if (!nextEdges.length && currentNode.data.typeCode !== 'end') {
+    for (const edge of edges) {
+      const sourceInBody = bodySet.has(edge.source)
+      const targetInBody = bodySet.has(edge.target)
+      if (!sourceInBody && targetInBody && edge.source !== foreachNodeId) {
         issues.push(
           createIssue({
             scope: 'node',
             level: 'error',
             nodeId: foreachNodeId,
-            message: 'foreach 分支必须最终由 end 节点结束。'
+            message: 'foreach 循环体不允许被循环外的节点连入。'
           })
         )
         return
       }
-
-      nextEdges.forEach((edge) => stack.push(edge.target))
+      if (sourceInBody && !targetInBody) {
+        issues.push(
+          createIssue({
+            scope: 'node',
+            level: 'error',
+            nodeId: foreachNodeId,
+            message: 'foreach 循环体不能连回循环外；要在遍历之后继续，请改用 foreach 的 NEXT 连线。'
+          })
+        )
+        return
+      }
     }
   }
 
   nodes
     .filter((node) => node.data.typeCode === 'foreach')
-    .forEach((node) => ensureForeachBranch(node.id))
+    .forEach((node) => ensureForeachBody(node.id))
 
   startNodes
     .filter((node) => node.data.typeCode === 'start.event')
@@ -363,7 +436,8 @@ export function validateWorkflowDraft(graph: WorkflowDomainGraphModel): Workflow
 export function validateNodeFormDraft(
   node: WorkflowDomainNode | null,
   form: WorkflowNodeFormModel | null,
-  taskDefinitions: TaskDefinitionItem[]
+  taskDefinitions: TaskDefinitionItem[],
+  agentOptions: WorkflowAgentOption[] = []
 ): WorkflowDraftValidationResult {
   if (!node || !form) return { valid: true, errors: [] }
 
@@ -410,13 +484,58 @@ export function validateNodeFormDraft(
       }
       break
 
-    case 'condition':
-      if (!String(config.path || '').trim()) errors.push('条件节点必须填写字段路径。')
-      if (!String(config.operator || '').trim()) errors.push('条件节点必须选择比较运算。')
-      if (String(config.operator || '') !== 'truthy' && !String(config.value ?? '').trim()) {
-        errors.push('条件节点必须填写比较值。')
+    case 'agent': {
+      const agentCode = String(config.agentCode || '').trim()
+      if (!agentCode) errors.push('请选择智能体。')
+      const agent = agentOptions.find((item) => item.code === agentCode)
+      if (agentCode && !agent) errors.push('所选智能体不存在或已停用。')
+      const analyze = Boolean(config.analyze)
+      if (analyze && agent && !agent.supportsAnalyze) {
+        errors.push('该智能体的数据源不支持结构化分析，请改用自定义提示词。')
+      }
+      if (!analyze && !String(config.promptTemplate || '').trim()) {
+        errors.push('请填写提示词，或改用数据源的结构化分析模板。')
+      }
+      if (agent?.requiresRefId && !String(config.refIdPath || '').trim()) {
+        errors.push('该智能体需要关联数据，请填写关联数据 id 路径。')
       }
       break
+    }
+
+    case 'condition': {
+      // 多条件模式下顶层的单条件不生效，两套校验分开做。
+      const clauses = Array.isArray(config.conditions) ? config.conditions : []
+      if (clauses.length) {
+        clauses.forEach((clause: Record<string, any>, index: number) => {
+          if (!String(clause?.path || '').trim()) {
+            errors.push(`条件 ${index + 1} 必须填写字段路径。`)
+          }
+          if (!String(clause?.operator || '').trim()) {
+            errors.push(`条件 ${index + 1} 必须选择比较运算。`)
+          }
+          if (
+            String(clause?.operator || '') !== 'truthy' &&
+            !String(clause?.value ?? '').trim() &&
+            !String(clause?.valuePath ?? '').trim()
+          ) {
+            errors.push(`条件 ${index + 1} 必须填写比较值或比较值路径。`)
+          }
+        })
+        break
+      }
+      if (!String(config.path || '').trim())
+        errors.push('条件节点必须填写字段路径，或改用多条件配置。')
+      if (!String(config.operator || '').trim()) errors.push('条件节点必须选择比较运算。')
+      // truthy 不需要比较值；比较值也可以改成从共享状态取（valuePath），二选一填一个即可。
+      if (
+        String(config.operator || '') !== 'truthy' &&
+        !String(config.value ?? '').trim() &&
+        !String(config.valuePath ?? '').trim()
+      ) {
+        errors.push('条件节点必须填写比较值或比较值路径。')
+      }
+      break
+    }
 
     case 'foreach':
       if (!String(config.itemsPath || '').trim()) errors.push('foreach 节点必须填写数组路径。')

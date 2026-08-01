@@ -13,15 +13,30 @@
             :disabled="loadingAgents || loadingConversation || isStreaming"
             @change="handleAgentChange"
           >
-            <ElOption v-for="item in agentList" :key="item.code" :label="item.displayName" :value="item.code" />
+            <ElOption
+              v-for="item in agentList"
+              :key="item.code"
+              :label="item.displayName"
+              :value="item.code"
+            />
           </ElSelect>
         </div>
 
         <div class="chat-header__actions">
-          <button type="button" class="chat-icon-button" :disabled="historyDisabled" @click="openHistory">
+          <button
+            type="button"
+            class="chat-icon-button"
+            :disabled="historyDisabled"
+            @click="openHistory"
+          >
             <ElIcon><ChatDotRound /></ElIcon>
           </button>
-          <button type="button" class="chat-icon-button" :disabled="newSessionDisabled" @click="startNewSession">
+          <button
+            type="button"
+            class="chat-icon-button"
+            :disabled="newSessionDisabled"
+            @click="startNewSession"
+          >
             <ElIcon><CirclePlus /></ElIcon>
           </button>
           <button
@@ -40,10 +55,25 @@
         </button>
       </div>
 
-      <div ref="messageContainer" v-loading="loadingConversation" class="chat-body" :class="{ 'chat-body--empty': showEmptyState }">
-        <ElAlert v-if="hintText" class="chat-body__alert" :title="hintText" type="info" :closable="false" />
+      <div
+        ref="messageContainer"
+        v-loading="loadingConversation"
+        class="chat-body"
+        :class="{ 'chat-body--empty': showEmptyState }"
+      >
+        <ElAlert
+          v-if="hintText"
+          class="chat-body__alert"
+          :title="hintText"
+          type="info"
+          :closable="false"
+        />
 
-        <div v-if="showEmptyState" class="chat-empty" :class="{ 'chat-empty--no-model': !availableModels.length }">
+        <div
+          v-if="showEmptyState"
+          class="chat-empty"
+          :class="{ 'chat-empty--no-model': !availableModels.length }"
+        >
           <ElEmpty class="chat-empty__main" :image-size="82">
             <template #description>
               <div class="chat-empty__copy">
@@ -52,12 +82,23 @@
               </div>
             </template>
 
-            <ElButton v-if="!availableModels.length" class="chat-empty__action" plain @click="goToModelConfig">
+            <ElButton
+              v-if="!availableModels.length"
+              class="chat-empty__action"
+              plain
+              @click="goToModelConfig"
+            >
               {{ t('assistant.goModelConfig') }}
             </ElButton>
 
             <div v-else-if="showStarterPrompts" class="chat-starters">
-              <ElButton v-for="prompt in currentAgent?.starterPrompts || []" :key="prompt" size="small" plain @click="messageText = prompt">
+              <ElButton
+                v-for="prompt in currentAgent?.starterPrompts || []"
+                :key="prompt"
+                size="small"
+                plain
+                @click="messageText = prompt"
+              >
                 {{ prompt }}
               </ElButton>
             </div>
@@ -65,8 +106,15 @@
         </div>
 
         <template v-else>
-          <div v-for="item in messages" :key="item.id" class="chat-message" :class="{ 'chat-message--me': item.isMe }">
-            <ElAvatar :size="34" :src="item.isMe ? userAvatar : currentAgentAvatar">{{ item.sender.slice(0, 1) }}</ElAvatar>
+          <div
+            v-for="item in messages"
+            :key="item.id"
+            class="chat-message"
+            :class="{ 'chat-message--me': item.isMe }"
+          >
+            <ElAvatar :size="34" :src="item.isMe ? userAvatar : currentAgentAvatar">{{
+              item.sender.slice(0, 1)
+            }}</ElAvatar>
             <div class="chat-message__content">
               <div class="chat-message__meta">
                 <span>{{ item.sender }}</span>
@@ -79,7 +127,9 @@
                 </div>
               </div>
               <div class="chat-message__bubble" :class="{ 'chat-message__bubble--me': item.isMe }">
-                <template v-if="item.isMe">{{ item.content || t('assistant.generating') }}</template>
+                <template v-if="item.isMe">{{
+                  item.content || t('assistant.generating')
+                }}</template>
                 <div
                   v-else-if="item.contentType === 'streaming' && !item.content && !item.reasoning"
                   class="chat-message__loading"
@@ -168,29 +218,56 @@
     </div>
   </ElDrawer>
 
-  <ElDrawer v-model="historyVisible" :size="isMobile ? '100%' : '300px'" :with-header="false" append-to-body>
+  <ElDrawer
+    v-model="historyVisible"
+    :size="isMobile ? '100%' : '300px'"
+    :with-header="false"
+    append-to-body
+  >
     <div class="history-panel">
       <div class="history-panel__header">
         <div>
           <div class="history-panel__title">{{ t('assistant.history') }}</div>
           <div class="history-panel__subtitle">{{ currentAgent?.displayName || '--' }}</div>
         </div>
-        <button type="button" class="chat-icon-button chat-icon-button--close" @click="historyVisible = false">
+        <button
+          type="button"
+          class="chat-icon-button chat-icon-button--close"
+          @click="historyVisible = false"
+        >
           <ElIcon><Close /></ElIcon>
         </button>
       </div>
 
-      <div ref="historyContainer" v-loading="historyLoading && !historyItems.length" class="history-panel__body" @scroll.passive="handleHistoryScroll">
-        <ElEmpty v-if="!historyLoading && !historyItems.length" :description="t('assistant.historyEmpty')" />
+      <div
+        ref="historyContainer"
+        v-loading="historyLoading && !historyItems.length"
+        class="history-panel__body"
+        @scroll.passive="handleHistoryScroll"
+      >
+        <ElEmpty
+          v-if="!historyLoading && !historyItems.length"
+          :description="t('assistant.historyEmpty')"
+        />
 
-        <div v-for="item in historyItems" :key="item.id" class="history-item" :class="{ 'history-item--active': currentSession?.id === item.id }">
+        <div
+          v-for="item in historyItems"
+          :key="item.id"
+          class="history-item"
+          :class="{ 'history-item--active': currentSession?.id === item.id }"
+        >
           <button type="button" class="history-item__main" @click="openHistorySession(item)">
             <div class="history-item__title">{{ item.title || item.agentName }}</div>
             <div class="history-item__meta">
               <span>{{ item.lastMessageAt || item.updatedAt }}</span>
             </div>
           </button>
-          <ElButton circle text :disabled="deletingSessionId === item.id" @click.stop="deleteHistorySession(item)">
+          <ElButton
+            circle
+            text
+            :disabled="deletingSessionId === item.id"
+            @click.stop="deleteHistorySession(item)"
+          >
             <ElIcon v-if="deletingSessionId === item.id" class="is-loading"><Loading /></ElIcon>
             <ElIcon v-else><Delete /></ElIcon>
           </ElButton>
@@ -204,13 +281,30 @@
   import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
   import { useStorage, useWindowSize } from '@vueuse/core'
   import { ElMessage, ElMessageBox } from 'element-plus'
-  import { ChatDotRound, CirclePlus, Close, Delete, Loading, Promotion, RefreshRight, VideoPause } from '@element-plus/icons-vue'
+  import {
+    ChatDotRound,
+    CirclePlus,
+    Close,
+    Delete,
+    Loading,
+    Promotion,
+    RefreshRight,
+    VideoPause
+  } from '@element-plus/icons-vue'
   import { useI18n } from 'vue-i18n'
   import { useRouter } from 'vue-router'
   import defaultAvatar from '@imgs/user/avatar.webp'
   import assistantAvatar from '@/assets/images/avatar/avatar10.webp'
   import AssistantRichText from './AssistantRichText.vue'
-  import { deleteAssistantSession, fetchAssistantAgents, fetchAssistantMessages, fetchAssistantModelOptions, fetchAssistantSession, fetchAssistantSessions, streamAssistantSession } from '@/api/assistant'
+  import {
+    deleteAssistantSession,
+    fetchAssistantAgents,
+    fetchAssistantMessages,
+    fetchAssistantModelOptions,
+    fetchAssistantSession,
+    fetchAssistantSessions,
+    streamAssistantSession
+  } from '@/api/assistant'
   import { useUserStore } from '@/store/modules/user'
   import { mittBus, type OpenChatPayload } from '@/utils/sys'
 
@@ -257,36 +351,84 @@
 
   const isMobile = computed(() => width.value < 640)
   const userAvatar = computed(() => userStore.getUserInfo.avatar || defaultAvatar)
-  const currentAgent = computed(() => agentList.value.find((item) => item.code === currentAgentCode.value) || null)
+  const currentAgent = computed(
+    () => agentList.value.find((item) => item.code === currentAgentCode.value) || null
+  )
   const currentAgentAvatar = computed(() => currentAgent.value?.avatar || assistantAvatar)
   const isNewsAgent = computed(() => currentAgent.value?.dataSourceType === 'news_context')
   const availableModels = computed(() => modelOptions.value?.models || [])
   const hintText = computed(() => {
-    if (!selectedModelId.value && availableModels.value.length > 1) return t('assistant.modelSelectionRequired')
+    if (!selectedModelId.value && availableModels.value.length > 1)
+      return t('assistant.modelSelectionRequired')
     return ''
   })
   const emptyPrimaryText = computed(() => {
     if (!availableModels.value.length) return t('assistant.noModelsTitle')
-    return currentAgent.value?.welcomeMessage || (isNewsAgent.value ? t('assistant.emptyNews') : t('assistant.emptyGeneral'))
+    return (
+      currentAgent.value?.welcomeMessage ||
+      (isNewsAgent.value ? t('assistant.emptyNews') : t('assistant.emptyGeneral'))
+    )
   })
   const emptySecondaryText = computed(() => {
     if (!availableModels.value.length) return t('assistant.noModelsDescription')
     return isNewsAgent.value ? t('assistant.emptyNews') : t('assistant.emptyGeneral')
   })
-  const showStarterPrompts = computed(() => Boolean(currentAgent.value?.starterPrompts?.length && availableModels.value.length && !messages.value.length))
-  const inputPlaceholder = computed(() => isNewsAgent.value ? t('assistant.placeholderNews') : t('assistant.placeholderGeneral'))
-  const footerHint = computed(() => isNewsAgent.value ? t('assistant.newsTip') : t('assistant.generalTip'))
-  const inputDisabled = computed(() => loadingConversation.value || isStreaming.value || !currentSession.value || !selectedModelId.value)
-  const toolDisabled = computed(() => loadingModels.value || loadingConversation.value || isStreaming.value)
-  const canRetry = computed(() => isNewsAgent.value && Boolean(currentSession.value?.newsId) && Boolean(selectedModelId.value))
-  const canSend = computed(() => Boolean(messageText.value.trim() && currentSession.value && selectedModelId.value && !loadingConversation.value && !isStreaming.value))
+  const showStarterPrompts = computed(() =>
+    Boolean(
+      currentAgent.value?.starterPrompts?.length &&
+        availableModels.value.length &&
+        !messages.value.length
+    )
+  )
+  const inputPlaceholder = computed(() =>
+    isNewsAgent.value ? t('assistant.placeholderNews') : t('assistant.placeholderGeneral')
+  )
+  const footerHint = computed(() =>
+    isNewsAgent.value ? t('assistant.newsTip') : t('assistant.generalTip')
+  )
+  const inputDisabled = computed(
+    () =>
+      loadingConversation.value ||
+      isStreaming.value ||
+      !currentSession.value ||
+      !selectedModelId.value
+  )
+  const toolDisabled = computed(
+    () => loadingModels.value || loadingConversation.value || isStreaming.value
+  )
+  const canRetry = computed(
+    () =>
+      isNewsAgent.value && Boolean(currentSession.value?.newsId) && Boolean(selectedModelId.value)
+  )
+  const canSend = computed(() =>
+    Boolean(
+      messageText.value.trim() &&
+        currentSession.value &&
+        selectedModelId.value &&
+        !loadingConversation.value &&
+        !isStreaming.value
+    )
+  )
   const showEmptyState = computed(() => !loadingConversation.value && !messages.value.length)
-  const historyDisabled = computed(() => !currentPayload.value || loadingConversation.value || loadingModels.value || isStreaming.value)
-  const newSessionDisabled = computed(() => !currentPayload.value || !selectedModelId.value || loadingConversation.value || loadingModels.value || isStreaming.value)
+  const historyDisabled = computed(
+    () =>
+      !currentPayload.value || loadingConversation.value || loadingModels.value || isStreaming.value
+  )
+  const newSessionDisabled = computed(
+    () =>
+      !currentPayload.value ||
+      !selectedModelId.value ||
+      loadingConversation.value ||
+      loadingModels.value ||
+      isStreaming.value
+  )
 
   const normalizeMessage = (message: Api.Assistant.Message): ChatMessage => ({
     id: message.id,
-    sender: message.role === 'user' ? userStore.getUserInfo.username : currentAgent.value?.displayName || t('assistant.title'),
+    sender:
+      message.role === 'user'
+        ? userStore.getUserInfo.username
+        : currentAgent.value?.displayName || t('assistant.title'),
     content: message.content || '',
     reasoning: message.reasoning || '',
     createdAt: message.createdAt,
@@ -353,14 +495,21 @@
     abortStream()
   }
 
-  const resolvePreferredModelId = (payload: OpenChatPayload, options: Api.Assistant.ModelOptions) => {
+  const resolvePreferredModelId = (
+    payload: OpenChatPayload,
+    options: Api.Assistant.ModelOptions
+  ) => {
     const ids = new Set(options.models.map((item) => item.id))
     if (payload.modelConfigId && ids.has(payload.modelConfigId)) return payload.modelConfigId
     if (options.defaultModelId && ids.has(options.defaultModelId)) return options.defaultModelId
     return options.models.length === 1 ? options.models[0].id : null
   }
 
-  const loadConversation = async (payload: OpenChatPayload, modelConfigId: number | null, forceNew = false) => {
+  const loadConversation = async (
+    payload: OpenChatPayload,
+    modelConfigId: number | null,
+    forceNew = false
+  ) => {
     loadingConversation.value = true
     messages.value = []
     currentSession.value = null
@@ -798,7 +947,10 @@
     background: transparent;
     color: var(--el-text-color-secondary);
     cursor: pointer;
-    transition: background-color 0.18s ease, color 0.18s ease, opacity 0.18s ease;
+    transition:
+      background-color 0.18s ease,
+      color 0.18s ease,
+      opacity 0.18s ease;
   }
 
   .chat-icon-button:hover {
@@ -1031,7 +1183,9 @@
     border: 1px solid rgba(203, 213, 225, 0.88);
     border-radius: 16px;
     background: rgba(255, 255, 255, 0.96);
-    transition: border-color 0.18s ease, box-shadow 0.18s ease;
+    transition:
+      border-color 0.18s ease,
+      box-shadow 0.18s ease;
   }
 
   .chat-footer__panel:hover {

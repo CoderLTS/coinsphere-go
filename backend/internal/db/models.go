@@ -471,7 +471,12 @@ type AssistantMessage struct {
 	ContentType string            `gorm:"size:40;default:text"`
 	Content     string            `gorm:"type:text"`
 	Reasoning   string            `gorm:"type:text"`
-	CreatedAt   time.Time         `gorm:"index:ix_assistant_msg_session,priority:2"`
+	// token 消耗:模型在流末尾给出的 usage,用来算成本、看哪个智能体最贵。
+	// 模型没返回 usage 时保持 0。
+	PromptTokens     int64     `gorm:"column:prompt_tokens;default:0"`
+	CompletionTokens int64     `gorm:"column:completion_tokens;default:0"`
+	TotalTokens      int64     `gorm:"column:total_tokens;default:0"`
+	CreatedAt        time.Time `gorm:"index:ix_assistant_msg_session,priority:2"`
 }
 
 func (AssistantMessage) TableName() string { return "assistant_messages" }

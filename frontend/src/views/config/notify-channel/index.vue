@@ -2,7 +2,12 @@
 <template>
   <div class="art-full-height">
     <ElCard class="art-table-card">
-      <ArtTableHeader :showZebra="false" :loading="loading" v-model:columns="columnChecks" @refresh="loadPageData">
+      <ArtTableHeader
+        :showZebra="false"
+        :loading="loading"
+        v-model:columns="columnChecks"
+        @refresh="loadPageData"
+      >
         <template #left>
           <ElSpace wrap>
             <ElButton v-if="hasAuth('config.notification_channels.create')" @click="openAddDialog">
@@ -95,7 +100,8 @@
 
   const renderActions = (row: NotifyChannelItem) =>
     h('div', { class: 'table-actions' }, [
-      hasAuth('config.notification_channels.test') && (!row.isBuiltin || row.channelType === 'in_app')
+      hasAuth('config.notification_channels.test') &&
+      (!row.isBuiltin || row.channelType === 'in_app')
         ? renderIconAction({
             icon: CircleCheck,
             title: t('notifyChannel.table.testStatus'),
@@ -122,80 +128,78 @@
     ])
 
   const { columns, columnChecks } = useTableColumns<NotifyChannelItem>(() => [
-      {
-        prop: 'displayName',
-        label: t('notifyChannel.table.displayName'),
-        minWidth: 140,
-        align: 'center',
-        showOverflowTooltip: true
-      },
-      {
-        prop: 'channelTypeLabel',
-        label: t('notifyChannel.table.channelType'),
-        minWidth: 140,
-        align: 'center'
-      },
-      {
-        prop: 'ownerLabel',
-        label: t('notifyChannel.table.owner'),
-        minWidth: 140,
-        align: 'center',
-        showOverflowTooltip: true,
-        formatter: (row: NotifyChannelItem) => row.ownerLabel || '--'
-      },
-      {
-        prop: 'targetSummary',
-        label: t('notifyChannel.table.targetSummary'),
-        minWidth: 140,
-        align: 'center',
-        showOverflowTooltip: true
-      },
-      {
-        prop: 'isEnabled',
-        label: t('notifyChannel.table.status'),
-        minWidth: 140,
-        align: 'center',
-        formatter: (row: NotifyChannelItem) =>
-          h(ElSwitch, {
-            modelValue: row.isEnabled,
-            disabled: !hasAuth('config.notification_channels.update') || row.isBuiltin,
-            'onUpdate:modelValue': (value: boolean | string | number) =>
-              handleToggleEnabled(row, Boolean(value))
-          })
-      },
-      {
-        prop: 'lastTestStatus',
-        label: t('notifyChannel.table.testStatus'),
-        minWidth: 140,
-        align: 'center',
-        formatter: (row: NotifyChannelItem) =>
-          h(
-            ElTag,
-            { type: getTestStatusType(row.lastTestStatus), size: 'small' },
-            () => getTestStatusLabel(row.lastTestStatus)
-          )
-      },
-      {
-        prop: 'lastTestedAt',
-        label: t('notifyChannel.table.lastTestedAt'),
-        minWidth: 140,
-        align: 'center'
-      },
-      {
-        prop: 'updatedAt',
-        label: t('notifyChannel.table.updatedAt'),
-        minWidth: 140,
-        align: 'center'
-      },
-      {
-        prop: 'operation',
-        label: t('notifyChannel.table.action'),
-        width: 132,
-        fixed: 'right',
-        align: 'center',
-        formatter: (row: NotifyChannelItem) => renderActions(row)
-      }
-    ])
+    {
+      prop: 'displayName',
+      label: t('notifyChannel.table.displayName'),
+      minWidth: 140,
+      align: 'center',
+      showOverflowTooltip: true
+    },
+    {
+      prop: 'channelTypeLabel',
+      label: t('notifyChannel.table.channelType'),
+      minWidth: 140,
+      align: 'center'
+    },
+    {
+      prop: 'ownerLabel',
+      label: t('notifyChannel.table.owner'),
+      minWidth: 140,
+      align: 'center',
+      showOverflowTooltip: true,
+      formatter: (row: NotifyChannelItem) => row.ownerLabel || '--'
+    },
+    {
+      prop: 'targetSummary',
+      label: t('notifyChannel.table.targetSummary'),
+      minWidth: 140,
+      align: 'center',
+      showOverflowTooltip: true
+    },
+    {
+      prop: 'isEnabled',
+      label: t('notifyChannel.table.status'),
+      minWidth: 140,
+      align: 'center',
+      formatter: (row: NotifyChannelItem) =>
+        h(ElSwitch, {
+          modelValue: row.isEnabled,
+          disabled: !hasAuth('config.notification_channels.update') || row.isBuiltin,
+          'onUpdate:modelValue': (value: boolean | string | number) =>
+            handleToggleEnabled(row, Boolean(value))
+        })
+    },
+    {
+      prop: 'lastTestStatus',
+      label: t('notifyChannel.table.testStatus'),
+      minWidth: 140,
+      align: 'center',
+      formatter: (row: NotifyChannelItem) =>
+        h(ElTag, { type: getTestStatusType(row.lastTestStatus), size: 'small' }, () =>
+          getTestStatusLabel(row.lastTestStatus)
+        )
+    },
+    {
+      prop: 'lastTestedAt',
+      label: t('notifyChannel.table.lastTestedAt'),
+      minWidth: 140,
+      align: 'center'
+    },
+    {
+      prop: 'updatedAt',
+      label: t('notifyChannel.table.updatedAt'),
+      minWidth: 140,
+      align: 'center'
+    },
+    {
+      prop: 'operation',
+      label: t('notifyChannel.table.action'),
+      width: 132,
+      fixed: 'right',
+      align: 'center',
+      formatter: (row: NotifyChannelItem) => renderActions(row)
+    }
+  ])
 
   const loadPageData = async () => {
     loading.value = true

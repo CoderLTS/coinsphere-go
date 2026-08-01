@@ -37,5 +37,5 @@
   import TodoList from './modules/todo-list.vue'
   import AboutProject from './modules/about-project.vue'
 
-defineOptions({ name: 'DashboardOverview' })
+  defineOptions({ name: 'DashboardOverview' })
 </script>

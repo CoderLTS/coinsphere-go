@@ -79,7 +79,12 @@
         </ElCol>
         <ElCol :span="12">
           <ElFormItem :label="t('aiConfig.form.timeoutMs')" prop="timeoutMs">
-            <ElInputNumber v-model="formData.timeoutMs" :min="1000" :max="300000" controls-position="right" />
+            <ElInputNumber
+              v-model="formData.timeoutMs"
+              :min="1000"
+              :max="300000"
+              controls-position="right"
+            />
           </ElFormItem>
         </ElCol>
       </ElRow>
@@ -87,7 +92,12 @@
       <ElRow :gutter="16">
         <ElCol :span="12">
           <ElFormItem :label="t('aiConfig.form.priority')" prop="priority">
-            <ElInputNumber v-model="formData.priority" :min="1" :max="9999" controls-position="right" />
+            <ElInputNumber
+              v-model="formData.priority"
+              :min="1"
+              :max="9999"
+              controls-position="right"
+            />
           </ElFormItem>
         </ElCol>
         <ElCol :span="12">
@@ -139,7 +149,7 @@
 
 <script setup lang="ts">
   import type { FormInstance, FormRules } from 'element-plus'
-import type { AiModelConfigItem, AiModelUpsertPayload, AiProviderMeta } from '@/api/config'
+  import type { AiModelConfigItem, AiModelUpsertPayload, AiProviderMeta } from '@/api/config'
   import { useI18n } from 'vue-i18n'
 
   interface Props {
@@ -213,10 +223,18 @@ import type { AiModelConfigItem, AiModelUpsertPayload, AiProviderMeta } from '@/
   }
 
   const rules = reactive<FormRules>({
-    provider: [{ required: true, message: t('aiConfig.validation.providerType'), trigger: 'change' }],
-    providerName: [{ required: true, message: t('aiConfig.validation.providerLabel'), trigger: 'blur' }],
-    displayName: [{ required: true, message: t('aiConfig.validation.displayName'), trigger: 'blur' }],
-    modelIdentifier: [{ required: true, message: t('aiConfig.validation.modelName'), trigger: 'blur' }],
+    provider: [
+      { required: true, message: t('aiConfig.validation.providerType'), trigger: 'change' }
+    ],
+    providerName: [
+      { required: true, message: t('aiConfig.validation.providerLabel'), trigger: 'blur' }
+    ],
+    displayName: [
+      { required: true, message: t('aiConfig.validation.displayName'), trigger: 'blur' }
+    ],
+    modelIdentifier: [
+      { required: true, message: t('aiConfig.validation.modelName'), trigger: 'blur' }
+    ],
     baseUrl: [{ required: true, message: t('aiConfig.validation.baseUrl'), trigger: 'blur' }],
     apiKey: [
       {

@@ -48,13 +48,19 @@
             :class="{ 'opacity-70': item.isRead }"
             @click="handleOpenRecord(item)"
           >
-            <div class="relative size-9 leading-9 text-center rounded-lg flex-cc bg-theme/12 text-theme">
+            <div
+              class="relative size-9 leading-9 text-center rounded-lg flex-cc bg-theme/12 text-theme"
+            >
               <ArtSvgIcon class="text-lg !bg-transparent" icon="ri:notification-3-line" />
               <span v-if="!item.isRead" class="notice-badge-dot"></span>
             </div>
             <div class="w-[calc(100%-45px)] ml-3.5 overflow-hidden">
-              <h4 class="text-sm font-normal leading-5.5 text-g-900 line-clamp-2">{{ item.messageTitle }}</h4>
-              <p class="mt-1.5 text-xs text-g-500 line-clamp-2">{{ item.messageContent || item.createdAt }}</p>
+              <h4 class="text-sm font-normal leading-5.5 text-g-900 line-clamp-2">{{
+                item.messageTitle
+              }}</h4>
+              <p class="mt-1.5 text-xs text-g-500 line-clamp-2">{{
+                item.messageContent || item.createdAt
+              }}</p>
               <p class="mt-1 text-xs text-g-400">{{ item.createdAt }}</p>
             </div>
           </li>
@@ -70,7 +76,9 @@
               <ArtSvgIcon class="text-lg !bg-transparent" icon="ri:message-3-line" />
             </div>
             <div class="w-[calc(100%-45px)] ml-3.5 overflow-hidden">
-              <h4 class="text-sm font-normal leading-5.5 text-g-900 line-clamp-2">{{ item.title }}</h4>
+              <h4 class="text-sm font-normal leading-5.5 text-g-900 line-clamp-2">{{
+                item.title
+              }}</h4>
               <p class="mt-1.5 text-xs text-g-500">{{ item.time }}</p>
             </div>
           </li>
@@ -99,7 +107,12 @@
       </div>
 
       <div class="relative box-border w-full px-3.5">
-        <ElButton class="w-full mt-3" :disabled="footerDisabled" :loading="loading" @click="handleFooterAction">
+        <ElButton
+          class="w-full mt-3"
+          :disabled="footerDisabled"
+          :loading="loading"
+          @click="handleFooterAction"
+        >
           {{ footerLabel }}
         </ElButton>
       </div>
@@ -127,7 +140,7 @@
   const { t } = useI18n()
   const router = useRouter()
   const notificationStore = useNotificationStore()
-  const { records, loading, hasMore, unreadCount } = storeToRefs(notificationStore)
+  const { records, loading, unreadCount } = storeToRefs(notificationStore)
 
   const show = ref(false)
   const visible = ref(false)

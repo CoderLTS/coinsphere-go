@@ -10,33 +10,34 @@
       :material-groups="materialGroups"
       :issues="allIssues"
       :task-definitions="taskDefinitions"
+      :agent-options="agentOptions"
       :notify-user-options="notifyUserOptions"
       :notify-role-options="notifyRoleOptions"
       :notify-options-loading="notifyOptionsLoading"
       :json-definition-visible="jsonDefinitionVisible"
       :dirty-node-ids="dirtyNodeIds"
-        :draft-state="draftState"
-        :active-cell-id="selection.activeCellId"
-        :active-cell-type="selection.activeCellType"
-        :edge-editor-cell-id="edgeEditorCellId"
-        :pending-edge-draft="pendingEdgeDraft"
-        :history-session-key="historySessionKey"
-        @request-activate-cell="handleActivationRequest"
-        @graph-commit="handleGraphCommit"
+      :draft-state="draftState"
+      :active-cell-id="selection.activeCellId"
+      :active-cell-type="selection.activeCellType"
+      :edge-editor-cell-id="edgeEditorCellId"
+      :pending-edge-draft="pendingEdgeDraft"
+      :history-session-key="historySessionKey"
+      @request-activate-cell="handleActivationRequest"
+      @graph-commit="handleGraphCommit"
       @material-drop="handleMaterialDrop"
       @zoom-change="zoom = $event"
       @rendered="handleCanvasRendered"
       @update-node-draft="handleNodeDraftUpdate"
       @request-commit-node-draft="void commitAndCloseNodeEditor()"
       @request-discard-node-draft="discardNodeDraft"
-        @request-close-node-editor="void closeNodeEditor()"
-        @request-close-edge-editor="handleCloseEdgeEditor"
-        @request-remove-selection="void removeSelection()"
-        @request-node-context-action="void handleNodeContextAction($event)"
-        @request-open-edge-editor="void handleOpenEdgeEditor($event)"
-        @create-pending-edge-draft="handlePendingEdgeDraftCreate"
-        @commit-edge-draft="handleEdgeDraftCommit"
-      >
+      @request-close-node-editor="void closeNodeEditor()"
+      @request-close-edge-editor="handleCloseEdgeEditor"
+      @request-remove-selection="void removeSelection()"
+      @request-node-context-action="void handleNodeContextAction($event)"
+      @request-open-edge-editor="void handleOpenEdgeEditor($event)"
+      @create-pending-edge-draft="handlePendingEdgeDraftCreate"
+      @commit-edge-draft="handleEdgeDraftCommit"
+    >
       <template #toolbar>
         <WorkflowEditorToolbar
           :mode="mode"
@@ -97,14 +98,16 @@
     fetchCreateWorkflowDefinition,
     fetchNodeDefinitions,
     fetchTaskDefinitions,
+    fetchWorkflowAgentOptions,
     fetchUpdateWorkflowDefinition,
     fetchValidateWorkflowDefinition,
     fetchWorkflowDefinitionDetail
   } from '@/api/scheduler'
-  import type { WorkflowDefinitionItem } from '@/api/scheduler'
+  import type { WorkflowAgentOption, WorkflowDefinitionItem } from '@/api/scheduler'
   import { useMenuStore } from '@/store/modules/menu'
   import { useWorkflowEditorStore } from '@/store/modules/workflow-editor'
   import { buildWorkflowMaterialGroups } from './node-materials'
+  import { syncNodeDefinitions } from './node-registry'
   import {
     applyEdgeFormToDomain,
     applyNodeFormToDomain,
@@ -112,7 +115,6 @@
     createDefaultDomainGraph,
     createDomainNodeFromType,
     flattenMaterials,
-    mapDomainEdgeToForm,
     mapDomainGraphToServer,
     mapDomainNodeToForm,
     mapServerGraphToDomain,
@@ -124,7 +126,6 @@
     WorkflowDomainEdge,
     WorkflowDomainGraphModel,
     WorkflowDomainNode,
-    WorkflowEditorIssue,
     WorkflowEditorMetaForm,
     WorkflowEditorMode,
     WorkflowGraphCommitPayload,
@@ -178,10 +179,12 @@
   const historySessionKey = ref(0)
   const notifyUserOptions = ref<WorkflowNotifyTargetOption[]>([])
   const notifyRoleOptions = ref<WorkflowNotifyTargetOption[]>([])
+  const agentOptions = ref<WorkflowAgentOption[]>([])
   const notifyOptionsLoading = ref(false)
   const notifyOptionsLoaded = ref(false)
   const zoomText = computed(() => `${Math.round(zoom.value * 100)}%`)
-  const cloneGraph = (graph: WorkflowDomainGraphModel): WorkflowDomainGraphModel => JSON.parse(JSON.stringify(graph))
+  const cloneGraph = (graph: WorkflowDomainGraphModel): WorkflowDomainGraphModel =>
+    JSON.parse(JSON.stringify(graph))
   const graphEquals = (left: WorkflowDomainGraphModel, right: WorkflowDomainGraphModel) =>
     JSON.stringify(left) === JSON.stringify(right)
   const resetGraphHistory = () => {
@@ -228,15 +231,6 @@
     return domainGraph.value.edges.find((edge) => edge.id === selection.value.activeCellId) || null
   })
 
-  const currentEdge = computed<WorkflowDomainEdge | null>(() => {
-    if (currentCommittedEdge.value) return currentCommittedEdge.value
-    if (selection.value.activeCellType !== 'edge' || !selection.value.activeCellId) return null
-    if (pendingEdgeDraft.value?.id === selection.value.activeCellId) {
-      return createDomainEdgeFromForm(pendingEdgeDraft.value, domainGraph.value.nodes)
-    }
-    return null
-  })
-
   const previewGraphForJson = computed<WorkflowDomainGraphModel>(() => {
     // JSON 预览优先展示“当前草稿效果”，避免用户打开节点编辑器后右侧预览仍是旧值。
     if (
@@ -251,7 +245,9 @@
     return {
       ...domainGraph.value,
       nodes: domainGraph.value.nodes.map((node) =>
-        node.id === draftState.value.cellId ? applyNodeFormToDomain(node, draftState.value.model as WorkflowNodeFormModel) : node
+        node.id === draftState.value.cellId
+          ? applyNodeFormToDomain(node, draftState.value.model as WorkflowNodeFormModel)
+          : node
       )
     }
   })
@@ -269,21 +265,25 @@
 
   const dirtyNodeIds = computed(() => {
     // 这里专门算出相对基线发生变化的节点，用于画布层高亮“已改动但未保存”的节点。
-    const baselineNodeMap = new Map((baselineGraph.value.nodes || []).map((node) => [node.id, node]))
+    const baselineNodeMap = new Map(
+      (baselineGraph.value.nodes || []).map((node) => [node.id, node])
+    )
     return domainGraph.value.nodes
       .filter((node) => {
         const baselineNode = baselineNodeMap.get(node.id)
         if (!baselineNode) return true
-        return JSON.stringify({
-          title: node.data.title,
-          typeCode: node.data.typeCode,
-          config: node.data.config
-        }) !==
+        return (
+          JSON.stringify({
+            title: node.data.title,
+            typeCode: node.data.typeCode,
+            config: node.data.config
+          }) !==
           JSON.stringify({
             title: baselineNode.data.title,
             typeCode: baselineNode.data.typeCode,
             config: baselineNode.data.config
           })
+        )
       })
       .map((node) => node.id)
   })
@@ -393,7 +393,7 @@
     if (!node) return false
 
     const draft = mapDomainNodeToForm(node)
-    const validation = validateNodeFormDraft(node, draft, taskDefinitions.value)
+    const validation = validateNodeFormDraft(node, draft, taskDefinitions.value, agentOptions.value)
     editorStore.seedDraft({
       cellId,
       cellType: 'node',
@@ -530,7 +530,12 @@
     }
 
     const draft = mapDomainNodeToForm(currentNode.value)
-    const validation = validateNodeFormDraft(currentNode.value, draft, taskDefinitions.value)
+    const validation = validateNodeFormDraft(
+      currentNode.value,
+      draft,
+      taskDefinitions.value,
+      agentOptions.value
+    )
     editorStore.seedDraft({
       cellId: currentNode.value.id,
       cellType: 'node',
@@ -545,7 +550,12 @@
     const nextSnapshot = JSON.stringify(model)
     const currentSnapshot = JSON.stringify(draftState.value.model || null)
     if (nextSnapshot === currentSnapshot) return
-    const validation = validateNodeFormDraft(currentNode.value, model, taskDefinitions.value)
+    const validation = validateNodeFormDraft(
+      currentNode.value,
+      model,
+      taskDefinitions.value,
+      agentOptions.value
+    )
     editorStore.updateDraft({
       model,
       valid: validation.valid,
@@ -591,10 +601,16 @@
   }
 
   const commitNodeDraftToGraph = async () => {
-    if (!currentNode.value || selection.value.activeCellType !== 'node' || !draftState.value.model) return true
+    if (!currentNode.value || selection.value.activeCellType !== 'node' || !draftState.value.model)
+      return true
 
     const nextForm = draftState.value.model as WorkflowNodeFormModel
-    const validation = validateNodeFormDraft(currentNode.value, nextForm, taskDefinitions.value)
+    const validation = validateNodeFormDraft(
+      currentNode.value,
+      nextForm,
+      taskDefinitions.value,
+      agentOptions.value
+    )
     editorStore.updateDraft({
       valid: validation.valid,
       errors: validation.errors
@@ -613,7 +629,12 @@
 
     const updatedNode = nextGraph.nodes.find((node) => node.id === currentNode.value?.id) || null
     const nextDraft = mapDomainNodeToForm(updatedNode)
-    const nextValidation = validateNodeFormDraft(updatedNode, nextDraft, taskDefinitions.value)
+    const nextValidation = validateNodeFormDraft(
+      updatedNode,
+      nextDraft,
+      taskDefinitions.value,
+      agentOptions.value
+    )
     editorStore.seedDraft({
       cellId: updatedNode?.id || null,
       cellType: updatedNode ? 'node' : null,
@@ -656,7 +677,11 @@
   }
 
   const tryCommitActiveNodeDraft = async () => {
-    if (selection.value.activeCellType !== 'node' || !draftState.value.cellId || !draftState.value.model) {
+    if (
+      selection.value.activeCellType !== 'node' ||
+      !draftState.value.cellId ||
+      !draftState.value.model
+    ) {
       return true
     }
 
@@ -708,7 +733,11 @@
       return
     }
 
-    if (payload.cellId === previousSelection.cellId && payload.cellType === previousSelection.cellType) return
+    if (
+      payload.cellId === previousSelection.cellId &&
+      payload.cellType === previousSelection.cellType
+    )
+      return
 
     const canLeave = await tryCommitActiveNodeDraft()
     if (!canLeave) {
@@ -790,7 +819,8 @@
   const removeSelection = async () => {
     if (pendingEdgeDraft.value) {
       const isPendingSelection =
-        selection.value.activeCellType === 'edge' && selection.value.activeCellId === pendingEdgeDraft.value.id
+        selection.value.activeCellType === 'edge' &&
+        selection.value.activeCellId === pendingEdgeDraft.value.id
       if (isPendingSelection) {
         clearPendingEdgeDraft({ clearSelection: true })
         return
@@ -1014,7 +1044,9 @@
     edgeEditorCellId.value = null
     editorStore.setDefinitionDetail(definition)
     editorStore.setMetaForm(normalizeDefinitionMeta(definition))
-    editorStore.setDomainGraph(mapServerGraphToDomain(definition.graph, nodeDefinitions.value, materialItems.value))
+    editorStore.setDomainGraph(
+      mapServerGraphToDomain(definition.graph, nodeDefinitions.value, materialItems.value)
+    )
     editorStore.setIssues({ client: [], server: [] })
     editorStore.captureBaseline()
     editorStore.enableDirtyTracking()
@@ -1159,11 +1191,16 @@
     resetGraphHistory()
 
     try {
-      const [taskDefinitionResult, nodeDefinitionResult] = await Promise.all([
+      const [taskDefinitionResult, nodeDefinitionResult, agentOptionResult] = await Promise.all([
         fetchTaskDefinitions(),
-        fetchNodeDefinitions()
+        fetchNodeDefinitions(),
+        // 智能体列表拿不到不该挡住整个编辑器（没配智能体也能画别的节点）。
+        fetchWorkflowAgentOptions().catch(() => [] as WorkflowAgentOption[])
       ])
+      agentOptions.value = agentOptionResult
 
+      // 先把节点定义同步给本地注册表镜像：端口、分支、校验都要按后端声明的图语义来。
+      syncNodeDefinitions(nodeDefinitionResult)
       const nextMaterialGroups = buildWorkflowMaterialGroups(nodeDefinitionResult)
       editorStore.setRegistryPayload({
         taskDefinitions: taskDefinitionResult,
@@ -1175,13 +1212,19 @@
         const nextMeta = normalizeDefinitionMeta(null)
         editorStore.setMetaForm(nextMeta)
         editorStore.setDomainGraph(
-          createDefaultDomainGraph(nodeDefinitionResult, taskDefinitionResult, flattenMaterials(nodeDefinitionResult))
+          createDefaultDomainGraph(nodeDefinitionResult, taskDefinitionResult)
         )
       } else if (currentDefinitionId.value) {
         const detail = await fetchWorkflowDefinitionDetail(currentDefinitionId.value)
         editorStore.setDefinitionDetail(detail)
         editorStore.setMetaForm(normalizeDefinitionMeta(detail))
-        editorStore.setDomainGraph(mapServerGraphToDomain(detail.graph, nodeDefinitionResult, flattenMaterials(nodeDefinitionResult)))
+        editorStore.setDomainGraph(
+          mapServerGraphToDomain(
+            detail.graph,
+            nodeDefinitionResult,
+            flattenMaterials(nodeDefinitionResult)
+          )
+        )
       }
 
       metaDraft.value = { ...metaForm.value }

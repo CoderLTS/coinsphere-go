@@ -37,12 +37,7 @@
       />
     </ElCard>
 
-    <ElDialog
-      v-model="dialogVisible"
-      destroy-on-close
-      width="720px"
-      :title="dialogTitle"
-    >
+    <ElDialog v-model="dialogVisible" destroy-on-close width="720px" :title="dialogTitle">
       <template v-if="currentRecord">
         <div class="dialog-header">
           <div class="dialog-header__title">{{ currentRecord.label }}</div>
@@ -66,25 +61,12 @@
           description="当前任务定义没有可直接编辑的根级基础参数"
         />
 
-        <ElForm
-          v-else
-          label-position="top"
-          class="task-definition-form"
-        >
-          <ElFormItem
-            v-for="field in editableFields"
-            :key="field.key"
-            :label="field.title"
-          >
+        <ElForm v-else label-position="top" class="task-definition-form">
+          <ElFormItem v-for="field in editableFields" :key="field.key" :label="field.title">
             <template #label>
               <div class="field-label">
                 <span>{{ field.title }}</span>
-                <ElTag
-                  v-if="field.hasSchemaDefault"
-                  size="small"
-                  effect="plain"
-                  type="info"
-                >
+                <ElTag v-if="field.hasSchemaDefault" size="small" effect="plain" type="info">
                   代码默认：{{ formatValue(field.schemaDefault) }}
                 </ElTag>
               </div>
@@ -105,10 +87,7 @@
               />
             </ElSelect>
 
-            <ElSwitch
-              v-else-if="field.kind === 'boolean'"
-              v-model="dialogForm[field.key]"
-            />
+            <ElSwitch v-else-if="field.kind === 'boolean'" v-model="dialogForm[field.key]" />
 
             <ElInputNumber
               v-else-if="field.kind === 'integer' || field.kind === 'number'"
@@ -120,11 +99,7 @@
               style="width: 100%"
             />
 
-            <ElInput
-              v-else
-              v-model="dialogForm[field.key]"
-              clearable
-            />
+            <ElInput v-else v-model="dialogForm[field.key]" clearable />
 
             <div v-if="field.description" class="field-description">
               {{ field.description }}
@@ -150,7 +125,16 @@
 
 <script setup lang="ts">
   import { Edit } from '@element-plus/icons-vue'
-  import { ElButton, ElEmpty, ElInput, ElInputNumber, ElOption, ElSelect, ElSwitch, ElTag } from 'element-plus'
+  import {
+    ElButton,
+    ElEmpty,
+    ElInput,
+    ElInputNumber,
+    ElOption,
+    ElSelect,
+    ElSwitch,
+    ElTag
+  } from 'element-plus'
   import { useAuth } from '@/hooks/core/useAuth'
   import { useTableColumns } from '@/hooks/core/useTableColumns'
   import {
@@ -222,7 +206,9 @@
     return `编辑任务定义：${currentRecord.value.label}`
   })
 
-  const editableFields = computed(() => buildEditableFields(currentRecord.value?.parameterSchema || {}))
+  const editableFields = computed(() =>
+    buildEditableFields(currentRecord.value?.parameterSchema || {})
+  )
 
   const unsupportedFieldLabels = computed(() => {
     const properties = currentRecord.value?.parameterSchema?.properties || {}
@@ -270,7 +256,8 @@
     Object.keys(dialogForm).forEach((key) => delete dialogForm[key])
     editableFields.value.forEach((field) => {
       const value = row.effectiveDefaultParams?.[field.key]
-      dialogForm[field.key] = value === undefined ? cloneValue(field.schemaDefault) : cloneValue(value)
+      dialogForm[field.key] =
+        value === undefined ? cloneValue(field.schemaDefault) : cloneValue(value)
     })
     dialogVisible.value = true
   }

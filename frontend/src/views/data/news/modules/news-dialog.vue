@@ -123,7 +123,9 @@
   const rules = reactive<FormRules>({
     title: [{ required: true, message: t('data.news.validation.title'), trigger: 'blur' }],
     content: [{ required: true, message: t('data.news.validation.content'), trigger: 'blur' }],
-    publishedAt: [{ required: true, message: t('data.news.validation.publishTime'), trigger: 'change' }]
+    publishedAt: [
+      { required: true, message: t('data.news.validation.publishTime'), trigger: 'change' }
+    ]
   })
 
   const createCurrentDateTime = () => {
@@ -212,5 +214,3 @@
     }
   }
 </style>
-
-

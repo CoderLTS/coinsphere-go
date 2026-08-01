@@ -13,7 +13,10 @@
       <div class="editor-toolbar__tools-group editor-toolbar__tools-group--left">
         <ElTooltip :content="materialsVisible ? '隐藏节点面板' : '显示节点面板'" placement="bottom">
           <ElButton
-            :class="['editor-toolbar__icon-btn', { 'editor-toolbar__icon-btn--active': materialsVisible }]"
+            :class="[
+              'editor-toolbar__icon-btn',
+              { 'editor-toolbar__icon-btn--active': materialsVisible }
+            ]"
             @click="$emit('toggle-materials')"
           >
             <ElIcon><Grid /></ElIcon>
@@ -72,7 +75,10 @@
 
         <ElTooltip :content="jsonVisible ? '隐藏 JSON 定义' : '显示 JSON 定义'" placement="bottom">
           <ElButton
-            :class="['editor-toolbar__icon-btn', { 'editor-toolbar__icon-btn--active': jsonVisible }]"
+            :class="[
+              'editor-toolbar__icon-btn',
+              { 'editor-toolbar__icon-btn--active': jsonVisible }
+            ]"
             @click="$emit('toggle-json')"
           >
             <ElIcon><DocumentCopy /></ElIcon>
@@ -80,7 +86,11 @@
         </ElTooltip>
 
         <ElTooltip content="校验" placement="bottom">
-          <ElButton class="editor-toolbar__icon-btn" :loading="validating" @click="$emit('validate')">
+          <ElButton
+            class="editor-toolbar__icon-btn"
+            :loading="validating"
+            @click="$emit('validate')"
+          >
             <ElIcon v-if="!validating"><CircleCheck /></ElIcon>
           </ElButton>
         </ElTooltip>
@@ -95,7 +105,12 @@
         </span>
       </div>
 
-      <ElButton type="primary" class="editor-toolbar__save" :loading="saving" @click="$emit('save')">
+      <ElButton
+        type="primary"
+        class="editor-toolbar__save"
+        :loading="saving"
+        @click="$emit('save')"
+      >
         保存定义
       </ElButton>
     </div>

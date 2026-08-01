@@ -131,7 +131,10 @@ export const useWorkflowEditorStore = defineStore('workflowEditorStore', () => {
     Object.assign(selection, payload)
   }
 
-  const setIssues = (payload: { client?: WorkflowEditorIssue[]; server?: WorkflowEditorIssue[] }) => {
+  const setIssues = (payload: {
+    client?: WorkflowEditorIssue[]
+    server?: WorkflowEditorIssue[]
+  }) => {
     // 前端本地校验和服务端校验分开存，便于界面区分错误来源。
     if (payload.client) clientIssues.value = payload.client
     if (payload.server) serverIssues.value = payload.server

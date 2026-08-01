@@ -6,7 +6,17 @@ import type {
   WorkflowNodeDefinitionItem,
   WorkflowNodeItem
 } from '@/api/scheduler'
-import { buildWorkflowMaterialGroups, getNodeMaterialMeta, inferNodeKind } from './node-materials'
+import {
+  buildWorkflowMaterialGroups,
+  getNodeMaterialMeta,
+  inferNodeFormKind
+} from './node-materials'
+import {
+  LOOP_NEXT_BRANCH,
+  getNodeBranches,
+  getNodeGraphKind,
+  hasDynamicBranches
+} from './node-registry'
 import type {
   WorkflowDomainEdge,
   WorkflowDomainGraphModel,
@@ -130,7 +140,6 @@ const createAutoLayoutPositions = (graph: WorkflowGraph) => {
     outgoing.set(nodeId, [])
     rank.set(nodeId, 0)
   })
-
   ;(graph.edges || []).forEach((edge) => {
     const source = String(edge.source || '')
     const target = String(edge.target || '')
@@ -186,7 +195,9 @@ const createAutoLayoutPositions = (graph: WorkflowGraph) => {
   return positions
 }
 
-export function flattenMaterials(nodeDefinitions: WorkflowNodeDefinitionItem[]): WorkflowMaterialItem[] {
+export function flattenMaterials(
+  nodeDefinitions: WorkflowNodeDefinitionItem[]
+): WorkflowMaterialItem[] {
   return buildWorkflowMaterialGroups(nodeDefinitions).flatMap((group) => group.items)
 }
 
@@ -222,7 +233,11 @@ export function buildDefaultNodeConfig(
     const suffix = typeCode.split('.', 2)[1] || 'manual'
     config.entryKey = String(config.entryKey || `${suffix}.default`).trim()
     config.displayName = String(config.displayName || START_LABELS[typeCode] || '开始入口').trim()
-    if (!config.inputBindings || typeof config.inputBindings !== 'object' || Array.isArray(config.inputBindings)) {
+    if (
+      !config.inputBindings ||
+      typeof config.inputBindings !== 'object' ||
+      Array.isArray(config.inputBindings)
+    ) {
       config.inputBindings = {}
     }
   }
@@ -230,46 +245,83 @@ export function buildDefaultNodeConfig(
   return config
 }
 
-export function buildPortsForType(typeCode: string): WorkflowDomainPort[] {
-  if (typeCode.startsWith('start.')) {
-    return [{ id: 'out', group: 'out', role: 'out' }]
-  }
+/**
+ * 按后端声明的图语义生成节点端口。
+ * 分支节点每个 branch 一个出口，循环节点是 BODY + NEXT，起始/终止各只有一侧。
+ * 这里不再出现具体类型编码 —— 后端加一种三分支节点，端口自动就是三个。
+ */
+export function buildPortsForType(
+  typeCode: string,
+  config?: Record<string, any>
+): WorkflowDomainPort[] {
+  const inPort: WorkflowDomainPort = { id: 'in', group: 'in', role: 'in' }
 
-  if (typeCode === 'end') {
-    return [{ id: 'in', group: 'in', role: 'in' }]
-  }
+  switch (getNodeGraphKind(typeCode)) {
+    case 'start':
+      return [{ id: 'out', group: 'out', role: 'out' }]
 
-  if (typeCode === 'condition.branch') {
-    return [
-      { id: 'in', group: 'in', role: 'in' },
-      { id: 'true', group: 'condition-true', role: 'out', label: 'TRUE' },
-      { id: 'false', group: 'condition-false', role: 'out', label: 'FALSE' }
-    ]
-  }
+    case 'terminal':
+      return [inPort]
 
-  if (typeCode === 'foreach') {
-    return [
-      { id: 'in', group: 'in', role: 'in' },
-      { id: 'body', group: 'foreach-body', role: 'out', label: 'BODY' }
-    ]
-  }
+    case 'branch': {
+      const branches = getNodeBranches(typeCode, config)
+      return [
+        inPort,
+        ...branches.map((branch, index) => ({
+          id: branch,
+          group: resolveBranchPortGroup(branch, index, branches.length),
+          role: 'out' as const,
+          label: branch.toUpperCase()
+        }))
+      ]
+    }
 
-  return [
-    { id: 'in', group: 'in', role: 'in' },
-    { id: 'out', group: 'out', role: 'out' }
-  ]
+    case 'loop':
+      // BODY 连循环体（每个元素跑一遍）；NEXT 连"整个循环跑完之后"继续的节点，可以不连。
+      return [
+        inPort,
+        { id: 'body', group: 'loop-body', role: 'out', label: 'BODY' },
+        { id: LOOP_NEXT_BRANCH, group: 'loop-next', role: 'out', label: 'NEXT' }
+      ]
+
+    default:
+      return [inPort, { id: 'out', group: 'out', role: 'out' }]
+  }
 }
 
+/**
+ * 分支端口的样式分组。true/false 这种常见语义给固定的绿/红，其余按顺序摊在节点右侧。
+ * 分组名同时决定端口在卡片上的纵向位置，见 buildPortGroups。
+ */
+const resolveBranchPortGroup = (branch: string, index: number, total: number) => {
+  if (branch === 'true') return 'branch-true'
+  if (branch === 'false') return 'branch-false'
+  if (total <= 2) return index === 0 ? 'branch-true' : 'branch-false'
+  return `branch-slot-${Math.min(index, MAX_BRANCH_SLOT)}`
+}
+
+/** 通用分支端口最多摊 4 个槽位，再多就叠在最后一个槽位上（画布上极少见）。 */
+const MAX_BRANCH_SLOT = 3
+
 const inferEdgeSourcePort = (nodeType: string, branch?: string) => {
-  if (nodeType === 'condition.branch') {
-    return branch === 'false' ? 'false' : 'true'
+  const kind = getNodeGraphKind(nodeType)
+  if (kind === 'branch') {
+    // 这里拿不到节点配置（只有边),动态分支就以边自带的 branch 为准，取不到再退回第一个静态分支。
+    const branches = getNodeBranches(nodeType)
+    if (branch) return branch
+    return branches[0] || 'out'
   }
-  if (nodeType === 'foreach') return 'body'
+  if (kind === 'loop') return branch === LOOP_NEXT_BRANCH ? LOOP_NEXT_BRANCH : 'body'
   return 'out'
 }
 
+/**
+ * 从边自带的端口/分支反推源节点类型。
+ * 用在「节点还没建好索引」的场景（例如从服务端 graph 反序列化到一半），拿不准就返回空串。
+ */
 const inferSourceTypeFromEdgePorts = (sourcePort?: string, branch?: string) => {
-  if (sourcePort === 'body') return 'foreach'
+  if (sourcePort === 'body' || sourcePort === LOOP_NEXT_BRANCH || branch === LOOP_NEXT_BRANCH)
+    return 'foreach'
   if (sourcePort === 'true' || sourcePort === 'false' || branch === 'true' || branch === 'false') {
     return 'condition.branch'
   }
@@ -277,17 +329,28 @@ const inferSourceTypeFromEdgePorts = (sourcePort?: string, branch?: string) => {
 }
 
 const normalizeEdgeSourcePort = (nodeType: string, sourcePort?: string, branch?: string) => {
-  if (nodeType === 'condition.branch') {
-    if (sourcePort === 'true' || sourcePort === 'false') return sourcePort
+  const kind = getNodeGraphKind(nodeType)
+  if (kind === 'branch') {
+    if (sourcePort) return sourcePort
     return inferEdgeSourcePort(nodeType, branch)
   }
-  if (nodeType === 'foreach') return 'body'
+  if (kind === 'loop') {
+    return sourcePort === LOOP_NEXT_BRANCH || branch === LOOP_NEXT_BRANCH
+      ? LOOP_NEXT_BRANCH
+      : 'body'
+  }
   return sourcePort || 'out'
 }
 
 const normalizeEdgeBranch = (nodeType: string, sourcePort?: string, branch?: string) => {
-  if (nodeType === 'condition.branch') {
-    return normalizeEdgeSourcePort(nodeType, sourcePort, branch)
+  const kind = getNodeGraphKind(nodeType)
+  // 分支节点的 branch 就是端口名；循环节点只有 NEXT 那条标 'next'，
+  // 循环体入口边不带 branch（与既有数据保持一致，不需要迁移）。
+  if (kind === 'branch') return normalizeEdgeSourcePort(nodeType, sourcePort, branch)
+  if (kind === 'loop') {
+    return normalizeEdgeSourcePort(nodeType, sourcePort, branch) === LOOP_NEXT_BRANCH
+      ? LOOP_NEXT_BRANCH
+      : ''
   }
   return ''
 }
@@ -298,7 +361,37 @@ const resolveEdgeSourceType = (
   sourcePort?: string,
   branch?: string
 ) => {
-  return nodeMap.get(String(sourceId))?.data.typeCode || inferSourceTypeFromEdgePorts(sourcePort, branch)
+  return (
+    nodeMap.get(String(sourceId))?.data.typeCode || inferSourceTypeFromEdgePorts(sourcePort, branch)
+  )
+}
+
+/** 没有定制表单的节点，卡片摘要按类型挑一两个关键配置显示。 */
+const buildGenericNodeSummary = (typeCode: string, config: Record<string, any>) => {
+  switch (typeCode) {
+    case 'condition.switch': {
+      const cases = Array.isArray(config.cases) ? config.cases : []
+      return cases.length ? `${cases.length} 个分支 + default` : '配置分支列表'
+    }
+    case 'state.set': {
+      const assignments = Array.isArray(config.assignments) ? config.assignments : []
+      const keys = assignments.map((item: any) => String(item?.key || '')).filter(Boolean)
+      return keys.length ? truncateText(keys.join(', ')) : '配置要设置的变量'
+    }
+    case 'state.append':
+      return truncateText(String(config.key || '配置目标数组变量'))
+    case 'array.filter':
+      return truncateText(String(config.itemsPath || '配置源数组路径'))
+    case 'log.message':
+      return truncateText(String(config.message || '配置日志内容'))
+    case 'workflow.call': {
+      const code = String(config.workflowCode || '').trim()
+      if (!code) return '选择目标工作流'
+      return truncateText(`${code} / ${String(config.entryKey || '?')}`)
+    }
+    default:
+      return ''
+  }
 }
 
 const buildNodeCollapsedSummary = (node: WorkflowDomainNode) => {
@@ -307,7 +400,9 @@ const buildNodeCollapsedSummary = (node: WorkflowDomainNode) => {
   switch (node.data.kind) {
     case 'start':
       if (node.data.typeCode === 'start.schedule') {
-        return truncateText(String(config.cronExpression || config.runAt || config.displayName || '定时触发入口'))
+        return truncateText(
+          String(config.cronExpression || config.runAt || config.displayName || '定时触发入口')
+        )
       }
       if (node.data.typeCode === 'start.event') {
         return truncateText(String(config.eventType || config.displayName || '等待指定事件'))
@@ -320,10 +415,26 @@ const buildNodeCollapsedSummary = (node: WorkflowDomainNode) => {
     case 'task':
       return truncateText(String(config.taskDefinitionCode || '选择任务定义'))
 
+    case 'agent': {
+      const agentCode = String(config.agentCode || '').trim()
+      if (!agentCode) return '选择智能体'
+      const mode = config.analyze ? '结构化分析' : '自定义提示词'
+      return truncateText(`${agentCode} / ${mode}`)
+    }
+
     case 'condition': {
+      // 多条件优先展示条数，单条件展示 "路径 运算 值"（值可能来自 valuePath）。
+      const clauses = Array.isArray(config.conditions) ? config.conditions : []
+      if (clauses.length) {
+        const logic = String(config.logic || 'and').toUpperCase()
+        return `${clauses.length} 个条件 / ${logic}`
+      }
       const operator = String(config.operator || '').trim()
-      const value = String(config.value ?? '').trim()
-      return truncateText([config.path, operator, value].filter(Boolean).join(' ') || '配置分支条件')
+      const valuePath = String(config.valuePath ?? '').trim()
+      const value = valuePath ? `→ ${valuePath}` : String(config.value ?? '').trim()
+      return truncateText(
+        [config.path, operator, value].filter(Boolean).join(' ') || '配置分支条件'
+      )
     }
 
     case 'foreach':
@@ -340,8 +451,9 @@ const buildNodeCollapsedSummary = (node: WorkflowDomainNode) => {
 
     case 'http':
       return truncateText(
-        [String(config.method || 'POST').toUpperCase(), String(config.url || '').trim()].filter(Boolean).join(' ') ||
-          '外部 HTTP 请求'
+        [String(config.method || 'POST').toUpperCase(), String(config.url || '').trim()]
+          .filter(Boolean)
+          .join(' ') || '外部 HTTP 请求'
       )
 
     case 'delay':
@@ -349,6 +461,9 @@ const buildNodeCollapsedSummary = (node: WorkflowDomainNode) => {
 
     case 'end':
       return '结束当前链路'
+
+    case 'generic':
+      return buildGenericNodeSummary(node.data.typeCode, config)
 
     default:
       return truncateText(node.data.subtitle || '')
@@ -364,7 +479,8 @@ const createDomainNode = (
 ): WorkflowDomainNode => {
   const material = getNodeMaterial(node.type, materials)
   const definition = nodeDefinitions.find((item) => item.typeCode === node.type)
-  const position = node.position || fallbackPositions.get(String(node.id)) || createNodePosition(index)
+  const position =
+    node.position || fallbackPositions.get(String(node.id)) || createNodePosition(index)
 
   const domainNode: WorkflowDomainNode = {
     id: node.id,
@@ -373,10 +489,10 @@ const createDomainNode = (
       width: material?.width || DEFAULT_NODE_SIZE.width,
       height: material?.height || DEFAULT_NODE_SIZE.height
     },
-    ports: buildPortsForType(node.type),
+    ports: buildPortsForType(node.type, node.config || {}),
     data: {
       typeCode: node.type,
-      kind: material?.kind || inferNodeKind(node.type),
+      kind: material?.kind || inferNodeFormKind(node.type),
       title: resolveNodeTitle(node.type, node.label, definition?.label || node.type),
       subtitle: material?.description || definition?.label || node.type,
       color: material?.color || '#64748b',
@@ -401,7 +517,12 @@ const createDomainEdge = (
   },
   nodeMap: Map<string, WorkflowDomainNode>
 ): WorkflowDomainEdge => {
-  const sourceType = resolveEdgeSourceType(nodeMap, String(edge.source), edge.sourcePort, edge.branch)
+  const sourceType = resolveEdgeSourceType(
+    nodeMap,
+    String(edge.source),
+    edge.sourcePort,
+    edge.branch
+  )
   const sourcePort = normalizeEdgeSourcePort(sourceType, edge.sourcePort, edge.branch)
   const branch = normalizeEdgeBranch(sourceType, sourcePort, edge.branch)
 
@@ -438,8 +559,7 @@ export function createDomainEdgeFromForm(
 
 export function createDefaultDomainGraph(
   nodeDefinitions: WorkflowNodeDefinitionItem[],
-  taskDefinitions: TaskDefinitionItem[],
-  materials: WorkflowMaterialItem[]
+  taskDefinitions: TaskDefinitionItem[]
 ): WorkflowDomainGraphModel {
   const startTypeCode = 'start.manual'
   const startDefinition = nodeDefinitions.find((item) => item.typeCode === startTypeCode)
@@ -549,42 +669,50 @@ const createPortGroup = (options: {
   labelColor?: string
   textAnchor?: 'start' | 'end' | 'middle'
   refDx?: number
-}) => ({
-  markup: [
-    { tagName: 'circle', selector: 'portHit' },
-    { tagName: 'circle', selector: 'portBody' },
-    { tagName: 'text', selector: 'portLabel' }
-  ],
-  position: { name: 'absolute', args: { x: options.x, y: options.y } },
-  attrs: {
-    portHit: {
-      r: 14,
-      magnet: options.magnet,
-      fill: 'transparent',
-      stroke: 'transparent',
-      class: 'workflow-port-hit'
-    },
-    portBody: {
-      r: 4,
-      magnet: options.magnet,
-      stroke: options.stroke,
-      strokeWidth: 1.4,
-      fill: '#ffffff',
-      style: { visibility: 'hidden' },
-      class: 'workflow-port-dot'
-    },
-    portLabel: {
-      fontSize: 10,
-      fontWeight: 700,
-      fill: options.labelColor || options.stroke,
-      textAnchor: options.textAnchor || 'start',
-      textVerticalAnchor: 'middle',
-      refX: options.refDx ?? 12,
-      style: { visibility: 'hidden' },
-      class: 'workflow-port-label'
+  /**
+   * 端口标签是否常显。默认只在 hover 节点时出现，避免画布糊成一片；
+   * 但分支/循环节点的出口语义（TRUE/FALSE、BODY/NEXT）不看标签根本分不出来，必须常显。
+   */
+  alwaysVisible?: boolean
+}) => {
+  const visibility = options.alwaysVisible ? 'visible' : 'hidden'
+  return {
+    markup: [
+      { tagName: 'circle', selector: 'portHit' },
+      { tagName: 'circle', selector: 'portBody' },
+      { tagName: 'text', selector: 'portLabel' }
+    ],
+    position: { name: 'absolute', args: { x: options.x, y: options.y } },
+    attrs: {
+      portHit: {
+        r: 14,
+        magnet: options.magnet,
+        fill: 'transparent',
+        stroke: 'transparent',
+        class: 'workflow-port-hit'
+      },
+      portBody: {
+        r: 4,
+        magnet: options.magnet,
+        stroke: options.stroke,
+        strokeWidth: 1.4,
+        fill: '#ffffff',
+        style: { visibility },
+        class: 'workflow-port-dot'
+      },
+      portLabel: {
+        fontSize: 10,
+        fontWeight: 700,
+        fill: options.labelColor || options.stroke,
+        textAnchor: options.textAnchor || 'start',
+        textVerticalAnchor: 'middle',
+        refX: options.refDx ?? 12,
+        style: { visibility },
+        class: 'workflow-port-label'
+      }
     }
   }
-})
+}
 
 const buildPortGroups = () => ({
   in: createPortGroup({
@@ -601,26 +729,72 @@ const buildPortGroups = () => ({
     stroke: '#3b82f6',
     magnet: true
   }),
-  'condition-true': createPortGroup({
+  // 下面这些是「有语义的出口」：分支走哪条、循环体还是循环之后，
+  // 光看小圆点分不出来，所以标签常显（alwaysVisible）。
+  'branch-true': createPortGroup({
     x: '100%',
     y: 28,
     stroke: '#22c55e',
     magnet: true,
-    labelColor: '#15803d'
+    labelColor: '#15803d',
+    alwaysVisible: true
   }),
-  'condition-false': createPortGroup({
+  'branch-false': createPortGroup({
     x: '100%',
     y: 68,
     stroke: '#ef4444',
     magnet: true,
-    labelColor: '#b91c1c'
+    labelColor: '#b91c1c',
+    alwaysVisible: true
   }),
-  'foreach-body': createPortGroup({
+  // 通用分支槽位：给 true/false 之外的自定义分支用，纵向依次排开。
+  'branch-slot-0': createPortGroup({
     x: '100%',
-    y: '50%',
+    y: 22,
+    stroke: '#6366f1',
+    magnet: true,
+    labelColor: '#4338ca',
+    alwaysVisible: true
+  }),
+  'branch-slot-1': createPortGroup({
+    x: '100%',
+    y: 42,
+    stroke: '#8b5cf6',
+    magnet: true,
+    labelColor: '#6d28d9',
+    alwaysVisible: true
+  }),
+  'branch-slot-2': createPortGroup({
+    x: '100%',
+    y: 62,
+    stroke: '#a855f7',
+    magnet: true,
+    labelColor: '#7e22ce',
+    alwaysVisible: true
+  }),
+  'branch-slot-3': createPortGroup({
+    x: '100%',
+    y: 82,
+    stroke: '#c026d3',
+    magnet: true,
+    labelColor: '#a21caf',
+    alwaysVisible: true
+  }),
+  'loop-body': createPortGroup({
+    x: '100%',
+    y: 28,
     stroke: '#ca8a04',
     magnet: true,
-    labelColor: '#a16207'
+    labelColor: '#a16207',
+    alwaysVisible: true
+  }),
+  'loop-next': createPortGroup({
+    x: '100%',
+    y: 68,
+    stroke: '#0ea5e9',
+    magnet: true,
+    labelColor: '#0369a1',
+    alwaysVisible: true
   })
 })
 
@@ -804,10 +978,10 @@ export function mapX6GraphToDomain(
         width: Math.round(size.width || material?.width || DEFAULT_NODE_SIZE.width),
         height: Math.round(size.height || material?.height || DEFAULT_NODE_SIZE.height)
       },
-      ports: buildPortsForType(typeCode),
+      ports: buildPortsForType(typeCode, nodeCell.data?.config || {}),
       data: {
         typeCode,
-        kind: material?.kind || inferNodeKind(typeCode),
+        kind: material?.kind || inferNodeFormKind(typeCode),
         title: resolveNodeTitle(typeCode, nodeCell.data?.title, definition?.label || typeCode),
         subtitle: '',
         color: String(nodeCell.data?.color || material?.color || '#64748b'),
@@ -866,7 +1040,10 @@ export function mapDomainEdgeToForm(edge: WorkflowDomainEdge | null): WorkflowEd
   }
 }
 
-export function applyNodeFormToDomain(node: WorkflowDomainNode, form: WorkflowNodeFormModel): WorkflowDomainNode {
+export function applyNodeFormToDomain(
+  node: WorkflowDomainNode,
+  form: WorkflowNodeFormModel
+): WorkflowDomainNode {
   const nextNode: WorkflowDomainNode = {
     ...node,
     data: {
@@ -875,13 +1052,27 @@ export function applyNodeFormToDomain(node: WorkflowDomainNode, form: WorkflowNo
       config: cloneConfig(form.config || {})
     }
   }
+  // 分支随配置变化的节点（多路 switch）在配置提交后要重建端口，否则新增的 case 没有出口可连。
+  if (hasDynamicBranches(nextNode.data.typeCode)) {
+    nextNode.ports = buildPortsForType(nextNode.data.typeCode, nextNode.data.config)
+  }
   nextNode.data.subtitle = buildNodeCollapsedSummary(nextNode)
   return nextNode
 }
 
-export function applyEdgeFormToDomain(edge: WorkflowDomainEdge, form: WorkflowEdgeFormModel): WorkflowDomainEdge {
-  const sourceType = inferSourceTypeFromEdgePorts(form.sourcePort || edge.sourcePort, form.branch || edge.data.branch)
-  const sourcePort = normalizeEdgeSourcePort(sourceType, form.sourcePort || edge.sourcePort, form.branch || edge.data.branch)
+export function applyEdgeFormToDomain(
+  edge: WorkflowDomainEdge,
+  form: WorkflowEdgeFormModel
+): WorkflowDomainEdge {
+  const sourceType = inferSourceTypeFromEdgePorts(
+    form.sourcePort || edge.sourcePort,
+    form.branch || edge.data.branch
+  )
+  const sourcePort = normalizeEdgeSourcePort(
+    sourceType,
+    form.sourcePort || edge.sourcePort,
+    form.branch || edge.data.branch
+  )
   return {
     ...edge,
     sourcePort,
@@ -937,7 +1128,9 @@ export function createDomainNodeFromType(
   const config = buildDefaultNodeConfig(definition, taskDefinitions)
   if (typeCode.startsWith('start.')) {
     config.entryKey = createUniqueStartEntryKey(typeCode, existingNodes)
-    config.displayName = String(config.displayName || START_LABELS[typeCode] || definition?.label || '开始入口').trim()
+    config.displayName = String(
+      config.displayName || START_LABELS[typeCode] || definition?.label || '开始入口'
+    ).trim()
   }
 
   const node: WorkflowDomainNode = {
@@ -947,10 +1140,10 @@ export function createDomainNodeFromType(
       width: material?.width || DEFAULT_NODE_SIZE.width,
       height: material?.height || DEFAULT_NODE_SIZE.height
     },
-    ports: buildPortsForType(typeCode),
+    ports: buildPortsForType(typeCode, config),
     data: {
       typeCode,
-      kind: material?.kind || inferNodeKind(typeCode),
+      kind: material?.kind || inferNodeFormKind(typeCode),
       title: resolveNodeTitle(typeCode, definition?.label, typeCode),
       subtitle: '',
       color: material?.color || '#64748b',
@@ -962,7 +1155,9 @@ export function createDomainNodeFromType(
   return node
 }
 
-export function normalizeDefinitionMeta(definition: WorkflowDefinitionItem | null): WorkflowEditorMetaForm {
+export function normalizeDefinitionMeta(
+  definition: WorkflowDefinitionItem | null
+): WorkflowEditorMetaForm {
   return {
     code: definition?.code || '',
     displayName: definition?.displayName || '',

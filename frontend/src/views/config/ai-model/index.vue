@@ -2,7 +2,12 @@
 <template>
   <div class="art-full-height">
     <ElCard class="art-table-card">
-      <ArtTableHeader :showZebra="false" :loading="loading" v-model:columns="columnChecks" @refresh="loadPageData">
+      <ArtTableHeader
+        :showZebra="false"
+        :loading="loading"
+        v-model:columns="columnChecks"
+        @refresh="loadPageData"
+      >
         <template #left>
           <ElSpace wrap>
             <ElButton v-if="hasAuth('config.ai_models.create')" @click="openAddDialog">
@@ -256,10 +261,8 @@
       minWidth: 120,
       align: 'center',
       formatter: (row) =>
-        h(
-          ElTag,
-          { type: getValidationTagType(row.lastValidationStatus), size: 'small' },
-          () => getValidationLabel(row.lastValidationStatus)
+        h(ElTag, { type: getValidationTagType(row.lastValidationStatus), size: 'small' }, () =>
+          getValidationLabel(row.lastValidationStatus)
         )
     },
     {
@@ -367,11 +370,15 @@
   }
 
   const handleDelete = async (row: AiModelConfigItem) => {
-    await ElMessageBox.confirm(t('aiConfig.deleteConfirm', { name: row.displayName }), t('common.tips'), {
-      type: 'warning',
-      confirmButtonText: t('common.confirm'),
-      cancelButtonText: t('common.cancel')
-    })
+    await ElMessageBox.confirm(
+      t('aiConfig.deleteConfirm', { name: row.displayName }),
+      t('common.tips'),
+      {
+        type: 'warning',
+        confirmButtonText: t('common.confirm'),
+        cancelButtonText: t('common.cancel')
+      }
+    )
     await fetchDeleteAiModel(row.id)
     await loadPageData()
   }

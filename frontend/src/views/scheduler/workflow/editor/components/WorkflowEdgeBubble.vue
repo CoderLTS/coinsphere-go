@@ -7,8 +7,9 @@
     </div>
 
     <ElForm label-position="top">
-      <ElFormItem v-if="isConditionEdge" label="分支标识">
+      <ElFormItem v-if="isSemanticEdge" label="分支标识">
         <ElInput :model-value="branchDisplayText" readonly />
+        <div v-if="branchHint" class="edge-bubble__hint">{{ branchHint }}</div>
       </ElFormItem>
       <ElFormItem label="显示标签">
         <ElInput v-model.trim="localForm.label" placeholder="用于画布展示" />
@@ -17,13 +18,16 @@
 
     <div class="edge-bubble__footer">
       <ElButton size="small" @click="$emit('cancel')">取消</ElButton>
-      <ElButton size="small" type="primary" @click="$emit('confirm', cloneForm(localForm))">确定</ElButton>
+      <ElButton size="small" type="primary" @click="$emit('confirm', cloneForm(localForm))"
+        >确定</ElButton
+      >
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
   import type { WorkflowDomainEdge, WorkflowEdgeFormModel } from '../types'
+  import { LOOP_NEXT_BRANCH } from '../node-registry'
 
   interface Props {
     edge: WorkflowDomainEdge
@@ -41,8 +45,22 @@
     ...edge
   })
 
-  const isConditionEdge = computed(() => ['true', 'false'].includes(props.edge.sourcePort || ''))
+  // 只要这条边是从「有语义的出口」拉出来的（分支的 true/false…、循环的 body/next），
+  // 就把分支标识显示出来。原来写死判断 true/false，foreach 的 NEXT 边点开是一片空白。
+  const isSemanticEdge = computed(() => {
+    const port = props.edge.sourcePort || ''
+    return Boolean(port) && port !== 'out'
+  })
+
+  const BRANCH_HINTS: Record<string, string> = {
+    body: '循环体：每个元素跑一遍',
+    [LOOP_NEXT_BRANCH]: '循环后继：全部元素跑完后继续',
+    true: '条件成立时走这条',
+    false: '条件不成立时走这条'
+  }
+
   const branchDisplayText = computed(() => localForm.branch || props.edge.sourcePort || '')
+  const branchHint = computed(() => BRANCH_HINTS[props.edge.sourcePort || ''] || '')
 
   const localForm = reactive<WorkflowEdgeFormModel>({
     id: props.edge.id,
@@ -97,6 +115,13 @@
       font-size: 12px;
       color: #64748b;
     }
+  }
+
+  .edge-bubble__hint {
+    margin-top: 4px;
+    font-size: 12px;
+    line-height: 18px;
+    color: #64748b;
   }
 
   .edge-bubble__footer {

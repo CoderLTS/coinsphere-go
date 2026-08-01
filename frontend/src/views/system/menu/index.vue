@@ -17,11 +17,7 @@
         @refresh="handleRefresh"
       >
         <template #left>
-          <ElButton
-            v-if="hasAuth('system.menus.create')"
-            v-ripple
-            @click="handleAddMenu"
-          >
+          <ElButton v-if="hasAuth('system.menus.create')" v-ripple @click="handleAddMenu">
             新增菜单
           </ElButton>
           <ElButton v-ripple @click="toggleExpand">
@@ -143,7 +139,10 @@
 
   const deepClone = <T,>(obj: T): T => JSON.parse(JSON.stringify(obj)) as T
 
-  const getDisplayTitle = (i18nKey: string | undefined, fallbackTitle: string | undefined): string => {
+  const getDisplayTitle = (
+    i18nKey: string | undefined,
+    fallbackTitle: string | undefined
+  ): string => {
     if (i18nKey) {
       const translated = formatMenuTitle(i18nKey)
       if (translated !== i18nKey) {
@@ -387,11 +386,14 @@
         String(item.meta?.i18nKey || ''),
         String(item.meta?.title || '')
       ).toLowerCase()
-      const routeValue = (item.meta?.isAuthButton ? '' : item.meta?.link || item.path || '').toLowerCase()
+      const routeValue = (
+        item.meta?.isAuthButton ? '' : item.meta?.link || item.path || ''
+      ).toLowerCase()
       const permissionValue = String(item.meta?.permissionCode || '').toLowerCase()
       const nameMatch = !searchName || menuTitle.includes(searchName)
       const routeMatch = !searchRoute || routeValue.includes(searchRoute)
-      const permissionMatch = !searchPermissionCode || permissionValue.includes(searchPermissionCode)
+      const permissionMatch =
+        !searchPermissionCode || permissionValue.includes(searchPermissionCode)
 
       if (item.children?.length) {
         const matchedChildren = searchMenu(item.children)

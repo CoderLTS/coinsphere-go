@@ -1,7 +1,12 @@
 <!-- 工作流编辑器页面或组件：WorkflowNodeEditorCard。 -->
 <template>
   <div class="node-editor-card" @pointerdown.stop @click.stop>
-    <ElButton class="node-editor-card__commit" type="primary" native-type="button" @click="handleRequestCommit">
+    <ElButton
+      class="node-editor-card__commit"
+      type="primary"
+      native-type="button"
+      @click="handleRequestCommit"
+    >
       保存
     </ElButton>
 
@@ -27,7 +32,11 @@
 
         <ElForm label-position="top">
           <ElFormItem label="节点名称">
-            <ElInput v-model="localForm.label" placeholder="请输入节点名称" @blur="handleTextBlur(['label'])" />
+            <ElInput
+              v-model="localForm.label"
+              placeholder="请输入节点名称"
+              @blur="handleTextBlur(['label'])"
+            />
           </ElFormItem>
 
           <ElFormItem label="节点类型">
@@ -149,7 +158,12 @@
                 clearable
                 @change="handleTaskDefinitionChange"
               >
-                <ElOption v-for="item in taskDefinitions" :key="item.code" :label="item.label" :value="item.code" />
+                <ElOption
+                  v-for="item in taskDefinitions"
+                  :key="item.code"
+                  :label="item.label"
+                  :value="item.code"
+                />
               </ElSelect>
             </ElFormItem>
 
@@ -204,8 +218,12 @@
                     v-else-if="field.type === 'integer' || field.type === 'number'"
                     :model-value="getTaskParameterValue(field)"
                     class="node-editor-card__param-input"
-                    :min="typeof field.schema.minimum === 'number' ? field.schema.minimum : undefined"
-                    :max="typeof field.schema.maximum === 'number' ? field.schema.maximum : undefined"
+                    :min="
+                      typeof field.schema.minimum === 'number' ? field.schema.minimum : undefined
+                    "
+                    :max="
+                      typeof field.schema.maximum === 'number' ? field.schema.maximum : undefined
+                    "
                     :step="field.type === 'integer' ? 1 : 0.1"
                     @update:model-value="setTaskParameterValue(field, $event)"
                   />
@@ -257,6 +275,78 @@
             </ElDescriptions>
           </template>
 
+          <template v-else-if="localForm.kind === 'agent'">
+            <ElFormItem label="智能体">
+              <ElSelect
+                v-model="localForm.config.agentCode"
+                placeholder="请选择智能体"
+                filterable
+                clearable
+                @change="emitModel"
+              >
+                <ElOption
+                  v-for="item in agentOptions"
+                  :key="item.code"
+                  :label="item.label"
+                  :value="item.code"
+                />
+              </ElSelect>
+              <div v-if="selectedAgent" class="node-editor-card__field-hint">
+                数据源：{{ selectedAgent.dataSourceLabel || selectedAgent.dataSourceType }}
+              </div>
+            </ElFormItem>
+
+            <ElFormItem v-if="selectedAgent?.supportsAnalyze" label="使用数据源的结构化分析模板">
+              <ElSwitch v-model="localForm.config.analyze" @change="emitModel" />
+              <div class="node-editor-card__field-hint">
+                开启后忽略下面的提示词，改用该数据源自带的分析指令。
+              </div>
+            </ElFormItem>
+
+            <ElFormItem v-if="!localForm.config.analyze" label="提示词">
+              <ElInput
+                v-model="localForm.config.promptTemplate"
+                type="textarea"
+                :rows="5"
+                :placeholder="promptTemplatePlaceholder"
+                @blur="handleTextBlur(['config', 'promptTemplate'])"
+              />
+            </ElFormItem>
+
+            <ElFormItem v-if="selectedAgent?.requiresRefId" label="关联数据 id 路径">
+              <ElInput
+                v-model="localForm.config.refIdPath"
+                placeholder="例如 currentItem.id"
+                @blur="handleTextBlur(['config', 'refIdPath'])"
+              />
+              <div class="node-editor-card__field-hint">
+                该智能体需要关联数据（{{ selectedAgent.dataSourceLabel }}），从共享状态的这个路径取
+                id。
+              </div>
+            </ElFormItem>
+
+            <ElFormItem label="结果写入共享状态的键名">
+              <ElInput
+                v-model="localForm.config.outputKey"
+                placeholder="默认 agentResult"
+                @blur="handleTextBlur(['config', 'outputKey'])"
+              />
+              <div class="node-editor-card__field-hint">{{ outputKeyHint }}</div>
+            </ElFormItem>
+
+            <ElFormItem label="指定模型配置 id">
+              <ElInputNumber
+                v-model="localForm.config.modelConfigId"
+                class="node-editor-card__full"
+                :min="0"
+                @change="emitModel"
+              />
+              <div class="node-editor-card__field-hint">
+                留空或 0 表示用该智能体绑定的模型；工作流按创建者的模型配置解析。
+              </div>
+            </ElFormItem>
+          </template>
+
           <template v-else-if="localForm.kind === 'condition'">
             <ElFormItem label="字段路径">
               <ElInput
@@ -269,6 +359,8 @@
             <ElFormItem label="比较运算">
               <ElSelect v-model="localForm.config.operator" @change="emitModel">
                 <ElOption label="等于" value="eq" />
+                <ElOption label="不等于" value="ne" />
+                <ElOption label="包含" value="contains" />
                 <ElOption label="大于" value="gt" />
                 <ElOption label="大于等于" value="gte" />
                 <ElOption label="小于" value="lt" />
@@ -284,37 +376,47 @@
                 @blur="handleTextBlur(['config', 'value'])"
               />
             </ElFormItem>
+
+            <ElFormItem label="比较值路径">
+              <ElInput
+                v-model="localForm.config.valuePath"
+                placeholder="选填；填了就取共享状态里该路径的值，优先于上面的固定比较值"
+                @blur="handleTextBlur(['config', 'valuePath'])"
+              />
+            </ElFormItem>
+
+            <ElAlert
+              type="info"
+              :closable="false"
+              title="需要多个条件时在下面添加；一旦填了多条件，上面的单条件就不再生效。"
+            />
+            <WorkflowSchemaFields
+              :schema="configSchema"
+              :config="localForm.config"
+              :keys="['logic', 'conditions']"
+              @update="handleSchemaFieldUpdate"
+            />
           </template>
 
           <template v-else-if="localForm.kind === 'foreach'">
-            <ElFormItem label="数组路径">
-              <ElInput
-                v-model="localForm.config.itemsPath"
-                placeholder="例如 taskResult.insertedItems"
-                @blur="handleTextBlur(['config', 'itemsPath'])"
-              />
-            </ElFormItem>
-
-            <ElFormItem label="元素变量名">
-              <ElInput
-                v-model="localForm.config.itemKey"
-                placeholder="默认 currentItem"
-                @blur="handleTextBlur(['config', 'itemKey'])"
-              />
-            </ElFormItem>
-
-            <ElFormItem label="索引变量名">
-              <ElInput
-                v-model="localForm.config.indexKey"
-                placeholder="默认 currentIndex"
-                @blur="handleTextBlur(['config', 'indexKey'])"
-              />
-            </ElFormItem>
+            <WorkflowSchemaFields
+              :schema="configSchema"
+              :config="localForm.config"
+              @update="handleSchemaFieldUpdate"
+            />
+            <ElAlert
+              type="info"
+              :closable="false"
+              title="BODY 连线是循环体（每个元素跑一遍）；要在遍历结束后继续，请从 NEXT 端口再拉一条连线。"
+            />
           </template>
 
           <template v-else-if="localForm.kind === 'notify'">
             <ElFormItem label="通知渠道">
-              <ElCheckboxGroup v-model="notifyChannelTypes" @change="handleNotifyChannelTypesChange">
+              <ElCheckboxGroup
+                v-model="notifyChannelTypes"
+                @change="handleNotifyChannelTypesChange"
+              >
                 <ElCheckbox label="站内通知" value="in_app" />
                 <ElCheckbox label="钉钉 Webhook" value="dingtalk_webhook" />
                 <ElCheckbox label="邮件" value="smtp_email" />
@@ -374,7 +476,11 @@
               </div>
 
               <div v-if="notifyTargetRows.length" class="target-panel__list">
-                <div v-for="(target, index) in notifyTargetRows" :key="target.rowId" class="target-panel__item">
+                <div
+                  v-for="(target, index) in notifyTargetRows"
+                  :key="target.rowId"
+                  class="target-panel__item"
+                >
                   <div class="target-panel__item-header">
                     <div class="target-panel__title">
                       <span class="target-panel__index">目标 {{ index + 1 }}</span>
@@ -402,8 +508,16 @@
                         class="target-panel__field target-panel__field--type"
                         @change="handleNotifyTargetTypeChange(target.rowId, target.targetType)"
                       >
-                        <ElOption label="用户" value="user" :disabled="isNotifyTargetTypeDisabled(target.rowId, 'user')" />
-                        <ElOption label="角色" value="role" :disabled="isNotifyTargetTypeDisabled(target.rowId, 'role')" />
+                        <ElOption
+                          label="用户"
+                          value="user"
+                          :disabled="isNotifyTargetTypeDisabled(target.rowId, 'user')"
+                        />
+                        <ElOption
+                          label="角色"
+                          value="role"
+                          :disabled="isNotifyTargetTypeDisabled(target.rowId, 'role')"
+                        />
                       </ElSelect>
                     </div>
 
@@ -440,99 +554,45 @@
           </template>
 
           <template v-else-if="localForm.kind === 'event'">
-            <ElFormItem label="事件类型">
-              <ElInput
-                v-model="localForm.config.eventType"
-                placeholder="例如 news.items.synced"
-                @blur="handleTextBlur(['config', 'eventType'])"
-              />
-            </ElFormItem>
-
-            <ElFormItem label="聚合类型">
-              <ElInput
-                v-model="localForm.config.aggregateType"
-                placeholder="默认 workflow_execution"
-                @blur="handleTextBlur(['config', 'aggregateType'])"
-              />
-            </ElFormItem>
-
-            <ElFormItem label="事件载荷路径">
-              <ElInput
-                v-model="localForm.config.payloadPath"
-                placeholder="例如 taskResult"
-                @blur="handleTextBlur(['config', 'payloadPath'])"
-              />
-            </ElFormItem>
-
-            <ElFormItem label="元数据路径">
-              <ElInput
-                v-model="localForm.config.metadataPath"
-                placeholder="可选"
-                @blur="handleTextBlur(['config', 'metadataPath'])"
-              />
-            </ElFormItem>
+            <WorkflowSchemaFields
+              :schema="configSchema"
+              :config="localForm.config"
+              @update="handleSchemaFieldUpdate"
+            />
           </template>
 
           <template v-else-if="localForm.kind === 'http'">
-            <ElFormItem label="请求地址">
-              <ElInput
-                v-model="localForm.config.url"
-                placeholder="https://example.com/webhook"
-                @blur="handleTextBlur(['config', 'url'])"
-              />
-            </ElFormItem>
-
-            <ElFormItem label="请求方法">
-              <ElSelect v-model="localForm.config.method" @change="emitModel">
-                <ElOption label="GET" value="GET" />
-                <ElOption label="POST" value="POST" />
-                <ElOption label="PUT" value="PUT" />
-              </ElSelect>
-            </ElFormItem>
-
-            <ElFormItem label="请求体路径">
-              <ElInput
-                v-model="localForm.config.payloadPath"
-                placeholder="例如 taskResult"
-                @blur="handleTextBlur(['config', 'payloadPath'])"
-              />
-            </ElFormItem>
-
-            <ElFormItem label="请求头 JSON">
-              <ElInput
-                v-model="httpHeadersJson"
-                type="textarea"
-                :rows="4"
-                placeholder='{"Content-Type":"application/json"}'
-                @blur="normalizeHeadersJsonField(httpHeadersJson)"
-              />
-            </ElFormItem>
-
-            <ElFormItem label="超时毫秒">
-              <ElInputNumber
-                v-model="localForm.config.timeoutMs"
-                class="node-editor-card__full"
-                :min="0"
-                :step="500"
-                @change="emitModel"
-              />
-            </ElFormItem>
+            <WorkflowSchemaFields
+              :schema="configSchema"
+              :config="localForm.config"
+              @update="handleSchemaFieldUpdate"
+            />
           </template>
 
           <template v-else-if="localForm.kind === 'delay'">
-            <ElFormItem label="等待毫秒">
-              <ElInputNumber
-                v-model="localForm.config.durationMs"
-                class="node-editor-card__full"
-                :min="0"
-                :step="1000"
-                @change="emitModel"
-              />
-            </ElFormItem>
+            <WorkflowSchemaFields
+              :schema="configSchema"
+              :config="localForm.config"
+              @update="handleSchemaFieldUpdate"
+            />
           </template>
 
           <template v-else-if="localForm.kind === 'end'">
-            <ElAlert type="success" :closable="false" title="结束节点没有额外配置，执行链路会在此终止。" />
+            <ElAlert
+              type="success"
+              :closable="false"
+              title="结束节点没有额外配置，执行链路会在此终止。"
+            />
+          </template>
+
+          <!-- 兜底：没有定制表单的节点按后端下发的 configSchema 自动渲染。
+               新增一种节点只要后端登记好 schema，这里就有可用的表单，不必再改本文件。 -->
+          <template v-else>
+            <WorkflowSchemaFields
+              :schema="configSchema"
+              :config="localForm.config"
+              @update="handleSchemaFieldUpdate"
+            />
           </template>
         </ElForm>
       </div>
@@ -541,18 +601,21 @@
 </template>
 
 <script setup lang="ts">
-  import type { TaskDefinitionItem } from '@/api/scheduler'
+  import type { TaskDefinitionItem, WorkflowAgentOption } from '@/api/scheduler'
   import type {
     WorkflowDomainNode,
     WorkflowEditorIssue,
     WorkflowNodeFormModel,
     WorkflowNotifyTargetOption
   } from '../types'
+  import { getNodeConfigSchema } from '../node-registry'
+  import WorkflowSchemaFields from './WorkflowSchemaFields.vue'
 
   interface Props {
     node: WorkflowDomainNode
     model: WorkflowNodeFormModel | null
     taskDefinitions: TaskDefinitionItem[]
+    agentOptions?: WorkflowAgentOption[]
     notifyUserOptions?: WorkflowNotifyTargetOption[]
     notifyRoleOptions?: WorkflowNotifyTargetOption[]
     notifyOptionsLoading?: boolean
@@ -589,6 +652,7 @@
 
   const props = withDefaults(defineProps<Props>(), {
     errors: () => [],
+    agentOptions: () => [],
     notifyUserOptions: () => [],
     notifyRoleOptions: () => [],
     notifyOptionsLoading: false
@@ -641,14 +705,32 @@
   const notifyTargetRows = ref<NotifyTargetRow[]>([])
   const startInputBindingsJson = ref('{}')
   const eventFiltersJson = ref('[]')
-  const httpHeadersJson = ref('{}')
   const localModelSnapshot = ref('')
   const lastEmittedSnapshot = ref('')
 
   const nodeTypeLabel = computed(
-    () => NODE_TYPE_LABELS[localForm.typeCode] || NODE_KIND_LABELS[localForm.kind] || localForm.typeCode || '--'
+    () =>
+      NODE_TYPE_LABELS[localForm.typeCode] ||
+      NODE_KIND_LABELS[localForm.kind] ||
+      localForm.typeCode ||
+      '--'
   )
-  const nodeTypeCodeHint = computed(() => (localForm.typeCode ? `类型编码：${localForm.typeCode}` : ''))
+  const nodeTypeCodeHint = computed(() =>
+    localForm.typeCode ? `类型编码：${localForm.typeCode}` : ''
+  )
+
+  // 后端下发的配置 schema：HTTP / 延迟 / 事件 / 遍历这几种「字段直译」的节点直接按它渲染表单，
+  // 不再在本文件里逐个手写一遍。开始 / 任务 / 通知 / 条件有联动和自定义控件，仍走下面的定制模板。
+  const configSchema = computed(() => getNodeConfigSchema(localForm.typeCode))
+
+  /** 当前选中的智能体：决定要不要显示「关联数据 id 路径」和「结构化分析」开关。 */
+  const selectedAgent = computed(
+    () => props.agentOptions.find((item) => item.code === localForm.config.agentCode) || null
+  )
+
+  // 这两段文案里带 {{ }}，写在模板里会被 Vue 当成插值解析，所以放到脚本里当普通字符串。
+  const promptTemplatePlaceholder = '支持 {{ 路径 }} 引用共享状态，例如 {{ currentItem.title }}'
+  const outputKeyHint = '下游节点可用 {{ 键名.content }} 引用回复正文。'
 
   const startNodeHint = computed(() => {
     if (localForm.typeCode === 'start.schedule') {
@@ -664,15 +746,20 @@
   })
 
   const selectedTaskDefinition = computed(
-    () => props.taskDefinitions.find((item) => item.code === localForm.config.taskDefinitionCode) || null
+    () =>
+      props.taskDefinitions.find((item) => item.code === localForm.config.taskDefinitionCode) ||
+      null
   )
 
   const resolveTaskParameterType = (schema: Record<string, any>): TaskParameterFieldType => {
     const enumValues = Array.isArray(schema.enum) ? schema.enum : []
     if (enumValues.length) return 'enum'
     const rawType = schema.type
-    const typeList = Array.isArray(rawType) ? rawType.map((item) => String(item || '')) : [String(rawType || '')]
-    return (TASK_PARAMETER_BASE_TYPES.find((item) => typeList.includes(item)) || 'unsupported') as TaskParameterFieldType
+    const typeList = Array.isArray(rawType)
+      ? rawType.map((item) => String(item || ''))
+      : [String(rawType || '')]
+    return (TASK_PARAMETER_BASE_TYPES.find((item) => typeList.includes(item)) ||
+      'unsupported') as TaskParameterFieldType
   }
 
   const formatTaskParameterOptionLabel = (value: unknown) => {
@@ -750,7 +837,9 @@
       new Set(
         list
           .map((item) => String(item || '').trim())
-          .filter((item): item is string => (NOTIFY_CHANNEL_TYPES as readonly string[]).includes(item))
+          .filter((item): item is string =>
+            (NOTIFY_CHANNEL_TYPES as readonly string[]).includes(item)
+          )
       )
     )
   }
@@ -884,8 +973,11 @@
       null,
       2
     )
-    eventFiltersJson.value = JSON.stringify(Array.isArray(localForm.config.filters) ? localForm.config.filters : [], null, 2)
-    httpHeadersJson.value = String(localForm.config.headersJson || '{}')
+    eventFiltersJson.value = JSON.stringify(
+      Array.isArray(localForm.config.filters) ? localForm.config.filters : [],
+      null,
+      2
+    )
   }
 
   const syncNotifyRowsToConfig = () => {
@@ -918,8 +1010,12 @@
     syncNotifyRowsToConfig()
   }
 
-  const usedNotifyTargetTypes = computed(() => new Set(notifyTargetRows.value.map((item) => item.targetType)))
-  const canAddNotifyTarget = computed(() => usedNotifyTargetTypes.value.size < NOTIFY_TARGET_TYPES.length)
+  const usedNotifyTargetTypes = computed(
+    () => new Set(notifyTargetRows.value.map((item) => item.targetType))
+  )
+  const canAddNotifyTarget = computed(
+    () => usedNotifyTargetTypes.value.size < NOTIFY_TARGET_TYPES.length
+  )
 
   const resolveNotifyTargetOptions = (targetType: 'user' | 'role') =>
     targetType === 'role' ? props.notifyRoleOptions : props.notifyUserOptions
@@ -959,7 +1055,9 @@
     if (
       localForm.kind === 'task' &&
       localForm.config.taskParams !== undefined &&
-      (!localForm.config.taskParams || typeof localForm.config.taskParams !== 'object' || Array.isArray(localForm.config.taskParams))
+      (!localForm.config.taskParams ||
+        typeof localForm.config.taskParams !== 'object' ||
+        Array.isArray(localForm.config.taskParams))
     ) {
       delete localForm.config.taskParams
     }
@@ -1045,25 +1143,9 @@
     emitModel()
   }
 
-  const normalizeHeadersJsonField = (sourceValue: string) => {
-    const text = String(sourceValue || '').trim()
-    if (!text) {
-      localForm.config.headersJson = '{}'
-      syncJsonTextRefs()
-      emitModel()
-      return
-    }
-    try {
-      const parsed = JSON.parse(text)
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        throw new Error('invalid object')
-      }
-      localForm.config.headersJson = JSON.stringify(parsed, null, 2)
-    } catch {
-      syncJsonTextRefs()
-      return
-    }
-    syncJsonTextRefs()
+  /** schema 驱动的字段改动统一走这里写回草稿：子组件不直接改 config，改动来源单一好追。 */
+  const handleSchemaFieldUpdate = (key: string, value: any) => {
+    localForm.config[key] = value
     emitModel()
   }
 
@@ -1082,7 +1164,10 @@
   const addNotifyTarget = () => {
     const nextType = NOTIFY_TARGET_TYPES.find((item) => !usedNotifyTargetTypes.value.has(item))
     if (!nextType) return
-    notifyTargetRows.value = [...notifyTargetRows.value, createNotifyTargetRow({ targetType: nextType, targetIds: [] })]
+    notifyTargetRows.value = [
+      ...notifyTargetRows.value,
+      createNotifyTargetRow({ targetType: nextType, targetIds: [] })
+    ]
     syncNotifyRowsToConfig()
     emitModel()
   }
@@ -1097,7 +1182,9 @@
     notifyTargetRows.value.some((item) => item.rowId !== rowId && item.targetType === targetType)
 
   const handleNotifyTargetTypeChange = (rowId: string, value: string) => {
-    const nextType = NOTIFY_TARGET_TYPES.includes(value as 'user' | 'role') ? (value as 'user' | 'role') : 'user'
+    const nextType = NOTIFY_TARGET_TYPES.includes(value as 'user' | 'role')
+      ? (value as 'user' | 'role')
+      : 'user'
     const currentRow = notifyTargetRows.value.find((item) => item.rowId === rowId) || null
     if (!currentRow) return
     if (isNotifyTargetTypeDisabled(rowId, nextType)) {

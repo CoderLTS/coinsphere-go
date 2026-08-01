@@ -7,11 +7,7 @@
       <ArtTableHeader v-model:columns="columnChecks" :loading="loading" @refresh="refreshData">
         <template #left>
           <ElSpace wrap>
-            <ElButton
-              v-if="hasAuth('system.users.create')"
-              @click="showDialog('add')"
-              v-ripple
-            >
+            <ElButton v-if="hasAuth('system.users.create')" @click="showDialog('add')" v-ripple>
               新增用户
             </ElButton>
           </ElSpace>
@@ -138,7 +134,7 @@
     loading,
     pagination,
     getData,
-    searchParams,
+    replaceSearchParams,
     resetSearchParams,
     handleSizeChange,
     handleCurrentChange,
@@ -214,7 +210,7 @@
   })
 
   const handleSearch = (params: Api.System.UserSearchParams) => {
-    Object.assign(searchParams, params)
+    replaceSearchParams(params)
     getData()
   }
 

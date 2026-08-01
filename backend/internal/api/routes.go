@@ -11,9 +11,11 @@ import (
 )
 
 // registerRoutes 把每个 URL 登记到路由表 mux。理解一行就理解全部:
-//   mux.HandleFunc("方法 /路径", 处理函数) —— 例如 "GET /api/..."。这是 Go 1.22+ net/http 的新路由写法(见 GO入门笔记『框架:net/http』)。
-//   路径里的 {definitionId} 之类是"路径参数",处理函数用 r.PathValue("definitionId") 取出。
-//   处理函数外面套一层 s.requireAuth / s.requirePermission(...),就是给这个接口加上"登录/权限"检查(中间件,见 api.go)。
+//
+//	mux.HandleFunc("方法 /路径", 处理函数) —— 例如 "GET /api/..."。这是 Go 1.22+ net/http 的新路由写法(见 GO入门笔记『框架:net/http』)。
+//	路径里的 {definitionId} 之类是"路径参数",处理函数用 r.PathValue("definitionId") 取出。
+//	处理函数外面套一层 s.requireAuth / s.requirePermission(...),就是给这个接口加上"登录/权限"检查(中间件,见 api.go)。
+//
 // registerRoutes 注册全部路由(与原 FastAPI 路由一一对应)。
 func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// 处理函数的固定签名是 func(w http.ResponseWriter, r *http.Request);这里直接写了一个匿名函数当处理器。
@@ -82,6 +84,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/scheduler/task-definitions/page", s.requirePermission(perm.SchedulerTaskDefinitionsView, s.handleListTaskDefinitionPage))
 	mux.HandleFunc("PUT /api/scheduler/task-definitions/{taskCode}/default-params", s.requirePermission(perm.SchedulerTaskDefinitionsUpdate, s.handleUpdateTaskDefaultParams))
 	mux.HandleFunc("GET /api/scheduler/node-definitions", s.requirePermission(perm.SchedulerWorkflowDefinitionsView, s.handleListNodeDefinitions))
+	mux.HandleFunc("GET /api/scheduler/agent-options", s.requirePermission(perm.SchedulerWorkflowDefinitionsView, s.handleListWorkflowAgentOptions))
 	mux.HandleFunc("GET /api/scheduler/workflow-definitions", s.requirePermission(perm.SchedulerWorkflowDefinitionsView, s.handleListWorkflowDefinitions))
 	mux.HandleFunc("POST /api/scheduler/workflow-definitions/validate", s.requirePermission(perm.SchedulerWorkflowDefinitionsView, s.handleValidateWorkflowDefinition))
 	mux.HandleFunc("POST /api/scheduler/workflow-definitions", s.requirePermission(perm.SchedulerWorkflowDefinitionsCreate, s.handleCreateWorkflowDefinition))

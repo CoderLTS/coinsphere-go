@@ -74,4 +74,3 @@ const fastEnterConfig: FastEnterConfig = {
 }
 
 export default Object.freeze(fastEnterConfig)
-

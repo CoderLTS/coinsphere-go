@@ -2,7 +2,12 @@
 <template>
   <ElSubMenu v-if="hasChildren" :index="item.path || item.meta.title" class="!p-0">
     <template #title>
-      <ArtSvgIcon v-if="item.meta.icon" :icon="item.meta.icon" :color="theme?.iconColor" class="menu-icon" />
+      <ArtSvgIcon
+        v-if="item.meta.icon"
+        :icon="item.meta.icon"
+        :color="theme?.iconColor"
+        class="menu-icon"
+      />
       <span class="menu-text">{{ formatMenuTitle(item.meta.title) }}</span>
       <div v-if="item.meta.showBadge" class="art-badge art-badge-horizontal" />
       <div v-if="item.meta.showTextBadge" class="art-text-badge">

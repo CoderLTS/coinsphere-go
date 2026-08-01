@@ -4,7 +4,9 @@
     <div class="meta-popover__header">
       <div>
         <strong>基础信息</strong>
-        <span>这里只维护工作流定义本身。工作流标识由系统自动生成并保持稳定，开始入口类型回到画布中的开始节点配置。</span>
+        <span
+          >这里只维护工作流定义本身。工作流标识由系统自动生成并保持稳定，开始入口类型回到画布中的开始节点配置。</span
+        >
       </div>
       <ElButton text @click="$emit('close')">关闭</ElButton>
     </div>
@@ -16,11 +18,17 @@
           disabled
           :placeholder="mode === 'create' ? '保存后由系统自动生成稳定标识' : ''"
         />
-        <div class="meta-popover__hint">用于版本归组、Webhook 地址和运行态定位，创建后保持稳定。</div>
+        <div class="meta-popover__hint"
+          >用于版本归组、Webhook 地址和运行态定位，创建后保持稳定。</div
+        >
       </ElFormItem>
 
       <ElFormItem label="工作流名称">
-        <ElInput v-model.trim="localModel.displayName" placeholder="请输入工作流名称" @blur="emitChange" />
+        <ElInput
+          v-model.trim="localModel.displayName"
+          placeholder="请输入工作流名称"
+          @blur="emitChange"
+        />
       </ElFormItem>
 
       <ElFormItem class="meta-popover__description" label="工作流说明">

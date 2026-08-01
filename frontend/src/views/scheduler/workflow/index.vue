@@ -25,17 +25,34 @@
         </template>
       </ArtTableHeader>
 
-      <ElTable v-loading="loading" :data="filteredDefinitionList" stripe table-layout="auto" class="workflow-definition-table">
-        <ElTableColumn prop="displayName" label="工作流名称" min-width="220" show-overflow-tooltip />
+      <ElTable
+        v-loading="loading"
+        :data="filteredDefinitionList"
+        stripe
+        table-layout="auto"
+        class="workflow-definition-table"
+      >
+        <ElTableColumn
+          prop="displayName"
+          label="工作流名称"
+          min-width="220"
+          show-overflow-tooltip
+        />
         <ElTableColumn prop="code" label="工作流编码" min-width="200" show-overflow-tooltip />
         <ElTableColumn label="最新版本" width="100" align="center">
           <template #default="{ row }">
-            <ElTag :type="row.isLatest ? 'primary' : 'info'" effect="plain">v{{ row.version }}</ElTag>
+            <ElTag :type="row.isLatest ? 'primary' : 'info'" effect="plain"
+              >v{{ row.version }}</ElTag
+            >
           </template>
         </ElTableColumn>
         <ElTableColumn label="激活版本" width="110" align="center">
           <template #default="{ row }">
-            <ElTag v-if="row.activeVersion" :type="row.isActive ? 'success' : 'warning'" effect="plain">
+            <ElTag
+              v-if="row.activeVersion"
+              :type="row.isActive ? 'success' : 'warning'"
+              effect="plain"
+            >
               v{{ row.activeVersion }}
             </ElTag>
             <span v-else>--</span>
@@ -51,24 +68,66 @@
         <ElTableColumn prop="executionCount" label="执行数" width="100" align="center" />
         <ElTableColumn label="内置" width="90" align="center">
           <template #default="{ row }">
-            <ElTag :type="row.isBuiltin ? 'warning' : 'info'" effect="plain">{{ row.isBuiltin ? '是' : '否' }}</ElTag>
+            <ElTag :type="row.isBuiltin ? 'warning' : 'info'" effect="plain">{{
+              row.isBuiltin ? '是' : '否'
+            }}</ElTag>
           </template>
         </ElTableColumn>
         <ElTableColumn prop="createdAt" label="创建时间" min-width="170" />
         <ElTableColumn label="操作" width="176" align="center">
           <template #default="{ row }">
             <ElSpace wrap size="small" class="operation-actions">
-              <ElTooltip v-if="hasAuth('scheduler.workflow_definitions.update')" content="编辑" placement="top">
-                <ElButton circle plain size="small" type="primary" :icon="Edit" @click="router.push(`/scheduler/workflow/${row.id}/edit`)" />
+              <ElTooltip
+                v-if="hasAuth('scheduler.workflow_definitions.update')"
+                content="编辑"
+                placement="top"
+              >
+                <ElButton
+                  circle
+                  plain
+                  size="small"
+                  type="primary"
+                  :icon="Edit"
+                  @click="router.push(`/scheduler/workflow/${row.id}/edit`)"
+                />
               </ElTooltip>
               <ElTooltip content="版本管理" placement="top">
-                <ElButton circle plain size="small" type="primary" :icon="Collection" @click="openVersionDialog(row)" />
+                <ElButton
+                  circle
+                  plain
+                  size="small"
+                  type="primary"
+                  :icon="Collection"
+                  @click="openVersionDialog(row)"
+                />
               </ElTooltip>
-              <ElTooltip v-if="hasAuth('scheduler.workflow_runtime.view')" content="查看运行态" placement="top">
-                <ElButton circle plain size="small" type="primary" :icon="Operation" @click="openRuntimeDrawer(row)" />
+              <ElTooltip
+                v-if="hasAuth('scheduler.workflow_runtime.view')"
+                content="查看运行态"
+                placement="top"
+              >
+                <ElButton
+                  circle
+                  plain
+                  size="small"
+                  type="primary"
+                  :icon="Operation"
+                  @click="openRuntimeDrawer(row)"
+                />
               </ElTooltip>
-              <ElTooltip v-if="hasAuth('scheduler.workflow_definitions.run')" content="手动运行" placement="top">
-                <ElButton circle plain size="small" type="primary" :icon="VideoPlay" @click="openRunDialog(row)" />
+              <ElTooltip
+                v-if="hasAuth('scheduler.workflow_definitions.run')"
+                content="手动运行"
+                placement="top"
+              >
+                <ElButton
+                  circle
+                  plain
+                  size="small"
+                  type="primary"
+                  :icon="VideoPlay"
+                  @click="openRunDialog(row)"
+                />
               </ElTooltip>
             </ElSpace>
           </template>
@@ -90,7 +149,9 @@
           <ElTable :data="versionDialogVersions" stripe>
             <ElTableColumn label="版本" width="90" align="center">
               <template #default="{ row }">
-                <ElTag effect="plain" :type="row.isLatest ? 'primary' : 'info'">v{{ row.version }}</ElTag>
+                <ElTag effect="plain" :type="row.isLatest ? 'primary' : 'info'"
+                  >v{{ row.version }}</ElTag
+                >
               </template>
             </ElTableColumn>
             <ElTableColumn prop="displayName" label="名称" min-width="200" show-overflow-tooltip />
@@ -108,7 +169,11 @@
             <ElTableColumn label="操作" width="180" align="center">
               <template #default="{ row }">
                 <ElSpace wrap size="small" class="operation-actions">
-                  <ElTooltip v-if="hasAuth('scheduler.workflow_definitions.update')" content="编辑" placement="top">
+                  <ElTooltip
+                    v-if="hasAuth('scheduler.workflow_definitions.update')"
+                    content="编辑"
+                    placement="top"
+                  >
                     <ElButton
                       circle
                       plain
@@ -153,7 +218,13 @@
                   </ElTooltip>
                   <ElTooltip
                     v-if="hasAuth('scheduler.workflow_definitions.delete')"
-                    :content="row.isActive ? '当前激活版本不可删除' : row.executionCount > 0 ? '有执行记录的版本不可删除' : '删除版本'"
+                    :content="
+                      row.isActive
+                        ? '当前激活版本不可删除'
+                        : row.executionCount > 0
+                          ? '有执行记录的版本不可删除'
+                          : '删除版本'
+                    "
                     placement="top"
                   >
                     <ElButton
@@ -177,70 +248,75 @@
 
     <ElDrawer v-model="runtimeDrawerVisible" title="运行状态" size="900px">
       <div v-loading="runtimeLoading">
-      <template v-if="runtimeFamilyDetail && runtimeState">
-        <div class="runtime-header">
-          <div>
-            <div class="runtime-header__title">{{ runtimeHeaderTitle }}</div>
-            <div class="runtime-header__meta">
-              {{ runtimeHeaderMeta }}
-            </div>
-          </div>
-          <ElTag :type="runtimeActiveVersion ? 'success' : 'info'" effect="plain">
-            {{ runtimeActiveVersion ? '当前激活版本' : '未激活' }}
-          </ElTag>
-        </div>
-
-        <ElEmpty
-          v-if="!runtimeState.activeDefinitionId"
-          description="当前工作流尚未激活，没有可运行的入口。"
-        />
-
-        <ElEmpty
-          v-else-if="!runtimeState.entries.length"
-          description="当前激活版本没有已注册的运行态入口。"
-        />
-
-        <ElTable v-else :data="runtimeState.entries" stripe>
-          <ElTableColumn prop="entryKey" label="入口标识" min-width="180" />
-          <ElTableColumn label="开始类型" width="120" align="center">
-            <template #default="{ row }">
-              {{ startTypeLabel(row.startType) }}
-            </template>
-          </ElTableColumn>
-          <ElTableColumn label="启用" width="110" align="center">
-            <template #default="{ row }">
-              <ElSwitch
-                v-if="hasAuth('scheduler.workflow_runtime.update')"
-                :model-value="row.isEnabled"
-                @update:model-value="updateRuntimeEntryStatus(row.entryKey, Boolean($event))"
-              />
-              <ElTag v-else :type="row.isEnabled ? 'success' : 'info'" effect="plain">
-                {{ row.isEnabled ? '启用' : '停用' }}
-              </ElTag>
-            </template>
-          </ElTableColumn>
-          <ElTableColumn prop="registrationStatus" label="注册状态" width="130" align="center" />
-          <ElTableColumn prop="nextRunAt" label="下次运行" min-width="160" />
-          <ElTableColumn prop="lastTriggeredAt" label="最近触发" min-width="160" />
-          <ElTableColumn prop="lastErrorMessage" label="最近错误" min-width="180" show-overflow-tooltip />
-          <ElTableColumn label="Secret" min-width="180">
-            <template #default="{ row }">
-              <div v-if="row.startType === 'webhook'" class="secret-cell">
-                <span>{{ row.secretHint || '--' }}</span>
-                <ElButton
-                  v-if="hasAuth('scheduler.workflow_runtime.update')"
-                  link
-                  type="primary"
-                  @click="rotateSecret(row.entryKey)"
-                >
-                  轮换
-                </ElButton>
+        <template v-if="runtimeFamilyDetail && runtimeState">
+          <div class="runtime-header">
+            <div>
+              <div class="runtime-header__title">{{ runtimeHeaderTitle }}</div>
+              <div class="runtime-header__meta">
+                {{ runtimeHeaderMeta }}
               </div>
-              <span v-else>--</span>
-            </template>
-          </ElTableColumn>
-        </ElTable>
-      </template>
+            </div>
+            <ElTag :type="runtimeActiveVersion ? 'success' : 'info'" effect="plain">
+              {{ runtimeActiveVersion ? '当前激活版本' : '未激活' }}
+            </ElTag>
+          </div>
+
+          <ElEmpty
+            v-if="!runtimeState.activeDefinitionId"
+            description="当前工作流尚未激活，没有可运行的入口。"
+          />
+
+          <ElEmpty
+            v-else-if="!runtimeState.entries.length"
+            description="当前激活版本没有已注册的运行态入口。"
+          />
+
+          <ElTable v-else :data="runtimeState.entries" stripe>
+            <ElTableColumn prop="entryKey" label="入口标识" min-width="180" />
+            <ElTableColumn label="开始类型" width="120" align="center">
+              <template #default="{ row }">
+                {{ startTypeLabel(row.startType) }}
+              </template>
+            </ElTableColumn>
+            <ElTableColumn label="启用" width="110" align="center">
+              <template #default="{ row }">
+                <ElSwitch
+                  v-if="hasAuth('scheduler.workflow_runtime.update')"
+                  :model-value="row.isEnabled"
+                  @update:model-value="updateRuntimeEntryStatus(row.entryKey, Boolean($event))"
+                />
+                <ElTag v-else :type="row.isEnabled ? 'success' : 'info'" effect="plain">
+                  {{ row.isEnabled ? '启用' : '停用' }}
+                </ElTag>
+              </template>
+            </ElTableColumn>
+            <ElTableColumn prop="registrationStatus" label="注册状态" width="130" align="center" />
+            <ElTableColumn prop="nextRunAt" label="下次运行" min-width="160" />
+            <ElTableColumn prop="lastTriggeredAt" label="最近触发" min-width="160" />
+            <ElTableColumn
+              prop="lastErrorMessage"
+              label="最近错误"
+              min-width="180"
+              show-overflow-tooltip
+            />
+            <ElTableColumn label="Secret" min-width="180">
+              <template #default="{ row }">
+                <div v-if="row.startType === 'webhook'" class="secret-cell">
+                  <span>{{ row.secretHint || '--' }}</span>
+                  <ElButton
+                    v-if="hasAuth('scheduler.workflow_runtime.update')"
+                    link
+                    type="primary"
+                    @click="rotateSecret(row.entryKey)"
+                  >
+                    轮换
+                  </ElButton>
+                </div>
+                <span v-else>--</span>
+              </template>
+            </ElTableColumn>
+          </ElTable>
+        </template>
       </div>
     </ElDrawer>
 
@@ -268,20 +344,35 @@
           </ElSelect>
         </ElFormItem>
         <ElFormItem label="运行输入 JSON">
-          <ElInput v-model="manualRunInputsJson" type="textarea" :rows="6" placeholder='例如：{"source":"manual"}' />
+          <ElInput
+            v-model="manualRunInputsJson"
+            type="textarea"
+            :rows="6"
+            placeholder='例如：{"source":"manual"}'
+          />
         </ElFormItem>
       </ElForm>
 
       <template #footer>
         <ElButton @click="runDialogVisible = false">取消</ElButton>
-        <ElButton type="primary" :loading="runSubmitting" @click="submitManualRun">开始执行</ElButton>
+        <ElButton type="primary" :loading="runSubmitting" @click="submitManualRun"
+          >开始执行</ElButton
+        >
       </template>
     </ElDialog>
   </div>
 </template>
 
 <script setup lang="ts">
-  import { Collection, Delete, Edit, Operation, Select, SwitchButton, VideoPlay } from '@element-plus/icons-vue'
+  import {
+    Collection,
+    Delete,
+    Edit,
+    Operation,
+    Select,
+    SwitchButton,
+    VideoPlay
+  } from '@element-plus/icons-vue'
   import { ElMessage, ElMessageBox, ElTag, ElTooltip } from 'element-plus'
   import { useAuth } from '@/hooks/core/useAuth'
   import {
@@ -384,8 +475,9 @@
   const runtimeActiveVersion = computed<WorkflowDefinitionVersionItem | null>(() => {
     if (!runtimeFamilyDetail.value || !runtimeActiveDefinitionId.value) return null
     return (
-      runtimeFamilyDetail.value.versions?.find((item) => item.id === runtimeActiveDefinitionId.value) ||
-      null
+      runtimeFamilyDetail.value.versions?.find(
+        (item) => item.id === runtimeActiveDefinitionId.value
+      ) || null
     )
   })
   const runtimeHeaderTitle = computed(() => {
@@ -480,7 +572,10 @@
   }
 
   const refreshFamilyPanelsByCode = async (workflowCode: string) => {
-    await Promise.all([refreshVersionDialogByCode(workflowCode), refreshRuntimeDrawerByCode(workflowCode)])
+    await Promise.all([
+      refreshVersionDialogByCode(workflowCode),
+      refreshRuntimeDrawerByCode(workflowCode)
+    ])
   }
 
   const openVersionDialog = async (row: WorkflowDefinitionItem) => {
@@ -520,7 +615,8 @@
     await router.push(`/scheduler/workflow/${row.id}/edit`)
   }
 
-  const canDeleteVersion = (row: WorkflowDefinitionVersionItem) => !row.isActive && row.executionCount === 0
+  const canDeleteVersion = (row: WorkflowDefinitionVersionItem) =>
+    !row.isActive && row.executionCount === 0
 
   const activateVersion = async (row: WorkflowDefinitionVersionItem) => {
     if (!versionFamilyCode.value) return
@@ -536,11 +632,15 @@
 
   const deactivateVersion = async (row: WorkflowDefinitionVersionItem) => {
     if (!versionFamilyCode.value) return
-    await ElMessageBox.confirm(`确认取消激活工作流定义“${row.displayName} / v${row.version}”吗？`, '提示', {
-      type: 'warning',
-      confirmButtonText: '确定',
-      cancelButtonText: '取消'
-    })
+    await ElMessageBox.confirm(
+      `确认取消激活工作流定义“${row.displayName} / v${row.version}”吗？`,
+      '提示',
+      {
+        type: 'warning',
+        confirmButtonText: '确定',
+        cancelButtonText: '取消'
+      }
+    )
     versionActionLoadingKey.value = `deactivate-${row.id}`
     try {
       await fetchDeactivateWorkflowDefinition(row.id)
@@ -553,11 +653,15 @@
 
   const deleteVersion = async (row: WorkflowDefinitionVersionItem) => {
     if (!versionFamilyCode.value || !canDeleteVersion(row)) return
-    await ElMessageBox.confirm(`确认删除工作流定义版本“${row.displayName} v${row.version}”吗？`, '提示', {
-      type: 'warning',
-      confirmButtonText: '确定',
-      cancelButtonText: '取消'
-    })
+    await ElMessageBox.confirm(
+      `确认删除工作流定义版本“${row.displayName} v${row.version}”吗？`,
+      '提示',
+      {
+        type: 'warning',
+        confirmButtonText: '确定',
+        cancelButtonText: '取消'
+      }
+    )
     versionActionLoadingKey.value = `delete-${row.id}`
     try {
       await fetchDeleteWorkflowDefinition(row.id)
@@ -570,12 +674,19 @@
 
   const updateRuntimeEntryStatus = async (entryKey: string, isEnabled: boolean) => {
     if (!runtimeActiveDefinitionId.value) return
-    runtimeState.value = await fetchUpdateWorkflowRuntimeEntryStatus(runtimeActiveDefinitionId.value, entryKey, isEnabled)
+    runtimeState.value = await fetchUpdateWorkflowRuntimeEntryStatus(
+      runtimeActiveDefinitionId.value,
+      entryKey,
+      isEnabled
+    )
   }
 
   const rotateSecret = async (entryKey: string) => {
     if (!runtimeActiveDefinitionId.value) return
-    const result = await fetchRotateWorkflowRuntimeEntrySecret(runtimeActiveDefinitionId.value, entryKey)
+    const result = await fetchRotateWorkflowRuntimeEntrySecret(
+      runtimeActiveDefinitionId.value,
+      entryKey
+    )
     ElMessage.success(`新的 Webhook Secret：${result.secret}`)
     await refreshRuntimeDrawer()
   }

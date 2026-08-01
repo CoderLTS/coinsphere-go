@@ -2,7 +2,7 @@
 <template>
   <div v-if="isGuest" class="guest-entry">
     <div class="guest-chip">
-        <img class="guest-chip__avatar" :src="userAvatar" alt="游客头像" />
+      <img class="guest-chip__avatar" :src="userAvatar" alt="游客头像" />
       <span>{{ $t('topBar.user.guest') }}</span>
     </div>
     <ElButton text class="guest-entry__login" @click="goLogin">
@@ -26,7 +26,7 @@
       <img
         class="size-8.5 mr-5 c-p rounded-full max-sm:w-6.5 max-sm:h-6.5 max-sm:mr-[16px]"
         :src="userAvatar"
-              alt="用户头像"
+        alt="用户头像"
       />
     </template>
     <template #default>
@@ -104,7 +104,9 @@
   const goLogin = (): void => {
     router.push({
       name: 'Login',
-      query: router.currentRoute.value.fullPath ? { redirect: router.currentRoute.value.fullPath } : undefined
+      query: router.currentRoute.value.fullPath
+        ? { redirect: router.currentRoute.value.fullPath }
+        : undefined
     })
   }
 
