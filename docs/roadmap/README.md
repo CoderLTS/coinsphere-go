@@ -13,8 +13,8 @@ CoinSphere 从通用后台与工作流系统演进为个人币圈量化平台，
 ## 当前状态
 
 - 当前阶段：A0 工程系统。
-- 当前交付：工程规则、基础 CI、安全扫描、Stylelint 门禁、版本化 SQL migration 工具、手工发布与 DPanel 自动部署流水线，以及 Python Worker 容器与 Compose/CI 健康契约。
-- 阶段状态：进行中，Stylelint、migration、发布产物和 Worker 容器基线已建立；尚需完成关键 Playwright 场景。
+- 当前交付：工程规则、基础 CI、安全扫描、Stylelint 门禁、版本化 SQL migration 工具、手工发布与 DPanel 自动部署流水线、Python Worker 容器与 Compose/CI 健康契约，以及关键 Playwright 浏览器门禁。
+- 阶段状态：进行中，Stylelint、migration、发布产物、Worker 容器和 Chromium/Firefox/WebKit 关键冒烟基线已建立。
 - GitHub 远程仓库、生产 Runner 和仅允许 `main` 的 `production` Environment 已配置；私有仓库的分支保护受当前 GitHub 套餐限制，操作约束见 [GitHub 治理手册](../runbooks/github-governance.md)。
 
 ## 里程碑

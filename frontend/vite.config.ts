@@ -13,6 +13,7 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default ({ mode }: { mode: string }) => {
   const root = process.cwd()
+  const isE2E = mode === 'e2e'
   const env = loadEnv(mode, root)
   const { VITE_VERSION, VITE_PORT, VITE_BASE_URL, VITE_API_URL, VITE_API_PROXY_URL } = env
 
@@ -71,7 +72,7 @@ export default ({ mode }: { mode: string }) => {
       // 自动按需导入 API
       AutoImport({
         imports: ['vue', 'vue-router', 'pinia', '@vueuse/core'],
-        dts: 'src/types/import/auto-imports.d.ts',
+        dts: isE2E ? false : 'src/types/import/auto-imports.d.ts',
         resolvers: [ElementPlusResolver()],
         eslintrc: {
           enabled: true,
@@ -81,7 +82,7 @@ export default ({ mode }: { mode: string }) => {
       }),
       // 自动按需导入组件
       Components({
-        dts: 'src/types/import/components.d.ts',
+        dts: isE2E ? false : 'src/types/import/components.d.ts',
         resolvers: [ElementPlusResolver()]
       }),
       // 按需定制主题配置
@@ -97,7 +98,7 @@ export default ({ mode }: { mode: string }) => {
         threshold: 10240, // 只有大小大于该值的资源会被处理 10240B = 10KB
         deleteOriginFile: false // 压缩后是否删除原文件
       }),
-      vueDevTools()
+      !isE2E && vueDevTools()
       // 打包分析
       // visualizer({
       //   open: true,
