@@ -105,8 +105,8 @@
   :deep(.el-menu--horizontal > .el-sub-menu > .el-sub-menu__title),
   :deep(.el-menu--horizontal > .el-menu-item) {
     display: flex;
-    align-items: center;
     gap: 8px;
+    align-items: center;
     padding: 0 16px 0 10px !important;
     border: 0 !important;
     border-bottom: 0 !important;

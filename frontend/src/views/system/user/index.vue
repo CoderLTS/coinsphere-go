@@ -276,8 +276,8 @@
 <style scoped lang="scss">
   .table-actions {
     display: flex;
-    justify-content: center;
-    gap: 8px;
     flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
   }
 </style>

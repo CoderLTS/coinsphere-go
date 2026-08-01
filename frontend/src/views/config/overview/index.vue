@@ -206,12 +206,12 @@
 
   .overview-hero {
     display: flex;
-    justify-content: space-between;
     gap: 16px;
+    justify-content: space-between;
     padding: 24px 28px;
-    border-radius: 24px;
+    background: linear-gradient(135deg, rgb(255 255 255 / 0.98), rgb(239 245 255 / 0.9));
     border: 1px solid var(--el-border-color-light);
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(239, 245, 255, 0.9));
+    border-radius: 24px;
 
     h1 {
       margin: 12px 0 8px;
@@ -220,18 +220,18 @@
 
     p {
       margin: 0;
-      color: var(--el-text-color-secondary);
       line-height: 1.8;
+      color: var(--el-text-color-secondary);
     }
   }
 
   .overview-hero__badge {
     display: inline-flex;
     padding: 6px 12px;
-    border-radius: 999px;
     font-size: 12px;
     color: #255ee8;
-    background: rgba(37, 94, 232, 0.12);
+    background: rgb(37 94 232 / 0.12);
+    border-radius: 999px;
   }
 
   .overview-hero__actions {
@@ -249,9 +249,9 @@
 
   .summary-card {
     padding: 18px 20px;
-    border-radius: 20px;
-    border: 1px solid var(--el-border-color-light);
     background: var(--el-fill-color-blank);
+    border: 1px solid var(--el-border-color-light);
+    border-radius: 20px;
 
     span,
     small {
@@ -296,17 +296,17 @@
 
   .agent-item {
     display: flex;
-    justify-content: space-between;
     gap: 16px;
+    justify-content: space-between;
     padding: 14px 16px;
-    border-radius: 16px;
+    background: rgb(148 163 184 / 0.05);
     border: 1px solid var(--el-border-color-lighter);
-    background: rgba(148, 163, 184, 0.05);
+    border-radius: 16px;
 
     p {
       margin: 8px 0 0;
-      color: var(--el-text-color-secondary);
       line-height: 1.7;
+      color: var(--el-text-color-secondary);
     }
   }
 
@@ -324,9 +324,9 @@
 
     div {
       padding: 16px;
-      border-radius: 16px;
+      background: rgb(148 163 184 / 0.05);
       border: 1px solid var(--el-border-color-lighter);
-      background: rgba(148, 163, 184, 0.05);
+      border-radius: 16px;
     }
 
     span,
@@ -353,8 +353,8 @@
   @media (max-width: 1100px) {
     .overview-hero,
     .panel-grid {
-      grid-template-columns: 1fr;
       flex-direction: column;
+      grid-template-columns: 1fr;
     }
   }
 </style>

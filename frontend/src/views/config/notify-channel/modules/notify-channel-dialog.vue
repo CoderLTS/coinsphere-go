@@ -505,8 +505,8 @@
 <style scoped lang="scss">
   .type-description {
     padding: 12px 14px;
+    background: rgb(148 163 184 / 0.08);
     border-radius: 14px;
-    background: rgba(148, 163, 184, 0.08);
 
     strong {
       display: block;
@@ -515,8 +515,8 @@
 
     p {
       margin: 6px 0 0;
-      color: var(--el-text-color-secondary);
       line-height: 1.7;
+      color: var(--el-text-color-secondary);
     }
   }
 </style>

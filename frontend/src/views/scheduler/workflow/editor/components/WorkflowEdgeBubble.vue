@@ -93,11 +93,11 @@
   .edge-bubble {
     width: 240px;
     padding: 14px;
-    border: 1px solid rgba(203, 213, 225, 0.86);
-    border-radius: 18px;
-    background: rgba(255, 255, 255, 0.98);
-    box-shadow: 0 18px 32px rgba(15, 23, 42, 0.14);
+    background: rgb(255 255 255 / 0.98);
     backdrop-filter: blur(16px);
+    border: 1px solid rgb(203 213 225 / 0.86);
+    border-radius: 18px;
+    box-shadow: 0 18px 32px rgb(15 23 42 / 0.14);
   }
 
   .edge-bubble__header {
@@ -126,7 +126,7 @@
 
   .edge-bubble__footer {
     display: flex;
-    justify-content: flex-end;
     gap: 8px;
+    justify-content: flex-end;
   }
 </style>

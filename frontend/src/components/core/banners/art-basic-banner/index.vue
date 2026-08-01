@@ -266,7 +266,7 @@
       width: 60%;
       height: 140%;
       content: '';
-      background: rgb(255 255 255 / 10%);
+      background: rgb(255 255 255 / 0.1);
       border-radius: 30%;
       transform: rotate(-20deg);
     }
@@ -286,8 +286,8 @@
         height: 60px;
         background: linear-gradient(
           to top,
-          rgb(255 255 255 / 40%),
-          rgb(255 255 255 / 10%),
+          rgb(255 255 255 / 0.4),
+          rgb(255 255 255 / 0.1),
           transparent
         );
         opacity: 0;
@@ -303,7 +303,7 @@
           width: 2px;
           height: 2px;
           content: '';
-          background: rgb(255 255 255 / 50%);
+          background: rgb(255 255 255 / 0.5);
         }
       }
     }

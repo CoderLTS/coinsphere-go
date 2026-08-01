@@ -24,6 +24,7 @@ echo '==> 验证 Vue 前端'
   cd "$repo_root/frontend"
   pnpm install --frozen-lockfile
   pnpm lint
+  pnpm lint:stylelint
   pnpm test
   pnpm build
 )

@@ -30,7 +30,7 @@
   height: 96px;
   overflow: hidden;
   font-family: Inter, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  background: var(--el-bg-color-overlay, #ffffff);
+  background: var(--el-bg-color-overlay, #fff);
   border: 1.5px solid var(--wf-node-border);
   border-radius: 12px;
   box-shadow: var(--wf-node-shadow);
@@ -192,7 +192,7 @@
   justify-content: center;
   width: 18px;
   height: 18px;
-  color: #ffffff;
+  color: #fff;
   background: var(--el-color-success, #22c55e);
   border-radius: 999px;
   transform: translateY(-1px);
@@ -204,6 +204,7 @@
 }
 
 /* ---------- 状态配色表 ---------- */
+
 /* 每种状态只在这里出现一次；shapes 里不再判断颜色，只负责决定 data-state 是什么。 */
 
 .wf-node[data-state='issue'] {
@@ -212,7 +213,7 @@
   --wf-node-status-bg: var(--el-color-danger-light-9, #fff1f0);
   --wf-node-status-fg: var(--el-color-danger, #ef4444);
   --wf-node-body-fg: var(--el-color-danger, #dc2626);
-  --wf-node-shadow: 0 0 0 1px rgb(239 68 68 / 8%);
+  --wf-node-shadow: 0 0 0 1px rgb(239 68 68 / 0.08);
 }
 
 .wf-node[data-state='failed'] {
@@ -222,7 +223,7 @@
   --wf-node-status-bg: var(--el-color-danger-light-9, #fff1f0);
   --wf-node-status-fg: var(--el-color-danger, #ef4444);
   --wf-node-body-fg: var(--el-color-danger, #dc2626);
-  --wf-node-shadow: 0 0 0 2px rgb(239 68 68 / 14%), 0 14px 28px rgb(239 68 68 / 14%);
+  --wf-node-shadow: 0 0 0 2px rgb(239 68 68 / 0.14), 0 14px 28px rgb(239 68 68 / 0.14);
 }
 
 .wf-node[data-state='running'] {
@@ -231,7 +232,7 @@
   --wf-node-icon-fg: #d97706;
   --wf-node-status-bg: var(--el-color-warning-light-9, #fff7ed);
   --wf-node-status-fg: #b45309;
-  --wf-node-shadow: 0 0 0 2px rgb(245 158 11 / 12%), 0 14px 28px rgb(245 158 11 / 12%);
+  --wf-node-shadow: 0 0 0 2px rgb(245 158 11 / 0.12), 0 14px 28px rgb(245 158 11 / 0.12);
 }
 
 .wf-node[data-state='retryWaiting'] {
@@ -240,7 +241,7 @@
   --wf-node-icon-fg: #c2410c;
   --wf-node-status-bg: var(--el-color-warning-light-9, #fff7ed);
   --wf-node-status-fg: #c2410c;
-  --wf-node-shadow: 0 0 0 2px rgb(251 146 60 / 12%), 0 14px 28px rgb(251 146 60 / 12%);
+  --wf-node-shadow: 0 0 0 2px rgb(251 146 60 / 0.12), 0 14px 28px rgb(251 146 60 / 0.12);
 }
 
 .wf-node[data-state='queued'] {
@@ -249,7 +250,7 @@
   --wf-node-icon-fg: var(--el-color-primary, #2563eb);
   --wf-node-status-bg: var(--el-color-primary-light-9, #eff6ff);
   --wf-node-status-fg: var(--el-color-primary, #2563eb);
-  --wf-node-shadow: 0 0 0 2px rgb(96 165 250 / 12%), 0 14px 28px rgb(96 165 250 / 12%);
+  --wf-node-shadow: 0 0 0 2px rgb(96 165 250 / 0.12), 0 14px 28px rgb(96 165 250 / 0.12);
 }
 
 .wf-node[data-state='success'] {
@@ -258,19 +259,19 @@
   --wf-node-icon-fg: #16a34a;
   --wf-node-status-bg: var(--el-color-success-light-9, #ecfdf5);
   --wf-node-status-fg: #15803d;
-  --wf-node-shadow: 0 0 0 2px rgb(34 197 94 / 12%), 0 14px 28px rgb(34 197 94 / 12%);
+  --wf-node-shadow: 0 0 0 2px rgb(34 197 94 / 0.12), 0 14px 28px rgb(34 197 94 / 0.12);
 }
 
 .wf-node[data-state='dirty'] {
   --wf-node-border: #5f95ff;
   --wf-node-status-bg: var(--el-color-primary-light-9, #eff6ff);
   --wf-node-status-fg: var(--el-color-primary, #2563eb);
-  --wf-node-shadow: 0 0 0 1px rgb(95 149 255 / 8%);
+  --wf-node-shadow: 0 0 0 1px rgb(95 149 255 / 0.08);
 }
 
 .wf-node[data-state='selected'] {
   --wf-node-border: var(--el-color-primary, #2563eb);
-  --wf-node-shadow: 0 0 0 3px rgb(37 99 235 / 22%), 0 16px 32px rgb(37 99 235 / 16%);
+  --wf-node-shadow: 0 0 0 3px rgb(37 99 235 / 0.22), 0 16px 32px rgb(37 99 235 / 0.16);
 }
 
 /* 无状态时开始/结束节点仍保留一点自己的底色，好和中间的处理节点区分开。 */

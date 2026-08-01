@@ -437,7 +437,7 @@
           position: absolute;
           display: block;
           border-radius: 8px;
-          box-shadow: 0 8px 24px rgb(64 87 167 / 12%);
+          box-shadow: 0 8px 24px rgb(64 87 167 / 0.12);
 
           &.square-blue {
             top: 12px;
@@ -445,7 +445,7 @@
             z-index: 2;
             width: 50px;
             height: 50px;
-            background-color: rgb(from $primary-base r g b / 30%);
+            background-color: rgb(from $primary-base r g b / 0.3);
           }
 
           &.square-pink {
@@ -454,7 +454,7 @@
             z-index: 1;
             width: 70px;
             height: 70px;
-            background-color: rgb(from $primary-base r g b / 15%);
+            background-color: rgb(from $primary-base r g b / 0.15);
           }
 
           &.square-purple {
@@ -463,7 +463,7 @@
             z-index: 3;
             width: 32px;
             height: 32px;
-            background-color: rgb(from $primary-base r g b / 45%);
+            background-color: rgb(from $primary-base r g b / 0.45);
           }
         }
 
@@ -582,15 +582,15 @@
         box-shadow: none;
 
         &.square-blue {
-          background-color: rgb(from $primary-base r g b / 18%);
+          background-color: rgb(from $primary-base r g b / 0.18);
         }
 
         &.square-pink {
-          background-color: rgb(from $primary-base r g b / 10%);
+          background-color: rgb(from $primary-base r g b / 0.1);
         }
 
         &.square-purple {
-          background-color: rgb(from $primary-base r g b / 20%);
+          background-color: rgb(from $primary-base r g b / 0.2);
         }
       }
 

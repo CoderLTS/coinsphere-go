@@ -368,7 +368,7 @@
 <style lang="scss" scoped>
   .layout-search {
     :deep(.search-modal) {
-      background-color: rgb(0 0 0 / 20%);
+      background-color: rgb(0 0 0 / 0.2);
     }
 
     :deep(.el-dialog__body) {
@@ -402,7 +402,7 @@
     }
 
     :deep(.search-modal) {
-      background-color: rgb(23 23 26 / 60%);
+      background-color: rgb(23 23 26 / 0.6);
       backdrop-filter: none;
     }
 

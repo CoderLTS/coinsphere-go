@@ -1271,9 +1271,9 @@
     position: relative;
     display: flex;
     flex-direction: column;
-    min-height: 0;
     width: 100%;
     height: 100%;
+    min-height: 0;
     overflow: hidden;
     background: #f4f7fb;
   }
@@ -1288,44 +1288,44 @@
     top: 60px;
     right: 20px;
     bottom: 14px;
-    width: 380px;
+    z-index: 18;
     display: flex;
     flex-direction: column;
+    width: 380px;
     padding: 10px 0 10px 10px;
-    border: 1px solid rgba(212, 216, 226, 0.92);
-    border-radius: 14px;
-    background: rgba(255, 255, 255, 0.96);
-    box-shadow: 0 12px 26px rgba(15, 23, 42, 0.08);
-    backdrop-filter: blur(12px);
-    z-index: 18;
     overflow: hidden;
+    background: rgb(255 255 255 / 0.96);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgb(212 216 226 / 0.92);
+    border-radius: 14px;
+    box-shadow: 0 12px 26px rgb(15 23 42 / 0.08);
   }
 
   .workflow-editor-page__json-head {
     flex: 0 0 auto;
     padding: 2px 14px 8px 6px;
-    color: #334155;
     font-size: 13px;
     font-weight: 600;
     line-height: 20px;
+    color: #334155;
   }
 
   .workflow-editor-page__json-body {
     flex: 1;
     min-height: 0;
-    overflow: auto;
     padding: 0 14px 8px 6px;
+    overflow: auto;
   }
 
   .workflow-editor-page__json-pre {
     min-height: 100%;
     margin: 0;
-    color: #0f172a;
+    font-family: 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace;
     font-size: 12px;
     line-height: 1.65;
-    font-family: 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace;
-    white-space: pre-wrap;
+    color: #0f172a;
     word-break: break-word;
+    white-space: pre-wrap;
   }
 
   .workflow-editor-page__json-body::-webkit-scrollbar {
@@ -1337,8 +1337,8 @@
   }
 
   .workflow-editor-page__json-body::-webkit-scrollbar-thumb {
+    background: rgb(148 163 184 / 0.88);
     border-radius: 999px;
-    background: rgba(148, 163, 184, 0.88);
   }
 
   .workflow-editor-page__meta {

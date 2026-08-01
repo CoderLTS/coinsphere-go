@@ -397,16 +397,12 @@
     width: 100%;
     height: 100%;
     overflow: hidden;
-    border: 1px solid rgba(226, 232, 240, 0.92);
-    border-radius: 22px;
     background:
-      radial-gradient(
-        circle at top center,
-        rgba(255, 255, 255, 0.9) 0%,
-        rgba(251, 253, 255, 0) 36%
-      ),
+      radial-gradient(circle at top center, rgb(255 255 255 / 0.9) 0%, rgb(251 253 255 / 0) 36%),
       linear-gradient(180deg, #fbfdff 0%, #f5f8fd 100%);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.64);
+    border: 1px solid rgb(226 232 240 / 0.92);
+    border-radius: 22px;
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.64);
     contain: layout paint;
   }
 
@@ -451,5 +447,5 @@
 
 <!-- 画布节点卡片样式：X6 渲染的节点不带组件 scope，必须走全局样式。 -->
 <style lang="scss">
-  @use '@/views/scheduler/workflow/editor/components/workflow-node-card.scss';
+  @use '@/views/scheduler/workflow/editor/components/workflow-node-card';
 </style>
