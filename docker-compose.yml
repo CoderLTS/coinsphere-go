@@ -1,0 +1,49 @@
+# coinsphere-go 全栈:web(nginx 托管前端 + 反代)→ backend(Go 单二进制)。
+# 一键起:docker compose up -d --build,然后访问 http://localhost:8080
+services:
+  backend:
+    build:
+      context: ./backend
+    image: coinsphere-go-backend
+    container_name: coinsphere-go-backend
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      # 必填:未设置则 compose 直接报错(见评审 #1)。生成随机值:openssl rand -hex 32
+      COINSPHERE_AUTH__SECRET_KEY: ${COINSPHERE_AUTH__SECRET_KEY:?请设置 COINSPHERE_AUTH__SECRET_KEY(.env 或环境变量,如 openssl rand -hex 32)}
+      # 可选强化:内置超管初始密码 / 敏感配置加密密钥 / webhook pepper(留空各自回落到 secret_key)
+      # COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD: ${COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD:-}
+      # COINSPHERE_AUTH__ENCRYPTION_KEY: ${COINSPHERE_AUTH__ENCRYPTION_KEY:-}
+      # COINSPHERE_AUTH__WEBHOOK_PEPPER: ${COINSPHERE_AUTH__WEBHOOK_PEPPER:-}
+      # 默认 sqlite(数据落在 backend-data 卷)。切 postgres/mysql 见 backend/README.md,例如:
+      # COINSPHERE_DATABASE__DRIVER: postgres
+      # COINSPHERE_DATABASE__HOST: your-db-host
+    volumes:
+      - backend-data:/app/data                  # sqlite 持久化
+      - backend-uploads:/app/volumes/uploads     # 上传文件持久化
+      - backend-static:/app/volumes/static       # 后端托管的静态资源
+    # 后端不对外暴露端口,仅经 web 反代访问;需直连调试可临时打开:
+    # ports:
+    #   - "6987:6987"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:6987/health >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  web:
+    build:
+      context: ./frontend
+    image: coinsphere-go-web
+    container_name: coinsphere-go-web
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${COINSPHERE_WEB_PORT:-8080}:80"
+
+volumes:
+  backend-data:
+  backend-uploads:
+  backend-static:

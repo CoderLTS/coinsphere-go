@@ -1,0 +1,888 @@
+﻿{
+  "httpMsg": {
+    "unauthorized": "未授权访问，请重新登录",
+    "forbidden": "禁止访问该资源",
+    "notFound": "请求的资源不存在",
+    "methodNotAllowed": "请求方法不允许",
+    "requestTimeout": "请求超时，请稍后重试",
+    "internalServerError": "服务器内部错误，请稍后重试",
+    "badGateway": "网关错误，请稍后重试",
+    "serviceUnavailable": "服务暂时不可用，请稍后重试",
+    "gatewayTimeout": "网关超时，请稍后重试",
+    "requestCancelled": "请求已取消",
+    "networkError": "网络连接异常，请检查网络连接",
+    "requestFailed": "请求失败",
+    "requestConfigError": "请求配置错误"
+  },
+  "topBar": {
+    "search": {
+      "title": "搜索"
+    },
+    "user": {
+      "userCenter": "个人中心",
+      "docs": "使用文档",
+      "github": "Github",
+      "lockScreen": "锁定屏幕",
+      "logout": "退出登录",
+      "guest": "游客",
+      "toLogin": "去登录"
+    },
+    "guide": {
+      "title": "点击这里查看",
+      "theme": "主题风格",
+      "menu": "开启顶栏菜单",
+      "description": "等更多配置"
+    }
+  },
+  "common": {
+    "tips": "提示",
+    "cancel": "取消",
+    "confirm": "确定",
+    "logOutTips": "您是否要退出登录?",
+    "noMore": "没有更多了",
+    "refresh": "刷新",
+    "noData": "暂无数据",
+    "noTasks": "暂无任务",
+    "running": "运行中",
+    "stopped": "已停止"
+  },
+  "search": {
+    "placeholder": "搜索页面",
+    "historyTitle": "搜索历史",
+    "switchKeydown": "切换",
+    "selectKeydown": "选择",
+    "exitKeydown": "关闭"
+  },
+  "setting": {
+    "menuType": {
+      "title": "菜单布局",
+      "list": [
+        "垂直",
+        "水平",
+        "混合",
+        "双列"
+      ]
+    },
+    "theme": {
+      "title": "主题风格",
+      "list": [
+        "浅色",
+        "深色",
+        "系统"
+      ]
+    },
+    "menu": {
+      "title": "菜单风格"
+    },
+    "color": {
+      "title": "系统主题色"
+    },
+    "box": {
+      "title": "盒子样式",
+      "list": [
+        "边框",
+        "阴影"
+      ]
+    },
+    "container": {
+      "title": "容器宽度",
+      "list": [
+        "铺满",
+        "定宽"
+      ]
+    },
+    "basics": {
+      "title": "基础配置",
+      "list": {
+        "multiTab": "开启多标签栏",
+        "accordion": "侧边栏开启手风琴模式",
+        "collapseSidebar": "显示折叠侧边栏按钮",
+        "fastEnter": "显示快速入口",
+        "reloadPage": "显示重载页面按钮",
+        "breadcrumb": "显示全局面包屑导航",
+        "language": "显示多语言选择",
+        "progressBar": "显示顶部进度条",
+        "weakMode": "色弱模式",
+        "watermark": "全局水印",
+        "menuWidth": "菜单宽度",
+        "tabStyle": "标签页风格",
+        "pageTransition": "页面切换动画",
+        "borderRadius": "自定义圆角"
+      }
+    },
+    "tabStyle": {
+      "default": "默认",
+      "card": "卡片",
+      "google": "谷歌"
+    },
+    "transition": {
+      "list": {
+        "none": "无动画",
+        "fade": "淡入淡出",
+        "slideLeft": "左侧滑入",
+        "slideBottom": "下方滑入",
+        "slideTop": "上方滑入"
+      }
+    },
+    "actions": {
+      "resetConfig": "重置配置",
+      "copyConfig": "复制配置",
+      "copySuccess": "配置已复制到剪贴板，可粘贴到 src/config/setting.ts 文件中",
+      "copyFailed": "复制失败，请重试",
+      "resetFailed": "重置失败，请刷新页面后重试"
+    }
+  },
+  "notice": {
+    "title": "通知",
+    "btnTest": "测试",
+    "btnRead": "标为已读",
+    "bar": [
+      "通知",
+      "消息",
+      "代办"
+    ],
+    "text": [
+      "暂无"
+    ],
+    "viewAll": "查看全部"
+  },
+  "worktab": {
+    "btn": {
+      "refresh": "刷新",
+      "fixed": "固定",
+      "unfixed": "取消固定",
+      "closeLeft": "关闭左侧",
+      "closeRight": "关闭右侧",
+      "closeOther": "关闭其他",
+      "closeAll": "关闭全部"
+    }
+  },
+  "login": {
+    "leftView": {
+      "title": "一款兼具设计美学与高效开发的后台系统",
+      "subTitle": "美观实用的界面，经过视觉优化，确保卓越的用户体验"
+    },
+    "title": "欢迎回来",
+    "subTitle": "输入您的账号和密码登录",
+    "roles": {
+      "super": "超级管理员",
+      "admin": "管理员",
+      "user": "普通用户"
+    },
+    "placeholder": {
+      "username": "请输入账号",
+      "password": "请输入密码",
+      "slider": "请拖动滑块完成验证"
+    },
+    "sliderText": "按住滑块拖动",
+    "sliderSuccessText": "验证成功",
+    "rememberPwd": "记住密码",
+    "forgetPwd": "忘记密码",
+    "btnText": "登录",
+    "noAccount": "还没有账号？",
+    "register": "注册",
+    "success": {
+      "title": "登录成功",
+      "message": "欢迎回来"
+    }
+  },
+  "forgetPassword": {
+    "title": "忘记密码？",
+    "subTitle": "输入您的电子邮件来重置您的密码",
+    "placeholder": "请输入您的电子邮件",
+    "submitBtnText": "提交",
+    "backBtnText": "返回"
+  },
+  "register": {
+    "title": "创建账号",
+    "subTitle": "欢迎加入我们，请填写以下信息完成注册",
+    "placeholder": {
+      "username": "请输入账号",
+      "password": "请输入密码",
+      "confirmPassword": "请再次输入密码"
+    },
+    "rule": {
+      "confirmPasswordRequired": "请再次输入密码",
+      "passwordMismatch": "两次输入密码不一致!",
+      "usernameLength": "长度在 3 到 20 个字符",
+      "passwordLength": "密码长度不能小于6位",
+      "agreementRequired": "请同意隐私协议"
+    },
+    "agreeText": "我同意",
+    "privacyPolicy": "《隐私政策》",
+    "submitBtnText": "注册",
+    "hasAccount": "已有账号？",
+    "toLogin": "去登录"
+  },
+  "lockScreen": {
+    "pwdError": "密码错误",
+    "lock": {
+      "inputPlaceholder": "请输入锁屏密码",
+      "btnText": "锁定"
+    },
+    "unlock": {
+      "inputPlaceholder": "请输入解锁密码",
+      "btnText": "解锁",
+      "backBtnText": "返回登录"
+    }
+  },
+  "greeting": {
+    "dawn": "凌晨了！",
+    "morning": "上午好！",
+    "afternoon": "下午好！",
+    "evening": "晚上好！"
+  },
+  "exceptionPage": {
+    "403": "抱歉，您无权访问该页面",
+    "404": "抱歉，您访问的页面不存在",
+    "500": "抱歉，服务器出错了",
+    "gohome": "返回首页"
+  },
+  "menus": {
+    "login": {
+      "title": "登录"
+    },
+    "register": {
+      "title": "注册"
+    },
+    "forgetPassword": {
+      "title": "忘记密码"
+    },
+    "outside": {
+      "title": "内嵌页面"
+    },
+    "dashboard": {
+      "title": "仪表盘",
+      "overview": "总览"
+    },
+    "result": {
+      "title": "结果页面",
+      "success": "成功页",
+      "fail": "失败页"
+    },
+    "exception": {
+      "title": "异常页面",
+      "forbidden": "403",
+      "notFound": "404",
+      "serverError": "500"
+    },
+    "system": {
+      "title": "系统管理",
+      "user": "用户管理",
+      "role": "角色管理",
+      "userCenter": "个人中心",
+      "menu": "菜单管理"
+    },
+    "scheduler": {
+      "title": "定时任务",
+      "overview": "任务概览",
+      "tasks": "任务列表"
+    },
+    "data": {
+      "title": "数据管理",
+      "news": "新闻数据",
+      "push": "推送数据",
+      "analysis": "AI 分析"
+    },
+    "config": {
+      "title": "配置管理",
+      "overview": "配置概览",
+      "aiModels": "模型配置",
+      "assistantAgents": "智能体配置",
+      "notifyChannels": "通知渠道",
+      "notifyRules": "通知规则"
+    }
+  },
+  "table": {
+    "form": {
+      "reset": "重置",
+      "submit": "提交"
+    },
+    "searchBar": {
+      "reset": "重置",
+      "search": "查询",
+      "expand": "展开",
+      "collapse": "收起",
+      "searchInputPlaceholder": "请输入",
+      "searchSelectPlaceholder": "请选择"
+    },
+    "selection": "选择",
+    "sizeOptions": {
+      "small": "紧凑",
+      "default": "默认",
+      "large": "宽松"
+    },
+    "column": {
+      "selection": "勾选",
+      "expand": "展开",
+      "index": "序号"
+    },
+    "zebra": "斑马纹",
+    "border": "边框",
+    "headerBackground": "表头背景"
+  },
+  "permissions": {
+    "add": "新增",
+    "edit": "编辑",
+    "delete": "删除",
+    "assign": "分配权限",
+    "toggleTask": "启停任务",
+    "viewAnalysis": "查看分析"
+  },
+  "assistant": {
+    "title": "智能助手",
+    "newsContextFallback": "当前新闻",
+    "agentDescriptionEmpty": "选择一个智能体后开始对话",
+    "placeholderGeneral": "输入你的问题…",
+    "placeholderNews": "继续追问这条新闻…",
+    "emptyGeneral": "这里会展示你的通用会话记录",
+    "emptyNews": "点击新闻数据中的 AI 分析后，这里会生成新闻解读",
+    "reasoning": "推理过程",
+    "reasoningToggle": "深度思考",
+    "reasoningOn": "开",
+    "reasoningOff": "关",
+    "history": "会话历史",
+    "deleteSession": "删除会话",
+    "deleteSessionConfirm": "确认删除“{title}”吗？删除后无法恢复。",
+    "deleteSessionSuccess": "会话已删除",
+    "historyEmpty": "当前智能体还没有历史会话",
+    "historyEmptyPreview": "暂时没有消息内容",
+    "generating": "正在生成回复...",
+    "newsScope": "新闻上下文",
+    "generalTip": "输入后按 Enter 发送",
+    "newsTip": "可继续追问新闻影响、风险和交易思路",
+    "goModelConfig": "前往模型配置",
+    "errors": {
+      "loadConversation": "加载智能助手会话失败，请稍后重试",
+      "stream": "智能助手暂时不可用，请稍后重试",
+      "loadModels": "加载可用模型失败，请稍后重试",
+      "loadHistory": "加载会话历史失败，请稍后重试",
+      "deleteSession": "删除会话失败，请稍后重试",
+      "agentUnavailable": "当前智能体不存在或已停用",
+      "newsContextRequired": "新闻分析智能体需要从新闻数据页进入"
+    },
+    "modelPlaceholder": "请选择模型",
+    "noModels": "当前无可用 AI 模型",
+    "noModelsTitle": "尚未配置可用模型",
+    "noModelsDescription": "请前往「配置管理 / 模型配置」完成启用后再开始提问。",
+    "modelSelectionRequired": "当前有多个可用模型，请先选择一个模型"
+  },
+  "aiConfig": {
+    "title": "模型配置",
+    "description": "这里管理当前登录用户自己的模型配置。只有已启用的模型，才能被智能助手和新闻分析智能体使用。",
+    "table": {
+      "displayName": "展示名称",
+      "provider": "厂商 / 协议",
+      "modelName": "模型名称",
+      "baseUrl": "接口地址",
+      "boundAgents": "绑定智能体",
+      "status": "状态",
+      "sessionCount": "会话数",
+      "validation": "校验状态",
+      "validatedAt": "校验时间",
+      "updatedAt": "更新时间",
+      "action": "操作",
+      "noBoundAgents": "未绑定智能体"
+    },
+    "actions": {
+      "validate": "连通性校验",
+      "bindAgent": "绑定智能体"
+    },
+    "agentDialog": {
+      "title": "绑定智能体",
+      "description": "一个模型可同时绑定多个智能体。未绑定时，系统会在当前用户的启用模型中按优先级自动回退。",
+      "field": "智能体",
+      "placeholder": "请选择智能体",
+      "disabled": "已停用"
+    },
+    "dialog": {
+      "addTitle": "新增 AI 模型",
+      "editTitle": "编辑 AI 模型"
+    },
+    "form": {
+      "providerType": "协议类型",
+      "preset": "厂商预设",
+      "presetPlaceholder": "请选择厂商预设",
+      "providerLabel": "厂商名称",
+      "displayName": "展示名称",
+      "modelName": "模型名称",
+      "baseUrl": "接口地址",
+      "apiKey": "API Key",
+      "apiKeyPlaceholder": "请输入 API Key",
+      "apiKeyKeepHint": "留空表示保留当前密钥",
+      "timeoutMs": "超时时间(ms)",
+      "priority": "优先级",
+      "enabled": "是否启用",
+      "headersJson": "自定义 Headers JSON",
+      "headersJsonPlaceholder": "{\"Authorization\":\"Bearer xxx\"}",
+      "extraBodyJson": "额外 Body JSON",
+      "extraBodyJsonPlaceholder": "{\"temperature\":0.3}",
+      "remark": "备注",
+      "remarkPlaceholder": "填写团队内部说明或用途"
+    },
+    "validation": {
+      "providerType": "请选择协议类型",
+      "providerLabel": "请输入厂商名称",
+      "displayName": "请输入展示名称",
+      "modelName": "请输入模型名称",
+      "baseUrl": "请输入接口地址",
+      "apiKey": "请输入 API Key",
+      "jsonObject": "JSON 顶层必须是对象",
+      "jsonInvalid": "请输入合法的 JSON",
+      "statusSuccess": "已校验",
+      "statusFailed": "失败",
+      "statusUnknown": "未校验"
+    },
+    "deleteConfirm": "确认删除模型“{name}”吗？历史会话会保留，但后续新请求将不能再使用这个模型。"
+  },
+  "assistantAgent": {
+    "title": "智能体配置",
+    "description": "在这里维护全局智能体模板。智能体决定系统提示词、欢迎语、开场问题和上下文数据来源。",
+    "dataSources": {
+      "none": "纯对话",
+      "system_context": "系统上下文",
+      "news_context": "新闻上下文"
+    },
+    "table": {
+      "displayName": "智能体",
+      "dataSourceType": "数据来源",
+      "bindingCount": "绑定模型数",
+      "sessionCount": "会话数",
+      "status": "状态",
+      "updatedAt": "更新时间",
+      "action": "操作",
+      "builtin": "内置",
+      "noDescription": "未填写描述"
+    },
+    "dialog": {
+      "addTitle": "新增智能体",
+      "editTitle": "编辑智能体"
+    },
+    "form": {
+      "code": "智能体编码",
+      "displayName": "智能体名称",
+      "avatar": "头像",
+      "uploadAvatar": "上传头像",
+      "restoreDefaultAvatar": "恢复默认",
+      "avatarUploadTip": "支持 jpg/png/webp/gif，大小不超过 2MB",
+      "avatarFormatError": "仅支持 jpg、png、webp、gif 格式的头像图片",
+      "avatarSizeError": "头像图片不能超过 2MB",
+      "description": "描述",
+      "descriptionPlaceholder": "用于说明该智能体适合处理什么问题",
+      "welcomeMessage": "欢迎语",
+      "welcomeMessagePlaceholder": "首次打开助手时展示的欢迎语",
+      "systemPrompt": "系统提示词",
+      "systemPromptPlaceholder": "定义该智能体的身份、边界和输出风格",
+      "starterPrompts": "开场问题",
+      "starterPromptsPlaceholder": "每行一条开场问题，最多保留前 6 条",
+      "dataSourceType": "数据来源",
+      "sort": "排序",
+      "enabled": "是否启用"
+    },
+    "validation": {
+      "code": "请输入智能体编码",
+      "displayName": "请输入智能体名称",
+      "dataSourceType": "请选择数据来源",
+      "systemPrompt": "请输入系统提示词"
+    },
+    "deleteConfirm": "确认删除智能体“{name}”吗？删除后不可恢复。"
+  },
+  "configOverview": {
+    "title": "配置概览",
+    "description": "统一查看模型可用性、智能体模板、厂商分布和通知健康状态，便于在修改配置前快速判断系统当前状态。",
+    "actions": {
+      "goModels": "查看模型配置",
+      "goAgents": "查看智能体配置",
+      "goNotifyChannels": "查看通知渠道",
+      "goNotifyRules": "查看通知规则"
+    },
+    "summary": {
+      "total": {
+        "label": "模型总数",
+        "description": "当前注册到 coinsphere 的全部模型配置数量"
+      },
+      "enabled": {
+        "label": "已启用模型",
+        "description": "当前可被智能助手直接使用的模型数量"
+      },
+      "validated": {
+        "label": "已校验模型",
+        "description": "最近一次连通性校验通过的模型数量"
+      },
+      "notifyRules": {
+        "label": "启用通知规则",
+        "description": "触发消息来源事件后可自动分发的通知规则数量"
+      },
+      "agents": {
+        "label": "启用智能体",
+        "description": "当前可被助手入口和新闻分析使用的智能体数量"
+      },
+      "bindings": {
+        "label": "模型绑定",
+        "description": "所有用户模型与智能体之间的绑定总数"
+      }
+    },
+    "agentPanel": {
+      "title": "智能体模板",
+      "description": "查看当前启用中的智能体、数据来源以及被多少模型绑定。",
+      "enabled": "已启用",
+      "disabled": "已停用",
+      "bindingCount": "已绑定 {count} 个模型"
+    },
+    "providerMix": {
+      "title": "厂商分布",
+      "description": "查看当前模型配置在不同厂商和协议之间的分布情况。"
+    },
+    "healthTable": {
+      "title": "模型健康列表",
+      "description": "统一查看模型可用性、校验状态、已绑定智能体和更新时间。",
+      "enabled": "已启用",
+      "disabled": "已停用",
+      "noBoundAgents": "未绑定智能体",
+      "columns": {
+        "model": "展示名称",
+        "provider": "厂商",
+        "modelName": "模型名称",
+        "status": "状态",
+        "validation": "校验状态",
+        "validatedAt": "校验时间",
+        "boundAgents": "绑定智能体",
+        "sessionCount": "会话数",
+        "updatedAt": "更新时间"
+      }
+    },
+    "notificationPanel": {
+      "title": "通知健康状态",
+      "description": "关注可发送通知的渠道实例、启用中的通知规则，以及最近一次消息下发结果。",
+      "channelCount": "已配置渠道",
+      "channelDescription": "通知中心中已创建的通知渠道实例总数",
+      "ruleCount": "启用通知规则",
+      "ruleDescription": "消息来源触发后可立即执行的通知规则数量",
+      "latestDelivery": "最近发送结果",
+      "latestDeliveryEmpty": "暂无发送记录",
+      "deliverySuccess": "成功",
+      "deliveryFailed": "失败",
+      "deliveryUnknown": "未知"
+    }
+  },
+  "notifyChannel": {
+    "title": "通知渠道",
+    "description": "管理具体的通知渠道实例，例如钉钉机器人和 SMTP 邮件账号。同一种渠道类型可以配置多条记录。",
+    "table": {
+      "displayName": "渠道名称",
+      "channelType": "渠道类型",
+      "owner": "归属用户",
+      "targetSummary": "目标摘要",
+      "status": "状态",
+      "testStatus": "测试状态",
+      "lastTestedAt": "最近测试时间",
+      "updatedAt": "更新时间",
+      "action": "操作"
+    },
+    "status": {
+      "success": "成功",
+      "failed": "失败",
+      "unknown": "未测试"
+    },
+    "dialog": {
+      "addTitle": "新增通知渠道",
+      "editTitle": "编辑通知渠道"
+    },
+    "form": {
+      "channelType": "渠道类型",
+      "displayName": "渠道名称",
+      "owner": "归属用户",
+      "typeDescription": "渠道说明",
+      "webhookBaseUrl": "Webhook 地址",
+      "accessToken": "访问令牌",
+      "secret": "签名密钥",
+      "host": "SMTP 服务器",
+      "port": "端口",
+      "username": "SMTP 用户名",
+      "password": "密码",
+      "fromEmail": "发件邮箱",
+      "fromName": "发件名称",
+      "recipients": "收件人",
+      "recipientsPlaceholder": "多个收件人可使用逗号或换行分隔",
+      "useTls": "启用 TLS 加密",
+      "enabled": "是否启用",
+      "remark": "备注",
+      "remarkPlaceholder": "可选，用于补充团队说明",
+      "secretPlaceholder": "请输入敏感配置值",
+      "secretKeepHint": "留空表示保留当前敏感配置",
+      "secretOptionalPlaceholder": "选填，填写签名密钥",
+      "secretOptionalKeepHint": "留空表示保留当前签名密钥"
+    },
+    "validation": {
+      "channelType": "请选择渠道类型",
+      "displayName": "请输入渠道名称",
+      "webhookBaseUrl": "请输入 Webhook 地址",
+      "accessToken": "请输入访问令牌",
+      "host": "请输入 SMTP 服务器",
+      "username": "请输入 SMTP 用户名",
+      "password": "请输入 SMTP 密码",
+      "fromEmail": "请输入发件邮箱",
+      "recipients": "请至少填写一个收件人"
+    },
+    "deleteConfirm": "确认删除通知渠道“{name}”吗？删除后不可恢复。"
+  },
+  "notifyRule": {
+    "title": "通知规则",
+    "description": "管理哪些消息来源会触发通知、通知要发往哪些渠道，以及最终渲染的通知模板内容。",
+    "table": {
+      "ruleName": "规则名称",
+      "source": "消息来源",
+      "targets": "通知目标",
+      "channelTypes": "渠道类型",
+      "contentFormat": "内容格式",
+      "status": "状态",
+      "updatedAt": "更新时间",
+      "action": "操作",
+      "noChannel": "未绑定渠道"
+    },
+    "dialog": {
+      "addTitle": "新增通知规则",
+      "editTitle": "编辑通知规则"
+    },
+    "form": {
+      "ruleName": "规则名称",
+      "sourceCode": "消息来源",
+      "targets": "通知目标",
+      "channelIds": "通知渠道",
+      "contentFormat": "内容格式",
+      "titleTemplate": "标题模板",
+      "titleTemplatePlaceholder": "示例：检测到新新闻：{{news.title}}",
+      "contentTemplate": "内容模板",
+      "contentTemplatePlaceholder": "支持使用 {{news.title}}、{{news.link}}、{{system.time}} 等变量",
+      "variables": "可用变量",
+      "enabled": "是否启用",
+      "remark": "备注",
+      "remarkPlaceholder": "可选，用于补充团队说明"
+    },
+    "variablePanel": {
+      "title": "变量参考",
+      "description": "变量由当前消息来源提供，模板会使用 Mustache 语法渲染。"
+    },
+    "targetTypes": {
+      "user": "用户",
+      "role": "角色"
+    },
+    "channelTypes": {
+      "inApp": "站内通知",
+      "dingtalk": "钉钉机器人",
+      "smtp": "SMTP 邮件"
+    },
+    "actions": {
+      "addTarget": "新增目标"
+    },
+    "validation": {
+      "ruleName": "请输入规则名称",
+      "sourceCode": "请选择消息来源",
+      "targets": "至少需要配置一个通知目标",
+      "targetRequired": "通知目标不能为空",
+      "channelTypes": "通知目标至少需要选择一种渠道类型",
+      "duplicateTarget": "同一个用户或角色不能重复配置多条通知目标",
+      "channelIds": "请至少选择一个通知渠道",
+      "titleTemplate": "请输入标题模板",
+      "contentTemplate": "请输入内容模板"
+    },
+    "deleteConfirm": "确认删除通知规则“{name}”吗？删除后不可恢复。"
+  },
+  "pushData": {
+    "title": "推送数据",
+    "description": "统一查看新闻消息、任务失败等来源触发后的实际推送记录，包含接收对象、渠道、状态和时间。",
+    "filters": {
+      "keyword": "关键词",
+      "keywordPlaceholder": "搜索标题、规则名称或接收用户",
+      "sourceCode": "消息来源",
+      "channelType": "渠道类型",
+      "status": "发送状态"
+    },
+    "table": {
+      "title": "推送内容",
+      "source": "消息来源",
+      "ruleName": "规则名称",
+      "recipient": "接收对象",
+      "channel": "通知渠道",
+      "status": "发送状态",
+      "sentAt": "发送时间",
+      "createdAt": "创建时间"
+    },
+    "sources": {
+      "newsCreated": "新闻消息",
+      "taskFailed": "定时任务失败"
+    },
+    "channels": {
+      "inApp": "站内通知",
+      "dingtalk": "钉钉机器人",
+      "smtp": "SMTP 邮件"
+    },
+    "status": {
+      "pending": "待发送",
+      "success": "发送成功",
+      "failed": "发送失败",
+      "skippedOffline": "离线跳过"
+    }
+  },
+  "home": {
+    "title": "欢迎来到 coinsphere 首页",
+    "description": "首页聚合了定时任务和新闻数据的关键状态，方便你在进入业务前快速判断系统是否健康。",
+    "actions": {
+      "taskOverview": "查看任务概览",
+      "taskList": "进入任务列表",
+      "newsData": "进入新闻数据",
+      "login": "登录后查看更多"
+    },
+    "recentNews": "最新新闻摘要",
+    "viewAll": "查看全部",
+    "taskPulse": "任务脉搏",
+    "executeCount": "已执行 {count} 次",
+    "operationSignals": "运行信号",
+    "summary": {
+      "newsTotal": {
+        "label": "累计新闻",
+        "description": "当前新闻库已沉淀的数据总量"
+      },
+      "newsToday": {
+        "label": "近 24 小时",
+        "description": "最近一天新增的新闻数量"
+      },
+      "activeTasks": {
+        "label": "运行任务",
+        "description": "当前保持运行状态的定时任务数"
+      }
+    },
+    "signals": {
+      "scheduler": {
+        "title": "调度系统",
+        "description": "当前有 {count} 个任务保持运行，可继续关注执行次数和异常信息。"
+      },
+      "news": {
+        "title": "新闻流入",
+        "hasData": "最近一条新闻入库时间为 {time}。",
+        "empty": "当前暂无新闻数据，请先检查采集任务或手工录入。"
+      }
+    },
+    "guest": {
+      "title": "游客模式",
+      "description": "当前以游客身份访问，仅开放首页浏览。登录后可查看定时任务、数据管理和系统管理页面。"
+    }
+  },
+  "scheduler": {
+    "overview": {
+      "title": "任务概览",
+      "description": "从启停比例、异常分布和执行热度三个维度观察定时任务体系，快速识别当前需要优先处理的任务。",
+      "goTaskList": "进入任务列表",
+      "statusBreakdown": "状态分布",
+      "executionRanking": "执行热度",
+      "taskCards": "重点任务卡片",
+      "insights": "分析结论",
+      "attention": {
+        "healthy": "运行稳定",
+        "warning": "需要关注",
+        "paused": "已暂停"
+      },
+      "card": {
+        "executeCount": "执行次数",
+        "lastRun": "最近执行"
+      },
+      "summary": {
+        "total": {
+          "label": "任务总数",
+          "description": "已接入调度中心的全部任务数量"
+        },
+        "activeRatio": {
+          "label": "运行占比",
+          "description": "当前运行中任务占全部任务的比例"
+        },
+        "warning": {
+          "label": "关注任务",
+          "description": "最近保留错误信息、需要优先排查的任务数"
+        },
+        "health": {
+          "label": "健康得分",
+          "emptyDescription": "暂无最近执行记录"
+        }
+      }
+    },
+    "task": {
+    "title": "任务列表",
+      "description": "统一查看调度状态、执行次数、最近一次执行和异常信息，支持直接启停任务。",
+      "columns": {
+        "name": "任务名称",
+        "schedule": "调度周期",
+        "status": "状态",
+        "executeCount": "执行次数",
+        "lastExecute": "最近执行",
+        "nextRun": "下次运行",
+        "lastError": "最近异常",
+        "action": "操作"
+      },
+      "start": "启动",
+      "stop": "停止",
+      "goOverview": "查看任务概览"
+    }
+  },
+  "data": {
+    "news": {
+      "title": "新闻数据",
+      "description": "集中维护新闻数据源，支持筛选、手工录入、编辑、删除，以及直接进入 AI 分析流程。",
+      "keywordLabel": "关键词",
+      "keywordPlaceholder": "请输入标题或摘要关键字",
+      "addNews": "新增新闻",
+      "sourceLink": "来源链接",
+      "analysis": "AI 分析",
+      "analysisNoModel": "当前还没有可用模型，请先在模型配置中配置并启用模型。",
+      "deleteConfirm": "确认删除“{title}”吗？删除后将无法恢复。",
+      "columns": {
+        "picture": "封面",
+        "messageId": "消息 ID",
+        "title": "标题",
+        "summary": "摘要",
+        "publishTime": "发布时间",
+        "source": "来源",
+        "action": "操作"
+      },
+      "summary": {
+        "total": {
+          "label": "数据总量",
+          "description": "新闻库内当前存储的新闻条数"
+        },
+        "current": {
+          "label": "当前页条数",
+          "description": "本页已加载到界面的数据数量"
+        },
+        "keyword": {
+          "label": "筛选状态",
+          "description": "是否正在按关键字过滤数据",
+          "filtered": "筛选中",
+          "all": "全部"
+        }
+      },
+      "form": {
+        "title": "新闻标题",
+        "titlePlaceholder": "请输入新闻标题",
+        "publishTime": "发布时间",
+        "publishTimePlaceholder": "请选择发布时间",
+        "sourceUrl": "来源地址",
+        "sourceUrlPlaceholder": "请输入原始来源地址",
+        "link": "跳转链接",
+        "linkPlaceholder": "请输入对外跳转链接",
+        "picture": "封面图片",
+        "picturePlaceholder": "请输入封面图片 URL",
+        "content": "正文内容",
+        "contentPlaceholder": "请输入新闻正文"
+      },
+      "dialog": {
+        "addTitle": "新增新闻",
+        "editTitle": "编辑新闻"
+      },
+      "validation": {
+        "title": "请输入新闻标题",
+        "content": "请输入新闻正文",
+        "publishTime": "请选择发布时间"
+      }
+    }
+  }
+}
+

@@ -1,0 +1,11 @@
+node_modules
+dist
+dist-ssr
+.vite
+coverage
+*.log
+*.local
+.eslintcache
+.stylelintcache
+Dockerfile
+.dockerignore
