@@ -1,4 +1,4 @@
-# coinsphere-go 全栈:web(nginx 托管前端 + 反代)→ backend(Go 单二进制)。
+# coinsphere-go 开发栈:web(nginx 托管前端 + 反代)→ backend(Go 单二进制)，worker(A0 空闲契约)。
 # 一键起:docker compose up -d --build,然后访问 http://localhost:8080
 services:
   backend:
@@ -31,6 +31,21 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  worker:
+    build:
+      context: ./worker
+    image: coinsphere-go-worker
+    container_name: coinsphere-go-worker
+    restart: unless-stopped
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+    environment:
+      TZ: UTC
 
   web:
     build:

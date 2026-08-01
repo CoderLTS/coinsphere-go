@@ -24,6 +24,8 @@ flowchart LR
 
 同一 Go 代码库最终构建 `api`、`collector`、`scheduler`、`executor` 四种进程。首版异步任务使用 PostgreSQL `FOR UPDATE SKIP LOCKED`，领域事件使用事务 Outbox，不引入额外消息中间件。
 
+A0 的 Python Worker 容器仅运行可探测的 `a0-idle` 前台进程，不连接数据库、不领取任务且不暴露网络端口。任务租约与取消在 A1 实现，数据集与双回测执行能力按 A3 至 A5 的阶段顺序引入。
+
 数据库 schema 通过后端镜像内的独立 migration 二进制演进，服务进程不负责生产迁移。A0 仅建立工具和测试骨架，A1 完成 GORM `AutoMigrate` 切换；详细决策见 [ADR-0002](./decisions/0002-versioned-sql-migrations.md)。
 
 ## 领域边界

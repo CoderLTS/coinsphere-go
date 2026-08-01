@@ -6,8 +6,8 @@
 - 数据库：SQLite 与 PostgreSQL 的空库升级、旧版本升级、回滚重放、幂等和失败原子性契约。
 - Vue：ESLint、Stylelint、类型检查、单元测试和生产构建。
 - Python：Ruff、Mypy、Pytest 和锁文件一致性。
-- 容器：Compose 配置以及 Backend、Frontend 镜像构建。
-- 安全：密钥、Go/Python 依赖、源代码、文件系统和 Backend/Frontend 镜像漏洞扫描。
+- 容器：Compose 配置以及 Backend、Frontend、Worker 镜像构建与健康检查。
+- 安全：密钥、Go/Python 依赖、源代码、文件系统和 Backend/Frontend/Worker 镜像漏洞扫描。
 
 ## 领域验收目标
 
@@ -27,7 +27,7 @@
 
 ## 已知基线债务
 
-- 关键 Playwright 场景、Worker 容器和发布产物扫描在对应 A0 独立 PR 建立前仍是阻塞 A0 退出的缺口。
+- 关键 Playwright 场景和发布产物扫描在对应 A0 独立 PR 建立前仍是阻塞 A0 退出的缺口。
 - 版本化 SQL migration 的工具与测试骨架已经建立；应用启动仍由 GORM `AutoMigrate` 管理业务表，切换必须在 A1 独立 PR 完成。
-- 当前 Go 测试覆盖配置安全校验和 migration 契约，前端和 Worker 仍以测试骨架为主；认证、工作流并发、取消和恢复的行为覆盖必须在 A1 对应 PR 中补齐。
+- 当前 Go 测试覆盖配置安全校验和 migration 契约，Worker 仅覆盖 A0 空闲运行与健康契约；认证、工作流并发、任务租约、取消和恢复的行为覆盖必须在 A1 对应 PR 中补齐。
 - 本机缺少 Docker 时，Compose 启动、健康检查和 API 冒烟必须由 GitHub Actions 完成。

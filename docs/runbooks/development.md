@@ -8,6 +8,18 @@
 
 脚本会验证 Go、Vue 和 Python Worker；若本机存在 Docker，还会验证 Compose 配置。脚本优先使用 `PATH` 或 `GOROOT` 中的 Go，并兼容 `%USERPROFILE%\go\go1.26.5` 的本地登记路径。
 
+Worker 容器可单独验证：
+
+```powershell
+$env:COINSPHERE_AUTH__SECRET_KEY = 'local-compose-validation-only'
+docker compose build worker
+docker compose up --detach --no-build --wait worker
+docker compose exec -T worker python -m coinsphere_worker health
+docker compose rm --stop --force worker
+```
+
+预期健康输出包含 `"mode":"a0-idle"` 和 `"taskConsumer":false`。A0 Worker 不连接数据库、不领取任务，开发 Compose 也不会为其提供网络、端口、卷或凭据。
+
 迁移契约默认在临时 SQLite 数据库执行。要同时验证 PostgreSQL，先设置仅供本地测试的 DSN：
 
 ```powershell
@@ -23,7 +35,7 @@ Pop-Location
 ./scripts/verify.sh
 ```
 
-GitHub Actions 负责 Linux、容器和安全检查。本地缺少 Docker 时可以继续开发，但 PR 在容器 Job 通过前不得合并。
+GitHub Actions 负责 Linux、三类镜像构建、Compose 健康、Worker A0 契约和安全检查。本地缺少 Docker 时可以继续开发，但 PR 在容器 Job 通过前不得合并。
 
 CI 使用固定 PostgreSQL 17 镜像执行迁移契约。本地与发布环境的迁移命令、编写约束和回滚步骤见[数据库迁移手册](./database-migrations.md)。
 

@@ -138,7 +138,7 @@ jobs:
       - name: Verify image proxy isolation
         run: |
           proxy_pattern='^(HTTP_PROXY|HTTPS_PROXY|NO_PROXY|http_proxy|https_proxy|no_proxy)='
-          for image in coinsphere-go-backend:latest coinsphere-go-web:latest; do
+          for image in coinsphere-go-backend:latest coinsphere-go-web:latest coinsphere-go-worker:latest; do
             image_env=$(docker image inspect "$image" --format '{{range .Config.Env}}{{println .}}{{end}}')
             if grep -Eq "$proxy_pattern" <<<"$image_env"; then
               echo "镜像包含运行时代理变量: $image" >&2
@@ -163,12 +163,21 @@ jobs:
           format: table
           severity: CRITICAL
           exit-code: "1"
+      - name: Scan worker image
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          version: v0.72.0
+          scan-type: image
+          image-ref: coinsphere-go-worker:latest
+          format: table
+          severity: CRITICAL
+          exit-code: "1"
       - name: Start Compose stack
         run: docker compose up --detach --no-build --wait --wait-timeout 180
       - name: Verify runtime proxy isolation
         run: |
           proxy_pattern='^(HTTP_PROXY|HTTPS_PROXY|NO_PROXY|http_proxy|https_proxy|no_proxy)='
-          for service in backend web; do
+          for service in backend web worker; do
             container_id=$(docker compose ps --quiet "$service")
             [[ -n $container_id ]] || { echo "未找到运行容器: $service" >&2; exit 1; }
             container_env=$(docker inspect "$container_id" --format '{{range .Config.Env}}{{println .}}{{end}}')
@@ -177,6 +186,10 @@ jobs:
               exit 1
             fi
           done
+      - name: Verify Worker A0 health contract
+        run: |
+          docker compose exec -T worker python -m coinsphere_worker health |
+            python3 -c 'import json, sys; assert json.load(sys.stdin) == {"mode": "a0-idle", "protocolVersion": 1, "role": "quant-worker", "status": "healthy", "taskConsumer": False}'
       - name: Smoke test health endpoint
         run: curl --fail --show-error --retry 10 --retry-all-errors --retry-delay 3 http://127.0.0.1:8080/health
       - name: Print Compose logs on failure
