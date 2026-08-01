@@ -9,10 +9,34 @@ WEB_PORT=${COINSPHERE_WEB_PORT:-8080}
 DATA_VOLUME=coinsphere-backend-data
 BACKUP_IMAGE=alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
 SOURCE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+DOCKER_CONFIG_FILE="${DOCKER_CONFIG:-${HOME:?HOME 未设置}/.docker}/config.json"
 
 if [[ ! $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
   echo "版本号必须符合 vX.Y.Z 格式: $VERSION" >&2
   exit 2
+fi
+if [[ -f $DOCKER_CONFIG_FILE ]]; then
+  command -v jq >/dev/null || { echo "缺少命令: jq" >&2; exit 3; }
+  if ! docker_config_state=$(jq -r -s '
+    if length != 1 or (.[0] | type) != "object" then "invalid"
+    elif (.[0] | has("proxies")) then "proxies"
+    else "clean"
+    end
+  ' "$DOCKER_CONFIG_FILE" 2>/dev/null); then
+    docker_config_state=invalid
+  fi
+  case "$docker_config_state" in
+    clean) ;;
+    proxies)
+      echo "Docker 客户端配置禁止包含全局 proxies: $DOCKER_CONFIG_FILE" >&2
+      echo "请移除全局代理后再执行部署，避免代理注入运行容器。" >&2
+      exit 5
+      ;;
+    *)
+      echo "Docker 客户端配置不是单个有效 JSON 对象: $DOCKER_CONFIG_FILE" >&2
+      exit 3
+      ;;
+  esac
 fi
 
 mkdir -p "$DEPLOY_DIR/backups"

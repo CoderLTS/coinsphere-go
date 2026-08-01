@@ -126,13 +126,25 @@ jobs:
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: Validate release maintenance scripts
         run: |
-          bash -n scripts/release/*.sh scripts/release/tests/*.sh
-          shellcheck scripts/release/*.sh scripts/release/tests/*.sh
-          bash scripts/release/tests/prune-registry-test.sh
+          bash -n scripts/release/*.sh scripts/release/tests/*.sh deploy/production/*.sh
+          shellcheck scripts/release/*.sh scripts/release/tests/*.sh deploy/production/*.sh
+          for test_script in scripts/release/tests/*.sh; do
+            bash "$test_script"
+          done
       - name: Validate Compose
         run: docker compose config --quiet
       - name: Build Compose images
         run: docker compose build
+      - name: Verify image proxy isolation
+        run: |
+          proxy_pattern='^(HTTP_PROXY|HTTPS_PROXY|NO_PROXY|http_proxy|https_proxy|no_proxy)='
+          for image in coinsphere-go-backend:latest coinsphere-go-web:latest; do
+            image_env=$(docker image inspect "$image" --format '{{range .Config.Env}}{{println .}}{{end}}')
+            if grep -Eq "$proxy_pattern" <<<"$image_env"; then
+              echo "镜像包含运行时代理变量: $image" >&2
+              exit 1
+            fi
+          done
       - name: Scan backend image
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
@@ -153,6 +165,18 @@ jobs:
           exit-code: "1"
       - name: Start Compose stack
         run: docker compose up --detach --no-build --wait --wait-timeout 180
+      - name: Verify runtime proxy isolation
+        run: |
+          proxy_pattern='^(HTTP_PROXY|HTTPS_PROXY|NO_PROXY|http_proxy|https_proxy|no_proxy)='
+          for service in backend web; do
+            container_id=$(docker compose ps --quiet "$service")
+            [[ -n $container_id ]] || { echo "未找到运行容器: $service" >&2; exit 1; }
+            container_env=$(docker inspect "$container_id" --format '{{range .Config.Env}}{{println .}}{{end}}')
+            if grep -Eq "$proxy_pattern" <<<"$container_env"; then
+              echo "运行容器包含代理变量: $service" >&2
+              exit 1
+            fi
+          done
       - name: Smoke test health endpoint
         run: curl --fail --show-error --retry 10 --retry-all-errors --retry-delay 3 http://127.0.0.1:8080/health
       - name: Print Compose logs on failure
