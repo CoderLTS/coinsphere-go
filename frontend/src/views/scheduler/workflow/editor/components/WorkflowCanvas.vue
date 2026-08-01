@@ -1388,11 +1388,7 @@
     height: 100%;
     overflow: hidden;
     background:
-      radial-gradient(
-        circle at top center,
-        rgba(255, 255, 255, 0.92) 0%,
-        rgba(251, 253, 255, 0) 38%
-      ),
+      radial-gradient(circle at top center, rgb(255 255 255 / 0.92) 0%, rgb(251 253 255 / 0) 38%),
       linear-gradient(180deg, #fbfdff 0%, #f5f8fd 100%);
   }
 
@@ -1418,8 +1414,8 @@
   .workflow-canvas__toolbar-slot {
     position: absolute;
     top: 20px;
-    left: 20px;
     right: 20px;
+    left: 20px;
     z-index: 20;
     pointer-events: none;
   }
@@ -1427,32 +1423,32 @@
   .workflow-canvas__stencil {
     position: absolute;
     top: 60px;
-    left: 20px;
     bottom: 14px;
-    width: 252px;
+    left: 20px;
+    z-index: 18;
     display: flex;
     flex-direction: column;
     gap: 0;
+    width: 252px;
     padding: 0 0 0 10px;
-    border: 1px solid rgba(212, 216, 226, 0.92);
-    border-radius: 14px;
-    background: rgba(255, 255, 255, 0.96);
-    box-shadow: 0 12px 26px rgba(15, 23, 42, 0.08);
+    overflow: visible;
+    background: rgb(255 255 255 / 0.96);
     backdrop-filter: blur(12px);
-    z-index: 18;
+    border: 1px solid rgb(212 216 226 / 0.92);
+    border-radius: 14px;
+    box-shadow: 0 12px 26px rgb(15 23 42 / 0.08);
     transition:
       width 0.2s ease,
       height 0.2s ease,
       padding 0.2s ease,
       transform 0.2s ease;
-    overflow: visible;
   }
 
   .workflow-canvas__stencil-body {
-    min-height: 0;
-    flex: 1;
     position: relative;
     z-index: 1;
+    flex: 1;
+    min-height: 0;
     overflow: hidden;
   }
 
@@ -1461,18 +1457,18 @@
     top: 6px;
     right: 0;
     bottom: 10px;
+    z-index: 3;
     width: 10px;
     pointer-events: none;
-    z-index: 3;
   }
 
   .workflow-canvas__stencil-scrollbar::before {
-    content: '';
     position: absolute;
     top: 0;
     right: 0;
     bottom: 0;
     width: 2px;
+    content: '';
     background: transparent;
   }
 
@@ -1480,8 +1476,8 @@
     position: absolute;
     right: 0;
     width: 4px;
+    background: rgb(148 163 184 / 0.96);
     border-radius: 999px;
-    background: rgba(148, 163, 184, 0.96);
   }
 
   .workflow-canvas__stencil-empty {
@@ -1495,69 +1491,69 @@
   }
 
   .workflow-canvas__context-menu {
-    min-width: 196px;
     display: flex;
     flex-direction: column;
     gap: 6px;
+    min-width: 196px;
     padding: 10px;
-    border: 1px solid rgba(203, 213, 225, 0.88);
-    border-radius: 16px;
-    background: rgba(255, 255, 255, 0.96);
-    box-shadow: 0 18px 32px rgba(15, 23, 42, 0.12);
+    background: rgb(255 255 255 / 0.96);
     backdrop-filter: blur(16px);
+    border: 1px solid rgb(203 213 225 / 0.88);
+    border-radius: 16px;
+    box-shadow: 0 18px 32px rgb(15 23 42 / 0.12);
   }
 
   .workflow-canvas__context-menu-title {
     padding: 2px 4px 8px;
-    border-bottom: 1px solid rgba(226, 232, 240, 0.92);
+    overflow: hidden;
     font-size: 13px;
     font-weight: 700;
     line-height: 18px;
     color: #0f172a;
-    white-space: nowrap;
-    overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
+    border-bottom: 1px solid rgb(226 232 240 / 0.92);
   }
 
   .workflow-canvas__context-menu-item {
-    height: 36px;
     display: flex;
     align-items: center;
     width: 100%;
+    height: 36px;
     padding: 0 12px;
-    border: 0;
-    border-radius: 10px;
-    background: transparent;
-    color: #334155;
     font-size: 13px;
     font-weight: 600;
+    color: #334155;
     cursor: pointer;
+    background: transparent;
+    border: 0;
+    border-radius: 10px;
     transition:
       background-color 0.15s ease,
       color 0.15s ease;
 
     &:hover {
-      background: #eef4ff;
       color: #3158d6;
+      background: #eef4ff;
     }
   }
 
   .workflow-canvas__context-menu-item--danger {
     &:hover {
-      background: #fff1f0;
       color: #dc2626;
+      background: #fff1f0;
     }
   }
 
   .workflow-canvas__loading {
     position: absolute;
-    inset: 88px 24px 24px 24px;
+    inset: 88px 24px 24px;
+    z-index: 24;
     display: grid;
     place-items: center;
-    z-index: 24;
-    border-radius: 20px;
-    background: rgba(255, 255, 255, 0.76);
+    background: rgb(255 255 255 / 0.76);
     backdrop-filter: blur(10px);
+    border-radius: 20px;
   }
 
   :deep(.x6-graph) {
@@ -1569,7 +1565,7 @@
   }
 
   :deep(.workflow-port-dot) {
-    filter: drop-shadow(0 0 10px rgba(37, 99, 235, 0.12));
+    filter: drop-shadow(0 0 10px rgb(37 99 235 / 0.12));
   }
 
   :deep(.x6-edge[shape='workflow-editor-edge'] path) {
@@ -1578,9 +1574,9 @@
 
   :deep(.x6-widget-stencil) {
     height: 100%;
-    border: 0;
-    background: transparent;
     overflow: hidden;
+    background: transparent;
+    border: 0;
   }
 
   :deep(.x6-widget-stencil-title) {
@@ -1590,42 +1586,42 @@
   :deep(.x6-widget-stencil-content) {
     top: 0 !important;
     right: 0 !important;
-    height: 100%;
-    margin-right: 0 !important;
-    padding: 0;
     box-sizing: border-box;
+    height: 100%;
+    padding: 0;
+    margin-right: 0 !important;
     overflow: auto;
     scrollbar-width: none;
   }
 
   :deep(.x6-widget-stencil-content::-webkit-scrollbar) {
+    display: none;
     width: 0 !important;
     height: 0 !important;
-    display: none;
   }
 
   :deep(.x6-widget-stencil-group-title) {
+    padding: 0 0 6px;
     margin: 0;
-    padding: 0 0 6px 0;
-    background: transparent !important;
-    color: #475569;
     font-size: 11px;
-    line-height: 16px;
     font-weight: 700;
+    line-height: 16px;
+    color: #475569;
     letter-spacing: 0.04em;
+    background: transparent !important;
   }
 
   :deep(.x6-widget-stencil-group) {
-    margin: 0;
     padding-bottom: 10px;
+    margin: 0;
   }
 
   :deep(.x6-widget-stencil-group > .x6-widget-stencil-group-title) {
     position: relative;
     height: auto;
     min-height: 0;
-    margin: 0 0 2px;
     padding: 0 0 6px 26px !important;
+    margin: 0 0 2px;
     line-height: 16px !important;
   }
 
@@ -1634,28 +1630,28 @@
   }
 
   :deep(.x6-widget-stencil-group.collapsable > .x6-widget-stencil-group-title::before) {
-    content: '';
     position: absolute;
-    left: 0;
     top: 50%;
+    left: 0;
     width: 16px;
     height: 16px;
-    border: 1px solid rgba(148, 163, 184, 0.75);
+    content: '';
+    background: rgb(255 255 255 / 0.96);
+    border: 1px solid rgb(148 163 184 / 0.75);
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.96);
-    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+    box-shadow: 0 2px 8px rgb(15 23 42 / 0.06);
     transform: translateY(-58%);
   }
 
   :deep(.x6-widget-stencil-group.collapsable > .x6-widget-stencil-group-title::after) {
-    content: '';
     position: absolute;
-    left: 4px;
     top: 50%;
+    left: 4px;
     width: 8px;
     height: 8px;
-    transform: translateY(-58%);
+    content: '';
     background: linear-gradient(#64748b, #64748b) center / 8px 1.5px no-repeat;
+    transform: translateY(-58%);
   }
 
   :deep(.x6-widget-stencil-group.collapsable.collapsed > .x6-widget-stencil-group-title::after) {
@@ -1665,21 +1661,21 @@
   }
 
   :deep(.x6-widget-stencil-group-content) {
-    padding-right: 0;
     padding-top: 0;
+    padding-right: 0;
     overflow: visible;
   }
 
   :deep(.workflow-stencil-card) {
     box-sizing: border-box;
     display: flex;
-    align-items: center;
     gap: 10px;
+    align-items: center;
     padding: 8px 10px;
+    background: #fff;
     border: 1px solid #5f95ff;
     border-radius: 8px;
-    background: #ffffff;
-    box-shadow: 0 4px 12px rgba(95, 149, 255, 0.08);
+    box-shadow: 0 4px 12px rgb(95 149 255 / 0.08);
     transition:
       transform 0.18s ease,
       box-shadow 0.18s ease,
@@ -1687,51 +1683,51 @@
   }
 
   :deep(.workflow-stencil-card__icon) {
-    flex: 0 0 auto;
-    width: 32px;
-    height: 32px;
     display: flex;
+    flex: 0 0 auto;
     align-items: center;
     justify-content: center;
-    border-radius: 8px;
+    width: 32px;
+    height: 32px;
     font-size: 12px;
     font-weight: 600;
     line-height: 1;
+    border-radius: 8px;
   }
 
   :deep(.workflow-stencil-card__body) {
-    min-width: 0;
-    flex: 1;
     display: flex;
+    flex: 1;
     flex-direction: column;
     gap: 2px;
+    min-width: 0;
   }
 
   :deep(.workflow-stencil-card__title) {
     min-width: 0;
-    font-size: 14px;
-    line-height: 18px;
-    font-weight: 600;
-    color: #141414;
-    white-space: nowrap;
     overflow: hidden;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 18px;
+    color: #141414;
     text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   :deep(.workflow-stencil-card__description) {
+    display: -webkit-box;
+    overflow: hidden;
     font-size: 12px;
     line-height: 16px;
-    color: rgba(0, 0, 0, 0.65);
-    display: -webkit-box;
+    color: rgb(0 0 0 / 0.65);
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
-    overflow: hidden;
   }
 
   :deep(.x6-widget-stencil-node:hover .workflow-stencil-card) {
-    transform: translateY(-1px);
     border-color: #3d7eff;
-    box-shadow: 0 8px 20px rgba(95, 149, 255, 0.18);
+    box-shadow: 0 8px 20px rgb(95 149 255 / 0.18);
+    transform: translateY(-1px);
   }
 
   :deep(.x6-widget-transform) {
@@ -1741,5 +1737,5 @@
 
 <!-- 画布节点卡片样式：X6 渲染的节点不带组件 scope，必须走全局样式。 -->
 <style lang="scss">
-  @use '@/views/scheduler/workflow/editor/components/workflow-node-card.scss';
+  @use '@/views/scheduler/workflow/editor/components/workflow-node-card';
 </style>

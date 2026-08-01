@@ -14,10 +14,10 @@
 ) {
   #{$selector} {
     overflow: hidden;
+    background: var(--default-box-color);
     border: 1px solid var(--art-card-border);
     border-radius: calc(var(--custom-radius) / 2 + 2px);
-    background: var(--default-box-color);
-    box-shadow: 0 0 4px rgba(0, 0, 0, 0.04);
+    box-shadow: 0 0 4px rgb(0 0 0 / 0.04);
 
     :deep(.el-card__header) {
       padding: $header-padding;
@@ -42,8 +42,8 @@
     :deep(.el-table tr),
     :deep(.el-table td.el-table__cell),
     :deep(.el-table th.el-table__cell) {
-      background: transparent;
       color: var(--el-text-color-regular);
+      background: transparent;
     }
 
     :deep(.el-table) {
@@ -75,7 +75,7 @@
     :deep(.el-table__fixed-right) {
       z-index: 3;
       border-left: 1px solid var(--art-card-border);
-      box-shadow: -10px 0 18px rgba(15, 23, 42, 0.06);
+      box-shadow: -10px 0 18px rgb(15 23 42 / 0.06);
     }
 
     :deep(.el-table__fixed-right::before) {
@@ -91,10 +91,10 @@
 ) {
   #{$selector} {
     display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 16px;
-    flex-wrap: wrap;
   }
 
   #{$copy-selector} h2 {
@@ -105,8 +105,8 @@
   }
 
   #{$copy-selector} p {
-    margin: 8px 0 0;
     max-width: 760px;
+    margin: 8px 0 0;
     font-size: 13px;
     line-height: 1.7;
     color: var(--el-text-color-secondary);
@@ -114,9 +114,9 @@
 
   #{$actions-selector} {
     display: flex;
-    align-items: center;
-    gap: 8px;
     flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
   }
 }
 
@@ -128,29 +128,29 @@
 ) {
   #{$actions-selector} {
     display: flex;
+    flex-wrap: nowrap;
+    gap: 8px;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    flex-wrap: nowrap;
     white-space: nowrap;
   }
 
   #{$surface-selector} {
+    position: relative;
+    z-index: 1;
     display: flex;
     align-items: center;
     justify-content: center;
     min-height: 46px;
-    margin: -12px -10px;
     padding: 12px 10px;
+    margin: -12px -10px;
     background-color: var(--default-box-color);
     background-image: none;
-    position: relative;
-    z-index: 1;
   }
 
   :deep(#{$cell-selector}) {
-    overflow: hidden;
     padding: 0 !important;
+    overflow: hidden;
     background: none !important;
     background-color: var(--default-box-color) !important;
     background-image: none !important;

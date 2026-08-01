@@ -6,8 +6,8 @@
 
   .el-drawer {
     // 背景滤镜效果
-    background: rgba($color: #fff, $alpha: 50%) !important;
-    box-shadow: 0 0 30px rgb(0 0 0 / 10%) !important;
+    background: rgba($color: #fff, $alpha: 0.5) !important;
+    box-shadow: 0 0 30px rgb(0 0 0 / 0.1) !important;
 
     @include backdropBlur();
 
@@ -33,7 +33,7 @@
           cursor: pointer;
           border: 2px solid var(--default-border);
           border-radius: 8px;
-          box-shadow: 0 0 8px 0 rgb(0 0 0 / 10%);
+          box-shadow: 0 0 8px 0 rgb(0 0 0 / 0.1);
           transition: box-shadow 0.1s;
 
           &.mt-16 {
@@ -68,7 +68,7 @@
 .dark {
   .setting-modal {
     .el-drawer {
-      background: rgba($color: #000, $alpha: 50%) !important;
+      background: rgba($color: #000, $alpha: 0.5) !important;
 
       .setting-item {
         .box {

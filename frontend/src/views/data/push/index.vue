@@ -256,9 +256,9 @@
     display: inline-block;
     max-width: 100%;
     overflow: hidden;
+    font-weight: 600;
+    color: var(--el-text-color-primary);
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: var(--el-text-color-primary);
-    font-weight: 600;
   }
 </style>

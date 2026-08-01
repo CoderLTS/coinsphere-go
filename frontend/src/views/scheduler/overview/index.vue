@@ -150,12 +150,12 @@
 
   .hero-panel {
     display: flex;
-    justify-content: space-between;
     gap: 18px;
+    justify-content: space-between;
     padding: 28px;
+    background: linear-gradient(135deg, rgb(250 252 255 / 0.98), rgb(232 241 255 / 0.92));
+    border: 1px solid rgb(56 104 255 / 0.12);
     border-radius: 28px;
-    background: linear-gradient(135deg, rgba(250, 252, 255, 0.98), rgba(232, 241, 255, 0.92));
-    border: 1px solid rgba(56, 104, 255, 0.12);
 
     h1 {
       margin: 14px 0 10px;
@@ -163,8 +163,8 @@
     }
 
     p {
-      margin: 0;
       max-width: 760px;
+      margin: 0;
       line-height: 1.8;
       color: var(--el-text-color-secondary);
     }
@@ -173,10 +173,10 @@
   .hero-badge {
     display: inline-flex;
     padding: 6px 12px;
-    border-radius: 999px;
-    background: rgba(45, 117, 255, 0.12);
-    color: #255ee8;
     font-size: 12px;
+    color: #255ee8;
+    background: rgb(45 117 255 / 0.12);
+    border-radius: 999px;
   }
 
   .hero-actions {
@@ -194,9 +194,9 @@
 
   .summary-card {
     padding: 18px 20px;
-    border-radius: 20px;
-    border: 1px solid var(--el-border-color-light);
     background: var(--el-fill-color-blank);
+    border: 1px solid var(--el-border-color-light);
+    border-radius: 20px;
 
     span,
     small {

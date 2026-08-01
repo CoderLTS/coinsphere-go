@@ -95,18 +95,18 @@
   .meta-popover {
     width: min(560px, calc(100vw - 48px));
     padding: 18px 18px 16px;
-    border: 1px solid rgba(203, 213, 225, 0.82);
-    border-radius: 22px;
-    background: rgba(255, 255, 255, 0.97);
-    box-shadow: 0 24px 40px rgba(15, 23, 42, 0.12);
+    background: rgb(255 255 255 / 0.97);
     backdrop-filter: blur(18px);
+    border: 1px solid rgb(203 213 225 / 0.82);
+    border-radius: 22px;
+    box-shadow: 0 24px 40px rgb(15 23 42 / 0.12);
   }
 
   .meta-popover__header {
     display: flex;
+    gap: 12px;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 12px;
     margin-bottom: 12px;
 
     strong {
@@ -136,15 +136,15 @@
 
   .meta-popover__hint {
     margin-top: 6px;
-    color: #64748b;
     font-size: 12px;
     line-height: 1.5;
+    color: #64748b;
   }
 
   .meta-popover__footer {
     display: flex;
-    justify-content: flex-end;
     gap: 10px;
+    justify-content: flex-end;
     margin-top: 8px;
   }
 </style>

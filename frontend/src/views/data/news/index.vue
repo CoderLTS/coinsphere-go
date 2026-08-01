@@ -348,15 +348,15 @@
 <style scoped lang="scss">
   .table-actions {
     display: flex;
-    justify-content: center;
     gap: 8px;
+    justify-content: center;
   }
 
   .news-cover {
     width: 72px;
     height: 54px;
-    border-radius: 14px;
     overflow: hidden;
     border: 1px solid var(--art-card-border);
+    border-radius: 14px;
   }
 </style>

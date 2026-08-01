@@ -82,6 +82,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Lint
         run: pnpm lint
+      - name: Stylelint
+        run: pnpm lint:stylelint
       - name: Unit tests
         run: pnpm test
       - name: Type check and build

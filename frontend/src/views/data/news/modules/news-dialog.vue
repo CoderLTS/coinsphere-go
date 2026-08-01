@@ -208,9 +208,9 @@
     :deep(.el-image) {
       width: 120px;
       height: 84px;
-      border-radius: 16px;
-      border: 1px solid var(--art-gray-200);
       overflow: hidden;
+      border: 1px solid var(--art-gray-200);
+      border-radius: 16px;
     }
   }
 </style>

@@ -165,12 +165,12 @@
     grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
     gap: 18px;
     padding: 30px;
-    border-radius: 30px;
     background:
-      radial-gradient(circle at top left, rgba(55, 125, 255, 0.24), transparent 28%),
-      radial-gradient(circle at bottom right, rgba(44, 200, 155, 0.16), transparent 30%),
-      linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(239, 245, 255, 0.92));
-    border: 1px solid rgba(71, 97, 255, 0.12);
+      radial-gradient(circle at top left, rgb(55 125 255 / 0.24), transparent 28%),
+      radial-gradient(circle at bottom right, rgb(44 200 155 / 0.16), transparent 30%),
+      linear-gradient(135deg, rgb(255 255 255 / 0.98), rgb(239 245 255 / 0.92));
+    border: 1px solid rgb(71 97 255 / 0.12);
+    border-radius: 30px;
   }
 
   .hero-main h1 {
@@ -179,8 +179,8 @@
   }
 
   .hero-main p {
-    margin: 0;
     max-width: 620px;
+    margin: 0;
     line-height: 1.9;
     color: var(--el-text-color-secondary);
   }
@@ -188,17 +188,17 @@
   .hero-badge {
     display: inline-flex;
     padding: 6px 12px;
-    border-radius: 999px;
-    background: rgba(37, 94, 232, 0.12);
-    color: #255ee8;
     font-size: 12px;
+    color: #255ee8;
+    background: rgb(37 94 232 / 0.12);
+    border-radius: 999px;
   }
 
   .hero-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 12px;
     margin-top: 24px;
-    flex-wrap: wrap;
   }
 
   .hero-side {
@@ -209,9 +209,9 @@
 
   .hero-stat {
     padding: 20px;
+    background: rgb(255 255 255 / 0.84);
+    border: 1px solid rgb(255 255 255 / 0.72);
     border-radius: 22px;
-    background: rgba(255, 255, 255, 0.84);
-    border: 1px solid rgba(255, 255, 255, 0.72);
 
     span,
     small {
@@ -237,19 +237,19 @@
 
   .panel-header {
     display: flex;
+    gap: 12px;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
     font-size: 16px;
     font-weight: 600;
   }
 
   .panel-state,
   .panel-empty {
-    min-height: 220px;
     display: flex;
     align-items: center;
     justify-content: center;
+    min-height: 220px;
     color: var(--el-text-color-secondary);
   }
 
@@ -263,18 +263,18 @@
   .news-item,
   .definition-item {
     padding: 16px 18px;
-    border-radius: 18px;
-    border: 1px solid var(--el-border-color-lighter);
     background: var(--el-fill-color-blank);
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 18px;
   }
 
   .news-item__head,
   .definition-item__head,
   .definition-item__meta {
     display: flex;
+    gap: 14px;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 14px;
   }
 
   .news-item__head h3 {

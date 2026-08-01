@@ -4,7 +4,7 @@
 
 - Go：格式、Vet、Staticcheck、测试、竞态检查和构建。
 - 数据库：SQLite 与 PostgreSQL 的空库升级、旧版本升级、回滚重放、幂等和失败原子性契约。
-- Vue：ESLint、类型检查、单元测试和生产构建。
+- Vue：ESLint、Stylelint、类型检查、单元测试和生产构建。
 - Python：Ruff、Mypy、Pytest 和锁文件一致性。
 - 容器：Compose 配置以及 Backend、Frontend 镜像构建。
 - 安全：密钥、Go/Python 依赖、源代码、文件系统和 Backend/Frontend 镜像漏洞扫描。
@@ -21,10 +21,15 @@ CodeQL 在公开仓库默认运行。私有仓库必须先启用 GitHub Advanced
 
 领域指标在对应里程碑实现前作为目标保留，不得使用空测试或固定成功结果伪造通过。
 
+## 前端浏览器基线
+
+- 受支持范围以 `frontend/package.json` 的 `browserslist` 为准：Chrome、Edge、Firefox 最近两个稳定版本，以及 Safari/iOS 16.4 及以上版本。
+- 不支持 IE、停止维护的浏览器和旧版内嵌 WebView。`vite.config.ts` 中的 `build.target` 仅定义 JavaScript 转译目标，不替代浏览器支持契约。
+- 项目已使用 Tailwind CSS 4、OKLCH、相对颜色、`:has()` 和渐进增强的 View Transition；关键 Playwright 浏览器矩阵仍属于 A0 待交付项。
+
 ## 已知基线债务
 
-- 现有前端 Stylelint 基线有 576 条问题，主要来自属性顺序与旧颜色语法。A0 使用独立 PR 清理后才将 Stylelint 设为阻塞门禁；禁止通过整体关闭规则获得假绿。
 - 关键 Playwright 场景、Worker 容器和发布产物扫描在对应 A0 独立 PR 建立前仍是阻塞 A0 退出的缺口。
 - 版本化 SQL migration 的工具与测试骨架已经建立；应用启动仍由 GORM `AutoMigrate` 管理业务表，切换必须在 A1 独立 PR 完成。
-- 当前 Go 测试只覆盖配置安全校验，前端和 Worker 仅有测试骨架；认证、工作流并发、取消和恢复的行为覆盖必须在 A1 对应 PR 中补齐。
+- 当前 Go 测试覆盖配置安全校验和 migration 契约，前端和 Worker 仍以测试骨架为主；认证、工作流并发、取消和恢复的行为覆盖必须在 A1 对应 PR 中补齐。
 - 本机缺少 Docker 时，Compose 启动、健康检查和 API 冒烟必须由 GitHub Actions 完成。

@@ -73,15 +73,15 @@
 
 <style scoped lang="scss">
   .material-panel {
-    width: 320px;
-    max-height: calc(100vh - 168px);
     display: flex;
     flex-direction: column;
-    border: 1px solid rgba(203, 213, 225, 0.75);
-    border-radius: 20px;
-    background: rgba(255, 255, 255, 0.94);
-    box-shadow: 0 18px 36px rgba(15, 23, 42, 0.08);
+    width: 320px;
+    max-height: calc(100vh - 168px);
+    background: rgb(255 255 255 / 0.94);
     backdrop-filter: blur(14px);
+    border: 1px solid rgb(203 213 225 / 0.75);
+    border-radius: 20px;
+    box-shadow: 0 18px 36px rgb(15 23 42 / 0.08);
     transition:
       width 0.24s ease,
       transform 0.24s ease;
@@ -93,11 +93,11 @@
 
   .material-panel__header {
     display: flex;
+    gap: 12px;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 12px;
     padding: 14px 16px 12px;
-    border-bottom: 1px solid rgba(226, 232, 240, 0.85);
+    border-bottom: 1px solid rgb(226 232 240 / 0.85);
 
     strong {
       display: block;
@@ -123,24 +123,24 @@
   }
 
   .material-group__title {
-    margin-bottom: 10px;
     padding-left: 4px;
+    margin-bottom: 10px;
     font-size: 12px;
     font-weight: 600;
     color: #475569;
   }
 
   .material-card {
-    width: 100%;
     display: flex;
-    align-items: flex-start;
     gap: 12px;
+    align-items: flex-start;
+    width: 100%;
     padding: 12px;
-    border: 1px solid rgba(226, 232, 240, 0.88);
-    border-radius: 16px;
-    background: #fff;
-    cursor: pointer;
     text-align: left;
+    cursor: pointer;
+    background: #fff;
+    border: 1px solid rgb(226 232 240 / 0.88);
+    border-radius: 16px;
     transition:
       border-color 0.2s ease,
       box-shadow 0.2s ease,
@@ -151,29 +151,29 @@
     }
 
     &:hover {
-      border-color: rgba(59, 130, 246, 0.42);
-      box-shadow: 0 12px 22px rgba(15, 23, 42, 0.08);
+      border-color: rgb(59 130 246 / 0.42);
+      box-shadow: 0 12px 22px rgb(15 23 42 / 0.08);
       transform: translateY(-1px);
     }
   }
 
   .material-card--disabled {
-    opacity: 0.45;
     cursor: not-allowed;
-    transform: none;
     box-shadow: none;
+    opacity: 0.45;
+    transform: none;
   }
 
   .material-card__badge {
-    width: 36px;
-    height: 36px;
     display: inline-flex;
+    flex-shrink: 0;
     align-items: center;
     justify-content: center;
-    border-radius: 12px;
+    width: 36px;
+    height: 36px;
     font-size: 14px;
     font-weight: 700;
-    flex-shrink: 0;
+    border-radius: 12px;
   }
 
   .material-card__content {

@@ -66,6 +66,7 @@ Push-Location (Join-Path $repoRoot 'frontend')
 try {
     Invoke-Native 'pnpm' @('install', '--frozen-lockfile')
     Invoke-Native 'pnpm' @('lint')
+    Invoke-Native 'pnpm' @('lint:stylelint')
     Invoke-Native 'pnpm' @('test')
     Invoke-Native 'pnpm' @('build')
 } finally {
