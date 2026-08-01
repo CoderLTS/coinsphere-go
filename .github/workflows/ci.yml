@@ -18,6 +18,22 @@ jobs:
   backend:
     name: Go backend
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.6-alpine3.21@sha256:849377bbbdb1143b82d1b87646eb8ab48241fe32b85ab6667e02e0af139aaa74
+        env:
+          POSTGRES_DB: coinsphere_test
+          POSTGRES_PASSWORD: migration-ci-only
+          POSTGRES_USER: coinsphere
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username=coinsphere --dbname=coinsphere_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      COINSPHERE_TEST_POSTGRES_DSN: postgres://coinsphere:migration-ci-only@127.0.0.1:5432/coinsphere_test?sslmode=disable
     defaults:
       run:
         working-directory: backend
@@ -39,6 +55,8 @@ jobs:
         run: |
           go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
           staticcheck ./...
+      - name: Database migration contract
+        run: go test -count=1 ./internal/migration ./cmd/migrate
       - name: Test with race detector
         run: go test -race ./...
       - name: Build
