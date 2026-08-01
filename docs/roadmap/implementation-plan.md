@@ -77,7 +77,7 @@
 2. 清理现有前端 Stylelint 基线，将 Stylelint 设为阻塞检查。
 3. 已建立版本化 SQL migration 工具，以及空库升级、旧版本升级、回滚重放、幂等和失败原子性测试骨架；A1 再切换应用启动路径。
 4. 建立关键 Playwright 冒烟、Worker 容器、Compose 健康测试和 API 冒烟。
-5. 建立 Gitleaks、govulncheck、pip-audit、Trivy 镜像扫描、CodeQL、SBOM、校验和与 GHCR 发布流水线。
+5. 建立 Gitleaks、govulncheck、pip-audit、Trivy 镜像扫描、SBOM、校验和与 GHCR 发布流水线。
 6. 用户配置远程仓库、分支保护、Actions 权限和 Renovate App。
 
 退出条件：所有 A0 检查在干净 checkout 可复现，分支保护实际生效，发布产物不包含凭据，回滚手册经过桌面演练。
@@ -236,7 +236,7 @@ K 线唯一键固定为 `(venue,instrumentId,interval,openTime)`。
 - Vue：ESLint、Stylelint、类型、单元、构建和关键 Playwright。
 - Python：Ruff、Mypy、Pytest、锁文件和黄金回测。
 - 数据库：空库升级、旧版本升级、回滚可行性和迁移幂等。
-- 安全：Gitleaks、govulncheck、pip-audit、Trivy 和 CodeQL。
+- 安全：Gitleaks、govulncheck、pip-audit 和 Trivy。
 - 容器：Compose 启动、健康检查、API 冒烟和镜像扫描。
 
 发布流水线构建带版本号和 Commit SHA 的镜像、SBOM、校验和及发布说明，可推送 GHCR。Codex 只生成部署包、升级命令、备份命令和回滚手册，用户在 Linux 主机手工执行。

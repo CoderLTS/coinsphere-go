@@ -30,9 +30,6 @@ git push -u origin main
 - `Python worker`
 - `Container builds`
 - `Secret scan`
-- `CodeQL (go)`
-- `CodeQL (javascript-typescript)`
-- `CodeQL (python)`
 - `Go vulnerability scan`
 - `Python dependency scan`
 - `Dependency and filesystem scan`
@@ -42,7 +39,6 @@ git push -u origin main
 ## 3. Actions 权限
 
 - Workflow 默认权限设为 Read repository contents。
-- 只有 CodeQL 使用 `security-events: write`。
 - 发布 Workflow 需要 GHCR 时单独授予 `packages: write`，不复用生产部署凭据。
 - 禁止把交易所密钥、Linux SSH 私钥或生产数据库凭据配置为 Actions Secret。
 - Fork PR 不运行任何持有写权限或高权限 Secret 的步骤。
