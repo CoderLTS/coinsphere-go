@@ -46,6 +46,9 @@ export default [
       globals: {
         // 合并从 autoImportConfig 中读取的全局变量配置
         ...autoImportConfig.globals,
+        // Element Plus resolver 只写入类型声明，需要在 ESLint 中显式声明。
+        ElLoading: 'readonly',
+        ElMessage: 'readonly',
         // TypeScript 全局命名空间
         Api: 'readonly'
       }

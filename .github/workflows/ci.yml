@@ -1,0 +1,138 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Go backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Check module files
+        run: go mod tidy -diff
+      - name: Check formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          test -z "$unformatted" || { printf '%s\n' "$unformatted"; exit 1; }
+      - name: Vet
+        run: go vet ./...
+      - name: Staticcheck
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
+          staticcheck ./...
+      - name: Test with race detector
+        run: go test -race ./...
+      - name: Build
+        run: go build ./...
+
+  frontend:
+    name: Vue frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm lint
+      - name: Unit tests
+        run: pnpm test
+      - name: Type check and build
+        run: pnpm build
+
+  worker:
+    name: Python worker
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: worker/uv.lock
+      - name: Install Python
+        run: uv python install 3.12
+      - name: Install dependencies
+        run: uv sync --locked --all-groups
+      - name: Ruff
+        run: uv run --frozen ruff check .
+      - name: Mypy
+        run: uv run --frozen mypy coinsphere_worker tests
+      - name: Pytest
+        run: uv run --frozen pytest
+
+  containers:
+    name: Container builds
+    runs-on: ubuntu-latest
+    needs:
+      - backend
+      - frontend
+      - worker
+    env:
+      COINSPHERE_AUTH__SECRET_KEY: ci-only-secret-key-that-is-never-deployed
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Validate Compose
+        run: docker compose config --quiet
+      - name: Build Compose images
+        run: docker compose build
+      - name: Scan backend image
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          version: v0.72.0
+          scan-type: image
+          image-ref: coinsphere-go-backend:latest
+          format: table
+          severity: CRITICAL
+          exit-code: "1"
+      - name: Scan frontend image
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          version: v0.72.0
+          scan-type: image
+          image-ref: coinsphere-go-web:latest
+          format: table
+          severity: CRITICAL
+          exit-code: "1"
+      - name: Start Compose stack
+        run: docker compose up --detach --no-build --wait --wait-timeout 180
+      - name: Smoke test health endpoint
+        run: curl --fail --show-error --retry 10 --retry-all-errors --retry-delay 3 http://127.0.0.1:8080/health
+      - name: Print Compose logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+      - name: Stop Compose stack
+        if: always()
+        run: docker compose down --volumes --remove-orphans

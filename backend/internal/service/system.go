@@ -1012,11 +1012,11 @@ func (a *App) listI18nByBizIDs(menuIDs, buttonIDs []int64) map[[2]any]M {
 
 // buildMenuTreePayload 构建前端菜单树结构。
 // 把"菜单行 + 按钮行"两张平表拼成前端要的层级菜单树,步骤:
-//   1) 先批量查出每个菜单/按钮的角色、国际化文案(集中查,避免在循环里逐条查库);
-//   2) actionMap:按 menuID 把按钮归到各自的菜单下;
-//   3) childrenMap:记录每个菜单有哪些直接子菜单;
-//   4) nodeMap:把每个菜单转成一个前端节点(带 meta 元信息);
-//   5) 最后按 ParentID 把子节点挂到父节点的 children 上,没有父的就是根节点。
+//  1. 先批量查出每个菜单/按钮的角色、国际化文案(集中查,避免在循环里逐条查库);
+//  2. actionMap:按 menuID 把按钮归到各自的菜单下;
+//  3. childrenMap:记录每个菜单有哪些直接子菜单;
+//  4. nodeMap:把每个菜单转成一个前端节点(带 meta 元信息);
+//  5. 最后按 ParentID 把子节点挂到父节点的 children 上,没有父的就是根节点。
 func (a *App) buildMenuTreePayload(menus []db.SystemMenu, buttons []db.SystemMenuButton) []M {
 	menuIDs := collectIDs(menus, func(m db.SystemMenu) int64 { return m.ID })
 	buttonIDs := collectIDs(buttons, func(b db.SystemMenuButton) int64 { return b.ID })

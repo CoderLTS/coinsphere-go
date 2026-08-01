@@ -1,0 +1,24 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "timezone": "Asia/Shanghai",
+  "schedule": ["before 06:00 on monday"],
+  "dependencyDashboard": true,
+  "automerge": false,
+  "prConcurrentLimit": 5,
+  "rangeStrategy": "replace",
+  "labels": ["dependencies"],
+  "packageRules": [
+    {
+      "description": "开发依赖的非主版本更新合并审查",
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "frontend development dependencies"
+    },
+    {
+      "description": "容器基础镜像单独审查",
+      "matchManagers": ["dockerfile", "docker-compose"],
+      "groupName": "container images"
+    }
+  ]
+}

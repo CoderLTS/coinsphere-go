@@ -20,12 +20,13 @@ import (
 // Hub 按用户聚合的 WebSocket 连接管理器。
 // type ... struct 定义"结构体"(把若干字段打包成一个类型),是本文件第一个 struct。见 GO入门笔记『复合类型』
 // 两个字段配合使用:
-//   mu          —— 互斥锁。多个 goroutine(各连接的收发、后台推送)会同时读写 connections,
-//                  而 Go 的 map 并发读写会直接崩溃;加锁 = 同一时刻只放一个 goroutine 进来改,保证安全。
-//                  sync.Mutex 是本文件第一次出现锁。见 GO入门笔记『并发』
-//   connections —— 连接注册表,是"嵌套 map":外层键=用户ID(int64),值又是一个 map;
-//                  内层键=该用户的一条连接(*websocket.Conn 指针,多端登录就有多条),值恒为 true。
-//                  内层 map 当"集合(set)"用,只关心连接在不在,bool 仅占位。map 见 GO入门笔记『复合类型』
+//
+//	mu          —— 互斥锁。多个 goroutine(各连接的收发、后台推送)会同时读写 connections,
+//	               而 Go 的 map 并发读写会直接崩溃;加锁 = 同一时刻只放一个 goroutine 进来改,保证安全。
+//	               sync.Mutex 是本文件第一次出现锁。见 GO入门笔记『并发』
+//	connections —— 连接注册表,是"嵌套 map":外层键=用户ID(int64),值又是一个 map;
+//	               内层键=该用户的一条连接(*websocket.Conn 指针,多端登录就有多条),值恒为 true。
+//	               内层 map 当"集合(set)"用,只关心连接在不在,bool 仅占位。map 见 GO入门笔记『复合类型』
 type Hub struct {
 	mu          sync.Mutex
 	connections map[int64]map[*websocket.Conn]bool
