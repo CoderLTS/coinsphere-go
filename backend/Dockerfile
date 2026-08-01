@@ -8,9 +8,12 @@ ARG GOPROXY=https://proxy.golang.org,direct
 ENV GOTOOLCHAIN=local CGO_ENABLED=0 GOPROXY=${GOPROXY}
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,id=coinsphere-go-mod,target=/go/pkg/mod \
+    go mod download
 COPY . .
-RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/coinsphere-server . \
+RUN --mount=type=cache,id=coinsphere-go-mod,target=/go/pkg/mod \
+    --mount=type=cache,id=coinsphere-go-build,target=/root/.cache/go-build \
+    GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/coinsphere-server . \
     && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/coinsphere-migrate ./cmd/migrate
 
 FROM scratch AS binaries

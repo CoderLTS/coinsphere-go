@@ -2,15 +2,15 @@
 # 前端:node 构建 dist → nginx 托管 SPA 并反代 /api、/static、/uploads、/ws、/health 到 Go 后端。
 # 构建上下文 = ./frontend
 FROM node:24-alpine@sha256:f70403e87646dc51b45295f4b8b70cdad0b63d2297c4c9899119b03f7af7a6b3 AS build
-ARG VITE_VERSION=development
-ENV VITE_VERSION=${VITE_VERSION}
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=coinsphere-pnpm-store,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
 COPY . .
 # 生产环境 VITE_API_URL=/(同源),API 走 nginx 反代;若 vue-tsc 类型检查阻塞可改 `pnpm exec vite build`
-RUN pnpm build
+ARG VITE_VERSION=development
+RUN VITE_VERSION="${VITE_VERSION}" pnpm build
 
 FROM scratch AS assets
 COPY --from=build /app/dist/ /

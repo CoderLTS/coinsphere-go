@@ -36,6 +36,7 @@ Windows/Linux 包不是桌面应用：包内后端二进制可直接运行，`we
 ## 持久型 Runner 清理
 
 - CoinSphere 使用独立的 `coinsphere-release` Buildx Builder，并通过宿主机网络和项目内 BuildKit 镜像源配置复用服务器现有出站链路；缓存清理不会操作其他项目的 Builder。
+- Go 模块、Go 编译结果和 pnpm store 使用 CoinSphere 专用 BuildKit cache mount；发布版本号变化只会重建前端产物，不会使依赖安装层失效。缓存仍在保留期内时，依赖锁文件变化只下载缺失内容。
 - Runner 的 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`（或对应小写变量）供发布作业的出站工具使用；只有构建脚本会把这些变量显式转交给 BuildKit。不得通过 Docker 客户端全局 `proxies` 为 Builder 配置代理，因为该配置也会注入 Compose 运行容器。
 - `scripts/release/cleanup-runner.sh` 只删除当前仓库的 `dist`、过期的 `RUNNER_TEMP` 内容和 CoinSphere Builder 缓存，不执行 `docker system prune`，不删除容器、数据卷或其他仓库镜像。
 - `scripts/release/prune-registry.sh` 只允许访问 `127.0.0.1:5000`，默认仅预演；发布工作流显式传入 `--apply`。认证复用 Runner 本地 Docker 登录配置，凭据不会进入命令参数或日志。
