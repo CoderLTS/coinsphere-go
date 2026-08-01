@@ -80,7 +80,7 @@
 5. 建立 Gitleaks、govulncheck、pip-audit、Trivy 镜像扫描、SBOM、校验和与 GHCR 发布流水线。
 6. 用户配置远程仓库、分支保护、Actions 权限和 Renovate App。
 
-当前进度：Python Worker 容器及开发 Compose/CI 健康门禁已经建立，Worker 保持无任务消费能力的 `a0-idle` 模式；关键 Playwright 场景仍待后续独立 PR 完成。
+当前进度：Python Worker 容器及开发 Compose/CI 健康门禁已经建立，Worker 保持无任务消费能力的 `a0-idle` 模式；关键 Playwright 场景已通过 Chromium、Firefox、WebKit 和隔离后端的 CI 阻塞门禁覆盖。该矩阵不替代 Edge、macOS Safari 或 iOS 真机验收。
 
 退出条件：所有 A0 检查在干净 checkout 可复现，分支保护实际生效，发布产物不包含凭据，回滚手册经过桌面演练。
 

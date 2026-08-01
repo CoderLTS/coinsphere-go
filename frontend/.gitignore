@@ -6,6 +6,8 @@ dist-ssr
 *.local
 .cursorrules
 coverage
+playwright-report
+test-results
 *.tsbuildinfo
 .eslintcache
 .stylelintcache

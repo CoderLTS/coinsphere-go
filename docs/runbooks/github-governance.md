@@ -29,6 +29,7 @@ git push -u origin main
 
 - `Go backend`
 - `Vue frontend`
+- `Playwright browser smoke`
 - `Python worker`
 - `Container builds`
 - `Secret scan`
@@ -36,7 +37,7 @@ git push -u origin main
 - `Python dependency scan`
 - `Dependency and filesystem scan`
 
-新增迁移、E2E、镜像扫描和发布检查后，应同步加入 Required checks。
+新增迁移、镜像扫描和发布检查后，应同步加入 Required checks。
 
 ## 3. Actions 权限
 
