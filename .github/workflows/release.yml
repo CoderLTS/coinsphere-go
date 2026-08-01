@@ -1,0 +1,112 @@
+name: Release and deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号，例如 v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: coinsphere-production-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, publish and deploy
+    runs-on: [self-hosted, Linux, X64, coinsphere-release, production]
+    environment: production
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ inputs.version }}
+      COINSPHERE_REGISTRY: 127.0.0.1:5000
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release source and version
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || { echo "只能从 main 手工发布" >&2; exit 1; }
+          [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || { echo "版本号必须符合 vX.Y.Z 格式" >&2; exit 1; }
+          git fetch --quiet origin main --tags
+          [[ "$(git rev-parse HEAD)" == "$(git rev-parse origin/main)" ]] || { echo "当前 Commit 不是最新 main" >&2; exit 1; }
+          if git show-ref --verify --quiet "refs/tags/$VERSION"; then
+            echo "版本标签已存在: $VERSION" >&2
+            exit 1
+          fi
+
+      - name: Build packages and push images
+        shell: bash
+        run: bash scripts/release/build.sh "$VERSION" "$GITHUB_SHA" dist
+
+      - name: Generate backend SBOM
+        uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+        with:
+          image: docker:127.0.0.1:5000/coinsphere/backend:${{ inputs.version }}
+          format: spdx-json
+          output-file: dist/coinsphere-${{ inputs.version }}-backend.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Generate web SBOM
+        uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+        with:
+          image: docker:127.0.0.1:5000/coinsphere/web:${{ inputs.version }}
+          format: spdx-json
+          output-file: dist/coinsphere-${{ inputs.version }}-web.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Scan release images
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          version: v0.72.0
+          scan-type: image
+          image-ref: 127.0.0.1:5000/coinsphere/backend:${{ inputs.version }}
+          format: table
+          severity: CRITICAL
+          exit-code: "1"
+
+      - name: Scan web release image
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          version: v0.72.0
+          scan-type: image
+          image-ref: 127.0.0.1:5000/coinsphere/web:${{ inputs.version }}
+          format: table
+          severity: CRITICAL
+          exit-code: "1"
+
+      - name: Add SBOM checksums
+        shell: bash
+        run: sha256sum dist/*.spdx.json >>dist/SHA256SUMS
+
+      - name: Preserve release candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coinsphere-${{ inputs.version }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Deploy through DPanel Compose
+        shell: bash
+        run: bash deploy/production/deploy.sh "$VERSION"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: ${{ inputs.version }}
+          name: CoinSphere ${{ inputs.version }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/*
