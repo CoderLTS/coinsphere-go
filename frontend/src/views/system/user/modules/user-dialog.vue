@@ -271,24 +271,24 @@
 <style scoped lang="scss">
   .avatar-editor {
     display: flex;
-    align-items: center;
     gap: 16px;
+    align-items: center;
   }
 
   .avatar-editor__preview {
+    flex-shrink: 0;
     width: 72px;
     height: 72px;
     overflow: hidden;
-    border-radius: 18px;
     border: 1px solid var(--el-border-color);
-    flex-shrink: 0;
+    border-radius: 18px;
   }
 
   .avatar-editor__actions {
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
     gap: 6px;
+    align-items: flex-start;
   }
 
   .avatar-editor__tip {

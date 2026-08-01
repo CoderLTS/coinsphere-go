@@ -755,9 +755,9 @@
   .version-header,
   .runtime-header {
     display: flex;
+    gap: 16px;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
     margin-bottom: 16px;
   }
 
@@ -771,15 +771,15 @@
   .version-header__meta,
   .runtime-header__meta {
     margin-top: 6px;
-    color: var(--el-text-color-secondary);
     font-size: 12px;
+    color: var(--el-text-color-secondary);
   }
 
   .secret-cell {
     display: flex;
+    gap: 8px;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
   }
 
   .operation-actions {

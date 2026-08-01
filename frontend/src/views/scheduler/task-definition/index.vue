@@ -455,15 +455,15 @@
 
     .dialog-header__meta {
       margin-top: 4px;
-      color: var(--art-text-gray-600);
-      font-family: 'Consolas', 'Courier New', monospace;
+      font-family: Consolas, 'Courier New', monospace;
       font-size: 13px;
+      color: var(--art-text-gray-600);
     }
 
     .dialog-header__description {
       margin-top: 8px;
-      color: var(--art-text-gray-700);
       line-height: 1.6;
+      color: var(--art-text-gray-700);
     }
 
     .dialog-alert {
@@ -472,16 +472,16 @@
 
     .field-label {
       display: flex;
-      align-items: center;
-      gap: 8px;
       flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
     }
 
     .field-description {
       margin-top: 6px;
-      color: var(--art-text-gray-600);
       font-size: 12px;
       line-height: 1.5;
+      color: var(--art-text-gray-600);
     }
   }
 </style>

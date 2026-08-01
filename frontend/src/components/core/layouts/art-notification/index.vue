@@ -238,8 +238,8 @@
 
   .notification-actions {
     display: inline-flex;
-    align-items: center;
     gap: 6px;
+    align-items: center;
   }
 
   .notice-badge-dot {
@@ -248,8 +248,8 @@
     right: 3px;
     width: 7px;
     height: 7px;
-    border-radius: 999px;
     background: #ef4444;
+    border-radius: 999px;
   }
 
   .scrollbar-thin::-webkit-scrollbar {

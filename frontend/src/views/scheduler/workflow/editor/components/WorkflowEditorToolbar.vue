@@ -198,41 +198,41 @@
 
   .editor-toolbar__tools {
     left: 50%;
-    transform: translateX(-50%);
     display: inline-flex;
-    align-items: center;
     gap: 6px;
+    align-items: center;
+    transform: translateX(-50%);
   }
 
   .editor-toolbar__actions {
     right: 0;
     display: inline-flex;
-    align-items: center;
     gap: 12px;
+    align-items: center;
   }
 
   .editor-toolbar__surface {
     display: inline-flex;
-    align-items: center;
     gap: 6px;
+    align-items: center;
     padding: 5px 6px;
-    border: 1px solid rgba(206, 212, 226, 0.9);
-    border-radius: 16px;
-    background: rgba(255, 255, 255, 0.96);
-    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+    background: rgb(255 255 255 / 0.96);
     backdrop-filter: blur(12px);
+    border: 1px solid rgb(206 212 226 / 0.9);
+    border-radius: 16px;
+    box-shadow: 0 10px 24px rgb(15 23 42 / 0.08);
   }
 
   .editor-toolbar__tools-group {
     display: inline-flex;
-    align-items: center;
     gap: 4px;
+    align-items: center;
   }
 
   .editor-toolbar__zoom-group {
     display: inline-flex;
-    align-items: center;
     gap: 2px;
+    align-items: center;
   }
 
   .editor-toolbar__meta {
@@ -252,65 +252,65 @@
     align-items: center;
     height: 28px;
     padding: 0 12px;
-    border-radius: 999px;
-    background: #f5f5fb;
-    color: #667085;
     font-size: 12px;
     font-weight: 600;
+    color: #667085;
     white-space: nowrap;
+    background: #f5f5fb;
+    border-radius: 999px;
   }
 
   .editor-toolbar__status--warning {
-    background: #fff3e8;
     color: #c2410c;
+    background: #fff3e8;
   }
 
   .editor-toolbar__status--danger {
-    background: #fef2f2;
     color: #dc2626;
+    background: #fef2f2;
   }
 
   .editor-toolbar__icon-btn {
-    width: 34px;
-    height: 34px;
-    padding: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 10px;
-    border-color: transparent;
-    background: transparent;
+    width: 34px;
+    height: 34px;
+    padding: 0;
     color: #334155;
+    background: transparent;
+    border-color: transparent;
+    border-radius: 10px;
   }
 
   .editor-toolbar__icon-btn:hover {
-    background: #f3f4fb;
     color: #1f3fb7;
+    background: #f3f4fb;
   }
 
   .editor-toolbar__icon-btn--active {
-    background: #eef4ff;
     color: #1f3fb7;
+    background: #eef4ff;
   }
 
   .editor-toolbar__divider {
     width: 1px;
     height: 18px;
-    background: rgba(203, 213, 225, 0.92);
+    background: rgb(203 213 225 / 0.92);
   }
 
   .editor-toolbar__zoom {
     min-width: 48px;
-    text-align: center;
     font-size: 12px;
     font-weight: 700;
     color: #0f172a;
+    text-align: center;
   }
 
   .editor-toolbar__save {
     height: 44px;
     padding: 0 18px;
     border-radius: 14px;
-    box-shadow: 0 12px 24px rgba(99, 102, 241, 0.22);
+    box-shadow: 0 12px 24px rgb(99 102 241 / 0.22);
   }
 </style>

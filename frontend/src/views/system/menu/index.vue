@@ -570,10 +570,10 @@
 <style scoped lang="scss">
   .table-actions {
     display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    flex-wrap: wrap;
   }
 
   .table-actions--right {

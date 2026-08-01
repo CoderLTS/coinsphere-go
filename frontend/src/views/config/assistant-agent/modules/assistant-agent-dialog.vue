@@ -294,18 +294,18 @@
 <style scoped lang="scss">
   .avatar-editor {
     display: flex;
-    align-items: center;
     gap: 14px;
+    align-items: center;
   }
 
   .avatar-editor__preview {
+    flex-shrink: 0;
     width: 72px;
     height: 72px;
     overflow: hidden;
-    border: 1px solid rgba(148, 163, 184, 0.24);
+    background: rgb(248 250 252 / 0.92);
+    border: 1px solid rgb(148 163 184 / 0.24);
     border-radius: 18px;
-    background: rgba(248, 250, 252, 0.92);
-    flex-shrink: 0;
   }
 
   .avatar-editor__actions {
@@ -317,7 +317,7 @@
 
   .avatar-editor__tip {
     font-size: 12px;
-    color: var(--el-text-color-secondary);
     line-height: 1.5;
+    color: var(--el-text-color-secondary);
   }
 </style>

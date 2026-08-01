@@ -542,42 +542,42 @@
   .assistant-rich-text:deep(.assistant-mermaid__panel) {
     position: relative;
     overflow: hidden;
-    border-radius: 18px;
     background: linear-gradient(180deg, #f8fbff 0%, #eef5ff 100%);
-    border: 1px solid rgba(148, 163, 184, 0.14);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    border: 1px solid rgb(148 163 184 / 0.14);
+    border-radius: 18px;
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.8);
   }
 
   .assistant-rich-text:deep(.assistant-mermaid__toolbar) {
     display: flex;
-    justify-content: flex-end;
     gap: 8px;
+    justify-content: flex-end;
     padding: 10px 10px 0;
   }
 
   .assistant-rich-text:deep(.assistant-mermaid__action) {
+    padding: 4px 10px;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
     cursor: pointer;
+    background: rgb(15 23 42 / 0.08);
     border: 0;
     border-radius: 999px;
-    padding: 4px 10px;
-    background: rgba(15, 23, 42, 0.08);
-    color: var(--el-text-color-secondary);
-    font-size: 12px;
     transition: all 0.18s ease;
   }
 
   .assistant-rich-text:deep(.assistant-mermaid__action:hover) {
-    background: rgba(77, 140, 255, 0.14);
     color: #3b82f6;
+    background: rgb(77 140 255 / 0.14);
   }
 
   .assistant-rich-text:deep(.assistant-mermaid__canvas) {
-    overflow: auto;
-    margin: 8px 12px 12px;
     padding: 14px;
+    margin: 8px 12px 12px;
+    overflow: auto;
+    background: #fff;
     border-radius: 16px;
-    background: #ffffff;
-    box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.14);
+    box-shadow: inset 0 0 0 1px rgb(148 163 184 / 0.14);
   }
 
   .assistant-rich-text:deep(.assistant-mermaid__svg) {
@@ -586,8 +586,8 @@
     min-width: 280px;
     height: auto;
     margin: 0 auto;
-    background: #ffffff;
     color: #0f172a;
+    background: #fff;
     border: 0 !important;
     outline: 0 !important;
     box-shadow: none !important;
@@ -595,7 +595,7 @@
 
   .assistant-rich-text:deep(.assistant-mermaid__svg .rect),
   .assistant-rich-text:deep(.assistant-mermaid__svg rect.rect) {
-    fill: #ffffff !important;
+    fill: #fff !important;
     stroke: transparent !important;
   }
 
@@ -608,13 +608,13 @@
 
   .assistant-rich-text:deep(.assistant-mermaid__loading) {
     display: flex;
-    min-height: 200px;
     flex-direction: column;
+    gap: 12px;
     align-items: center;
     justify-content: center;
-    gap: 12px;
-    color: var(--el-text-color-secondary);
+    min-height: 200px;
     font-size: 13px;
+    color: var(--el-text-color-secondary);
 
     em {
       font-style: normal;
@@ -623,14 +623,14 @@
 
   .assistant-rich-text:deep(.assistant-mermaid__loading-dots) {
     display: inline-flex;
-    align-items: center;
     gap: 6px;
+    align-items: center;
 
     span {
       width: 8px;
       height: 8px;
+      background: rgb(77 140 255 / 0.72);
       border-radius: 999px;
-      background: rgba(77, 140, 255, 0.72);
       animation: assistant-mermaid-bounce 1.1s infinite ease-in-out;
     }
 

@@ -16,11 +16,38 @@ module.exports = {
     {
       files: ['**/*.{css,scss}'],
       customSyntax: 'postcss-scss'
+    },
+    {
+      // GitHub Markdown 样式按级联阶段分段覆盖同一选择器，不能机械合并。
+      files: ['src/assets/styles/core/md.scss'],
+      rules: {
+        'no-duplicate-selectors': null
+      }
+    },
+    {
+      // 该兼容性 mixin 显式保留旧浏览器前缀。
+      files: ['src/assets/styles/core/mixin.scss'],
+      rules: {
+        'at-rule-no-vendor-prefix': null,
+        'selector-no-vendor-prefix': null
+      }
     }
   ],
   // 自定义规则
   rules: {
     'import-notation': 'string', // 指定导入CSS文件的方式("string"|"url")
+    'alpha-value-notation': 'number', // 透明度统一使用 0.x 数值
+    'color-function-notation': 'modern', // 颜色函数统一使用现代空格与斜杠语法
+    // 同时允许前缀与范围语法，避免 Stylelint 自动修复改变既有浏览器兼容边界。
+    'media-feature-range-notation': null,
+    'at-rule-empty-line-before': [
+      'always',
+      {
+        except: ['blockless-after-same-name-blockless', 'first-nested'],
+        ignore: ['after-comment'],
+        ignoreAtRules: ['else'] // Prettier 将 SCSS 的 } @else 保持在同一行
+      }
+    ],
     'selector-class-pattern': null, // 选择器类名命名规则
     'custom-property-pattern': null, // 自定义属性命名规则
     'keyframes-name-pattern': null, // 动画帧节点样式命名规则
@@ -47,6 +74,9 @@ module.exports = {
       {
         ignoreAtRules: [
           'apply',
+          'custom-variant',
+          'forward',
+          'function',
           'use',
           'mixin',
           'include',
@@ -56,7 +86,10 @@ module.exports = {
           'else',
           'for',
           'while',
-          'reference'
+          'reference',
+          'return',
+          'theme',
+          'utility'
         ]
       }
     ],
@@ -65,6 +98,9 @@ module.exports = {
       {
         ignoreAtRules: [
           'apply',
+          'custom-variant',
+          'forward',
+          'function',
           'use',
           'mixin',
           'include',
@@ -74,7 +110,10 @@ module.exports = {
           'else',
           'for',
           'while',
-          'reference'
+          'reference',
+          'return',
+          'theme',
+          'utility'
         ]
       }
     ]

@@ -1234,17 +1234,17 @@
 <style scoped lang="scss">
   .node-editor-card {
     position: relative;
+    display: flex;
+    flex-direction: column;
     width: 100%;
     height: 100%;
     min-height: 0;
-    display: flex;
-    flex-direction: column;
     overflow: hidden;
-    border: 1px solid rgba(203, 213, 225, 0.86);
-    border-radius: 22px;
-    background: rgba(255, 255, 255, 0.98);
-    box-shadow: 0 28px 48px rgba(15, 23, 42, 0.16);
+    background: rgb(255 255 255 / 0.98);
     backdrop-filter: blur(18px);
+    border: 1px solid rgb(203 213 225 / 0.86);
+    border-radius: 22px;
+    box-shadow: 0 28px 48px rgb(15 23 42 / 0.16);
   }
 
   .node-editor-card__commit {
@@ -1255,39 +1255,38 @@
     height: 28px;
     min-height: 28px;
     padding: 0 12px;
-    border: 1px solid rgba(37, 99, 235, 0.16);
-    border-radius: 999px;
-    background: linear-gradient(180deg, #4f8cff 0%, #3b7cff 100%);
-    box-shadow: 0 8px 16px rgba(59, 124, 255, 0.2);
     font-size: 12px;
     font-weight: 600;
     letter-spacing: 0.01em;
+    background: linear-gradient(180deg, #4f8cff 0%, #3b7cff 100%);
+    border: 1px solid rgb(37 99 235 / 0.16);
+    border-radius: 999px;
+    box-shadow: 0 8px 16px rgb(59 124 255 / 0.2);
 
     &:hover {
       background: linear-gradient(180deg, #4684f6 0%, #316ff0 100%);
-      box-shadow: 0 10px 18px rgba(49, 111, 240, 0.24);
+      box-shadow: 0 10px 18px rgb(49 111 240 / 0.24);
       transform: translateY(-1px);
     }
 
     &:active {
+      box-shadow: 0 6px 12px rgb(49 111 240 / 0.18);
       transform: translateY(0);
-      box-shadow: 0 6px 12px rgba(49, 111, 240, 0.18);
     }
   }
 
   .node-editor-card__field-hint {
     margin-top: 6px;
-    color: #94a3b8;
     font-size: 12px;
     line-height: 18px;
+    color: #94a3b8;
     word-break: break-all;
   }
 
   .node-editor-card__scroll {
     flex: 1;
     min-height: 0;
-    overflow-x: hidden;
-    overflow-y: auto;
+    overflow: hidden auto;
     overscroll-behavior: contain;
   }
 
@@ -1306,8 +1305,8 @@
 
   .node-editor-card__param-control {
     display: flex;
-    align-items: center;
     gap: 10px;
+    align-items: center;
     width: 100%;
   }
 
@@ -1318,8 +1317,8 @@
 
   .node-editor-card__param-boolean {
     display: flex;
-    align-items: center;
     gap: 10px;
+    align-items: center;
   }
 
   .target-panel {
@@ -1327,16 +1326,16 @@
     flex-direction: column;
     gap: 8px;
     padding: 6px 8px;
-    border: 1px solid rgba(226, 232, 240, 0.92);
+    background: rgb(248 250 252 / 0.94);
+    border: 1px solid rgb(226 232 240 / 0.92);
     border-radius: 14px;
-    background: rgba(248, 250, 252, 0.94);
   }
 
   .target-panel__header {
     display: flex;
+    gap: 12px;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
   }
 
   .target-panel__list {
@@ -1350,16 +1349,16 @@
     flex-direction: column;
     gap: 10px;
     padding: 8px;
-    border: 1px solid rgba(226, 232, 240, 0.82);
+    background: rgb(255 255 255 / 0.88);
+    border: 1px solid rgb(226 232 240 / 0.82);
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.88);
   }
 
   .target-panel__item-header {
     display: flex;
+    gap: 12px;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 12px;
   }
 
   .target-panel__item-grid {
@@ -1370,10 +1369,10 @@
   }
 
   .target-panel__index {
-    color: var(--el-text-color-primary);
     font-size: 14px;
     font-weight: 600;
     line-height: 1.3;
+    color: var(--el-text-color-primary);
   }
 
   .target-panel__field {
@@ -1388,9 +1387,9 @@
   }
 
   .target-panel__title-hint {
-    color: var(--el-text-color-secondary);
     font-size: 12px;
     line-height: 1.4;
+    color: var(--el-text-color-secondary);
   }
 
   .target-panel__field-group {
@@ -1405,9 +1404,9 @@
   }
 
   .target-panel__field-label {
-    color: var(--el-text-color-secondary);
     font-size: 12px;
     line-height: 1.4;
+    color: var(--el-text-color-secondary);
   }
 
   .target-panel__field--type {
@@ -1425,8 +1424,8 @@
   .target-panel__option-label {
     display: block;
     line-height: 18px;
-    white-space: normal;
     word-break: break-word;
+    white-space: normal;
   }
 
   @media (width <= 768px) {
@@ -1437,8 +1436,8 @@
 
   pre {
     margin: 0;
-    white-space: pre-wrap;
     word-break: break-word;
+    white-space: pre-wrap;
   }
 
   :deep(.el-form-item) {
@@ -1454,9 +1453,9 @@
   }
 
   :deep(.target-panel__field--targets .el-select__wrapper) {
-    min-height: 40px;
-    height: auto;
     align-items: flex-start;
+    height: auto;
+    min-height: 40px;
     padding-top: 6px;
     padding-bottom: 6px;
   }
@@ -1466,17 +1465,17 @@
   }
 
   :deep(.target-panel__field .el-tag__content) {
-    white-space: normal;
-    word-break: break-word;
     line-height: 16px;
+    word-break: break-word;
+    white-space: normal;
   }
 
   :deep(.target-panel__select-popper .el-select-dropdown__item) {
     height: auto;
     min-height: 34px;
-    white-space: normal;
-    line-height: 18px;
     padding-top: 8px;
     padding-bottom: 8px;
+    line-height: 18px;
+    white-space: normal;
   }
 </style>

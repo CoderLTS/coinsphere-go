@@ -7,6 +7,13 @@
     "node": ">=24.0.0 <25",
     "pnpm": "10.33.0"
   },
+  "browserslist": [
+    "last 2 Chrome versions",
+    "last 2 Edge versions",
+    "last 2 Firefox versions",
+    "Safari >= 16.4",
+    "iOS >= 16.4"
+  ],
   "scripts": {
     "dev": "vite --open",
     "build": "vue-tsc --noEmit && vite build",
@@ -15,7 +22,8 @@
     "test": "vitest run",
     "fix": "eslint --fix",
     "lint:prettier": "prettier --write \"**/*.{js,cjs,ts,json,tsx,css,less,scss,vue,html,md}\"",
-    "lint:stylelint": "stylelint  \"**/*.{css,scss,vue}\" --fix",
+    "lint:stylelint": "stylelint \"**/*.{css,scss,vue}\"",
+    "fix:stylelint": "stylelint \"**/*.{css,scss,vue}\" --fix",
     "lint:lint-staged": "lint-staged",
     "prepare": "husky",
     "commit": "git-cz",

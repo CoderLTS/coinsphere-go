@@ -132,7 +132,7 @@
     height: 128px;
     margin: 0 -24px;
     background:
-      linear-gradient(140deg, rgba(93, 135, 255, 0.85), rgba(56, 192, 252, 0.45)),
+      linear-gradient(140deg, rgb(93 135 255 / 0.85), rgb(56 192 252 / 0.45)),
       linear-gradient(180deg, #f8fbff, #eef5ff);
   }
 
@@ -140,9 +140,9 @@
     width: 84px;
     height: 84px;
     margin-top: -42px;
+    object-fit: cover;
     border: 4px solid #fff;
     border-radius: 50%;
-    object-fit: cover;
   }
 
   .profile-card__name {
@@ -166,17 +166,17 @@
   }
 
   .profile-card__meta {
-    margin-top: 24px;
     display: flex;
     flex-direction: column;
     gap: 12px;
+    margin-top: 24px;
     text-align: left;
   }
 
   .meta-item {
     display: flex;
-    align-items: center;
     gap: 10px;
+    align-items: center;
     font-size: 14px;
     color: var(--art-gray-600);
   }

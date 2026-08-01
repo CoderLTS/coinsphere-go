@@ -309,8 +309,8 @@
 
   .role-permission-dialog__node {
     display: flex;
-    align-items: center;
     gap: 8px;
+    align-items: center;
     min-width: 0;
   }
 
@@ -323,13 +323,13 @@
   .role-permission-dialog__type {
     flex-shrink: 0;
     padding: 2px 8px;
-    border-radius: 999px;
     font-size: 11px;
     line-height: 1.4;
+    border-radius: 999px;
   }
 
   .role-permission-dialog__type--action {
-    background: rgba(77, 140, 255, 0.1);
     color: #2563eb;
+    background: rgb(77 140 255 / 0.1);
   }
 </style>
