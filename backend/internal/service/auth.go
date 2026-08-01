@@ -214,9 +214,11 @@ func (a *App) BuildUserInfo(principal *Principal) M {
 }
 
 // listRolesForUser 查某用户的所有"启用中"角色。GORM 的链式调用等价于这段 SQL:
-//   SELECT roles.* FROM roles
-//   JOIN user_roles ON user_roles.role_id = roles.id
-//   WHERE user_roles.user_id = ? AND roles.is_enabled = ? ORDER BY roles.id ASC
+//
+//	SELECT roles.* FROM roles
+//	JOIN user_roles ON user_roles.role_id = roles.id
+//	WHERE user_roles.user_id = ? AND roles.is_enabled = ? ORDER BY roles.id ASC
+//
 // .Find(&roles) 把查到的多行结果写回切片。见 GO入门笔记『框架:GORM』。
 func (a *App) listRolesForUser(userID int64) ([]db.SystemRole, error) {
 	var roles []db.SystemRole

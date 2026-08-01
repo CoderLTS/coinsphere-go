@@ -14,7 +14,4 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Auto-generated files
-src/types/import/auto-imports.d.ts
-src/types/import/components.d.ts
-.auto-import.json
+# 自动导入清单和类型声明需要提交，保证干净环境可直接执行 Lint 与类型检查。

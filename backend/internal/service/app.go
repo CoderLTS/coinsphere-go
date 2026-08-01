@@ -230,8 +230,3 @@ func truncateRunes(value string, n int) string {
 	}
 	return string(runes[:n])
 }
-
-// ptr 便捷取地址。
-// [T any] 是泛型:T 是"类型参数",调用时替换成具体类型。ptr("x") 返回 *string,ptr(1) 返回 *int。
-// 很多可选字段/参数要求传指针,用它能一行拿到"指向某个值的指针"。见 GO入门笔记『泛型』。
-func ptr[T any](v T) *T { return &v }

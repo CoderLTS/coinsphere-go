@@ -14,7 +14,7 @@ import (
 // var 在函数外声明的是"包级变量",整个包都能用。errors.New 造一个固定的错误值(称"哨兵错误"),
 // 之后用 errors.Is 判断"是不是这个错误",比直接比较字符串更可靠。见 GO入门笔记『变量、函数、错误』。
 // errBacklogExceeded 同一并发键等待队列超限(HTTP 429)。
-var errBacklogExceeded = errors.New("Current start entry backlog exceeded the configured limit")
+var errBacklogExceeded = errors.New("current start entry backlog exceeded the configured limit")
 
 // isBacklogExceeded 判断错误是否为积压超限。
 func isBacklogExceeded(err error) bool { return errors.Is(err, errBacklogExceeded) }

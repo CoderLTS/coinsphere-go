@@ -1,0 +1,34 @@
+name: 功能交付
+description: 定义一个可独立实现、验收和回滚的功能单元
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: 目标结果
+      description: 描述用户可观察到的最终行为。
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 范围与非目标
+      description: 明确本次包含和不包含的内容。
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准
+      description: 列出可自动验证或人工验收的条件。
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: 风险与回滚
+      description: 说明数据、安全、交易和部署风险，以及回滚方法。
+    validations:
+      required: true

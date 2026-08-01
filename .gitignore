@@ -4,5 +4,10 @@ Thumbs.db
 .idea/
 .vscode/
 
+# Local secrets and machine-specific environment overrides
+.env
+.env.*
+!.env.example
+
 # backend/ 与 frontend/ 各自的 .gitignore 已覆盖构建产物、依赖与运行时数据
 # (backend: data/ volumes/ *.exe *.log ; frontend: node_modules dist .vite ...)

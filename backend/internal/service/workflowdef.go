@@ -562,7 +562,7 @@ func (a *App) UpdateWorkflowDefinition(definitionID int64, payload WorkflowDefin
 		merged.DisplayName = definition.DisplayName
 	}
 	// 前端没传图时,用 loadJSONObject 把旧版本的 GraphJSON(JSON 字符串)反序列化回 map 沿用。
-	if merged.Graph == nil || len(merged.Graph) == 0 {
+	if len(merged.Graph) == 0 {
 		merged.Graph = loadJSONObject(definition.GraphJSON)
 	}
 	return a.createVersionRow(definition.Code, int(versionCount)+1, merged, definition.IsBuiltin, operatorUserID)
