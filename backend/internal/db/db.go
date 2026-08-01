@@ -19,6 +19,21 @@ import (
 // Open 按配置的 driver 打开数据库连接并完成建表。
 // 本项目用 GORM 这个 ORM 框架:把 Go struct 当数据库表来读写,基本不用手写 SQL(见 GO入门笔记『框架:GORM』)。
 func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
+	gdb, err := Connect(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// A1 切换到版本化 SQL migration 前，应用启动仍保留现有 AutoMigrate 行为。
+	if err := gdb.AutoMigrate(AllModels()...); err != nil {
+		return nil, fmt.Errorf("auto migrate: %w", err)
+	}
+	return gdb, nil
+}
+
+// Connect 只建立数据库连接并配置连接池，不修改业务 schema。
+// migration 命令使用此入口，避免在执行版本化 SQL 前触发 GORM AutoMigrate。
+func Connect(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	// gorm.Dialector 是"数据库方言"接口(interface):只约定要实现哪些方法,不关心具体是谁。
 	// sqlite/mysql/postgres 各自返回一个满足该接口的对象,于是下面一套代码就能支持三种数据库(见 GO入门笔记『接口』)。
 	var dialector gorm.Dialector
@@ -109,10 +124,5 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		sqlDB.SetConnMaxIdleTime(5 * time.Minute)
 	}
 
-	// AutoMigrate 按 struct 定义自动建表 / 补列(改了 models.go 重启即生效)。
-	// AllModels() 返回模型切片,后面的 ... 把切片"展开"成一个个不定参数传进去。
-	if err := gdb.AutoMigrate(AllModels()...); err != nil {
-		return nil, fmt.Errorf("auto migrate: %w", err)
-	}
 	return gdb, nil
 }

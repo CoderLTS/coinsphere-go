@@ -75,7 +75,7 @@
 
 1. 规则、路线图、架构总览、ADR、契约、PR/Issue 模板、本地验证脚本与 Go/Vue/Python 基础 CI。
 2. 清理现有前端 Stylelint 基线，将 Stylelint 设为阻塞检查。
-3. 引入版本化 SQL migration 工具与空库升级、旧版本升级、回滚和幂等测试骨架。
+3. 已建立版本化 SQL migration 工具，以及空库升级、旧版本升级、回滚重放、幂等和失败原子性测试骨架；A1 再切换应用启动路径。
 4. 建立关键 Playwright 冒烟、Worker 容器、Compose 健康测试和 API 冒烟。
 5. 建立 Gitleaks、govulncheck、pip-audit、Trivy 镜像扫描、CodeQL、SBOM、校验和与 GHCR 发布流水线。
 6. 用户配置远程仓库、分支保护、Actions 权限和 Renovate App。

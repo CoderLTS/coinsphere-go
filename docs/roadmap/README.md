@@ -13,8 +13,8 @@ CoinSphere 从通用后台与工作流系统演进为个人币圈量化平台，
 ## 当前状态
 
 - 当前阶段：A0 工程系统。
-- 当前交付：工程规则、基础 CI、安全扫描、测试骨架、架构文档和本地验证入口。
-- 阶段状态：进行中，Stylelint 基线已经清零并进入阻塞 CI；尚需完成数据库迁移测试骨架、关键 Playwright 场景、Worker 容器和发布产物流水线。
+- 当前交付：工程规则、基础 CI、安全扫描、Stylelint 门禁，以及版本化 SQL migration 工具、命令和 SQLite/PostgreSQL 契约测试。
+- 阶段状态：进行中，Stylelint 基线和 migration 测试骨架已建立；尚需完成关键 Playwright 场景、Worker 容器和发布产物流水线。
 - GitHub 远程仓库与分支保护尚未配置，操作步骤见 [GitHub 治理手册](../runbooks/github-governance.md)。
 
 ## 里程碑

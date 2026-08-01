@@ -21,12 +21,25 @@
 ## 快速开始
 
 ```powershell
-cd backend-go
+cd backend
 go build -o coinsphere-server.exe .
 .\coinsphere-server.exe            # 默认读取 ./config.yml,SQLite,监听 :6987
 ```
 
 首次启动自动建表并写入种子数据(内置角色/菜单/超管 `coinsphere`/`coinsphere`、两个内置工作流)。
+
+## 版本化数据库迁移
+
+迁移命令与服务端分离，并复用同一份数据库配置：
+
+```powershell
+go run ./cmd/migrate -config ./config.yml -direction status
+go run ./cmd/migrate -config ./config.yml -direction up
+go run ./cmd/migrate -config ./config.yml -direction down -steps 1
+go run ./cmd/migrate -config ./config.yml -direction version
+```
+
+容器镜像同时提供 `/app/coinsphere-migrate`。A0 阶段迁移 `00001` 只建立版本历史，不替代现有业务表的 GORM `AutoMigrate`；应用启动切换属于 A1 独立交付。迁移编写、验证和回滚约束见 [`docs/runbooks/database-migrations.md`](../docs/runbooks/database-migrations.md)。
 
 ## 数据库切换
 
@@ -69,8 +82,10 @@ $env:COINSPHERE_SERVER__PORT = '7000'
 
 ```
 main.go                 入口:配置 → 建表种子 → 运行时 → HTTP
+cmd/migrate             独立版本化 SQL migration 命令
 internal/config         YAML + 环境变量覆盖
 internal/db             GORM 模型 / 多方言 Open / 种子数据
+internal/migration      嵌入式 SQL、Goose Runner 与迁移契约
 internal/security       pbkdf2 密码、HS256 token、Fernet 密文
 internal/perm           权限码常量与内置菜单映射
 internal/service        全部业务逻辑(App 结构,按领域分文件)
