@@ -11,7 +11,7 @@
 
 必须遵守以下边界：
 
-- Codex、GitHub 和 CI 永不接触真实交易所密钥，不连接生产主机，不发起真实订单。
+- Codex、GitHub 和 CI 永不接触真实交易所密钥或发起真实订单；允许用户手工触发受 `production` Environment 约束的发布工作流连接生产主机并自动部署。
 - `main` 开启分支保护，禁止直接提交和自动合并。
 - 分支使用 `codex/<issue-id>-<slug>`；每个 PR 只交付一个可独立验收和回滚的行为。
 - 数据库迁移、凭据、风控和订单状态机使用独立 PR，并提供回滚说明。
@@ -239,7 +239,7 @@ K 线唯一键固定为 `(venue,instrumentId,interval,openTime)`。
 - 安全：Gitleaks、govulncheck、pip-audit 和 Trivy。
 - 容器：Compose 启动、健康检查、API 冒烟和镜像扫描。
 
-发布流水线构建带版本号和 Commit SHA 的镜像、SBOM、校验和及发布说明，可推送 GHCR。Codex 只生成部署包、升级命令、备份命令和回滚手册，用户在 Linux 主机手工执行。
+发布流水线从受保护的 `main` 构建带版本号和 Commit SHA 的镜像、SPDX JSON SBOM、校验和及发布说明，推送到生产主机私有 Registry，并在备份和 migration 成功后通过 DPanel Compose 自动更新。流水线只能由用户手工触发，使用专用 self-hosted Runner 和 `production` Environment；真实交易所密钥不进入 GitHub、Runner 日志或发布产物。
 
 ## 7. 总体验收门禁
 

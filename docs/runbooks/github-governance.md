@@ -1,6 +1,8 @@
 # GitHub 仓库治理手册
 
-远程仓库与组织权限只能由用户配置。Codex 可以在远程配置完成后推送 `codex/*` 分支并创建草稿 PR，但不能合并。
+远程仓库已经配置。Codex 可以推送 `codex/*` 分支并创建草稿 PR，但不能合并。
+
+当前仓库为私有仓库，GitHub Free 不提供该仓库的 Branch Protection API。升级到支持私有仓库保护规则的套餐后，必须按下节启用；在升级前，用户仍需坚持 PR 审查和手工合并，发布 Workflow 通过 `production` Environment 的 `main` 分支白名单与脚本内最新 `origin/main` 校验阻止其他分支发布。
 
 ## 1. 连接远程仓库
 
@@ -39,7 +41,7 @@ git push -u origin main
 ## 3. Actions 权限
 
 - Workflow 默认权限设为 Read repository contents。
-- 发布 Workflow 需要 GHCR 时单独授予 `packages: write`，不复用生产部署凭据。
+- 发布 Workflow 仅授予创建 GitHub Release 所需的 `contents: write`；私有 Registry 凭据只保存在生产 Runner 本机，不配置为 Actions Secret。
 - 禁止把交易所密钥、Linux SSH 私钥或生产数据库凭据配置为 Actions Secret。
 - Fork PR 不运行任何持有写权限或高权限 Secret 的步骤。
 

@@ -1,0 +1,42 @@
+name: coinsphere-go
+
+services:
+  backend:
+    image: ${COINSPHERE_BACKEND_IMAGE:?请设置 COINSPHERE_BACKEND_IMAGE}
+    restart: unless-stopped
+    env_file:
+      - runtime.env
+    volumes:
+      - backend-data:/app/data
+      - backend-uploads:/app/volumes/uploads
+      - backend-static:/app/volumes/static
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:6987/health >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  web:
+    image: ${COINSPHERE_WEB_IMAGE:?请设置 COINSPHERE_WEB_IMAGE}
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${COINSPHERE_WEB_BIND:-127.0.0.1}:${COINSPHERE_WEB_PORT:-8080}:80"
+    networks:
+      - default
+      - infrastructure
+
+volumes:
+  backend-data:
+    name: coinsphere-backend-data
+  backend-uploads:
+    name: coinsphere-backend-uploads
+  backend-static:
+    name: coinsphere-backend-static
+
+networks:
+  infrastructure:
+    external: true
