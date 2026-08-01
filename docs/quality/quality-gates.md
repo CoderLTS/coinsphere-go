@@ -8,6 +8,8 @@
 - 容器：Compose 配置以及 Backend、Frontend 镜像构建。
 - 安全：密钥、Go/Python 依赖、源代码、文件系统和 Backend/Frontend 镜像漏洞扫描。
 
+CodeQL 在公开仓库默认运行。私有仓库必须先启用 GitHub Advanced Security，再将仓库 Actions 变量 `CODEQL_ENABLED` 设为 `true`；未满足条件时任务明确跳过，其他安全门禁仍保持阻塞。
+
 ## 领域验收目标
 
 - 修复后的 K 线完整率不低于 99.99%，唯一键重复为零。
