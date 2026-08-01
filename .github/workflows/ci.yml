@@ -127,16 +127,18 @@ jobs:
       - name: Build Compose images
         run: docker compose build
       - name: Scan backend image
-        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
+          version: v0.72.0
           scan-type: image
           image-ref: coinsphere-go-backend:latest
           format: table
           severity: CRITICAL
           exit-code: "1"
       - name: Scan frontend image
-        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
+          version: v0.72.0
           scan-type: image
           image-ref: coinsphere-go-web:latest
           format: table
