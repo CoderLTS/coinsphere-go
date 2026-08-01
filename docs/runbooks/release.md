@@ -13,6 +13,9 @@ A0 当前生产 Compose 仍使用 SQLite，版本化 migration 只建立机制�
 - DPanel Compose：`/home/infrastructure/dpanel/compose/coinsphere-go`。
 - Web 健康检查：生产主机 `http://127.0.0.1:8080/health`。
 - 生产运行配置：部署目录的 `runtime.env`，权限固定为 `0600`，不会进入仓库、日志或 Release。
+- 出站代理只配置在 Runner 服务环境中；Action 下载和其他出站工具仍会继承该环境。`build.sh` 统一大小写变量，并仅通过 BuildKit 预定义构建参数把代理传入构建步骤，镜像和运行容器不保存代理配置。
+- `${DOCKER_CONFIG:-$HOME/.docker}/config.json` 禁止包含顶层 `proxies`。发布前置检查发现该配置时会在调用 Docker 前终止，避免代理自动注入生产容器。
+- Runner 的 `NO_PROXY`/`no_proxy` 必须至少包含 `127.0.0.1`、`localhost` 和本机 Registry 地址，确保推送、部署及健康检查不经过出站代理。
 
 仓库当前为 GitHub 私有仓库，现有套餐不支持 Branch Protection 或 Environment required reviewers。`production` Environment 已用自定义部署分支策略限制为 `main`，工作流还会校验最新 `origin/main`；当前人工门禁由 `workflow_dispatch` 和用户不直接推送 `main` 的流程约束保证。如需 GitHub 强制 PR 审查或“触发后再审批”，必须升级支持私有仓库保护规则的套餐。
 
@@ -33,6 +36,7 @@ Windows/Linux 包不是桌面应用：包内后端二进制可直接运行，`we
 ## 持久型 Runner 清理
 
 - CoinSphere 使用独立的 `coinsphere-release` Buildx Builder，并通过宿主机网络和项目内 BuildKit 镜像源配置复用服务器现有出站链路；缓存清理不会操作其他项目的 Builder。
+- Runner 的 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`（或对应小写变量）供发布作业的出站工具使用；只有构建脚本会把这些变量显式转交给 BuildKit。不得通过 Docker 客户端全局 `proxies` 为 Builder 配置代理，因为该配置也会注入 Compose 运行容器。
 - `scripts/release/cleanup-runner.sh` 只删除当前仓库的 `dist`、过期的 `RUNNER_TEMP` 内容和 CoinSphere Builder 缓存，不执行 `docker system prune`，不删除容器、数据卷或其他仓库镜像。
 - `scripts/release/prune-registry.sh` 只允许访问 `127.0.0.1:5000`，默认仅预演；发布工作流显式传入 `--apply`。认证复用 Runner 本地 Docker 登录配置，凭据不会进入命令参数或日志。
 - Registry Manifest 删除后，未引用 Blob 仍需在独立维护窗口执行 Registry garbage collection。共享 Registry 运行期间禁止自动执行 GC，避免与其他项目推送并发造成数据损坏。

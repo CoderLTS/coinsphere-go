@@ -6,3 +6,4 @@
 - `runtime.env` 只保存在服务器，禁止提交或上传到 GitHub Release。
 - 部署前停止旧服务并备份 SQLite 数据卷；migration 或健康检查失败时恢复数据备份和上一版本镜像。
 - 当前 A0 仍保留应用启动时的 GORM AutoMigrate，版本化 migration 只提供机制基线，不能替代 A1 的业务 schema 切换。
+- 运行容器不需要构建代理。`deploy.sh` 会拒绝 Docker 客户端 `config.json` 中的顶层 `proxies`；出站代理应只保留在 Runner 服务环境中，由发布构建脚本显式传给 BuildKit。Runner 的 `NO_PROXY`/`no_proxy` 必须覆盖本机 Registry、`127.0.0.1` 和 `localhost`。
