@@ -6,6 +6,7 @@ COMMIT_SHA=${2:?用法: build.sh vX.Y.Z COMMIT_SHA [OUTPUT_DIR]}
 OUTPUT_DIR=${3:-dist}
 REGISTRY=${COINSPHERE_REGISTRY:-127.0.0.1:5000}
 GO_PROXY=${COINSPHERE_GO_PROXY:-https://goproxy.cn,direct}
+BUILDER=${COINSPHERE_BUILDER:-coinsphere-release}
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 OUTPUT_DIR=$(mkdir -p "$OUTPUT_DIR" && cd "$OUTPUT_DIR" && pwd)
 
@@ -17,9 +18,14 @@ if [[ ! $COMMIT_SHA =~ ^[0-9a-f]{40}$ ]]; then
   echo "Commit SHA 必须是 40 位小写十六进制" >&2
   exit 2
 fi
+if [[ ! $BUILDER =~ ^[0-9A-Za-z][0-9A-Za-z_.-]*$ ]]; then
+  echo "Buildx Builder 名称无效: $BUILDER" >&2
+  exit 2
+fi
 for command_name in docker zip tar sha256sum; do
   command -v "$command_name" >/dev/null || { echo "缺少命令: $command_name" >&2; exit 3; }
 done
+docker buildx version >/dev/null
 if find "$OUTPUT_DIR" -mindepth 1 -print -quit | grep -q .; then
   echo "输出目录必须为空: $OUTPUT_DIR" >&2
   exit 3
@@ -32,24 +38,32 @@ backend_image="$REGISTRY/coinsphere/backend:$VERSION"
 web_image="$REGISTRY/coinsphere/web:$VERSION"
 sha_tag="sha-${COMMIT_SHA:0:12}"
 
-docker build \
+if ! docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
+  docker buildx create --name "$BUILDER" --driver docker-container --driver-opt network=host \
+    --buildkitd-config "$ROOT_DIR/scripts/release/buildkitd.toml" >/dev/null
+fi
+docker buildx inspect --bootstrap "$BUILDER" >/dev/null
+
+docker buildx build --builder "$BUILDER" --load \
   --label "org.opencontainers.image.version=$VERSION" \
   --label "org.opencontainers.image.revision=$COMMIT_SHA" \
   --build-arg TARGETOS=linux --build-arg TARGETARCH=amd64 --build-arg "GOPROXY=$GO_PROXY" \
   -t "$backend_image" -t "$REGISTRY/coinsphere/backend:$sha_tag" \
   "$ROOT_DIR/backend"
-docker build \
+docker buildx build --builder "$BUILDER" --load \
   --label "org.opencontainers.image.version=$VERSION" \
   --label "org.opencontainers.image.revision=$COMMIT_SHA" \
   --build-arg "VITE_VERSION=$VERSION" \
   -t "$web_image" -t "$REGISTRY/coinsphere/web:$sha_tag" \
   "$ROOT_DIR/frontend"
 
-docker build --build-arg TARGETOS=linux --build-arg TARGETARCH=amd64 --build-arg "GOPROXY=$GO_PROXY" \
+docker buildx build --builder "$BUILDER" \
+  --build-arg TARGETOS=linux --build-arg TARGETARCH=amd64 --build-arg "GOPROXY=$GO_PROXY" \
   --target binaries --output "type=local,dest=$work_dir/linux" "$ROOT_DIR/backend"
-docker build --build-arg TARGETOS=windows --build-arg TARGETARCH=386 --build-arg "GOPROXY=$GO_PROXY" \
+docker buildx build --builder "$BUILDER" \
+  --build-arg TARGETOS=windows --build-arg TARGETARCH=386 --build-arg "GOPROXY=$GO_PROXY" \
   --target binaries --output "type=local,dest=$work_dir/windows" "$ROOT_DIR/backend"
-docker build --build-arg "VITE_VERSION=$VERSION" \
+docker buildx build --builder "$BUILDER" --build-arg "VITE_VERSION=$VERSION" \
   --target assets --output "type=local,dest=$work_dir/web" "$ROOT_DIR/frontend"
 
 windows_name="coinsphere-$VERSION-windows-x86"

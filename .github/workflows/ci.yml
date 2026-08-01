@@ -124,6 +124,11 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Validate release maintenance scripts
+        run: |
+          bash -n scripts/release/*.sh scripts/release/tests/*.sh
+          shellcheck scripts/release/*.sh scripts/release/tests/*.sh
+          bash scripts/release/tests/prune-registry-test.sh
       - name: Validate Compose
         run: docker compose config --quiet
       - name: Build Compose images
