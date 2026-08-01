@@ -25,8 +25,18 @@ A0 当前生产 Compose 仍使用 SQLite，版本化 migration 只建立机制�
 5. 后端和前端镜像分别推送版本标签与 `sha-<commit>` 标签到私有 Registry，禁止使用 `latest`。
 6. 部署脚本停止旧服务、备份 SQLite 数据卷、执行 migration、启动固定版本镜像并检查健康状态。
 7. 部署成功后才创建 GitHub Release；失败的候选产物仅在 Actions Artifact 保留 14 天，不会创建版本标签。
+8. Release 创建后，Registry 对 backend/web 分别保留最近 10 个版本和当前部署版本，并删除对应的本地旧镜像标签。
+9. 无论发布成功或失败，最终步骤都会删除 `dist`、清理超过 24 小时的 Runner 临时文件、清理 CoinSphere 专用 Builder 中超过 7 天的缓存并停止 Builder 容器。
 
 Windows/Linux 包不是桌面应用：包内后端二进制可直接运行，`web` 目录需要 Nginx 或等价 Web Server 托管并反向代理到后端。
+
+## 持久型 Runner 清理
+
+- CoinSphere 使用独立的 `coinsphere-release` Buildx Builder，并通过宿主机网络和项目内 BuildKit 镜像源配置复用服务器现有出站链路；缓存清理不会操作其他项目的 Builder。
+- `scripts/release/cleanup-runner.sh` 只删除当前仓库的 `dist`、过期的 `RUNNER_TEMP` 内容和 CoinSphere Builder 缓存，不执行 `docker system prune`，不删除容器、数据卷或其他仓库镜像。
+- `scripts/release/prune-registry.sh` 只允许访问 `127.0.0.1:5000`，默认仅预演；发布工作流显式传入 `--apply`。认证复用 Runner 本地 Docker 登录配置，凭据不会进入命令参数或日志。
+- Registry Manifest 删除后，未引用 Blob 仍需在独立维护窗口执行 Registry garbage collection。共享 Registry 运行期间禁止自动执行 GC，避免与其他项目推送并发造成数据损坏。
+- Action 下载目录、工具缓存和 Runner 诊断日志保留给 Runner 自身管理；GitHub Artifact 按 14 天策略由 GitHub 清理，GitHub Release 长期保留。
 
 ## 自动回滚
 
