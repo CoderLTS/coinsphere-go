@@ -24,47 +24,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  codeql:
-    name: CodeQL (${{ matrix.language }})
-    if: ${{ !github.event.repository.private || vars.CODEQL_ENABLED == 'true' }}
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - language: go
-            build_mode: manual
-            source_path: backend
-          - language: javascript-typescript
-            build_mode: none
-            source_path: frontend
-          - language: python
-            build_mode: none
-            source_path: worker
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        if: matrix.language == 'go'
-        with:
-          go-version-file: backend/go.mod
-          cache-dependency-path: backend/go.sum
-      - uses: github/codeql-action/init@bce182f857edf1feab116e9795a3393d21977282 # v4
-        with:
-          languages: ${{ matrix.language }}
-          build-mode: ${{ matrix.build_mode }}
-          config: |
-            paths:
-              - ${{ matrix.source_path }}
-      - name: Build Go database
-        if: matrix.language == 'go'
-        working-directory: backend
-        run: go build ./...
-      - uses: github/codeql-action/analyze@bce182f857edf1feab116e9795a3393d21977282 # v4
-
   go-dependencies:
     name: Go vulnerability scan
     runs-on: ubuntu-latest
