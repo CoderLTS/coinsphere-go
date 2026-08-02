@@ -2,7 +2,9 @@
 
 ## 当前边界
 
-当前生产 Compose 仍使用 SQLite，版本化 migration 已包含机制基线和 `worker_tasks` 表，应用启动仍保留 GORM `AutoMigrate`。A1 Worker 运行时只接入开发 Compose 与 CI；生产流水线仍仅构建、扫描和部署 Backend/Web。A1 完成业务 schema 切换前，本流水线只用于现有管理平台，不得据此启用模拟盘或实盘交易能力。
+当前生产 Compose 仍使用 SQLite，版本化 migration 已包含机制基线、`worker_tasks` 表和逻辑版本 `00003` 的 Outbox schema 契约，应用启动仍保留 GORM `AutoMigrate`。A1 Worker 运行时只接入开发 Compose 与 CI，Outbox dispatcher 也仍沿用既有实现；生产流水线仍仅构建、扫描和部署 Backend/Web。A1-10 完成业务 schema 切换前，本流水线只用于现有管理平台，不得据此启用模拟盘或实盘交易能力。
+
+A1-3 不修改 Release 工作流、部署脚本或生产拓扑，本 PR 也不触发发布或部署。后续用户手工发布固定 `main` 版本时，仍按既有流程先备份 SQLite，再执行镜像内 migration。
 
 发布允许 Codex 和 GitHub Actions 连接生产主机，但不得接触真实交易所密钥或发起真实订单。生产发布必须由用户从 `main` 手工触发；PR、push 和定时任务不会使用生产 Runner。
 
@@ -126,3 +128,7 @@ A1-1 不修改 schema、业务数据、API 契约或 Release 工作流。需要�
 ## A1-2 Worker schema 与运行时回滚
 
 生产 Release 当前不部署 Worker，因此回滚 Backend/Web 时不需要操作 `worker_tasks`。开发或后续环境回滚 Worker 运行时时，先停止全部消费者，再恢复上一兼容代码并保留队列、任务和 migration 版本；不得手工改写任务状态。只有队列确定为空且目标是撤销 schema 时才可执行 `00002` Down；非空队列会 fail-closed，禁止删除任务或篡改 migration 版本。自动发布回滚继续通过部署前 SQLite 备份恢复现有管理平台数据，不额外执行 Down。
+
+## A1-3 Outbox schema 回滚
+
+代码回滚时恢复上一兼容 Backend，并保留 `domain_event_outbox`、既有事件和 migration 版本；旧 producer 不写新增列，可继续依赖数据库默认值。禁止为代码回滚执行 `00003` Down。只有停止全部 Outbox 写入且确认表完全为空时，才可显式回滚 schema；任何事件都会使 Down fail-closed。自动发布失败仍通过部署前 SQLite 备份恢复，不额外执行 Down，也不得清空事件或篡改 `schema_migrations`。

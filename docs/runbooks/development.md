@@ -22,6 +22,8 @@ Linux CI 额外执行 `go test -race ./...` 和 `SIGTERM` 进程测试。关机�
 
 `00002_a1_worker_tasks.sql` 与 Python Worker 已共同建立 A1 任务队列协议。Worker 只连接 PostgreSQL，在单事务内用 `FOR UPDATE SKIP LOCKED` 认领，并以数据库时间和唯一 `lease_id` 约束心跳、恢复与终态；当前只执行 `contract.noop` 和 `contract.sleep` 伪任务，不包含数据集、回测或交易能力。
 
+逻辑版本 `00003` 按驱动加载 SQLite 或 PostgreSQL Outbox SQL，验证既有事件保留、五态、尝试次数、活跃租约、死信/告警时间与索引契约。它不改变现有 `drainPendingEvents`；本地验证不得把尚未实现的原子认领、过期恢复、指数退避或死信告警运行时视为已完成。
+
 Worker 容器可单独验证：
 
 ```powershell
@@ -86,7 +88,7 @@ Pop-Location
 
 GitHub Actions 负责 Linux、三类镜像构建、Compose 健康、Worker A1 PostgreSQL 集成契约和安全检查。本地缺少 Docker 或 PostgreSQL 时可以继续开发，但 PR 在 Worker 集成与容器 Job 通过前不得合并。
 
-CI 使用固定 PostgreSQL 17 镜像执行 migration 与 Worker 运行时契约，包括七态、租约、尝试次数、非空 Down 保护、并发认领、旧租约 fencing、崩溃回收和 5 秒取消。本地与发布环境的迁移命令、编写约束和回滚步骤见[数据库迁移手册](./database-migrations.md)。
+CI 使用固定 PostgreSQL 17 镜像执行 migration 与 Worker 运行时契约，包括 Worker 七态、租约、尝试次数、非空 Down 保护、并发认领、旧租约 fencing、崩溃回收和 5 秒取消，以及 Outbox 五态、租约字段一致性、保数升级、重复 Up、回滚重放和失败原子性。本地与发布环境的迁移命令、编写约束和回滚步骤见[数据库迁移手册](./database-migrations.md)。
 
 ## 安全约束
 

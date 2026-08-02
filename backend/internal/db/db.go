@@ -25,8 +25,10 @@ func Open(ctx context.Context, cfg config.DatabaseConfig) (*gorm.DB, error) {
 		return nil, err
 	}
 
-	// A1 切换到版本化 SQL migration 前，应用启动仍保留现有 AutoMigrate 行为。
-	if err := gdb.WithContext(ctx).AutoMigrate(AllModels()...); err != nil {
+	// A1-10 整体切换前仍保留 AutoMigrate；00003 已接管的 Outbox 需要单表跳过，
+	// 否则 SQLite 会为既有列或旧索引差异重建表，进而删除版本化触发器与专用索引。
+	outboxVersioned := gdb.WithContext(ctx).Migrator().HasColumn(&DomainEventOutbox{}, "max_attempts")
+	if err := gdb.WithContext(ctx).AutoMigrate(autoMigrateModels(outboxVersioned)...); err != nil {
 		closeDatabase(gdb)
 		return nil, fmt.Errorf("auto migrate: %w", err)
 	}
