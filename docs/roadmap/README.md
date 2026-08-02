@@ -13,8 +13,8 @@ CoinSphere 从通用后台与工作流系统演进为个人币圈量化平台，
 ## 当前状态
 
 - 当前阶段：A1 基础稳定化。
-- 当前交付：A1-1 全链路 Context 取消、超时、信号处理与优雅关机。
-- 阶段状态：A0 已完成并经用户手工放行，A1 进行中；Python Worker 继续保持无任务消费能力的 `a0-idle` 模式，租约、心跳和 5 秒内任务取消留到 A1-2。
+- 当前交付：A1-2 Worker 任务队列 schema 前置迁移。
+- 阶段状态：A0 已完成并经用户手工放行，A1 进行中；`worker_tasks` 已建立七态、租约、心跳和取消字段契约，Python Worker 继续保持无任务消费能力的 `a0-idle` 模式，运行时认领、崩溃回收和 5 秒内取消由下一独立 PR 实现。
 - GitHub 远程仓库、生产 Runner 和仅允许 `main` 的 `production` Environment 已配置；私有仓库的分支保护受当前 GitHub 套餐限制，操作约束见 [GitHub 治理手册](../runbooks/github-governance.md)。
 
 ## 里程碑

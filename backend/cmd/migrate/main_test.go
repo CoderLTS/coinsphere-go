@@ -26,7 +26,7 @@ func TestRunMigratesWithoutAutoMigrate(t *testing.T) {
 	if err := run(context.Background(), []string{"-config", configPath, "-direction", "up"}, &stdout, &stderr); err != nil {
 		t.Fatalf("run migration command: %v\nstderr: %s", err, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "current=1 latest=1 applied=1") {
+	if !strings.Contains(stdout.String(), "current=2 latest=2 applied=2") {
 		t.Fatalf("unexpected command output: %s", stdout.String())
 	}
 
@@ -54,12 +54,15 @@ func TestRunMigratesWithoutAutoMigrate(t *testing.T) {
 	if !strings.Contains(stdout.String(), "00001\tapplied") {
 		t.Fatalf("unexpected status output: %s", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "00002\tapplied") {
+		t.Fatalf("unexpected status output: %s", stdout.String())
+	}
 
 	stdout.Reset()
 	if err := run(context.Background(), []string{"-config", configPath, "-direction", "version"}, &stdout, &stderr); err != nil {
 		t.Fatalf("read migration version: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "current=1 latest=1") {
+	if !strings.Contains(stdout.String(), "current=2 latest=2") {
 		t.Fatalf("unexpected version output: %s", stdout.String())
 	}
 
@@ -75,7 +78,7 @@ func TestRunMigratesWithoutAutoMigrate(t *testing.T) {
 	if err := run(context.Background(), []string{"-config", configPath, "-direction", "down", "-steps", "1"}, &stdout, &stderr); err != nil {
 		t.Fatalf("run down migration command: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "current=0 latest=1 rolled_back=1") {
+	if !strings.Contains(stdout.String(), "current=1 latest=2 rolled_back=1") {
 		t.Fatalf("unexpected down output: %s", stdout.String())
 	}
 }

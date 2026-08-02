@@ -42,16 +42,17 @@ func runEmbeddedMigrations(t *testing.T, driver string, db *sql.DB) {
 	}
 
 	ctx := context.Background()
-	assertVersions(t, ctx, runner, 0, 1)
+	assertVersions(t, ctx, runner, 0, 2)
 
 	results, err := runner.Up(ctx, 0)
 	if err != nil {
 		t.Fatalf("upgrade embedded migrations: %v", err)
 	}
-	if len(results) != 1 || results[0].Version != 1 {
+	if len(results) != 2 || results[0].Version != 1 || results[1].Version != 2 {
 		t.Fatalf("unexpected embedded up results: %+v", results)
 	}
-	assertVersions(t, ctx, runner, 1, 1)
+	assertVersions(t, ctx, runner, 2, 2)
+	assertWorkerTaskSchema(t, ctx, db)
 
 	results, err = runner.Up(ctx, 0)
 	if err != nil {
@@ -61,14 +62,209 @@ func runEmbeddedMigrations(t *testing.T, driver string, db *sql.DB) {
 		t.Fatalf("expected idempotent embedded upgrade, got %+v", results)
 	}
 
+	if _, err := runner.Down(ctx, 1); err == nil {
+		t.Fatal("expected non-empty worker task table to block rollback")
+	}
+	assertVersions(t, ctx, runner, 2, 2)
+	var taskCount int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM worker_tasks").Scan(&taskCount); err != nil || taskCount != 4 {
+		t.Fatalf("failed rollback changed worker tasks: count=%d err=%v", taskCount, err)
+	}
+	if _, err := db.ExecContext(ctx, "DELETE FROM worker_tasks"); err != nil {
+		t.Fatalf("delete worker task fixtures: %v", err)
+	}
+	if driver == "postgres" {
+		assertConcurrentInsertBlocksWorkerTaskDown(t, ctx, db, runner)
+	}
+
 	rolledBack, err := runner.Down(ctx, 1)
 	if err != nil {
 		t.Fatalf("rollback embedded migration: %v", err)
 	}
-	if len(rolledBack) != 1 || rolledBack[0].Version != 1 {
+	if len(rolledBack) != 1 || rolledBack[0].Version != 2 {
 		t.Fatalf("unexpected embedded down results: %+v", rolledBack)
 	}
-	assertVersions(t, ctx, runner, 0, 1)
+	assertVersions(t, ctx, runner, 1, 2)
+	if _, err := db.ExecContext(ctx, "SELECT 1 FROM worker_tasks"); err == nil {
+		t.Fatal("worker_tasks still exists after rolling back migration 2")
+	}
+
+	results, err = runner.Up(ctx, 0)
+	if err != nil {
+		t.Fatalf("reapply worker task migration: %v", err)
+	}
+	if len(results) != 1 || results[0].Version != 2 {
+		t.Fatalf("unexpected embedded reapply results: %+v", results)
+	}
+	assertVersions(t, ctx, runner, 2, 2)
+
+	rolledBack, err = runner.Down(ctx, 2)
+	if err != nil {
+		t.Fatalf("rollback all embedded migrations: %v", err)
+	}
+	if len(rolledBack) != 2 || rolledBack[0].Version != 2 || rolledBack[1].Version != 1 {
+		t.Fatalf("unexpected full embedded down results: %+v", rolledBack)
+	}
+	assertVersions(t, ctx, runner, 0, 2)
+}
+
+func assertConcurrentInsertBlocksWorkerTaskDown(
+	t *testing.T,
+	ctx context.Context,
+	db *sql.DB,
+	runner *migration.Runner,
+) {
+	t.Helper()
+
+	writer, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin concurrent worker task insert: %v", err)
+	}
+	if _, err := writer.ExecContext(ctx, `
+INSERT INTO worker_tasks (id, task_type, payload_json)
+VALUES ('018f0000-0000-7000-8000-000000000011', 'contract.concurrent', '{}')
+`); err != nil {
+		_ = writer.Rollback()
+		t.Fatalf("insert uncommitted worker task: %v", err)
+	}
+
+	downCtx, cancelDown := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelDown()
+	downDone := make(chan error, 1)
+	go func() {
+		_, err := runner.Down(downCtx, 1)
+		downDone <- err
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var waiting bool
+		err := db.QueryRowContext(ctx, `
+SELECT EXISTS (
+    SELECT 1
+    FROM pg_locks AS locks
+    JOIN pg_class AS tables ON tables.oid = locks.relation
+    JOIN pg_namespace AS schemas ON schemas.oid = tables.relnamespace
+    WHERE schemas.nspname = current_schema()
+      AND tables.relname = 'worker_tasks'
+      AND locks.mode = 'AccessExclusiveLock'
+      AND NOT locks.granted
+)
+`).Scan(&waiting)
+		if err != nil {
+			_ = writer.Rollback()
+			t.Fatalf("inspect concurrent migration lock: %v", err)
+		}
+		if waiting {
+			break
+		}
+		if time.Now().After(deadline) {
+			_ = writer.Rollback()
+			t.Fatal("worker task Down did not wait for the concurrent writer")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if err := writer.Commit(); err != nil {
+		t.Fatalf("commit concurrent worker task insert: %v", err)
+	}
+	select {
+	case err := <-downDone:
+		if err == nil {
+			t.Fatal("concurrent worker task was deleted by Down")
+		}
+	case <-downCtx.Done():
+		t.Fatalf("worker task Down did not finish: %v", downCtx.Err())
+	}
+
+	assertVersions(t, ctx, runner, 2, 2)
+	var taskCount int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM worker_tasks").Scan(&taskCount); err != nil || taskCount != 1 {
+		t.Fatalf("concurrent Down changed worker tasks: count=%d err=%v", taskCount, err)
+	}
+	if _, err := db.ExecContext(ctx, "DELETE FROM worker_tasks"); err != nil {
+		t.Fatalf("delete concurrent worker task fixture: %v", err)
+	}
+}
+
+func assertWorkerTaskSchema(t *testing.T, ctx context.Context, db *sql.DB) {
+	t.Helper()
+
+	if _, err := db.ExecContext(ctx, `
+INSERT INTO worker_tasks (id, task_type, payload_json)
+VALUES ('018f0000-0000-7000-8000-000000000001', 'contract.noop', '{}')
+`); err != nil {
+		t.Fatalf("insert queued worker task: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+INSERT INTO worker_tasks (
+    id, task_type, payload_json, status, attempt_count,
+    lease_id, worker_id, lease_expires_at, last_heartbeat_at, claimed_at
+) VALUES (
+    '018f0000-0000-7000-8000-000000000002', 'contract.noop', '{}', 'claimed', 1,
+    '018f0000-0000-7000-8000-000000000101', 'worker-a', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+)
+`); err != nil {
+		t.Fatalf("insert leased worker task: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO worker_tasks (
+    id, task_type, payload_json, status, attempt_count,
+    lease_id, worker_id, lease_expires_at, last_heartbeat_at, claimed_at
+) VALUES (
+    '018f0000-0000-7000-8000-000000000006', 'contract.noop', '{}', 'claimed', 1,
+    '018f0000-0000-7000-8000-000000000101', 'worker-b', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+)`); err == nil {
+		t.Fatal("expected duplicate lease to fail")
+	}
+	validTransitions := []string{
+		`UPDATE worker_tasks SET status = 'running', started_at = CURRENT_TIMESTAMP
+WHERE id = '018f0000-0000-7000-8000-000000000002'`,
+		`UPDATE worker_tasks SET status = 'cancelRequested', cancel_requested_at = CURRENT_TIMESTAMP
+WHERE id = '018f0000-0000-7000-8000-000000000002'`,
+		`UPDATE worker_tasks SET status = 'canceled', finished_at = CURRENT_TIMESTAMP,
+    lease_id = NULL, worker_id = NULL, lease_expires_at = NULL, last_heartbeat_at = NULL
+WHERE id = '018f0000-0000-7000-8000-000000000002'`,
+		`INSERT INTO worker_tasks (id, task_type, payload_json, status, finished_at)
+VALUES ('018f0000-0000-7000-8000-000000000008', 'contract.noop', '{}', 'succeeded', CURRENT_TIMESTAMP)`,
+		`INSERT INTO worker_tasks (id, task_type, payload_json, status, finished_at)
+VALUES ('018f0000-0000-7000-8000-000000000009', 'contract.noop', '{}', 'failed', CURRENT_TIMESTAMP)`,
+	}
+	for _, statement := range validTransitions {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			t.Fatalf("apply valid worker task state: %v", err)
+		}
+	}
+
+	invalidRows := []struct {
+		name string
+		sql  string
+	}{
+		{
+			name: "unknown status",
+			sql:  "INSERT INTO worker_tasks (id, task_type, payload_json, status) VALUES ('018f0000-0000-7000-8000-000000000003', 'contract.noop', '{}', 'unknown')",
+		},
+		{
+			name: "attempt beyond maximum",
+			sql:  "INSERT INTO worker_tasks (id, task_type, payload_json, attempt_count, max_attempts) VALUES ('018f0000-0000-7000-8000-000000000004', 'contract.noop', '{}', 2, 1)",
+		},
+		{
+			name: "active task without lease",
+			sql:  "INSERT INTO worker_tasks (id, task_type, payload_json, status) VALUES ('018f0000-0000-7000-8000-000000000005', 'contract.noop', '{}', 'running')",
+		},
+		{
+			name: "canceled task without timestamps",
+			sql:  "INSERT INTO worker_tasks (id, task_type, payload_json, status, finished_at) VALUES ('018f0000-0000-7000-8000-000000000007', 'contract.noop', '{}', 'canceled', CURRENT_TIMESTAMP)",
+		},
+		{
+			name: "terminal task without finished time",
+			sql:  "INSERT INTO worker_tasks (id, task_type, payload_json, status) VALUES ('018f0000-0000-7000-8000-000000000010', 'contract.noop', '{}', 'succeeded')",
+		},
+	}
+	for _, test := range invalidRows {
+		if _, err := db.ExecContext(ctx, test.sql); err == nil {
+			t.Fatalf("expected %s to fail", test.name)
+		}
+	}
 }
 
 func TestMigrationContractSQLite(t *testing.T) {

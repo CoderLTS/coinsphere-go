@@ -2,11 +2,11 @@
 
 ## 当前边界
 
-A0 当前生产 Compose 仍使用 SQLite，版本化 migration 只建立机制基线，应用启动仍保留 GORM `AutoMigrate`。A1 完成业务 schema 切换前，本流水线只用于现有管理平台，不得据此启用模拟盘或实盘交易能力。
+当前生产 Compose 仍使用 SQLite，版本化 migration 已包含机制基线和未启用消费的 `worker_tasks` 表，应用启动仍保留 GORM `AutoMigrate`。A1 完成业务 schema 切换前，本流水线只用于现有管理平台，不得据此启用模拟盘或实盘交易能力。
 
 发布允许 Codex 和 GitHub Actions 连接生产主机，但不得接触真实交易所密钥或发起真实订单。生产发布必须由用户从 `main` 手工触发；PR、push 和定时任务不会使用生产 Runner。
 
-后端容器接收 Compose 发送的 `SIGTERM` 后，通过 `signal.NotifyContext` 取消 HTTP 与 Runtime 根 Context，停止接收新请求和认领新执行，并有界关闭数据库与 WebSocket。应用总关机预算为 30 秒，Compose `stop_grace_period` 为 40 秒；被取消的既有工作流执行按当前重试策略进入 `retry_waiting` 或 `failed`。该行为不启用 Python Worker 任务消费，A1-2 能力仍未进入发布范围。
+后端容器接收 Compose 发送的 `SIGTERM` 后，通过 `signal.NotifyContext` 取消 HTTP 与 Runtime 根 Context，停止接收新请求和认领新执行，并有界关闭数据库与 WebSocket。应用总关机预算为 30 秒，Compose `stop_grace_period` 为 40 秒；被取消的既有工作流执行按当前重试策略进入 `retry_waiting` 或 `failed`。`worker_tasks` schema 不改变运行拓扑，Python Worker 任务消费仍未进入发布范围。
 
 ## 生产基础设施
 
@@ -122,3 +122,7 @@ Release workflow 自动部署时调用 `./deploy.sh vX.Y.Z release-manifest.json
 ## A1-1 生命周期回滚
 
 A1-1 不修改 schema、业务数据、API 契约或 Release 工作流。需要回滚时整体回退本 PR，恢复上一固定镜像与 Compose 文件；无需执行 migration Down。已进入 `retry_waiting` 或 `failed` 的执行继续按原有运行时语义处理，禁止为回滚手工改写执行状态。Python Worker、Outbox、WebSocket 正常态协议、Auth 和迁移切换不属于本次回滚范围。
+
+## A1-2 Worker 任务 schema 回滚
+
+`00002` 不启用 Worker 或产生任务。手工回滚前必须使用当前迁移二进制确认 `worker_tasks` 为空，再执行一次 Down 并确认版本回到 `1`；非空队列会拒绝 Down，禁止删除任务或篡改 migration 版本。自动发布回滚继续通过部署前 SQLite 备份恢复 schema 和数据，不额外执行 Down。
