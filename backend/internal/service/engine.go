@@ -47,7 +47,10 @@ type runResult struct {
 }
 
 // runExecutionGraph 只负责跑图,不推进 execution 终态状态机。
-func (a *App) runExecutionGraph(executionID int64) (*runResult, error) {
+func (a *App) runExecutionGraph(ctx context.Context, executionID int64) (*runResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	execution, err := a.getExecutionByID(executionID)
 	if err != nil {
 		return nil, err
@@ -111,7 +114,7 @@ func (a *App) runExecutionGraph(executionID int64) (*runResult, error) {
 		execution.ID, definition.Code, execution.StartEntryKey, triggerType,
 	)
 	// 核心:从起始节点开始真正"跑图"。失败就记结束时间、打日志、把错误抛给调用方。
-	if err := a.runGraph(result, state, graph, asString(startNode["id"])); err != nil {
+	if err := a.runGraph(ctx, result, state, graph, asString(startNode["id"])); err != nil {
 		result.FinishedAt = time.Now()
 		log.Printf("[engine] execution failed: execution_id=%d workflow_code=%s err=%v", execution.ID, definition.Code, err)
 		return result, err
@@ -277,7 +280,7 @@ func (r *graphRun) acquireSlot(ctx context.Context) error {
 func (r *graphRun) releaseSlot() { <-r.slots }
 
 // runGraph 建索引、划分循环体,再从起点跑整张 DAG。
-func (a *App) runGraph(result *runResult, state *runState, graph M, startNodeID string) error {
+func (a *App) runGraph(ctx context.Context, result *runResult, state *runState, graph M, startNodeID string) error {
 	index := buildGraphIndex(graph)
 
 	// 只有"从本次执行起点可达"的节点才会被跑(多入口图里只跑选中入口那一支)。
@@ -312,7 +315,7 @@ func (a *App) runGraph(result *runResult, state *runState, graph M, startNodeID 
 		graphIndex: index, loopBody: loopBody,
 		slots: make(chan struct{}, slotCount),
 	}
-	return run.runDAG(context.Background(), startNodeID, mainSet)
+	return run.runDAG(ctx, startNodeID, mainSet)
 }
 
 // runDAG 在给定节点集合内跑一段 DAG:startNodeID 是入口(集合内入度为 0)。
@@ -413,10 +416,10 @@ func (r *graphRun) processNode(ctx context.Context, nodeID string, advance func(
 
 	nodeResult, execErr := r.runNodeBody(ctx, node, nodeLog)
 	if execErr != nil {
-		r.closeNodeLog(nodeLog, nil, execErr)
+		r.closeNodeLog(ctx, nodeLog, nil, execErr)
 		return execErr
 	}
-	r.closeNodeLog(nodeLog, nodeResult, nil)
+	r.closeNodeLog(ctx, nodeLog, nodeResult, nil)
 
 	// 循环节点:对数组逐个跑一遍循环体子图(元素间串行,子图内部仍可并发),跑完再推进循环后继。
 	// 注意此时执行令牌已经归还 —— 循环体里的节点要自己去取令牌,父节点不能占着不放。
@@ -456,7 +459,7 @@ func (r *graphRun) openNodeLog(nodeID, nodeType string) (*db.WorkflowExecutionNo
 }
 
 // closeNodeLog 收尾一条节点日志:成功写输出快照,失败写错误信息。
-func (r *graphRun) closeNodeLog(nodeLog *db.WorkflowExecutionNode, nodeResult *nodeExecResult, execErr error) {
+func (r *graphRun) closeNodeLog(ctx context.Context, nodeLog *db.WorkflowExecutionNode, nodeResult *nodeExecResult, execErr error) {
 	finishedAt := time.Now()
 	updates := map[string]any{
 		"finished_at": finishedAt,
@@ -471,7 +474,12 @@ func (r *graphRun) closeNodeLog(nodeLog *db.WorkflowExecutionNode, nodeResult *n
 		updates["status"] = "success"
 		updates["output_snapshot_json"] = serializeSnapshot(nodeResult.Output, r.app.Cfg.Workflow.MaxOutputSnapshotBytes)
 	}
-	r.app.DB.Model(nodeLog).Updates(updates)
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cleanupCancel()
+	if err := r.app.dbWithContext(cleanupCtx).Model(nodeLog).Updates(updates).Error; err != nil {
+		log.Printf("[engine] close node log failed: execution_id=%d node_id=%s err=%v",
+			r.result.Execution.ID, nodeLog.NodeID, err)
+	}
 }
 
 // executeNode 按节点类型查处理器并执行。查不到处理器就直接把错误返回(交给失败分支处理)。
@@ -615,6 +623,7 @@ func (a *App) buildEventBasePayload(definition *db.WorkflowDefinition, runtimeEn
 
 // publishStandardEvent 在公共字段基础上合并本次 payload,发布一条标准工作流事件;失败只记日志不中断。
 func (a *App) publishStandardEvent(
+	ctx context.Context,
 	definition *db.WorkflowDefinition, runtimeEntry *db.WorkflowRuntimeEntry,
 	executionID int64, nodeID *int64, eventType string, triggerCtx, payload M,
 ) {
@@ -623,7 +632,8 @@ func (a *App) publishStandardEvent(
 		mergedPayload[key] = value
 	}
 	metadata := M{"workflowCode": definition.Code, "nodeId": nilOrValue(nodeID)}
-	if _, err := a.publishDomainEvent(
+	if _, err := a.publishDomainEventContext(
+		ctx,
 		eventType, "workflow_execution", fmt.Sprint(executionID),
 		mergedPayload, metadata, &executionID, nodeID,
 	); err != nil {
@@ -632,56 +642,61 @@ func (a *App) publishStandardEvent(
 }
 
 // publishExecutionSucceeded success 终态后的标准事件。
-func (a *App) publishExecutionSucceeded(result *runResult) {
+func (a *App) publishExecutionSucceeded(ctx context.Context, result *runResult) {
 	taskResult := orEmptyMap(result.SharedState["taskResult"])
 	payload := M{"status": "success"}
 	for key, value := range taskResult {
 		payload[key] = value
 	}
-	a.publishStandardEvent(result.Definition, result.RuntimeEntry, result.Execution.ID, nil, "workflow.execution.succeeded", result.TriggerCtx, payload)
-	a.publishStandardEvent(result.Definition, result.RuntimeEntry, result.Execution.ID, nil, "workflow.execution.finished", result.TriggerCtx, payload)
+	a.publishStandardEvent(ctx, result.Definition, result.RuntimeEntry, result.Execution.ID, nil, "workflow.execution.succeeded", result.TriggerCtx, payload)
+	a.publishStandardEvent(ctx, result.Definition, result.RuntimeEntry, result.Execution.ID, nil, "workflow.execution.finished", result.TriggerCtx, payload)
 	if result.RuntimeEntry != nil {
-		a.DB.Model(&db.WorkflowRuntimeEntry{}).Where("id = ?", result.RuntimeEntry.ID).Updates(map[string]any{
+		a.dbWithContext(ctx).Model(&db.WorkflowRuntimeEntry{}).Where("id = ?", result.RuntimeEntry.ID).Updates(map[string]any{
 			"last_triggered_at": result.FinishedAt, "last_error_message": "", "updated_at": time.Now(),
 		})
 	}
 }
 
 // publishExecutionFailed failed 终态后的标准事件。
-func (a *App) publishExecutionFailed(result *runResult, errorMessage string) {
-	a.publishFailureEvents(result.Definition, result.RuntimeEntry, result.Execution.ID, result.TriggerCtx, errorMessage, result.StartedAt, result.FinishedAt)
+func (a *App) publishExecutionFailed(ctx context.Context, result *runResult, errorMessage string) {
+	a.publishFailureEvents(ctx, result.Definition, result.RuntimeEntry, result.Execution.ID, result.TriggerCtx, errorMessage, result.StartedAt, result.FinishedAt)
 	if result.RuntimeEntry != nil {
-		a.DB.Model(&db.WorkflowRuntimeEntry{}).Where("id = ?", result.RuntimeEntry.ID).Updates(map[string]any{
+		a.dbWithContext(ctx).Model(&db.WorkflowRuntimeEntry{}).Where("id = ?", result.RuntimeEntry.ID).Updates(map[string]any{
 			"last_triggered_at": result.FinishedAt, "last_error_message": errorMessage, "updated_at": time.Now(),
 		})
 	}
 }
 
 // publishRecoveredFailureEvents stale 恢复后的失败事件。
-func (a *App) publishRecoveredFailureEvents(executionID int64, errorMessage string) {
-	execution, err := a.getExecutionByID(executionID)
-	if err != nil || execution.WorkflowDefinition == nil {
+func (a *App) publishRecoveredFailureEvents(ctx context.Context, executionID int64, errorMessage string) {
+	var execution db.WorkflowExecution
+	if err := a.dbWithContext(ctx).Preload("WorkflowDefinition").First(&execution, executionID).Error; err != nil || execution.WorkflowDefinition == nil {
 		return
 	}
-	runtimeEntry := a.getRuntimeEntryByDefinitionAndKey(execution.WorkflowDefinition.ID, execution.StartEntryKey)
+	var runtimeEntry db.WorkflowRuntimeEntry
+	runtimeEntryPtr := &runtimeEntry
+	if err := a.dbWithContext(ctx).Where("workflow_definition_id = ? AND entry_key = ?", execution.WorkflowDefinition.ID, execution.StartEntryKey).First(&runtimeEntry).Error; err != nil {
+		runtimeEntryPtr = nil
+	}
 	triggerCtx := extractTriggerContext(execution.ContextSnapshotJSON)
 	startedAt := firstTime(execution.StartedAt, execution.ClaimedAt, &execution.QueuedAt)
 	finishedAt := time.Now()
 	if execution.FinishedAt != nil {
 		finishedAt = *execution.FinishedAt
 	}
-	a.publishFailureEvents(execution.WorkflowDefinition, runtimeEntry, executionID, triggerCtx, errorMessage, startedAt, finishedAt)
+	a.publishFailureEvents(ctx, execution.WorkflowDefinition, runtimeEntryPtr, executionID, triggerCtx, errorMessage, startedAt, finishedAt)
 }
 
 func (a *App) publishFailureEvents(
+	ctx context.Context,
 	definition *db.WorkflowDefinition, runtimeEntry *db.WorkflowRuntimeEntry,
 	executionID int64, triggerCtx M, errorMessage string, startedAt, finishedAt time.Time,
 ) {
-	a.publishStandardEvent(definition, runtimeEntry, executionID, nil, "workflow.execution.failed", triggerCtx, M{
+	a.publishStandardEvent(ctx, definition, runtimeEntry, executionID, nil, "workflow.execution.failed", triggerCtx, M{
 		"status": "failed", "errorMessage": errorMessage,
 		"startedAt": fmtTimeV(startedAt), "finishedAt": fmtTimeV(finishedAt),
 	})
-	a.publishStandardEvent(definition, runtimeEntry, executionID, nil, "workflow.execution.finished", triggerCtx, M{
+	a.publishStandardEvent(ctx, definition, runtimeEntry, executionID, nil, "workflow.execution.finished", triggerCtx, M{
 		"status": "failed", "errorMessage": errorMessage,
 	})
 }

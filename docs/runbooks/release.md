@@ -6,6 +6,8 @@ A0 当前生产 Compose 仍使用 SQLite，版本化 migration 只建立机制�
 
 发布允许 Codex 和 GitHub Actions 连接生产主机，但不得接触真实交易所密钥或发起真实订单。生产发布必须由用户从 `main` 手工触发；PR、push 和定时任务不会使用生产 Runner。
 
+后端容器接收 Compose 发送的 `SIGTERM` 后，通过 `signal.NotifyContext` 取消 HTTP 与 Runtime 根 Context，停止接收新请求和认领新执行，并有界关闭数据库与 WebSocket。应用总关机预算为 30 秒，Compose `stop_grace_period` 为 40 秒；被取消的既有工作流执行按当前重试策略进入 `retry_waiting` 或 `failed`。该行为不启用 Python Worker 任务消费，A1-2 能力仍未进入发布范围。
+
 ## 生产基础设施
 
 - Runner：`coinsphere-production`，标签为 `self-hosted`、`Linux`、`X64`、`coinsphere-release`、`production`。
@@ -34,6 +36,8 @@ A0 当前生产 Compose 仍使用 SQLite，版本化 migration 只建立机制�
 10. 无论发布成功或失败，最终步骤都会删除 `dist`、清理超过 24 小时的 Runner 临时文件、清理 CoinSphere 专用 Builder 中超过 7 天的缓存并停止 Builder 容器。
 
 Windows/Linux 包不是桌面应用：包内后端二进制可直接运行，`web` 目录需要 Nginx 或等价 Web Server 托管并反向代理到后端。
+
+部署脚本的 `stop`、`down` 和回滚均使用相同关机契约：先发送 `SIGTERM`，由应用在 30 秒内完成 HTTP、Runtime、数据库和 WebSocket 收尾，Compose 最多等待 40 秒后才强制停止。发布工作流本身不因 A1-1 增加新的生产触发方式。
 
 ## 最终产物门禁
 
@@ -87,6 +91,8 @@ migration、Compose 启动或 `/health` 任一步失败时，`deploy.sh` 会：
 
 脚本保留最近 10 份 SQLite 备份。它不会执行 migration Down，也不会修改 `schema_migrations` 伪造回滚。
 
+关机期间已认领的工作流执行会在可收尾时进入既有 `retry_waiting` 或 `failed`；若进程在 40 秒宽限后仍被强制停止，遗留的 `running` 记录继续由既有 stale recovery 在下一次启动后处理，不得手工改写状态。
+
 ## 手工恢复
 
 自动回滚失败时，先保持服务停止，再检查：
@@ -112,3 +118,7 @@ Release workflow 自动部署时调用 `./deploy.sh vX.Y.Z release-manifest.json
 ## 本门禁回滚
 
 本次门禁不修改数据库或业务运行时数据。代码回滚时整体回退本 PR，并恢复 Release workflow 原有校验和与部署调用；已生成的候选 Artifact 和 Registry 标签不得视为已扫描产物，必须停止后续上传与部署。生产 `.env` 中已写入的 digest 引用可继续运行，无需改回版本标签。
+
+## A1-1 生命周期回滚
+
+A1-1 不修改 schema、业务数据、API 契约或 Release 工作流。需要回滚时整体回退本 PR，恢复上一固定镜像与 Compose 文件；无需执行 migration Down。已进入 `retry_waiting` 或 `failed` 的执行继续按原有运行时语义处理，禁止为回滚手工改写执行状态。Python Worker、Outbox、WebSocket 正常态协议、Auth 和迁移切换不属于本次回滚范围。

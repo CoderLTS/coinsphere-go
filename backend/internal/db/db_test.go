@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
@@ -8,7 +9,7 @@ import (
 )
 
 func TestOpenPreservesAutoMigrateBehavior(t *testing.T) {
-	gdb, err := Open(config.DatabaseConfig{
+	gdb, err := Open(context.Background(), config.DatabaseConfig{
 		Driver: "sqlite",
 		Path:   filepath.Join(t.TempDir(), "application.db"),
 	})

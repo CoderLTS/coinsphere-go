@@ -7,6 +7,7 @@ services:
     image: coinsphere-go-backend
     container_name: coinsphere-go-backend
     restart: unless-stopped
+    stop_grace_period: 40s
     environment:
       TZ: ${TZ:-Asia/Shanghai}
       # 必填:未设置则 compose 直接报错(见评审 #1)。生成随机值:openssl rand -hex 32

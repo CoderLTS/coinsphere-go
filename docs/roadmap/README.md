@@ -12,17 +12,17 @@ CoinSphere 从通用后台与工作流系统演进为个人币圈量化平台，
 
 ## 当前状态
 
-- 当前阶段：A0 工程系统。
-- 当前交付：工程规则、基础 CI、安全扫描、Stylelint 门禁、版本化 SQL migration 工具、最终发布产物安全与完整性扫描、手工发布与 DPanel 自动部署流水线、Python Worker 容器与 Compose/CI 健康契约，以及关键 Playwright 浏览器门禁。
-- 阶段状态：进行中，Stylelint、migration、最终发布产物扫描、Worker 容器和 Chromium/Firefox/WebKit 关键冒烟基线已建立。
+- 当前阶段：A1 基础稳定化。
+- 当前交付：A1-1 全链路 Context 取消、超时、信号处理与优雅关机。
+- 阶段状态：A0 已完成并经用户手工放行，A1 进行中；Python Worker 继续保持无任务消费能力的 `a0-idle` 模式，租约、心跳和 5 秒内任务取消留到 A1-2。
 - GitHub 远程仓库、生产 Runner 和仅允许 `main` 的 `production` Environment 已配置；私有仓库的分支保护受当前 GitHub 套餐限制，操作约束见 [GitHub 治理手册](../runbooks/github-governance.md)。
 
 ## 里程碑
 
 | 阶段 | 状态 | 活跃开发时间 | 交付结果 |
 | --- | --- | ---: | --- |
-| A0 工程系统 | 进行中 | 1-2 周 | GitHub Actions、规则文档、ADR、PR 模板和测试入口 |
-| A1 基础稳定化 | 待开始 | 2-3 周 | 取消、Outbox、事务、Auth、WebSocket、迁移和观测 |
+| A0 工程系统 | 已完成 | 1-2 周 | GitHub Actions、规则文档、ADR、PR 模板和测试入口 |
+| A1 基础稳定化 | 进行中 | 2-3 周 | 取消、Outbox、事务、Auth、WebSocket、迁移和观测 |
 | A2 行情底座 | 待开始 | 4-5 周 | TimescaleDB、双所元数据、1m 行情、补数和质量治理 |
 | A3 研究数据层 | 待开始 | 3-4 周 | K 线工作台、Parquet 数据集、新闻和 LLM 因子 |
 | A4 策略与向量回测 | 待开始 | 4-5 周 | Monaco、多文件版本、沙箱 Worker 和 vectorbt |

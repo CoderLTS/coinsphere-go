@@ -7,6 +7,7 @@
 package db
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -113,13 +114,13 @@ var agentItems = []agentItem{
 }
 
 // Seed 写入内置角色、用户、菜单、i18n、智能体、渠道与内置工作流。幂等。
-func Seed(gdb *gorm.DB, hasher *security.PasswordHasher, adminPassword string) error {
+func Seed(ctx context.Context, gdb *gorm.DB, hasher *security.PasswordHasher, adminPassword string) error {
 	// 入参里的 *gorm.DB、*security.PasswordHasher 都是“指针”(*类型 表示指向该类型的指针),
 	// 传指针可避免复制、并共享同一个数据库连接。函数只返回一个 error:nil 表示成功。
 	// Transaction(事务):把括号里的整段操作当成“要么全成功、要么全回滚”的整体;传进去的
 	// func(tx *gorm.DB) error {...} 是匿名函数(闭包),内部一律改用 tx 读写。只要它返回非 nil 的
 	// error,GORM 就自动回滚,之前写入的种子数据全部撤销。见 GO入门笔记『框架:GORM』。
-	return gdb.Transaction(func(tx *gorm.DB) error {
+	return gdb.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// := 是“短变量声明”:一次性接住返回值并自动推断类型。seedRoles 返回 (map, error)。
 		// 紧跟的 if err != nil 是 Go 最常见的错误处理:err 非 nil 就说明出错,直接把错误往上
 		// 返回(在事务里 return 错误 = 触发回滚)。见 GO入门笔记『变量、函数、错误』。

@@ -3,9 +3,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -20,90 +22,120 @@ import (
 	"coinsphere/backend/internal/service"
 )
 
-// main 是整个程序的入口:Go 程序从 main 包里的 main() 函数开始执行。
-// 启动顺序固定:加载配置 → 打开数据库 → 建表种子 → 构建 App → 启动运行时 → 起 HTTP → 等信号优雅关机。
+const (
+	shutdownTimeout   = 30 * time.Second
+	readHeaderTimeout = 10 * time.Second
+	idleTimeout       = 60 * time.Second
+)
+
 func main() {
-	// 第 1 步:解析命令行参数。flag 是标准库,用来读 -config 这类启动参数。
-	// := 是"短声明":自动推断类型、只能在函数内部用。flag.String 返回的是 *string 指针,
-	// 真正的值要等 flag.Parse() 解析完命令行后,再用 *configPath 取出来(见下一段)。
 	configPath := flag.String("config", "", "配置文件路径(默认 config.yml,可用 COINSPHERE_CONFIG_PATH 覆盖)")
 	flag.Parse()
 
-	// 第 2 步:加载配置。Go 函数常常返回多个值,这里同时接住配置 cfg 和错误 err。
-	// *configPath 前面的 * 是"顺着指针取值",把上面得到的 *string 还原成字符串。
-	// Go 没有 try/except,靠"返回 error + if err != nil"判断成败;出错就 log.Fatalf 打日志并退出进程。
-	cfg, err := config.Load(*configPath)
+	ctx, stop := signalContext()
+	go func() {
+		<-ctx.Done()
+		stop() // 首次信号开始收尾后恢复默认处理,第二次信号可强制退出。
+	}()
+	err := run(ctx, *configPath)
+	stop()
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		log.Printf("backend stopped with error: %v", err)
+		os.Exit(1)
 	}
-	// 安全校验:签名密钥若未配置/仍为默认值则拒绝启动(见评审 #1),避免令牌被伪造。
+}
+
+func signalContext() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+}
+
+func run(parentCtx context.Context, configPath string) (runErr error) {
+	ctx, cancel := context.WithCancel(parentCtx)
+	defer cancel()
+
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
 	if err := cfg.Validate(); err != nil {
-		log.Fatalf("invalid config: %v", err)
+		return fmt.Errorf("invalid config: %w", err)
 	}
 
-	// 第 3 步:按配置打开数据库(内部会按 driver 选方言并自动建表,见 db 包)。
-	gdb, err := db.Open(cfg.Database)
+	gdb, err := db.Open(ctx, cfg.Database)
 	if err != nil {
-		log.Fatalf("open database: %v", err)
+		return fmt.Errorf("open database: %w", err)
 	}
-	// 第 4 步:准备密码哈希器,并写入种子数据(内置管理员、菜单与权限等)。
+	sqlDB, err := gdb.DB()
+	if err != nil {
+		return fmt.Errorf("get sql database: %w", err)
+	}
+	defer func() { runErr = errors.Join(runErr, sqlDB.Close()) }()
+
 	hasher := security.NewPasswordHasher(cfg.Auth.PasswordIterations)
-	if err := db.Seed(gdb, hasher, cfg.Auth.BootstrapAdminPassword); err != nil {
-		log.Fatalf("seed database: %v", err)
+	if err := db.Seed(ctx, gdb, hasher, cfg.Auth.BootstrapAdminPassword); err != nil {
+		return fmt.Errorf("seed database: %w", err)
 	}
-	// 提醒:内置超管若仍用默认初始密码,登录后应尽快改掉(见评审 #2)。
 	if cfg.Auth.BootstrapAdminPassword == "coinsphere" {
 		log.Printf("[warn] 内置超管仍使用默认初始密码,请登录后尽快修改,或用 COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD 指定强密码")
 	}
 	log.Printf("database ready: driver=%s", cfg.Database.Driver)
 
-	// 第 5 步:构建 App(承载工作流运行时)。workerID 用"主机名:进程号"标识当前进程实例。
-	// hostname, _ := ... 里的 _ 是"下划线丢弃":这里不关心 os.Hostname 的错误,直接扔掉。
 	hostname, _ := os.Hostname()
 	workerID := fmt.Sprintf("%s:%d", hostname, os.Getpid())
-	app, err := service.NewApp(gdb, cfg, workerID)
+	app, err := service.NewApp(ctx, gdb, cfg, workerID)
 	if err != nil {
-		log.Fatalf("build app: %v", err)
+		return fmt.Errorf("build app: %w", err)
 	}
-	// 启动后台运行时:内部会开一批 goroutine(调度、执行循环等)在本进程内并发运行。
 	app.StartRuntime()
 
-	// 第 6 步:装配 HTTP 服务。filepath.Join 按操作系统分隔符拼路径(Windows 用 \、Linux 用 /),比手写字符串安全。
 	executable, _ := os.Executable()
 	baseDir := filepath.Dir(executable)
-	staticDir := filepath.Join(baseDir, "volumes", "static")
-	uploadsDir := filepath.Join(baseDir, "volumes", "uploads")
-	mux := api.NewServer(app, staticDir, uploadsDir)
-
-	// &http.Server{...} 用 & 取地址,得到一个指向 http.Server 的指针;Handler 就是上面建好的路由 mux。
+	mux := api.NewServer(app, filepath.Join(baseDir, "volumes", "static"), filepath.Join(baseDir, "volumes", "uploads"))
 	server := &http.Server{
-		Addr:    fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
-		Handler: mux,
+		Addr:              fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
+		Handler:           mux,
+		ReadHeaderTimeout: readHeaderTimeout,
+		IdleTimeout:       idleTimeout,
+		BaseContext: func(net.Listener) context.Context {
+			return ctx
+		},
 	}
-	// 第 7 步:起 HTTP 服务。go func(){...}() 开一条 goroutine 让服务在后台监听,
-	// 主流程才能继续往下走去等退出信号(否则 ListenAndServe 会一直阻塞在这里)。
-	// 正常关机时 ListenAndServe 返回 http.ErrServerClosed,这一种不算错误。
+	serveErr := make(chan error, 1)
 	go func() {
 		log.Printf("http server listening on %s", server.Addr)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("http server: %v", err)
+		err := server.ListenAndServe()
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
 		}
+		serveErr <- err
 	}()
 
-	// 第 8 步:优雅关机。channel 是 goroutine 之间传信号的管道(见 GO入门笔记『并发』)。
-	// make(chan os.Signal, 1) 建一个容量 1 的信号 channel;signal.Notify 把 Ctrl+C / SIGTERM 转发进来。
-	// <-quit 从 channel 接收,会一直阻塞,直到收到信号才继续往下执行。
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
-	<-quit
-	log.Printf("shutting down...")
+	var cause error
+	select {
+	case <-ctx.Done():
+		log.Printf("shutting down...")
+	case err := <-serveErr:
+		if err != nil {
+			cause = fmt.Errorf("http server: %w", err)
+		}
+	}
 
-	// 给关机一个 30 秒超时:context 用来传递"到点该停手了/超时了"的信号。
-	// defer cancel() 登记收尾——不管函数怎么返回,退出前一定会调用 cancel() 释放这个 context。
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	// 先让 HTTP 停止接收新请求(等在途请求处理完或到超时),再停后台运行时。_ = 表示忽略返回的错误。
-	_ = server.Shutdown(ctx)
-	app.StopRuntime()
-	log.Printf("bye")
+	// 一个取消信号同时阻止新请求、新认领,并传到在途工作流及外部 I/O。
+	cancel()
+	app.Hub.CloseAll()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer shutdownCancel()
+
+	var shutdownErrs []error
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		shutdownErrs = append(shutdownErrs, fmt.Errorf("shutdown http server: %w", err))
+		_ = server.Close()
+	}
+	if err := app.StopRuntime(shutdownCtx); err != nil {
+		shutdownErrs = append(shutdownErrs, fmt.Errorf("stop runtime: %w", err))
+	}
+	if cause == nil && len(shutdownErrs) == 0 {
+		log.Printf("bye")
+	}
+	return errors.Join(append([]error{cause}, shutdownErrs...)...)
 }

@@ -3,6 +3,7 @@
 ## PR 阻塞检查
 
 - Go：格式、Vet、Staticcheck、测试、竞态检查和构建。
+- 生命周期：`SIGINT`/`SIGTERM` 必须取消同一个根 Context；HTTP、Runtime、数据库和 WebSocket 在 30 秒应用总预算内收尾，Compose 给予 40 秒宽限，且停止后不再接收请求或认领执行。
 - 数据库：SQLite 与 PostgreSQL 的空库升级、旧版本升级、回滚重放、幂等和失败原子性契约。
 - Vue：ESLint、Stylelint、类型检查、Vitest 单元测试和生产构建。
 - 浏览器：Chromium、Firefox、WebKit 的关键 Playwright 冒烟；失败时保留截图、trace 和 HTML 报告。
@@ -32,5 +33,6 @@
 ## 已知基线债务
 
 - 版本化 SQL migration 的工具与测试骨架已经建立；应用启动仍由 GORM `AutoMigrate` 管理业务表，切换必须在 A1 独立 PR 完成。
-- 当前 Go 测试覆盖配置安全校验和 migration 契约，Worker 仅覆盖 A0 空闲运行与健康契约；认证、工作流并发、任务租约、取消和恢复的行为覆盖必须在 A1 对应 PR 中补齐。
+- Go 进程生命周期已覆盖信号、超时、取消传播、有界收尾和竞态；被取消的既有工作流执行按当前策略进入 `retry_waiting` 或 `failed`。
+- Worker 仍仅覆盖 A0 空闲运行与健康契约；租约、心跳、崩溃回收和 5 秒内任务取消由 A1-2 补齐，认证、工作流并发和恢复行为仍由后续对应 PR 覆盖。
 - 本机缺少 Docker 时，Compose 启动、健康检查和 API 冒烟必须由 GitHub Actions 完成。

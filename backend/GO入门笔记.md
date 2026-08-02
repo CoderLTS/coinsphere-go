@@ -37,7 +37,7 @@ import (
 
 - **`internal/` 文件夹**:Go 的特殊约定 —— `internal` 里的包只能被本项目 import,外部项目无法引用。用来放"内部实现"。
 - **大写 = 公开,小写 = 私有**:标识符(函数名/变量名/字段名)**首字母大写**表示能被别的包访问(public),**小写**表示只在本包内可见(private)。这是 Go 唯一的可见性规则,没有 `public`/`private` 关键字。
-  例:`func (a *App) StartRuntime()` 外部能调;`func (a *App) spawn()` 只能本包调。
+  例:`func (a *App) StartRuntime(ctx context.Context)` 外部能调;`func (a *App) spawn()` 只能本包调。
 
 ---
 
@@ -95,7 +95,7 @@ type ServerConfig struct {
 - 为什么用指针?① 传大结构体时不复制,省内存;② 想让函数**修改**原对象而不是副本;③ 用 `nil` 表示"没有这个值"(可选值)。
 ```go
 func NewApp(...) (*App, error)   // 返回 *App:一个指向 App 的指针
-app.StartRuntime()               // app 是指针,用 . 直接调方法(Go 自动解引用)
+app.StartRuntime(ctx)            // app 是指针,用 . 直接调方法(Go 自动解引用)
 ```
 
 ### slice(切片)和 map(字典)
@@ -117,14 +117,14 @@ Go 没有 class。把函数"挂"到某个类型上,就成了方法:
 type App struct { ... }
 
 // (a *App) 叫"接收者":表示这是 App 的方法,方法内用 a 指代当前对象(类似别的语言的 this/self)
-func (a *App) StartRuntime() {
-    a.spawn(a.schedulerLoop)   // 调本对象的其它方法/字段
+func (a *App) StartRuntime(ctx context.Context) {
+    a.spawn(ctx, a.schedulerLoop) // 调本对象的其它方法/字段
 }
 ```
 - **指针接收者 `(a *App)`**:方法内可以修改对象;不复制对象。本项目几乎都用它。
 - 值接收者 `(a App)`:操作的是副本,改了不影响原对象。
 
-调用:`app.StartRuntime()`。就这么简单。
+调用:`app.StartRuntime(ctx)`。`ctx` 被取消时,Runtime 的循环和在途执行会一起收到停止通知。
 
 ---
 
@@ -154,20 +154,22 @@ go func() {                 // 开一个新 goroutine,和主流程同时跑
 
 ### channel:goroutine 之间传数据/信号的"管道"
 ```go
-a.stop = make(chan struct{})   // 创建一个 channel;struct{} 是"零字节"类型,只当信号用
-close(a.stop)                  // 关闭 channel —— 所有在等它的 goroutine 会立刻收到通知
-<-a.stop                       // 从 channel 接收(会阻塞,直到有数据或被 close)
+ch := make(chan struct{})      // 创建一个 channel;struct{} 是"零字节"类型,只当信号用
+close(ch)                      // 关闭 channel —— 所有在等它的 goroutine 会立刻收到通知
+<-ch                           // 从 channel 接收(会阻塞,直到有数据或被 close)
 ch <- struct{}{}               // 向 channel 发送
 ```
 
 ### select:同时等多个 channel,谁先来走谁
 本项目用它实现"可被中断的 sleep":
 ```go
-func (a *App) sleeping(interval time.Duration) bool {
+func sleeping(ctx context.Context, interval time.Duration) bool {
+    timer := time.NewTimer(interval)
+    defer timer.Stop()
     select {
-    case <-a.stop:              // 如果收到停止信号
+    case <-ctx.Done():          // 根 Context 被信号或关机流程取消
         return false            //   → 提前醒来,返回 false 让循环退出
-    case <-time.After(interval): // 否则睡够 interval 时间
+    case <-timer.C:             // 否则睡够 interval 时间
         return true
     }
 }
@@ -181,22 +183,22 @@ go func() {
     loop()
 }()
 ...
-a.wg.Wait()          // 阻塞,直到计数归零(所有后台循环都退出了)
+a.wg.Wait()          // 阻塞,直到计数归零;实际关机还要用 Context 给这段等待设置总上限
 ```
 
 ### context.Context:传递"取消信号"和超时
-你会在函数参数里看到 `ctx context.Context`。它是 Go 里传递"该停手了/超时了"的标准方式,比如 `main.go` 里 30 秒关机超时。
+你会在函数参数里看到 `ctx context.Context`。它是 Go 里传递"该停手了/超时了"的标准方式。`main.go` 用 `signal.NotifyContext` 把 `SIGINT`/`SIGTERM` 变成唯一根 Context 的取消信号,HTTP、Runtime、数据库和 WebSocket 都沿调用链接收它;应用最多等待 30 秒,Compose 最多等待 40 秒。
 
 ---
 
 ## 7. defer:登记"函数返回前一定要做的收尾"
 
 ```go
-func (a *App) spawn(loop func()) {
+func (a *App) spawn(ctx context.Context, loop func(context.Context)) {
     a.wg.Add(1)
     go func() {
         defer a.wg.Done()   // 不管下面怎么退出,这个 goroutine 结束前一定执行 Done()
-        loop()
+        loop(ctx)
     }()
 }
 ```

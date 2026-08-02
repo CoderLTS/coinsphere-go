@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -18,14 +19,15 @@ import (
 
 // Open 按配置的 driver 打开数据库连接并完成建表。
 // 本项目用 GORM 这个 ORM 框架:把 Go struct 当数据库表来读写,基本不用手写 SQL(见 GO入门笔记『框架:GORM』)。
-func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
-	gdb, err := Connect(cfg)
+func Open(ctx context.Context, cfg config.DatabaseConfig) (*gorm.DB, error) {
+	gdb, err := Connect(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
 
 	// A1 切换到版本化 SQL migration 前，应用启动仍保留现有 AutoMigrate 行为。
-	if err := gdb.AutoMigrate(AllModels()...); err != nil {
+	if err := gdb.WithContext(ctx).AutoMigrate(AllModels()...); err != nil {
+		closeDatabase(gdb)
 		return nil, fmt.Errorf("auto migrate: %w", err)
 	}
 	return gdb, nil
@@ -33,7 +35,7 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 
 // Connect 只建立数据库连接并配置连接池，不修改业务 schema。
 // migration 命令使用此入口，避免在执行版本化 SQL 前触发 GORM AutoMigrate。
-func Connect(cfg config.DatabaseConfig) (*gorm.DB, error) {
+func Connect(ctx context.Context, cfg config.DatabaseConfig) (*gorm.DB, error) {
 	// gorm.Dialector 是"数据库方言"接口(interface):只约定要实现哪些方法,不关心具体是谁。
 	// sqlite/mysql/postgres 各自返回一个满足该接口的对象,于是下面一套代码就能支持三种数据库(见 GO入门笔记『接口』)。
 	var dialector gorm.Dialector
@@ -103,7 +105,8 @@ func Connect(cfg config.DatabaseConfig) (*gorm.DB, error) {
 
 	// postgres 独有:若指定了 schema,先确保它存在。%q 会给标识符自动加引号。
 	if cfg.Driver == "postgres" && cfg.Schema != "" {
-		if err := gdb.Exec(fmt.Sprintf(`CREATE SCHEMA IF NOT EXISTS %q`, cfg.Schema)).Error; err != nil {
+		if err := gdb.WithContext(ctx).Exec(fmt.Sprintf(`CREATE SCHEMA IF NOT EXISTS %q`, cfg.Schema)).Error; err != nil {
+			closeDatabase(gdb)
 			return nil, fmt.Errorf("create schema: %w", err)
 		}
 	}
@@ -112,6 +115,10 @@ func Connect(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	sqlDB, err := gdb.DB()
 	if err != nil {
 		return nil, err
+	}
+	if err := sqlDB.PingContext(ctx); err != nil {
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("ping %s database: %w", cfg.Driver, err)
 	}
 	// 连接池:sqlite 是单文件数据库,多个连接同时写会报 "database is locked",
 	// 所以把最大连接数限成 1(写操作串行);mysql/postgres 是真正的并发数据库,给更大的池并回收空闲连接。
@@ -125,4 +132,10 @@ func Connect(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	}
 
 	return gdb, nil
+}
+
+func closeDatabase(gdb *gorm.DB) {
+	if sqlDB, err := gdb.DB(); err == nil {
+		_ = sqlDB.Close()
+	}
 }

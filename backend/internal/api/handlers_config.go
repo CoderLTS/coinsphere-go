@@ -240,7 +240,7 @@ func (s *Server) handleTestNotifyChannel(w http.ResponseWriter, r *http.Request,
 		fail(w, err.Error())
 		return
 	}
-	data, err := s.App.TestNotifyChannel(channelID, principal)
+	data, err := s.App.TestNotifyChannel(r.Context(), channelID, principal)
 	if err != nil {
 		fail(w, err.Error())
 		return
@@ -430,7 +430,10 @@ func (s *Server) handleNotificationsWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID := principal.User.ID
-	s.App.Hub.Connect(userID, conn)
+	if !s.App.Hub.Connect(userID, conn) {
+		_ = conn.Close()
+		return
+	}
 	// defer + 匿名函数:不管下面因何退出,断开连接、关闭 conn 的收尾都会执行(见 GO入门笔记『defer』)。
 	defer func() {
 		s.App.Hub.Disconnect(userID, conn)
