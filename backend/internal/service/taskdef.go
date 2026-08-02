@@ -11,6 +11,7 @@
 package service
 
 import (
+	"context"
 	"sort"
 	"strings"
 	"time"
@@ -29,7 +30,7 @@ type taskDefinition struct {
 	Label           string
 	Description     string
 	ParameterSchema M
-	Execute         func(a *App, inputs M) (M, error)
+	Execute         func(ctx context.Context, a *App, inputs M) (M, error)
 }
 
 // taskDefinitions 是所有内置任务的清单(注册表本体)。
@@ -50,7 +51,7 @@ var taskDefinitions = []*taskDefinition{
 		},
 		// 这里给 Execute 字段赋了一个"匿名函数"(函数字面量),就是这种任务真正执行的逻辑:
 		// 读分页参数(缺省给默认值)→ 调 syncLatestNews 抓取 → 返回统计结果。
-		Execute: func(a *App, inputs M) (M, error) {
+		Execute: func(ctx context.Context, a *App, inputs M) (M, error) {
 			pageSize := int(asInt64(inputs["pageSize"]))
 			if pageSize <= 0 {
 				pageSize = 10
@@ -59,7 +60,7 @@ var taskDefinitions = []*taskDefinition{
 			if page <= 0 {
 				page = 1
 			}
-			result, err := a.syncLatestNews(pageSize, page)
+			result, err := a.syncLatestNews(ctx, pageSize, page)
 			if err != nil {
 				return nil, err
 			}

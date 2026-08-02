@@ -241,7 +241,7 @@ func taskRunExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	payload, err := definition.Execute(ctx.App, mergedInputs)
+	payload, err := definition.Execute(ctx.Ctx, ctx.App, mergedInputs)
 	if err != nil {
 		return nil, err
 	}
@@ -282,7 +282,7 @@ func notifyExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 			outboxEventID = &id
 		}
 	}
-	result, err := ctx.App.dispatchNotifyNode(ctx.Execution, ctx.NodeLog, outboxEventID, config, ctx.State.snapshot())
+	result, err := ctx.App.dispatchNotifyNode(ctx.Ctx, ctx.Execution, ctx.NodeLog, outboxEventID, config, ctx.State.snapshot())
 	if err != nil {
 		return nil, err
 	}

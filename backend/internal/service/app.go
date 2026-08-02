@@ -2,6 +2,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,12 +40,13 @@ type App struct {
 	//   Cipher —— 敏感信息的对称加解密
 	//   Hub    —— WebSocket 连接中心,负责给前端实时推送
 	// 用指针可以避免复制大对象,并让多处共享同一份实例。见 GO入门笔记『复合类型』。
-	DB     *gorm.DB
-	Cfg    *config.AppConfig
-	Hasher *security.PasswordHasher
-	Tokens *security.TokenManager
-	Cipher *security.SecretCipher
-	Hub    *Hub
+	DB       *gorm.DB
+	Cfg      *config.AppConfig
+	Hasher   *security.PasswordHasher
+	Tokens   *security.TokenManager
+	Cipher   *security.SecretCipher
+	Hub      *Hub
+	database *gorm.DB
 
 	// dummyHash 预先算好的“假密码哈希”:登录时若用户不存在/停用,也拿它跑一次校验,
 	// 让各分支耗时一致,消除通过响应快慢枚举用户名的可能(见评审 #7)。
@@ -61,16 +63,16 @@ type App struct {
 	runningKeys   map[string]int
 	runningKeysMu sync.Mutex
 
-	// dispatcherWake / stop 都是 channel(管道,goroutine 之间传信号用),元素是 struct{}
+	// dispatcherWake 是 channel(管道,goroutine 之间传信号用),元素是 struct{}
 	// (零字节类型,只当"信号"不携带数据):
 	//   dispatcherWake —— 有新任务入队时往里发一下,立刻唤醒派发循环,降低延迟
-	//   stop           —— 一旦 close(关闭),所有在等它的后台循环都会立刻收到"该停了"
-	// wg(WaitGroup)用来等所有后台 goroutine 干净退出。channel / WaitGroup 见 GO入门笔记『并发』。
+	// runtimeCtx 贯通进程关机、后台循环和工作流执行;wg 等所有后台 goroutine 干净退出。
 	// dispatcherWake 入队后立即唤醒派发循环,降低触发延迟。
 	dispatcherWake chan struct{}
 
-	stop chan struct{}
-	wg   sync.WaitGroup
+	runtimeCtx    context.Context
+	runtimeCancel context.CancelFunc
+	wg            sync.WaitGroup
 }
 
 // NewApp 组装运行时。
@@ -78,7 +80,10 @@ type App struct {
 // NewApp 是 App 的"构造函数":Go 没有 class / constructor 关键字,惯例就是写一个 New 开头
 // 的函数,把各个依赖 new 好、填进结构体再返回。返回类型 (*App, error) 是多返回值:
 // 一个成功结果(*App 指针)+ 一个错误(error),见 GO入门笔记『变量、函数、错误』。
-func NewApp(gdb *gorm.DB, cfg *config.AppConfig, workerID string) (*App, error) {
+func NewApp(parentCtx context.Context, gdb *gorm.DB, cfg *config.AppConfig, workerID string) (*App, error) {
+	if parentCtx == nil {
+		return nil, errors.New("runtime context is required")
+	}
 	// := 是短变量声明(自动推断类型,只能在函数内部用);这里一次接住两个返回值:cipher 和 err。
 	// 紧跟的 if err != nil 是 Go 最典型的错误处理:出错就带着错误提前 return,不靠抛异常。
 	cipher, err := security.NewSecretCipher(cfg.Auth.EncryptionKey)
@@ -87,11 +92,12 @@ func NewApp(gdb *gorm.DB, cfg *config.AppConfig, workerID string) (*App, error) 
 	}
 	// 复用同一个 hasher:既装进 App.Hasher,也用它预算一份假哈希填 dummyHash(见评审 #7)。
 	hasher := security.NewPasswordHasher(cfg.Auth.PasswordIterations)
+	runtimeCtx, runtimeCancel := context.WithCancel(parentCtx)
 	// &App{...} 是"结构体字面量 + 取地址(&)":当场把各字段填好,并返回它的指针 *App。
 	// 字段名后跟冒号按名赋值,顺序随意。make(chan struct{}, 1) 造一个容量为 1 的带缓冲 channel。
 	// 结尾的 nil 占据 error 返回值的位置,表示"没有错误"。
 	return &App{
-		DB:             gdb,
+		DB:             gdb.WithContext(runtimeCtx),
 		Cfg:            cfg,
 		Hasher:         hasher,
 		Tokens:         security.NewTokenManager(cfg.Auth.SecretKey, cfg.Auth.AccessTokenTTLMinutes, cfg.Auth.RefreshTokenTTLDays),
@@ -101,8 +107,17 @@ func NewApp(gdb *gorm.DB, cfg *config.AppConfig, workerID string) (*App, error) 
 		dummyHash:      hasher.HashPassword(security.RandomToken()),
 		runningKeys:    map[string]int{},
 		dispatcherWake: make(chan struct{}, 1),
-		stop:           make(chan struct{}),
+		runtimeCtx:     runtimeCtx,
+		runtimeCancel:  runtimeCancel,
+		database:       gdb,
 	}, nil
+}
+
+func (a *App) dbWithContext(ctx context.Context) *gorm.DB {
+	if a.database != nil {
+		return a.database.WithContext(ctx)
+	}
+	return a.DB.WithContext(ctx)
 }
 
 // Go 用一个固定的"参考时间"当格式模板:2006-01-02 15:04:05 恰好是 1 2 3 4 5 6(月日时分秒年)。

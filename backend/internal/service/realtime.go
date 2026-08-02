@@ -19,7 +19,7 @@ import (
 
 // Hub 按用户聚合的 WebSocket 连接管理器。
 // type ... struct 定义"结构体"(把若干字段打包成一个类型),是本文件第一个 struct。见 GO入门笔记『复合类型』
-// 两个字段配合使用:
+// 三个字段配合使用:
 //
 //	mu          —— 互斥锁。多个 goroutine(各连接的收发、后台推送)会同时读写 connections,
 //	               而 Go 的 map 并发读写会直接崩溃;加锁 = 同一时刻只放一个 goroutine 进来改,保证安全。
@@ -27,9 +27,11 @@ import (
 //	connections —— 连接注册表,是"嵌套 map":外层键=用户ID(int64),值又是一个 map;
 //	               内层键=该用户的一条连接(*websocket.Conn 指针,多端登录就有多条),值恒为 true。
 //	               内层 map 当"集合(set)"用,只关心连接在不在,bool 仅占位。map 见 GO入门笔记『复合类型』
+//	closed      —— 关机开始后永久为 true,阻止已进入处理器的升级请求晚注册。
 type Hub struct {
 	mu          sync.Mutex
 	connections map[int64]map[*websocket.Conn]bool
+	closed      bool
 }
 
 // NewHub 创建连接管理器。
@@ -42,16 +44,20 @@ func NewHub() *Hub {
 // Connect 注册用户连接。
 // (h *Hub) 叫"方法接收者":表示这是挂在 Hub 上的方法,方法内用 h 指代当前 Hub(类似别的语言的 this/self)。
 // 这是本文件第一个方法。见 GO入门笔记『方法与接收者』
-func (h *Hub) Connect(userID int64, conn *websocket.Conn) {
+func (h *Hub) Connect(userID int64, conn *websocket.Conn) bool {
 	// 先加锁;defer 登记"函数返回前自动解锁",这样无论从哪条分支 return 都不会漏解锁。defer 见 GO入门笔记『defer』
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.closed {
+		return false
+	}
 	// 该用户第一次连进来时,内层 map 还是 nil(空);向 nil map 写入会 panic(崩溃),所以要先建好。
 	if h.connections[userID] == nil {
 		h.connections[userID] = map[*websocket.Conn]bool{}
 	}
 	// 把这条连接放入该用户的连接集合(值 true 仅占位)。
 	h.connections[userID][conn] = true
+	return true
 }
 
 // Disconnect 移除用户连接。
@@ -69,6 +75,24 @@ func (h *Hub) Disconnect(userID int64, conn *websocket.Conn) {
 	// 若该用户已无任何连接,顺手把外层 map 里的这个用户也删掉,避免残留空表。len 取长度。
 	if len(sockets) == 0 {
 		delete(h.connections, userID)
+	}
+}
+
+// CloseAll 关闭升级后的连接;http.Server.Shutdown 不会接管 WebSocket。
+func (h *Hub) CloseAll() {
+	h.mu.Lock()
+	h.closed = true
+	sockets := make([]*websocket.Conn, 0)
+	for _, userSockets := range h.connections {
+		for conn := range userSockets {
+			sockets = append(sockets, conn)
+		}
+	}
+	h.connections = map[int64]map[*websocket.Conn]bool{}
+	h.mu.Unlock()
+
+	for _, conn := range sockets {
+		_ = conn.Close()
 	}
 }
 

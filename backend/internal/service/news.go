@@ -4,6 +4,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -189,7 +190,7 @@ type blockbeatsItem struct {
 }
 
 // fetchBlockbeatsNews 抓取快讯列表,失败时自动重试,最多 3 次。
-func fetchBlockbeatsNews(size, page int) ([]blockbeatsItem, error) {
+func fetchBlockbeatsNews(ctx context.Context, size, page int) ([]blockbeatsItem, error) {
 	// fmt.Sprintf 用占位符拼出带查询参数的 URL(%d = 填入一个整数)。
 	url := fmt.Sprintf("%s?type=push&size=%d&page=%d", blockbeatsAPIURL, size, page)
 	// http.Client 是发请求的客户端;Timeout 限制单次请求最长 10 秒。
@@ -197,11 +198,16 @@ func fetchBlockbeatsNews(size, page int) ([]blockbeatsItem, error) {
 	var lastErr error
 	// 简单的重试循环:失败就 sleep 一会再试,attempt 从 0 递增到 2。
 	for attempt := 0; attempt < 3; attempt++ {
-		// client.Get 发一个 GET 请求;返回响应 resp 和错误 err。
-		resp, err := client.Get(url)
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := client.Do(request)
 		if err != nil {
 			lastErr = err
-			time.Sleep(time.Duration(attempt+1) * time.Second)
+			if err := waitForRetry(ctx, attempt); err != nil {
+				return nil, err
+			}
 			continue
 		}
 		// 注意:这里用 resp.Body.Close() 手动关闭,而不是 defer。因为循环里 defer 会一直堆到
@@ -209,7 +215,9 @@ func fetchBlockbeatsNews(size, page int) ([]blockbeatsItem, error) {
 		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
 			resp.Body.Close()
 			lastErr = fmt.Errorf("blockbeats http %d", resp.StatusCode)
-			time.Sleep(time.Duration(attempt+1) * time.Second)
+			if err := waitForRetry(ctx, attempt); err != nil {
+				return nil, err
+			}
 			continue
 		}
 		// 上游 data 字段可能是 {data:[...]} 或直接为数组,做兼容解析。
@@ -267,6 +275,20 @@ func fetchBlockbeatsNews(size, page int) ([]blockbeatsItem, error) {
 	return nil, lastErr
 }
 
+func waitForRetry(ctx context.Context, attempt int) error {
+	if attempt >= 2 {
+		return nil
+	}
+	timer := time.NewTimer(time.Duration(attempt+1) * time.Second)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // parseUnixAny 把"可能是数字也可能是字符串"的时间戳转成 *time.Time。
 func parseUnixAny(value any) *time.Time {
 	var seconds int64
@@ -302,8 +324,8 @@ type newsSyncResult struct {
 }
 
 // syncLatestNews 拉取 Blockbeats 快讯并去重入库。
-func (a *App) syncLatestNews(pageSize, page int) (*newsSyncResult, error) {
-	rows, err := fetchBlockbeatsNews(pageSize, page)
+func (a *App) syncLatestNews(ctx context.Context, pageSize, page int) (*newsSyncResult, error) {
+	rows, err := fetchBlockbeatsNews(ctx, pageSize, page)
 	if err != nil {
 		return nil, err
 	}
@@ -316,7 +338,7 @@ func (a *App) syncLatestNews(pageSize, page int) (*newsSyncResult, error) {
 	}
 	// Pluck 只取某一列,把已存在的 source_message_id 收集到 existingIDs 切片。
 	var existingIDs []int64
-	a.DB.Model(&db.BlockbeatsNews{}).Where("source_message_id IN ?", ids).Pluck("source_message_id", &existingIDs)
+	a.DB.WithContext(ctx).Model(&db.BlockbeatsNews{}).Where("source_message_id IN ?", ids).Pluck("source_message_id", &existingIDs)
 	// 用 map[int64]bool 当"集合"记录哪些 ID 已入库,后面就能 O(1) 判重、跳过重复(见 GO入门笔记『复合类型』)。
 	existing := map[int64]bool{}
 	for _, id := range existingIDs {
@@ -326,6 +348,9 @@ func (a *App) syncLatestNews(pageSize, page int) (*newsSyncResult, error) {
 	inserted := 0
 	insertedItems := make([]M, 0)
 	for _, row := range rows {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if existing[row.MessageID] {
 			continue
 		}
@@ -339,7 +364,7 @@ func (a *App) syncLatestNews(pageSize, page int) (*newsSyncResult, error) {
 			OriginalURL:     row.Link,
 			ImageURL:        row.Picture,
 		}
-		if err := a.DB.Create(&record).Error; err != nil {
+		if err := a.DB.WithContext(ctx).Create(&record).Error; err != nil {
 			continue
 		}
 		inserted++

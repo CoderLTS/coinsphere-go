@@ -4,6 +4,7 @@ package service
 // log = 打印日志;time = 时间与时长(time.Duration)。
 // coinsphere/backend/internal/db = 本项目的数据库模型包(GORM 的表结构定义)。
 import (
+	"context"
 	"log"
 	"time"
 
@@ -15,8 +16,11 @@ import (
 // StartRuntime 启动全部后台循环:调度、派发、事件、恢复与清理。
 // 单进程内 goroutine 协作,替代原 orchestrator/worker 双进程 + Redis。
 func (a *App) StartRuntime() {
-	a.bootstrapRuntimeEntries()
-	a.reconcileScheduleRegistrations()
+	if a.runtimeCtx.Err() != nil {
+		return
+	}
+	a.bootstrapRuntimeEntries(a.runtimeCtx)
+	a.reconcileScheduleRegistrations(a.runtimeCtx)
 
 	// spawn 会用 go 关键字为每个循环各开一条 goroutine(并发执行流),
 	// 于是这五条后台循环同时运行、互不阻塞。见 GO入门笔记『并发』。
@@ -29,17 +33,25 @@ func (a *App) StartRuntime() {
 }
 
 // StopRuntime 通知全部循环退出并等待收尾。
-func (a *App) StopRuntime() {
-	// close(a.stop) 关闭"停止信号" channel:所有正在 <-a.stop 上等待的 goroutine 会同时立刻收到通知而退出。
-	// 随后 a.wg.Wait() 阻塞在此,直到全部后台循环都执行完各自的 Done(),确保干净收尾。见 GO入门笔记『并发』。
-	close(a.stop)
-	a.wg.Wait()
-	log.Printf("[runtime] stopped")
+func (a *App) StopRuntime(ctx context.Context) error {
+	a.runtimeCancel()
+	done := make(chan struct{})
+	go func() {
+		a.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		log.Printf("[runtime] stopped")
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // spawn 统一负责"开一条后台 goroutine 并把它纳入等待组 wg"。
 // 参数 loop func() 的类型是"函数":表示传进来一个无参数、无返回值的函数值,把要并发跑的循环当值传入。
-func (a *App) spawn(loop func()) {
+func (a *App) spawn(loop func(context.Context)) {
 	// wg.Add(1):等待组计数 +1,登记"又多了一条要等它结束的 goroutine"。见 GO入门笔记『并发』。
 	a.wg.Add(1)
 	// go func(){ ... }() 用 go 关键字开一条新的并发执行流(goroutine);
@@ -47,18 +59,18 @@ func (a *App) spawn(loop func()) {
 	go func() {
 		// defer 登记收尾动作:不管下面的 loop() 怎样退出,本 goroutine 结束前一定执行 wg.Done()(计数 -1)。见 GO入门笔记『defer』。
 		defer a.wg.Done()
-		loop()
+		loop(a.runtimeCtx)
 	}()
 }
 
 // sleeping 实现"可被中断的睡眠":要么睡满 interval,要么中途被停止信号叫醒。
 // 返回 bool:true = 正常睡够(调用方可继续下一轮循环);false = 收到停止信号(该退出循环了)。
 // interval time.Duration 是 Go 的"时间长度"类型(按纳秒计),如 500*time.Millisecond。见 GO入门笔记『复合类型』。
-func (a *App) sleeping(interval time.Duration) bool {
+func (a *App) sleeping(ctx context.Context, interval time.Duration) bool {
 	// select 同时等多个 channel,哪个 case 先就绪就走哪个;这是 Go 并发协调的核心。见 GO入门笔记『并发』。
 	select {
-	// 若 a.stop 被 close,这个接收立刻就绪 → 返回 false,让调用方的 for 循环退出。
-	case <-a.stop:
+	// 若 ctx 被取消,这个接收立刻就绪 → 返回 false,让调用方的 for 循环退出。
+	case <-ctx.Done():
 		return false
 	// 否则 time.After 会在 interval 之后才送来一个值 → 说明睡够了,返回 true。
 	case <-time.After(interval):
@@ -79,14 +91,17 @@ func (a *App) wakeDispatcher() {
 
 // bootstrapRuntimeEntries 启动时为已激活但没有入口记录的 workflow 重建入口
 // (覆盖种子数据只写激活状态不写入口的情况)。
-func (a *App) bootstrapRuntimeEntries() {
+func (a *App) bootstrapRuntimeEntries(ctx context.Context) {
 	// var states []T 声明一个切片(slice):可变长数组,[]db.WorkflowRuntimeState 表示"一堆运行态记录"。见 GO入门笔记『复合类型』。
 	var states []db.WorkflowRuntimeState
 	// GORM:等价 SQL "SELECT * FROM workflow_runtime_states WHERE active_workflow_definition_id IS NOT NULL"。
 	// &states 传切片的地址,GORM 把查询结果写回到 states 里。见 GO入门笔记『框架:GORM』。
-	a.DB.Where("active_workflow_definition_id IS NOT NULL").Find(&states)
+	a.DB.WithContext(ctx).Where("active_workflow_definition_id IS NOT NULL").Find(&states)
 	// for i := range states 遍历切片,i 是下标;:= 是短声明(自动推断类型,只能在函数内用)。见 GO入门笔记『复合类型』『变量、函数、错误』。
 	for i := range states {
+		if ctx.Err() != nil {
+			return
+		}
 		// &states[i] 取第 i 个元素的地址,得到指针;之后对 state 的读写就直接作用在原元素上。见 GO入门笔记『复合类型』。
 		state := &states[i]
 		var entryCount int64
@@ -107,18 +122,18 @@ func (a *App) bootstrapRuntimeEntries() {
 
 // 后台循环之一【调度】:定时扫描"到点该跑"的定时任务并入队。
 // schedulerLoop 扫描到期的 schedule 入口并入队执行。
-func (a *App) schedulerLoop() {
+func (a *App) schedulerLoop(ctx context.Context) {
 	// time.Duration 是时长类型;毫秒配置值 × time.Millisecond 得到一个真正的时长。见 GO入门笔记『复合类型』。
 	pollInterval := time.Duration(a.Cfg.Workflow.PollIntervalMs) * time.Millisecond
 	reconcileInterval := time.Duration(a.Cfg.Workflow.ScheduleReconcileIntervalSeconds) * time.Second
 	lastReconcile := time.Now()
 	// for a.sleeping(pollInterval) 是本项目所有后台循环的通用骨架:
 	// 每轮先睡一个轮询间隔;睡够返回 true 就继续下一轮,收到停止信号返回 false 则循环自然结束、goroutine 退出。见 GO入门笔记『并发』。
-	for a.sleeping(pollInterval) {
-		a.fireDueScheduleEntries()
+	for a.sleeping(ctx, pollInterval) {
+		a.fireDueScheduleEntries(ctx)
 		// 每隔 reconcileInterval 再对齐一次调度注册状态(而不是每一轮都做)。
 		if time.Since(lastReconcile) >= reconcileInterval {
-			a.reconcileScheduleRegistrations()
+			a.reconcileScheduleRegistrations(ctx)
 			lastReconcile = time.Now()
 		}
 	}
@@ -126,12 +141,12 @@ func (a *App) schedulerLoop() {
 
 // fireDueScheduleEntries 找出所有 next_run_at 已到期的调度入口,逐个"抢占并触发"。
 // 这里体现"数据库即队列":不依赖 Redis,靠一条带条件的 UPDATE 来抢触发权(见下方乐观锁注释)。
-func (a *App) fireDueScheduleEntries() {
+func (a *App) fireDueScheduleEntries(ctx context.Context) {
 	now := time.Now()
 	var entries []db.WorkflowRuntimeEntry
 	// 等价一条带 JOIN 的 SELECT:取出已启用、已注册、next_run_at 已到期、且绑定在当前激活定义上的 schedule 入口。
 	// GORM 里 ? 是占位符,值单独传(下面几行末尾的 "schedule", true, "registered", now),由驱动转义、防 SQL 注入。见 GO入门笔记『框架:GORM』。
-	a.DB.Joins("JOIN workflow_runtime_states ON workflow_runtime_entries.workflow_runtime_state_id = workflow_runtime_states.id").
+	a.DB.WithContext(ctx).Joins("JOIN workflow_runtime_states ON workflow_runtime_entries.workflow_runtime_state_id = workflow_runtime_states.id").
 		Where(
 			"workflow_runtime_entries.start_type = ? AND workflow_runtime_entries.is_enabled = ? "+
 				"AND workflow_runtime_entries.registration_status = ? "+
@@ -143,6 +158,9 @@ func (a *App) fireDueScheduleEntries() {
 		Find(&entries)
 
 	for i := range entries {
+		if ctx.Err() != nil {
+			return
+		}
 		entry := &entries[i]
 		// *entry.NextRunAt:entry.NextRunAt 是指针(*time.Time),用 * 顺着指针取出它指向的时间值。见 GO入门笔记『复合类型』。
 		dueAt := *entry.NextRunAt
@@ -206,10 +224,13 @@ func (a *App) computeEntryNextRun(entry *db.WorkflowRuntimeEntry, after time.Tim
 }
 
 // reconcileScheduleRegistrations 对齐 schedule 入口注册状态。
-func (a *App) reconcileScheduleRegistrations() {
+func (a *App) reconcileScheduleRegistrations(ctx context.Context) {
 	var states []db.WorkflowRuntimeState
-	a.DB.Find(&states)
+	a.DB.WithContext(ctx).Find(&states)
 	for i := range states {
+		if ctx.Err() != nil {
+			return
+		}
 		state := &states[i]
 		activeDefinitionID := int64(0)
 		if state.ActiveWorkflowDefinitionID != nil {
@@ -254,47 +275,53 @@ func (a *App) reconcileScheduleRegistrations() {
 
 // 后台循环之二【派发】:把"排队中"的执行认领下来,交给 worker 池并发执行。
 // dispatchLoop 提升到期重试 + 认领 queued 执行,交给 worker 池。
-func (a *App) dispatchLoop() {
+func (a *App) dispatchLoop(ctx context.Context) {
 	pollInterval := time.Duration(a.Cfg.Workflow.PollIntervalMs) * time.Millisecond
 	// make(chan struct{}, N) 建一个"带缓冲"的 channel,容量 N = 最大并发数。
 	// 它当"令牌桶 / 信号量"用:桶里有 N 个空位,占到一个才能开跑,跑完再还回来(见 claimAndRun)。见 GO入门笔记『并发』。
 	slots := make(chan struct{}, a.Cfg.Workflow.ExecutorConcurrency)
-	// for {} 是无限循环(没有条件),靠里面的 case <-a.stop: return 来退出。
+	// for {} 是无限循环(没有条件),靠里面的 case <-ctx.Done(): return 来退出。
 	for {
 		// select 在这里同时等三件事,谁先来走谁:
 		select {
 		// 1) 收到停止信号 → return 结束本 goroutine。
-		case <-a.stop:
+		case <-ctx.Done():
 			return
 		// 2) 有人调用 wakeDispatcher 塞了信号 → 立刻醒来干活(新任务入队时用,免得空等)。
 		case <-a.dispatcherWake:
 		// 3) 前两者都没发生也没关系:睡满 pollInterval 后照样醒来轮询一次(兜底)。
 		case <-time.After(pollInterval):
 		}
-		a.promoteDueRetries()
-		a.claimAndRun(slots)
+		if ctx.Err() != nil {
+			return
+		}
+		a.promoteDueRetries(ctx)
+		a.claimAndRun(ctx, slots)
 	}
 }
 
 // promoteDueRetries 把"到点该重试"的执行从 retry_waiting 批量改回 queued,让它们重新可被认领。
 // 等价 SQL:UPDATE workflow_executions SET status='queued', next_retry_at=NULL WHERE status='retry_waiting' AND next_retry_at<=now。
-func (a *App) promoteDueRetries() {
+func (a *App) promoteDueRetries(ctx context.Context) {
 	now := time.Now()
-	a.DB.Model(&db.WorkflowExecution{}).
+	a.DB.WithContext(ctx).Model(&db.WorkflowExecution{}).
 		Where("status = ? AND next_retry_at IS NOT NULL AND next_retry_at <= ?", "retry_waiting", now).
 		Updates(map[string]any{"status": "queued", "next_retry_at": nil})
 }
 
 // claimAndRun 在并发上限内尽量多地认领待执行任务,每认领一条就开一条 goroutine 去跑。
-func (a *App) claimAndRun(slots chan struct{}) {
+func (a *App) claimAndRun(ctx context.Context, slots chan struct{}) {
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		// 非阻塞地"占一个并发槽":能往 slots 塞进一个令牌就继续;塞不进(桶满)就走 default 直接返回,不阻塞。
 		select {
 		case slots <- struct{}{}:
 		default:
 			return // 并发槽已满。
 		}
-		execution := a.claimNextExecution()
+		execution := a.claimNextExecution(ctx)
 		if execution == nil {
 			// 没有可认领的任务:把刚占的槽还回来(<-slots 从 channel 取出一个令牌)再退出。
 			<-slots
@@ -307,18 +334,21 @@ func (a *App) claimAndRun(slots chan struct{}) {
 			// 两个 defer 按"后进先出"执行:goroutine 结束时先归还并发槽(<-slots),再让等待组计数 -1。见 GO入门笔记『defer』『并发』。
 			defer a.wg.Done()
 			defer func() { <-slots }()
-			a.processExecution(execution)
+			a.processExecution(ctx, execution)
 		}(execution)
 	}
 }
 
 // claimNextExecution 乐观认领一条 queued 执行(跳过并发键被占用的)。
-func (a *App) claimNextExecution() *db.WorkflowExecution {
+func (a *App) claimNextExecution(ctx context.Context) *db.WorkflowExecution {
 	var candidates []db.WorkflowExecution
 	// 先按入队时间捞出最多 20 条 queued 候选(SELECT ... WHERE status='queued' ORDER BY queued_at LIMIT 20)。
 	// 注意:这一步只是"看看有哪些",还没认领——真正的认领靠下面那条带条件的 UPDATE。
-	a.DB.Where("status = ?", "queued").Order("queued_at ASC, id ASC").Limit(20).Find(&candidates)
+	a.DB.WithContext(ctx).Where("status = ?", "queued").Order("queued_at ASC, id ASC").Limit(20).Find(&candidates)
 	for i := range candidates {
+		if ctx.Err() != nil {
+			return nil
+		}
 		candidate := &candidates[i]
 		// 先在进程内抢并发键信号量;抢不到说明同键任务已在跑,跳过看下一条。
 		if !a.tryAcquireKey(candidate.ConcurrencyKey) {
@@ -328,7 +358,7 @@ func (a *App) claimNextExecution() *db.WorkflowExecution {
 		// 数据库即队列的核心认领动作:UPDATE ... SET status='running',... WHERE id=? AND status='queued'。
 		// WHERE 里再次要求 status 仍是 'queued':只有把它从 queued 改成 running 的那一个 worker 会成功,
 		// 天然互斥,不需要 Redis 分布式锁——这就是"用一条带条件的 UPDATE 当队列出队"的设计。
-		result := a.DB.Model(&db.WorkflowExecution{}).
+		result := a.DB.WithContext(ctx).Model(&db.WorkflowExecution{}).
 			Where("id = ? AND status = ?", candidate.ID, "queued").
 			Updates(map[string]any{
 				"status": "running", "claimed_at": now, "started_at": now,
@@ -341,13 +371,18 @@ func (a *App) claimNextExecution() *db.WorkflowExecution {
 			a.releaseKey(candidate.ConcurrencyKey)
 			continue
 		}
-		claimed, err := a.getExecutionByID(candidate.ID)
-		if err != nil {
-			a.releaseKey(candidate.ConcurrencyKey)
-			continue
-		}
-		// 认领成功,返回这条执行的最新数据指针。
-		return claimed
+		candidate.Status = "running"
+		candidate.ClaimedAt = &now
+		candidate.StartedAt = &now
+		candidate.FinishedAt = nil
+		candidate.LastHeartbeatAt = &now
+		candidate.WorkerID = &a.WorkerID
+		candidate.NextRetryAt = nil
+		candidate.FailureCategory = ""
+		candidate.ErrorMessage = ""
+		candidate.AttemptCount++
+		// UPDATE 已提交后直接交给执行 goroutine;取消会由其 detached cleanup 收尾。
+		return candidate
 	}
 	return nil
 }
@@ -390,7 +425,7 @@ func (a *App) releaseKey(key string) {
 }
 
 // processExecution 执行一条已认领的 execution:attempt 记录、心跳、跑图、终态回写。
-func (a *App) processExecution(execution *db.WorkflowExecution) {
+func (a *App) processExecution(ctx context.Context, execution *db.WorkflowExecution) {
 	// defer:整条执行处理结束前一定归还并发键,和 tryAcquireKey 配对。见 GO入门笔记『defer』。
 	defer a.releaseKey(execution.ConcurrencyKey)
 	attempt := execution.AttemptCount
@@ -406,7 +441,9 @@ func (a *App) processExecution(execution *db.WorkflowExecution) {
 	// 心跳 goroutine:证明本执行仍在运行,供 stale 恢复判定。
 	// heartbeatStop 是一个只用来发"停止"信号的 channel(struct{} 零字节)。见 GO入门笔记『并发』。
 	heartbeatStop := make(chan struct{})
+	heartbeatDone := make(chan struct{})
 	go func() {
+		defer close(heartbeatDone)
 		interval := time.Duration(a.Cfg.Workflow.HeartbeatIntervalSeconds) * time.Second
 		if interval < time.Second {
 			interval = time.Second
@@ -420,9 +457,11 @@ func (a *App) processExecution(execution *db.WorkflowExecution) {
 			// 收到停止信号(主流程 close 了 heartbeatStop)→ return 结束心跳 goroutine。
 			case <-heartbeatStop:
 				return
+			case <-ctx.Done():
+				return
 			// 每当 ticker 到点 → 刷新一次 last_heartbeat_at 时间戳(带 worker_id/attempt 条件,确保只更新自己这一轮)。
 			case <-ticker.C:
-				a.DB.Model(&db.WorkflowExecution{}).
+				a.DB.WithContext(ctx).Model(&db.WorkflowExecution{}).
 					Where("id = ? AND status = ? AND attempt_count = ? AND worker_id = ?", execution.ID, "running", attempt, a.WorkerID).
 					Update("last_heartbeat_at", time.Now())
 			}
@@ -430,24 +469,25 @@ func (a *App) processExecution(execution *db.WorkflowExecution) {
 	}()
 
 	// 真正执行工作流图;返回 (结果, 错误)。这一行会阻塞到执行结束。
-	result, runErr := a.runExecutionGraph(execution.ID)
-	// 执行结束,close 心跳 channel:上面的 case <-heartbeatStop 立刻就绪,心跳 goroutine 随即退出。见 GO入门笔记『并发』。
+	result, runErr := a.runExecutionGraph(ctx, execution.ID)
 	close(heartbeatStop)
-
+	<-heartbeatDone
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cleanupCancel()
 	if runErr != nil {
-		a.finalizeFailure(execution, attempt, result, runErr)
+		a.finalizeFailure(cleanupCtx, execution, attempt, result, runErr)
 		return
 	}
-	a.finalizeSuccess(execution, attempt, result)
+	a.finalizeSuccess(cleanupCtx, execution, attempt, result)
 }
 
 // finalizeSuccess 把执行写成 success 终态。
 // 下面 UPDATE 的 WHERE 里带 status='running' AND attempt_count=? AND worker_id=?:
 // 只有"仍是本 worker、本次尝试还在跑"时才写得进去,防止已被 stale 恢复抢走的执行又被旧 worker 覆盖(乐观保护)。
-func (a *App) finalizeSuccess(execution *db.WorkflowExecution, attempt int, result *runResult) {
+func (a *App) finalizeSuccess(ctx context.Context, execution *db.WorkflowExecution, attempt int, result *runResult) {
 	finishedAt := result.FinishedAt
 	durationMs := finishedAt.Sub(result.StartedAt).Milliseconds()
-	updated := a.DB.Model(&db.WorkflowExecution{}).
+	updated := a.dbWithContext(ctx).Model(&db.WorkflowExecution{}).
 		Where("id = ? AND status = ? AND attempt_count = ? AND worker_id = ?", execution.ID, "running", attempt, a.WorkerID).
 		Updates(map[string]any{
 			"status": "success", "finished_at": finishedAt, "duration_ms": durationMs,
@@ -458,13 +498,13 @@ func (a *App) finalizeSuccess(execution *db.WorkflowExecution, attempt int, resu
 	if updated.RowsAffected == 0 {
 		return
 	}
-	a.closeAttempt(execution.ID, attempt, "success", finishedAt, "", "")
-	a.publishExecutionSucceeded(result)
+	a.closeAttempt(ctx, execution.ID, attempt, "success", finishedAt, "", "")
+	a.publishExecutionSucceeded(ctx, result)
 }
 
 // finalizeFailure 把执行写成失败终态:可重试且未超次数则转 retry_waiting 并排下次重试时间,否则判 failed。
 // runErr 是跑图抛出的原始错误对象(不只是文本):可重试性优先由错误自身携带的标注决定,见 failure.go。
-func (a *App) finalizeFailure(execution *db.WorkflowExecution, attempt int, result *runResult, runErr error) {
+func (a *App) finalizeFailure(ctx context.Context, execution *db.WorkflowExecution, attempt int, result *runResult, runErr error) {
 	errorMessage := ""
 	if runErr != nil {
 		errorMessage = runErr.Error()
@@ -502,20 +542,20 @@ func (a *App) finalizeFailure(execution *db.WorkflowExecution, attempt int, resu
 		updates["context_snapshot_json"] = serializeSnapshot(result.SharedState, a.Cfg.Workflow.MaxOutputSnapshotBytes)
 		updates["result_snapshot_json"] = serializeSnapshot(orEmptyMap(result.SharedState["nodeOutputs"]), a.Cfg.Workflow.MaxOutputSnapshotBytes)
 	}
-	updated := a.DB.Model(&db.WorkflowExecution{}).
+	updated := a.dbWithContext(ctx).Model(&db.WorkflowExecution{}).
 		Where("id = ? AND status = ? AND attempt_count = ? AND worker_id = ?", execution.ID, "running", attempt, a.WorkerID).
 		Updates(updates)
 	if updated.RowsAffected == 0 {
 		return
 	}
-	a.closeAttempt(execution.ID, attempt, nextStatus, finishedAt, failureCategory, errorMessage)
+	a.closeAttempt(ctx, execution.ID, attempt, nextStatus, finishedAt, failureCategory, errorMessage)
 	if nextStatus == "failed" && result != nil {
-		a.publishExecutionFailed(result, errorMessage)
+		a.publishExecutionFailed(ctx, result, errorMessage)
 	}
 }
 
-func (a *App) closeAttempt(executionID int64, attempt int, status string, finishedAt time.Time, failureCategory, errorSummary string) {
-	a.DB.Model(&db.WorkflowExecutionAttempt{}).
+func (a *App) closeAttempt(ctx context.Context, executionID int64, attempt int, status string, finishedAt time.Time, failureCategory, errorSummary string) {
+	a.dbWithContext(ctx).Model(&db.WorkflowExecutionAttempt{}).
 		Where("workflow_execution_id = ? AND attempt = ?", executionID, attempt).
 		Updates(map[string]any{
 			"status": status, "finished_at": finishedAt,
@@ -547,10 +587,10 @@ func (a *App) computeNextRetryAt(attempt int) time.Time {
 
 // 后台循环之三【事件】:定时把 outbox 表里待发的领域事件冲刷出去(可靠事件投递)。
 // 同样用 for a.sleeping(interval) 骨架:睡够一轮就处理一批,收到停止信号就退出。见 GO入门笔记『并发』。
-func (a *App) eventOutboxLoop() {
+func (a *App) eventOutboxLoop(ctx context.Context) {
 	interval := time.Duration(a.Cfg.Workflow.OutboxPollIntervalMs) * time.Millisecond
-	for a.sleeping(interval) {
-		a.drainPendingEvents(a.Cfg.Workflow.OutboxBatchSize)
+	for a.sleeping(ctx, interval) {
+		a.drainPendingEvents(ctx, a.Cfg.Workflow.OutboxBatchSize)
 	}
 }
 
@@ -559,24 +599,27 @@ func (a *App) eventOutboxLoop() {
 // 后台循环之四【恢复】:把"心跳早已超时"的 running 执行判成 worker 丢失并善后。
 // staleRecoveryLoop 心跳超时的 running 执行判定为 worker_lost。
 // 也覆盖进程崩溃重启后的孤儿执行恢复。
-func (a *App) staleRecoveryLoop() {
+func (a *App) staleRecoveryLoop(ctx context.Context) {
 	interval := time.Duration(a.Cfg.Workflow.StaleRecoveryIntervalSeconds) * time.Second
-	for a.sleeping(interval) {
+	for a.sleeping(ctx, interval) {
 		staleBefore := time.Now().Add(-time.Duration(a.Cfg.Workflow.ExecutionStaleTimeoutSeconds) * time.Second)
 		var staleRows []db.WorkflowExecution
 		// Preload("WorkflowDefinition"):GORM 顺带把关联的定义一起查出来(类似预加载 JOIN),省得后面再查一次。见 GO入门笔记『框架:GORM』。
-		a.DB.Preload("WorkflowDefinition").
+		a.DB.WithContext(ctx).Preload("WorkflowDefinition").
 			Where("status = ? AND last_heartbeat_at IS NOT NULL AND last_heartbeat_at < ?", "running", staleBefore).
 			Order("last_heartbeat_at ASC, id ASC").Limit(a.Cfg.Workflow.OutboxBatchSize).
 			Find(&staleRows)
 		for i := range staleRows {
-			a.recoverStaleExecution(&staleRows[i])
+			if ctx.Err() != nil {
+				return
+			}
+			a.recoverStaleExecution(ctx, &staleRows[i])
 		}
 	}
 }
 
 // recoverStaleExecution 处理单条超时执行:未超重试次数则转 retry_waiting 等待重试,否则判 failed;并归还并发键。
-func (a *App) recoverStaleExecution(execution *db.WorkflowExecution) {
+func (a *App) recoverStaleExecution(ctx context.Context, execution *db.WorkflowExecution) {
 	finishedAt := time.Now()
 	startedAt := firstTime(execution.StartedAt, execution.ClaimedAt, &execution.QueuedAt)
 	durationMs := finishedAt.Sub(startedAt).Milliseconds()
@@ -607,10 +650,10 @@ func (a *App) recoverStaleExecution(execution *db.WorkflowExecution) {
 	if updated.RowsAffected == 0 {
 		return
 	}
-	a.closeAttempt(execution.ID, attempt, nextStatus, finishedAt, "worker_lost", "Worker heartbeat timed out")
+	a.closeAttempt(ctx, execution.ID, attempt, nextStatus, finishedAt, "worker_lost", "Worker heartbeat timed out")
 	a.releaseKey(execution.ConcurrencyKey)
 	if nextStatus == "failed" {
-		a.publishRecoveredFailureEvents(execution.ID, "Worker heartbeat timed out")
+		a.publishRecoveredFailureEvents(ctx, execution.ID, "Worker heartbeat timed out")
 	}
 	log.Printf("[recovery] stale execution recovered: execution_id=%d next_status=%s", execution.ID, nextStatus)
 }
@@ -619,11 +662,11 @@ func (a *App) recoverStaleExecution(execution *db.WorkflowExecution) {
 
 // 后台循环之五【清理】:每天凌晨 3 点后,批量删除超过保留期的历史执行,控制表体积。
 // cleanupLoop 每天 03:00 之后清理超保留期的终态执行。
-func (a *App) cleanupLoop() {
+func (a *App) cleanupLoop(ctx context.Context) {
 	// 记住"上次清理是哪一天",保证一天只清一次。
 	lastCleanupDate := ""
 	// 每分钟醒来看一眼(很轻量),真正干活受下面两个条件闸门控制。
-	for a.sleeping(time.Minute) {
+	for a.sleeping(ctx, time.Minute) {
 		now := time.Now()
 		if now.Hour() < 3 {
 			continue
@@ -636,6 +679,9 @@ func (a *App) cleanupLoop() {
 		deletedTotal := 0
 		// 内层无限 for:一批一批地删,直到某批删的数量不足一整批,说明删完了才 break 跳出。
 		for {
+			if ctx.Err() != nil {
+				return
+			}
 			deleted := a.cleanupTerminalHistory()
 			deletedTotal += deleted
 			if deleted < a.Cfg.Workflow.RetentionDeleteBatchSize {

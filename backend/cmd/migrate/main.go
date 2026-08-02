@@ -49,7 +49,7 @@ func run(parent context.Context, args []string, stdout, stderr io.Writer) error 
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	gdb, err := db.Connect(cfg.Database)
+	gdb, err := db.Connect(ctx, cfg.Database)
 	if err != nil {
 		return fmt.Errorf("connect database: %w", err)
 	}

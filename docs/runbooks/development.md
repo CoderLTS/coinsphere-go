@@ -8,6 +8,20 @@
 
 脚本会验证 Go、Vue 和 Python Worker；若本机存在 Docker，还会验证 Compose 配置。浏览器冒烟需按下节安装 Playwright 浏览器后独立执行。脚本优先使用 `PATH` 或 `GOROOT` 中的 Go，并兼容 `%USERPROFILE%\go\go1.26.5` 的本地登记路径。
 
+## Go 生命周期
+
+Go 测试覆盖 `signal.NotifyContext` 根 Context、HTTP 与 Runtime 取消、数据库和 WebSocket 收尾，以及取消后的 `retry_waiting`/`failed` 状态。Windows 本地运行：
+
+```powershell
+Push-Location .\backend
+go test -count=1 ./...
+Pop-Location
+```
+
+Linux CI 额外执行 `go test -race ./...` 和 `SIGTERM` 进程测试。关机契约固定为 30 秒应用总预算，开发与生产 Compose 的 `stop_grace_period` 固定为 40 秒；超时必须报错退出，不能无限等待。手工运行后按 Ctrl+C 可验证 `SIGINT` 路径，但自动化测试不连接生产服务或使用真实凭据。
+
+本交付只处理 Go 服务进程生命周期。Python Worker 仍为 `a0-idle`，A1-2 才实现任务租约、心跳、崩溃回收和 5 秒内取消。
+
 Worker 容器可单独验证：
 
 ```powershell

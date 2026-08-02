@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"gorm.io/gorm"
+
 	"coinsphere/backend/internal/db"
 	"coinsphere/backend/internal/security"
 )
@@ -813,8 +815,12 @@ func (a *App) cleanupTerminalHistory() int {
 
 func (a *App) getExecutionByID(executionID int64) (*db.WorkflowExecution, error) {
 	var execution db.WorkflowExecution
-	if err := a.DB.Preload("WorkflowDefinition").First(&execution, executionID).Error; err != nil {
+	err := a.DB.Preload("WorkflowDefinition").First(&execution, executionID).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, bizErr("Workflow execution does not exist")
+	}
+	if err != nil {
+		return nil, err
 	}
 	return &execution, nil
 }

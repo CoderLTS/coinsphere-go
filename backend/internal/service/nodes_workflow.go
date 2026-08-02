@@ -12,6 +12,7 @@
 package service
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -50,6 +51,9 @@ func init() {
 }
 
 func workflowCallExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
+	if err := ctx.Ctx.Err(); err != nil {
+		return nil, err
+	}
 	config := nodeConfig(ctx)
 	workflowCode := cfgStr(config, "workflowCode", "")
 	entryKey := cfgStr(config, "entryKey", "")
@@ -89,6 +93,9 @@ func workflowCallExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 
 	started, err := ctx.App.RunRuntimeEntry(entry.ID, triggerCtx)
 	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Ctx.Err(); err != nil {
 		return nil, err
 	}
 	execution, _ := started["execution"].(M)
@@ -173,25 +180,32 @@ func (a *App) requireActiveRuntimeEntry(workflowCode, entryKey string) (*db.Work
 //
 // ponytail: 用轮询而不是通知/回调 —— 执行状态本来就落在库里,一秒查一次足够,
 // 也不用为此新增一套跨 goroutine 的等待注册表。真要更实时再换。
-func (a *App) waitForExecution(ctx interface{ Err() error }, executionID int64, timeout time.Duration) (*db.WorkflowExecution, error) {
-	deadline := time.Now().Add(timeout)
+func (a *App) waitForExecution(ctx context.Context, executionID int64, timeout time.Duration) (*db.WorkflowExecution, error) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		var execution db.WorkflowExecution
-		if err := a.DB.First(&execution, executionID).Error; err != nil {
+		if err := a.DB.WithContext(ctx).First(&execution, executionID).Error; err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			return nil, bizErr("子工作流执行记录不存在: %d", executionID)
 		}
 		if execution.Status == "success" || execution.Status == "failed" {
 			return &execution, nil
 		}
-		if time.Now().After(deadline) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timer.C:
 			return nil, retryableErr(bizErr("等待子工作流执行 %d 超时", executionID))
+		case <-ticker.C:
 		}
-		<-ticker.C
 	}
 }
 

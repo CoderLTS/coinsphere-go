@@ -5,12 +5,15 @@ package service
 // 标准库与本项目包之间空一行分组,是 Go 的惯例。见 GO入门笔记『import』
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
+	"net"
 	"net/http"
 	"net/smtp"
 	"net/url"
@@ -229,7 +232,7 @@ func (a *App) SetNotifyChannelEnabled(channelID int64, enabled bool, principal *
 }
 
 // TestNotifyChannel 渠道连通性测试。
-func (a *App) TestNotifyChannel(channelID int64, principal *Principal) (M, error) {
+func (a *App) TestNotifyChannel(ctx context.Context, channelID int64, principal *Principal) (M, error) {
 	channel, err := a.requireChannel(channelID, principal)
 	if err != nil {
 		return nil, err
@@ -242,12 +245,12 @@ func (a *App) TestNotifyChannel(channelID int64, principal *Principal) (M, error
 	if err != nil {
 		return nil, err
 	}
-	ok, message, _ := validateNotifyChannel(runtimeChannel)
+	ok, message, _ := validateNotifyChannel(ctx, runtimeChannel)
 	status := "failed"
 	if ok {
 		status = "success"
 	}
-	a.DB.Model(channel).Updates(map[string]any{
+	a.DB.WithContext(ctx).Model(channel).Updates(map[string]any{
 		"last_test_status": status, "last_test_message": message,
 		"last_tested_at": now, "updated_at": now,
 	})
@@ -463,6 +466,7 @@ func (a *App) GetTargetMeta() M {
 
 // dispatchNotifyNode 执行 notify 节点的实际派发。
 func (a *App) dispatchNotifyNode(
+	ctx context.Context,
 	execution *db.WorkflowExecution,
 	nodeLog *db.WorkflowExecutionNode,
 	outboxEventID *int64,
@@ -486,6 +490,9 @@ func (a *App) dispatchNotifyNode(
 
 	roleIDs := make([]int64, 0)
 	for _, target := range targets {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if target["targetType"] == "role" {
 			roleIDs = append(roleIDs, target["targetId"].(int64))
 		}
@@ -513,11 +520,18 @@ func (a *App) dispatchNotifyNode(
 			userIDs = roleUserMapping[targetID]
 		}
 		for _, userID := range userIDs {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			runtimeChannels := a.listUserRuntimeChannels(userID, externalTypes)
 			resolvedTypes := map[string]bool{}
 			for _, runtimeChannel := range runtimeChannels {
 				resolvedTypes[runtimeChannel.ChannelType] = true
-				if a.dispatchExternalChannel(execution, nodeLog, outboxEventID, targetType, targetID, userID, runtimeChannel, title, content, messageFormat) {
+				sent := a.dispatchExternalChannel(ctx, execution, nodeLog, outboxEventID, targetType, targetID, userID, runtimeChannel, title, content, messageFormat)
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				if sent {
 					dispatched++
 				} else {
 					failed++
@@ -538,7 +552,11 @@ func (a *App) dispatchNotifyNode(
 				failed++
 			}
 			if hasInApp {
-				switch a.dispatchInAppChannel(execution, nodeLog, outboxEventID, targetType, targetID, userID, title, content) {
+				status := a.dispatchInAppChannel(execution, nodeLog, outboxEventID, targetType, targetID, userID, title, content)
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				switch status {
 				case "success":
 					dispatched++
 				case "skipped_offline":
@@ -557,6 +575,7 @@ func (a *App) dispatchNotifyNode(
 }
 
 func (a *App) dispatchExternalChannel(
+	ctx context.Context,
 	execution *db.WorkflowExecution, nodeLog *db.WorkflowExecutionNode, outboxEventID *int64,
 	targetType string, targetID, userID int64, runtimeChannel *notifyRuntimeChannel,
 	title, content, messageFormat string,
@@ -568,8 +587,10 @@ func (a *App) dispatchExternalChannel(
 		ChannelType: runtimeChannel.ChannelType, Status: "pending",
 		Title: title, Content: content, CreatedAt: time.Now(),
 	}
-	a.DB.Create(&delivery)
-	ok, message, providerResponse := sendNotifyChannel(runtimeChannel, title, content, messageFormat)
+	if err := a.DB.WithContext(ctx).Create(&delivery).Error; err != nil {
+		return false
+	}
+	ok, message, providerResponse := sendNotifyChannel(ctx, runtimeChannel, title, content, messageFormat)
 	updates := map[string]any{
 		"status":                 statusText(ok),
 		"provider_response_text": providerResponse,
@@ -580,7 +601,11 @@ func (a *App) dispatchExternalChannel(
 	} else {
 		updates["sent_at"] = time.Now()
 	}
-	a.DB.Model(&delivery).Updates(updates)
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cleanupCancel()
+	if err := a.dbWithContext(cleanupCtx).Model(&delivery).Updates(updates).Error; err != nil {
+		log.Printf("[notify] finalize delivery failed: delivery_id=%d err=%v", delivery.ID, err)
+	}
 	return ok
 }
 
@@ -710,17 +735,17 @@ func (a *App) listEnabledUserIDsByRoleIDs(roleIDs []int64) map[int64][]int64 {
 	return result
 }
 
-func validateNotifyChannel(channel *notifyRuntimeChannel) (bool, string, string) {
+func validateNotifyChannel(ctx context.Context, channel *notifyRuntimeChannel) (bool, string, string) {
 	switch channel.ChannelType {
 	case "dingtalk_webhook":
-		ok, response := sendDingTalk(channel, "text", "", "【coinsphere】通知渠道连通性测试")
+		ok, response := sendDingTalk(ctx, channel, "text", "", "【coinsphere】通知渠道连通性测试")
 		message := "连接失败"
 		if ok {
 			message = "连接成功"
 		}
 		return ok, message, response
 	case "smtp_email":
-		if err := smtpValidate(channel); err != nil {
+		if err := smtpValidate(ctx, channel); err != nil {
 			return false, "连接失败: " + err.Error(), err.Error()
 		}
 		return true, "连接成功", "SMTP OK"
@@ -729,7 +754,7 @@ func validateNotifyChannel(channel *notifyRuntimeChannel) (bool, string, string)
 	}
 }
 
-func sendNotifyChannel(channel *notifyRuntimeChannel, title, content, format string) (bool, string, string) {
+func sendNotifyChannel(ctx context.Context, channel *notifyRuntimeChannel, title, content, format string) (bool, string, string) {
 	switch channel.ChannelType {
 	case "dingtalk_webhook":
 		msgType := "text"
@@ -739,14 +764,14 @@ func sendNotifyChannel(channel *notifyRuntimeChannel, title, content, format str
 		} else if format == "html" {
 			body = stripSimpleHTML(content)
 		}
-		ok, response := sendDingTalk(channel, msgType, title, body)
+		ok, response := sendDingTalk(ctx, channel, msgType, title, body)
 		message := "发送失败"
 		if ok {
 			message = "发送成功"
 		}
 		return ok, message, response
 	case "smtp_email":
-		if err := smtpSend(channel, title, content, format); err != nil {
+		if err := smtpSend(ctx, channel, title, content, format); err != nil {
 			return false, "发送失败: " + err.Error(), err.Error()
 		}
 		return true, "发送成功", "{}"
@@ -755,7 +780,7 @@ func sendNotifyChannel(channel *notifyRuntimeChannel, title, content, format str
 	}
 }
 
-func sendDingTalk(channel *notifyRuntimeChannel, msgType, title, content string) (bool, string) {
+func sendDingTalk(ctx context.Context, channel *notifyRuntimeChannel, msgType, title, content string) (bool, string) {
 	accessToken := strings.TrimSpace(asString(channel.Secrets["accessToken"]))
 	if accessToken == "" {
 		return false, `{"errcode":400,"errmsg":"钉钉渠道缺少访问令牌"}`
@@ -785,8 +810,13 @@ func sendDingTalk(channel *notifyRuntimeChannel, msgType, title, content string)
 	// json.Marshal 把 body(map)序列化成 JSON 字节;raw, _ := 里的 _ 丢弃错误(内容可控,基本不会失败)。
 	raw, _ := json.Marshal(body)
 	// http.Client 是发 HTTP 请求的客户端,设 8 秒超时防卡死;Post 发一个 POST 请求。
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewReader(raw))
+	if err != nil {
+		return false, dumpJSON(M{"errcode": 500, "errmsg": err.Error()})
+	}
+	request.Header.Set("Content-Type", "application/json")
 	client := &http.Client{Timeout: 8 * time.Second}
-	resp, err := client.Post(webhookURL, "application/json", bytes.NewReader(raw))
+	resp, err := client.Do(request)
 	if err != nil {
 		return false, dumpJSON(M{"errcode": 500, "errmsg": err.Error()})
 	}
@@ -824,48 +854,75 @@ func smtpConfig(channel *notifyRuntimeChannel) (host string, port int, username,
 	return host, port, username, password, useTLS, nil
 }
 
-func smtpDial(host string, port int, useTLS bool) (*smtp.Client, error) {
-	if useTLS {
-		if port == 0 {
-			port = 465
-		}
-		conn, err := tls.Dial("tcp", fmt.Sprintf("%s:%d", host, port), &tls.Config{ServerName: host})
-		if err != nil {
-			return nil, err
-		}
-		return smtp.NewClient(conn, host)
-	}
+func smtpDial(ctx context.Context, host string, port int, useTLS bool) (*smtp.Client, func() bool, error) {
 	if port == 0 {
-		port = 25
+		if useTLS {
+			port = 465
+		} else {
+			port = 25
+		}
 	}
-	client, err := smtp.Dial(fmt.Sprintf("%s:%d", host, port))
+	conn, err := (&net.Dialer{Timeout: 8 * time.Second}).DialContext(ctx, "tcp", fmt.Sprintf("%s:%d", host, port))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	deadline := time.Now().Add(8 * time.Second)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+	_ = conn.SetDeadline(deadline)
+	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	fail := func(err error) (*smtp.Client, func() bool, error) {
+		stopCancel()
+		_ = conn.Close()
+		return nil, nil, err
+	}
+	if useTLS {
+		tlsConn := tls.Client(conn, &tls.Config{ServerName: host})
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			return fail(err)
+		}
+		conn = tlsConn
+	}
+	client, err := smtp.NewClient(conn, host)
+	if err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		return fail(err)
 	}
 	// 尽量升级 STARTTLS,失败则沿用明文。
-	if ok, _ := client.Extension("STARTTLS"); ok {
-		_ = client.StartTLS(&tls.Config{ServerName: host})
+	if !useTLS {
+		if ok, _ := client.Extension("STARTTLS"); ok {
+			_ = client.StartTLS(&tls.Config{ServerName: host})
+		}
 	}
-	return client, nil
+	if err := ctx.Err(); err != nil {
+		_ = client.Close()
+		stopCancel()
+		return nil, nil, err
+	}
+	return client, stopCancel, nil
 }
 
-func smtpValidate(channel *notifyRuntimeChannel) error {
+func smtpValidate(ctx context.Context, channel *notifyRuntimeChannel) error {
 	host, port, username, password, useTLS, err := smtpConfig(channel)
 	if err != nil {
 		return err
 	}
-	client, err := smtpDial(host, port, useTLS)
+	client, stopCancel, err := smtpDial(ctx, host, port, useTLS)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
+	defer stopCancel()
 	if err := client.Auth(smtp.PlainAuth("", username, password, host)); err != nil {
 		return err
 	}
 	return client.Noop()
 }
 
-func smtpSend(channel *notifyRuntimeChannel, title, content, format string) error {
+func smtpSend(ctx context.Context, channel *notifyRuntimeChannel, title, content, format string) error {
 	host, port, username, password, useTLS, err := smtpConfig(channel)
 	if err != nil {
 		return err
@@ -899,11 +956,12 @@ func smtpSend(channel *notifyRuntimeChannel, title, content, format string) erro
 		body,
 	}, "\r\n")
 
-	client, err := smtpDial(host, port, useTLS)
+	client, stopCancel, err := smtpDial(ctx, host, port, useTLS)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
+	defer stopCancel()
 	if err := client.Auth(smtp.PlainAuth("", username, password, host)); err != nil {
 		return err
 	}

@@ -1,8 +1,11 @@
 package service
 
 import (
+	"context"
 	"log"
 	"time"
+
+	"gorm.io/gorm"
 
 	"coinsphere/backend/internal/db"
 )
@@ -40,6 +43,24 @@ func (a *App) publishDomainEvent(
 	payload, metadata M,
 	workflowExecutionID, workflowExecutionNodeID *int64,
 ) (int64, error) {
+	return a.publishDomainEventWithDB(a.DB, eventType, aggregateType, aggregateID, payload, metadata, workflowExecutionID, workflowExecutionNodeID)
+}
+
+func (a *App) publishDomainEventContext(
+	ctx context.Context,
+	eventType, aggregateType, aggregateID string,
+	payload, metadata M,
+	workflowExecutionID, workflowExecutionNodeID *int64,
+) (int64, error) {
+	return a.publishDomainEventWithDB(a.dbWithContext(ctx), eventType, aggregateType, aggregateID, payload, metadata, workflowExecutionID, workflowExecutionNodeID)
+}
+
+func (a *App) publishDomainEventWithDB(
+	database *gorm.DB,
+	eventType, aggregateType, aggregateID string,
+	payload, metadata M,
+	workflowExecutionID, workflowExecutionNodeID *int64,
+) (int64, error) {
 	// AvailableAt=now 表示"现在就可投递"(也可设未来时间实现延迟事件);:= 是短变量声明,自动推断类型。dumpJSON 把 map 转成 JSON 文本存进一列。
 	now := time.Now()
 	record := db.DomainEventOutbox{
@@ -49,7 +70,7 @@ func (a *App) publishDomainEvent(
 		Status: "pending", AvailableAt: now, CreatedAt: now, UpdatedAt: now,
 	}
 	// Create(&record) = INSERT 一行;成功后自增主键 record.ID 被 GORM 写回,返回给调用方。见 GO入门笔记『框架:GORM』
-	if err := a.DB.Create(&record).Error; err != nil {
+	if err := database.Create(&record).Error; err != nil {
 		return 0, err
 	}
 	return record.ID, nil
@@ -57,13 +78,16 @@ func (a *App) publishDomainEvent(
 
 // drainPendingEvents 拉取并处理一批 pending outbox 事件。
 // outbox 的"第二步",由后台循环(loops.go)反复调用:每次捞最多 limit 条"到点且待处理"的事件来投递。
-func (a *App) drainPendingEvents(limit int) {
+func (a *App) drainPendingEvents(ctx context.Context, limit int) {
 	// 查询条件:status=pending 且 available_at<=now(到点了);按 id 升序、限量 limit。? 是占位符,防 SQL 注入。见 GO入门笔记『框架:GORM』
 	var rows []db.DomainEventOutbox
-	a.DB.Where("status = ? AND available_at <= ?", "pending", time.Now()).
+	a.DB.WithContext(ctx).Where("status = ? AND available_at <= ?", "pending", time.Now()).
 		Order("id ASC").Limit(limit).Find(&rows)
 	// for i := range rows + row := &rows[i]:用下标取"指向真实元素的指针",而非副本(与 notify.go 里同款写法)。见 GO入门笔记『复合类型』
 	for i := range rows {
+		if ctx.Err() != nil {
+			return
+		}
 		row := &rows[i]
 		event := &domainEvent{
 			OutboxID: row.ID, EventType: row.EventType,
@@ -74,7 +98,7 @@ func (a *App) drainPendingEvents(limit int) {
 		}
 		// 逐条投递:处理失败 → 标记 failed、记录错误信息与重试次数(attempt_count+1),continue 跳过继续下一条,不影响别的事件。
 		// log.Printf 打印日志(%d 是数字、%v 是任意值);truncateRunes 把过长的错误信息截断到 4000 字符再入库。见 GO入门笔记『错误处理』
-		if err := a.handleEventTriggeredEntries(event); err != nil {
+		if err := a.handleEventTriggeredEntries(ctx, event); err != nil {
 			log.Printf("[events] outbox subscriber failed: outbox_id=%d err=%v", row.ID, err)
 			now := time.Now()
 			a.DB.Model(row).Updates(map[string]any{
@@ -94,10 +118,10 @@ func (a *App) drainPendingEvents(limit int) {
 
 // handleEventTriggeredEntries 把事件匹配到 start.event 入口并入队执行。
 // outbox 的"消费方":查出所有"事件触发型(start_type=event)、已启用、且有生效版本"的工作流入口,逐个看这条事件是否命中,命中就跑。
-func (a *App) handleEventTriggeredEntries(event *domainEvent) error {
+func (a *App) handleEventTriggeredEntries(ctx context.Context, event *domainEvent) error {
 	// Preload 预加载关联对象(定义、运行时状态);Joins 关联运行时状态表以便在 Where 里过滤。见 GO入门笔记『框架:GORM』
 	var entries []db.WorkflowRuntimeEntry
-	a.DB.Preload("WorkflowDefinition").Preload("WorkflowRuntimeState").
+	a.DB.WithContext(ctx).Preload("WorkflowDefinition").Preload("WorkflowRuntimeState").
 		Joins("JOIN workflow_runtime_states ON workflow_runtime_entries.workflow_runtime_state_id = workflow_runtime_states.id").
 		Where(
 			"workflow_runtime_entries.start_type = ? AND workflow_runtime_entries.is_enabled = ? "+
@@ -108,6 +132,9 @@ func (a *App) handleEventTriggeredEntries(event *domainEvent) error {
 		Find(&entries)
 
 	for i := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		entry := &entries[i]
 		definition := entry.WorkflowDefinition
 		state := entry.WorkflowRuntimeState

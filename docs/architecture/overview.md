@@ -24,7 +24,9 @@ flowchart LR
 
 同一 Go 代码库最终构建 `api`、`collector`、`scheduler`、`executor` 四种进程。首版异步任务使用 PostgreSQL `FOR UPDATE SKIP LOCKED`，领域事件使用事务 Outbox，不引入额外消息中间件。
 
-A0 的 Python Worker 容器仅运行可探测的 `a0-idle` 前台进程，不连接数据库、不领取任务且不暴露网络端口。任务租约与取消在 A1 实现，数据集与双回测执行能力按 A3 至 A5 的阶段顺序引入。
+Go 服务使用 `signal.NotifyContext` 为 `SIGINT`/`SIGTERM` 建立唯一进程根 Context。HTTP 请求、Runtime 循环和执行、数据库操作及 WebSocket 连接从该根 Context 接收取消；进程停止接收新工作后，在 30 秒应用总预算内完成有界收尾，Compose 提供 40 秒终止宽限。
+
+A0 的 Python Worker 容器仅运行可探测的 `a0-idle` 前台进程，不连接数据库、不领取任务且不暴露网络端口。A1-1 不改变该边界；任务租约、心跳、崩溃回收和 5 秒内取消由 A1-2 独立实现，数据集与双回测执行能力按 A3 至 A5 的阶段顺序引入。
 
 数据库 schema 通过后端镜像内的独立 migration 二进制演进，服务进程不负责生产迁移。A0 仅建立工具和测试骨架，A1 完成 GORM `AutoMigrate` 切换；详细决策见 [ADR-0002](./decisions/0002-versioned-sql-migrations.md)。
 

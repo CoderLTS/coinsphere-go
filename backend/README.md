@@ -73,15 +73,19 @@ $env:COINSPHERE_SERVER__PORT = '7000'
 
 - **调度**:每秒扫描 `next_run_at` 到期的 schedule 入口,先乐观推进 `next_run_at` 抢占触发权,再以 `schedule:{entryId}:{dueUnix}` 幂等键入队。
 - **执行**:dispatcher 认领 queued 执行(每 key 并发受限),worker goroutine 跑图并写节点/边日志,心跳写 `last_heartbeat_at`。
+- **生命周期**:`signal.NotifyContext` 将 `SIGINT`/`SIGTERM` 统一传给 HTTP、Runtime、数据库和 WebSocket；应用最多用 30 秒收尾，Compose 提供 40 秒宽限。
+- **取消**:停止后不再接收请求或认领执行；被取消的既有执行按当前重试策略进入 `retry_waiting` 或 `failed`。
 - **重试**:可重试失败(timeout/connection/429/5xx)按 `retry_backoff_seconds` 退避,`retry_waiting → queued` 自动提升。
 - **恢复**:心跳超时(含进程崩溃重启后的孤儿执行)标记 `worker_lost` 并按剩余次数重试或失败。
 - **事件**:领域事件写 `domain_event_outbox`,后台循环投递,匹配 `start.event` 入口自动触发工作流。
 - **清理**:每天 03:00 后按批删除超过保留期的终态执行。
 
+Python Worker 仍保持 `a0-idle`，不领取任务；租约、心跳、崩溃回收和 5 秒内任务取消属于 A1-2。
+
 ## 目录
 
 ```
-main.go                 入口:配置 → 建表种子 → 运行时 → HTTP
+main.go                 入口:根 Context → 配置 → 建表种子 → Runtime/HTTP → 有界关机
 cmd/migrate             独立版本化 SQL migration 命令
 internal/config         YAML + 环境变量覆盖
 internal/db             GORM 模型 / 多方言 Open / 种子数据
