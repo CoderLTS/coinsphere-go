@@ -39,7 +39,7 @@ go run ./cmd/migrate -config ./config.yml -direction down -steps 1
 go run ./cmd/migrate -config ./config.yml -direction version
 ```
 
-容器镜像同时提供 `/app/coinsphere-migrate`。`00001` 建立版本历史，`00002` 建立供 Python Worker 使用的 `worker_tasks`；其余现有业务表仍由 GORM `AutoMigrate` 管理，应用启动切换属于 A1 后续独立交付。迁移编写、验证和回滚约束见 [`docs/runbooks/database-migrations.md`](../docs/runbooks/database-migrations.md)。
+容器镜像同时提供 `/app/coinsphere-migrate`。`00001` 建立版本历史，`00002` 建立供 Python Worker 使用的 `worker_tasks`，逻辑版本 `00003` 按数据库驱动加载 SQLite/PostgreSQL SQL，为既有 `domain_event_outbox` 保数补齐五态、最大尝试、租约、错误分类、死信与告警留存契约，并保留旧 GORM `event_type` 查询索引。应用检测到 `00003` 后用同表名占位模型隔离 Outbox DDL，其余现有业务表及关系仍由 `AutoMigrate` 管理；整体启动切换属于 A1-10。迁移编写、验证和回滚约束见 [`docs/runbooks/database-migrations.md`](../docs/runbooks/database-migrations.md)。
 
 ## 数据库切换
 
@@ -77,7 +77,7 @@ $env:COINSPHERE_SERVER__PORT = '7000'
 - **取消**:停止后不再接收请求或认领执行；被取消的既有执行按当前重试策略进入 `retry_waiting` 或 `failed`。
 - **重试**:可重试失败(timeout/connection/429/5xx)按 `retry_backoff_seconds` 退避,`retry_waiting → queued` 自动提升。
 - **恢复**:心跳超时(含进程崩溃重启后的孤儿执行)标记 `worker_lost` 并按剩余次数重试或失败。
-- **事件**:领域事件写 `domain_event_outbox`,后台循环投递,匹配 `start.event` 入口自动触发工作流。
+- **事件**:领域事件写 `domain_event_outbox`,后台循环投递,匹配 `start.event` 入口自动触发工作流。`00003` 只建立后续可靠投递所需的数据契约；当前循环仍直接扫描 `pending`，尚未实现原子认领、租约 fencing、过期恢复、指数退避、最大尝试、死信或告警运行时。
 - **清理**:每天 03:00 后按批删除超过保留期的终态执行。
 
 Python Worker 已通过独立 PostgreSQL 连接消费 `worker_tasks`，使用唯一租约完成认领、心跳、崩溃回收和 5 秒内取消。该运行时仅接入开发 Compose 与 CI，生产 Release 仍不构建或部署 Worker，也不改变 Go 工作流执行器。

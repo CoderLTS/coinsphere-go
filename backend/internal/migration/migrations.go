@@ -46,11 +46,15 @@ func New(db *sql.DB, driver string) (*Runner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open embedded migrations: %w", err)
 	}
-	return NewWithFS(db, driver, f)
+	return newWithFS(db, driver, f, embeddedMigrationOptions(driver)...)
 }
 
 // NewWithFS creates a runner with an explicit filesystem. It is used by migration contract tests.
 func NewWithFS(db *sql.DB, driver string, migrations fs.FS) (*Runner, error) {
+	return newWithFS(db, driver, migrations)
+}
+
+func newWithFS(db *sql.DB, driver string, migrations fs.FS, extraOptions ...goose.ProviderOption) (*Runner, error) {
 	dialect, err := gooseDialect(driver)
 	if err != nil {
 		return nil, err
@@ -61,6 +65,7 @@ func NewWithFS(db *sql.DB, driver string, migrations fs.FS) (*Runner, error) {
 		goose.WithDisableGlobalRegistry(true),
 		goose.WithLogger(goose.NopLogger()),
 	}
+	options = append(options, extraOptions...)
 	if dialect == goose.DialectPostgres {
 		locker, err := lock.NewPostgresSessionLocker()
 		if err != nil {
@@ -74,6 +79,20 @@ func NewWithFS(db *sql.DB, driver string, migrations fs.FS) (*Runner, error) {
 		return nil, fmt.Errorf("create migration provider: %w", err)
 	}
 	return &Runner{provider: provider}, nil
+}
+
+// embeddedMigrationOptions 在 Goose 收集 migration 版本前排除另一数据库方言的同版本文件。
+// 00003 需要分别使用 SQLite 触发器和 PostgreSQL CHECK/表锁；先排除再解析可保持一个逻辑版本，
+// 同时继续让 SQL 作为可审查、可独立事务回滚的事实来源。
+func embeddedMigrationOptions(driver string) []goose.ProviderOption {
+	switch strings.ToLower(strings.TrimSpace(driver)) {
+	case "sqlite":
+		return []goose.ProviderOption{goose.WithExcludeNames([]string{"00003_a1_outbox_schema_postgres.sql"})}
+	case "postgres", "postgresql", "pgsql", "psql":
+		return []goose.ProviderOption{goose.WithExcludeNames([]string{"00003_a1_outbox_schema_sqlite.sql"})}
+	default:
+		return nil
+	}
 }
 
 // Up applies all pending migrations, or stops at target when target is greater than zero.

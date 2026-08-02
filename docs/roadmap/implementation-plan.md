@@ -92,7 +92,7 @@
 
 1. 已建立 `signal.NotifyContext` 根 Context，以及 HTTP、Runtime、数据库和 WebSocket 的有界取消与优雅关机。
 2. 已独立建立 Worker 任务 schema 与 PostgreSQL 运行时，覆盖租约、心跳、崩溃回收、最大尝试次数和 5 秒内任务取消。
-3. Outbox 锁租约、指数退避、最大重试、死信和告警。
+3. Outbox 可靠投递：首个独立 PR 已用版本 `00003` 建立双方言 schema、五态、锁租约、最大尝试、死信和告警留存契约；后续 PR 再实现原子认领、过期恢复、指数退避和 dispatcher 运行时。
 4. 工作流版本生成与激活事务化，覆盖并发和中间状态测试。
 5. WebSocket 单写协程、心跳、背压、序列号和严格 Origin。
 6. HTTP 节点 SSRF 防护、私网阻断、域名白名单、重定向复检和 Header 脱敏。
@@ -102,7 +102,7 @@
 10. 移除生产 AutoMigrate，完成版本化 SQL migration 切换。
 11. 结构化日志、请求 ID、Prometheus、审计事件、存活和就绪检查。
 
-当前进度：A1-1 已完成全链路取消与有界关机。A1-2 先以独立迁移建立 `worker_tasks` 七态、租约、心跳、取消和尝试次数约束，再由 Python Worker 使用 `FOR UPDATE SKIP LOCKED`、数据库时间与 `lease_id` fencing 实现认领、续租、崩溃恢复和 5 秒内取消；真实 PostgreSQL 并发测试与开发 Compose 负责验收。当前只执行契约伪任务，不包含数据集、回测或交易能力，生产 Release 也不部署 Worker。下一项为 Outbox 可靠投递。
+当前进度：A1-1 已完成全链路取消与有界关机。A1-2 已建立 `worker_tasks` schema 与 PostgreSQL 运行时。A1-3 首个独立 PR 新增 SQLite/PostgreSQL 双方言逻辑版本 `00003`，为既有 `domain_event_outbox` 保数补齐 `max_attempts`、租约、错误分类、死信和告警字段，并约束 `pending/claimed/processed/failed/dead_letter` 状态、终态时间和必要索引。该 PR 不改变现有 dispatcher；原子认领、过期恢复、指数退避和死信告警运行时仍待后续交付，生产 Release 也不部署 Worker 或新增交易能力。应用启动移除 `AutoMigrate` 仍属于 A1-10。
 
 退出条件：竞态测试通过；取消、崩溃回收、Outbox 死信、Auth 轮换、SSRF、XSS、WebSocket 背压和关机均有自动化测试。
 
@@ -239,7 +239,7 @@ K 线唯一键固定为 `(venue,instrumentId,interval,openTime)`。
 - Go：格式、Vet、Staticcheck、单元、竞态、集成和构建。
 - Vue：ESLint、Stylelint、类型、单元、构建和关键 Playwright。
 - Python：Ruff、Mypy、Pytest、锁文件和黄金回测。
-- 数据库：空库升级、旧版本升级、回滚可行性和迁移幂等。
+- 数据库：SQLite/PostgreSQL 空库升级、旧版本保数升级、重复 Up、回滚重放和失败原子性；有业务数据的破坏性 Down 必须 fail-closed。
 - 安全：Gitleaks、govulncheck、pip-audit 和 Trivy。
 - 容器：Compose 启动、健康检查、API 冒烟和镜像扫描。
 - 发布产物：精确文件清单、SHA-256、Manifest 字段、远端镜像 digest、SPDX JSON 根组件绑定、危险归档路径和敏感内容扫描。

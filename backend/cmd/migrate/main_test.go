@@ -26,7 +26,7 @@ func TestRunMigratesWithoutAutoMigrate(t *testing.T) {
 	if err := run(context.Background(), []string{"-config", configPath, "-direction", "up"}, &stdout, &stderr); err != nil {
 		t.Fatalf("run migration command: %v\nstderr: %s", err, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "current=2 latest=2 applied=2") {
+	if !strings.Contains(stdout.String(), "current=3 latest=3 applied=3") {
 		t.Fatalf("unexpected command output: %s", stdout.String())
 	}
 
@@ -57,12 +57,15 @@ func TestRunMigratesWithoutAutoMigrate(t *testing.T) {
 	if !strings.Contains(stdout.String(), "00002\tapplied") {
 		t.Fatalf("unexpected status output: %s", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "00003\tapplied") {
+		t.Fatalf("unexpected status output: %s", stdout.String())
+	}
 
 	stdout.Reset()
 	if err := run(context.Background(), []string{"-config", configPath, "-direction", "version"}, &stdout, &stderr); err != nil {
 		t.Fatalf("read migration version: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "current=2 latest=2") {
+	if !strings.Contains(stdout.String(), "current=3 latest=3") {
 		t.Fatalf("unexpected version output: %s", stdout.String())
 	}
 
@@ -78,8 +81,23 @@ func TestRunMigratesWithoutAutoMigrate(t *testing.T) {
 	if err := run(context.Background(), []string{"-config", configPath, "-direction", "down", "-steps", "1"}, &stdout, &stderr); err != nil {
 		t.Fatalf("run down migration command: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "current=1 latest=2 rolled_back=1") {
+	if !strings.Contains(stdout.String(), "current=2 latest=3 rolled_back=1") {
 		t.Fatalf("unexpected down output: %s", stdout.String())
+	}
+
+	// 00003 Down 只撤销可靠投递增量，保留旧兼容 Outbox 表，避免 schema 回滚误删事件容器。
+	db, err = sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatalf("reopen rolled back database: %v", err)
+	}
+	if err := db.QueryRow("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'domain_event_outbox'").Scan(&businessTable); err != nil {
+		t.Fatalf("outbox base table was removed by migration Down: %v", err)
+	}
+	if err := db.QueryRow("SELECT max_attempts FROM domain_event_outbox LIMIT 1").Scan(new(int)); err == nil || !strings.Contains(strings.ToLower(err.Error()), "no such column") {
+		t.Fatalf("00003 columns still exist after Down: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close rolled back database: %v", err)
 	}
 }
 
