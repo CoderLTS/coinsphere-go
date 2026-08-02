@@ -26,7 +26,7 @@ flowchart LR
 
 Go 服务使用 `signal.NotifyContext` 为 `SIGINT`/`SIGTERM` 建立唯一进程根 Context。HTTP 请求、Runtime 循环和执行、数据库操作及 WebSocket 连接从该根 Context 接收取消；进程停止接收新工作后，在 30 秒应用总预算内完成有界收尾，Compose 提供 40 秒终止宽限。
 
-A1-2 的前置迁移建立独立 `worker_tasks` 队列表，以 UUIDv7 字符串 ID、七态任务状态、唯一租约 ID、租约到期时间、心跳和取消时间承载后续 Worker 协议；该表不复用 Go 工作流的 `workflow_executions`。Python Worker 容器仍仅运行可探测的 `a0-idle` 前台进程，不连接数据库、不领取任务且不暴露网络端口；PostgreSQL `FOR UPDATE SKIP LOCKED` 认领、租约 fencing、崩溃回收和 5 秒内取消由下一独立 PR 实现，数据集与双回测执行能力按 A3 至 A5 的阶段顺序引入。
+A1-2 使用独立 `worker_tasks` 队列表，以 UUIDv7 字符串任务 ID、七态状态、唯一租约 ID、租约到期、心跳和取消时间承载 Worker 协议；该表不复用 Go 工作流的 `workflow_executions`。Python Worker 在单个 PostgreSQL 事务中通过 `FOR UPDATE SKIP LOCKED` 认领并递增尝试次数，所有活跃状态写入同时匹配任务 ID、`lease_id`、合法前态与数据库时间。过期的 `claimed/running` 按剩余尝试次数重排或失败，过期的 `cancelRequested` 只能取消，旧租约不能续租或提交终态。开发 Compose 通过仅内部可见的 PostgreSQL 网络启用该消费者；生产 Release 暂不部署 Worker，数据集与双回测执行能力按 A3 至 A5 的阶段顺序引入。
 
 数据库 schema 通过后端镜像内的独立 migration 二进制演进，服务进程不负责生产迁移。A0 仅建立工具和测试骨架，A1 完成 GORM `AutoMigrate` 切换；详细决策见 [ADR-0002](./decisions/0002-versioned-sql-migrations.md)。
 

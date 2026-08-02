@@ -126,6 +126,22 @@ jobs:
   worker:
     name: Python worker
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.6-alpine3.21@sha256:849377bbbdb1143b82d1b87646eb8ab48241fe32b85ab6667e02e0af139aaa74
+        env:
+          POSTGRES_DB: coinsphere_worker_test
+          POSTGRES_PASSWORD: worker-ci-only
+          POSTGRES_USER: coinsphere
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username=coinsphere --dbname=coinsphere_worker_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      COINSPHERE_TEST_POSTGRES_DSN: postgres://coinsphere:worker-ci-only@127.0.0.1:5432/coinsphere_worker_test?sslmode=disable
     defaults:
       run:
         working-directory: worker
@@ -221,10 +237,10 @@ jobs:
               exit 1
             fi
           done
-      - name: Verify Worker A0 health contract
+      - name: Verify Worker A1 health contract
         run: |
           docker compose exec -T worker python -m coinsphere_worker health |
-            python3 -c 'import json, sys; assert json.load(sys.stdin) == {"mode": "a0-idle", "protocolVersion": 1, "role": "quant-worker", "status": "healthy", "taskConsumer": False}'
+            python3 -c 'import json, sys; assert json.load(sys.stdin) == {"mode": "a1-postgres", "protocolVersion": 1, "role": "quant-worker", "status": "healthy", "taskConsumer": True}'
       - name: Smoke test health endpoint
         run: curl --fail --show-error --retry 10 --retry-all-errors --retry-delay 3 http://127.0.0.1:8080/health
       - name: Print Compose logs on failure
