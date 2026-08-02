@@ -249,6 +249,69 @@ def test_expired_cancel_request_is_canceled_without_retry(postgres_dsn: str) -> 
     assert row["lease_id"] is None
 
 
+def test_cancel_deadline_survives_owner_crash_within_five_seconds(postgres_dsn: str) -> None:
+    task_id = "018f0000-0000-7000-8000-000000000207"
+    insert_task(postgres_dsn, task_id)
+
+    # 使用完整 15 秒租约，并让 Owner 先观察到取消再断开连接，精确覆盖复审发现的
+    # 崩溃窗口：恢复不能等待租约自然到期，旧 Owner 也不能再写入任何终态。
+    owner_connection = psycopg.connect(postgres_dsn)
+    try:
+        owner_store = PostgresTaskStore(owner_connection, "worker-owner", lease_seconds=15)
+        old_lease = cast(TaskLease, owner_store.claim())
+        assert owner_store.start(old_lease)
+        with psycopg.connect(postgres_dsn, autocommit=True) as admin:
+            admin.execute(
+                """
+                UPDATE worker_tasks
+                SET status = 'cancelRequested',
+                    cancel_requested_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s AND status = 'running'
+                """,
+                (task_id,),
+            )
+        requested_at = time.monotonic()
+        before_heartbeat = task_row(postgres_dsn, task_id)
+        assert owner_store.heartbeat(old_lease) == "cancelRequested"
+        after_heartbeat = task_row(postgres_dsn, task_id)
+        assert after_heartbeat["lease_expires_at"] == before_heartbeat["lease_expires_at"]
+        assert after_heartbeat["last_heartbeat_at"] == before_heartbeat["last_heartbeat_at"]
+    finally:
+        owner_connection.close()
+
+    stop_event = threading.Event()
+    errors: list[BaseException] = []
+
+    def run_recovery_worker() -> None:
+        try:
+            WorkerRuntime(postgres_dsn, "worker-recovery").run(stop_event)
+        except BaseException as exc:  # pragma: no cover - 失败会在主测试线程断言
+            errors.append(exc)
+
+    thread = threading.Thread(target=run_recovery_worker, daemon=True)
+    thread.start()
+    try:
+        wait_for_status(postgres_dsn, task_id, "canceled")
+        elapsed = time.monotonic() - requested_at
+    finally:
+        stop_event.set()
+        thread.join(timeout=2)
+
+    assert elapsed < 5
+    assert not thread.is_alive()
+    assert not errors
+    row = task_row(postgres_dsn, task_id)
+    assert row["lease_id"] is None
+    assert row["worker_id"] is None
+
+    with psycopg.connect(postgres_dsn) as stale_connection:
+        stale_store = PostgresTaskStore(stale_connection, "worker-owner", lease_seconds=15)
+        assert stale_store.heartbeat(old_lease) is None
+        assert not stale_store.succeed(old_lease)
+        assert not stale_store.cancel(old_lease)
+
+
 def test_cancel_request_stops_contract_task_within_five_seconds(postgres_dsn: str) -> None:
     task_id = "018f0000-0000-7000-8000-000000000204"
     insert_task(

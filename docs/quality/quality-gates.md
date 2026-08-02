@@ -7,7 +7,7 @@
 - 数据库：SQLite 与 PostgreSQL 的空库升级、旧版本升级、回滚重放、幂等和失败原子性契约；Worker 任务表还必须覆盖七态、尝试次数、租约唯一性及非空表拒绝 Down。
 - Vue：ESLint、Stylelint、类型检查、Vitest 单元测试和生产构建。
 - 浏览器：Chromium、Firefox、WebKit 的关键 Playwright 冒烟；失败时保留截图、trace 和 HTML 报告。
-- Python：Ruff、Mypy、Pytest、锁文件一致性，以及真实 PostgreSQL 的并发认领、续租、旧租约 fencing、过期恢复、尝试耗尽与 5 秒取消。
+- Python：Ruff、Mypy、Pytest、锁文件一致性，以及真实 PostgreSQL 的并发认领、续租、旧租约 fencing、过期恢复、尝试耗尽、正常取消与 Owner 崩溃后的 5 秒取消截止时间。
 - 容器：Compose 配置以及 Backend、Frontend、Worker 镜像构建与健康检查。
 - 安全：密钥、Go/Python 依赖、源代码、文件系统和 Backend/Frontend/Worker 镜像漏洞扫描。
 - 发布产物：最终 ZIP、tar.gz、Manifest、SPDX JSON SBOM 和 `SHA256SUMS` 必须通过精确清单、校验和、远端镜像 digest 与 SBOM 根组件绑定、危险归档路径及敏感内容扫描，失败时禁止上传 Artifact 和部署。

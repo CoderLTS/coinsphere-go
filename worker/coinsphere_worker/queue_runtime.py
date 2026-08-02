@@ -150,10 +150,11 @@ class PostgresTaskStore:
         )
 
     def heartbeat(self, task: TaskLease) -> str | None:
-        """续期当前租约并返回数据库中的活跃状态。
+        """续期运行中租约并返回数据库中的活跃状态。
 
         返回 ``None`` 表示租约已过期、被替换或任务已进入其他状态。调用方必须
-        立即停止伪任务，且不得再尝试提交成功或失败终态。
+        立即停止伪任务，且不得再尝试提交成功或失败终态。``cancelRequested``
+        只返回给 Owner 确认，不再续期，否则 Owner 在确认取消前崩溃会突破取消时限。
         """
 
         with self._connection.transaction():
@@ -165,12 +166,26 @@ class PostgresTaskStore:
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s
                   AND lease_id = %s
-                  AND status IN ('running', 'cancelRequested')
+                  AND status = 'running'
                   AND lease_expires_at > CURRENT_TIMESTAMP
                 RETURNING status
                 """,
                 (self._lease_seconds, task.task_id, task.lease_id),
             ).fetchone()
+            if row is None:
+                # 正常心跳只需一次 UPDATE；仅在状态竞争、租约失效或收到取消时补查。
+                # 该 SELECT 不修改租约时间，恢复器仍能按独立取消截止时间接管。
+                row = self._connection.execute(
+                    """
+                    SELECT status
+                    FROM worker_tasks
+                    WHERE id = %s
+                      AND lease_id = %s
+                      AND status = 'cancelRequested'
+                      AND lease_expires_at > CURRENT_TIMESTAMP
+                    """,
+                    (task.task_id, task.lease_id),
+                ).fetchone()
         return None if row is None else cast(str, row[0])
 
     def succeed(self, task: TaskLease) -> bool:
@@ -298,22 +313,28 @@ class PostgresTaskStore:
         return None if row is None else cast(str, row[0])
 
     def recover_expired(self) -> list[Recovery]:
-        """回收过期租约，并保证取消任务永不重新入队。
+        """回收过期租约或超时取消，并保证取消任务永不重新入队。
 
         三类更新位于同一事务，且各自先用 ``FOR UPDATE SKIP LOCKED`` 锁定候选行。
-        因此多个 Worker 可并发恢复不同任务；旧租约字段在状态切换时一次性清除。
+        因此多个 Worker 可并发恢复不同任务；取消使用独立数据库截止时间，旧租约字段
+        在状态切换时一次性清除。
         """
 
         recovered: list[Recovery] = []
         with self._connection.transaction():
+            # 默认恢复轮询为 1 秒；4 秒数据库截止时间为调度抖动保留余量，确保即使
+            # Owner 已观察取消但在提交 canceled 前崩溃，任务仍能在 5 秒契约内收敛。
             recovered.extend(
                 self._recover(
                     """
-                    WITH expired AS (
+                    WITH cancelable AS (
                         SELECT id, lease_id
                         FROM worker_tasks
                         WHERE status = 'cancelRequested'
-                          AND lease_expires_at <= CURRENT_TIMESTAMP
+                          AND (
+                              lease_expires_at <= CURRENT_TIMESTAMP
+                              OR cancel_requested_at <= CURRENT_TIMESTAMP - INTERVAL '4 seconds'
+                          )
                         FOR UPDATE SKIP LOCKED
                     )
                     UPDATE worker_tasks AS task
@@ -327,12 +348,12 @@ class PostgresTaskStore:
                         lease_expires_at = NULL,
                         last_heartbeat_at = NULL,
                         updated_at = CURRENT_TIMESTAMP
-                    FROM expired
-                    WHERE task.id = expired.id
-                    RETURNING task.id, expired.lease_id
+                    FROM cancelable
+                    WHERE task.id = cancelable.id
+                    RETURNING task.id, cancelable.lease_id
                     """,
                     status="canceled",
-                    category="cancel_after_lease_expiry",
+                    category="cancel_recovered",
                 )
             )
             recovered.extend(

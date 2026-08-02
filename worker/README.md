@@ -20,7 +20,7 @@ uv run pytest tests/test_queue_runtime.py
 
 `python -m coinsphere_worker run` 必须通过 `COINSPHERE_WORKER_DATABASE_DSN` 连接已经应用 `00002_a1_worker_tasks.sql` 的 PostgreSQL；配置缺失或数据库异常时进程 fail-closed 非零退出。单进程串行执行一个任务，多个 Worker 依赖 PostgreSQL `FOR UPDATE SKIP LOCKED` 并发认领，不使用 Redis、Kafka 或 NATS。
 
-认领会递增 `attempt_count` 并创建新的 `lease_id`。启动、心跳、成功、失败和取消均同时校验任务 ID、租约 ID、合法前态和数据库时间；租约过期后旧 Worker 不能再续租或写终态。过期的 `claimed/running` 在仍有尝试次数时重新排队，否则进入 `failed`；过期的 `cancelRequested` 只会进入 `canceled`。SIGINT/SIGTERM 会停止认领和心跳，在途任务由同一过期租约路径恢复。
+认领会递增 `attempt_count` 并创建新的 `lease_id`。启动、心跳、成功、失败和取消均同时校验任务 ID、租约 ID、合法前态和数据库时间；租约过期后旧 Worker 不能再续租或写终态。过期的 `claimed/running` 在仍有尝试次数时重新排队，否则进入 `failed`。心跳对 `cancelRequested` 只观察、不续租；恢复器在租约过期或取消请求满 4 秒时将其转为 `canceled`，以默认 1 秒轮询保证 Owner 在确认取消前崩溃时仍满足 5 秒时限。SIGINT/SIGTERM 会停止认领和心跳，在途任务由同一过期租约路径恢复。
 
 日志覆盖启动停止、认领、状态转换、心跳异常、恢复、取消和终态，只包含任务、Worker、租约、状态与固定错误分类。禁止记录 DSN、环境值、原始 `payload_json`、凭据、令牌或个人数据。
 
