@@ -9,6 +9,7 @@
 - Python：Ruff、Mypy、Pytest 和锁文件一致性。
 - 容器：Compose 配置以及 Backend、Frontend、Worker 镜像构建与健康检查。
 - 安全：密钥、Go/Python 依赖、源代码、文件系统和 Backend/Frontend/Worker 镜像漏洞扫描。
+- 发布产物：最终 ZIP、tar.gz、Manifest、SPDX JSON SBOM 和 `SHA256SUMS` 必须通过精确清单、校验和、远端镜像 digest 与 SBOM 根组件绑定、危险归档路径及敏感内容扫描，失败时禁止上传 Artifact 和部署。
 
 ## 领域验收目标
 
@@ -30,7 +31,6 @@
 
 ## 已知基线债务
 
-- 发布产物扫描在对应 A0 独立 PR 建立前仍是阻塞 A0 退出的缺口。
 - 版本化 SQL migration 的工具与测试骨架已经建立；应用启动仍由 GORM `AutoMigrate` 管理业务表，切换必须在 A1 独立 PR 完成。
 - 当前 Go 测试覆盖配置安全校验和 migration 契约，Worker 仅覆盖 A0 空闲运行与健康契约；认证、工作流并发、任务租约、取消和恢复的行为覆盖必须在 A1 对应 PR 中补齐。
 - 本机缺少 Docker 时，Compose 启动、健康检查和 API 冒烟必须由 GitHub Actions 完成。

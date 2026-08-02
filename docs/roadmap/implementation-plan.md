@@ -1,7 +1,7 @@
 # CoinSphere AI 全流程实施计划
 
 - 状态：已接受，执行中
-- 更新日期：2026-08-01
+- 更新日期：2026-08-02
 - 交付方式：Codex + GPT 5.6sol
 - 产品负责人和最终放行人：用户
 
@@ -77,10 +77,10 @@
 2. 清理现有前端 Stylelint 基线，将 Stylelint 设为阻塞检查。
 3. 已建立版本化 SQL migration 工具，以及空库升级、旧版本升级、回滚重放、幂等和失败原子性测试骨架；A1 再切换应用启动路径。
 4. 建立关键 Playwright 冒烟、Worker 容器、Compose 健康测试和 API 冒烟。
-5. 建立 Gitleaks、govulncheck、pip-audit、Trivy 镜像扫描、SBOM、校验和与 GHCR 发布流水线。
+5. 已建立 Gitleaks、govulncheck、pip-audit、Trivy 镜像扫描、SBOM、校验和、最终发布产物安全与完整性扫描，以及生产主机私有 Registry 发布流水线。
 6. 用户配置远程仓库、分支保护、Actions 权限和 Renovate App。
 
-当前进度：Python Worker 容器及开发 Compose/CI 健康门禁已经建立，Worker 保持无任务消费能力的 `a0-idle` 模式；关键 Playwright 场景已通过 Chromium、Firefox、WebKit 和隔离后端的 CI 阻塞门禁覆盖。该矩阵不替代 Edge、macOS Safari 或 iOS 真机验收。
+当前进度：Python Worker 容器及开发 Compose/CI 健康门禁已经建立，Worker 保持无任务消费能力的 `a0-idle` 模式；关键 Playwright 场景已通过 Chromium、Firefox、WebKit 和隔离后端的 CI 阻塞门禁覆盖；最终 ZIP、tar.gz、Manifest、SBOM 与校验和会在 Artifact 上传和部署前执行 fail-closed 扫描。该矩阵不替代 Edge、macOS Safari 或 iOS 真机验收。
 
 退出条件：所有 A0 检查在干净 checkout 可复现，分支保护实际生效，发布产物不包含凭据，回滚手册经过桌面演练。
 
@@ -240,8 +240,9 @@ K 线唯一键固定为 `(venue,instrumentId,interval,openTime)`。
 - 数据库：空库升级、旧版本升级、回滚可行性和迁移幂等。
 - 安全：Gitleaks、govulncheck、pip-audit 和 Trivy。
 - 容器：Compose 启动、健康检查、API 冒烟和镜像扫描。
+- 发布产物：精确文件清单、SHA-256、Manifest 字段、远端镜像 digest、SPDX JSON 根组件绑定、危险归档路径和敏感内容扫描。
 
-发布流水线从受保护的 `main` 构建带版本号和 Commit SHA 的镜像、SPDX JSON SBOM、校验和及发布说明，推送到生产主机私有 Registry，并在备份和 migration 成功后通过 DPanel Compose 自动更新。流水线只能由用户手工触发，使用专用 self-hosted Runner 和 `production` Environment；真实交易所密钥不进入 GitHub、Runner 日志或发布产物。
+发布流水线从受保护的 `main` 构建带版本号和 Commit SHA 的镜像、SPDX JSON SBOM、校验和及发布说明；最终产物扫描通过后才允许上传 GitHub Artifact 和部署，并在备份和 migration 成功后通过 DPanel Compose 自动更新。镜像推送到生产主机私有 Registry。流水线只能由用户手工触发，使用专用 self-hosted Runner 和 `production` Environment；真实交易所密钥不进入 GitHub、Runner 日志或发布产物。
 
 ## 7. 总体验收门禁
 

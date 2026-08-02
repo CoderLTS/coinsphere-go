@@ -43,13 +43,22 @@ jobs:
           fi
 
       - name: Build packages and push images
+        id: build
         shell: bash
-        run: bash scripts/release/build.sh "$VERSION" "$GITHUB_SHA" dist
+        run: |
+          set -Eeuo pipefail
+          bash scripts/release/build.sh "$VERSION" "$GITHUB_SHA" dist
+          backend_digest=$(jq -er '.backendDigest' dist/release-manifest.json)
+          web_digest=$(jq -er '.webDigest' dist/release-manifest.json)
+          [[ $backend_digest =~ ^127\.0\.0\.1:5000/coinsphere/backend@sha256:[0-9a-f]{64}$ ]] || exit 1
+          [[ $web_digest =~ ^127\.0\.0\.1:5000/coinsphere/web@sha256:[0-9a-f]{64}$ ]] || exit 1
+          printf 'backend_digest=%s\n' "$backend_digest" >>"$GITHUB_OUTPUT"
+          printf 'web_digest=%s\n' "$web_digest" >>"$GITHUB_OUTPUT"
 
       - name: Generate backend SBOM
         uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
         with:
-          image: docker:127.0.0.1:5000/coinsphere/backend:${{ inputs.version }}
+          image: registry:${{ steps.build.outputs.backend_digest }}
           format: spdx-json
           output-file: dist/coinsphere-${{ inputs.version }}-backend.spdx.json
           upload-artifact: false
@@ -58,7 +67,7 @@ jobs:
       - name: Generate web SBOM
         uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
         with:
-          image: docker:127.0.0.1:5000/coinsphere/web:${{ inputs.version }}
+          image: registry:${{ steps.build.outputs.web_digest }}
           format: spdx-json
           output-file: dist/coinsphere-${{ inputs.version }}-web.spdx.json
           upload-artifact: false
@@ -69,7 +78,7 @@ jobs:
         with:
           version: v0.72.0
           scan-type: image
-          image-ref: 127.0.0.1:5000/coinsphere/backend:${{ inputs.version }}
+          image-ref: ${{ steps.build.outputs.backend_digest }}
           format: table
           severity: CRITICAL
           exit-code: "1"
@@ -79,14 +88,28 @@ jobs:
         with:
           version: v0.72.0
           scan-type: image
-          image-ref: 127.0.0.1:5000/coinsphere/web:${{ inputs.version }}
+          image-ref: ${{ steps.build.outputs.web_digest }}
           format: table
           severity: CRITICAL
           exit-code: "1"
 
-      - name: Add SBOM checksums
+      - name: Generate final checksums
         shell: bash
-        run: sha256sum dist/*.spdx.json >>dist/SHA256SUMS
+        run: |
+          cd dist
+          sha256sum \
+            "./coinsphere-$VERSION-windows-x86.zip" \
+            "./coinsphere-$VERSION-linux-amd64.tar.gz" \
+            "./coinsphere-$VERSION-docker.tar.gz" \
+            ./release-manifest.json \
+            "./coinsphere-$VERSION-backend.spdx.json" \
+            "./coinsphere-$VERSION-web.spdx.json" >SHA256SUMS
+
+      - name: Scan final release artifacts
+        shell: bash
+        run: |
+          command -v python3 >/dev/null || { echo "缺少命令: python3" >&2; exit 3; }
+          python3 scripts/release/scan-artifacts.py "$VERSION" "$GITHUB_SHA" dist
 
       - name: Preserve release candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -98,7 +121,7 @@ jobs:
 
       - name: Deploy through DPanel Compose
         shell: bash
-        run: bash deploy/production/deploy.sh "$VERSION"
+        run: bash deploy/production/deploy.sh "$VERSION" dist/release-manifest.json
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2

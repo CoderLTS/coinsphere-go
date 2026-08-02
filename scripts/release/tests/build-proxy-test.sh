@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 TEST_DIR=$(mktemp -d)
+PYTHON=${PYTHON:-python3}
 cleanup() {
   rm -rf -- "$TEST_DIR"
 }
@@ -57,7 +58,10 @@ if [[ ${1:-} == buildx && ${2:-} == build ]]; then
         touch "$destination/coinsphere-server" "$destination/coinsphere-migrate"
         ;;
       assets)
-        touch "$destination/index.html"
+        touch \
+          "$destination/index.html" \
+          "$destination/app.js.gz" \
+          "$destination/role-edit-dialog.vue_vue_type_script_setup_true_lang-paLwghtU.js"
         ;;
     esac
   fi
@@ -92,6 +96,38 @@ DOCKER_CONFIG="$TEST_DIR/docker-clean" \
 COINSPHERE_BUILDER=coinsphere-proxy-test \
 bash "$ROOT_DIR/scripts/release/build.sh" \
   v1.2.3 0123456789abcdef0123456789abcdef01234567 "$TEST_DIR/output"
+
+if tar -tzf "$TEST_DIR/output/coinsphere-v1.2.3-linux-amd64.tar.gz" |
+  grep -Fq '/web/app.js.gz'; then
+  echo "未使用的前端预压缩文件不得进入发布包" >&2
+  exit 1
+fi
+"$PYTHON" - "$ROOT_DIR" "$TEST_DIR/output" <<'PY'
+import importlib.util
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+root_dir, output_dir = map(Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location(
+    "artifact_scanner", root_dir / "scripts/release/scan-artifacts.py"
+)
+scanner = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(scanner)
+scanner.scan_zip(
+    output_dir / "coinsphere-v1.2.3-windows-x86.zip", "windows-x86", "v1.2.3"
+)
+linux_archive = output_dir / "coinsphere-v1.2.3-linux-amd64.tar.gz"
+with tempfile.TemporaryFile() as tar_stream:
+    scanner.decompress_gzip(linux_archive, tar_stream)
+    scanner.validate_tar_layout(tar_stream, linux_archive.name)
+if os.name != "nt":
+    scanner.scan_tar(linux_archive, "linux-amd64", "v1.2.3")
+scanner.scan_tar(
+    output_dir / "coinsphere-v1.2.3-docker.tar.gz", "docker", "v1.2.3"
+)
+PY
 
 if [[ $(wc -l <"$BUILD_DOCKER_BUILD_LOG") -ne 5 ]]; then
   echo "应执行五次 Buildx 构建" >&2
