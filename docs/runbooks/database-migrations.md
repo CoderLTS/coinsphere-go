@@ -2,11 +2,11 @@
 
 ## 当前边界
 
-A0 已提供独立的版本化 SQL migration 命令、嵌入式迁移文件、PostgreSQL advisory lock 和自动化契约测试。服务进程仍通过 `db.Open` 执行 GORM `AutoMigrate`，迁移命令通过 `db.Connect` 建立连接且不会创建业务表。
+A0 已提供独立的版本化 SQL migration 命令、嵌入式迁移文件、PostgreSQL advisory lock 和自动化契约测试。A1 的 `00002_a1_worker_tasks.sql` 新建独立 Worker 任务队列表；服务进程仍通过 `db.Open` 对既有业务模型执行 GORM `AutoMigrate`，迁移命令通过 `db.Connect` 建立连接且不会触发 AutoMigrate。
 
 迁移命令只支持 SQLite 开发态和目标 PostgreSQL 架构。现有 MySQL 应用启动路径继续使用 `AutoMigrate`，不在本迁移工具的支持与验收范围内。
 
-`00001_a0_versioned_migrations.sql` 是机制基线，只建立 `schema_migrations` 版本历史。A1 必须用独立 PR 完成现有业务 schema 的 SQL 基线、存量数据库校准、启动路径切换和恢复演练。在该 PR 合并前，不得关闭 `AutoMigrate`。
+`00001_a0_versioned_migrations.sql` 是机制基线，只建立 `schema_migrations` 版本历史。`00002` 只建立 `worker_tasks`，不启用 Python Worker、API 或 Compose 数据库连接。A1 仍必须在路线图第 10 项用独立 PR 完成其余业务 schema 的 SQL 基线、存量数据库校准、启动路径切换和恢复演练；在该 PR 合并前不得关闭 `AutoMigrate`。
 
 ## 命令
 
@@ -37,7 +37,7 @@ COINSPHERE_AUTH__SECRET_KEY=local-migration-only \
 
 ## 编写迁移
 
-- 文件位于 `backend/internal/migration/sql`，命名为五位递增版本号加说明，例如 `00002_platform_schema.sql`。
+- 文件位于 `backend/internal/migration/sql`，命名为五位递增版本号加说明，例如 `00003_platform_schema.sql`。
 - 每个文件必须同时包含 `-- +goose Up` 和 `-- +goose Down`。
 - 已合并或在任何环境应用过的迁移禁止修改、重排或复用版本号；修正只能追加新迁移。
 - 默认保持事务执行。确需非事务 DDL 时必须单独 PR，写明失败后的恢复步骤并经过 PostgreSQL 演练。
@@ -61,6 +61,8 @@ go test -count=1 ./internal/migration ./cmd/migrate
 - 失败迁移文件事务回滚，不留下该文件的部分 schema，也不推进该文件版本。
 - 超量回滚与无效目标版本在修改 schema 前失败。
 - CLI 使用无 `AutoMigrate` 的连接入口。
+- `worker_tasks` 只接受公共契约的七种状态，强制尝试次数范围、活跃状态完整租约、租约 ID 唯一，以及取消和终态时间一致性。
+- `00002` 的 Down 只允许空队列；存在任何任务时必须失败并保持表、数据和 migration 版本不变。
 
 ## 发布步骤
 
@@ -80,4 +82,4 @@ go test -count=1 ./internal/migration ./cmd/migrate
 
 ## 本次交付回滚
 
-本次 A0 基线不创建业务表。回滚代码时先停止服务；若已显式应用 `00001`，在当前迁移二进制仍可用时执行一次 `down` 删除该版本的应用记录，再恢复上一镜像。保留 `schema_migrations` 空表不会影响旧版服务，也可以在确认没有其他迁移历史后从备份恢复。现有业务 schema 与数据不应因本次回滚发生变化。
+本次 `00002` 只创建尚未被运行时使用的 `worker_tasks`。回滚前先停止相关写入并确认 `SELECT COUNT(*) FROM worker_tasks` 为零，再使用包含 `00002` 的迁移二进制执行一次 `down`，确认版本回到 `1` 后才恢复上一镜像。若表非空，Down 会 fail-closed；不得删除任务或修改 `schema_migrations` 绕过保护，应保留当前版本并调查数据来源，必要时从发布前备份恢复。

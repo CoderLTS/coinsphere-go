@@ -91,7 +91,7 @@
 独立交付顺序：
 
 1. 已建立 `signal.NotifyContext` 根 Context，以及 HTTP、Runtime、数据库和 WebSocket 的有界取消与优雅关机。
-2. Worker 租约、心跳、崩溃回收和 5 秒内任务取消。
+2. Worker 租约、心跳、崩溃回收和 5 秒内任务取消；任务队列 schema 前置迁移已独立建立，运行时由下一独立 PR 完成。
 3. Outbox 锁租约、指数退避、最大重试、死信和告警。
 4. 工作流版本生成与激活事务化，覆盖并发和中间状态测试。
 5. WebSocket 单写协程、心跳、背压、序列号和严格 Origin。
@@ -102,7 +102,7 @@
 10. 移除生产 AutoMigrate，完成版本化 SQL migration 切换。
 11. 结构化日志、请求 ID、Prometheus、审计事件、存活和就绪检查。
 
-当前进度：A1-1 统一由 `SIGINT`/`SIGTERM` 取消进程根 Context，停止接收新请求和认领新执行，并在应用总预算 30 秒、Compose 宽限 40 秒内完成 HTTP、Runtime、数据库和 WebSocket 收尾。被取消的既有工作流执行沿用当前重试策略进入 `retry_waiting` 或 `failed`，不新增任务状态。Python Worker 继续保持 `a0-idle`，租约、心跳、崩溃回收和 5 秒内任务取消由 A1-2 独立交付。
+当前进度：A1-1 已完成全链路取消与有界关机。A1-2 的独立前置迁移建立 `worker_tasks` 七态任务表、唯一租约 ID、租约到期、心跳、取消和尝试次数约束，且非空队列拒绝 Down；该表不复用 Go 工作流执行表。Python Worker 继续保持 `a0-idle`，PostgreSQL `FOR UPDATE SKIP LOCKED` 认领、租约 fencing、崩溃回收和 5 秒内取消由下一独立 PR 交付。
 
 退出条件：竞态测试通过；取消、崩溃回收、Outbox 死信、Auth 轮换、SSRF、XSS、WebSocket 背压和关机均有自动化测试。
 

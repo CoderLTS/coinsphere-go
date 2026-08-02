@@ -39,7 +39,7 @@ go run ./cmd/migrate -config ./config.yml -direction down -steps 1
 go run ./cmd/migrate -config ./config.yml -direction version
 ```
 
-容器镜像同时提供 `/app/coinsphere-migrate`。A0 阶段迁移 `00001` 只建立版本历史，不替代现有业务表的 GORM `AutoMigrate`；应用启动切换属于 A1 独立交付。迁移编写、验证和回滚约束见 [`docs/runbooks/database-migrations.md`](../docs/runbooks/database-migrations.md)。
+容器镜像同时提供 `/app/coinsphere-migrate`。`00001` 建立版本历史，`00002` 建立尚未启用消费的 `worker_tasks`；其余现有业务表仍由 GORM `AutoMigrate` 管理，应用启动切换属于 A1 后续独立交付。迁移编写、验证和回滚约束见 [`docs/runbooks/database-migrations.md`](../docs/runbooks/database-migrations.md)。
 
 ## 数据库切换
 
@@ -80,7 +80,7 @@ $env:COINSPHERE_SERVER__PORT = '7000'
 - **事件**:领域事件写 `domain_event_outbox`,后台循环投递,匹配 `start.event` 入口自动触发工作流。
 - **清理**:每天 03:00 后按批删除超过保留期的终态执行。
 
-Python Worker 仍保持 `a0-idle`，不领取任务；租约、心跳、崩溃回收和 5 秒内任务取消属于 A1-2。
+Python Worker 仍保持 `a0-idle`，不领取任务；`worker_tasks` 仅提供 schema 前置，租约认领、心跳、崩溃回收和 5 秒内任务取消由下一独立 PR 实现。
 
 ## 目录
 

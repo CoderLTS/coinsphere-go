@@ -20,7 +20,7 @@ Pop-Location
 
 Linux CI 额外执行 `go test -race ./...` 和 `SIGTERM` 进程测试。关机契约固定为 30 秒应用总预算，开发与生产 Compose 的 `stop_grace_period` 固定为 40 秒；超时必须报错退出，不能无限等待。手工运行后按 Ctrl+C 可验证 `SIGINT` 路径，但自动化测试不连接生产服务或使用真实凭据。
 
-本交付只处理 Go 服务进程生命周期。Python Worker 仍为 `a0-idle`，A1-2 才实现任务租约、心跳、崩溃回收和 5 秒内取消。
+`00002_a1_worker_tasks.sql` 已建立 Worker 任务队列 schema 前置契约。Python Worker 仍为 `a0-idle`；本交付不连接数据库、不领取任务，运行时租约、心跳、崩溃回收和 5 秒内取消由下一独立 PR 实现。
 
 Worker 容器可单独验证：
 
@@ -76,7 +76,7 @@ Pop-Location
 
 GitHub Actions 负责 Linux、三类镜像构建、Compose 健康、Worker A0 契约和安全检查。本地缺少 Docker 时可以继续开发，但 PR 在容器 Job 通过前不得合并。
 
-CI 使用固定 PostgreSQL 17 镜像执行迁移契约。本地与发布环境的迁移命令、编写约束和回滚步骤见[数据库迁移手册](./database-migrations.md)。
+CI 使用固定 PostgreSQL 17 镜像执行迁移契约，包括 Worker 任务表的七态、租约、尝试次数和非空 Down 保护。本地与发布环境的迁移命令、编写约束和回滚步骤见[数据库迁移手册](./database-migrations.md)。
 
 ## 安全约束
 
