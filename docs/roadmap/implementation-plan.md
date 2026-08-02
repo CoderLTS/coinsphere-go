@@ -92,7 +92,7 @@
 
 1. 已建立 `signal.NotifyContext` 根 Context，以及 HTTP、Runtime、数据库和 WebSocket 的有界取消与优雅关机。
 2. 已独立建立 Worker 任务 schema 与 PostgreSQL 运行时，覆盖租约、心跳、崩溃回收、最大尝试次数和 5 秒内任务取消。
-3. Outbox 可靠投递：首个独立 PR 已用版本 `00003` 建立双方言 schema、五态、锁租约、最大尝试、死信和告警留存契约；后续 PR 再实现原子认领、过期恢复、指数退避和 dispatcher 运行时。
+3. Outbox 可靠投递：首个独立 PR 已用版本 `00003` 建立双方言 schema、五态、锁租约、最大尝试、死信和告警留存契约；第二个独立 PR 建立双方言原子批量认领、数据库时间租约、终态 fencing 和过期恢复存储 API；后续 PR 再接入 dispatcher，并实现指数退避、订阅失败重试和死信告警。
 4. 工作流版本生成与激活事务化，覆盖并发和中间状态测试。
 5. WebSocket 单写协程、心跳、背压、序列号和严格 Origin。
 6. HTTP 节点 SSRF 防护、私网阻断、域名白名单、重定向复检和 Header 脱敏。
@@ -102,7 +102,7 @@
 10. 移除生产 AutoMigrate，完成版本化 SQL migration 切换。
 11. 结构化日志、请求 ID、Prometheus、审计事件、存活和就绪检查。
 
-当前进度：A1-1 已完成全链路取消与有界关机。A1-2 已建立 `worker_tasks` schema 与 PostgreSQL 运行时。A1-3 首个独立 PR 新增 SQLite/PostgreSQL 双方言逻辑版本 `00003`，为既有 `domain_event_outbox` 保数补齐 `max_attempts`、租约、错误分类、死信和告警字段，并约束 `pending/claimed/processed/failed/dead_letter` 状态、终态时间和必要索引。该 PR 不改变现有 dispatcher；原子认领、过期恢复、指数退避和死信告警运行时仍待后续交付，生产 Release 也不部署 Worker 或新增交易能力。应用启动移除 `AutoMigrate` 仍属于 A1-10。
+当前进度：A1-1 已完成全链路取消与有界关机。A1-2 已建立 `worker_tasks` schema 与 PostgreSQL 运行时。A1-3 首个独立 PR 新增 SQLite/PostgreSQL 双方言逻辑版本 `00003`，为既有 `domain_event_outbox` 保数补齐 `max_attempts`、租约、错误分类、死信和告警字段，并约束 `pending/claimed/processed/failed/dead_letter` 状态、终态时间和必要索引。第二个独立 PR 不修改 schema，在 `internal/db` 建立单语句批量认领、锁租约、终态 fencing 与过期恢复：未耗尽事件回到 `pending`，耗尽事件收敛到 `dead_letter`，旧租约不能写终态。现有 `drainPendingEvents` 仍未接入该 API；指数退避、订阅失败重试、死信告警和 dispatcher 切换仍待后续交付。生产 Release 不部署 Worker 或新增交易能力，应用启动移除 `AutoMigrate` 仍属于 A1-10。
 
 退出条件：竞态测试通过；取消、崩溃回收、Outbox 死信、Auth 轮换、SSRF、XSS、WebSocket 背压和关机均有自动化测试。
 

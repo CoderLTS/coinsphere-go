@@ -55,8 +55,8 @@ jobs:
         run: |
           go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
           staticcheck ./...
-      - name: Database migration contract
-        run: go test -count=1 ./internal/migration ./cmd/migrate
+      - name: Database contracts
+        run: go test -count=1 ./internal/db ./internal/migration ./cmd/migrate
       - name: Test with race detector
         run: go test -race ./...
       - name: Build
