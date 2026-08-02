@@ -80,7 +80,7 @@
 5. 已建立 Gitleaks、govulncheck、pip-audit、Trivy 镜像扫描、SBOM、校验和、最终发布产物安全与完整性扫描，以及生产主机私有 Registry 发布流水线。
 6. 用户配置远程仓库、分支保护、Actions 权限和 Renovate App。
 
-当前进度：Python Worker 容器及开发 Compose/CI 健康门禁已经建立，Worker 保持无任务消费能力的 `a0-idle` 模式；关键 Playwright 场景已通过 Chromium、Firefox、WebKit 和隔离后端的 CI 阻塞门禁覆盖；最终 ZIP、tar.gz、Manifest、SBOM 与校验和会在 Artifact 上传和部署前执行 fail-closed 扫描。该矩阵不替代 Edge、macOS Safari 或 iOS 真机验收。
+当前进度：A0 已建立 Python Worker 容器及 Compose/CI 健康门禁，A1-2 在该基础上接入 PostgreSQL 任务消费；关键 Playwright 场景已通过 Chromium、Firefox、WebKit 和隔离后端的 CI 阻塞门禁覆盖；最终 ZIP、tar.gz、Manifest、SBOM 与校验和会在 Artifact 上传和部署前执行 fail-closed 扫描。该矩阵不替代 Edge、macOS Safari 或 iOS 真机验收。
 
 退出条件：所有 A0 检查在干净 checkout 可复现，分支保护实际生效，发布产物不包含凭据，回滚手册经过桌面演练。
 
@@ -91,7 +91,7 @@
 独立交付顺序：
 
 1. 已建立 `signal.NotifyContext` 根 Context，以及 HTTP、Runtime、数据库和 WebSocket 的有界取消与优雅关机。
-2. Worker 租约、心跳、崩溃回收和 5 秒内任务取消；任务队列 schema 前置迁移已独立建立，运行时由下一独立 PR 完成。
+2. 已独立建立 Worker 任务 schema 与 PostgreSQL 运行时，覆盖租约、心跳、崩溃回收、最大尝试次数和 5 秒内任务取消。
 3. Outbox 锁租约、指数退避、最大重试、死信和告警。
 4. 工作流版本生成与激活事务化，覆盖并发和中间状态测试。
 5. WebSocket 单写协程、心跳、背压、序列号和严格 Origin。
@@ -102,7 +102,7 @@
 10. 移除生产 AutoMigrate，完成版本化 SQL migration 切换。
 11. 结构化日志、请求 ID、Prometheus、审计事件、存活和就绪检查。
 
-当前进度：A1-1 已完成全链路取消与有界关机。A1-2 的独立前置迁移建立 `worker_tasks` 七态任务表、唯一租约 ID、租约到期、心跳、取消和尝试次数约束，且非空队列拒绝 Down；该表不复用 Go 工作流执行表。Python Worker 继续保持 `a0-idle`，PostgreSQL `FOR UPDATE SKIP LOCKED` 认领、租约 fencing、崩溃回收和 5 秒内取消由下一独立 PR 交付。
+当前进度：A1-1 已完成全链路取消与有界关机。A1-2 先以独立迁移建立 `worker_tasks` 七态、租约、心跳、取消和尝试次数约束，再由 Python Worker 使用 `FOR UPDATE SKIP LOCKED`、数据库时间与 `lease_id` fencing 实现认领、续租、崩溃恢复和 5 秒内取消；真实 PostgreSQL 并发测试与开发 Compose 负责验收。当前只执行契约伪任务，不包含数据集、回测或交易能力，生产 Release 也不部署 Worker。下一项为 Outbox 可靠投递。
 
 退出条件：竞态测试通过；取消、崩溃回收、Outbox 死信、Auth 轮换、SSRF、XSS、WebSocket 背压和关机均有自动化测试。
 

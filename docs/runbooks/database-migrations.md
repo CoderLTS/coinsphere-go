@@ -6,7 +6,7 @@ A0 已提供独立的版本化 SQL migration 命令、嵌入式迁移文件、Po
 
 迁移命令只支持 SQLite 开发态和目标 PostgreSQL 架构。现有 MySQL 应用启动路径继续使用 `AutoMigrate`，不在本迁移工具的支持与验收范围内。
 
-`00001_a0_versioned_migrations.sql` 是机制基线，只建立 `schema_migrations` 版本历史。`00002` 只建立 `worker_tasks`，不启用 Python Worker、API 或 Compose 数据库连接。A1 仍必须在路线图第 10 项用独立 PR 完成其余业务 schema 的 SQL 基线、存量数据库校准、启动路径切换和恢复演练；在该 PR 合并前不得关闭 `AutoMigrate`。
+`00001_a0_versioned_migrations.sql` 是机制基线，只建立 `schema_migrations` 版本历史。`00002` 只建立 `worker_tasks`；A1 Python Worker 已在开发 Compose 与 CI 中使用该表，但不新增 API，也不进入生产 Release。A1 仍必须在路线图第 10 项用独立 PR 完成其余业务 schema 的 SQL 基线、存量数据库校准、启动路径切换和恢复演练；在该 PR 合并前不得关闭 `AutoMigrate`。
 
 ## 命令
 
@@ -80,6 +80,8 @@ go test -count=1 ./internal/migration ./cmd/migrate
 4. 恢复上一固定镜像，运行 `version`、就绪检查和领域数据校验。
 5. 禁止手工删除或修改 `schema_migrations` 记录；这会让代码版本与实际 schema 脱节。
 
-## 本次交付回滚
+## Worker schema 与运行时回滚
 
-本次 `00002` 只创建尚未被运行时使用的 `worker_tasks`。回滚前先停止相关写入并确认 `SELECT COUNT(*) FROM worker_tasks` 为零，再使用包含 `00002` 的迁移二进制执行一次 `down`，确认版本回到 `1` 后才恢复上一镜像。若表非空，Down 会 fail-closed；不得删除任务或修改 `schema_migrations` 绕过保护，应保留当前版本并调查数据来源，必要时从发布前备份恢复。
+回滚 Worker 运行时代码时，先停止所有消费者并确认不再产生心跳或新认领，再恢复上一兼容版本。保留 `worker_tasks`、现有任务和 migration 版本；不得删除任务、手工改写状态或为了代码回滚执行 `00002` Down。
+
+只有明确回滚 schema 且队列从未产生任务时，才可在停止全部相关写入后确认 `SELECT COUNT(*) FROM worker_tasks` 为零，再使用包含 `00002` 的 migration 二进制执行一次 Down 并确认版本回到 `1`。若表非空，Down 会 fail-closed；应保留当前版本并调查或恢复兼容消费者，禁止删除任务或修改 `schema_migrations` 绕过保护。

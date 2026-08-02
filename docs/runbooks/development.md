@@ -20,19 +20,29 @@ Pop-Location
 
 Linux CI 额外执行 `go test -race ./...` 和 `SIGTERM` 进程测试。关机契约固定为 30 秒应用总预算，开发与生产 Compose 的 `stop_grace_period` 固定为 40 秒；超时必须报错退出，不能无限等待。手工运行后按 Ctrl+C 可验证 `SIGINT` 路径，但自动化测试不连接生产服务或使用真实凭据。
 
-`00002_a1_worker_tasks.sql` 已建立 Worker 任务队列 schema 前置契约。Python Worker 仍为 `a0-idle`；本交付不连接数据库、不领取任务，运行时租约、心跳、崩溃回收和 5 秒内取消由下一独立 PR 实现。
+`00002_a1_worker_tasks.sql` 与 Python Worker 已共同建立 A1 任务队列协议。Worker 只连接 PostgreSQL，在单事务内用 `FOR UPDATE SKIP LOCKED` 认领，并以数据库时间和唯一 `lease_id` 约束心跳、恢复与终态；当前只执行 `contract.noop` 和 `contract.sleep` 伪任务，不包含数据集、回测或交易能力。
 
 Worker 容器可单独验证：
 
 ```powershell
 $env:COINSPHERE_AUTH__SECRET_KEY = 'local-compose-validation-only'
-docker compose build worker
+docker compose build backend worker
 docker compose up --detach --no-build --wait worker
 docker compose exec -T worker python -m coinsphere_worker health
-docker compose rm --stop --force worker
+docker compose stop worker postgres
+docker compose rm --force worker migrate-worker postgres
 ```
 
-预期健康输出包含 `"mode":"a0-idle"` 和 `"taskConsumer":false`。A0 Worker 不连接数据库、不领取任务，开发 Compose 也不会为其提供网络、端口、卷或凭据。
+Compose 会在内部 `worker-db` 网络启动 PostgreSQL，等待健康后由一次性 `migrate-worker` 应用 migration，再启动 Worker。预期健康输出包含 `"mode":"a1-postgres"` 和 `"taskConsumer":true`。Worker 不开放端口、不挂载业务数据卷、不连接 Backend 网络，也不注入交易所凭据。
+
+本机已有仅供测试的 PostgreSQL 时，可直接运行真实并发与取消用例。测试会创建并删除随机隔离 schema，不会清空固定外部表：
+
+```powershell
+$env:COINSPHERE_TEST_POSTGRES_DSN = 'postgresql://coinsphere:test-only@127.0.0.1:5432/coinsphere_worker_test?sslmode=disable'
+Push-Location .\worker
+uv run --frozen pytest tests/test_queue_runtime.py
+Pop-Location
+```
 
 ## 前端浏览器冒烟
 
@@ -74,9 +84,9 @@ Pop-Location
 ./scripts/verify.sh
 ```
 
-GitHub Actions 负责 Linux、三类镜像构建、Compose 健康、Worker A0 契约和安全检查。本地缺少 Docker 时可以继续开发，但 PR 在容器 Job 通过前不得合并。
+GitHub Actions 负责 Linux、三类镜像构建、Compose 健康、Worker A1 PostgreSQL 集成契约和安全检查。本地缺少 Docker 或 PostgreSQL 时可以继续开发，但 PR 在 Worker 集成与容器 Job 通过前不得合并。
 
-CI 使用固定 PostgreSQL 17 镜像执行迁移契约，包括 Worker 任务表的七态、租约、尝试次数和非空 Down 保护。本地与发布环境的迁移命令、编写约束和回滚步骤见[数据库迁移手册](./database-migrations.md)。
+CI 使用固定 PostgreSQL 17 镜像执行 migration 与 Worker 运行时契约，包括七态、租约、尝试次数、非空 Down 保护、并发认领、旧租约 fencing、崩溃回收和 5 秒取消。本地与发布环境的迁移命令、编写约束和回滚步骤见[数据库迁移手册](./database-migrations.md)。
 
 ## 安全约束
 

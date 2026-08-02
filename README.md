@@ -5,7 +5,7 @@ coinsphere 的 Go 版整合仓库:Go 后端(单二进制)+ Vue 前端。
 ```
 backend/    Go 后端 —— 单进程内运行 HTTP API + 工作流调度/执行/事件分发(详见 backend/README.md)
 frontend/   Vue 3 + Vite 前端(原 fronted/,权限走 backend 模式)
-worker/     Python 3.12 量化 Worker(A0 仅提供空闲运行与健康契约)
+worker/     Python 3.12 量化 Worker(A1 PostgreSQL 租约、心跳、恢复与取消)
 ```
 
 ## 开发
@@ -31,7 +31,7 @@ pnpm dev
 
 ## 开发 Compose(Docker 一键起)
 
-拓扑:`web`(nginx)托管前端 dist 并把 `/api`、`/static`、`/uploads`、`/ws`、`/health` 反代到 `backend`(Go)，另行启动无网络和凭据的 `worker`(Python)。
+拓扑:`web`(nginx)托管前端 dist 并把 `/api`、`/static`、`/uploads`、`/ws`、`/health` 反代到 `backend`(Go)；内部 `worker-db` 网络连接 PostgreSQL、一次性 migration 与 `worker`(Python)。Backend 开发态仍使用独立 SQLite。
 前端生产环境 `VITE_API_URL = /`,与 nginx 同源,故无需改前端代码。
 
 ```bash
@@ -42,8 +42,8 @@ docker compose up -d --build
 ```
 
 - 入口只有 `web`(默认 `8080`,可用 `COINSPHERE_WEB_PORT` 改);`backend` 不对外暴露,仅经 nginx 反代。
-- A0 `worker` 只报告 `a0-idle` 健康状态，不领取任务、不开放端口、不挂载数据卷。
-- 持久化:sqlite(`backend-data` 卷)、上传文件(`backend-uploads`)、后端静态(`backend-static`)。
+- A1 `worker` 使用 PostgreSQL 租约消费任务，健康状态为 `a1-postgres`；不开放端口、不挂载业务数据卷、不持有交易凭据。
+- 持久化:sqlite(`backend-data` 卷)、Worker PostgreSQL(`worker-postgres-data` 卷)、上传文件(`backend-uploads`)、后端静态(`backend-static`)。
 - 换密钥/数据库:`COINSPHERE_AUTH__SECRET_KEY`、`COINSPHERE_DATABASE__*` 环境变量(见 `docker-compose.yml` 注释与 `backend/README.md`)。
 - 前端构建用项目自带 `pnpm build`(含 `vue-tsc` 类型检查);若类型检查阻塞出镜像,把 `frontend/Dockerfile` 的 `pnpm build` 换成 `pnpm exec vite build`。
 

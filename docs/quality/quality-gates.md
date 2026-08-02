@@ -7,7 +7,7 @@
 - 数据库：SQLite 与 PostgreSQL 的空库升级、旧版本升级、回滚重放、幂等和失败原子性契约；Worker 任务表还必须覆盖七态、尝试次数、租约唯一性及非空表拒绝 Down。
 - Vue：ESLint、Stylelint、类型检查、Vitest 单元测试和生产构建。
 - 浏览器：Chromium、Firefox、WebKit 的关键 Playwright 冒烟；失败时保留截图、trace 和 HTML 报告。
-- Python：Ruff、Mypy、Pytest 和锁文件一致性。
+- Python：Ruff、Mypy、Pytest、锁文件一致性，以及真实 PostgreSQL 的并发认领、续租、旧租约 fencing、过期恢复、尝试耗尽、正常取消与 Owner 崩溃后的 5 秒取消截止时间。
 - 容器：Compose 配置以及 Backend、Frontend、Worker 镜像构建与健康检查。
 - 安全：密钥、Go/Python 依赖、源代码、文件系统和 Backend/Frontend/Worker 镜像漏洞扫描。
 - 发布产物：最终 ZIP、tar.gz、Manifest、SPDX JSON SBOM 和 `SHA256SUMS` 必须通过精确清单、校验和、远端镜像 digest 与 SBOM 根组件绑定、危险归档路径及敏感内容扫描，失败时禁止上传 Artifact 和部署。
@@ -34,5 +34,5 @@
 
 - 版本化 SQL migration 的工具与测试骨架已经建立；应用启动仍由 GORM `AutoMigrate` 管理业务表，切换必须在 A1 独立 PR 完成。
 - Go 进程生命周期已覆盖信号、超时、取消传播、有界收尾和竞态；被取消的既有工作流执行按当前策略进入 `retry_waiting` 或 `failed`。
-- Worker 任务队列 schema 已由 `00002` 建立并通过 SQLite/PostgreSQL migration 契约验证；Worker 仍仅覆盖 A0 空闲运行与健康契约，认领、心跳、租约 fencing、崩溃回收和 5 秒内取消由下一独立 PR 补齐。
+- Worker 任务队列 schema 与 A1 PostgreSQL 运行时已建立；运行日志必须覆盖启动停止、认领、状态变化、心跳异常、恢复、取消和终态，且不得输出 DSN、环境值、原始任务载荷或凭据。当前仅有契约伪任务，数据集、回测与生产部署仍是后续里程碑。
 - 本机缺少 Docker 时，Compose 启动、健康检查和 API 冒烟必须由 GitHub Actions 完成。

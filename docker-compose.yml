@@ -1,4 +1,5 @@
-# coinsphere-go 开发栈:web(nginx 托管前端 + 反代)→ backend(Go 单二进制)，worker(A0 空闲契约)。
+# coinsphere-go 开发栈:web(nginx 托管前端 + 反代)→ backend(Go 单二进制)，
+# PostgreSQL 仅通过内部网络为 A1 Worker 队列提供协调。
 # 一键起:docker compose up -d --build,然后访问 http://localhost:8080
 services:
   backend:
@@ -33,13 +34,52 @@ services:
       retries: 3
       start_period: 10s
 
+  postgres:
+    image: postgres:17.6-alpine3.21@sha256:849377bbbdb1143b82d1b87646eb8ab48241fe32b85ab6667e02e0af139aaa74
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: coinsphere
+      POSTGRES_USER: coinsphere
+      POSTGRES_PASSWORD: coinsphere-worker-dev-only
+    volumes:
+      - worker-postgres-data:/var/lib/postgresql/data
+    networks:
+      - worker-db
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready --username=coinsphere --dbname=coinsphere"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  migrate-worker:
+    image: coinsphere-go-backend
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["/app/coinsphere-migrate", "-config", "/app/config.yml", "-direction", "up"]
+    environment:
+      COINSPHERE_DATABASE__DRIVER: postgres
+      COINSPHERE_DATABASE__HOST: postgres
+      COINSPHERE_DATABASE__PORT: 5432
+      COINSPHERE_DATABASE__USER: coinsphere
+      COINSPHERE_DATABASE__PASSWORD: coinsphere-worker-dev-only
+      COINSPHERE_DATABASE__DATABASE: coinsphere
+      COINSPHERE_DATABASE__SCHEMA: coinsphere
+    networks:
+      - worker-db
+
   worker:
     build:
       context: ./worker
     image: coinsphere-go-worker
     container_name: coinsphere-go-worker
     restart: unless-stopped
-    network_mode: none
+    depends_on:
+      migrate-worker:
+        condition: service_completed_successfully
+    networks:
+      - worker-db
     read_only: true
     cap_drop:
       - ALL
@@ -47,6 +87,7 @@ services:
       - "no-new-privileges:true"
     environment:
       TZ: UTC
+      COINSPHERE_WORKER_DATABASE_DSN: postgresql://coinsphere:coinsphere-worker-dev-only@postgres:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dcoinsphere
 
   web:
     build:
@@ -63,3 +104,8 @@ volumes:
   backend-data:
   backend-uploads:
   backend-static:
+  worker-postgres-data:
+
+networks:
+  worker-db:
+    internal: true
