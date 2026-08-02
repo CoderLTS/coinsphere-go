@@ -77,7 +77,7 @@ $env:COINSPHERE_SERVER__PORT = '7000'
 - **取消**:停止后不再接收请求或认领执行；被取消的既有执行按当前重试策略进入 `retry_waiting` 或 `failed`。
 - **重试**:可重试失败(timeout/connection/429/5xx)按 `retry_backoff_seconds` 退避,`retry_waiting → queued` 自动提升。
 - **恢复**:心跳超时(含进程崩溃重启后的孤儿执行)标记 `worker_lost` 并按剩余次数重试或失败。
-- **事件**:领域事件写 `domain_event_outbox`,后台循环投递,匹配 `start.event` 入口自动触发工作流。`00003` 只建立后续可靠投递所需的数据契约；当前循环仍直接扫描 `pending`，尚未实现原子认领、租约 fencing、过期恢复、指数退避、最大尝试、死信或告警运行时。
+- **事件**:领域事件写 `domain_event_outbox`,后台循环投递,匹配 `start.event` 入口自动触发工作流。`00003` 建立可靠投递数据契约，`internal/db` 已提供 SQLite/PostgreSQL 原子批量认领、数据库时间租约、终态 fencing 与过期恢复；当前循环仍直接扫描 `pending`，尚未接入该 API，也未实现指数退避、订阅失败重试或死信告警。
 - **清理**:每天 03:00 后按批删除超过保留期的终态执行。
 
 Python Worker 已通过独立 PostgreSQL 连接消费 `worker_tasks`，使用唯一租约完成认领、心跳、崩溃回收和 5 秒内取消。该运行时仅接入开发 Compose 与 CI，生产 Release 仍不构建或部署 Worker，也不改变 Go 工作流执行器。

@@ -22,7 +22,7 @@ Linux CI 额外执行 `go test -race ./...` 和 `SIGTERM` 进程测试。关机�
 
 `00002_a1_worker_tasks.sql` 与 Python Worker 已共同建立 A1 任务队列协议。Worker 只连接 PostgreSQL，在单事务内用 `FOR UPDATE SKIP LOCKED` 认领，并以数据库时间和唯一 `lease_id` 约束心跳、恢复与终态；当前只执行 `contract.noop` 和 `contract.sleep` 伪任务，不包含数据集、回测或交易能力。
 
-逻辑版本 `00003` 按驱动加载 SQLite 或 PostgreSQL Outbox SQL，验证既有事件保留、五态、尝试次数、活跃租约、死信/告警时间与索引契约。它不改变现有 `drainPendingEvents`；本地验证不得把尚未实现的原子认领、过期恢复、指数退避或死信告警运行时视为已完成。
+逻辑版本 `00003` 按驱动加载 SQLite 或 PostgreSQL Outbox SQL，验证既有事件保留、五态、尝试次数、活跃租约、死信/告警时间与索引契约。`internal/db` 在该 schema 上提供单语句原子批量认领、数据库时间租约、终态 fencing 与过期恢复；SQLite 并发测试使用两个独立句柄指向同一 WAL 文件，PostgreSQL 使用 `FOR UPDATE SKIP LOCKED`。它不改变现有 `drainPendingEvents`；本地验证不得把尚未接入的 dispatcher、指数退避、订阅失败重试或死信告警视为已完成。
 
 Worker 容器可单独验证：
 
@@ -71,12 +71,12 @@ CI 使用锁定依赖安装 Chromium、Firefox、WebKit，并在 `Playwright bro
 
 本门禁不改变业务接口、数据库、Compose 或部署产物。需要回滚时整体回退引入 Playwright 的 PR，删除测试依赖、配置、用例和 CI Job，并从 `Container builds` 的 `needs` 及仓库 Required checks/ruleset 中同步移除 `Playwright browser smoke`；无数据或运行时迁移。
 
-迁移契约默认在临时 SQLite 数据库执行。要同时验证 PostgreSQL，先设置仅供本地测试的 DSN：
+数据库契约默认在临时 SQLite 数据库执行。要同时验证 PostgreSQL migration 与 Outbox 并发租约，先设置仅供本地测试的 DSN：
 
 ```powershell
 $env:COINSPHERE_TEST_POSTGRES_DSN = 'postgres://coinsphere:test-only@127.0.0.1:5432/coinsphere_test?sslmode=disable'
 Push-Location .\backend
-go test -count=1 ./internal/migration ./cmd/migrate
+go test -count=1 ./internal/db ./internal/migration ./cmd/migrate
 Pop-Location
 ```
 
@@ -88,7 +88,7 @@ Pop-Location
 
 GitHub Actions 负责 Linux、三类镜像构建、Compose 健康、Worker A1 PostgreSQL 集成契约和安全检查。本地缺少 Docker 或 PostgreSQL 时可以继续开发，但 PR 在 Worker 集成与容器 Job 通过前不得合并。
 
-CI 使用固定 PostgreSQL 17 镜像执行 migration 与 Worker 运行时契约，包括 Worker 七态、租约、尝试次数、非空 Down 保护、并发认领、旧租约 fencing、崩溃回收和 5 秒取消，以及 Outbox 五态、租约字段一致性、保数升级、重复 Up、回滚重放和失败原子性。本地与发布环境的迁移命令、编写约束和回滚步骤见[数据库迁移手册](./database-migrations.md)。
+CI 使用固定 PostgreSQL 17 镜像执行 migration、Outbox 存储与 Worker 运行时契约，包括 Worker 七态、租约、尝试次数、非空 Down 保护、并发认领、旧租约 fencing、崩溃回收和 5 秒取消，以及 Outbox 五态、租约字段一致性、保数升级、重复 Up、回滚重放、双认领者争抢、批量与事务失败原子性、过期恢复和旧 token fencing。本地与发布环境的迁移命令、编写约束和回滚步骤见[数据库迁移手册](./database-migrations.md)。
 
 ## 安全约束
 
