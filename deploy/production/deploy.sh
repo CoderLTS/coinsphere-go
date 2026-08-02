@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-VERSION=${1:?用法: deploy.sh vX.Y.Z}
+if (( $# < 1 || $# > 2 )); then
+  echo "用法: deploy.sh vX.Y.Z [release-manifest.json]" >&2
+  exit 2
+fi
+VERSION=$1
+MANIFEST_FILE=${2:-}
 REGISTRY=${COINSPHERE_REGISTRY:-127.0.0.1:5000}
 DEPLOY_DIR=${COINSPHERE_DEPLOY_DIR:-/home/infrastructure/dpanel/compose/coinsphere-go}
 WEB_BIND=${COINSPHERE_WEB_BIND:-127.0.0.1}
@@ -14,6 +19,47 @@ DOCKER_CONFIG_FILE="${DOCKER_CONFIG:-${HOME:?HOME 未设置}/.docker}/config.jso
 if [[ ! $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
   echo "版本号必须符合 vX.Y.Z 格式: $VERSION" >&2
   exit 2
+fi
+if [[ ! $REGISTRY =~ ^[0-9A-Za-z.-]+(:[0-9]{1,5})?$ ]]; then
+  echo "Registry 地址格式无效" >&2
+  exit 2
+fi
+BACKEND_IMAGE=$REGISTRY/coinsphere/backend:$VERSION
+WEB_IMAGE=$REGISTRY/coinsphere/web:$VERSION
+if [[ -n $MANIFEST_FILE ]]; then
+  command -v jq >/dev/null || { echo "缺少命令: jq" >&2; exit 3; }
+  if [[ ! -f $MANIFEST_FILE || -L $MANIFEST_FILE ]]; then
+    echo "发布 Manifest 不是普通文件" >&2
+    exit 2
+  fi
+  if ! manifest_images=$(jq -er --arg version "$VERSION" \
+    --arg backend "$REGISTRY/coinsphere/backend" --arg web "$REGISTRY/coinsphere/web" '
+    def digest($repository):
+      type == "string"
+      and startswith($repository + "@sha256:")
+      and (ltrimstr($repository + "@sha256:") | test("^[0-9a-f]{64}$"));
+    if type == "object"
+      and (keys == ["backendDigest", "backendImage", "commit", "version", "webDigest", "webImage"])
+      and .version == $version
+      and (.commit | type == "string" and test("^[0-9a-f]{40}$"))
+      and .backendImage == ($backend + ":" + $version)
+      and .webImage == ($web + ":" + $version)
+      and (.backendDigest | digest($backend))
+      and (.webDigest | digest($web))
+    then .backendDigest, .webDigest
+    else error("invalid release manifest")
+    end
+  ' "$MANIFEST_FILE" 2>/dev/null); then
+    echo "发布 Manifest 与版本或 Registry 不匹配" >&2
+    exit 2
+  fi
+  mapfile -t release_images <<<"$manifest_images"
+  if [[ ${#release_images[@]} -ne 2 ]]; then
+    echo "发布 Manifest 镜像字段无效" >&2
+    exit 2
+  fi
+  BACKEND_IMAGE=${release_images[0]}
+  WEB_IMAGE=${release_images[1]}
 fi
 if [[ -f $DOCKER_CONFIG_FILE ]]; then
   command -v jq >/dev/null || { echo "缺少命令: jq" >&2; exit 3; }
@@ -76,8 +122,8 @@ if [[ $SOURCE_DIR != "$DEPLOY_DIR" ]]; then
 fi
 cat >"$next_env" <<EOF
 COINSPHERE_VERSION=$VERSION
-COINSPHERE_BACKEND_IMAGE=$REGISTRY/coinsphere/backend:$VERSION
-COINSPHERE_WEB_IMAGE=$REGISTRY/coinsphere/web:$VERSION
+COINSPHERE_BACKEND_IMAGE=$BACKEND_IMAGE
+COINSPHERE_WEB_IMAGE=$WEB_IMAGE
 COINSPHERE_WEB_BIND=$WEB_BIND
 COINSPHERE_WEB_PORT=$WEB_PORT
 EOF

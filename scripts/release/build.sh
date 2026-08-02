@@ -29,7 +29,7 @@ if [[ ! $BUILDER =~ ^[0-9A-Za-z][0-9A-Za-z_.-]*$ ]]; then
   echo "Buildx Builder 名称无效: $BUILDER" >&2
   exit 2
 fi
-for command_name in docker jq zip tar sha256sum; do
+for command_name in docker jq zip tar gzip sha256sum; do
   command -v "$command_name" >/dev/null || { echo "缺少命令: $command_name" >&2; exit 3; }
 done
 if [[ -f $DOCKER_CONFIG_FILE ]]; then
@@ -106,6 +106,7 @@ run_buildx \
   --target binaries --output "type=local,dest=$work_dir/windows" "$ROOT_DIR/backend"
 run_buildx --build-arg "VITE_VERSION=$VERSION" \
   --target assets --output "type=local,dest=$work_dir/web" "$ROOT_DIR/frontend"
+find "$work_dir/web" -type f -name '*.gz' -delete
 
 windows_name="coinsphere-$VERSION-windows-x86"
 linux_name="coinsphere-$VERSION-linux-amd64"
@@ -128,8 +129,11 @@ install -m 0644 "$ROOT_DIR/deploy/production/runtime.env.example" "$work_dir/pac
 install -m 0644 "$ROOT_DIR/deploy/production/README.md" "$work_dir/packages/$docker_name/README.md"
 
 (cd "$work_dir/packages" && zip -X -qr "$OUTPUT_DIR/$windows_name.zip" "$windows_name")
-tar -C "$work_dir/packages" -czf "$OUTPUT_DIR/$linux_name.tar.gz" "$linux_name"
-tar -C "$work_dir/packages" -czf "$OUTPUT_DIR/$docker_name.tar.gz" "$docker_name"
+tar_options=(--sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner --format=gnu)
+tar "${tar_options[@]}" -C "$work_dir/packages" -cf - "$linux_name" |
+  gzip -n >"$OUTPUT_DIR/$linux_name.tar.gz"
+tar "${tar_options[@]}" -C "$work_dir/packages" -cf - "$docker_name" |
+  gzip -n >"$OUTPUT_DIR/$docker_name.tar.gz"
 
 docker push "$backend_image"
 docker push "$REGISTRY/coinsphere/backend:$sha_tag"
