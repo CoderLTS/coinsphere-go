@@ -472,7 +472,9 @@ SELECT EXISTS (
 		t.Fatalf("worker task Down did not finish: %v", downCtx.Err())
 	}
 
-	assertVersions(t, ctx, runner, 2, 2)
+	// 并发写入使 00002 Down fail-closed 后，数据库当前版本仍为 2；00003 虽已回滚，
+	// 但它仍是二进制内嵌的最新版本，因此 latest 必须保持 3。
+	assertVersions(t, ctx, runner, 2, 3)
 	var taskCount int
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM worker_tasks").Scan(&taskCount); err != nil || taskCount != 1 {
 		t.Fatalf("concurrent Down changed worker tasks: count=%d err=%v", taskCount, err)
