@@ -59,7 +59,7 @@ func run(parent context.Context, args []string, stdout, stderr io.Writer) error 
 	}
 	defer sqlDB.Close()
 
-	runner, err := migration.New(sqlDB, cfg.Database.Driver)
+	runner, err := migration.New(sqlDB)
 	if err != nil {
 		return err
 	}

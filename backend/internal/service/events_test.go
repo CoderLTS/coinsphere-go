@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -16,7 +15,6 @@ import (
 
 	"coinsphere/backend/internal/config"
 	"coinsphere/backend/internal/db"
-	"coinsphere/backend/internal/migration"
 )
 
 // TestDrainPendingEventsClaimsAndCompletes 从服务入口验证成功事件必须经过 claim/complete，
@@ -376,30 +374,7 @@ func TestTerminalFailuresPublishStandardEvents(t *testing.T) {
 
 func openMigratedServiceDatabase(t *testing.T) *gorm.DB {
 	t.Helper()
-	database, err := db.Open(context.Background(), config.DatabaseConfig{
-		Driver: "sqlite",
-		Path:   filepath.Join(t.TempDir(), "service-events.db"),
-	})
-	if err != nil {
-		t.Fatalf("open service test database: %v", err)
-	}
-	sqlDB, err := database.DB()
-	if err != nil {
-		t.Fatalf("get service test database: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := sqlDB.Close(); err != nil {
-			t.Errorf("close service test database: %v", err)
-		}
-	})
-	runner, err := migration.New(sqlDB, "sqlite")
-	if err != nil {
-		t.Fatalf("create service migration runner: %v", err)
-	}
-	if _, err := runner.Up(context.Background(), 0); err != nil {
-		t.Fatalf("upgrade service test database: %v", err)
-	}
-	return database
+	return openPostgresWorkflowContractDatabase(t).primary
 }
 
 func newOutboxServiceTestApp(database *gorm.DB, leaseSeconds int) *App {

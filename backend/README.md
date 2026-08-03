@@ -8,13 +8,13 @@
 
 | 原 Python 版 | Go 版 |
 |---|---|
-| api / orchestrator / worker / init 四种进程角色 | 一个二进制,启动即完成建表 + 种子数据,goroutine 承载全部后台循环 |
+| api / orchestrator / worker / init 四种进程角色 | 一个 Go 服务二进制，启动写入种子数据并以 goroutine 承载后台循环；独立 migration 二进制拥有 DDL |
 | Redis Stream + 消费组做执行派发 | 数据库即队列:`workflow_executions.status` + 乐观锁 `UPDATE ... WHERE status='queued'` 认领 |
 | Redis ZSet 做重试到期索引 | 直接查 `status='retry_waiting' AND next_retry_at <= now` |
 | Redis 分布式锁选 leader | 单实例,无需选主(多实例部署需自行加数据库级锁) |
 | Redis 并发租约限制同 key 并发 | 进程内信号量(`semaphore_limit_per_key`) |
 | APScheduler + pickle 任务表 | 调度循环直接按 runtime entry 的 `next_run_at` 轮询触发(Quartz 6 位 cron / interval / once) |
-| PostgreSQL 专属 | GORM AutoMigrate,支持 **SQLite / MySQL / PostgreSQL** |
+| PostgreSQL 专属 | **PostgreSQL/TimescaleDB-only** 的版本化 SQL 基线 |
 
 已删除的表:`scheduler_jobs`(APScheduler pickle)、`workflow_dispatch_outbox`(Redis 中转)。其余表名、列名与 API 响应契约与 Python 版保持一致,前端无需改动。
 
@@ -22,12 +22,13 @@
 
 ```powershell
 cd backend
+$env:COINSPHERE_DATABASE__DSN = 'postgresql://coinsphere:test-only@127.0.0.1:5432/coinsphere?sslmode=disable'
 go run ./cmd/migrate -config ./config.yml -direction up
 go build -o coinsphere-server.exe .
-.\coinsphere-server.exe            # 默认读取 ./config.yml,SQLite,监听 :6987
+.\coinsphere-server.exe            # 默认读取 ./config.yml，监听 :6987
 ```
 
-SQLite/PostgreSQL 必须先由独立命令应用到 `00003`；缺失时服务会明确拒绝启动，不会在后台循环重复失败。随后首次启动仍由现有 `AutoMigrate` 建立其余业务表并写入种子数据(内置角色/菜单/超管 `coinsphere`/`coinsphere`、两个内置工作流)。
+独立命令必须先把空 schema 应用到当前版本；服务只读校验 migration 版本，不会执行 DDL。版本缺失、落后或领先时服务明确拒绝启动。首次成功启动写入内置角色、菜单、超管 `coinsphere`/`coinsphere` 和两个内置工作流。
 
 ## 版本化数据库迁移
 
@@ -40,35 +41,28 @@ go run ./cmd/migrate -config ./config.yml -direction down -steps 1
 go run ./cmd/migrate -config ./config.yml -direction version
 ```
 
-容器镜像同时提供 `/app/coinsphere-migrate`。`00001` 建立版本历史，`00002` 建立供 Python Worker 使用的 `worker_tasks`，逻辑版本 `00003` 按数据库驱动加载 SQLite/PostgreSQL SQL，为既有 `domain_event_outbox` 保数补齐五态、最大尝试、租约、错误分类、死信与告警留存契约，并保留旧 GORM `event_type` 查询索引。应用检测到 `00003` 后用同表名占位模型隔离 Outbox DDL，其余现有业务表及关系仍由 `AutoMigrate` 管理；整体启动切换属于 A1-10。迁移编写、验证和回滚约束见 [`docs/runbooks/database-migrations.md`](../docs/runbooks/database-migrations.md)。
+容器镜像同时提供 `/app/coinsphere-migrate`。`00001_a1_postgres_baseline.sql` 在空 PostgreSQL schema 中一次建立当前 Go 业务表、`worker_tasks`、外键、索引和 Outbox/Worker 状态约束。项目尚未投产，旧开发数据直接重置，不提供 SQLite、MySQL 或旧 PostgreSQL schema 的升级路径。迁移编写、验证和回滚约束见 [`docs/runbooks/database-migrations.md`](../docs/runbooks/database-migrations.md)。
 
-## 数据库切换
+## 数据库配置
 
-`config.yml` 的 `database.driver` 支持 `sqlite` / `mysql` / `postgres`:
+`config.yml` 只保留 PostgreSQL DSN 和连接池参数：
 
 ```yaml
 database:
-  driver: postgres
-  host: 127.0.0.1
-  port: 5432
-  user: coinsphere
-  password: secret
-  database: coinsphere
-  schema: coinsphere    # 仅 postgres
+  dsn: postgresql://coinsphere:secret@127.0.0.1:5432/coinsphere?sslmode=disable
+  max_open_conns: 40
+  max_idle_conns: 10
+  conn_max_idle_time_seconds: 300
 ```
 
 任意配置可用环境变量覆盖,规则 `COINSPHERE_<段>__<键>`:
 
 ```powershell
-$env:COINSPHERE_DATABASE__DRIVER = 'mysql'
+$env:COINSPHERE_DATABASE__DSN = 'postgresql://coinsphere:test-only@127.0.0.1:5432/coinsphere?sslmode=disable'
 $env:COINSPHERE_SERVER__PORT = '7000'
 ```
 
-- SQLite:纯 Go 驱动(免 cgo),开启 WAL,单写连接;适合单机/开发。
-- PostgreSQL:自动创建并使用 `database.schema` 指定的 schema,已实测端到端通过。
-- MySQL:GORM 官方驱动 + AutoMigrate,DSN 自动带 `parseTime=true`;未在本机实测。
-
-> 密码哈希(pbkdf2_sha256)、JWT 格式、Fernet 加密与 Python 版兼容;但 Go 版删除了两张表且不迁移旧 Redis 状态,建议指向全新 schema/库,而不是直接复用 Python 版正在使用的 schema。
+DSN 必须指向已经存在的数据库和 schema；连接入口不会创建 schema。密码哈希（pbkdf2_sha256）、JWT 格式和 Fernet 密文仍与 Python 版兼容，但数据库只允许使用全新 CoinSphere schema，不能直接复用旧 Python 或旧 Go schema。
 
 ## 运行时行为
 
@@ -80,12 +74,12 @@ $env:COINSPHERE_SERVER__PORT = '7000'
 - **取消**:停止后不再接收请求或认领执行；被取消的既有执行按当前重试策略进入 `retry_waiting` 或 `failed`。
 - **重试**:可重试失败(timeout/connection/429/5xx)按 `retry_backoff_seconds` 退避,`retry_waiting → queued` 自动提升。
 - **恢复**:心跳超时(含进程崩溃重启后的孤儿执行)标记 `worker_lost` 并按剩余次数重试或失败。
-- **事件**:工作流终态与标准领域事件在同一短事务写入 `domain_event_outbox`；存储层支持 SQLite/PostgreSQL 原子批量认领，后台循环按处理能力即时逐条认领，并用数据库时间续租和 fencing 投递。匹配 `start.event` 入口后以稳定幂等键触发工作流；订阅失败按 `retry_backoff_seconds` 重排，尝试耗尽进入死信，未告警死信由 `alerted_at` 原子去重后输出脱敏日志。
+- **事件**:工作流终态与标准领域事件在同一短事务写入 `domain_event_outbox`；PostgreSQL 存储层使用 `FOR UPDATE SKIP LOCKED` 原子批量认领，并用数据库时间续租和 fencing 投递。匹配 `start.event` 入口后以稳定幂等键触发工作流；订阅失败按 `retry_backoff_seconds` 重排，尝试耗尽进入死信，未告警死信由 `alerted_at` 原子去重后输出脱敏日志。
 - **清理**:每天 03:00 后按批删除超过保留期的终态执行。
 
 Python Worker 已通过独立 PostgreSQL 连接消费 `worker_tasks`，使用唯一租约完成认领、心跳、崩溃回收和 5 秒内取消。该运行时仅接入开发 Compose 与 CI，生产 Release 仍不构建或部署 Worker，也不改变 Go 工作流执行器。
 
-工作流版本与激活契约复用现有 schema，不新增 migration；SQLite 与 PostgreSQL 使用同一套服务测试验证并发版本、并发激活、失败回滚和快照可见性。设置测试 PostgreSQL DSN 后可与 migration、Outbox 契约一起运行：
+工作流版本、激活、Outbox 和 Worker 契约都在随机隔离的 PostgreSQL schema 上验证。设置测试 DSN 后运行：
 
 ```powershell
 $env:COINSPHERE_TEST_POSTGRES_DSN = 'postgres://coinsphere:test-only@127.0.0.1:5432/coinsphere_test?sslmode=disable'
@@ -101,10 +95,10 @@ go test -count=1 ./internal/service ./internal/api
 ## 目录
 
 ```
-main.go                 入口:根 Context → 配置 → 建表种子 → Runtime/HTTP → 有界关机
+main.go                 入口:根 Context → 配置 → 版本校验/种子 → Runtime/HTTP → 有界关机
 cmd/migrate             独立版本化 SQL migration 命令
 internal/config         YAML + 环境变量覆盖
-internal/db             GORM 模型 / 多方言 Open / 种子数据
+internal/db             GORM 模型 / PostgreSQL 连接 / 种子数据
 internal/migration      嵌入式 SQL、Goose Runner 与迁移契约
 internal/security       pbkdf2 密码、HS256 token、Fernet 密文
 internal/perm           权限码常量与内置菜单映射

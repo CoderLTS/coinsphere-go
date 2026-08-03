@@ -6,21 +6,25 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 
-	"coinsphere/backend/internal/config"
-	"coinsphere/backend/internal/db"
 	"coinsphere/backend/internal/migration"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 const signalHelperEnv = "COINSPHERE_TEST_SIGNAL_HELPER"
+
+var lifecycleSchemaSequence atomic.Uint64
 
 func TestSignalContextHandlesSIGTERM(t *testing.T) {
 	if os.Getenv(signalHelperEnv) == "1" {
@@ -91,7 +95,7 @@ func TestRunStopsCleanlyWhenRootContextIsCanceled(t *testing.T) {
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
 	_ = listener.Close()
-	configPath, databasePath := writeLifecycleConfig(t, port)
+	configPath := writeLifecycleConfig(t, port)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -123,9 +127,6 @@ func TestRunStopsCleanlyWhenRootContextIsCanceled(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("backend did not finish graceful shutdown")
 	}
-	if err := os.Remove(databasePath); err != nil {
-		t.Fatalf("database connection was not closed: %v", err)
-	}
 }
 
 func TestRunCleansUpAfterListenFailure(t *testing.T) {
@@ -135,61 +136,89 @@ func TestRunCleansUpAfterListenFailure(t *testing.T) {
 	}
 	defer listener.Close()
 	port := listener.Addr().(*net.TCPAddr).Port
-	configPath, databasePath := writeLifecycleConfig(t, port)
+	configPath := writeLifecycleConfig(t, port)
 
 	err = run(context.Background(), configPath)
 	if err == nil || !strings.Contains(err.Error(), "http server") {
 		t.Fatalf("run error = %v, want HTTP listen failure", err)
 	}
-	if err := os.Remove(databasePath); err != nil {
-		t.Fatalf("database connection was not closed: %v", err)
-	}
 }
 
-func writeLifecycleConfig(t *testing.T, port int) (string, string) {
+func writeLifecycleConfig(t *testing.T, port int) string {
 	t.Helper()
+	baseDSN := strings.TrimSpace(os.Getenv("COINSPHERE_TEST_POSTGRES_DSN"))
+	if baseDSN == "" {
+		if os.Getenv("CI") != "" {
+			t.Fatal("COINSPHERE_TEST_POSTGRES_DSN is required in CI")
+		}
+		t.Skip("COINSPHERE_TEST_POSTGRES_DSN is not configured")
+	}
+	adminConfig, err := pgx.ParseConfig(baseDSN)
+	if err != nil {
+		t.Fatalf("parse lifecycle PostgreSQL DSN: %v", err)
+	}
+	admin := stdlib.OpenDB(*adminConfig)
+	if err := admin.Ping(); err != nil {
+		_ = admin.Close()
+		t.Fatalf("ping lifecycle PostgreSQL database: %v", err)
+	}
+	schema := fmt.Sprintf("main_lifecycle_test_%d_%d_%d", os.Getpid(), time.Now().UnixNano(), lifecycleSchemaSequence.Add(1))
+	if _, err := admin.Exec("CREATE SCHEMA " + pgx.Identifier{schema}.Sanitize()); err != nil {
+		_ = admin.Close()
+		t.Fatalf("create lifecycle PostgreSQL schema: %v", err)
+	}
+	testConfig := adminConfig.Copy()
+	if testConfig.RuntimeParams == nil {
+		testConfig.RuntimeParams = make(map[string]string)
+	}
+	testConfig.RuntimeParams["search_path"] = schema
+	database := stdlib.OpenDB(*testConfig)
+	if err := database.Ping(); err != nil {
+		_ = database.Close()
+		_, _ = admin.Exec("DROP SCHEMA " + pgx.Identifier{schema}.Sanitize() + " CASCADE")
+		_ = admin.Close()
+		t.Fatalf("ping lifecycle PostgreSQL schema: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = database.Close()
+		_, _ = admin.Exec("DROP SCHEMA " + pgx.Identifier{schema}.Sanitize() + " CASCADE")
+		_ = admin.Close()
+	})
+	runner, err := migration.New(database)
+	if err != nil {
+		t.Fatalf("create lifecycle migration runner: %v", err)
+	}
+	if _, err := runner.Up(context.Background(), 0); err != nil {
+		t.Fatalf("migrate lifecycle PostgreSQL schema: %v", err)
+	}
+
 	directory := t.TempDir()
 	configPath := filepath.Join(directory, "config.yml")
-	databasePath := filepath.Join(directory, "lifecycle.db")
 	content := fmt.Sprintf(`server:
   host: 127.0.0.1
   port: %d
 database:
-  driver: sqlite
-  path: lifecycle.db
+  dsn: %q
 auth:
   secret_key: test-only-root-context-secret
   encryption_key: test-only-encryption-secret
   bootstrap_admin_password: test-only-admin-password
   password_iterations: 1000
-`, port)
+`, port, lifecyclePostgresURL(t, baseDSN, schema))
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	// 生命周期测试遵循真实启动顺序：独立 migration 先提交版本化 schema，服务随后只校验并保留 AutoMigrate。
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		t.Fatalf("load lifecycle config: %v", err)
+	return configPath
+}
+
+func lifecyclePostgresURL(t *testing.T, dsn, schema string) string {
+	t.Helper()
+	parsed, err := url.Parse(dsn)
+	if err != nil || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") {
+		t.Fatalf("PostgreSQL lifecycle test DSN must be a postgres:// or postgresql:// URL")
 	}
-	gdb, err := db.Connect(context.Background(), cfg.Database)
-	if err != nil {
-		t.Fatalf("connect lifecycle migration database: %v", err)
-	}
-	sqlDB, err := gdb.DB()
-	if err != nil {
-		t.Fatalf("get lifecycle migration database: %v", err)
-	}
-	runner, err := migration.New(sqlDB, cfg.Database.Driver)
-	if err != nil {
-		_ = sqlDB.Close()
-		t.Fatalf("create lifecycle migration runner: %v", err)
-	}
-	if _, err := runner.Up(context.Background(), 0); err != nil {
-		_ = sqlDB.Close()
-		t.Fatalf("migrate lifecycle database: %v", err)
-	}
-	if err := sqlDB.Close(); err != nil {
-		t.Fatalf("close lifecycle migration database: %v", err)
-	}
-	return configPath, databasePath
+	query := parsed.Query()
+	query.Set("options", "-csearch_path="+schema)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }

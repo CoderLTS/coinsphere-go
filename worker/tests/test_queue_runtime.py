@@ -44,7 +44,7 @@ def postgres_dsn() -> Iterator[str]:
         / "internal"
         / "migration"
         / "sql"
-        / "00002_a1_worker_tasks.sql"
+        / "00001_a1_postgres_baseline.sql"
     )
     up_sql, separator, _down_sql = migration_path.read_text(encoding="utf-8").partition(
         "-- +goose Down"

@@ -18,6 +18,7 @@ import (
 	"coinsphere/backend/internal/api"
 	"coinsphere/backend/internal/config"
 	"coinsphere/backend/internal/db"
+	"coinsphere/backend/internal/migration"
 	"coinsphere/backend/internal/service"
 )
 
@@ -60,7 +61,7 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 		return fmt.Errorf("invalid config: %w", err)
 	}
 
-	gdb, err := db.Open(ctx, cfg.Database)
+	gdb, err := db.Connect(ctx, cfg.Database)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
@@ -69,6 +70,13 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 		return fmt.Errorf("get sql database: %w", err)
 	}
 	defer func() { runErr = errors.Join(runErr, sqlDB.Close()) }()
+	runner, err := migration.New(sqlDB)
+	if err != nil {
+		return fmt.Errorf("build migration validator: %w", err)
+	}
+	if err := runner.ValidateCurrent(ctx); err != nil {
+		return fmt.Errorf("validate database schema: %w", err)
+	}
 
 	hostname, _ := os.Hostname()
 	workerID := fmt.Sprintf("%s:%d", hostname, os.Getpid())
@@ -82,7 +90,7 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	if cfg.Auth.BootstrapAdminPassword == "coinsphere" {
 		log.Printf("[warn] 内置超管仍使用默认初始密码,请登录后尽快修改,或用 COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD 指定强密码")
 	}
-	log.Printf("database ready: driver=%s", cfg.Database.Driver)
+	log.Printf("database ready: engine=postgres")
 
 	app.StartRuntime()
 

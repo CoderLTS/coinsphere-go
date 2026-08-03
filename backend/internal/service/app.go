@@ -15,7 +15,6 @@ import (
 	"gorm.io/gorm"
 
 	"coinsphere/backend/internal/config"
-	"coinsphere/backend/internal/db"
 	"coinsphere/backend/internal/security"
 )
 
@@ -84,12 +83,6 @@ type App struct {
 func NewApp(parentCtx context.Context, gdb *gorm.DB, cfg *config.AppConfig, workerID string) (*App, error) {
 	if parentCtx == nil {
 		return nil, errors.New("runtime context is required")
-	}
-	// 00003 是可靠 Outbox 运行时的原子 schema 契约。服务进程只校验、不代跑 migration；
-	// 否则全新 SQLite 会被旧 AutoMigrate 建成缺列表，后台循环只能持续失败而无法投递。
-	if (cfg.Database.Driver == "sqlite" || cfg.Database.Driver == "postgres") &&
-		!gdb.Migrator().HasColumn(&db.DomainEventOutbox{}, "max_attempts") {
-		return nil, errors.New("database migration 00003 is required; run coinsphere-migrate -direction up before starting the backend")
 	}
 	// := 是短变量声明(自动推断类型,只能在函数内部用);这里一次接住两个返回值:cipher 和 err。
 	// 紧跟的 if err != nil 是 Go 最典型的错误处理:出错就带着错误提前 return,不靠抛异常。

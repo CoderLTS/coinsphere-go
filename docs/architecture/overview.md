@@ -26,15 +26,15 @@ flowchart LR
 
 Go 服务使用 `signal.NotifyContext` 为 `SIGINT`/`SIGTERM` 建立唯一进程根 Context。HTTP 请求、Runtime 循环和执行、数据库操作及 WebSocket 连接从该根 Context 接收取消；进程停止接收新工作后，在 30 秒应用总预算内完成有界收尾，Compose 提供 40 秒终止宽限。
 
-A1-2 使用独立 `worker_tasks` 队列表，以 UUIDv7 字符串任务 ID、七态状态、唯一租约 ID、租约到期、心跳和取消时间承载 Worker 协议；该表不复用 Go 工作流的 `workflow_executions`。Python Worker 在单个 PostgreSQL 事务中通过 `FOR UPDATE SKIP LOCKED` 认领并递增尝试次数，所有活跃状态写入同时匹配任务 ID、`lease_id`、合法前态与数据库时间。过期的 `claimed/running` 按剩余尝试次数重排或失败；`cancelRequested` 不再续租，并在租约过期或独立 4 秒取消截止时间到达时只能进入 `canceled`，因此 Owner 在确认取消前崩溃也不会突破 5 秒契约。旧租约不能续租或提交终态。开发 Compose 通过仅内部可见的 PostgreSQL 网络启用该消费者；生产 Release 暂不部署 Worker，数据集与双回测执行能力按 A3 至 A5 的阶段顺序引入。
+A1 基线包含独立 `worker_tasks` 队列表，以 UUIDv7 字符串任务 ID、七态状态、唯一租约 ID、租约到期、心跳和取消时间承载 Worker 协议；该表不复用 Go 工作流的 `workflow_executions`。Python Worker 在单个 PostgreSQL 事务中通过 `FOR UPDATE SKIP LOCKED` 认领并递增尝试次数，所有活跃状态写入同时匹配任务 ID、`lease_id`、合法前态与数据库时间。过期的 `claimed/running` 按剩余尝试次数重排或失败；`cancelRequested` 不再续租，并在租约过期或独立 4 秒取消截止时间到达时只能进入 `canceled`。旧租约不能续租或提交终态。开发 Compose 通过内部数据库网络让 Backend 与 Worker 共享 TimescaleDB；生产 Release 暂不部署 Worker。
 
-A1-3 的逻辑版本 `00003` 分别提供 SQLite 与 PostgreSQL SQL，在保留既有事件和入站引用的前提下，为 `domain_event_outbox` 建立 `pending/claimed/processed/failed/dead_letter` 五态，以及最大尝试、唯一租约、Owner、租约到期、认领、错误分类、死信和告警时间契约。数据库约束保证只有 `claimed` 持有完整活跃租约，尝试次数不越界，终态时间一致；索引覆盖待认领、过期恢复、未告警死信和终态留存。存储层使用单条 DML 完成候选选择、批量更新与返回：PostgreSQL 通过 `FOR UPDATE SKIP LOCKED` 并发认领，SQLite 通过同一 WAL 文件的原子写语句串行多个认领者；每行由数据库生成唯一 token，租约、续租和 fencing 均使用数据库时间。dispatcher 每轮最多处理配置的批量上限，但仅在具备处理能力时即时认领下一条，避免慢首项让尚未开始的尾部事件消耗租约；慢订阅期间周期续租。成功或失败写入同时匹配事件 ID、token、Owner、认领代次与未过期时间。失败按配置退避，未耗尽事件回到 `pending`，耗尽或租约最后一次过期进入 `dead_letter`。工作流成功、最终失败与 stale 耗尽路径将业务终态和两条标准事件放入同一短事务；消费端使用事件、Outbox ID 与入口 ID 组成的稳定幂等键承接至少一次投递。死信先原子标记 `alerted_at` 再输出只含固定 ID 的日志，因此多实例不会重复告警；提交标记后立即崩溃仍可能漏日志，可靠外部告警需后续独立通道，当前不宣称 exactly-once。
+基线为 `domain_event_outbox` 建立 `pending/claimed/processed/failed/dead_letter` 五态，以及最大尝试、唯一租约、Owner、租约到期、认领、错误分类、死信和告警时间契约。数据库约束保证只有 `claimed` 持有完整活跃租约，尝试次数不越界，终态时间一致；索引覆盖待认领、过期恢复、未告警死信和终态留存。存储层通过 PostgreSQL `FOR UPDATE SKIP LOCKED` 在单条 DML 中完成候选选择、批量更新与返回；每行由数据库生成唯一 token，租约、续租和 fencing 均使用数据库时间。dispatcher 仅在具备处理能力时认领下一条，慢订阅期间周期续租。失败按配置退避，未耗尽事件回到 `pending`，耗尽或租约最后一次过期进入 `dead_letter`。工作流终态和标准事件在同一短事务提交；死信先原子标记 `alerted_at` 再输出只含固定 ID 的日志。提交标记后立即崩溃仍可能漏日志，当前不宣称 exactly-once。
 
-A1-4 复用现有 `(code, version)`、运行态和入口唯一约束，以数据库事务串行同一工作流 family 的变更。新版本在锁内读取 `MAX(version)` 后分配，避免先查后改竞态；激活、停用、入口重建及相关状态更新使用同一个事务。任一步失败都会回滚到原 active 版本和原入口集合，未提交的中间状态对其他连接不可见；运行态查询也在一致快照内读取 active 指针与入口，因此只返回完整旧版本或完整新版本。SQLite 与 PostgreSQL 使用同一套服务契约验证并发版本、并发激活、失败回滚和快照可见性，无需新增 schema migration。
+A1 工作流运行态复用 `(code, version)`、状态和入口唯一约束，以 PostgreSQL 事务串行同一工作流 family 的变更。新版本在锁内读取 `MAX(version)` 后分配；激活、停用、入口重建及相关状态更新使用同一个事务。任一步失败都会回滚到原 active 版本和入口集合，运行态查询只返回完整旧版本或完整新版本。
 
 A1-5 将 `/ws/notifications` 收敛为每连接一个有限发送队列和一个 writer。Hub 在锁内按同一顺序完成非阻塞入队，队列满的慢连接原子摘表后在锁外关闭，因此并发生产者和健康连接不等待网络写入；初始未读快照预先入队并固定为 `sequence=1`。writer 独占业务帧和 RFC6455 Ping，按实际写出顺序补连续序号；读循环只处理控制帧，Pong 延长期限，Hub 关机等待全部 writer 退出。事件使用固定五字段信封，数据在入队前固化且时间统一为 UTC。握手只接受与有效 scheme、Host 和端口同源的 Origin；Vite 代理保留开发页面 Host，Nginx 保留原始端口和合法上游 scheme。该阶段不新增跨域 allowlist、Token 兼容层、依赖或 migration。
 
-数据库 schema 通过后端镜像内的独立 migration 二进制演进，服务进程只校验 Outbox `00003` 已存在，不负责生产迁移。当前仍保留 GORM `AutoMigrate`；应用检测到 `00003` 字段后以同表名占位模型隔离 Outbox DDL，防止 SQLite 重建表并删除版本化约束，同时保留关系元数据以补齐 PostgreSQL 空库外键，其余业务模型和关系继续迁移。A1-10 才完成其余业务 schema 基线、存量校准和启动路径切换。详细决策见 [ADR-0002](./decisions/0002-versioned-sql-migrations.md)。
+数据库 schema 通过后端镜像内的独立 migration 二进制演进。单一 `00001_a1_postgres_baseline.sql` 面向空 PostgreSQL schema 建立当前全部业务表、Worker 队列、外键、索引和状态约束；服务进程只读校验版本，不执行 DDL。Backend 与 Worker 共用同一 TimescaleDB，旧 SQLite/MySQL schema 和未投产开发数据不提供兼容层。详细决策见 [ADR-0002](./decisions/0002-versioned-sql-migrations.md)。
 
 ## 领域边界
 

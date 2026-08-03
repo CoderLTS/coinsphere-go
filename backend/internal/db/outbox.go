@@ -12,38 +12,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// SQLite 以单条写语句完成候选选择、状态变更和结果返回。julianday 将 GORM 写入时可能保留的
-// 时区偏移归一化为绝对时间；strftime 的毫秒精度避免短租约在跨秒 heartbeat 时被提前判定过期。
-// 外层条件再次校验候选状态，文件写锁保证多个 WAL 句柄不会重复认领。
-const claimOutboxSQLite = `
-UPDATE domain_event_outbox
-SET status = 'claimed',
-    attempt_count = attempt_count + 1,
-    lease_id = lower(hex(randomblob(16))),
-    worker_id = ?,
-    claimed_at = strftime('%Y-%m-%d %H:%M:%f', 'now'),
-    lease_expires_at = strftime('%Y-%m-%d %H:%M:%f', 'now', '+' || CAST(? AS TEXT) || ' seconds'),
-    processed_at = NULL,
-    last_error_category = NULL,
-    last_error_message = '',
-    dead_lettered_at = NULL,
-    alerted_at = NULL,
-    updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now')
-WHERE id IN (
-    SELECT id
-    FROM domain_event_outbox
-    WHERE status = 'pending'
-      AND julianday(available_at) <= julianday('now')
-      AND attempt_count < max_attempts
-    ORDER BY julianday(available_at), id
-    LIMIT ?
-)
-  AND status = 'pending'
-  AND julianday(available_at) <= julianday('now')
-  AND attempt_count < max_attempts
-RETURNING *
-`
-
 // PostgreSQL 在同一条语句中锁定并跳过其他认领者已锁住的候选行，再批量更新并返回租约。
 // statement_timestamp() 避免调用方外层事务较长时使用事务开始时间计算出过早的租约。
 const claimOutboxPostgres = `
@@ -86,36 +54,6 @@ SELECT * FROM claimed ORDER BY available_at, id
 
 // 过期恢复保留已消耗的 attempt_count：仍有次数时重新排队，耗尽时原子进入死信，
 // 避免最后一次租约崩溃后永久停留在 claimed。两种结果都会在同一写入中清除旧租约。
-const recoverOutboxSQLite = `
-UPDATE domain_event_outbox
-SET status = CASE WHEN attempt_count < max_attempts THEN 'pending' ELSE 'dead_letter' END,
-    available_at = strftime('%Y-%m-%d %H:%M:%f', 'now'),
-    processed_at = CASE WHEN attempt_count < max_attempts THEN NULL ELSE strftime('%Y-%m-%d %H:%M:%f', 'now') END,
-    lease_id = NULL,
-    worker_id = NULL,
-    lease_expires_at = NULL,
-    claimed_at = NULL,
-    last_error_category = CASE
-        WHEN attempt_count < max_attempts THEN 'lease_expired'
-        ELSE 'attempts_exhausted'
-    END,
-    last_error_message = '',
-    dead_lettered_at = CASE WHEN attempt_count < max_attempts THEN NULL ELSE strftime('%Y-%m-%d %H:%M:%f', 'now') END,
-    alerted_at = NULL,
-    updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now')
-WHERE id IN (
-    SELECT id
-    FROM domain_event_outbox
-    WHERE status = 'claimed'
-      AND julianday(lease_expires_at) <= julianday('now')
-    ORDER BY lease_expires_at, id
-    LIMIT ?
-)
-  AND status = 'claimed'
-  AND julianday(lease_expires_at) <= julianday('now')
-RETURNING *
-`
-
 const recoverOutboxPostgres = `
 WITH recovery_clock AS MATERIALIZED (
     SELECT statement_timestamp() AS now
@@ -155,34 +93,6 @@ WITH recovery_clock AS MATERIALIZED (
 SELECT * FROM recovered ORDER BY available_at, id
 `
 
-// SQLite 用数据库时间完成失败重排或最终死信。WHERE 中的完整租约条件既阻止过期 Owner 写入，
-// 也防止旧 token 在事件被重新认领后覆盖新一代租约；错误正文固定留空，避免持久化订阅异常中的敏感内容。
-const failOutboxSQLite = `
-UPDATE domain_event_outbox
-SET status = CASE WHEN attempt_count < max_attempts THEN 'pending' ELSE 'dead_letter' END,
-    available_at = CASE
-        WHEN attempt_count < max_attempts
-            THEN strftime('%Y-%m-%d %H:%M:%f', 'now', '+' || CAST(? AS TEXT) || ' seconds')
-        ELSE strftime('%Y-%m-%d %H:%M:%f', 'now')
-    END,
-    processed_at = CASE WHEN attempt_count < max_attempts THEN NULL ELSE strftime('%Y-%m-%d %H:%M:%f', 'now') END,
-    lease_id = NULL,
-    worker_id = NULL,
-    lease_expires_at = NULL,
-    claimed_at = NULL,
-    last_error_category = ?,
-    last_error_message = '',
-    dead_lettered_at = CASE WHEN attempt_count < max_attempts THEN NULL ELSE strftime('%Y-%m-%d %H:%M:%f', 'now') END,
-    alerted_at = NULL,
-    updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now')
-WHERE id = ?
-  AND status = 'claimed'
-  AND lease_id = ?
-  AND worker_id = ?
-  AND attempt_count = ?
-  AND julianday(lease_expires_at) > julianday('now')
-`
-
 const failOutboxPostgres = `
 WITH failure_clock AS MATERIALIZED (
     SELECT statement_timestamp() AS now
@@ -215,26 +125,6 @@ WHERE outbox.id = ?
 
 // 告警领取先原子写 alerted_at 再只返回固定 ID。它提供并发下的 at-most-once 告警语义：
 // 多实例不会重复输出同一死信，但若进程在提交标记后、写日志前崩溃，仍可能漏报；可靠外部告警需独立 Outbox。
-const alertOutboxDeadLettersSQLite = `
-UPDATE domain_event_outbox
-SET alerted_at = CASE
-        WHEN julianday(dead_lettered_at) > julianday('now') THEN dead_lettered_at
-        ELSE strftime('%Y-%m-%d %H:%M:%f', 'now')
-    END,
-    updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now')
-WHERE id IN (
-    SELECT id
-    FROM domain_event_outbox
-    WHERE status = 'dead_letter'
-      AND alerted_at IS NULL
-    ORDER BY julianday(dead_lettered_at), id
-    LIMIT ?
-)
-  AND status = 'dead_letter'
-  AND alerted_at IS NULL
-RETURNING id
-`
-
 const alertOutboxDeadLettersPostgres = `
 WITH alert_clock AS MATERIALIZED (
     SELECT statement_timestamp() AS now
@@ -283,19 +173,7 @@ func ClaimOutboxEvents(
 	}
 	leaseSeconds := ceilDurationSeconds(leaseDuration)
 
-	var query string
-	var args []any
-	switch database.Dialector.Name() {
-	case "sqlite":
-		query = claimOutboxSQLite
-		args = []any{workerID, leaseSeconds, limit}
-	case "postgres":
-		query = claimOutboxPostgres
-		args = []any{limit, workerID, leaseSeconds}
-	default:
-		return nil, fmt.Errorf("outbox claim does not support database driver %q", database.Dialector.Name())
-	}
-	rows, err := updateOutboxRows(ctx, database, query, args...)
+	rows, err := updateOutboxRows(ctx, database, claimOutboxPostgres, limit, workerID, leaseSeconds)
 	if err != nil {
 		return nil, fmt.Errorf("claim outbox events: %w", err)
 	}
@@ -312,16 +190,7 @@ func RecoverExpiredOutboxEvents(ctx context.Context, database *gorm.DB, limit in
 		return nil, errors.New("outbox recovery limit must be greater than zero")
 	}
 
-	var query string
-	switch database.Dialector.Name() {
-	case "sqlite":
-		query = recoverOutboxSQLite
-	case "postgres":
-		query = recoverOutboxPostgres
-	default:
-		return nil, fmt.Errorf("outbox recovery does not support database driver %q", database.Dialector.Name())
-	}
-	rows, err := updateOutboxRows(ctx, database, query, limit)
+	rows, err := updateOutboxRows(ctx, database, recoverOutboxPostgres, limit)
 	if err != nil {
 		return nil, fmt.Errorf("recover expired outbox events: %w", err)
 	}
@@ -338,18 +207,10 @@ func CompleteOutboxEvent(ctx context.Context, database *gorm.DB, claim DomainEve
 		return false, fmt.Errorf("complete outbox event: %w", err)
 	}
 
-	nowExpression, ok := outboxNowExpression(database)
-	if !ok {
-		return false, fmt.Errorf("outbox completion does not support database driver %q", database.Dialector.Name())
-	}
-	validLeaseExpression := fmt.Sprintf("lease_expires_at > %s", nowExpression)
-	if database.Dialector.Name() == "sqlite" {
-		validLeaseExpression = fmt.Sprintf("julianday(lease_expires_at) > julianday(%s)", nowExpression)
-	}
-	query := fmt.Sprintf(`
+	query := `
 UPDATE domain_event_outbox
 SET status = 'processed',
-    processed_at = %[1]s,
+    processed_at = statement_timestamp(),
     lease_id = NULL,
     worker_id = NULL,
     lease_expires_at = NULL,
@@ -358,14 +219,14 @@ SET status = 'processed',
     last_error_message = '',
     dead_lettered_at = NULL,
     alerted_at = NULL,
-    updated_at = %[1]s
+    updated_at = statement_timestamp()
 WHERE id = ?
   AND status = 'claimed'
   AND lease_id = ?
   AND worker_id = ?
   AND attempt_count = ?
-  AND %[2]s
-`, nowExpression, validLeaseExpression)
+  AND lease_expires_at > statement_timestamp()
+`
 	result := database.WithContext(ctx).Exec(
 		query,
 		claim.ID,
@@ -396,27 +257,17 @@ func RenewOutboxEventLease(
 	if leaseDuration <= 0 {
 		return false, errors.New("outbox lease duration must be greater than zero")
 	}
-	nowExpression, ok := outboxNowExpression(database)
-	if !ok {
-		return false, fmt.Errorf("outbox renewal does not support database driver %q", database.Dialector.Name())
-	}
-	leaseExpression := "strftime('%Y-%m-%d %H:%M:%f', 'now', '+' || CAST(? AS TEXT) || ' seconds')"
-	validLeaseExpression := fmt.Sprintf("julianday(lease_expires_at) > julianday(%s)", nowExpression)
-	if database.Dialector.Name() == "postgres" {
-		leaseExpression = fmt.Sprintf("%s + (CAST(? AS BIGINT) * INTERVAL '1 second')", nowExpression)
-		validLeaseExpression = fmt.Sprintf("lease_expires_at > %s", nowExpression)
-	}
-	query := fmt.Sprintf(`
+	query := `
 UPDATE domain_event_outbox
-SET lease_expires_at = %[1]s,
-    updated_at = %[2]s
+SET lease_expires_at = statement_timestamp() + (CAST(? AS BIGINT) * INTERVAL '1 second'),
+    updated_at = statement_timestamp()
 WHERE id = ?
   AND status = 'claimed'
   AND lease_id = ?
   AND worker_id = ?
   AND attempt_count = ?
-  AND %[3]s
-`, leaseExpression, nowExpression, validLeaseExpression)
+  AND lease_expires_at > statement_timestamp()
+`
 	result := database.WithContext(ctx).Exec(
 		query,
 		ceilDurationSeconds(leaseDuration),
@@ -454,17 +305,8 @@ func FailOutboxEvent(
 		return false, errors.New("outbox failure category must contain 1 to 64 characters")
 	}
 
-	var query string
-	switch database.Dialector.Name() {
-	case "sqlite":
-		query = failOutboxSQLite
-	case "postgres":
-		query = failOutboxPostgres
-	default:
-		return false, fmt.Errorf("outbox failure does not support database driver %q", database.Dialector.Name())
-	}
 	result := database.WithContext(ctx).Exec(
-		query,
+		failOutboxPostgres,
 		ceilDurationSeconds(retryDelay),
 		category,
 		claim.ID,
@@ -488,18 +330,9 @@ func MarkOutboxDeadLettersAlerted(ctx context.Context, database *gorm.DB, limit 
 		return nil, errors.New("outbox alert limit must be greater than zero")
 	}
 
-	var query string
-	switch database.Dialector.Name() {
-	case "sqlite":
-		query = alertOutboxDeadLettersSQLite
-	case "postgres":
-		query = alertOutboxDeadLettersPostgres
-	default:
-		return nil, fmt.Errorf("outbox alert does not support database driver %q", database.Dialector.Name())
-	}
 	var ids []int64
 	err := database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return tx.Raw(query, limit).Scan(&ids).Error
+		return tx.Raw(alertOutboxDeadLettersPostgres, limit).Scan(&ids).Error
 	})
 	if err != nil {
 		return nil, fmt.Errorf("mark Outbox dead letters alerted: %w", err)
@@ -514,17 +347,6 @@ func validateOutboxClaim(claim DomainEventOutbox) error {
 		return errors.New("valid outbox lease is required")
 	}
 	return nil
-}
-
-func outboxNowExpression(database *gorm.DB) (string, bool) {
-	switch database.Dialector.Name() {
-	case "sqlite":
-		return "strftime('%Y-%m-%d %H:%M:%f', 'now')", true
-	case "postgres":
-		return "statement_timestamp()", true
-	default:
-		return "", false
-	}
 }
 
 func ceilDurationSeconds(duration time.Duration) int64 {
