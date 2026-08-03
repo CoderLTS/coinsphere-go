@@ -66,6 +66,7 @@ type WorkflowConfig struct {
 	PollIntervalMs                   int   `yaml:"poll_interval_ms"`
 	OutboxPollIntervalMs             int   `yaml:"outbox_poll_interval_ms"`
 	OutboxBatchSize                  int   `yaml:"outbox_batch_size"`
+	OutboxLeaseSeconds               int   `yaml:"outbox_lease_seconds"`
 	ExecutionRetentionDays           int   `yaml:"execution_retention_days"`
 	RetentionDeleteBatchSize         int   `yaml:"retention_delete_batch_size"`
 	MaxInputSnapshotBytes            int   `yaml:"max_input_snapshot_bytes"`
@@ -167,6 +168,7 @@ func defaultConfig() *AppConfig {
 			PollIntervalMs:                   1000,
 			OutboxPollIntervalMs:             1000,
 			OutboxBatchSize:                  100,
+			OutboxLeaseSeconds:               30,
 			ExecutionRetentionDays:           30,
 			RetentionDeleteBatchSize:         1000,
 			MaxInputSnapshotBytes:            65536,
@@ -213,6 +215,9 @@ func (c *AppConfig) normalize(baseDir string) {
 	}
 	if c.Workflow.MaxAttempts < 1 {
 		c.Workflow.MaxAttempts = 1
+	}
+	if c.Workflow.OutboxLeaseSeconds < 1 {
+		c.Workflow.OutboxLeaseSeconds = 30
 	}
 	if c.Workflow.GraphNodeConcurrency < 1 {
 		c.Workflow.GraphNodeConcurrency = 8

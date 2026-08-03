@@ -2,11 +2,11 @@
 
 ## 当前边界
 
-A0 已提供独立的版本化 SQL migration 命令、嵌入式迁移文件、PostgreSQL advisory lock 和自动化契约测试。A1 的 `00002_a1_worker_tasks.sql` 新建独立 Worker 任务队列表；A1-3 的逻辑版本 `00003` 分别使用 `00003_a1_outbox_schema_sqlite.sql` 与 `00003_a1_outbox_schema_postgres.sql`，Runner 按数据库驱动只加载对应方言。服务进程仍通过 `db.Open` 对既有业务模型执行 GORM `AutoMigrate`，迁移命令通过 `db.Connect` 建立连接且不会触发 AutoMigrate。
+A0 已提供独立的版本化 SQL migration 命令、嵌入式迁移文件、PostgreSQL advisory lock 和自动化契约测试。A1 的 `00002_a1_worker_tasks.sql` 新建独立 Worker 任务队列表；A1-3 的逻辑版本 `00003` 分别使用 `00003_a1_outbox_schema_sqlite.sql` 与 `00003_a1_outbox_schema_postgres.sql`，Runner 按数据库驱动只加载对应方言。服务进程仍通过 `db.Open` 对既有业务模型执行 GORM `AutoMigrate`，但在组装可靠 Outbox 运行时前会校验 `00003`；迁移命令通过 `db.Connect` 建立连接且不会触发 AutoMigrate。
 
 迁移命令只支持 SQLite 开发态和目标 PostgreSQL 架构。现有 MySQL 应用启动路径继续使用 `AutoMigrate`，不在本迁移工具的支持与验收范围内。
 
-`00001_a0_versioned_migrations.sql` 是机制基线，只建立 `schema_migrations` 版本历史。`00002` 只建立 `worker_tasks`；A1 Python Worker 已在开发 Compose 与 CI 中使用该表，但不新增 API，也不进入生产 Release。`00003` 在空 migration 数据库中创建兼容基表，在既有 GORM 数据库中原样保留事件和入站引用，再补齐 `max_attempts`、`lease_id`、`worker_id`、`lease_expires_at`、`claimed_at`、`last_error_category`、`dead_lettered_at` 与 `alerted_at`。合法状态为 `pending`、`claimed`、`processed`、`failed`、`dead_letter`；约束和索引为后续认领、恢复、退避、死信告警与留存提供数据契约，但本 PR 不实现 dispatcher 运行时。
+`00001_a0_versioned_migrations.sql` 是机制基线，只建立 `schema_migrations` 版本历史。`00002` 只建立 `worker_tasks`；A1 Python Worker 已在开发 Compose 与 CI 中使用该表，但不新增 API，也不进入生产 Release。`00003` 在空 migration 数据库中创建兼容基表，在既有 GORM 数据库中原样保留事件和入站引用，再补齐 `max_attempts`、`lease_id`、`worker_id`、`lease_expires_at`、`claimed_at`、`last_error_category`、`dead_lettered_at` 与 `alerted_at`。合法状态为 `pending`、`claimed`、`processed`、`failed`、`dead_letter`；运行时在该约束上完成原子认领、续租、失败退避、过期恢复和死信告警，`failed` 仅保留兼容旧 dispatcher 的既有终态。
 
 A1 仍必须在路线图 A1-10 用独立 PR 完成其余业务 schema 的 SQL 基线、存量数据库校准、启动路径切换和恢复演练；在该 PR 合并前不得关闭 `AutoMigrate`。Outbox 新字段已在 GORM 模型中声明，但由 `00003` 独占 DDL 所有权；应用检测到 `max_attempts` 后用同表名占位模型隔离 Outbox DDL，并保留关系元数据以补齐 PostgreSQL 空库外键，其余显式模型和关系继续迁移。`00003` 还显式建立并在 Down 后保留旧 GORM `event_type` 查询索引，避免空 migration 库丢失既有查询基线。
 
@@ -34,6 +34,8 @@ go run ./cmd/migrate -config ./config.yml -direction down -steps 1
 COINSPHERE_AUTH__SECRET_KEY=local-migration-only \
   docker compose run --rm backend /app/coinsphere-migrate -config /app/config.yml -direction status
 ```
+
+开发 Compose 的一次性 `migrate-backend` 与 Backend 共享 SQLite 数据卷，并作为 Backend 的启动依赖；直接运行二进制时也必须先执行 `direction up`。生产部署脚本保持“停止旧版本、备份 SQLite、独立迁移、启动新版本”的顺序。
 
 真实发布命令必须由用户在 Linux 主机执行，且只使用 Docker Secret 或本机配置注入数据库凭据。凭据不得出现在仓库、Issue、PR、CI 参数或终端截图中。
 
@@ -68,6 +70,7 @@ go test -count=1 ./internal/migration ./cmd/migrate
 - `00002` 的 Down 只允许空队列；存在任何任务时必须失败并保持表、数据和 migration 版本不变。
 - `domain_event_outbox` 只接受五种合法状态，强制 `0 <= attempt_count <= max_attempts`、仅 `claimed` 持有完整活跃租约、死信与告警时间一致，并验证待认领、过期恢复、死信告警、终态留存索引及唯一 `lease_id`。
 - `00003` 必须覆盖空 migration 数据库、已有 GORM Outbox 的保数升级、重复 Up、Down 后重放和 Up 失败原子性；非空 Outbox 的 Down 必须保持表、事件和 migration 版本不变。
+- Outbox 存储契约必须在 SQLite 与 PostgreSQL 同时覆盖并发批量认领、调用方事务回滚、续租、失败重排、旧 token fencing、过期恢复、尝试耗尽，以及未告警死信的并发领取和批量失败全回滚。
 
 ## 发布步骤
 
@@ -93,6 +96,6 @@ go test -count=1 ./internal/migration ./cmd/migrate
 
 ## Outbox schema 与代码回滚
 
-回滚 A1-3 代码时，恢复上一兼容代码并保留 `domain_event_outbox`、全部事件和 migration 版本。现有 producer 不写新增列，数据库默认值可继续承载旧运行时；不得为了代码回滚执行 `00003` Down，也不得删除事件或修改 `schema_migrations`。
+回滚 A1-3 运行时代码前，先停止新 dispatcher，并使用当前版本等待或恢复全部活跃租约，确认不存在 `status='claimed'` 的事件后再恢复上一兼容代码；否则旧 dispatcher 不会回收新租约。保留 `domain_event_outbox`、全部待处理/死信事件和 migration 版本，数据库默认值可继续承载旧 producer；不得为了代码回滚执行 `00003` Down，也不得删除事件或修改 `schema_migrations`。
 
 只有明确撤销 schema、停止全部 Outbox 写入且确认表从未产生任何事件时，才可使用包含 `00003` 的 migration 二进制执行一次 Down 并确认版本回到 `2`。SQLite 与 PostgreSQL 都会先取得阻止并发写入的 schema/表锁再检查空表；任何既有事件都会使 Down 在同一事务中 fail-closed，表、数据、索引、约束和版本记录保持不变。非空时应保留扩展 schema，禁止清空事件换取回滚。

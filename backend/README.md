@@ -22,11 +22,12 @@
 
 ```powershell
 cd backend
+go run ./cmd/migrate -config ./config.yml -direction up
 go build -o coinsphere-server.exe .
 .\coinsphere-server.exe            # 默认读取 ./config.yml,SQLite,监听 :6987
 ```
 
-首次启动自动建表并写入种子数据(内置角色/菜单/超管 `coinsphere`/`coinsphere`、两个内置工作流)。
+SQLite/PostgreSQL 必须先由独立命令应用到 `00003`；缺失时服务会明确拒绝启动，不会在后台循环重复失败。随后首次启动仍由现有 `AutoMigrate` 建立其余业务表并写入种子数据(内置角色/菜单/超管 `coinsphere`/`coinsphere`、两个内置工作流)。
 
 ## 版本化数据库迁移
 
@@ -77,7 +78,7 @@ $env:COINSPHERE_SERVER__PORT = '7000'
 - **取消**:停止后不再接收请求或认领执行；被取消的既有执行按当前重试策略进入 `retry_waiting` 或 `failed`。
 - **重试**:可重试失败(timeout/connection/429/5xx)按 `retry_backoff_seconds` 退避,`retry_waiting → queued` 自动提升。
 - **恢复**:心跳超时(含进程崩溃重启后的孤儿执行)标记 `worker_lost` 并按剩余次数重试或失败。
-- **事件**:领域事件写 `domain_event_outbox`,后台循环投递,匹配 `start.event` 入口自动触发工作流。`00003` 建立可靠投递数据契约，`internal/db` 已提供 SQLite/PostgreSQL 原子批量认领、数据库时间租约、终态 fencing 与过期恢复；当前循环仍直接扫描 `pending`，尚未接入该 API，也未实现指数退避、订阅失败重试或死信告警。
+- **事件**:工作流终态与标准领域事件在同一短事务写入 `domain_event_outbox`；存储层支持 SQLite/PostgreSQL 原子批量认领，后台循环按处理能力即时逐条认领，并用数据库时间续租和 fencing 投递。匹配 `start.event` 入口后以稳定幂等键触发工作流；订阅失败按 `retry_backoff_seconds` 重排，尝试耗尽进入死信，未告警死信由 `alerted_at` 原子去重后输出脱敏日志。
 - **清理**:每天 03:00 后按批删除超过保留期的终态执行。
 
 Python Worker 已通过独立 PostgreSQL 连接消费 `worker_tasks`，使用唯一租约完成认领、心跳、崩溃回收和 5 秒内取消。该运行时仅接入开发 Compose 与 CI，生产 Release 仍不构建或部署 Worker，也不改变 Go 工作流执行器。

@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -16,6 +17,42 @@ import (
 
 	"coinsphere/backend/internal/config"
 )
+
+var errDatabaseOperation = errors.New("database operation failed")
+
+// redactingGORMLogger 保留参数占位后的 SQL、耗时和行数，但不把驱动错误正文写入日志。
+// 数据库错误可能回显约束值或业务内容；调用方应另行记录固定操作名、资源 ID 和错误分类。
+type redactingGORMLogger struct {
+	logger.Interface
+}
+
+func (l redactingGORMLogger) LogMode(level logger.LogLevel) logger.Interface {
+	return redactingGORMLogger{Interface: l.Interface.LogMode(level)}
+}
+
+func (l redactingGORMLogger) Error(ctx context.Context, _ string, _ ...interface{}) {
+	l.Interface.Error(ctx, errDatabaseOperation.Error())
+}
+
+func (l redactingGORMLogger) Trace(
+	ctx context.Context,
+	begin time.Time,
+	fc func() (string, int64),
+	err error,
+) {
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		err = errDatabaseOperation
+	}
+	l.Interface.Trace(ctx, begin, fc, err)
+}
+
+// ParamsFilter 显式透传底层参数过滤器；未知实现则 fail-closed 丢弃参数，避免包装 logger 后重新展开 payload。
+func (l redactingGORMLogger) ParamsFilter(ctx context.Context, query string, params ...interface{}) (string, []interface{}) {
+	if filter, ok := l.Interface.(gorm.ParamsFilter); ok {
+		return filter.ParamsFilter(ctx, query, params...)
+	}
+	return query, nil
+}
 
 // Open 按配置的 driver 打开数据库连接并完成建表。
 // 本项目用 GORM 这个 ORM 框架:把 Go struct 当数据库表来读写,基本不用手写 SQL(见 GO入门笔记『框架:GORM』)。
@@ -92,14 +129,15 @@ func Connect(ctx context.Context, cfg config.DatabaseConfig) (*gorm.DB, error) {
 	// gorm.Open 用选好的方言真正建立连接,返回 *gorm.DB —— 之后所有数据库操作都通过它。
 	// 顺带配置查询日志:慢于 500ms 的 SQL 才告警;查不到记录(First 未命中)是正常业务分支,不刷日志。
 	gdb, err := gorm.Open(dialector, &gorm.Config{
-		Logger: logger.New(
+		Logger: redactingGORMLogger{Interface: logger.New(
 			log.New(os.Stderr, "\r\n", log.LstdFlags),
 			logger.Config{
 				SlowThreshold:             500 * time.Millisecond,
 				LogLevel:                  logger.Warn,
 				IgnoreRecordNotFoundError: true, // First() 未命中是正常业务分支,不刷日志。
+				ParameterizedQueries:      true, // SQL 错误和慢查询日志保留占位符，禁止展开 Outbox payload 等参数。
 			},
-		),
+		)},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open %s database: %w", cfg.Driver, err)

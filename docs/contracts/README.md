@@ -32,7 +32,9 @@ Worker 必须周期续租；租约一旦过期，旧 Worker 立即失去心跳�
 
 Outbox 认领必须在单条数据库语句中完成候选选择、批量状态更新和结果返回，禁止先查后改。每条 `pending` 事件仅在 `available_at` 已到且 `attempt_count < max_attempts` 时可进入 `claimed`；认领递增一次尝试次数，并由数据库生成新的唯一 `lease_id`、记录 Owner、认领时间和租约到期时间。
 
-`claimed -> processed` 必须同时匹配事件 ID、`lease_id`、Owner、`attempt_count` 和未过期的数据库时间。租约过期后旧 Owner 立即失去终态写权限；即使事件已经恢复并重新认领，旧 token 的写入也只能影响零行。恢复保留已消耗的尝试次数并清空旧租约：仍有次数时回到 `pending`，最后一次租约过期时进入 `dead_letter`，且 `processed_at` 与 `dead_lettered_at` 相同。当前 `failed` 继续表示旧 dispatcher 的既有终态；订阅失败重试、指数退避和告警留待 dispatcher 接入 PR。
+续租、`claimed -> processed` 和订阅失败释放都必须同时匹配事件 ID、`lease_id`、Owner、`attempt_count` 和未过期的数据库时间。租约过期后旧 Owner 立即失去续租与终态写权限；即使事件已经恢复并重新认领，旧 token 的写入也只能影响零行。订阅失败保留已消耗的尝试次数并清空旧租约：仍有次数时按数据库时间与 `retry_backoff_seconds` 回到 `pending`，最后一次失败或租约过期时进入 `dead_letter`，且 `processed_at` 与 `dead_lettered_at` 相同。当前 `failed` 只表示旧 dispatcher 的既有终态，新 dispatcher 不再写入该状态。
+
+工作流成功、最终失败和 stale 耗尽时，execution 终态、attempt、两条标准事件及对应入口状态必须在同一短事务提交；任一事件插入失败时整体回滚。显式 `event.emit` 节点的权威业务动作就是单条 Outbox 插入，不把整张图或外部副作用包入长事务。未告警死信通过原子设置 `alerted_at` 由一个实例领取，告警日志只允许固定 Outbox ID、尝试次数和分类，不得包含 payload、metadata、Owner、token 或异常正文。该标记提供 at-most-once 日志去重，不等同于可靠外部告警。
 
 ## 交易命令
 

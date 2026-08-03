@@ -18,6 +18,7 @@ cd backend
 # ⚠️ 首次运行需要一个真实签名密钥,否则拒绝启动(见 backend/README.md 安全说明):
 #    正式用:在 config.yml 或环境变量设 COINSPHERE_AUTH__SECRET_KEY(如 openssl rand -hex 32)
 #    本地图快:$env:COINSPHERE_ALLOW_INSECURE_SECRET = '1'   # 临时放行默认密钥
+go run ./cmd/migrate -config ./config.yml -direction up
 go build -o coinsphere-server.exe .
 .\coinsphere-server.exe
 
@@ -27,7 +28,7 @@ pnpm install
 pnpm dev
 ```
 
-默认超管账号:`coinsphere` / `coinsphere`(后端首次启动自动建表 + 写种子数据),**首登后请尽快改密**;可用 `COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD` 指定强初始密码。
+默认超管账号:`coinsphere` / `coinsphere`(migration 后，后端首次启动继续用 AutoMigrate 建其余表并写种子数据),**首登后请尽快改密**;可用 `COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD` 指定强初始密码。
 
 ## 开发 Compose(Docker 一键起)
 

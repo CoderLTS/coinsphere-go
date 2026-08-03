@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"time"
 
@@ -14,9 +16,9 @@ import (
 // 「为什么用 outbox」:业务动作(比如"工作流执行完成")往往要顺带触发别的事(发通知、再触发别的工作流)。
 // 若在业务事务里直接去投递/触发,那步一旦失败或很慢,就可能拖垮业务动作,或出现"业务成功了、通知却丢了"。
 // outbox 的办法是把两件事拆开、且都落到同一个数据库:
-//   ① 业务处理时,只把"发生了什么事件"作为一行写进 outbox 表(和业务数据同一事务,要么都成功要么都回滚,绝不丢事件);
-//   ② 另有一个后台循环(见 loops.go)不断把 outbox 里 pending 的事件捞出来,慢慢投递、匹配、触发工作流;
-//      失败就标记 failed 并记重试次数,下次再来 —— 业务侧完全不受影响。
+//   ① 业务处理时,只把"发生了什么事件"作为一行写进 outbox 表;需要与业务状态原子提交的调用方必须传入同一事务;
+//   ② 另有一个后台循环(见 loops.go)原子认领到期事件,再投递、匹配并触发工作流;
+//      失败按退避重新排队,尝试耗尽进入死信 —— 业务侧完全不受影响。
 // 一句话:先可靠落库、后异步投递,把"产生事件"和"消费事件"解耦。
 
 // domainEvent 标准化领域事件。
@@ -34,6 +36,14 @@ type domainEvent struct {
 	CreatedAt               time.Time
 }
 
+var errLoadEventSubscribers = errors.New("load event subscribers")
+
+const (
+	outboxFailureBacklog    = "subscriber_backlog_exceeded"
+	outboxFailureQuery      = "subscriber_query_failed"
+	outboxFailureSubscriber = "subscriber_delivery_failed"
+)
+
 // publishDomainEvent 领域事件先落 outbox,由后台循环投递。
 // outbox 的"第一步":业务代码调用它,只做一件事 —— 往 outbox 表插入一行 status="pending" 的事件记录,然后立即返回;
 // 真正的投递/触发交给后台的 drainPendingEvents。(a *App) 是方法接收者;返回 (int64, error) 是"新记录ID + 错误"。
@@ -44,15 +54,6 @@ func (a *App) publishDomainEvent(
 	workflowExecutionID, workflowExecutionNodeID *int64,
 ) (int64, error) {
 	return a.publishDomainEventWithDB(a.DB, eventType, aggregateType, aggregateID, payload, metadata, workflowExecutionID, workflowExecutionNodeID)
-}
-
-func (a *App) publishDomainEventContext(
-	ctx context.Context,
-	eventType, aggregateType, aggregateID string,
-	payload, metadata M,
-	workflowExecutionID, workflowExecutionNodeID *int64,
-) (int64, error) {
-	return a.publishDomainEventWithDB(a.dbWithContext(ctx), eventType, aggregateType, aggregateID, payload, metadata, workflowExecutionID, workflowExecutionNodeID)
 }
 
 func (a *App) publishDomainEventWithDB(
@@ -76,44 +77,138 @@ func (a *App) publishDomainEventWithDB(
 	return record.ID, nil
 }
 
-// drainPendingEvents 拉取并处理一批 pending outbox 事件。
-// outbox 的"第二步",由后台循环(loops.go)反复调用:每次捞最多 limit 条"到点且待处理"的事件来投递。
+// drainPendingEvents 依次恢复过期租约、原子认领并投递一批事件，最后领取未告警死信。
+// 每个存储步骤彼此独立：单步失败只输出固定操作名，既不记录 payload/metadata，也不输出异常正文、Owner 或 token。
 func (a *App) drainPendingEvents(ctx context.Context, limit int) {
-	// 查询条件:status=pending 且 available_at<=now(到点了);按 id 升序、限量 limit。? 是占位符,防 SQL 注入。见 GO入门笔记『框架:GORM』
-	var rows []db.DomainEventOutbox
-	a.DB.WithContext(ctx).Where("status = ? AND available_at <= ?", "pending", time.Now()).
-		Order("id ASC").Limit(limit).Find(&rows)
-	// for i := range rows + row := &rows[i]:用下标取"指向真实元素的指针",而非副本(与 notify.go 里同款写法)。见 GO入门笔记『复合类型』
-	for i := range rows {
+	if ctx.Err() != nil || limit < 1 {
+		return
+	}
+	database := a.dbWithContext(ctx)
+	if recovered, err := db.RecoverExpiredOutboxEvents(ctx, database, limit); err != nil {
+		log.Printf("[events] outbox store failed: operation=recover")
+	} else if len(recovered) > 0 {
+		log.Printf("[events] outbox leases recovered: count=%d", len(recovered))
+	}
+
+	// 存储层保留原子批量认领契约；dispatcher 按实际处理能力逐条即时认领，
+	// 避免慢首项让尚未开始处理的批次尾部事件白白耗尽租约和尝试次数。
+	for range limit {
+		claims, err := db.ClaimOutboxEvents(ctx, database, a.WorkerID, 1, a.outboxLeaseDuration())
+		if err != nil {
+			log.Printf("[events] outbox store failed: operation=claim")
+			break
+		}
+		if len(claims) == 0 {
+			break
+		}
+		a.deliverClaimedOutboxEvent(ctx, claims[0])
 		if ctx.Err() != nil {
 			return
 		}
-		row := &rows[i]
-		event := &domainEvent{
-			OutboxID: row.ID, EventType: row.EventType,
-			AggregateType: row.AggregateType, AggregateID: row.AggregateID,
-			Payload: loadJSONObject(row.PayloadJSON), Metadata: loadJSONObject(row.MetadataJSON),
-			WorkflowExecutionID: row.WorkflowExecutionID, WorkflowExecutionNodeID: row.WorkflowExecutionNodeID,
-			CreatedAt: row.CreatedAt,
-		}
-		// 逐条投递:处理失败 → 标记 failed、记录错误信息与重试次数(attempt_count+1),continue 跳过继续下一条,不影响别的事件。
-		// log.Printf 打印日志(%d 是数字、%v 是任意值);truncateRunes 把过长的错误信息截断到 4000 字符再入库。见 GO入门笔记『错误处理』
-		if err := a.handleEventTriggeredEntries(ctx, event); err != nil {
-			log.Printf("[events] outbox subscriber failed: outbox_id=%d err=%v", row.ID, err)
-			now := time.Now()
-			a.DB.Model(row).Updates(map[string]any{
-				"status": "failed", "processed_at": now,
-				"last_error_message": truncateRunes(err.Error(), 4000),
-				"attempt_count":      row.AttemptCount + 1, "updated_at": now,
-			})
-			continue
-		}
-		// 处理成功 → 标记 processed 并清空错误信息;这条事件从此不再被后台捞起。
-		now := time.Now()
-		a.DB.Model(row).Updates(map[string]any{
-			"status": "processed", "processed_at": now, "last_error_message": "", "updated_at": now,
-		})
 	}
+	if ctx.Err() != nil {
+		return
+	}
+	alertIDs, err := db.MarkOutboxDeadLettersAlerted(ctx, database, limit)
+	if err != nil {
+		log.Printf("[events] outbox store failed: operation=alert")
+		return
+	}
+	for _, id := range alertIDs {
+		log.Printf("[alert] outbox dead letter: outbox_id=%d", id)
+	}
+}
+
+// deliverClaimedOutboxEvent 在处理前先验证并续租，慢订阅期间按租约三分之一周期续租。
+// 若续租失败会取消本次处理，最终 fenced 写入只能由仍持有当前租约代次的 Owner 完成。
+func (a *App) deliverClaimedOutboxEvent(ctx context.Context, claim db.DomainEventOutbox) {
+	leaseDuration := a.outboxLeaseDuration()
+	renewed, err := db.RenewOutboxEventLease(ctx, a.dbWithContext(ctx), claim, leaseDuration)
+	if err != nil {
+		log.Printf("[events] outbox store failed: operation=renew outbox_id=%d", claim.ID)
+		return
+	}
+	if !renewed {
+		log.Printf("[events] outbox lease lost: operation=renew outbox_id=%d attempt=%d", claim.ID, claim.AttemptCount)
+		return
+	}
+
+	deliveryCtx, cancelDelivery := context.WithCancel(ctx)
+	stopHeartbeat := make(chan struct{})
+	heartbeatResult := make(chan bool, 1)
+	go func() {
+		ticker := time.NewTicker(leaseDuration / 3)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopHeartbeat:
+				heartbeatResult <- true
+				return
+			case <-deliveryCtx.Done():
+				heartbeatResult <- false
+				return
+			case <-ticker.C:
+				ok, err := db.RenewOutboxEventLease(deliveryCtx, a.dbWithContext(deliveryCtx), claim, leaseDuration)
+				if err != nil {
+					log.Printf("[events] outbox store failed: operation=heartbeat outbox_id=%d", claim.ID)
+				} else if !ok {
+					log.Printf("[events] outbox lease lost: operation=heartbeat outbox_id=%d attempt=%d", claim.ID, claim.AttemptCount)
+				}
+				if err != nil || !ok {
+					cancelDelivery()
+					heartbeatResult <- false
+					return
+				}
+			}
+		}
+	}()
+
+	event := &domainEvent{
+		OutboxID: claim.ID, EventType: claim.EventType,
+		AggregateType: claim.AggregateType, AggregateID: claim.AggregateID,
+		Payload: loadJSONObject(claim.PayloadJSON), Metadata: loadJSONObject(claim.MetadataJSON),
+		WorkflowExecutionID: claim.WorkflowExecutionID, WorkflowExecutionNodeID: claim.WorkflowExecutionNodeID,
+		CreatedAt: claim.CreatedAt,
+	}
+	deliveryErr := a.handleEventTriggeredEntries(deliveryCtx, event)
+	close(stopHeartbeat)
+	leaseValid := <-heartbeatResult
+	cancelDelivery()
+	if !leaseValid || ctx.Err() != nil {
+		return
+	}
+	if deliveryErr == nil {
+		completed, err := db.CompleteOutboxEvent(ctx, a.dbWithContext(ctx), claim)
+		if err != nil {
+			log.Printf("[events] outbox store failed: operation=complete outbox_id=%d", claim.ID)
+		} else if !completed {
+			log.Printf("[events] outbox lease lost: operation=complete outbox_id=%d attempt=%d", claim.ID, claim.AttemptCount)
+		}
+		return
+	}
+
+	category := outboxFailureSubscriber
+	if errors.Is(deliveryErr, errBacklogExceeded) {
+		category = outboxFailureBacklog
+	} else if errors.Is(deliveryErr, errLoadEventSubscribers) {
+		category = outboxFailureQuery
+	}
+	failed, err := db.FailOutboxEvent(ctx, a.dbWithContext(ctx), claim, a.retryBackoff(claim.AttemptCount), category)
+	if err != nil {
+		log.Printf("[events] outbox store failed: operation=fail outbox_id=%d", claim.ID)
+	} else if !failed {
+		log.Printf("[events] outbox lease lost: operation=fail outbox_id=%d attempt=%d", claim.ID, claim.AttemptCount)
+	} else {
+		log.Printf("[events] outbox delivery failed: outbox_id=%d attempt=%d category=%s", claim.ID, claim.AttemptCount, category)
+	}
+}
+
+func (a *App) outboxLeaseDuration() time.Duration {
+	seconds := a.Cfg.Workflow.OutboxLeaseSeconds
+	if seconds < 1 {
+		seconds = 30
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 // handleEventTriggeredEntries 把事件匹配到 start.event 入口并入队执行。
@@ -121,7 +216,7 @@ func (a *App) drainPendingEvents(ctx context.Context, limit int) {
 func (a *App) handleEventTriggeredEntries(ctx context.Context, event *domainEvent) error {
 	// Preload 预加载关联对象(定义、运行时状态);Joins 关联运行时状态表以便在 Where 里过滤。见 GO入门笔记『框架:GORM』
 	var entries []db.WorkflowRuntimeEntry
-	a.DB.WithContext(ctx).Preload("WorkflowDefinition").Preload("WorkflowRuntimeState").
+	result := a.DB.WithContext(ctx).Preload("WorkflowDefinition").Preload("WorkflowRuntimeState").
 		Joins("JOIN workflow_runtime_states ON workflow_runtime_entries.workflow_runtime_state_id = workflow_runtime_states.id").
 		Where(
 			"workflow_runtime_entries.start_type = ? AND workflow_runtime_entries.is_enabled = ? "+
@@ -130,6 +225,9 @@ func (a *App) handleEventTriggeredEntries(ctx context.Context, event *domainEven
 		).
 		Order("workflow_runtime_entries.updated_at DESC, workflow_runtime_entries.id DESC").
 		Find(&entries)
+	if result.Error != nil {
+		return fmt.Errorf("%w: %v", errLoadEventSubscribers, result.Error)
+	}
 
 	for i := range entries {
 		if err := ctx.Err(); err != nil {
@@ -168,11 +266,10 @@ func (a *App) handleEventTriggeredEntries(ctx context.Context, event *domainEven
 			"idempotencyKey":  buildEventTriggerKey(event.EventType, event.OutboxID, entry.ID),
 			"payload":         event.Payload,
 		})
-		// 出错时:若只是"积压超限"就跳过这条(不算失败,下轮再来);其它错误则向上返回,让 drainPendingEvents 把整条事件标记 failed。
+		// 任一入口未能入队都让整条事件重排；已成功入口由稳定幂等键去重，积压入口则在退避后继续尝试。
 		if err != nil {
 			if isBacklogExceeded(err) {
-				log.Printf("[events] skip event enqueue due to backlog limit: outbox_id=%d entry=%s", event.OutboxID, entry.EntryKey)
-				continue
+				log.Printf("[events] event enqueue deferred: outbox_id=%d entry=%s category=%s", event.OutboxID, entry.EntryKey, outboxFailureBacklog)
 			}
 			return err
 		}

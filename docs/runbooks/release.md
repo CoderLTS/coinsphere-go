@@ -2,7 +2,7 @@
 
 ## 当前边界
 
-当前生产 Compose 仍使用 SQLite，版本化 migration 已包含机制基线、`worker_tasks` 表和逻辑版本 `00003` 的 Outbox schema 契约，应用启动仍保留 GORM `AutoMigrate`。A1 Worker 运行时只接入开发 Compose 与 CI，Outbox dispatcher 也仍沿用既有实现；生产流水线仍仅构建、扫描和部署 Backend/Web。A1-10 完成业务 schema 切换前，本流水线只用于现有管理平台，不得据此启用模拟盘或实盘交易能力。
+当前生产 Compose 仍使用 SQLite，版本化 migration 已包含机制基线、`worker_tasks` 表和逻辑版本 `00003` 的 Outbox schema 契约，应用启动仍保留 GORM `AutoMigrate`。A1 Worker 运行时只接入开发 Compose 与 CI；Backend 内置 Outbox dispatcher 已使用原子租约、续租、失败退避和死信日志告警。生产流水线仍仅构建、扫描和部署 Backend/Web。A1-10 完成业务 schema 切换前，本流水线只用于现有管理平台，不得据此启用模拟盘或实盘交易能力。
 
 A1-3 不修改 Release 工作流、部署脚本或生产拓扑，本 PR 也不触发发布或部署。后续用户手工发布固定 `main` 版本时，仍按既有流程先备份 SQLite，再执行镜像内 migration。
 

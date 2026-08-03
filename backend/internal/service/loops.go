@@ -5,10 +5,12 @@ package service
 // coinsphere/backend/internal/db = 本项目的数据库模型包(GORM 的表结构定义)。
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
 	"coinsphere/backend/internal/db"
+	"gorm.io/gorm"
 )
 
 // 下面每个 func (a *App) Xxx() 都是 App 类型的"方法":(a *App) 叫"接收者",
@@ -487,19 +489,30 @@ func (a *App) processExecution(ctx context.Context, execution *db.WorkflowExecut
 func (a *App) finalizeSuccess(ctx context.Context, execution *db.WorkflowExecution, attempt int, result *runResult) {
 	finishedAt := result.FinishedAt
 	durationMs := finishedAt.Sub(result.StartedAt).Milliseconds()
-	updated := a.dbWithContext(ctx).Model(&db.WorkflowExecution{}).
-		Where("id = ? AND status = ? AND attempt_count = ? AND worker_id = ?", execution.ID, "running", attempt, a.WorkerID).
-		Updates(map[string]any{
-			"status": "success", "finished_at": finishedAt, "duration_ms": durationMs,
-			"context_snapshot_json": serializeSnapshot(result.SharedState, a.Cfg.Workflow.MaxOutputSnapshotBytes),
-			"result_snapshot_json":  serializeSnapshot(orEmptyMap(result.SharedState["nodeOutputs"]), a.Cfg.Workflow.MaxOutputSnapshotBytes),
-			"error_message":         "",
-		})
-	if updated.RowsAffected == 0 {
+	err := a.dbWithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		terminal := tx.Model(&db.WorkflowExecution{}).
+			Where("id = ? AND status = ? AND attempt_count = ? AND worker_id = ?", execution.ID, "running", attempt, a.WorkerID).
+			Updates(map[string]any{
+				"status": "success", "finished_at": finishedAt, "duration_ms": durationMs,
+				"context_snapshot_json": serializeSnapshot(result.SharedState, a.Cfg.Workflow.MaxOutputSnapshotBytes),
+				"result_snapshot_json":  serializeSnapshot(orEmptyMap(result.SharedState["nodeOutputs"]), a.Cfg.Workflow.MaxOutputSnapshotBytes),
+				"error_message":         "",
+			})
+		if terminal.Error != nil || terminal.RowsAffected == 0 {
+			return terminal.Error
+		}
+		if err := a.closeAttemptWithDB(tx, execution.ID, attempt, a.WorkerID, "success", result.StartedAt, finishedAt, "", ""); err != nil {
+			return err
+		}
+		if err := a.publishExecutionSucceededWithDB(tx, result); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("[runtime] terminal transaction failed: execution_id=%d status=success", execution.ID)
 		return
 	}
-	a.closeAttempt(ctx, execution.ID, attempt, "success", finishedAt, "", "")
-	a.publishExecutionSucceeded(ctx, result)
 }
 
 // finalizeFailure 把执行写成失败终态:可重试且未超次数则转 retry_waiting 并排下次重试时间,否则判 failed。
@@ -542,31 +555,78 @@ func (a *App) finalizeFailure(ctx context.Context, execution *db.WorkflowExecuti
 		updates["context_snapshot_json"] = serializeSnapshot(result.SharedState, a.Cfg.Workflow.MaxOutputSnapshotBytes)
 		updates["result_snapshot_json"] = serializeSnapshot(orEmptyMap(result.SharedState["nodeOutputs"]), a.Cfg.Workflow.MaxOutputSnapshotBytes)
 	}
-	updated := a.dbWithContext(ctx).Model(&db.WorkflowExecution{}).
-		Where("id = ? AND status = ? AND attempt_count = ? AND worker_id = ?", execution.ID, "running", attempt, a.WorkerID).
-		Updates(updates)
-	if updated.RowsAffected == 0 {
+	err := a.dbWithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		terminal := tx.Model(&db.WorkflowExecution{}).
+			Where("id = ? AND status = ? AND attempt_count = ? AND worker_id = ?", execution.ID, "running", attempt, a.WorkerID).
+			Updates(updates)
+		if terminal.Error != nil || terminal.RowsAffected == 0 {
+			return terminal.Error
+		}
+		if err := a.closeAttemptWithDB(tx, execution.ID, attempt, a.WorkerID, nextStatus, startedAt, finishedAt, failureCategory, errorMessage); err != nil {
+			return err
+		}
+		if nextStatus == "failed" {
+			terminalResult := result
+			if terminalResult == nil {
+				var err error
+				terminalResult, err = a.loadTerminalRunResult(tx, execution, finishedAt)
+				if err != nil {
+					return err
+				}
+			}
+			if err := a.publishExecutionFailedWithDB(tx, terminalResult, errorMessage); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("[runtime] terminal transaction failed: execution_id=%d status=%s category=%s", execution.ID, nextStatus, failureCategory)
 		return
-	}
-	a.closeAttempt(ctx, execution.ID, attempt, nextStatus, finishedAt, failureCategory, errorMessage)
-	if nextStatus == "failed" && result != nil {
-		a.publishExecutionFailed(ctx, result, errorMessage)
 	}
 }
 
-func (a *App) closeAttempt(ctx context.Context, executionID int64, attempt int, status string, finishedAt time.Time, failureCategory, errorSummary string) {
-	a.dbWithContext(ctx).Model(&db.WorkflowExecutionAttempt{}).
+func (a *App) closeAttemptWithDB(database *gorm.DB, executionID int64, attempt int, workerID, status string, startedAt, finishedAt time.Time, failureCategory, errorSummary string) error {
+	failureCategory = truncateRunes(failureCategory, 64)
+	errorSummary = truncateRunes(errorSummary, 4000)
+	updated := database.Model(&db.WorkflowExecutionAttempt{}).
 		Where("workflow_execution_id = ? AND attempt = ?", executionID, attempt).
 		Updates(map[string]any{
 			"status": status, "finished_at": finishedAt,
-			"failure_category": truncateRunes(failureCategory, 64),
-			"error_summary":    truncateRunes(errorSummary, 4000),
+			"failure_category": failureCategory,
+			"error_summary":    errorSummary,
 		})
+	if updated.Error != nil {
+		return updated.Error
+	}
+	if updated.RowsAffected == 1 {
+		return nil
+	}
+	if updated.RowsAffected > 1 {
+		return fmt.Errorf("close workflow execution attempt: updated %d rows", updated.RowsAffected)
+	}
+	// 认领 UPDATE 提交后进程可能在创建 attempt 前取消或崩溃；终态事务补建缺失账本，
+	// 使取消善后和 stale 恢复仍能把 execution、attempt 与标准事件原子收敛。
+	return database.Create(&db.WorkflowExecutionAttempt{
+		WorkflowExecutionID: executionID,
+		Attempt:             attempt,
+		WorkerID:            workerID,
+		StartedAt:           startedAt,
+		FinishedAt:          &finishedAt,
+		FailureCategory:     failureCategory,
+		ErrorSummary:        errorSummary,
+		Status:              status,
+	}).Error
 }
 
 // computeNextRetryAt 按"退避序列"算下次重试时刻:第 1/2/3 次失败分别等 30/120/600 秒(可配置)。
 // len(backoffs) 取切片长度;backoffs[index] 按下标取元素;末尾把秒数 × time.Second 变成时长再 Add 到当前时间。见 GO入门笔记『复合类型』。
 func (a *App) computeNextRetryAt(attempt int) time.Time {
+	return time.Now().Add(a.retryBackoff(attempt))
+}
+
+// retryBackoff 返回当前尝试对应的退避时长，工作流重试和 Outbox 重排共用同一配置。
+func (a *App) retryBackoff(attempt int) time.Duration {
 	backoffs := a.Cfg.Workflow.RetryBackoffSeconds
 	if len(backoffs) == 0 {
 		backoffs = []int{30, 120, 600}
@@ -578,7 +638,11 @@ func (a *App) computeNextRetryAt(attempt int) time.Time {
 	if index >= len(backoffs) {
 		index = len(backoffs) - 1
 	}
-	return time.Now().Add(time.Duration(backoffs[index]) * time.Second)
+	seconds := backoffs[index]
+	if seconds < 0 {
+		seconds = 0
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 // classifyFailure 已迁到 failure.go:改为"错误类型驱动 + 文本兜底",不再纯靠子串匹配。
@@ -620,6 +684,9 @@ func (a *App) staleRecoveryLoop(ctx context.Context) {
 
 // recoverStaleExecution 处理单条超时执行:未超重试次数则转 retry_waiting 等待重试,否则判 failed;并归还并发键。
 func (a *App) recoverStaleExecution(ctx context.Context, execution *db.WorkflowExecution) {
+	if execution.WorkerID == nil || execution.LastHeartbeatAt == nil {
+		return
+	}
 	finishedAt := time.Now()
 	startedAt := firstTime(execution.StartedAt, execution.ClaimedAt, &execution.QueuedAt)
 	durationMs := finishedAt.Sub(startedAt).Milliseconds()
@@ -644,17 +711,50 @@ func (a *App) recoverStaleExecution(ctx context.Context, execution *db.WorkflowE
 	} else {
 		updates["next_retry_at"] = nil
 	}
-	updated := a.DB.Model(&db.WorkflowExecution{}).
-		Where("id = ? AND status = ? AND attempt_count = ?", execution.ID, "running", attempt).
-		Updates(updates)
-	if updated.RowsAffected == 0 {
+	attemptWorkerID := ""
+	if execution.WorkerID != nil {
+		attemptWorkerID = *execution.WorkerID
+	}
+	var updated bool
+	err := a.dbWithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 扫描和写入之间健康 worker 可能已经续过心跳；worker、attempt 与扫描时 heartbeat
+		// 共同充当 fencing 条件，旧快照不得回收仍健康或已被重新认领的执行。
+		terminal := tx.Model(&db.WorkflowExecution{}).
+			Where(
+				"id = ? AND status = ? AND attempt_count = ? AND worker_id = ? AND last_heartbeat_at = ?",
+				execution.ID,
+				"running",
+				attempt,
+				*execution.WorkerID,
+				*execution.LastHeartbeatAt,
+			).
+			Updates(updates)
+		if terminal.Error != nil || terminal.RowsAffected == 0 {
+			return terminal.Error
+		}
+		if err := a.closeAttemptWithDB(tx, execution.ID, attempt, attemptWorkerID, nextStatus, startedAt, finishedAt, "worker_lost", "Worker heartbeat timed out"); err != nil {
+			return err
+		}
+		if nextStatus == "failed" {
+			result, err := a.loadTerminalRunResult(tx, execution, finishedAt)
+			if err != nil {
+				return err
+			}
+			if err := a.publishExecutionFailedWithDB(tx, result, "Worker heartbeat timed out"); err != nil {
+				return err
+			}
+		}
+		updated = true
+		return nil
+	})
+	if err != nil {
+		log.Printf("[recovery] stale transaction failed: execution_id=%d next_status=%s", execution.ID, nextStatus)
 		return
 	}
-	a.closeAttempt(ctx, execution.ID, attempt, nextStatus, finishedAt, "worker_lost", "Worker heartbeat timed out")
-	a.releaseKey(execution.ConcurrencyKey)
-	if nextStatus == "failed" {
-		a.publishRecoveredFailureEvents(ctx, execution.ID, "Worker heartbeat timed out")
+	if !updated {
+		return
 	}
+	a.releaseKey(execution.ConcurrencyKey)
 	log.Printf("[recovery] stale execution recovered: execution_id=%d next_status=%s", execution.ID, nextStatus)
 }
 

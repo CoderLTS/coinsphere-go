@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,7 +12,49 @@ import (
 
 	"coinsphere/backend/internal/config"
 	"coinsphere/backend/internal/db"
+	"coinsphere/backend/internal/migration"
 )
+
+// TestNewAppRequiresOutboxMigration 验证服务只校验独立 migration，不在启动路径偷偷修改版本化 schema。
+// 缺少 00003 时必须明确失败；同一数据库完成 migration 后即可组装运行时，AutoMigrate 仍由 db.Open 保留。
+func TestNewAppRequiresOutboxMigration(t *testing.T) {
+	cfg := config.DatabaseConfig{Driver: "sqlite", Path: filepath.Join(t.TempDir(), "runtime-schema.db")}
+	gdb, err := db.Open(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("open legacy runtime database: %v", err)
+	}
+	sqlDB, err := gdb.DB()
+	if err != nil {
+		t.Fatalf("get legacy runtime database: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	appConfig := &config.AppConfig{
+		Database: cfg,
+		Auth: config.AuthConfig{
+			SecretKey:             strings.Repeat("s", 32),
+			EncryptionKey:         strings.Repeat("e", 32),
+			PasswordIterations:    1,
+			AccessTokenTTLMinutes: 1,
+			RefreshTokenTTLDays:   1,
+		},
+	}
+
+	if _, err := NewApp(context.Background(), gdb, appConfig, "schema-test-worker"); err == nil || !strings.Contains(err.Error(), "00003") {
+		t.Fatalf("NewApp error = %v, want missing migration 00003", err)
+	}
+	runner, err := migration.New(sqlDB, "sqlite")
+	if err != nil {
+		t.Fatalf("create runtime migration runner: %v", err)
+	}
+	if _, err := runner.Up(context.Background(), 0); err != nil {
+		t.Fatalf("apply runtime migrations: %v", err)
+	}
+	app, err := NewApp(context.Background(), gdb, appConfig, "schema-test-worker")
+	if err != nil {
+		t.Fatalf("NewApp after migration: %v", err)
+	}
+	app.runtimeCancel()
+}
 
 func TestRuntimeCancellationFinalizesInFlightExecution(t *testing.T) {
 	ctx := context.Background()
