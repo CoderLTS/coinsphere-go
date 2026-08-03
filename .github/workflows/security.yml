@@ -2,6 +2,9 @@ name: Security
 
 on:
   pull_request:
+  push:
+    branches:
+      - main
   schedule:
     - cron: "30 21 * * 0"
   workflow_dispatch:
@@ -10,6 +13,58 @@ permissions:
   contents: read
 
 jobs:
+  dependency-changes:
+    name: Dependency change scope
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.scope.outputs.go }}
+      python: ${{ steps.scope.outputs.python }}
+      filesystem: ${{ steps.scope.outputs.filesystem }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Select dependency scans
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -Eeuo pipefail
+          go=false
+          python=false
+          filesystem=false
+
+          if [[ "$EVENT_NAME" != "pull_request" ]]; then
+            go=true
+            python=true
+            filesystem=true
+          else
+            while IFS= read -r file; do
+              case "$file" in
+                backend/go.mod|backend/go.sum)
+                  go=true
+                  filesystem=true
+                  ;;
+                worker/pyproject.toml|worker/uv.lock)
+                  python=true
+                  filesystem=true
+                  ;;
+                frontend/package.json|frontend/pnpm-lock.yaml|docker-compose.yml|*/Dockerfile|*/Dockerfile.*|.github/workflows/*.yml)
+                  filesystem=true
+                  ;;
+              esac
+            done < <(git diff --name-only --diff-filter=ACMRTD "$BASE_SHA" "$HEAD_SHA")
+          fi
+
+          {
+            echo "go=$go"
+            echo "python=$python"
+            echo "filesystem=$filesystem"
+          } >>"$GITHUB_OUTPUT"
+
   secrets:
     name: Secret scan
     runs-on: ubuntu-latest
@@ -26,6 +81,8 @@ jobs:
 
   go-dependencies:
     name: Go vulnerability scan
+    needs: dependency-changes
+    if: needs.dependency-changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -41,6 +98,8 @@ jobs:
 
   python-dependencies:
     name: Python dependency scan
+    needs: dependency-changes
+    if: needs.dependency-changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -58,6 +117,8 @@ jobs:
 
   filesystem:
     name: Dependency and filesystem scan
+    needs: dependency-changes
+    if: needs.dependency-changes.outputs.filesystem == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
