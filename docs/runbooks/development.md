@@ -26,6 +26,20 @@ Linux CI 额外执行 `go test -race ./...` 和 `SIGTERM` 进程测试。关机�
 
 A1-4 的 `internal/service` 契约在 SQLite 同一 WAL 文件的独立句柄和 PostgreSQL 隔离 schema 上执行同一测试：并发更新必须生成唯一、连续的新版本；并发激活最终只能保留一个 active 版本及其完整入口；激活或停用中途失败必须恢复原 active 版本、入口启停状态与密文；其他连接及运行态 API 只能观察完整旧快照或完整新快照。实现复用现有唯一约束和事务，不需要 schema migration，`AutoMigrate` 仍保留到 A1-10。
 
+A1-5 的通知 WebSocket 定向契约覆盖并发单 writer、固定信封与连续序号、慢连接背压、RFC6455 Ping/Pong、失联超时、Hub 关闭和严格 Origin；前端单元测试覆盖信封版本、重复/倒退序号、重连与同源 URL。无需数据库、真实凭据或外部服务：
+
+```powershell
+Push-Location .\backend
+go test -count=1 ./internal/service ./internal/api
+Pop-Location
+
+Push-Location .\frontend
+pnpm exec vitest run src/store/modules/notification.test.ts
+Pop-Location
+```
+
+Linux CI 的 `go test -race ./...` 负责在竞态检测器下重复覆盖并发推送；严格 Origin 依赖代理保留原始 Host（含端口）和单值 `http/https` 有效 scheme。当前 `token` 查询参数不得进入 Nginx、应用或测试日志，Token 存储与轮换在 A1-7 处理。
+
 Worker 容器可单独验证：
 
 ```powershell
@@ -90,7 +104,7 @@ Pop-Location
 
 GitHub Actions 负责 Linux、三类镜像构建、Compose 健康、Worker A1 PostgreSQL 集成契约和安全检查。本地缺少 Docker 或 PostgreSQL 时可以继续开发，但 PR 在 Worker 集成与容器 Job 通过前不得合并。
 
-CI 使用固定 PostgreSQL 17 镜像执行 migration、Outbox 存储、工作流服务与 Worker 运行时契约，包括 Worker 七态、租约、尝试次数、非空 Down 保护、并发认领、旧租约 fencing、崩溃回收和 5 秒取消，Outbox 五态、租约字段一致性、保数升级、重复 Up、回滚重放、双认领者争抢、批量与事务失败原子性、续租、失败退避、过期恢复、死信告警争抢和旧 token fencing，以及工作流并发版本、并发激活、失败回滚和完整快照可见性。本地与发布环境的迁移命令、编写约束和回滚步骤见[数据库迁移手册](./database-migrations.md)。
+CI 使用固定 PostgreSQL 17 镜像执行 migration、Outbox 存储、工作流服务与 Worker 运行时契约，包括 Worker 七态、租约、尝试次数、非空 Down 保护、并发认领、旧租约 fencing、崩溃回收和 5 秒取消，Outbox 五态、租约字段一致性、保数升级、重复 Up、回滚重放、双认领者争抢、批量与事务失败原子性、续租、失败退避、过期恢复、死信告警争抢和旧 token fencing，工作流并发版本、并发激活、失败回滚和完整快照可见性，以及通知 WebSocket 单 writer、序列、背压、心跳、关闭与 Origin 契约。本地与发布环境的迁移命令、编写约束和回滚步骤见[数据库迁移手册](./database-migrations.md)。
 
 ## 安全约束
 

@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/gorilla/websocket"
@@ -400,12 +402,80 @@ func (s *Server) handleTestInApp(w http.ResponseWriter, r *http.Request, princip
 
 // ---------- WebSocket ----------
 
-// wsUpgrader 负责把普通 HTTP 连接"升级"成 WebSocket 长连接(gorilla/websocket 库)。
-// CheckOrigin 字段挂了一个匿名函数,恒返回 true = 不校验来源域名(内网/开发环境放行)。
+// wsUpgrader 负责把普通 HTTP 连接升级成 WebSocket，并在握手阶段拒绝跨站来源。
 var wsUpgrader = websocket.Upgrader{
 	ReadBufferSize:  4096,
 	WriteBufferSize: 4096,
-	CheckOrigin:     func(r *http.Request) bool { return true },
+	CheckOrigin:     checkWebSocketOrigin,
+}
+
+// checkWebSocketOrigin 按浏览器同源元组比较 scheme、主机和有效端口；缺失或含路径的 Origin 均拒绝。
+func checkWebSocketOrigin(r *http.Request) bool {
+	origins := r.Header.Values("Origin")
+	if len(origins) != 1 {
+		return false
+	}
+	origin, err := url.Parse(origins[0])
+	if err != nil || origin.Scheme == "" || origin.Host == "" || origin.User != nil ||
+		origin.Opaque != "" || origin.Path != "" || origin.RawPath != "" || origin.ForceQuery ||
+		origin.RawQuery != "" || origin.Fragment != "" {
+		return false
+	}
+	if !strings.EqualFold(origin.Scheme, "http") && !strings.EqualFold(origin.Scheme, "https") {
+		return false
+	}
+
+	scheme, ok := effectiveRequestScheme(r)
+	if !ok {
+		return false
+	}
+	requestOrigin, err := url.Parse(scheme + "://" + r.Host)
+	if err != nil || requestOrigin.Host == "" || requestOrigin.User != nil || requestOrigin.Opaque != "" ||
+		requestOrigin.Path != "" || requestOrigin.RawPath != "" || requestOrigin.ForceQuery ||
+		requestOrigin.RawQuery != "" || requestOrigin.Fragment != "" {
+		return false
+	}
+	originPort, originPortOK := effectiveOriginPort(origin)
+	requestPort, requestPortOK := effectiveOriginPort(requestOrigin)
+	return originPortOK && requestPortOK &&
+		strings.EqualFold(origin.Scheme, requestOrigin.Scheme) &&
+		strings.EqualFold(origin.Hostname(), requestOrigin.Hostname()) &&
+		originPort == requestPort
+}
+
+func effectiveRequestScheme(r *http.Request) (string, bool) {
+	if r.TLS != nil {
+		return "https", true
+	}
+	forwarded := r.Header.Values("X-Forwarded-Proto")
+	if len(forwarded) == 0 {
+		return "http", true
+	}
+	if len(forwarded) != 1 {
+		return "", false
+	}
+	scheme := strings.ToLower(strings.TrimSpace(forwarded[0]))
+	if scheme != "http" && scheme != "https" {
+		return "", false
+	}
+	return scheme, true
+}
+
+func effectiveOriginPort(origin *url.URL) (string, bool) {
+	if strings.HasSuffix(origin.Host, ":") {
+		return "", false
+	}
+	if port := origin.Port(); port != "" {
+		value, err := strconv.Atoi(port)
+		if err != nil || value < 1 || value > 65535 {
+			return "", false
+		}
+		return strconv.Itoa(value), true
+	}
+	if strings.EqualFold(origin.Scheme, "https") {
+		return "443", true
+	}
+	return "80", true
 }
 
 // handleNotificationsWS 处理 GET /ws/notifications:建立 WebSocket 连接推送未读通知。
@@ -430,32 +500,21 @@ func (s *Server) handleNotificationsWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID := principal.User.ID
-	if !s.App.Hub.Connect(userID, conn) {
+	if !s.App.Hub.Connect(userID, conn, func() service.RealtimeEvent {
+		return service.RealtimeEvent{
+			Type: "notice.unread",
+			Data: M{"unreadCount": s.App.CountUnreadInApp(userID)},
+		}
+	}) {
 		_ = conn.Close()
 		return
 	}
-	// defer + 匿名函数:不管下面因何退出,断开连接、关闭 conn 的收尾都会执行(见 GO入门笔记『defer』)。
-	defer func() {
-		s.App.Hub.Disconnect(userID, conn)
-		conn.Close()
-	}()
+	defer s.App.Hub.Disconnect(userID, conn)
 
-	unreadCount := s.App.CountUnreadInApp(userID)
-	initial, _ := json.Marshal(M{"type": "notice.unread", "unreadCount": unreadCount})
-	if err := conn.WriteMessage(websocket.TextMessage, initial); err != nil {
-		return
-	}
-	// for {} 是无限循环(Go 只有 for 一种循环关键字):持续读取客户端消息,直到出错(通常是连接断开)才 return 退出。
+	// 业务通道是单向通知；读循环只负责处理控制帧并触发 Hub 安装的 PongHandler。
 	for {
-		messageType, message, err := conn.ReadMessage()
-		if err != nil {
+		if _, _, err := conn.ReadMessage(); err != nil {
 			return
-		}
-		if messageType == websocket.TextMessage && string(message) == "ping" {
-			pong, _ := json.Marshal(M{"type": "pong"})
-			if err := conn.WriteMessage(websocket.TextMessage, pong); err != nil {
-				return
-			}
 		}
 	}
 }

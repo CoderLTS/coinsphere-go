@@ -32,6 +32,8 @@ A1-3 的逻辑版本 `00003` 分别提供 SQLite 与 PostgreSQL SQL，在保留�
 
 A1-4 复用现有 `(code, version)`、运行态和入口唯一约束，以数据库事务串行同一工作流 family 的变更。新版本在锁内读取 `MAX(version)` 后分配，避免先查后改竞态；激活、停用、入口重建及相关状态更新使用同一个事务。任一步失败都会回滚到原 active 版本和原入口集合，未提交的中间状态对其他连接不可见；运行态查询也在一致快照内读取 active 指针与入口，因此只返回完整旧版本或完整新版本。SQLite 与 PostgreSQL 使用同一套服务契约验证并发版本、并发激活、失败回滚和快照可见性，无需新增 schema migration。
 
+A1-5 将 `/ws/notifications` 收敛为每连接一个有限发送队列和一个 writer。Hub 在锁内按同一顺序完成非阻塞入队，队列满的慢连接原子摘表后在锁外关闭，因此并发生产者和健康连接不等待网络写入；初始未读快照预先入队并固定为 `sequence=1`。writer 独占业务帧和 RFC6455 Ping，按实际写出顺序补连续序号；读循环只处理控制帧，Pong 延长期限，Hub 关机等待全部 writer 退出。事件使用固定五字段信封，数据在入队前固化且时间统一为 UTC。握手只接受与有效 scheme、Host 和端口同源的 Origin；Vite 代理保留开发页面 Host，Nginx 保留原始端口和合法上游 scheme。该阶段不新增跨域 allowlist、Token 兼容层、依赖或 migration。
+
 数据库 schema 通过后端镜像内的独立 migration 二进制演进，服务进程只校验 Outbox `00003` 已存在，不负责生产迁移。当前仍保留 GORM `AutoMigrate`；应用检测到 `00003` 字段后以同表名占位模型隔离 Outbox DDL，防止 SQLite 重建表并删除版本化约束，同时保留关系元数据以补齐 PostgreSQL 空库外键，其余业务模型和关系继续迁移。A1-10 才完成其余业务 schema 基线、存量校准和启动路径切换。详细决策见 [ADR-0002](./decisions/0002-versioned-sql-migrations.md)。
 
 ## 领域边界
