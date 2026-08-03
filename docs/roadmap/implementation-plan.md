@@ -1,7 +1,7 @@
 # CoinSphere AI 全流程实施计划
 
 - 状态：已接受，执行中
-- 更新日期：2026-08-02
+- 更新日期：2026-08-03
 - 交付方式：Codex + GPT 5.6sol
 - 产品负责人和最终放行人：用户
 
@@ -93,7 +93,7 @@
 1. 已建立 `signal.NotifyContext` 根 Context，以及 HTTP、Runtime、数据库和 WebSocket 的有界取消与优雅关机。
 2. 已独立建立 Worker 任务 schema 与 PostgreSQL 运行时，覆盖租约、心跳、崩溃回收、最大尝试次数和 5 秒内任务取消。
 3. Outbox 可靠投递：版本 `00003` 建立双方言 schema、五态、锁租约、最大尝试、死信和告警留存契约；存储 API 提供原子批量认领、续租、数据库时间 fencing、失败重排、过期恢复和一次性告警领取；运行时将工作流终态与标准事件原子提交，并完成 dispatcher、指数退避、订阅失败重试和死信告警闭环。
-4. 工作流版本生成与激活事务化，覆盖并发和中间状态测试。
+4. 已完成工作流版本生成与激活事务化：同一工作流 family 的并发更新生成唯一、单调递增版本；激活、停用与运行时入口替换在明确事务边界内完成，并覆盖并发、失败回滚和中间状态不可见测试。
 5. WebSocket 单写协程、心跳、背压、序列号和严格 Origin。
 6. HTTP 节点 SSRF 防护、私网阻断、域名白名单、重定向复检和 Header 脱敏。
 7. Access Token 内存保存，Refresh Token 安全 Cookie、轮换和自动刷新。
@@ -102,7 +102,7 @@
 10. 移除生产 AutoMigrate，完成版本化 SQL migration 切换。
 11. 结构化日志、请求 ID、Prometheus、审计事件、存活和就绪检查。
 
-当前进度：A1-1 已完成全链路取消与有界关机。A1-2 已建立 `worker_tasks` schema 与 PostgreSQL 运行时。A1-3 已完成事务生产与可靠投递闭环：SQLite/PostgreSQL 逻辑版本 `00003` 保数建立五态和租约约束；双方言存储层使用单条 DML 完成批量认领、续租、失败重排、过期恢复和告警领取；工作流成功、最终失败及 stale 耗尽的业务终态、attempt、两条标准事件和入口状态在同一短事务提交。dispatcher 使用稳定幂等键承接至少一次投递，按 `retry_backoff_seconds` 重排，耗尽后进入 `dead_letter`；`alerted_at` 防止多实例重复日志告警，但不宣称外部 exactly-once。生产 Release 不部署 Worker 或新增交易能力，应用启动移除 `AutoMigrate` 仍属于 A1-10。
+当前进度：A1-1 已完成全链路取消与有界关机。A1-2 已建立 `worker_tasks` schema 与 PostgreSQL 运行时。A1-3 已完成事务生产与可靠投递闭环：SQLite/PostgreSQL 逻辑版本 `00003` 保数建立五态和租约约束；双方言存储层使用单条 DML 完成批量认领、续租、失败重排、过期恢复和告警领取；工作流成功、最终失败及 stale 耗尽的业务终态、attempt、两条标准事件和入口状态在同一短事务提交。dispatcher 使用稳定幂等键承接至少一次投递，按 `retry_backoff_seconds` 重排，耗尽后进入 `dead_letter`；`alerted_at` 防止多实例重复日志告警，但不宣称外部 exactly-once。A1-4 已完成工作流 family 级串行化：版本号在事务内按现存最大版本分配，并发更新得到唯一、连续的新版本；激活、停用与运行时入口替换原子提交，失败保留原 active 版本及完整入口，读者只会观察完整旧快照或完整新快照。SQLite 与 PostgreSQL 运行同一套服务契约测试。本阶段不新增 schema migration，生产 Release 不部署 Worker 或新增交易能力，应用启动移除 `AutoMigrate` 仍属于 A1-10。
 
 退出条件：竞态测试通过；取消、崩溃回收、Outbox 死信、Auth 轮换、SSRF、XSS、WebSocket 背压和关机均有自动化测试。
 

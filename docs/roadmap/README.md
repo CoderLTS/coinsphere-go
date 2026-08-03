@@ -13,8 +13,8 @@ CoinSphere 从通用后台与工作流系统演进为个人币圈量化平台，
 ## 当前状态
 
 - 当前阶段：A1 基础稳定化。
-- 当前交付：A1-3 事务 Outbox 与可靠 dispatcher 闭环。
-- 阶段状态：A0 已完成并经用户手工放行，A1 进行中；`worker_tasks` schema 与 Python Worker 运行时均已建立。A1-3 已由逻辑版本 `00003`、双方言原子存储 API 和运行时闭环共同实现：工作流终态与标准事件在同一短事务提交，dispatcher 原子认领并续租，订阅失败按配置退避，尝试耗尽进入死信，未告警死信由原子 `alerted_at` 标记去重后输出脱敏日志。生产 Release 仍不部署 Worker，本 PR 也不触发发布或部署。
+- 当前交付：A1-4 工作流版本生成与激活事务化。
+- 阶段状态：A0 已完成并经用户手工放行，A1 进行中；`worker_tasks` schema、Python Worker 运行时与 A1-3 Outbox 可靠投递闭环均已建立。A1-4 将同一工作流 family 的版本生成、激活、停用和运行时入口替换纳入明确事务边界：并发更新生成唯一、单调递增版本，失败保留原 active 版本及完整入口，读者只观察完整旧快照或完整新快照；SQLite 与 PostgreSQL 运行同一套服务契约测试。本阶段不新增 migration，`AutoMigrate` 的移除仍属于 A1-10，生产 Release 也不触发部署。
 - GitHub 远程仓库、生产 Runner 和仅允许 `main` 的 `production` Environment 已配置；私有仓库的分支保护受当前 GitHub 套餐限制，操作约束见 [GitHub 治理手册](../runbooks/github-governance.md)。
 
 ## 里程碑

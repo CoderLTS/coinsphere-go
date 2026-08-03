@@ -131,14 +131,7 @@ func (s *Server) handleDeactivateWorkflowDefinition(w http.ResponseWriter, r *ht
 		fail(w, err.Error())
 		return
 	}
-	definition, err := s.App.GetWorkflowDefinition(definitionID)
-	if err != nil {
-		fail(w, err.Error())
-		return
-	}
-	// definition 是 map,definition["code"] 取出的是 any;.(string) 是"类型断言",把它当 string 取出,第二个返回值(用 _ 丢弃)表示是否成功。
-	code, _ := definition["code"].(string)
-	data, err := s.App.DeactivateWorkflowCode(code)
+	data, err := s.App.DeactivateDefinition(definitionID)
 	respond(w, data, err, "工作流已取消激活")
 }
 

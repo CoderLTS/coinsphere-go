@@ -5,12 +5,15 @@
 package service
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
 
 	"coinsphere/backend/internal/db"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // startNodeTypes 已删除:哪些类型算"起始节点"由节点注册表(nodes.go 的 Kind)说了算,
@@ -436,6 +439,8 @@ func edgeBranchKey(edge M) string {
 
 const workflowCodeMaxLength = 120
 
+var errWorkflowCodeTaken = errors.New("workflow code is already in use")
+
 // WorkflowDefinitionUpsertPayload 定义创建/编辑载荷。
 type WorkflowDefinitionUpsertPayload struct {
 	// 反引号里的 `json:"code"` 是 struct tag:告诉 JSON 库前端字段名与这里字段的对应关系
@@ -536,13 +541,50 @@ func (a *App) GetWorkflowDefinition(definitionID int64) (M, error) {
 // CreateWorkflowDefinition 创建 v1。
 func (a *App) CreateWorkflowDefinition(payload WorkflowDefinitionUpsertPayload, operatorUserID int64) (M, error) {
 	// 校验必填:去掉首尾空白后名称不能为空。返回 (nil, error) 表示失败——Go 靠“值 + error”双返回来报错。
-	// 通过后由 generateWorkflowCode 生成库内唯一 code,再建第 1 版(version=1)。
 	displayName := strings.TrimSpace(payload.DisplayName)
 	if displayName == "" {
 		return nil, bizErr("Workflow display name is required")
 	}
-	code := a.generateWorkflowCode(displayName)
-	return a.createVersionRow(code, 1, payload, false, operatorUserID)
+	if validation := a.ValidateWorkflowDefinition(payload); validation["valid"] != true {
+		issues := validation["issues"].([]M)
+		return nil, bizErr("%s", asString(issues[0]["message"]))
+	}
+	baseCode := buildWorkflowCodeBase(displayName)
+	var definitionID int64
+	// (code, version) 唯一约束仲裁同名并发创建；插入后再在同一事务确认 family 只有
+	// 当前 v1，兼容历史上删除 v1 但仍保留高版本的工作流，不把新工作流误并入旧 family。
+	for index := 1; ; index++ {
+		code := workflowCodeCandidate(baseCode, index)
+		err := a.DB.Transaction(func(tx *gorm.DB) error {
+			definition := buildWorkflowDefinition(code, 1, payload, false, operatorUserID)
+			created := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "code"}, {Name: "version"}},
+				DoNothing: true,
+			}).Create(&definition)
+			if created.Error != nil {
+				return created.Error
+			}
+			if created.RowsAffected == 0 {
+				return errWorkflowCodeTaken
+			}
+			var familySize int64
+			if err := tx.Model(&db.WorkflowDefinition{}).Where("code = ?", code).Count(&familySize).Error; err != nil {
+				return err
+			}
+			if familySize != 1 {
+				return errWorkflowCodeTaken
+			}
+			definitionID = definition.ID
+			return nil
+		})
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, errWorkflowCodeTaken) {
+			return nil, err
+		}
+	}
+	return a.GetWorkflowDefinition(definitionID)
 }
 
 // UpdateWorkflowDefinition 编辑生成新版本。
@@ -551,9 +593,6 @@ func (a *App) UpdateWorkflowDefinition(definitionID int64, payload WorkflowDefin
 	if err != nil {
 		return nil, err
 	}
-	// 编辑不是原地改,而是新建一个“版本号 +1”的新行。先数一下这个 code 已有多少个版本。
-	var versionCount int64
-	a.DB.Model(&db.WorkflowDefinition{}).Where("code = ?", definition.Code).Count(&versionCount)
 
 	// merged := payload 是值拷贝(struct 直接赋值即复制一份),再把前端没填的字段用旧版本补齐。
 	merged := payload
@@ -565,60 +604,75 @@ func (a *App) UpdateWorkflowDefinition(definitionID int64, payload WorkflowDefin
 	if len(merged.Graph) == 0 {
 		merged.Graph = loadJSONObject(definition.GraphJSON)
 	}
-	return a.createVersionRow(definition.Code, int(versionCount)+1, merged, definition.IsBuiltin, operatorUserID)
+	if validation := a.ValidateWorkflowDefinition(merged); validation["valid"] != true {
+		issues := validation["issues"].([]M)
+		return nil, bizErr("%s", asString(issues[0]["message"]))
+	}
+
+	var createdID int64
+	err = a.DB.Transaction(func(tx *gorm.DB) error {
+		locked, err := lockWorkflowDefinitionFamily(tx, definitionID)
+		if err != nil {
+			return err
+		}
+		var maxVersion int
+		if err := tx.Model(&db.WorkflowDefinition{}).
+			Where("code = ?", locked.Code).
+			Select("COALESCE(MAX(version), 0)").
+			Scan(&maxVersion).Error; err != nil {
+			return err
+		}
+		created := buildWorkflowDefinition(locked.Code, maxVersion+1, merged, locked.IsBuiltin, operatorUserID)
+		if err := tx.Create(&created).Error; err != nil {
+			return err
+		}
+		createdID = created.ID
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return a.GetWorkflowDefinition(createdID)
 }
 
 // DeleteWorkflowDefinition 删除未激活且无执行历史的版本。
 func (a *App) DeleteWorkflowDefinition(definitionID int64) error {
-	definition, err := a.requireDefinition(definitionID)
-	if err != nil {
-		return err
-	}
-	state := a.getRuntimeStateByCode(definition.Code)
-	// 删除前两道保护:正在激活的版本不能删;有执行历史的版本也不能删。
-	// *state.ActiveWorkflowDefinitionID 里的 * 是“解引用”:取出指针指向的实际 int64 值来比较。
-	if state != nil && state.ActiveWorkflowDefinitionID != nil && *state.ActiveWorkflowDefinitionID == definitionID {
-		return bizErr("Active workflow definition cannot be deleted")
-	}
-	var executionCount int64
-	a.DB.Model(&db.WorkflowExecution{}).Where("workflow_definition_id = ?", definitionID).Count(&executionCount)
-	if executionCount > 0 {
-		return bizErr("Workflow definition with execution history cannot be deleted")
-	}
-	// 通过检查后真正删除:等价 DELETE FROM workflow_definition WHERE id = ?(按主键)。
-	return a.DB.Delete(definition).Error
+	return a.DB.Transaction(func(tx *gorm.DB) error {
+		definition, err := lockWorkflowDefinitionFamily(tx, definitionID)
+		if err != nil {
+			return err
+		}
+		var state db.WorkflowRuntimeState
+		err = tx.Where("workflow_code = ?", definition.Code).First(&state).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		if err == nil && state.ActiveWorkflowDefinitionID != nil && *state.ActiveWorkflowDefinitionID == definitionID {
+			return bizErr("Active workflow definition cannot be deleted")
+		}
+		var executionCount int64
+		if err := tx.Model(&db.WorkflowExecution{}).Where("workflow_definition_id = ?", definitionID).Count(&executionCount).Error; err != nil {
+			return err
+		}
+		if executionCount > 0 {
+			return bizErr("Workflow definition with execution history cannot be deleted")
+		}
+		return tx.Delete(definition).Error
+	})
 }
 
-// createVersionRow 组装并插入一条工作流定义记录(某个 code 的某个版本)。
-// 关于“事务”:这里只有单条 INSERT,一步到位、无需事务;像 seed.go 的 Seed 那样“多步要么全成”
-// 才用 db.Transaction 包起来。见 GO入门笔记『框架:GORM』。
-func (a *App) createVersionRow(code string, version int, payload WorkflowDefinitionUpsertPayload, isBuiltin bool, operatorUserID int64) (M, error) {
+func buildWorkflowDefinition(code string, version int, payload WorkflowDefinitionUpsertPayload, isBuiltin bool, operatorUserID int64) db.WorkflowDefinition {
 	displayName := strings.TrimSpace(payload.DisplayName)
-	if displayName == "" {
-		return nil, bizErr("Workflow display name is required")
-	}
-	validation := a.ValidateWorkflowDefinition(payload)
-	if valid, _ := validation["valid"].(bool); !valid {
-		issues := validation["issues"].([]M)
-		return nil, bizErr("%s", asString(issues[0]["message"]))
-	}
 	graph := payload.Graph
 	if graph == nil {
 		graph = M{}
 	}
-	// 用“键值写法”的 struct 字面量构造要落库的行。GraphJSON 用 dumpJSON(graph) 把图(map)
-	// 序列化成 JSON 字符串存进文本列;CreatedBy 是 *int64 指针字段,用 &operatorUserID 取地址填入。
-	definition := db.WorkflowDefinition{
+	return db.WorkflowDefinition{
 		Code: code, Version: version, DisplayName: displayName,
 		Description: strings.TrimSpace(payload.Description),
 		GraphJSON:   dumpJSON(graph), IsBuiltin: isBuiltin,
 		CreatedBy: &operatorUserID, CreatedAt: time.Now(),
 	}
-	// Create(&definition):INSERT 一行;GORM 会把自增主键回填到 definition.ID(&definition 传指针正为此)。
-	if err := a.DB.Create(&definition).Error; err != nil {
-		return nil, err
-	}
-	return a.GetWorkflowDefinition(definition.ID)
 }
 
 // ---------- 内部 ----------
@@ -645,20 +699,49 @@ func (a *App) listLatestDefinitions() []db.WorkflowDefinition {
 
 // requireDefinition 按主键查一条定义,查不到就返回业务错误;返回 *db.WorkflowDefinition(指针)。
 func (a *App) requireDefinition(definitionID int64) (*db.WorkflowDefinition, error) {
+	return requireDefinitionWithDB(a.DB, definitionID)
+}
+
+func requireDefinitionWithDB(database *gorm.DB, definitionID int64) (*db.WorkflowDefinition, error) {
 	var definition db.WorkflowDefinition
-	// First(&x, id):按主键查一条,等价 SELECT ... WHERE id = ? LIMIT 1;查不到时 err 非 nil。
-	if err := a.DB.First(&definition, definitionID).Error; err != nil {
+	err := database.First(&definition, definitionID).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, bizErr("Workflow definition does not exist")
+	}
+	if err != nil {
+		return nil, err
 	}
 	return &definition, nil
 }
 
-func (a *App) getRuntimeStateByCode(workflowCode string) *db.WorkflowRuntimeState {
-	var state db.WorkflowRuntimeState
-	if err := a.DB.Where("workflow_code = ?", workflowCode).First(&state).Error; err != nil {
-		return nil
+// lockWorkflowDefinitionFamily 用一条无值变化的 UPDATE 获取同一 code 的数据库写锁。
+// PostgreSQL 会锁住 family 的定义行，SQLite 会在事务首写时取得 WAL writer lock；
+// 后续必须只使用同一个 tx，才能让版本分配、激活和删除在多进程下串行。
+func lockWorkflowDefinitionFamily(tx *gorm.DB, definitionID int64) (*db.WorkflowDefinition, error) {
+	result := tx.Model(&db.WorkflowDefinition{}).
+		Where("code = (?)", tx.Model(&db.WorkflowDefinition{}).Select("code").Where("id = ?", definitionID)).
+		UpdateColumn("version", gorm.Expr("version"))
+	if result.Error != nil {
+		return nil, result.Error
 	}
-	return &state
+	return requireDefinitionWithDB(tx, definitionID)
+}
+
+func (a *App) getRuntimeStateByCode(workflowCode string) *db.WorkflowRuntimeState {
+	state, _ := findRuntimeStateByCodeWithDB(a.DB, workflowCode)
+	return state
+}
+
+func findRuntimeStateByCodeWithDB(database *gorm.DB, workflowCode string) (*db.WorkflowRuntimeState, error) {
+	var state db.WorkflowRuntimeState
+	err := database.Where("workflow_code = ?", workflowCode).First(&state).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &state, nil
 }
 
 // runtimeStateMap 一次性把所有运行时状态查出来,做成 code → *state 的 map 便于查找。
@@ -741,27 +824,17 @@ func resolveActiveVersion(state *db.WorkflowRuntimeState, versionMap map[int64]i
 	return nil
 }
 
-// generateWorkflowCode 由显示名生成一个数据库内唯一的 code(重名就加 -2、-3… 后缀)。
-func (a *App) generateWorkflowCode(displayName string) string {
-	base := buildWorkflowCodeBase(displayName)
-	candidate := base
-	index := 2
-	// for 不带任何条件 = 无限循环,靠内部 return 跳出:一旦 candidate 在库里查不到重复就返回它。
-	for {
-		var count int64
-		a.DB.Model(&db.WorkflowDefinition{}).Where("code = ?", candidate).Count(&count)
-		if count == 0 {
-			return candidate
-		}
-		suffix := "-" + itoa(index)
-		available := workflowCodeMaxLength - len(suffix)
-		truncated := strings.TrimRight(truncateBytes(base, available), "-._")
-		if truncated == "" {
-			truncated = "workflow"
-		}
-		candidate = truncated + suffix
-		index++
+func workflowCodeCandidate(base string, index int) string {
+	if index <= 1 {
+		return base
 	}
+	suffix := "-" + itoa(index)
+	available := workflowCodeMaxLength - len(suffix)
+	truncated := strings.TrimRight(truncateBytes(base, available), "-._")
+	if truncated == "" {
+		truncated = "workflow"
+	}
+	return truncated + suffix
 }
 
 // buildWorkflowCodeBase 把显示名转成 code 基串:字母数字转小写保留,其它字符压成单个连字符 -。
