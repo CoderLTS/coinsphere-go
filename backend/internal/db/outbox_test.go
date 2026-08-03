@@ -193,6 +193,14 @@ func runOutboxLeaseContract(t *testing.T, open func(t *testing.T) *outboxContrac
 		if err != nil || completed {
 			t.Fatalf("expired lease completed event: completed=%v err=%v", completed, err)
 		}
+		renewed, err := RenewOutboxEventLease(context.Background(), database.primary, oldClaims[retryID], time.Minute)
+		if err != nil || renewed {
+			t.Fatalf("expired lease was renewed: renewed=%v err=%v", renewed, err)
+		}
+		failed, err := FailOutboxEvent(context.Background(), database.primary, oldClaims[retryID], time.Second, "subscriber_failed")
+		if err != nil || failed {
+			t.Fatalf("expired lease rescheduled event: failed=%v err=%v", failed, err)
+		}
 		recovered, err := RecoverExpiredOutboxEvents(context.Background(), database.primary, 10)
 		if err != nil || len(recovered) != 2 {
 			t.Fatalf("recover expired Outbox leases: rows=%v err=%v", outboxContractRowsSummary(recovered), err)
@@ -223,6 +231,10 @@ func runOutboxLeaseContract(t *testing.T, open func(t *testing.T) *outboxContrac
 		if err != nil || completed {
 			t.Fatalf("old lease modified reclaimed event: completed=%v err=%v", completed, err)
 		}
+		failed, err = FailOutboxEvent(context.Background(), database.primary, oldClaims[retryID], time.Second, "subscriber_failed")
+		if err != nil || failed {
+			t.Fatalf("old lease rescheduled reclaimed event: failed=%v err=%v", failed, err)
+		}
 		stillClaimed := readOutboxEvent(t, database.primary, retryID)
 		if stillClaimed.Status != "claimed" || stillClaimed.LeaseID == nil || *stillClaimed.LeaseID != *newClaim.LeaseID {
 			t.Fatalf("old lease changed current claim: %s", outboxContractRowSummary(stillClaimed))
@@ -235,6 +247,173 @@ func runOutboxLeaseContract(t *testing.T, open func(t *testing.T) *outboxContrac
 		finished := readOutboxEvent(t, database.primary, retryID)
 		if finished.Status != "processed" || finished.ProcessedAt == nil || finished.LeaseID != nil {
 			t.Fatalf("completed event has invalid terminal state: %s", outboxContractRowSummary(finished))
+		}
+	})
+
+	t.Run("failed delivery retries then reaches dead letter", func(t *testing.T) {
+		database := open(t)
+		eventID := insertPendingOutboxEvent(t, database.primary, "contract.delivery.retry", 2)
+		claims, err := ClaimOutboxEvents(context.Background(), database.primary, "outbox-delivery-old", 1, time.Minute)
+		if err != nil || len(claims) != 1 || claims[0].ID != eventID {
+			t.Fatalf("claim retry fixture: rows=%v err=%v", outboxContractRowsSummary(claims), err)
+		}
+		oldClaim := claims[0]
+		renewed, err := RenewOutboxEventLease(context.Background(), database.primary, oldClaim, 2*time.Minute)
+		if err != nil || !renewed {
+			t.Fatalf("renew current Outbox lease: renewed=%v err=%v", renewed, err)
+		}
+
+		rollback := errors.New("failure transition rollback")
+		err = database.primary.Transaction(func(tx *gorm.DB) error {
+			updated, err := FailOutboxEvent(context.Background(), tx, oldClaim, 2*time.Second, "subscriber_failed")
+			if err != nil {
+				return err
+			}
+			if !updated {
+				return errors.New("transaction did not update current Outbox lease")
+			}
+			return rollback
+		})
+		if !errors.Is(err, rollback) {
+			t.Fatalf("failure transaction error = %v, want rollback sentinel", err)
+		}
+		rolledBack := readOutboxEvent(t, database.primary, eventID)
+		if rolledBack.Status != "claimed" || rolledBack.LeaseID == nil || rolledBack.AttemptCount != 1 {
+			t.Fatalf("rolled back failure changed claim: %s", outboxContractRowSummary(rolledBack))
+		}
+
+		failedAt := time.Now().UTC()
+		updated, err := FailOutboxEvent(context.Background(), database.primary, oldClaim, 2*time.Second, "subscriber_failed")
+		if err != nil || !updated {
+			t.Fatalf("reschedule failed Outbox delivery: updated=%v err=%v", updated, err)
+		}
+		retryRow := readOutboxEvent(t, database.primary, eventID)
+		if retryRow.Status != "pending" || retryRow.AttemptCount != 1 || retryRow.LeaseID != nil ||
+			retryRow.AvailableAt.Before(failedAt.Add(500*time.Millisecond)) || retryRow.LastErrorCategory == nil ||
+			*retryRow.LastErrorCategory != "subscriber_failed" || retryRow.LastErrorMessage != "" {
+			t.Fatalf("failed delivery was not safely rescheduled: %s", outboxContractRowSummary(retryRow))
+		}
+		tooEarly, err := ClaimOutboxEvents(context.Background(), database.primary, "outbox-delivery-too-early", 1, time.Minute)
+		if err != nil || len(tooEarly) != 0 {
+			t.Fatalf("retry was claimed before backoff elapsed: rows=%v err=%v", outboxContractRowsSummary(tooEarly), err)
+		}
+
+		setOutboxAvailableAt(t, database.primary, eventID, time.Now().UTC().Add(-time.Minute))
+		claims, err = ClaimOutboxEvents(context.Background(), database.primary, "outbox-delivery-new", 1, time.Minute)
+		if err != nil || len(claims) != 1 || claims[0].AttemptCount != 2 {
+			t.Fatalf("reclaim retry after backoff: rows=%v err=%v", outboxContractRowsSummary(claims), err)
+		}
+		newClaim := claims[0]
+		updated, err = FailOutboxEvent(context.Background(), database.primary, oldClaim, time.Second, "subscriber_failed")
+		if err != nil || updated {
+			t.Fatalf("old failure token changed new claim: updated=%v err=%v", updated, err)
+		}
+		updated, err = FailOutboxEvent(context.Background(), database.primary, newClaim, time.Second, "subscriber_failed")
+		if err != nil || !updated {
+			t.Fatalf("dead-letter exhausted delivery: updated=%v err=%v", updated, err)
+		}
+		deadLetter := readOutboxEvent(t, database.primary, eventID)
+		if deadLetter.Status != "dead_letter" || deadLetter.ProcessedAt == nil || deadLetter.DeadLetteredAt == nil ||
+			!deadLetter.ProcessedAt.Equal(*deadLetter.DeadLetteredAt) || deadLetter.LeaseID != nil ||
+			deadLetter.LastErrorCategory == nil || *deadLetter.LastErrorCategory != "subscriber_failed" {
+			t.Fatalf("exhausted delivery has invalid dead letter state: %s", outboxContractRowSummary(deadLetter))
+		}
+	})
+
+	t.Run("dead letter alerts are claimed once across workers", func(t *testing.T) {
+		database := open(t)
+		peer := database.openPeer(t)
+		wantIDs := make(map[int64]struct{}, 7)
+		for index := range 7 {
+			wantIDs[insertDeadLetterOutboxEvent(t, database.primary, fmt.Sprintf("contract.alert.%d", index))] = struct{}{}
+		}
+
+		// 两个独立句柄同时领取告警，验证 PostgreSQL 的 SKIP LOCKED 与 SQLite 文件写锁
+		// 都只能让一个 ID 出现在一个批次中，且 limit 对每个批次独立生效。
+		type alertResult struct {
+			ids []int64
+			err error
+		}
+		start := make(chan struct{})
+		results := make(chan alertResult, 2)
+		claimAlerts := func(gdb *gorm.DB) {
+			<-start
+			ids, err := MarkOutboxDeadLettersAlerted(context.Background(), gdb, 4)
+			results <- alertResult{ids: ids, err: err}
+		}
+		go claimAlerts(database.primary)
+		go claimAlerts(peer)
+		close(start)
+
+		seen := make(map[int64]struct{}, len(wantIDs))
+		batchSizes := make(map[int]int, 2)
+		for range 2 {
+			result := <-results
+			if result.err != nil {
+				t.Fatalf("claim concurrent dead letter alerts: %v", result.err)
+			}
+			batchSizes[len(result.ids)]++
+			for _, id := range result.ids {
+				if _, exists := seen[id]; exists {
+					t.Fatalf("dead letter %d was alerted by both workers", id)
+				}
+				seen[id] = struct{}{}
+			}
+		}
+		if len(seen) != len(wantIDs) || batchSizes[4] != 1 || batchSizes[3] != 1 {
+			t.Fatalf("unexpected alert batch split: alerted=%d sizes=%v", len(seen), batchSizes)
+		}
+		for id := range wantIDs {
+			if _, exists := seen[id]; !exists {
+				t.Fatalf("dead letter %d was not alerted", id)
+			}
+			if row := readOutboxEvent(t, database.primary, id); row.AlertedAt == nil {
+				t.Fatalf("dead letter %d was returned without alerted_at", id)
+			}
+		}
+		none, err := MarkOutboxDeadLettersAlerted(context.Background(), database.primary, 10)
+		if err != nil || len(none) != 0 {
+			t.Fatalf("already alerted dead letters were reclaimed: ids=%v err=%v", none, err)
+		}
+
+		rollbackID := insertDeadLetterOutboxEvent(t, database.primary, "contract.alert.rollback")
+		rollback := errors.New("alert transaction rollback")
+		err = database.primary.Transaction(func(tx *gorm.DB) error {
+			ids, err := MarkOutboxDeadLettersAlerted(context.Background(), tx, 1)
+			if err != nil {
+				return err
+			}
+			if len(ids) != 1 || ids[0] != rollbackID {
+				return fmt.Errorf("unexpected transaction alert IDs: %v", ids)
+			}
+			return rollback
+		})
+		if !errors.Is(err, rollback) {
+			t.Fatalf("alert transaction error = %v, want rollback sentinel", err)
+		}
+		if row := readOutboxEvent(t, database.primary, rollbackID); row.AlertedAt != nil {
+			t.Fatalf("rolled back alert left alerted_at: %s", outboxContractRowSummary(row))
+		}
+		reclaimed, err := MarkOutboxDeadLettersAlerted(context.Background(), database.primary, 1)
+		if err != nil || len(reclaimed) != 1 || reclaimed[0] != rollbackID {
+			t.Fatalf("rolled back alert was not reclaimable: ids=%v err=%v", reclaimed, err)
+		}
+	})
+
+	t.Run("dead letter alert batch failure is atomic", func(t *testing.T) {
+		database := open(t)
+		firstID := insertDeadLetterOutboxEvent(t, database.primary, "contract.alert.atomic.first")
+		failedID := insertDeadLetterOutboxEvent(t, database.primary, "contract.alert.atomic.fail")
+		installOutboxAlertFailureTrigger(t, database.primary)
+
+		ids, err := MarkOutboxDeadLettersAlerted(context.Background(), database.primary, 2)
+		if err == nil {
+			t.Fatalf("alert batch unexpectedly succeeded with IDs %v", ids)
+		}
+		for _, eventID := range []int64{firstID, failedID} {
+			if row := readOutboxEvent(t, database.primary, eventID); row.AlertedAt != nil {
+				t.Fatalf("failed alert batch partially marked event: %s", outboxContractRowSummary(row))
+			}
 		}
 	})
 }
@@ -276,6 +455,25 @@ RETURNING id
 `, eventType, maxAttempts, now, now, now).Scan(&eventID).Error
 	if err != nil {
 		t.Fatalf("insert pending Outbox event: %v", err)
+	}
+	return eventID
+}
+
+func insertDeadLetterOutboxEvent(t *testing.T, database *gorm.DB, eventType string) int64 {
+	t.Helper()
+	now := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	var eventID int64
+	err := database.Raw(`
+INSERT INTO domain_event_outbox (
+    event_type, aggregate_type, aggregate_id, payload_json, metadata_json,
+    status, attempt_count, max_attempts, available_at, processed_at,
+    last_error_category, last_error_message, dead_lettered_at, created_at, updated_at
+) VALUES (?, 'contract', 'fixture', '{}', '{}', 'dead_letter', 1, 1, ?, ?,
+          'subscriber_failed', '', ?, ?, ?)
+RETURNING id
+`, eventType, now, now, now, now, now).Scan(&eventID).Error
+	if err != nil {
+		t.Fatalf("insert dead-letter Outbox event: %v", err)
 	}
 	return eventID
 }
@@ -342,6 +540,44 @@ FOR EACH ROW EXECUTE FUNCTION outbox_contract_reject_claim()`,
 	for _, statement := range statements {
 		if err := database.Exec(statement).Error; err != nil {
 			t.Fatalf("install Outbox claim failure trigger: %v", err)
+		}
+	}
+}
+
+func installOutboxAlertFailureTrigger(t *testing.T, database *gorm.DB) {
+	t.Helper()
+	var statements []string
+	switch database.Dialector.Name() {
+	case "sqlite":
+		statements = []string{`
+CREATE TRIGGER outbox_contract_reject_alert
+BEFORE UPDATE ON domain_event_outbox
+FOR EACH ROW
+WHEN NEW.alerted_at IS NOT NULL AND NEW.event_type = 'contract.alert.atomic.fail'
+BEGIN
+    SELECT RAISE(ABORT, 'forced Outbox alert failure');
+END
+`}
+	case "postgres":
+		statements = []string{
+			`CREATE FUNCTION outbox_contract_reject_alert() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.alerted_at IS NOT NULL AND NEW.event_type = 'contract.alert.atomic.fail' THEN
+        RAISE EXCEPTION 'forced Outbox alert failure';
+    END IF;
+    RETURN NEW;
+END
+$$`,
+			`CREATE TRIGGER outbox_contract_reject_alert
+BEFORE UPDATE ON domain_event_outbox
+FOR EACH ROW EXECUTE FUNCTION outbox_contract_reject_alert()`,
+		}
+	default:
+		t.Fatalf("unsupported Outbox contract driver %q", database.Dialector.Name())
+	}
+	for _, statement := range statements {
+		if err := database.Exec(statement).Error; err != nil {
+			t.Fatalf("install Outbox alert failure trigger: %v", err)
 		}
 	}
 }

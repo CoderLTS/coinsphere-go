@@ -22,7 +22,7 @@ Linux CI 额外执行 `go test -race ./...` 和 `SIGTERM` 进程测试。关机�
 
 `00002_a1_worker_tasks.sql` 与 Python Worker 已共同建立 A1 任务队列协议。Worker 只连接 PostgreSQL，在单事务内用 `FOR UPDATE SKIP LOCKED` 认领，并以数据库时间和唯一 `lease_id` 约束心跳、恢复与终态；当前只执行 `contract.noop` 和 `contract.sleep` 伪任务，不包含数据集、回测或交易能力。
 
-逻辑版本 `00003` 按驱动加载 SQLite 或 PostgreSQL Outbox SQL，验证既有事件保留、五态、尝试次数、活跃租约、死信/告警时间与索引契约。`internal/db` 在该 schema 上提供单语句原子批量认领、数据库时间租约、终态 fencing 与过期恢复；SQLite 并发测试使用两个独立句柄指向同一 WAL 文件，PostgreSQL 使用 `FOR UPDATE SKIP LOCKED`。它不改变现有 `drainPendingEvents`；本地验证不得把尚未接入的 dispatcher、指数退避、订阅失败重试或死信告警视为已完成。
+逻辑版本 `00003` 按驱动加载 SQLite 或 PostgreSQL Outbox SQL，验证既有事件保留、五态、尝试次数、活跃租约、死信/告警时间与索引契约。`internal/db` 在该 schema 上提供单语句原子批量认领、数据库时间续租与 fencing、失败重排、过期恢复及告警领取；SQLite 并发测试使用两个独立句柄指向同一 WAL 文件，PostgreSQL 使用 `FOR UPDATE SKIP LOCKED`。`drainPendingEvents` 已接入这些 API，按 `outbox_lease_seconds` 续租、按 `retry_backoff_seconds` 重排，并在尝试耗尽后原子领取死信日志告警。工作流终态与标准事件使用同一短事务，任一事件插入失败会回滚终态。
 
 Worker 容器可单独验证：
 
@@ -32,10 +32,10 @@ docker compose build backend worker
 docker compose up --detach --no-build --wait worker
 docker compose exec -T worker python -m coinsphere_worker health
 docker compose stop worker postgres
-docker compose rm --force worker migrate-worker postgres
+docker compose rm --force worker migrate-worker migrate-backend postgres
 ```
 
-Compose 会在内部 `worker-db` 网络启动 PostgreSQL，等待健康后由一次性 `migrate-worker` 应用 migration，再启动 Worker。预期健康输出包含 `"mode":"a1-postgres"` 和 `"taskConsumer":true`。Worker 不开放端口、不挂载业务数据卷、不连接 Backend 网络，也不注入交易所凭据。
+Compose 会先由一次性 `migrate-backend` 在共享 SQLite 卷应用 migration，再启动 Backend；同时在内部 `worker-db` 网络启动 PostgreSQL，等待健康后由 `migrate-worker` 应用 migration，再启动 Worker。预期健康输出包含 `"mode":"a1-postgres"` 和 `"taskConsumer":true`。Worker 不开放端口、不挂载业务数据卷、不连接 Backend 网络，也不注入交易所凭据。
 
 本机已有仅供测试的 PostgreSQL 时，可直接运行真实并发与取消用例。测试会创建并删除随机隔离 schema，不会清空固定外部表：
 
@@ -88,7 +88,7 @@ Pop-Location
 
 GitHub Actions 负责 Linux、三类镜像构建、Compose 健康、Worker A1 PostgreSQL 集成契约和安全检查。本地缺少 Docker 或 PostgreSQL 时可以继续开发，但 PR 在 Worker 集成与容器 Job 通过前不得合并。
 
-CI 使用固定 PostgreSQL 17 镜像执行 migration、Outbox 存储与 Worker 运行时契约，包括 Worker 七态、租约、尝试次数、非空 Down 保护、并发认领、旧租约 fencing、崩溃回收和 5 秒取消，以及 Outbox 五态、租约字段一致性、保数升级、重复 Up、回滚重放、双认领者争抢、批量与事务失败原子性、过期恢复和旧 token fencing。本地与发布环境的迁移命令、编写约束和回滚步骤见[数据库迁移手册](./database-migrations.md)。
+CI 使用固定 PostgreSQL 17 镜像执行 migration、Outbox 存储与 Worker 运行时契约，包括 Worker 七态、租约、尝试次数、非空 Down 保护、并发认领、旧租约 fencing、崩溃回收和 5 秒取消，以及 Outbox 五态、租约字段一致性、保数升级、重复 Up、回滚重放、双认领者争抢、批量与事务失败原子性、续租、失败退避、过期恢复、死信告警争抢和旧 token fencing。本地与发布环境的迁移命令、编写约束和回滚步骤见[数据库迁移手册](./database-migrations.md)。
 
 ## 安全约束
 

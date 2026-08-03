@@ -14,6 +14,10 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"coinsphere/backend/internal/config"
+	"coinsphere/backend/internal/db"
+	"coinsphere/backend/internal/migration"
 )
 
 const signalHelperEnv = "COINSPHERE_TEST_SIGNAL_HELPER"
@@ -161,6 +165,31 @@ auth:
 `, port)
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
+	}
+	// 生命周期测试遵循真实启动顺序：独立 migration 先提交版本化 schema，服务随后只校验并保留 AutoMigrate。
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("load lifecycle config: %v", err)
+	}
+	gdb, err := db.Connect(context.Background(), cfg.Database)
+	if err != nil {
+		t.Fatalf("connect lifecycle migration database: %v", err)
+	}
+	sqlDB, err := gdb.DB()
+	if err != nil {
+		t.Fatalf("get lifecycle migration database: %v", err)
+	}
+	runner, err := migration.New(sqlDB, cfg.Database.Driver)
+	if err != nil {
+		_ = sqlDB.Close()
+		t.Fatalf("create lifecycle migration runner: %v", err)
+	}
+	if _, err := runner.Up(context.Background(), 0); err != nil {
+		_ = sqlDB.Close()
+		t.Fatalf("migrate lifecycle database: %v", err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatalf("close lifecycle migration database: %v", err)
 	}
 	return configPath, databasePath
 }

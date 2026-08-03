@@ -20,6 +20,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -27,6 +28,7 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+	"gorm.io/gorm"
 
 	"coinsphere/backend/internal/db"
 )
@@ -621,82 +623,105 @@ func (a *App) buildEventBasePayload(definition *db.WorkflowDefinition, runtimeEn
 	}
 }
 
-// publishStandardEvent 在公共字段基础上合并本次 payload,发布一条标准工作流事件;失败只记日志不中断。
-func (a *App) publishStandardEvent(
-	ctx context.Context,
+// publishStandardEventWithDB 在调用方事务中写入标准工作流事件，错误必须向上返回以回滚业务终态。
+func (a *App) publishStandardEventWithDB(
+	database *gorm.DB,
 	definition *db.WorkflowDefinition, runtimeEntry *db.WorkflowRuntimeEntry,
 	executionID int64, nodeID *int64, eventType string, triggerCtx, payload M,
-) {
+) error {
 	mergedPayload := a.buildEventBasePayload(definition, runtimeEntry, executionID, triggerCtx)
 	for key, value := range payload {
 		mergedPayload[key] = value
 	}
 	metadata := M{"workflowCode": definition.Code, "nodeId": nilOrValue(nodeID)}
-	if _, err := a.publishDomainEventContext(
-		ctx,
+	_, err := a.publishDomainEventWithDB(
+		database,
 		eventType, "workflow_execution", fmt.Sprint(executionID),
 		mergedPayload, metadata, &executionID, nodeID,
-	); err != nil {
-		log.Printf("[engine] publish standard event failed: execution_id=%d event=%s err=%v", executionID, eventType, err)
-	}
+	)
+	return err
 }
 
-// publishExecutionSucceeded success 终态后的标准事件。
-func (a *App) publishExecutionSucceeded(ctx context.Context, result *runResult) {
+// publishExecutionSucceededWithDB 将 success 与 finished 事件及入口状态写入同一短事务。
+func (a *App) publishExecutionSucceededWithDB(database *gorm.DB, result *runResult) error {
 	taskResult := orEmptyMap(result.SharedState["taskResult"])
 	payload := M{"status": "success"}
 	for key, value := range taskResult {
 		payload[key] = value
 	}
-	a.publishStandardEvent(ctx, result.Definition, result.RuntimeEntry, result.Execution.ID, nil, "workflow.execution.succeeded", result.TriggerCtx, payload)
-	a.publishStandardEvent(ctx, result.Definition, result.RuntimeEntry, result.Execution.ID, nil, "workflow.execution.finished", result.TriggerCtx, payload)
+	if err := a.publishStandardEventWithDB(database, result.Definition, result.RuntimeEntry, result.Execution.ID, nil, "workflow.execution.succeeded", result.TriggerCtx, payload); err != nil {
+		return err
+	}
+	if err := a.publishStandardEventWithDB(database, result.Definition, result.RuntimeEntry, result.Execution.ID, nil, "workflow.execution.finished", result.TriggerCtx, payload); err != nil {
+		return err
+	}
 	if result.RuntimeEntry != nil {
-		a.dbWithContext(ctx).Model(&db.WorkflowRuntimeEntry{}).Where("id = ?", result.RuntimeEntry.ID).Updates(map[string]any{
+		if err := database.Model(&db.WorkflowRuntimeEntry{}).Where("id = ?", result.RuntimeEntry.ID).Updates(map[string]any{
 			"last_triggered_at": result.FinishedAt, "last_error_message": "", "updated_at": time.Now(),
-		})
+		}).Error; err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-// publishExecutionFailed failed 终态后的标准事件。
-func (a *App) publishExecutionFailed(ctx context.Context, result *runResult, errorMessage string) {
-	a.publishFailureEvents(ctx, result.Definition, result.RuntimeEntry, result.Execution.ID, result.TriggerCtx, errorMessage, result.StartedAt, result.FinishedAt)
+// publishExecutionFailedWithDB 将 failed 与 finished 事件及入口状态写入同一短事务。
+func (a *App) publishExecutionFailedWithDB(database *gorm.DB, result *runResult, errorMessage string) error {
+	if err := a.publishFailureEventsWithDB(database, result.Definition, result.RuntimeEntry, result.Execution.ID, result.TriggerCtx, errorMessage, result.StartedAt, result.FinishedAt); err != nil {
+		return err
+	}
 	if result.RuntimeEntry != nil {
-		a.dbWithContext(ctx).Model(&db.WorkflowRuntimeEntry{}).Where("id = ?", result.RuntimeEntry.ID).Updates(map[string]any{
+		if err := database.Model(&db.WorkflowRuntimeEntry{}).Where("id = ?", result.RuntimeEntry.ID).Updates(map[string]any{
 			"last_triggered_at": result.FinishedAt, "last_error_message": errorMessage, "updated_at": time.Now(),
-		})
+		}).Error; err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-// publishRecoveredFailureEvents stale 恢复后的失败事件。
-func (a *App) publishRecoveredFailureEvents(ctx context.Context, executionID int64, errorMessage string) {
-	var execution db.WorkflowExecution
-	if err := a.dbWithContext(ctx).Preload("WorkflowDefinition").First(&execution, executionID).Error; err != nil || execution.WorkflowDefinition == nil {
-		return
+// loadTerminalRunResult 为跑图前失败或 stale 恢复补齐标准事件所需的最小上下文。
+func (a *App) loadTerminalRunResult(database *gorm.DB, execution *db.WorkflowExecution, finishedAt time.Time) (*runResult, error) {
+	definition := execution.WorkflowDefinition
+	if definition == nil {
+		definition = &db.WorkflowDefinition{}
+		if err := database.First(definition, execution.WorkflowDefinitionID).Error; err != nil {
+			return nil, err
+		}
 	}
 	var runtimeEntry db.WorkflowRuntimeEntry
-	runtimeEntryPtr := &runtimeEntry
-	if err := a.dbWithContext(ctx).Where("workflow_definition_id = ? AND entry_key = ?", execution.WorkflowDefinition.ID, execution.StartEntryKey).First(&runtimeEntry).Error; err != nil {
-		runtimeEntryPtr = nil
+	var runtimeEntryPtr *db.WorkflowRuntimeEntry
+	if execution.StartEntryKey != "" {
+		err := database.Where("workflow_definition_id = ? AND entry_key = ?", definition.ID, execution.StartEntryKey).First(&runtimeEntry).Error
+		if err == nil {
+			runtimeEntryPtr = &runtimeEntry
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
 	}
-	triggerCtx := extractTriggerContext(execution.ContextSnapshotJSON)
-	startedAt := firstTime(execution.StartedAt, execution.ClaimedAt, &execution.QueuedAt)
-	finishedAt := time.Now()
-	if execution.FinishedAt != nil {
-		finishedAt = *execution.FinishedAt
-	}
-	a.publishFailureEvents(ctx, execution.WorkflowDefinition, runtimeEntryPtr, executionID, triggerCtx, errorMessage, startedAt, finishedAt)
+	return &runResult{
+		Execution:    execution,
+		Definition:   definition,
+		RuntimeEntry: runtimeEntryPtr,
+		TriggerCtx:   extractTriggerContext(execution.ContextSnapshotJSON),
+		SharedState:  M{},
+		StartedAt:    firstTime(execution.StartedAt, execution.ClaimedAt, &execution.QueuedAt),
+		FinishedAt:   finishedAt,
+	}, nil
 }
 
-func (a *App) publishFailureEvents(
-	ctx context.Context,
+func (a *App) publishFailureEventsWithDB(
+	database *gorm.DB,
 	definition *db.WorkflowDefinition, runtimeEntry *db.WorkflowRuntimeEntry,
 	executionID int64, triggerCtx M, errorMessage string, startedAt, finishedAt time.Time,
-) {
-	a.publishStandardEvent(ctx, definition, runtimeEntry, executionID, nil, "workflow.execution.failed", triggerCtx, M{
+) error {
+	if err := a.publishStandardEventWithDB(database, definition, runtimeEntry, executionID, nil, "workflow.execution.failed", triggerCtx, M{
 		"status": "failed", "errorMessage": errorMessage,
 		"startedAt": fmtTimeV(startedAt), "finishedAt": fmtTimeV(finishedAt),
-	})
-	a.publishStandardEvent(ctx, definition, runtimeEntry, executionID, nil, "workflow.execution.finished", triggerCtx, M{
+	}); err != nil {
+		return err
+	}
+	return a.publishStandardEventWithDB(database, definition, runtimeEntry, executionID, nil, "workflow.execution.finished", triggerCtx, M{
 		"status": "failed", "errorMessage": errorMessage,
 	})
 }

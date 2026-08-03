@@ -13,8 +13,8 @@ CoinSphere 从通用后台与工作流系统演进为个人币圈量化平台，
 ## 当前状态
 
 - 当前阶段：A1 基础稳定化。
-- 当前交付：A1-3 Outbox 原子认领、锁租约、fencing 与过期恢复。
-- 阶段状态：A0 已完成并经用户手工放行，A1 进行中；`worker_tasks` schema 与 Python Worker 运行时均已建立。A1-3 的首个独立 PR 以逻辑版本 `00003` 为 SQLite/PostgreSQL 建立 Outbox 五态、租约 fencing、最大尝试、死信与告警留存的数据契约；第二个独立 PR 在该 schema 上建立双方言原子批量认领、数据库时间租约、终态 fencing 与过期恢复存储 API。现有 dispatcher 接入、指数退避、订阅失败重试和死信告警仍由后续独立 PR 实现。生产 Release 仍不部署 Worker，也不因本 PR 触发发布或部署。
+- 当前交付：A1-3 事务 Outbox 与可靠 dispatcher 闭环。
+- 阶段状态：A0 已完成并经用户手工放行，A1 进行中；`worker_tasks` schema 与 Python Worker 运行时均已建立。A1-3 已由逻辑版本 `00003`、双方言原子存储 API 和运行时闭环共同实现：工作流终态与标准事件在同一短事务提交，dispatcher 原子认领并续租，订阅失败按配置退避，尝试耗尽进入死信，未告警死信由原子 `alerted_at` 标记去重后输出脱敏日志。生产 Release 仍不部署 Worker，本 PR 也不触发发布或部署。
 - GitHub 远程仓库、生产 Runner 和仅允许 `main` 的 `production` Environment 已配置；私有仓库的分支保护受当前 GitHub 套餐限制，操作约束见 [GitHub 治理手册](../runbooks/github-governance.md)。
 
 ## 里程碑

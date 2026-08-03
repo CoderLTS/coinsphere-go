@@ -38,6 +38,7 @@ workflow:
   poll_interval_ms: 1000
   outbox_poll_interval_ms: 1000
   outbox_batch_size: 100
+  outbox_lease_seconds: 30
   execution_retention_days: 30
   retention_delete_batch_size: 1000
   max_input_snapshot_bytes: 65536

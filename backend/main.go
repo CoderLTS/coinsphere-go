@@ -18,7 +18,6 @@ import (
 	"coinsphere/backend/internal/api"
 	"coinsphere/backend/internal/config"
 	"coinsphere/backend/internal/db"
-	"coinsphere/backend/internal/security"
 	"coinsphere/backend/internal/service"
 )
 
@@ -71,8 +70,13 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	}
 	defer func() { runErr = errors.Join(runErr, sqlDB.Close()) }()
 
-	hasher := security.NewPasswordHasher(cfg.Auth.PasswordIterations)
-	if err := db.Seed(ctx, gdb, hasher, cfg.Auth.BootstrapAdminPassword); err != nil {
+	hostname, _ := os.Hostname()
+	workerID := fmt.Sprintf("%s:%d", hostname, os.Getpid())
+	app, err := service.NewApp(ctx, gdb, cfg, workerID)
+	if err != nil {
+		return fmt.Errorf("build app: %w", err)
+	}
+	if err := db.Seed(ctx, gdb, app.Hasher, cfg.Auth.BootstrapAdminPassword); err != nil {
 		return fmt.Errorf("seed database: %w", err)
 	}
 	if cfg.Auth.BootstrapAdminPassword == "coinsphere" {
@@ -80,12 +84,6 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	}
 	log.Printf("database ready: driver=%s", cfg.Database.Driver)
 
-	hostname, _ := os.Hostname()
-	workerID := fmt.Sprintf("%s:%d", hostname, os.Getpid())
-	app, err := service.NewApp(ctx, gdb, cfg, workerID)
-	if err != nil {
-		return fmt.Errorf("build app: %w", err)
-	}
 	app.StartRuntime()
 
 	executable, _ := os.Executable()

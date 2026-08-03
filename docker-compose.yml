@@ -9,6 +9,9 @@ services:
     container_name: coinsphere-go-backend
     restart: unless-stopped
     stop_grace_period: 40s
+    depends_on:
+      migrate-backend:
+        condition: service_completed_successfully
     environment:
       TZ: ${TZ:-Asia/Shanghai}
       # 必填:未设置则 compose 直接报错(见评审 #1)。生成随机值:openssl rand -hex 32
@@ -17,9 +20,7 @@ services:
       # COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD: ${COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD:-}
       # COINSPHERE_AUTH__ENCRYPTION_KEY: ${COINSPHERE_AUTH__ENCRYPTION_KEY:-}
       # COINSPHERE_AUTH__WEBHOOK_PEPPER: ${COINSPHERE_AUTH__WEBHOOK_PEPPER:-}
-      # 默认 sqlite(数据落在 backend-data 卷)。切 postgres/mysql 见 backend/README.md,例如:
-      # COINSPHERE_DATABASE__DRIVER: postgres
-      # COINSPHERE_DATABASE__HOST: your-db-host
+      # 开发 Compose 固定使用共享 backend-data 卷中的 SQLite；其他数据库见 backend/README.md 的直接运行配置。
     volumes:
       - backend-data:/app/data                  # sqlite 持久化
       - backend-uploads:/app/volumes/uploads     # 上传文件持久化
@@ -33,6 +34,13 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  migrate-backend:
+    image: coinsphere-go-backend
+    restart: "no"
+    command: ["/app/coinsphere-migrate", "-config", "/app/config.yml", "-direction", "up"]
+    volumes:
+      - backend-data:/app/data
 
   postgres:
     image: postgres:17.6-alpine3.21@sha256:849377bbbdb1143b82d1b87646eb8ab48241fe32b85ab6667e02e0af139aaa74
