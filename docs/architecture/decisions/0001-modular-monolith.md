@@ -10,7 +10,7 @@ CoinSphere 需要持续行情采集、粗粒度调度、Python 回测、模拟�
 
 ## 决策
 
-保持单仓库和模块化单体。所有 Go 常驻角色使用同一个应用二进制和镜像，通过 `COINSPHERE_ROLE=api|collector|scheduler|executor` 显式选择；缺失或非法角色启动失败。Python Worker 是唯一独立语言边界，任务队列和事务 Outbox 使用 PostgreSQL 实现。
+保持单仓库和模块化单体。A2 起，各 Go 常驻角色随实际能力落地到同一个应用二进制和镜像，通过 `COINSPHERE_ROLE=api|collector|scheduler|executor` 显式选择；角色选择在实现后对缺失或非法值启动失败。当前 A1 仍运行既有单进程后台，尚未实现该环境变量。Python Worker 是唯一独立语言边界，任务队列和事务 Outbox 使用 PostgreSQL 实现。
 
 A2 起新增金融能力按 `marketdata`、`dataset`、`news`、`strategy`、`backtest`、`trading` 和 `risk` 领域组织。领域包不得依赖 `internal/api` 或现有 `internal/service.App`，由启动层和适配层完成装配。现有后台与工作流保留，不做与交付无关的全仓迁移。
 
@@ -18,7 +18,7 @@ A2 起新增金融能力按 `marketdata`、`dataset`、`news`、`strategy`、`ba
 
 ## 结果
 
-- 采集、调度、API 和执行仍有进程级故障隔离，但构建、镜像、配置解析和依赖装配只维护一套。
+- 目标角色落地后，采集、调度、API 和执行拥有进程级故障隔离，但构建、镜像、配置解析和依赖装配只维护一套。
 - 新金融代码获得明确依赖方向，不再继续扩大 `service.App`，旧管理功能无需一次性重写。
 - PostgreSQL 是多实例协调点；只有出现持续锁竞争、独立扩缩容或故障隔离证据时，才编写新 ADR 评估消息中间件或服务拆分。
-- 单镜像包含各角色代码，镜像体积不是当前优化目标；只有供应链扫描或部署数据证明成本不可接受时，才评估拆分产物。
+- 目标单镜像包含各角色代码，镜像体积不是当前优化目标；只有供应链扫描或部署数据证明成本不可接受时，才评估拆分产物。

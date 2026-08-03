@@ -206,7 +206,7 @@ A1 安全波次拆成三个可独立验收和回滚的 PR：
 验证分为三层：
 
 1. PR 快速层：按受影响路径执行格式/Lint、编译或类型检查、生产构建和相关核心测试；Secret scan 始终运行，目标中位反馈不超过 5 分钟。
-2. 波次集成层：临时集成分支集中运行一次 migration、PostgreSQL/TimescaleDB Compose、跨模块 API、Chromium 关键路径和必要 Race；相关前端 PR 不重复运行三浏览器矩阵。
+2. 波次集成层：临时集成分支集中运行一次 migration、PostgreSQL/TimescaleDB Compose、跨模块 API、Chromium/Firefox/WebKit 关键路径和必要 Race；相关前端 PR 不重复运行三浏览器矩阵。
 3. `main`/定时/发布层：运行三浏览器、完整 Race、容器、依赖与供应链扫描、SBOM、校验和、Manifest 和最终发布产物验证。锁文件变化时，依赖扫描也进入 PR 快速层。
 
 数据库只验证 PostgreSQL 空库 Up、当前版本启动和本次 migration 的必要回滚。共享基线建立后，每次结构变更追加版本化 SQL，不修改已应用历史文件，也不为旧数据或其他数据库补兼容路径。

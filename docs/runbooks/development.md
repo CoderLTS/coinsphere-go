@@ -35,13 +35,14 @@ Go 生命周期测试覆盖 `SIGINT`/`SIGTERM` 根 Context、HTTP、Runtime、�
 
 Worker 和数据库契约使用随机 PostgreSQL schema，覆盖 `FOR UPDATE SKIP LOCKED` 认领、数据库时间租约、fencing、过期恢复、尝试耗尽和取消。当前 Worker 只执行契约伪任务，不包含数据集、回测或交易能力。
 
-本机没有 Docker/WSL。容器、Compose 和需要真实 PostgreSQL/TimescaleDB 的检查由 GitHub Actions 执行，或在统一环境主机的隔离目录和独立 Compose 项目中执行。
+本地缺少 Docker、WSL 或 PostgreSQL/TimescaleDB 时，将对应检查交给 GitHub Actions，或在统一环境主机的隔离目录和独立 Compose 项目中执行。
 
 ## PR 快速层
 
 - Draft stacked PR 可以指向父分支；上游进入 `main` 后，下游变基到 `main` 并将 base 改为 `main`，才能标记 Ready。
-- 密钥扫描始终运行；按变更路径运行格式、Lint、类型检查、构建和受影响核心测试。
+- 密钥扫描始终运行；按变更路径选择模块，Go 后端模块运行 `go test -count=1 ./...`，其他模块运行格式、Lint、类型检查、构建和相关核心测试。
 - 前端关键交互变更运行 Chromium 冒烟；依赖清单或锁文件变化时运行依赖扫描。
+- 发布维护脚本变更运行 Bash 语法、ShellCheck 和脚本检查，不在普通 PR 构建容器。
 - Migration、金融、安全、并发、恢复和外部契约变更必须运行对应定向检查；Bug 修复增加一个覆盖根因的回归检查。
 - PR 模板记录实际命令和结果。快速层目标是尽快暴露本切片问题，不宣称覆盖完整矩阵。
 
@@ -54,6 +55,8 @@ Worker 和数据库契约使用随机 PostgreSQL schema，覆盖 `FOR UPDATE SKI
 - Chromium、Firefox、WebKit 关键浏览器冒烟。
 - Backend、Frontend、Worker 镜像构建、健康检查和端到端冒烟。
 - 一次最终只读复审。
+
+在 GitHub Actions 中通过 `workflow_dispatch` 选择临时集成分支，即可启用完整层；普通功能 PR 不运行该层。
 
 集成分支不直接交付，也不替代独立 PR。每个 PR 仍由用户审查并手工合并，禁止自动合并。
 

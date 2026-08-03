@@ -6,11 +6,12 @@
 
 - 基线：Draft stacked PR 可以指向父分支；Ready PR 必须以 `main` 为 base，且依赖 PR 已进入 `main`。
 - 通用：密钥扫描始终运行；只检查受影响模块的格式、Lint、类型、构建和核心测试。
-- Go：涉及 Go 时运行格式、Vet、Staticcheck、测试和构建，竞态检查留到完整层。
+- Go：涉及 Go 时运行格式、Vet、Staticcheck、`go test -count=1 ./...` 和构建，竞态检查留到完整层。
 - Vue：涉及前端时运行 ESLint、Stylelint、Vitest、类型检查和生产构建；影响关键交互时增加 Chromium 冒烟。
 - Python：涉及 Worker 时运行 Ruff、Mypy、Pytest 和锁文件一致性检查。
 - 数据库：涉及 migration、事务或约束时验证 PostgreSQL 升降级、失败原子性、并发与回滚契约。
 - 依赖：仅在依赖清单或锁文件变化时运行对应依赖扫描。
+- 发布：涉及发布维护脚本时运行 Bash 语法、ShellCheck 和现有脚本检查；Compose 构建与启动留到完整层。
 
 核心测试按风险投入，必须覆盖金融 Decimal/UTC、数据库约束与 migration、并发事务、恢复、外部契约、SSRF/Auth、采集去重补数、订单状态机、风控、账务和对账。普通 CRUD、DTO 映射、简单配置、日志包装、普通 UI 和工作流/通知胶水不强制新增单元测试；Bug 修复增加一个覆盖根因的回归检查。
 

@@ -12,11 +12,11 @@
 - 新金融接口统一位于 `/api/v1`，现有管理接口保持原路径直至单独迁移。
 - 列表接口使用游标分页，命令接口支持 `Idempotency-Key`。
 - 错误响应使用 `application/problem+json`，至少包含 `type`、`title`、`status`、`code`、`requestId`、`retryable`。
-- Access Token 只保存在浏览器内存中；登录响应返回 Access Token，Refresh Token 通过轮换的 HttpOnly Cookie 由 refresh/logout 接口管理。
+- 当前 A1 登录、refresh 和 logout 接口通过 JSON 传递 Access/Refresh Token，前端状态同时持有两者。A1 安全波次的目标契约是 Access Token 只保存在浏览器内存中，Refresh Token 改为由 refresh/logout 接口轮换的 HttpOnly Cookie；目标实现合并前不得把它描述为现行行为。
 
-## A2 行情最小契约
+## A2 行情契约范围（待实现）
 
-A2 的首个契约交付只冻结 Decimal/UTC 规则、`Instrument`、`Candle`、`Ticker`、最小数据库约束、`MarketSource` 和可执行样本。缺口质量模型、推荐算法、保留策略、衍生统计和 UI 查询模型留到对应纵向切片，不进入公共契约。
+本节只限定 A2 首个契约 PR 的边界，尚不是现行运行时契约；以下约束必须与 Binance/OKX 可执行样本一同合并后才生效。首个交付只冻结 Decimal/UTC 规则、`Instrument`、`Candle`、`Ticker`、最小数据库约束和 `MarketSource`。缺口质量模型、推荐算法、保留策略、衍生统计和 UI 查询模型留到对应纵向切片，不进入公共契约。
 
 ### 规范化类型
 
@@ -71,7 +71,7 @@ WebSocket 事件统一使用以下信封：
 
 每条通知连接只有一个 writer，业务帧和 Ping 均由它写入。发送队列有界；队列满时服务端关闭慢连接，不阻塞生产者、不静默丢弃后续帧，客户端重连后以首个 `notice.unread` 快照恢复。服务端周期发送 RFC6455 Ping，Pong 延长读期限，失联连接到期关闭；Hub 关机后拒绝新连接并等待既有 writer 退出。
 
-浏览器握手必须携带唯一且合法的 `Origin`，其有效 scheme、主机和端口必须与请求完全同源；缺失、畸形、跨 scheme/主机/端口均拒绝。通知 WebSocket 使用固定 `Sec-WebSocket-Protocol` 完成鉴权，禁止在 URL 查询参数中传递 Token。开发和生产反向代理必须保留原始 Host（含非默认端口）及合法的有效 scheme，代理和应用日志不得记录令牌或事件 payload。
+浏览器握手必须携带唯一且合法的 `Origin`，其有效 scheme、主机和端口必须与请求完全同源；缺失、畸形、跨 scheme/主机/端口均拒绝。当前 A1 通知 WebSocket 通过 URL 查询参数传递 Access Token，代理、应用和测试日志不得记录查询串、令牌或事件 payload。A1 安全波次将改为固定 `Sec-WebSocket-Protocol` 鉴权并拒绝查询串 Token；开发和生产反向代理始终必须保留原始 Host（含非默认端口）及合法的有效 scheme。
 
 ## 异步任务
 
