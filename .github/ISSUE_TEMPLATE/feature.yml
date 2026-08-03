@@ -1,14 +1,72 @@
 name: 功能交付
-description: 定义一个可独立实现、验收和回滚的功能单元
+description: 定义一个可独立实现、验收和回滚的纵向能力
 title: "[Feature] "
 labels:
   - enhancement
 body:
+  - type: input
+    id: branch
+    attributes:
+      label: 分支
+      description: 使用 codex/<phase>-<slug>，不要求 Issue ID。
+      placeholder: codex/a2-market-contract
+    validations:
+      required: true
+  - type: input
+    id: wave
+    attributes:
+      label: 开发波次
+      description: 填写本能力所属阶段和波次。
+      placeholder: A2 / wave-1
+    validations:
+      required: true
+  - type: input
+    id: base_commit
+    attributes:
+      label: Base commit
+      description: 所有并行切片共同基于的提交 SHA。
+    validations:
+      required: true
+  - type: input
+    id: contract_sha
+    attributes:
+      label: 契约提交 SHA
+      description: 填写已冻结契约的提交 SHA；不依赖契约时填写“不涉及”。
+    validations:
+      required: true
   - type: textarea
     id: outcome
     attributes:
       label: 目标结果
       description: 描述用户可观察到的最终行为。
+    validations:
+      required: true
+  - type: textarea
+    id: contract
+    attributes:
+      label: 输入输出契约
+      description: 列出接口、schema、事件或文件输入输出；无公开契约时填写“不涉及”。
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: 依赖与并行方式
+      description: 列出依赖 PR，并注明独立 fan-out、stacked 或根 Agent 直接完成。
+    validations:
+      required: true
+  - type: textarea
+    id: allowed_paths
+    attributes:
+      label: 允许修改路径
+      description: 列出本任务独占的文件或目录。
+    validations:
+      required: true
+  - type: textarea
+    id: forbidden_paths
+    attributes:
+      label: 禁止修改路径
+      description: 明确共享契约、migration、配置、锁文件、计划文档及其他 Agent 所有路径。
     validations:
       required: true
   - type: textarea
@@ -21,14 +79,14 @@ body:
   - type: textarea
     id: acceptance
     attributes:
-      label: 验收标准
-      description: 列出可自动验证或人工验收的条件。
+      label: 验收标准与命令
+      description: 列出可执行命令、预期结果和必要的人工验收条件。
     validations:
       required: true
   - type: textarea
     id: risks
     attributes:
       label: 风险与回滚
-      description: 说明数据、安全、交易和部署风险，以及回滚方法。
+      description: 说明数据、安全、交易和部署风险，以及可执行的回滚方法。
     validations:
       required: true
