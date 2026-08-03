@@ -24,6 +24,8 @@ Linux CI 额外执行 `go test -race ./...` 和 `SIGTERM` 进程测试。关机�
 
 逻辑版本 `00003` 按驱动加载 SQLite 或 PostgreSQL Outbox SQL，验证既有事件保留、五态、尝试次数、活跃租约、死信/告警时间与索引契约。`internal/db` 在该 schema 上提供单语句原子批量认领、数据库时间续租与 fencing、失败重排、过期恢复及告警领取；SQLite 并发测试使用两个独立句柄指向同一 WAL 文件，PostgreSQL 使用 `FOR UPDATE SKIP LOCKED`。`drainPendingEvents` 已接入这些 API，按 `outbox_lease_seconds` 续租、按 `retry_backoff_seconds` 重排，并在尝试耗尽后原子领取死信日志告警。工作流终态与标准事件使用同一短事务，任一事件插入失败会回滚终态。
 
+A1-4 的 `internal/service` 契约在 SQLite 同一 WAL 文件的独立句柄和 PostgreSQL 隔离 schema 上执行同一测试：并发更新必须生成唯一、连续的新版本；并发激活最终只能保留一个 active 版本及其完整入口；激活或停用中途失败必须恢复原 active 版本、入口启停状态与密文；其他连接及运行态 API 只能观察完整旧快照或完整新快照。实现复用现有唯一约束和事务，不需要 schema migration，`AutoMigrate` 仍保留到 A1-10。
+
 Worker 容器可单独验证：
 
 ```powershell
@@ -76,7 +78,7 @@ CI 使用锁定依赖安装 Chromium、Firefox、WebKit，并在 `Playwright bro
 ```powershell
 $env:COINSPHERE_TEST_POSTGRES_DSN = 'postgres://coinsphere:test-only@127.0.0.1:5432/coinsphere_test?sslmode=disable'
 Push-Location .\backend
-go test -count=1 ./internal/db ./internal/migration ./cmd/migrate
+go test -count=1 ./internal/db ./internal/migration ./internal/service ./cmd/migrate
 Pop-Location
 ```
 
@@ -88,7 +90,7 @@ Pop-Location
 
 GitHub Actions 负责 Linux、三类镜像构建、Compose 健康、Worker A1 PostgreSQL 集成契约和安全检查。本地缺少 Docker 或 PostgreSQL 时可以继续开发，但 PR 在 Worker 集成与容器 Job 通过前不得合并。
 
-CI 使用固定 PostgreSQL 17 镜像执行 migration、Outbox 存储与 Worker 运行时契约，包括 Worker 七态、租约、尝试次数、非空 Down 保护、并发认领、旧租约 fencing、崩溃回收和 5 秒取消，以及 Outbox 五态、租约字段一致性、保数升级、重复 Up、回滚重放、双认领者争抢、批量与事务失败原子性、续租、失败退避、过期恢复、死信告警争抢和旧 token fencing。本地与发布环境的迁移命令、编写约束和回滚步骤见[数据库迁移手册](./database-migrations.md)。
+CI 使用固定 PostgreSQL 17 镜像执行 migration、Outbox 存储、工作流服务与 Worker 运行时契约，包括 Worker 七态、租约、尝试次数、非空 Down 保护、并发认领、旧租约 fencing、崩溃回收和 5 秒取消，Outbox 五态、租约字段一致性、保数升级、重复 Up、回滚重放、双认领者争抢、批量与事务失败原子性、续租、失败退避、过期恢复、死信告警争抢和旧 token fencing，以及工作流并发版本、并发激活、失败回滚和完整快照可见性。本地与发布环境的迁移命令、编写约束和回滚步骤见[数据库迁移手册](./database-migrations.md)。
 
 ## 安全约束
 

@@ -3,7 +3,9 @@ package service
 // import:引入标准库(errors 错误、strings 字符串、time 时间)与本项目的包
 // (internal/db 数据库模型、internal/security 加密工具)。见 GO入门笔记『项目怎么组织』。
 import (
+	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -117,102 +119,144 @@ func (a *App) GetSchedulerOverview() (M, error) {
 
 // GetRuntimeByDefinition 定义对应 workflow code 的运行态。
 func (a *App) GetRuntimeByDefinition(definitionID int64) (M, error) {
-	// definition, err := ... 一次接住"结果"和"错误"两个返回值。
-	definition, err := a.requireDefinition(definitionID)
-	// 出错就把 nil 和错误一起往上返回(Go 靠层层返回 error 传递失败,没有异常机制)。见 GO入门笔记『变量、函数、错误』。
+	var result M
+	// state 与 entries 必须来自同一数据库快照；否则激活在两次 SELECT 之间提交时，
+	// 响应可能把旧 activeDefinitionId 与新入口拼成不存在的中间状态。
+	err := a.DB.Transaction(func(tx *gorm.DB) error {
+		definition, err := requireDefinitionWithDB(tx, definitionID)
+		if err != nil {
+			return err
+		}
+		state, err := findRuntimeStateByCodeWithDB(tx, definition.Code)
+		if err != nil {
+			return err
+		}
+		result, err = serializeRuntimeWithDB(tx, definition.Code, state)
+		return err
+	}, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return nil, err
 	}
-	return a.serializeRuntime(definition.Code, a.getRuntimeStateByCode(definition.Code)), nil
+	return result, nil
 }
 
 // ---------- 激活 / 停用 ----------
 
 // ActivateDefinition 激活定义版本并重建运行入口。
 func (a *App) ActivateDefinition(definitionID int64, operatorUserID int64) (M, error) {
-	definition, err := a.requireDefinition(definitionID)
+	var workflowCode string
+	err := a.DB.Transaction(func(tx *gorm.DB) error {
+		definition, err := lockWorkflowDefinitionFamily(tx, definitionID)
+		if err != nil {
+			return err
+		}
+		workflowCode = definition.Code
+		state, err := findRuntimeStateByCodeWithDB(tx, workflowCode)
+		if err != nil {
+			return err
+		}
+		if state == nil {
+			state = &db.WorkflowRuntimeState{WorkflowCode: workflowCode}
+			if err := tx.Create(state).Error; err != nil {
+				return err
+			}
+		}
+		// 先重建完整入口，最后再切 active 指针；二者仍在同一事务内，任一步失败整体回滚。
+		if err := a.reconcileRuntimeEntriesForDefinitionWithDB(tx, state, definition, true); err != nil {
+			return err
+		}
+		now := time.Now()
+		updated := tx.Model(&db.WorkflowRuntimeState{}).Where("id = ?", state.ID).Updates(map[string]any{
+			"active_workflow_definition_id": definition.ID,
+			"activated_at":                  now, "activated_by": operatorUserID, "updated_at": now,
+		})
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return fmt.Errorf("activate workflow runtime state: updated %d rows", updated.RowsAffected)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now()
-	state := a.getRuntimeStateByCode(definition.Code)
-	// 典型的"没有就建、有就改":state==nil 表示查不到运行态记录。
-	if state == nil {
-		// &db.WorkflowRuntimeState{...} 直接造一个结构体并取它的地址(得到指针)。
-		// 字段里的 &definition.ID、&now 也是取地址:这些字段是指针类型,用来表达"可为空"。见 GO入门笔记『复合类型』。
-		state = &db.WorkflowRuntimeState{
-			WorkflowCode: definition.Code, ActiveWorkflowDefinitionID: &definition.ID,
-			ActivatedAt: &now, ActivatedBy: &operatorUserID, UpdatedAt: now,
-		}
-		// Create = INSERT 一行;.Error 取本次操作的错误。见 GO入门笔记『框架:GORM』。
-		if err := a.DB.Create(state).Error; err != nil {
-			return nil, err
-		}
-	} else {
-		if err := a.DB.Model(state).Updates(map[string]any{
-			"active_workflow_definition_id": definition.ID,
-			"activated_at":                  now, "activated_by": operatorUserID, "updated_at": now,
-		}).Error; err != nil {
-			return nil, err
-		}
-		a.DB.First(state, state.ID)
-	}
-	if err := a.reconcileRuntimeEntriesForState(state, true); err != nil {
-		return nil, err
-	}
-	a.DB.First(state, state.ID)
-	return a.serializeRuntime(definition.Code, state), nil
+	return a.GetRuntimeByDefinition(definitionID)
 }
 
-// DeactivateWorkflowCode 停用 workflow code。
-func (a *App) DeactivateWorkflowCode(workflowCode string) (M, error) {
-	state := a.getRuntimeStateByCode(workflowCode)
-	if state == nil {
-		return nil, bizErr("Workflow runtime state does not exist")
-	}
-	// 等价 SQL:DELETE FROM workflow_runtime_entries WHERE workflow_runtime_state_id = ?(删掉该 code 的全部运行入口)。见 GO入门笔记『框架:GORM』。
-	if err := a.DB.Where("workflow_runtime_state_id = ?", state.ID).Delete(&db.WorkflowRuntimeEntry{}).Error; err != nil {
+// DeactivateDefinition 停用 definition 所属 workflow code。
+func (a *App) DeactivateDefinition(definitionID int64) (M, error) {
+	err := a.DB.Transaction(func(tx *gorm.DB) error {
+		definition, err := lockWorkflowDefinitionFamily(tx, definitionID)
+		if err != nil {
+			return err
+		}
+		state, err := findRuntimeStateByCodeWithDB(tx, definition.Code)
+		if err != nil {
+			return err
+		}
+		if state == nil || state.ActiveWorkflowDefinitionID == nil {
+			return bizErr("Workflow runtime state does not exist")
+		}
+		if err := tx.Where("workflow_runtime_state_id = ?", state.ID).Delete(&db.WorkflowRuntimeEntry{}).Error; err != nil {
+			return err
+		}
+		updated := tx.Model(&db.WorkflowRuntimeState{}).Where("id = ?", state.ID).Updates(map[string]any{
+			"active_workflow_definition_id": nil, "activated_at": nil, "activated_by": nil, "updated_at": time.Now(),
+		})
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return fmt.Errorf("deactivate workflow runtime state: updated %d rows", updated.RowsAffected)
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
-	if err := a.DB.Model(state).Updates(map[string]any{
-		"active_workflow_definition_id": nil, "activated_at": nil, "activated_by": nil, "updated_at": time.Now(),
-	}).Error; err != nil {
-		return nil, err
-	}
-	a.DB.First(state, state.ID)
-	return a.serializeRuntime(workflowCode, state), nil
+	return a.GetRuntimeByDefinition(definitionID)
 }
 
 // SetEntryEnabled 启停运行入口。
 func (a *App) SetEntryEnabled(definitionID int64, entryKey string, isEnabled bool) (M, error) {
-	entry, err := a.requireRuntimeEntry(definitionID, entryKey)
-	if err != nil {
-		return nil, err
-	}
-	updates := map[string]any{"is_enabled": isEnabled, "updated_at": time.Now()}
-	// 不带表达式的 switch 等价于一串 if / else if:哪个 case 条件先为真就走哪个,且默认不"穿透"下一个 case。见 GO入门笔记『其它会撞见的小语法』。
-	switch {
-	case entry.StartType == "schedule":
-		if isEnabled {
-			// 重新注册调度:计算 next_run_at。
-			if err := a.registerScheduleEntry(entry); err != nil {
-				updates["registration_status"] = "error"
-				updates["last_error_message"] = err.Error()
-				a.DB.Model(entry).Updates(updates)
-				return nil, err
+	err := a.DB.Transaction(func(tx *gorm.DB) error {
+		if _, err := lockWorkflowDefinitionFamily(tx, definitionID); err != nil {
+			return err
+		}
+		entry, err := requireRuntimeEntryWithDB(tx, definitionID, entryKey)
+		if err != nil {
+			return err
+		}
+		updates := map[string]any{"is_enabled": isEnabled, "updated_at": time.Now()}
+		switch {
+		case entry.StartType == "schedule" && isEnabled:
+			scheduleUpdates, err := a.scheduleRegistrationUpdatesWithDB(tx, entry)
+			if err != nil {
+				return err
 			}
-			updates["registration_status"] = "registered"
-		} else {
+			for key, value := range scheduleUpdates {
+				updates[key] = value
+			}
+		case entry.StartType == "schedule":
 			updates["registration_status"] = "disabled"
 			updates["schedule_job_id"] = ""
 			updates["next_run_at"] = nil
+		case !isEnabled:
+			updates["registration_status"] = "disabled"
+		case entry.StartType == "event" || entry.StartType == "webhook":
+			updates["registration_status"] = "registered"
 		}
-	case !isEnabled:
-		updates["registration_status"] = "disabled"
-	case entry.StartType == "event" || entry.StartType == "webhook":
-		updates["registration_status"] = "registered"
-	}
-	if err := a.DB.Model(entry).Updates(updates).Error; err != nil {
+		updated := tx.Model(&db.WorkflowRuntimeEntry{}).Where("id = ?", entry.ID).Updates(updates)
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return fmt.Errorf("update workflow runtime entry: updated %d rows", updated.RowsAffected)
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	return a.GetRuntimeByDefinition(definitionID)
@@ -221,26 +265,39 @@ func (a *App) SetEntryEnabled(definitionID int64, entryKey string, isEnabled boo
 // RotateWebhookSecret 轮换 webhook 密钥。
 // RotateWebhookSecret 轮换 webhook 密钥:生成新明文 secret,数据库里只存它的哈希(secret_hash)与提示片段,明文只在本次响应里返回一次。
 func (a *App) RotateWebhookSecret(definitionID int64, entryKey string) (M, error) {
-	entry, err := a.requireRuntimeEntry(definitionID, entryKey)
-	if err != nil {
-		return nil, err
-	}
-	if entry.StartType != "webhook" {
-		return nil, bizErr("Only webhook start entries support secret rotation")
-	}
 	secret := security.RandomURLSafe(24)
-	registrationStatus := "disabled"
-	if entry.IsEnabled {
-		registrationStatus = "registered"
-	}
-	now := time.Now()
-	if err := a.DB.Model(entry).Updates(map[string]any{
-		"secret_hash":         security.HashWebhookSecret(a.Cfg.Auth.WebhookPepper, secret),
-		"secret_hint":         buildSecretHint(secret),
-		"secret_rotated_at":   now,
-		"registration_status": registrationStatus,
-		"updated_at":          now,
-	}).Error; err != nil {
+	err := a.DB.Transaction(func(tx *gorm.DB) error {
+		if _, err := lockWorkflowDefinitionFamily(tx, definitionID); err != nil {
+			return err
+		}
+		entry, err := requireRuntimeEntryWithDB(tx, definitionID, entryKey)
+		if err != nil {
+			return err
+		}
+		if entry.StartType != "webhook" {
+			return bizErr("Only webhook start entries support secret rotation")
+		}
+		registrationStatus := "disabled"
+		if entry.IsEnabled {
+			registrationStatus = "registered"
+		}
+		now := time.Now()
+		updated := tx.Model(&db.WorkflowRuntimeEntry{}).Where("id = ?", entry.ID).Updates(map[string]any{
+			"secret_hash":         security.HashWebhookSecret(a.Cfg.Auth.WebhookPepper, secret),
+			"secret_hint":         buildSecretHint(secret),
+			"secret_rotated_at":   now,
+			"registration_status": registrationStatus,
+			"updated_at":          now,
+		})
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return fmt.Errorf("rotate workflow webhook secret: updated %d rows", updated.RowsAffected)
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	return M{"entryKey": entryKey, "secret": secret, "secretHint": buildSecretHint(secret)}, nil
@@ -479,25 +536,31 @@ func buildStartInputs(startNode M, triggerCtx M) M {
 // ---------- 入口对齐与调度注册 ----------
 
 // reconcileRuntimeEntriesForState 依据激活定义重建 runtime entries。
-func (a *App) reconcileRuntimeEntriesForState(state *db.WorkflowRuntimeState, preserveExisting bool) error {
+func (a *App) reconcileRuntimeEntriesForStateWithDB(database *gorm.DB, state *db.WorkflowRuntimeState, preserveExisting bool) error {
 	if state.ActiveWorkflowDefinitionID == nil {
 		return nil
 	}
-	definition, err := a.requireDefinition(*state.ActiveWorkflowDefinitionID)
+	definition, err := requireDefinitionWithDB(database, *state.ActiveWorkflowDefinitionID)
 	if err != nil {
 		return err
 	}
+	return a.reconcileRuntimeEntriesForDefinitionWithDB(database, state, definition, preserveExisting)
+}
+
+func (a *App) reconcileRuntimeEntriesForDefinitionWithDB(database *gorm.DB, state *db.WorkflowRuntimeState, definition *db.WorkflowDefinition, preserveExisting bool) error {
 	graph := loadJSONObject(definition.GraphJSON)
 
 	// 先把旧入口读出来存进 previousMap(键=entryKey,值=指向旧入口的指针),等下重建时好继承旧的启停状态 / 密钥。
 	var previousEntries []db.WorkflowRuntimeEntry
-	a.DB.Where("workflow_runtime_state_id = ?", state.ID).Find(&previousEntries)
+	if err := database.Where("workflow_runtime_state_id = ?", state.ID).Find(&previousEntries).Error; err != nil {
+		return err
+	}
 	previousMap := map[string]*db.WorkflowRuntimeEntry{}
 	for i := range previousEntries {
 		previousMap[previousEntries[i].EntryKey] = &previousEntries[i]
 	}
 	// 再全删旧入口,随后按当前 graph 重新逐个建出来(先清后建,保证与最新定义完全一致)。
-	if err := a.DB.Where("workflow_runtime_state_id = ?", state.ID).Delete(&db.WorkflowRuntimeEntry{}).Error; err != nil {
+	if err := database.Where("workflow_runtime_state_id = ?", state.ID).Delete(&db.WorkflowRuntimeEntry{}).Error; err != nil {
 		return err
 	}
 
@@ -544,23 +607,27 @@ func (a *App) reconcileRuntimeEntriesForState(state *db.WorkflowRuntimeState, pr
 		if preserveExisting && previous != nil {
 			entry.LastTriggeredAt = previous.LastTriggeredAt
 		}
-		if err := a.DB.Create(&entry).Error; err != nil {
+		if err := database.Create(&entry).Error; err != nil {
 			return err
 		}
 
 		switch {
 		case startType == "schedule" && isEnabled:
-			if err := a.registerScheduleEntry(&entry); err != nil {
-				a.DB.Model(&entry).Updates(map[string]any{
+			if err := a.registerScheduleEntryWithDB(database, &entry); err != nil {
+				if updateErr := database.Model(&entry).Updates(map[string]any{
 					"registration_status": "error", "last_error_message": err.Error(), "updated_at": time.Now(),
-				})
+				}).Error; updateErr != nil {
+					return updateErr
+				}
 			}
 		case startType == "event" || startType == "webhook":
 			status := "disabled"
 			if isEnabled {
 				status = "registered"
 			}
-			a.DB.Model(&entry).Updates(map[string]any{"registration_status": status, "updated_at": time.Now()})
+			if err := database.Model(&entry).Updates(map[string]any{"registration_status": status, "updated_at": time.Now()}).Error; err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -568,20 +635,32 @@ func (a *App) reconcileRuntimeEntriesForState(state *db.WorkflowRuntimeState, pr
 
 // registerScheduleEntry 计算并写入 schedule 入口的下次触发时间。
 func (a *App) registerScheduleEntry(entry *db.WorkflowRuntimeEntry) error {
-	definition, err := a.requireDefinition(entry.WorkflowDefinitionID)
+	return a.registerScheduleEntryWithDB(a.DB, entry)
+}
+
+func (a *App) registerScheduleEntryWithDB(database *gorm.DB, entry *db.WorkflowRuntimeEntry) error {
+	updates, err := a.scheduleRegistrationUpdatesWithDB(database, entry)
 	if err != nil {
 		return err
+	}
+	return database.Model(&db.WorkflowRuntimeEntry{}).Where("id = ?", entry.ID).Updates(updates).Error
+}
+
+func (a *App) scheduleRegistrationUpdatesWithDB(database *gorm.DB, entry *db.WorkflowRuntimeEntry) (map[string]any, error) {
+	definition, err := requireDefinitionWithDB(database, entry.WorkflowDefinitionID)
+	if err != nil {
+		return nil, err
 	}
 	graph := loadJSONObject(definition.GraphJSON)
 	startNode := findStartNodeByEntryKey(graph, entry.EntryKey, "start.schedule")
 	if startNode == nil {
-		return bizErr("Schedule start node does not exist in definition")
+		return nil, bizErr("Schedule start node does not exist in definition")
 	}
 	config, _ := startNode["config"].(map[string]any)
 	// 算出"从现在起的下一次触发时间"。schedulerLoop 正是靠比较 next_run_at 是否 <= now 来决定该不该触发。
 	nextRunAt, err := computeNextScheduleTime(config, time.Now())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	updates := map[string]any{
 		"schedule_job_id":     "workflow-runtime-entry:" + int64Text(entry.ID),
@@ -593,7 +672,7 @@ func (a *App) registerScheduleEntry(entry *db.WorkflowRuntimeEntry) error {
 	} else {
 		updates["next_run_at"] = nil
 	}
-	return a.DB.Model(&db.WorkflowRuntimeEntry{}).Where("id = ?", entry.ID).Updates(updates).Error
+	return updates, nil
 }
 
 // computeNextScheduleTime 依据调度配置计算下一次触发时间。
@@ -847,12 +926,16 @@ func (a *App) getRuntimeEntryByDefinitionAndKey(definitionID int64, entryKey str
 	return &entry
 }
 
-func (a *App) requireRuntimeEntry(definitionID int64, entryKey string) (*db.WorkflowRuntimeEntry, error) {
-	entry := a.getRuntimeEntryByDefinitionAndKey(definitionID, entryKey)
-	if entry == nil {
+func requireRuntimeEntryWithDB(database *gorm.DB, definitionID int64, entryKey string) (*db.WorkflowRuntimeEntry, error) {
+	var entry db.WorkflowRuntimeEntry
+	err := database.Where("workflow_definition_id = ? AND entry_key = ?", definitionID, entryKey).First(&entry).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, bizErr("Workflow runtime entry does not exist")
 	}
-	return entry, nil
+	if err != nil {
+		return nil, err
+	}
+	return &entry, nil
 }
 
 func (a *App) countExecutionsByStatus(statuses []string) map[string]int64 {
@@ -873,7 +956,7 @@ func (a *App) countExecutionsByStatus(statuses []string) map[string]int64 {
 	return result
 }
 
-func (a *App) serializeRuntime(workflowCode string, state *db.WorkflowRuntimeState) M {
+func serializeRuntimeWithDB(database *gorm.DB, workflowCode string, state *db.WorkflowRuntimeState) (M, error) {
 	entries := []M{}
 	var runtimeStateID, activeDefinitionID any
 	activatedAt := ""
@@ -884,7 +967,9 @@ func (a *App) serializeRuntime(workflowCode string, state *db.WorkflowRuntimeSta
 		}
 		activatedAt = fmtTime(state.ActivatedAt)
 		var entryRows []db.WorkflowRuntimeEntry
-		a.DB.Where("workflow_runtime_state_id = ?", state.ID).Order("entry_key ASC, id ASC").Find(&entryRows)
+		if err := database.Where("workflow_runtime_state_id = ?", state.ID).Order("entry_key ASC, id ASC").Find(&entryRows).Error; err != nil {
+			return nil, err
+		}
 		for i := range entryRows {
 			entries = append(entries, serializeRuntimeEntry(&entryRows[i]))
 		}
@@ -893,7 +978,7 @@ func (a *App) serializeRuntime(workflowCode string, state *db.WorkflowRuntimeSta
 		"workflowCode": workflowCode, "runtimeStateId": runtimeStateID,
 		"activeDefinitionId": activeDefinitionID, "activatedAt": activatedAt,
 		"entries": entries,
-	}
+	}, nil
 }
 
 func serializeRuntimeEntry(entry *db.WorkflowRuntimeEntry) M {

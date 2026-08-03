@@ -53,7 +53,7 @@ try {
     Invoke-Native $go @('vet', './...')
     Invoke-Native $go @('run', 'honnef.co/go/tools/cmd/staticcheck@v0.7.0', './...')
     Write-Host '==> Verify database contracts'
-    Invoke-Native $go @('test', '-count=1', './internal/db', './internal/migration', './cmd/migrate')
+    Invoke-Native $go @('test', '-count=1', './internal/db', './internal/migration', './internal/service', './cmd/migrate')
     Invoke-Native $go @('test', './...')
     Invoke-Native $go @('build', './...')
     Invoke-Native $go @('run', 'golang.org/x/vuln/cmd/govulncheck@v1.1.4', './...')

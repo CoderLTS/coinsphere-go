@@ -106,16 +106,32 @@ func (a *App) bootstrapRuntimeEntries(ctx context.Context) {
 		}
 		// &states[i] 取第 i 个元素的地址,得到指针;之后对 state 的读写就直接作用在原元素上。见 GO入门笔记『复合类型』。
 		state := &states[i]
-		var entryCount int64
-		// 等价 SQL "SELECT COUNT(*) FROM workflow_runtime_entries WHERE workflow_runtime_state_id = ?",结果写回 entryCount。
-		a.DB.Model(&db.WorkflowRuntimeEntry{}).Where("workflow_runtime_state_id = ?", state.ID).Count(&entryCount)
-		if entryCount > 0 {
-			// continue 跳过本次循环剩余部分,直接进入下一个 state。
-			continue
-		}
-		// if err := f(); err != nil 是 Go 最常见的错误处理写法:先调用拿到 err,再判断;没有 try/except。见 GO入门笔记『变量、函数、错误』。
-		if err := a.reconcileRuntimeEntriesForState(state, false); err != nil {
-			log.Printf("[runtime] bootstrap entries failed: workflow_code=%s err=%v", state.WorkflowCode, err)
+		// Count、重建和激活共享 family 锁，避免两个实例启动时互相删建同一套入口。
+		err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if state.ActiveWorkflowDefinitionID == nil {
+				return nil
+			}
+			if _, err := lockWorkflowDefinitionFamily(tx, *state.ActiveWorkflowDefinitionID); err != nil {
+				return err
+			}
+			current, err := findRuntimeStateByCodeWithDB(tx, state.WorkflowCode)
+			if err != nil {
+				return err
+			}
+			if current == nil || current.ActiveWorkflowDefinitionID == nil {
+				return nil
+			}
+			var entryCount int64
+			if err := tx.Model(&db.WorkflowRuntimeEntry{}).Where("workflow_runtime_state_id = ?", current.ID).Count(&entryCount).Error; err != nil {
+				return err
+			}
+			if entryCount > 0 {
+				return nil
+			}
+			return a.reconcileRuntimeEntriesForStateWithDB(tx, current, false)
+		})
+		if err != nil {
+			log.Printf("[runtime] bootstrap entries failed: workflow_code=%s", state.WorkflowCode)
 		}
 	}
 }

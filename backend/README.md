@@ -72,6 +72,7 @@ $env:COINSPHERE_SERVER__PORT = '7000'
 
 ## 运行时行为
 
+- **版本与激活**:同一工作流 family 的版本生成、激活、停用和运行时入口替换在数据库事务内串行；并发更新生成唯一、单调递增版本，失败保留原 active 版本及完整入口，读取只返回完整旧快照或完整新快照。
 - **调度**:每秒扫描 `next_run_at` 到期的 schedule 入口,先乐观推进 `next_run_at` 抢占触发权,再以 `schedule:{entryId}:{dueUnix}` 幂等键入队。
 - **执行**:dispatcher 认领 queued 执行(每 key 并发受限),worker goroutine 跑图并写节点/边日志,心跳写 `last_heartbeat_at`。
 - **生命周期**:`signal.NotifyContext` 将 `SIGINT`/`SIGTERM` 统一传给 HTTP、Runtime、数据库和 WebSocket；应用最多用 30 秒收尾，Compose 提供 40 秒宽限。
@@ -82,6 +83,13 @@ $env:COINSPHERE_SERVER__PORT = '7000'
 - **清理**:每天 03:00 后按批删除超过保留期的终态执行。
 
 Python Worker 已通过独立 PostgreSQL 连接消费 `worker_tasks`，使用唯一租约完成认领、心跳、崩溃回收和 5 秒内取消。该运行时仅接入开发 Compose 与 CI，生产 Release 仍不构建或部署 Worker，也不改变 Go 工作流执行器。
+
+工作流版本与激活契约复用现有 schema，不新增 migration；SQLite 与 PostgreSQL 使用同一套服务测试验证并发版本、并发激活、失败回滚和快照可见性。设置测试 PostgreSQL DSN 后可与 migration、Outbox 契约一起运行：
+
+```powershell
+$env:COINSPHERE_TEST_POSTGRES_DSN = 'postgres://coinsphere:test-only@127.0.0.1:5432/coinsphere_test?sslmode=disable'
+go test -count=1 ./internal/db ./internal/migration ./internal/service ./cmd/migrate
+```
 
 ## 目录
 
