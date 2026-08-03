@@ -1,12 +1,52 @@
 # 公共契约
 
+## 金融公共类型
+
+- 时间统一使用 UTC。数据库使用 `timestamptz`，HTTP 和事件使用 RFC3339Nano；领域逻辑不得依赖本地时区。
+- 价格、数量、金额和费率在 Go 领域中使用 `github.com/shopspring/decimal`，数据库使用 `numeric(38,18)`，JSON 使用十进制字符串；金融计算和账务禁止使用 `float64`。
+- 新金融 HTTP 接口使用强类型请求/响应 DTO。`map[string]any` 只允许留在旧管理接口、动态工作流图和外部无类型载荷边界，不得作为 `/api/v1` 金融资源模型。
+- 金融资源 ID 使用 UUIDv7 字符串。
+
 ## HTTP API
 
 - 新金融接口统一位于 `/api/v1`，现有管理接口保持原路径直至单独迁移。
-- 新金融资源使用 UUIDv7 字符串 ID，时间使用 UTC RFC3339Nano。
-- 价格、数量、金额和费率使用 Decimal，JSON 中序列化为字符串。
 - 列表接口使用游标分页，命令接口支持 `Idempotency-Key`。
 - 错误响应使用 `application/problem+json`，至少包含 `type`、`title`、`status`、`code`、`requestId`、`retryable`。
+- Access Token 只保存在浏览器内存中；登录响应返回 Access Token，Refresh Token 通过轮换的 HttpOnly Cookie 由 refresh/logout 接口管理。
+
+## A2 行情最小契约
+
+A2 的首个契约交付只冻结 Decimal/UTC 规则、`Instrument`、`Candle`、`Ticker`、最小数据库约束、`MarketSource` 和可执行样本。缺口质量模型、推荐算法、保留策略、衍生统计和 UI 查询模型留到对应纵向切片，不进入公共契约。
+
+### 规范化类型
+
+| 类型 | 最小语义 |
+| --- | --- |
+| `Instrument` | `id`、`venue`、`marketType`、`nativeSymbol`、`baseAsset`、`quoteAsset`、`status`、价格步长、数量步长 |
+| `Candle` | `venue`、`instrumentId`、`interval`、`openTime`、`closeTime`、OHLC、基础成交量 |
+| `Ticker` | `venue`、`instrumentId`、`occurredAt`、最新价、最优买价、最优卖价 |
+
+所有时间必须是 UTC，所有价格、步长和成交量必须是 Decimal。交易所原始枚举和字段不得泄漏到这些公共类型；无法无损规范化的字段留在交易所适配器内，直到 Binance 与 OKX 都出现真实共同需求。
+
+### 最小存储约束
+
+- Instrument 以 `(venue, marketType, nativeSymbol)` 唯一，规范化 ID 创建后保持稳定。
+- K 线以 `(venue, instrumentId, interval, openTime)` 唯一；OHLC 和成交量列使用 `numeric(38,18)`，时间列使用 `timestamptz`。
+- Ticker 首轮只承诺可按 `(venue, instrumentId)` 读取最新快照及其事件时间，不提前冻结历史保留模型。
+- 批量写入必须幂等；重复补数不得生成第二条逻辑记录。
+
+### `MarketSource`
+
+`MarketSource` 只覆盖 Binance 与 OKX 都需要的三个外部能力：品种元数据快照、分页历史 K 线和实时 Candle/Ticker 订阅。它接收 Context、返回上述规范化类型，并将交易所协议错误分类后交给共享 runner；连接生命周期、限频、断点、重试、日志和持久化由共享 runner 负责。
+
+该接口不是动态插件点。A2 契约必须同时带有 Binance 和 OKX 脱敏样本的可执行检查，证明：
+
+- 两组原始载荷产生相同语义的规范化类型。
+- Decimal 解析和 JSON 往返不经过浮点数，时间统一为 UTC。
+- K 线唯一键稳定，重复样本写入保持幂等。
+- 分页边界和实时订阅取消不会重复或遗漏样本声明范围内的数据。
+
+契约合并后，Binance、OKX、共享存储/runner 和市场 UI 才从同一 base 并行实现，不得在各切片中扩展公共字段。
 
 ## 实时事件
 
@@ -22,16 +62,16 @@ WebSocket 事件统一使用以下信封：
 }
 ```
 
-当前信封 `version` 固定为 `1`，且只包含 `type`、`version`、`sequence`、`occurredAt`、`data` 五个字段。`sequence` 按单条连接实际写出的业务帧从 `1` 连续递增，重连后重置；RFC6455 Ping/Pong 等控制帧不占序号。`occurredAt` 是事件进入实时通道时的 UTC RFC3339Nano 时间，同一事件广播到多个连接时保持一致。客户端遇到未知类型可忽略业务内容，但应消费其合法序号；版本不支持或序号重复、倒退时不得更新状态。
+信封 `version` 固定为 `1`，且只包含 `type`、`version`、`sequence`、`occurredAt`、`data` 五个字段。`sequence` 按单条连接实际写出的业务帧从 `1` 连续递增，重连后重置；RFC6455 Ping/Pong 等控制帧不占序号。`occurredAt` 是事件进入实时通道时的 UTC RFC3339Nano 时间，同一事件广播到多个连接时保持一致。客户端遇到未知类型可忽略业务内容，但应消费其合法序号；版本不支持或序号重复、倒退时不得更新状态。
 
-`GET /ws/notifications` 当前发送两类通知事件：
+`GET /ws/notifications` 发送两类通知事件：
 
 - `notice.unread`：`data` 为 `{"unreadCount": 0}`。
 - `notice.created`：`data` 为 `{"record": {}, "unreadCount": 1}`。
 
 每条通知连接只有一个 writer，业务帧和 Ping 均由它写入。发送队列有界；队列满时服务端关闭慢连接，不阻塞生产者、不静默丢弃后续帧，客户端重连后以首个 `notice.unread` 快照恢复。服务端周期发送 RFC6455 Ping，Pong 延长读期限，失联连接到期关闭；Hub 关机后拒绝新连接并等待既有 writer 退出。
 
-浏览器握手必须携带唯一且合法的 `Origin`，其有效 scheme、主机和端口必须与请求完全同源；缺失、畸形、跨 scheme/主机/端口均拒绝。开发和生产反向代理必须保留原始 Host（含非默认端口）及合法的有效 scheme。当前访问令牌仍通过 `token` 查询参数传递，存储、Cookie 化和轮换由 A1-7 独立交付；代理和应用日志不得记录该查询值或事件 payload。
+浏览器握手必须携带唯一且合法的 `Origin`，其有效 scheme、主机和端口必须与请求完全同源；缺失、畸形、跨 scheme/主机/端口均拒绝。通知 WebSocket 使用固定 `Sec-WebSocket-Protocol` 完成鉴权，禁止在 URL 查询参数中传递 Token。开发和生产反向代理必须保留原始 Host（含非默认端口）及合法的有效 scheme，代理和应用日志不得记录令牌或事件 payload。
 
 ## 异步任务
 
