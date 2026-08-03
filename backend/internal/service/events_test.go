@@ -258,16 +258,22 @@ func TestFinalizeSuccessTransaction(t *testing.T) {
 		database := openMigratedServiceDatabase(t)
 		app := newOutboxServiceTestApp(database, 5)
 		definition, entry, execution := createTerminalServiceFixture(t, database, app, "finalize-success-rollback")
-		if err := database.Exec(`
-CREATE TRIGGER service_test_reject_finished_outbox
+		statements := []string{
+			`CREATE FUNCTION service_test_reject_finished_outbox() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'forced finished Outbox insert failure';
+END
+$$`,
+			`CREATE TRIGGER service_test_reject_finished_outbox
 BEFORE INSERT ON domain_event_outbox
 FOR EACH ROW
-WHEN NEW.event_type = 'workflow.execution.finished'
-BEGIN
-    SELECT RAISE(ABORT, 'forced finished Outbox insert failure');
-END
-`).Error; err != nil {
-			t.Fatalf("install finished-Outbox failure trigger: %v", err)
+WHEN (NEW.event_type = 'workflow.execution.finished')
+EXECUTE FUNCTION service_test_reject_finished_outbox()`,
+		}
+		for _, statement := range statements {
+			if err := database.Exec(statement).Error; err != nil {
+				t.Fatalf("install finished-Outbox failure trigger: %v", err)
+			}
 		}
 		captureServiceTestLogs(t)
 
