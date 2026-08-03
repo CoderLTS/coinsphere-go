@@ -22,6 +22,17 @@ WebSocket 事件统一使用以下信封：
 }
 ```
 
+当前信封 `version` 固定为 `1`，且只包含 `type`、`version`、`sequence`、`occurredAt`、`data` 五个字段。`sequence` 按单条连接实际写出的业务帧从 `1` 连续递增，重连后重置；RFC6455 Ping/Pong 等控制帧不占序号。`occurredAt` 是事件进入实时通道时的 UTC RFC3339Nano 时间，同一事件广播到多个连接时保持一致。客户端遇到未知类型可忽略业务内容，但应消费其合法序号；版本不支持或序号重复、倒退时不得更新状态。
+
+`GET /ws/notifications` 当前发送两类通知事件：
+
+- `notice.unread`：`data` 为 `{"unreadCount": 0}`。
+- `notice.created`：`data` 为 `{"record": {}, "unreadCount": 1}`。
+
+每条通知连接只有一个 writer，业务帧和 Ping 均由它写入。发送队列有界；队列满时服务端关闭慢连接，不阻塞生产者、不静默丢弃后续帧，客户端重连后以首个 `notice.unread` 快照恢复。服务端周期发送 RFC6455 Ping，Pong 延长读期限，失联连接到期关闭；Hub 关机后拒绝新连接并等待既有 writer 退出。
+
+浏览器握手必须携带唯一且合法的 `Origin`，其有效 scheme、主机和端口必须与请求完全同源；缺失、畸形、跨 scheme/主机/端口均拒绝。开发和生产反向代理必须保留原始 Host（含非默认端口）及合法的有效 scheme。当前访问令牌仍通过 `token` 查询参数传递，存储、Cookie 化和轮换由 A1-7 独立交付；代理和应用日志不得记录该查询值或事件 payload。
+
 ## 异步任务
 
 任务状态固定为 `queued`、`claimed`、`running`、`cancelRequested`、`succeeded`、`failed`、`canceled`。正常路径为 `queued -> claimed -> running -> succeeded/failed`；取消可从活跃状态进入 `cancelRequested -> canceled`。每次认领递增 `attempt_count` 并生成新的唯一 `lease_id`，启动、心跳和终态写入必须同时匹配任务 ID、租约 ID、合法前态及未过期的数据库时间。

@@ -427,9 +427,11 @@ func (a *App) SendTestInAppNotification(userID int64) M {
 		"isRead": false, "readAt": "", "sentAt": fmtTimeV(now), "createdAt": fmtTimeV(now),
 	}
 	unreadCount := a.countUnreadInApp(userID)
-	// 【与 realtime.go 的关系】a.Hub 就是 realtime.go 里的连接注册表;SendToUser 把这条消息实时推给该用户所有在线连接,
-	// 前端收到 type=notice.created 就即时弹通知、刷新红点数。数据库存历史,Hub 负责"实时"。
-	a.Hub.SendToUser(userID, M{"type": "notice.created", "record": record, "unreadCount": unreadCount})
+	// Hub 在每条连接的唯一 writer 中补齐版本、序列与 UTC 时间；业务层只提供事件类型和 data。
+	a.Hub.SendToUser(userID, RealtimeEvent{
+		Type: "notice.created",
+		Data: M{"record": record, "unreadCount": unreadCount},
+	})
 	return M{"record": record, "unreadCount": unreadCount}
 }
 
@@ -646,7 +648,6 @@ func (a *App) dispatchInAppChannel(
 	}
 	unreadCount := a.countUnreadInApp(userID) + 1
 	payload := M{
-		"type": "notice.created",
 		"record": M{
 			"id": delivery.ID, "workflowExecutionId": execution.ID, "workflowExecutionNodeId": nodeLog.ID,
 			"workflowDefinitionId": definitionID, "workflowDefinitionCode": definitionCode,
@@ -661,8 +662,8 @@ func (a *App) dispatchInAppChannel(
 		},
 		"unreadCount": unreadCount,
 	}
-	// 【与 realtime.go 的关系】推送成功就把这条投递标记 success;失败(比如刚好断线)标记 failed。
-	if a.Hub.SendToUser(userID, payload) {
+	// SendToUser=true 表示至少一条在线连接已接受入队；后续网络失败由持久记录和重连快照兜底，不引入额外 ACK 协议。
+	if a.Hub.SendToUser(userID, RealtimeEvent{Type: "notice.created", Data: payload}) {
 		a.DB.Model(&delivery).Updates(map[string]any{"status": "success", "sent_at": time.Now()})
 		return "success"
 	}

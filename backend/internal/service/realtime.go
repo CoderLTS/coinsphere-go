@@ -1,140 +1,314 @@
 package service
 
 import (
-	// sync:标准库并发工具包。本文件用它的 Mutex(互斥锁)保护共享数据。见 GO入门笔记『并发』
+	"encoding/json"
+	"log"
 	"sync"
+	"time"
 
-	// gorilla/websocket:第三方 WebSocket 库(go.mod 里 require 的)。
-	// HTTP 是"一问一答"、答完即断;WebSocket 是"长连接、双向、随时推送"。
-	// 浏览器先发一个带特殊头的普通 HTTP 请求,服务端用 websocket.Upgrader 把这次连接"升级"成 WebSocket
-	// (升级动作在 API 层完成),之后得到的 *websocket.Conn 就代表这条长连接,可反复读写。
-	// 本文件不做升级,只集中管理"已经建立好的连接"。见 GO入门笔记『框架/并发』
 	"github.com/gorilla/websocket"
 )
 
-// —— 本文件:WebSocket 连接注册表(Hub)——
-// 通知要"实时"推给在线用户,就得记住"每个用户当前开着哪些 WebSocket 连接"。
-// Hub 就是这张注册表 + 一套线程安全的增删查推方法;它被 App 持有(见 app.go 的 App.Hub),
-// notify.go 里的 a.Hub.SendToUser(...) 就是通过它把站内通知实时推到前端。
+const realtimeEventVersion = 1
 
-// Hub 按用户聚合的 WebSocket 连接管理器。
-// type ... struct 定义"结构体"(把若干字段打包成一个类型),是本文件第一个 struct。见 GO入门笔记『复合类型』
-// 三个字段配合使用:
-//
-//	mu          —— 互斥锁。多个 goroutine(各连接的收发、后台推送)会同时读写 connections,
-//	               而 Go 的 map 并发读写会直接崩溃;加锁 = 同一时刻只放一个 goroutine 进来改,保证安全。
-//	               sync.Mutex 是本文件第一次出现锁。见 GO入门笔记『并发』
-//	connections —— 连接注册表,是"嵌套 map":外层键=用户ID(int64),值又是一个 map;
-//	               内层键=该用户的一条连接(*websocket.Conn 指针,多端登录就有多条),值恒为 true。
-//	               内层 map 当"集合(set)"用,只关心连接在不在,bool 仅占位。map 见 GO入门笔记『复合类型』
-//	closed      —— 关机开始后永久为 true,阻止已进入处理器的升级请求晚注册。
+type RealtimeEvent struct {
+	Type string
+	Data any
+}
+
+type realtimeEnvelope struct {
+	Type       string          `json:"type"`
+	Version    int             `json:"version"`
+	Sequence   uint64          `json:"sequence"`
+	OccurredAt string          `json:"occurredAt"`
+	Data       json.RawMessage `json:"data"`
+}
+
+type realtimeMessage struct {
+	eventType  string
+	occurredAt string
+	data       json.RawMessage
+}
+
+type realtimeSettings struct {
+	sendQueueSize int
+	writeWait     time.Duration
+	pongWait      time.Duration
+	pingPeriod    time.Duration
+	readLimit     int64
+}
+
+func defaultRealtimeSettings() realtimeSettings {
+	return realtimeSettings{
+		sendQueueSize: 64,
+		writeWait:     10 * time.Second,
+		pongWait:      60 * time.Second,
+		pingPeriod:    54 * time.Second,
+		readLimit:     1024,
+	}
+}
+
+// Hub 按用户管理通知 WebSocket。共享锁只保护连接表，网络写入全部由每连接唯一的 writer 执行。
 type Hub struct {
 	mu          sync.Mutex
-	connections map[int64]map[*websocket.Conn]bool
+	connections map[int64]map[*realtimeClient]struct{}
 	closed      bool
+	settings    realtimeSettings
+	writers     sync.WaitGroup
+	userGates   sync.Map
 }
 
-// NewHub 创建连接管理器。
-// 返回 *Hub(指向 Hub 的指针):Go 惯例用 NewXxx 当"构造器",返回指针可避免复制、并让各处共享同一实例。
-// &Hub{...} 里的 & 是"取地址"得到指针;map 必须先初始化(这里用字面量建好空的外层表)才能写入。见 GO入门笔记『复合类型』
+type realtimeClient struct {
+	userID int64
+	conn   *websocket.Conn
+	send   chan realtimeMessage
+	done   chan struct{}
+
+	mu      sync.Mutex
+	stopped bool
+}
+
 func NewHub() *Hub {
-	return &Hub{connections: map[int64]map[*websocket.Conn]bool{}}
+	return newHub(defaultRealtimeSettings())
 }
 
-// Connect 注册用户连接。
-// (h *Hub) 叫"方法接收者":表示这是挂在 Hub 上的方法,方法内用 h 指代当前 Hub(类似别的语言的 this/self)。
-// 这是本文件第一个方法。见 GO入门笔记『方法与接收者』
-func (h *Hub) Connect(userID int64, conn *websocket.Conn) bool {
-	// 先加锁;defer 登记"函数返回前自动解锁",这样无论从哪条分支 return 都不会漏解锁。defer 见 GO入门笔记『defer』
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.closed {
+func newHub(settings realtimeSettings) *Hub {
+	return &Hub{
+		connections: map[int64]map[*realtimeClient]struct{}{},
+		settings:    settings,
+	}
+}
+
+func newRealtimeClient(userID int64, conn *websocket.Conn, queueSize int) *realtimeClient {
+	return &realtimeClient{
+		userID: userID,
+		conn:   conn,
+		send:   make(chan realtimeMessage, queueSize),
+		done:   make(chan struct{}),
+	}
+}
+
+// userGate 让同一用户的连接快照与通知入队共享线性顺序；闸门在 Hub 生命周期内保留，避免删除重建造成锁身份竞态。
+func (h *Hub) userGate(userID int64) *sync.Mutex {
+	gate, _ := h.userGates.LoadOrStore(userID, &sync.Mutex{})
+	return gate.(*sync.Mutex)
+}
+
+func (c *realtimeClient) enqueue(message realtimeMessage) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stopped {
 		return false
 	}
-	// 该用户第一次连进来时,内层 map 还是 nil(空);向 nil map 写入会 panic(崩溃),所以要先建好。
-	if h.connections[userID] == nil {
-		h.connections[userID] = map[*websocket.Conn]bool{}
+	select {
+	case c.send <- message:
+		return true
+	default:
+		return false
 	}
-	// 把这条连接放入该用户的连接集合(值 true 仅占位)。
-	h.connections[userID][conn] = true
+}
+
+func prepareRealtimeMessage(event RealtimeEvent) (realtimeMessage, bool) {
+	data, err := json.Marshal(event.Data)
+	if err != nil {
+		return realtimeMessage{}, false
+	}
+	return realtimeMessage{
+		eventType:  event.Type,
+		occurredAt: time.Now().UTC().Format(time.RFC3339Nano),
+		data:       data,
+	}, true
+}
+
+func (c *realtimeClient) stop() {
+	c.mu.Lock()
+	if c.stopped {
+		c.mu.Unlock()
+		return
+	}
+	c.stopped = true
+	close(c.done)
+	c.mu.Unlock()
+	if c.conn != nil {
+		_ = c.conn.Close()
+	}
+}
+
+// Connect 在同一锁序中生成初始快照、预入队并公开连接，保证并发通知只能排在 sequence=1 之后。
+func (h *Hub) Connect(userID int64, conn *websocket.Conn, initial func() RealtimeEvent) bool {
+	h.mu.Lock()
+	closed := h.closed
+	h.mu.Unlock()
+	if closed || conn == nil || initial == nil {
+		return false
+	}
+
+	conn.SetReadLimit(h.settings.readLimit)
+	if err := conn.SetReadDeadline(time.Now().Add(h.settings.pongWait)); err != nil {
+		return false
+	}
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(h.settings.pongWait))
+	})
+
+	client := newRealtimeClient(userID, conn, h.settings.sendQueueSize)
+	gate := h.userGate(userID)
+	gate.Lock()
+	defer gate.Unlock()
+
+	initialMessage, ok := prepareRealtimeMessage(initial())
+	if !ok || !client.enqueue(initialMessage) {
+		client.stop()
+		return false
+	}
+
+	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		client.stop()
+		return false
+	}
+	if h.connections[userID] == nil {
+		h.connections[userID] = map[*realtimeClient]struct{}{}
+	}
+	h.connections[userID][client] = struct{}{}
+	h.writers.Add(1)
+	h.mu.Unlock()
+
+	go h.writeLoop(client)
 	return true
 }
 
-// Disconnect 移除用户连接。
+// Disconnect 摘除并关闭指定连接；重复调用是安全的。
 func (h *Hub) Disconnect(userID int64, conn *websocket.Conn) {
+	var target *realtimeClient
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	// := 是"短变量声明":自动推断类型并新建变量(只能在函数内用)。见 GO入门笔记『变量』
-	// 读一个不存在的键会得到该类型的"零值",map 的零值是 nil。
-	sockets := h.connections[userID]
-	if sockets == nil {
-		return
-	}
-	// delete(map, key):从 map 删除一个键;这里移除这一条具体连接。
-	delete(sockets, conn)
-	// 若该用户已无任何连接,顺手把外层 map 里的这个用户也删掉,避免残留空表。len 取长度。
-	if len(sockets) == 0 {
-		delete(h.connections, userID)
-	}
-}
-
-// CloseAll 关闭升级后的连接;http.Server.Shutdown 不会接管 WebSocket。
-func (h *Hub) CloseAll() {
-	h.mu.Lock()
-	h.closed = true
-	sockets := make([]*websocket.Conn, 0)
-	for _, userSockets := range h.connections {
-		for conn := range userSockets {
-			sockets = append(sockets, conn)
+	for client := range h.connections[userID] {
+		if client.conn == conn {
+			target = client
+			delete(h.connections[userID], client)
+			break
 		}
 	}
-	h.connections = map[int64]map[*websocket.Conn]bool{}
+	if len(h.connections[userID]) == 0 {
+		delete(h.connections, userID)
+	}
 	h.mu.Unlock()
-
-	for _, conn := range sockets {
-		_ = conn.Close()
+	if target != nil {
+		target.stop()
 	}
 }
 
-// IsOnline 用户是否有活跃连接。
+func (h *Hub) removeClient(client *realtimeClient) {
+	// writer 一旦退出，先拒绝后续入队，再等待连接表锁完成摘除，避免把无人消费的事件报告为已接受。
+	client.stop()
+	h.mu.Lock()
+	clients := h.connections[client.userID]
+	delete(clients, client)
+	if len(clients) == 0 {
+		delete(h.connections, client.userID)
+	}
+	h.mu.Unlock()
+}
+
+// CloseAll 阻止晚注册、关闭升级连接并等待 writer 退出；http.Server.Shutdown 不会接管 WebSocket。
+func (h *Hub) CloseAll() {
+	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		h.writers.Wait()
+		return
+	}
+	h.closed = true
+	clients := make([]*realtimeClient, 0)
+	for _, userClients := range h.connections {
+		for client := range userClients {
+			clients = append(clients, client)
+		}
+	}
+	h.connections = map[int64]map[*realtimeClient]struct{}{}
+	h.mu.Unlock()
+	log.Printf("[realtime] hub closing: client_count=%d", len(clients))
+
+	for _, client := range clients {
+		client.stop()
+	}
+	h.writers.Wait()
+}
+
 func (h *Hub) IsOnline(userID int64) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	// 连接数 > 0 即在线;用户不存在时 len(nil) 为 0,自然返回 false。notify.go 靠它判断"离线跳过"。
 	return len(h.connections[userID]) > 0
 }
 
-// SendToUser 向用户全部连接推送 JSON 消息,任一成功即返回 true。
-// 这是"实时通知"的出口:notify.go 生成通知后调用它,把消息推到该用户所有在线的浏览器标签页。
-func (h *Hub) SendToUser(userID int64, payload M) bool {
-	// 【并发关键】先在锁内把该用户的连接"拍快照"复制成一个 slice(切片),然后立刻解锁,之后再脱离锁去发送。
-	// 原因:下面的 WriteMessage 要走网络、可能很慢甚至阻塞;若整段都占着锁,其它 goroutine(新连接注册、
-	// 断开、别的推送)就全被卡死。所以套路是"锁内快照 → 解锁 → 锁外慢慢发"。见 GO入门笔记『并发』
-	h.mu.Lock()
-	// make([]T, 0, n):新建长度 0、预留容量 n 的切片;预留容量可减少后续 append 扩容。slice 见 GO入门笔记『复合类型』
-	sockets := make([]*websocket.Conn, 0, len(h.connections[userID]))
-	// range 遍历 map:这里只要键(每条连接),忽略值。for 是 Go 唯一的循环关键字。见 GO入门笔记『复合类型』
-	for conn := range h.connections[userID] {
-		// append 往切片追加元素并返回新切片,必须赋回原变量。
-		sockets = append(sockets, conn)
-	}
-	h.mu.Unlock()
-	if len(sockets) == 0 {
+// SendToUser 只做非阻塞入队。队列满表示客户端已经落后，立即摘除，避免拖住生产者和其他连接。
+func (h *Hub) SendToUser(userID int64, event RealtimeEvent) bool {
+	message, ok := prepareRealtimeMessage(event)
+	if !ok {
 		return false
 	}
-	// 把 payload 序列化成 JSON 文本,再转成字节切片 []byte 供发送(WebSocket 收发的是字节)。
-	message := []byte(dumpJSON(payload))
-	success := false
-	// for i, v := range slice 遍历切片;这里用 _ 丢弃下标,只取每条连接 conn。
-	for _, conn := range sockets {
-		// if err := 表达式; err != nil { ... } 是最典型的错误处理:先执行并接住 err,再判断是否出错。见 GO入门笔记『错误处理』
-		// conn.WriteMessage 把一帧文本(TextMessage)写到这条 WebSocket 连接上。
-		if err := conn.WriteMessage(websocket.TextMessage, message); err != nil {
-			// 写失败通常代表这条连接已经断了:顺手清理掉,再 continue 跳到下一条继续发。
-			h.Disconnect(userID, conn)
+	gate := h.userGate(userID)
+	gate.Lock()
+	defer gate.Unlock()
+
+	dropped := make([]*realtimeClient, 0)
+	accepted := false
+	h.mu.Lock()
+	for client := range h.connections[userID] {
+		if client.enqueue(message) {
+			accepted = true
 			continue
 		}
-		success = true
+		delete(h.connections[userID], client)
+		dropped = append(dropped, client)
 	}
-	return success
+	if len(h.connections[userID]) == 0 {
+		delete(h.connections, userID)
+	}
+	h.mu.Unlock()
+
+	for _, client := range dropped {
+		client.stop()
+		log.Printf("[realtime] slow client disconnected: reason=send_queue_full")
+	}
+	return accepted
+}
+
+// writeLoop 是连接的唯一写协程：业务帧与控制帧都不允许从处理器或通知生产者直接写入。
+func (h *Hub) writeLoop(client *realtimeClient) {
+	defer h.writers.Done()
+	defer h.removeClient(client)
+
+	ticker := time.NewTicker(h.settings.pingPeriod)
+	defer ticker.Stop()
+	var sequence uint64
+
+	for {
+		select {
+		case <-client.done:
+			return
+		case message := <-client.send:
+			nextSequence := sequence + 1
+			envelope := realtimeEnvelope{
+				Type:       message.eventType,
+				Version:    realtimeEventVersion,
+				Sequence:   nextSequence,
+				OccurredAt: message.occurredAt,
+				Data:       message.data,
+			}
+			if err := client.conn.SetWriteDeadline(time.Now().Add(h.settings.writeWait)); err != nil {
+				return
+			}
+			if err := client.conn.WriteJSON(envelope); err != nil {
+				return
+			}
+			sequence = nextSequence
+		case <-ticker.C:
+			deadline := time.Now().Add(h.settings.writeWait)
+			if err := client.conn.WriteControl(websocket.PingMessage, nil, deadline); err != nil {
+				return
+			}
+		}
+	}
 }

@@ -245,7 +245,7 @@ func TestStopRuntimeHonorsDeadline(t *testing.T) {
 func TestHubRejectsConnectionsAfterClose(t *testing.T) {
 	hub := NewHub()
 	hub.CloseAll()
-	if hub.Connect(1, nil) {
+	if hub.Connect(1, nil, func() RealtimeEvent { return RealtimeEvent{} }) {
 		t.Fatal("closed hub accepted a late WebSocket connection")
 	}
 	if hub.IsOnline(1) {
