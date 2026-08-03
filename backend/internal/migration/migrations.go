@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"strings"
 	"time"
 
 	"github.com/pressly/goose/v3"
@@ -23,6 +22,7 @@ var embeddedSQL embed.FS
 // Runner applies the immutable SQL migrations bundled into the backend binary.
 type Runner struct {
 	provider *goose.Provider
+	db       *sql.DB
 }
 
 // Result describes one migration applied by an up or down operation.
@@ -41,58 +41,31 @@ type Status struct {
 }
 
 // New creates a runner for the bundled production migrations.
-func New(db *sql.DB, driver string) (*Runner, error) {
+func New(db *sql.DB) (*Runner, error) {
 	f, err := fs.Sub(embeddedSQL, "sql")
 	if err != nil {
 		return nil, fmt.Errorf("open embedded migrations: %w", err)
 	}
-	return newWithFS(db, driver, f, embeddedMigrationOptions(driver)...)
+	return newWithFS(db, f)
 }
 
-// NewWithFS creates a runner with an explicit filesystem. It is used by migration contract tests.
-func NewWithFS(db *sql.DB, driver string, migrations fs.FS) (*Runner, error) {
-	return newWithFS(db, driver, migrations)
-}
-
-func newWithFS(db *sql.DB, driver string, migrations fs.FS, extraOptions ...goose.ProviderOption) (*Runner, error) {
-	dialect, err := gooseDialect(driver)
-	if err != nil {
-		return nil, err
-	}
-
+func newWithFS(db *sql.DB, migrations fs.FS) (*Runner, error) {
 	options := []goose.ProviderOption{
 		goose.WithTableName(versionTable),
 		goose.WithDisableGlobalRegistry(true),
 		goose.WithLogger(goose.NopLogger()),
 	}
-	options = append(options, extraOptions...)
-	if dialect == goose.DialectPostgres {
-		locker, err := lock.NewPostgresSessionLocker()
-		if err != nil {
-			return nil, fmt.Errorf("create postgres migration lock: %w", err)
-		}
-		options = append(options, goose.WithSessionLocker(locker))
+	locker, err := lock.NewPostgresSessionLocker()
+	if err != nil {
+		return nil, fmt.Errorf("create postgres migration lock: %w", err)
 	}
+	options = append(options, goose.WithSessionLocker(locker))
 
-	provider, err := goose.NewProvider(dialect, db, migrations, options...)
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations, options...)
 	if err != nil {
 		return nil, fmt.Errorf("create migration provider: %w", err)
 	}
-	return &Runner{provider: provider}, nil
-}
-
-// embeddedMigrationOptions 在 Goose 收集 migration 版本前排除另一数据库方言的同版本文件。
-// 00003 需要分别使用 SQLite 触发器和 PostgreSQL CHECK/表锁；先排除再解析可保持一个逻辑版本，
-// 同时继续让 SQL 作为可审查、可独立事务回滚的事实来源。
-func embeddedMigrationOptions(driver string) []goose.ProviderOption {
-	switch strings.ToLower(strings.TrimSpace(driver)) {
-	case "sqlite":
-		return []goose.ProviderOption{goose.WithExcludeNames([]string{"00003_a1_outbox_schema_postgres.sql"})}
-	case "postgres", "postgresql", "pgsql", "psql":
-		return []goose.ProviderOption{goose.WithExcludeNames([]string{"00003_a1_outbox_schema_sqlite.sql"})}
-	default:
-		return nil
-	}
+	return &Runner{provider: provider, db: db}, nil
 }
 
 // Up applies all pending migrations, or stops at target when target is greater than zero.
@@ -181,6 +154,30 @@ func (r *Runner) Versions(ctx context.Context) (current int64, latest int64, err
 	return current, latest, nil
 }
 
+// ValidateCurrent 只读校验数据库最后一条 migration 记录，服务启动不会创建版本表或执行 DDL。
+func (r *Runner) ValidateCurrent(ctx context.Context) error {
+	var version int64
+	var applied bool
+	query := fmt.Sprintf("SELECT version_id, is_applied FROM %s ORDER BY id DESC LIMIT 1", versionTable)
+	if err := r.db.QueryRowContext(ctx, query).Scan(&version, &applied); err != nil {
+		return fmt.Errorf("read application migration version: %w", err)
+	}
+	sources := r.provider.ListSources()
+	if len(sources) == 0 {
+		return errors.New("migration bundle is empty")
+	}
+	latest := sources[len(sources)-1].Version
+	if !applied || version != latest {
+		return fmt.Errorf(
+			"database migration is not current: latest record version=%d applied=%t, binary latest=%d; run coinsphere-migrate -direction up",
+			version,
+			applied,
+			latest,
+		)
+	}
+	return nil
+}
+
 // Status returns every bundled migration and its database state.
 func (r *Runner) Status(ctx context.Context) ([]Status, error) {
 	if _, _, err := r.ensureDatabaseNotAhead(ctx); err != nil {
@@ -212,17 +209,6 @@ func (r *Runner) ensureDatabaseNotAhead(ctx context.Context) (current int64, lat
 		return 0, 0, fmt.Errorf("database migration version %d is newer than this binary's latest version %d", current, latest)
 	}
 	return current, latest, nil
-}
-
-func gooseDialect(driver string) (goose.Dialect, error) {
-	switch strings.ToLower(strings.TrimSpace(driver)) {
-	case "sqlite":
-		return goose.DialectSQLite3, nil
-	case "postgres", "postgresql", "pgsql", "psql":
-		return goose.DialectPostgres, nil
-	default:
-		return "", fmt.Errorf("unsupported migration database driver: %q", driver)
-	}
 }
 
 func migrationResults(results []*goose.MigrationResult) []Result {

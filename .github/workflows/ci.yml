@@ -19,8 +19,8 @@ jobs:
     name: Go backend
     runs-on: ubuntu-latest
     services:
-      postgres:
-        image: postgres:17.6-alpine3.21@sha256:849377bbbdb1143b82d1b87646eb8ab48241fe32b85ab6667e02e0af139aaa74
+      timescaledb:
+        image: timescale/timescaledb:2.29.0-pg17@sha256:3e65c273cbf7218f2a28692492b4625b49f35c7d2142e945561ef52311a8c83a
         env:
           POSTGRES_DB: coinsphere_test
           POSTGRES_PASSWORD: migration-ci-only
@@ -127,8 +127,8 @@ jobs:
     name: Python worker
     runs-on: ubuntu-latest
     services:
-      postgres:
-        image: postgres:17.6-alpine3.21@sha256:849377bbbdb1143b82d1b87646eb8ab48241fe32b85ab6667e02e0af139aaa74
+      timescaledb:
+        image: timescale/timescaledb:2.29.0-pg17@sha256:3e65c273cbf7218f2a28692492b4625b49f35c7d2142e945561ef52311a8c83a
         env:
           POSTGRES_DB: coinsphere_worker_test
           POSTGRES_PASSWORD: worker-ci-only

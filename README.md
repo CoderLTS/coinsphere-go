@@ -10,14 +10,13 @@ worker/     Python 3.12 量化 Worker(A1 PostgreSQL 租约、心跳、恢复与�
 
 ## 开发
 
-两个终端分别启动:
+准备一个 PostgreSQL/TimescaleDB 空库后，两个终端分别启动：
 
 ```powershell
-# 1) 后端(默认读 backend/config.yml,SQLite,监听 :6987)
+# 1) 后端（默认读 backend/config.yml，监听 :6987）
 cd backend
-# ⚠️ 首次运行需要一个真实签名密钥,否则拒绝启动(见 backend/README.md 安全说明):
-#    正式用:在 config.yml 或环境变量设 COINSPHERE_AUTH__SECRET_KEY(如 openssl rand -hex 32)
-#    本地图快:$env:COINSPHERE_ALLOW_INSECURE_SECRET = '1'   # 临时放行默认密钥
+$env:COINSPHERE_DATABASE__DSN = 'postgresql://coinsphere:test-only@127.0.0.1:5432/coinsphere?sslmode=disable'
+$env:COINSPHERE_AUTH__SECRET_KEY = 'local-random-secret'
 go run ./cmd/migrate -config ./config.yml -direction up
 go build -o coinsphere-server.exe .
 .\coinsphere-server.exe
@@ -28,11 +27,11 @@ pnpm install
 pnpm dev
 ```
 
-默认超管账号:`coinsphere` / `coinsphere`(migration 后，后端首次启动继续用 AutoMigrate 建其余表并写种子数据),**首登后请尽快改密**;可用 `COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD` 指定强初始密码。
+Migration 建立完整 schema，后端首次启动只写种子数据。默认超管账号为 `coinsphere` / `coinsphere`，首登后必须尽快改密；可用 `COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD` 指定强初始密码。
 
 ## 开发 Compose(Docker 一键起)
 
-拓扑:`web`(nginx)托管前端 dist 并把 `/api`、`/static`、`/uploads`、`/ws`、`/health` 反代到 `backend`(Go)；内部 `worker-db` 网络连接 PostgreSQL、一次性 migration 与 `worker`(Python)。Backend 开发态仍使用独立 SQLite。
+拓扑：`web`（Nginx）托管前端 dist 并反代 Backend；Backend、一次性 `migrate` 和 Python Worker 通过内部网络共享固定版本的 TimescaleDB。
 前端生产环境 `VITE_API_URL = /`,与 nginx 同源,故无需改前端代码。
 
 ```bash
@@ -44,10 +43,10 @@ docker compose up -d --build
 
 - 入口只有 `web`(默认 `8080`,可用 `COINSPHERE_WEB_PORT` 改);`backend` 不对外暴露,仅经 nginx 反代。
 - A1 `worker` 使用 PostgreSQL 租约消费任务，健康状态为 `a1-postgres`；不开放端口、不挂载业务数据卷、不持有交易凭据。
-- 持久化:sqlite(`backend-data` 卷)、Worker PostgreSQL(`worker-postgres-data` 卷)、上传文件(`backend-uploads`)、后端静态(`backend-static`)。
-- 换密钥/数据库:`COINSPHERE_AUTH__SECRET_KEY`、`COINSPHERE_DATABASE__*` 环境变量(见 `docker-compose.yml` 注释与 `backend/README.md`)。
+- 持久化：TimescaleDB（`timescale-data` 卷）、上传文件（`backend-uploads`）、后端静态（`backend-static`）。
+- 数据库只支持 PostgreSQL/TimescaleDB；直接运行时通过 `COINSPHERE_DATABASE__DSN` 注入 DSN，Compose 已提供开发专用 DSN。
 - 前端构建用项目自带 `pnpm build`(含 `vue-tsc` 类型检查);若类型检查阻塞出镜像,把 `frontend/Dockerfile` 的 `pnpm build` 换成 `pnpm exec vite build`。
 
 > 说明:Go 后端只在 `/static/`、`/uploads/` 提供文件、`/api` `/ws` `/health` 提供接口,**不在根路径托管 SPA**——所以由 nginx 托管前端并反代后端,而不是把 dist 塞进后端的 `volumes/static`。
 
-数据库可切 sqlite / mysql / postgres,环境变量覆盖规则等见 `backend/README.md`。
+数据库配置与迁移规则见 `backend/README.md` 和 `docs/runbooks/database-migrations.md`。

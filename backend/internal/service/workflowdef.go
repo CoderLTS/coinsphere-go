@@ -715,8 +715,7 @@ func requireDefinitionWithDB(database *gorm.DB, definitionID int64) (*db.Workflo
 }
 
 // lockWorkflowDefinitionFamily 用一条无值变化的 UPDATE 获取同一 code 的数据库写锁。
-// PostgreSQL 会锁住 family 的定义行，SQLite 会在事务首写时取得 WAL writer lock；
-// 后续必须只使用同一个 tx，才能让版本分配、激活和删除在多进程下串行。
+// PostgreSQL 会锁住 family 的定义行；后续必须只使用同一个 tx，才能让版本分配、激活和删除在多进程下串行。
 func lockWorkflowDefinitionFamily(tx *gorm.DB, definitionID int64) (*db.WorkflowDefinition, error) {
 	result := tx.Model(&db.WorkflowDefinition{}).
 		Where("code = (?)", tx.Model(&db.WorkflowDefinition{}).Select("code").Where("id = ?", definitionID)).

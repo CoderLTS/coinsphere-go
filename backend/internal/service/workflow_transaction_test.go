@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -14,6 +13,7 @@ import (
 
 	"coinsphere/backend/internal/config"
 	"coinsphere/backend/internal/db"
+	"coinsphere/backend/internal/migration"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	gormpostgres "gorm.io/driver/postgres"
@@ -27,29 +27,23 @@ var workflowContractSchemaSequence atomic.Uint64
 
 type workflowContractDatabase struct {
 	primary  *gorm.DB
-	driver   string
 	openPeer func(t *testing.T) *gorm.DB
 }
 
-func TestWorkflowTransactionContractSQLite(t *testing.T) {
-	runWorkflowTransactionContract(t, openSQLiteWorkflowContractDatabase)
-}
-
 func TestWorkflowTransactionContractPostgres(t *testing.T) {
-	runWorkflowTransactionContract(t, openPostgresWorkflowContractDatabase)
+	runWorkflowTransactionContract(t)
 }
 
-// runWorkflowTransactionContract 对两种数据库执行同一组状态转换，避免只在单一方言下验证语法正确，
-// 却遗漏跨实例锁、事务回滚或一致性快照语义。
-func runWorkflowTransactionContract(t *testing.T, open func(t *testing.T) *workflowContractDatabase) {
+// runWorkflowTransactionContract 通过真实 PostgreSQL 并发与失败注入固定跨实例锁、事务回滚和一致性快照语义。
+func runWorkflowTransactionContract(t *testing.T) {
 	t.Helper()
 
 	t.Run("concurrent same-name creation allocates distinct families", func(t *testing.T) {
-		database := open(t)
+		database := openPostgresWorkflowContractDatabase(t)
 		peer := database.openPeer(t)
 		apps := []*App{
-			newWorkflowContractApp(database.primary, database.driver),
-			newWorkflowContractApp(peer, database.driver),
+			newWorkflowContractApp(database.primary),
+			newWorkflowContractApp(peer),
 		}
 
 		start := make(chan struct{})
@@ -90,10 +84,10 @@ func runWorkflowTransactionContract(t *testing.T, open func(t *testing.T) *workf
 	})
 
 	t.Run("concurrent versions are continuous", func(t *testing.T) {
-		database := open(t)
+		database := openPostgresWorkflowContractDatabase(t)
 		peer := database.openPeer(t)
-		primaryApp := newWorkflowContractApp(database.primary, database.driver)
-		peerApp := newWorkflowContractApp(peer, database.driver)
+		primaryApp := newWorkflowContractApp(database.primary)
+		peerApp := newWorkflowContractApp(peer)
 		baseID := createWorkflowContractDefinition(t, primaryApp, workflowContractPayload("并发版本", "version"))
 		base := readWorkflowContractDefinition(t, database.primary, baseID)
 
@@ -134,8 +128,8 @@ func runWorkflowTransactionContract(t *testing.T, open func(t *testing.T) *workf
 	})
 
 	t.Run("version allocation uses maximum after a gap", func(t *testing.T) {
-		database := open(t)
-		app := newWorkflowContractApp(database.primary, database.driver)
+		database := openPostgresWorkflowContractDatabase(t)
+		app := newWorkflowContractApp(database.primary)
 		baseID := createWorkflowContractDefinition(t, app, workflowContractPayload("版本缺口", "gap1"))
 		secondID := createWorkflowContractVersion(t, app, baseID, workflowContractPayload("版本缺口-2", "gap2"))
 		thirdID := createWorkflowContractVersion(t, app, secondID, workflowContractPayload("版本缺口-3", "gap3"))
@@ -150,10 +144,10 @@ func runWorkflowTransactionContract(t *testing.T, open func(t *testing.T) *workf
 	})
 
 	t.Run("concurrent activation leaves one complete runtime", func(t *testing.T) {
-		database := open(t)
+		database := openPostgresWorkflowContractDatabase(t)
 		peer := database.openPeer(t)
-		primaryApp := newWorkflowContractApp(database.primary, database.driver)
-		peerApp := newWorkflowContractApp(peer, database.driver)
+		primaryApp := newWorkflowContractApp(database.primary)
+		peerApp := newWorkflowContractApp(peer)
 		firstID := createWorkflowContractDefinition(t, primaryApp, workflowContractPayload("并发激活", "first"))
 		secondID := createWorkflowContractVersion(t, primaryApp, firstID, workflowContractPayload("并发激活-2", "second"))
 
@@ -181,8 +175,8 @@ func runWorkflowTransactionContract(t *testing.T, open func(t *testing.T) *workf
 	})
 
 	t.Run("activation failure rolls back all runtime state", func(t *testing.T) {
-		database := open(t)
-		app := newWorkflowContractApp(database.primary, database.driver)
+		database := openPostgresWorkflowContractDatabase(t)
+		app := newWorkflowContractApp(database.primary)
 		firstID := createWorkflowContractDefinition(t, app, workflowContractPayload("激活回滚", "stable"))
 		secondID := createWorkflowContractVersion(t, app, firstID, workflowContractPayload("激活回滚-2", "stable"))
 		if _, err := app.ActivateDefinition(firstID, 31); err != nil {
@@ -213,9 +207,9 @@ func runWorkflowTransactionContract(t *testing.T, open func(t *testing.T) *workf
 	})
 
 	t.Run("uncommitted activation is never partially visible", func(t *testing.T) {
-		database := open(t)
+		database := openPostgresWorkflowContractDatabase(t)
 		peer := database.openPeer(t)
-		writer := newWorkflowContractApp(database.primary, database.driver)
+		writer := newWorkflowContractApp(database.primary)
 		firstID := createWorkflowContractDefinition(t, writer, workflowContractPayload("中间状态", "old"))
 		secondID := createWorkflowContractVersion(t, writer, firstID, workflowContractPayload("中间状态-2", "new"))
 		if _, err := writer.ActivateDefinition(firstID, 41); err != nil {
@@ -265,10 +259,10 @@ func runWorkflowTransactionContract(t *testing.T, open func(t *testing.T) *workf
 	})
 
 	t.Run("runtime read never mixes activation snapshots", func(t *testing.T) {
-		database := open(t)
+		database := openPostgresWorkflowContractDatabase(t)
 		peer := database.openPeer(t)
-		reader := newWorkflowContractApp(database.primary, database.driver)
-		writer := newWorkflowContractApp(peer, database.driver)
+		reader := newWorkflowContractApp(database.primary)
+		writer := newWorkflowContractApp(peer)
 		firstID := createWorkflowContractDefinition(t, reader, workflowContractPayload("一致读取", "old"))
 		secondID := createWorkflowContractVersion(t, reader, firstID, workflowContractPayload("一致读取-2", "new"))
 		if _, err := writer.ActivateDefinition(firstID, 51); err != nil {
@@ -323,8 +317,8 @@ func runWorkflowTransactionContract(t *testing.T, open func(t *testing.T) *workf
 	})
 
 	t.Run("deactivation failure restores entries and active state", func(t *testing.T) {
-		database := open(t)
-		app := newWorkflowContractApp(database.primary, database.driver)
+		database := openPostgresWorkflowContractDatabase(t)
+		app := newWorkflowContractApp(database.primary)
 		definitionID := createWorkflowContractDefinition(t, app, workflowContractPayload("停用回滚", "deactivate"))
 		if _, err := app.ActivateDefinition(definitionID, 61); err != nil {
 			t.Fatalf("activate deactivation fixture: %v", err)
@@ -340,12 +334,11 @@ func runWorkflowTransactionContract(t *testing.T, open func(t *testing.T) *workf
 	})
 }
 
-func newWorkflowContractApp(database *gorm.DB, driver string) *App {
+func newWorkflowContractApp(database *gorm.DB) *App {
 	return &App{
 		DB:       database,
 		database: database,
 		Cfg: &config.AppConfig{
-			Database: config.DatabaseConfig{Driver: driver},
 			Auth: config.AuthConfig{
 				WebhookPepper: "workflow-transaction-contract-pepper",
 			},
@@ -570,18 +563,8 @@ func assertSerializedRuntimeMatchesDefinition(t *testing.T, runtime M, definitio
 
 func installWorkflowEntryInsertFailureTrigger(t *testing.T, database *gorm.DB, definitionID int64, entryKey string) {
 	t.Helper()
-	var statements []string
-	switch database.Dialector.Name() {
-	case "sqlite":
-		statements = []string{fmt.Sprintf(`CREATE TRIGGER workflow_contract_reject_entry
-BEFORE INSERT ON workflow_runtime_entries
-WHEN NEW.workflow_definition_id = %d AND NEW.entry_key = %s
-BEGIN
-    SELECT RAISE(ABORT, 'workflow contract entry failure');
-END`, definitionID, workflowContractSQLLiteral(entryKey))}
-	case "postgres":
-		statements = []string{
-			fmt.Sprintf(`CREATE FUNCTION workflow_contract_reject_entry() RETURNS trigger AS $$
+	statements := []string{
+		fmt.Sprintf(`CREATE FUNCTION workflow_contract_reject_entry() RETURNS trigger AS $$
 BEGIN
     IF NEW.workflow_definition_id = %d AND NEW.entry_key = %s THEN
         RAISE EXCEPTION 'workflow contract entry failure';
@@ -589,12 +572,9 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql`, definitionID, workflowContractSQLLiteral(entryKey)),
-			`CREATE TRIGGER workflow_contract_reject_entry
+		`CREATE TRIGGER workflow_contract_reject_entry
 BEFORE INSERT ON workflow_runtime_entries
 FOR EACH ROW EXECUTE FUNCTION workflow_contract_reject_entry()`,
-		}
-	default:
-		t.Fatalf("unsupported workflow contract driver %q", database.Dialector.Name())
 	}
 	for _, statement := range statements {
 		if err := database.Exec(statement).Error; err != nil {
@@ -605,18 +585,8 @@ FOR EACH ROW EXECUTE FUNCTION workflow_contract_reject_entry()`,
 
 func installWorkflowStateDeactivateFailureTrigger(t *testing.T, database *gorm.DB, stateID int64) {
 	t.Helper()
-	var statements []string
-	switch database.Dialector.Name() {
-	case "sqlite":
-		statements = []string{fmt.Sprintf(`CREATE TRIGGER workflow_contract_reject_deactivation
-BEFORE UPDATE OF active_workflow_definition_id ON workflow_runtime_states
-WHEN OLD.id = %d AND NEW.active_workflow_definition_id IS NULL
-BEGIN
-    SELECT RAISE(ABORT, 'workflow contract deactivation failure');
-END`, stateID)}
-	case "postgres":
-		statements = []string{
-			fmt.Sprintf(`CREATE FUNCTION workflow_contract_reject_deactivation() RETURNS trigger AS $$
+	statements := []string{
+		fmt.Sprintf(`CREATE FUNCTION workflow_contract_reject_deactivation() RETURNS trigger AS $$
 BEGIN
     IF OLD.id = %d AND NEW.active_workflow_definition_id IS NULL THEN
         RAISE EXCEPTION 'workflow contract deactivation failure';
@@ -624,12 +594,9 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql`, stateID),
-			`CREATE TRIGGER workflow_contract_reject_deactivation
+		`CREATE TRIGGER workflow_contract_reject_deactivation
 BEFORE UPDATE OF active_workflow_definition_id ON workflow_runtime_states
 FOR EACH ROW EXECUTE FUNCTION workflow_contract_reject_deactivation()`,
-		}
-	default:
-		t.Fatalf("unsupported workflow contract driver %q", database.Dialector.Name())
 	}
 	for _, statement := range statements {
 		if err := database.Exec(statement).Error; err != nil {
@@ -670,33 +637,6 @@ func waitWorkflowContractResult(t *testing.T, result <-chan error, timeoutMessag
 		t.Fatal(timeoutMessage)
 		return nil
 	}
-}
-
-func openSQLiteWorkflowContractDatabase(t *testing.T) *workflowContractDatabase {
-	t.Helper()
-	cfg := config.DatabaseConfig{
-		Driver: "sqlite",
-		Path:   filepath.Join(t.TempDir(), "workflow-transaction-contract.db"),
-	}
-	primary := openSQLiteWorkflowContractHandle(t, cfg)
-	prepareWorkflowContractRelations(t, primary)
-	return &workflowContractDatabase{
-		primary: primary,
-		driver:  cfg.Driver,
-		openPeer: func(t *testing.T) *gorm.DB {
-			return openSQLiteWorkflowContractHandle(t, cfg)
-		},
-	}
-}
-
-func openSQLiteWorkflowContractHandle(t *testing.T, cfg config.DatabaseConfig) *gorm.DB {
-	t.Helper()
-	database, err := db.Connect(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("open SQLite workflow contract database: %v", err)
-	}
-	registerWorkflowContractDatabaseCleanup(t, database, "SQLite")
-	return database
 }
 
 func openPostgresWorkflowContractDatabase(t *testing.T) *workflowContractDatabase {
@@ -746,7 +686,6 @@ func openPostgresWorkflowContractDatabase(t *testing.T) *workflowContractDatabas
 	prepareWorkflowContractRelations(t, primary)
 	return &workflowContractDatabase{
 		primary: primary,
-		driver:  "postgres",
 		openPeer: func(t *testing.T) *gorm.DB {
 			return openPostgresWorkflowContractHandle(t, testConfig)
 		},
@@ -777,27 +716,15 @@ func openPostgresWorkflowContractHandle(t *testing.T, cfg *pgx.ConnConfig) *gorm
 
 func prepareWorkflowContractRelations(t *testing.T, database *gorm.DB) {
 	t.Helper()
-	// A1-4 不改变 schema；契约测试迁移定义、运行态、入口及详情查询依赖的执行表，
-	// 直接验证现有唯一约束与外键，不在测试中另造结构。
-	if err := database.AutoMigrate(
-		&db.WorkflowDefinition{},
-		&db.WorkflowRuntimeState{},
-		&db.WorkflowRuntimeEntry{},
-		&db.WorkflowExecution{},
-	); err != nil {
-		t.Fatalf("prepare workflow contract relations: %v", err)
-	}
-}
-
-func registerWorkflowContractDatabaseCleanup(t *testing.T, database *gorm.DB, driver string) {
-	t.Helper()
 	sqlDB, err := database.DB()
 	if err != nil {
-		t.Fatalf("get %s workflow contract database: %v", driver, err)
+		t.Fatalf("get workflow contract database: %v", err)
 	}
-	t.Cleanup(func() {
-		if err := sqlDB.Close(); err != nil {
-			t.Errorf("close %s workflow contract database: %v", driver, err)
-		}
-	})
+	runner, err := migration.New(sqlDB)
+	if err != nil {
+		t.Fatalf("create workflow contract migration runner: %v", err)
+	}
+	if _, err := runner.Up(context.Background(), 0); err != nil {
+		t.Fatalf("apply workflow contract baseline: %v", err)
+	}
 }

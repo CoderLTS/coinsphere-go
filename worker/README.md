@@ -18,7 +18,7 @@ uv run pytest tests/test_queue_runtime.py
 
 ## 运行契约
 
-`python -m coinsphere_worker run` 必须通过 `COINSPHERE_WORKER_DATABASE_DSN` 连接已经应用 `00002_a1_worker_tasks.sql` 的 PostgreSQL；配置缺失或数据库异常时进程 fail-closed 非零退出。单进程串行执行一个任务，多个 Worker 依赖 PostgreSQL `FOR UPDATE SKIP LOCKED` 并发认领，不使用 Redis、Kafka 或 NATS。
+`python -m coinsphere_worker run` 必须通过 `COINSPHERE_WORKER_DATABASE_DSN` 连接已经应用 CoinSphere 单一基线的 PostgreSQL/TimescaleDB；配置缺失或数据库异常时进程 fail-closed 非零退出。单进程串行执行一个任务，多个 Worker 依赖 PostgreSQL `FOR UPDATE SKIP LOCKED` 并发认领，不使用 Redis、Kafka 或 NATS。
 
 认领会递增 `attempt_count` 并创建新的 `lease_id`。启动、心跳、成功、失败和取消均同时校验任务 ID、租约 ID、合法前态和数据库时间；租约过期后旧 Worker 不能再续租或写终态。过期的 `claimed/running` 在仍有尝试次数时重新排队，否则进入 `failed`。心跳对 `cancelRequested` 只观察、不续租；恢复器在租约过期或取消请求满 4 秒时将其转为 `canceled`，以默认 1 秒轮询保证 Owner 在确认取消前崩溃时仍满足 5 秒时限。SIGINT/SIGTERM 会停止认领和心跳，在途任务由同一过期租约路径恢复。
 
@@ -26,7 +26,7 @@ uv run pytest tests/test_queue_runtime.py
 
 ## 容器契约
 
-根目录开发 Compose 使用内部 `worker-db` 网络启动 PostgreSQL、一次性 migration 和 Worker。Worker 保持只读文件系统、移除全部 Linux capabilities、启用 `no-new-privileges`，不暴露端口、不挂载业务数据卷，也不持有交易所凭据。
+根目录开发 Compose 使用内部数据库网络启动共享 TimescaleDB、一次性 migration、Backend 和 Worker。Worker 保持只读文件系统、移除全部 Linux capabilities、启用 `no-new-privileges`，不暴露端口、不挂载业务数据卷，也不持有交易所凭据。
 
 ```bash
 docker compose up --detach --build --wait worker
@@ -41,4 +41,4 @@ docker compose exec -T worker python -m coinsphere_worker health
 
 ## 回滚
 
-先停止 Worker，确认不再产生心跳或认领，再回退 Worker 代码、开发 Compose 和 CI 配置。已存在的任务及 migration 版本必须保留，等待兼容版本恢复消费；不得为了代码回滚删除任务、修改状态或强制执行 `00002` Down。生产 Release 当前不构建或部署 Worker，因此不需要修改生产 Compose、镜像 digest 或发布产物。
+先停止 Worker，确认不再产生心跳或认领，再回退 Worker 代码、开发 Compose 和 CI 配置。已存在的任务及 migration 版本必须保留，等待兼容版本恢复消费；不得为了代码回滚删除任务、修改状态或强制执行 `00001` Down。生产 Release 当前不构建或部署 Worker，因此不需要修改生产 Compose、镜像 digest 或发布产物。

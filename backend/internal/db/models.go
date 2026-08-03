@@ -179,10 +179,7 @@ type TaskDefinitionConfig struct {
 
 func (TaskDefinitionConfig) TableName() string { return "task_definition_configs" }
 
-// DomainEventOutbox 领域事件 outbox。
-// A1-3 新增字段由版本化 00003 migration 独占 DDL 所有权：<-:update 允许后续 dispatcher 更新，
-// -:migration 阻止当前仍保留的 AutoMigrate 抢先建列或改写双方言约束。禁止 Create 写入这些字段，
-// 使尚未执行 00003 的旧库仍可由现有 producer 插入事件；数据库在迁移后负责补齐 max_attempts 默认值。
+// DomainEventOutbox 领域事件 outbox。租约字段只允许 dispatcher 更新，producer 创建事件时由数据库基线补齐默认值。
 type DomainEventOutbox struct {
 	ID                      int64                  `gorm:"primaryKey;autoIncrement"`
 	EventType               string                 `gorm:"size:120;index"`
@@ -197,16 +194,16 @@ type DomainEventOutbox struct {
 	Status                  string                 `gorm:"size:20;default:pending;index:ix_event_outbox_pending,priority:1"`
 	AttemptCount            int                    `gorm:"default:0"`
 	AvailableAt             time.Time              `gorm:"index:ix_event_outbox_pending,priority:2"`
-	MaxAttempts             int                    `gorm:"column:max_attempts;<-:update;-:migration"`
-	LeaseID                 *string                `gorm:"column:lease_id;<-:update;-:migration"`
-	WorkerID                *string                `gorm:"column:worker_id;<-:update;-:migration"`
-	LeaseExpiresAt          *time.Time             `gorm:"column:lease_expires_at;<-:update;-:migration"`
-	ClaimedAt               *time.Time             `gorm:"column:claimed_at;<-:update;-:migration"`
+	MaxAttempts             int                    `gorm:"column:max_attempts;<-:update"`
+	LeaseID                 *string                `gorm:"column:lease_id;<-:update"`
+	WorkerID                *string                `gorm:"column:worker_id;<-:update"`
+	LeaseExpiresAt          *time.Time             `gorm:"column:lease_expires_at;<-:update"`
+	ClaimedAt               *time.Time             `gorm:"column:claimed_at;<-:update"`
 	ProcessedAt             *time.Time
-	LastErrorCategory       *string    `gorm:"column:last_error_category;<-:update;-:migration"`
+	LastErrorCategory       *string    `gorm:"column:last_error_category;<-:update"`
 	LastErrorMessage        string     `gorm:"type:text"`
-	DeadLetteredAt          *time.Time `gorm:"column:dead_lettered_at;<-:update;-:migration"`
-	AlertedAt               *time.Time `gorm:"column:alerted_at;<-:update;-:migration"`
+	DeadLetteredAt          *time.Time `gorm:"column:dead_lettered_at;<-:update"`
+	AlertedAt               *time.Time `gorm:"column:alerted_at;<-:update"`
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
 }
@@ -504,66 +501,3 @@ type RefreshTokenRecord struct {
 }
 
 func (RefreshTokenRecord) TableName() string { return "refresh_tokens" }
-
-// AllModels 按依赖顺序返回全部模型,用于 AutoMigrate。
-// 返回 []any(any = 任意类型的切片)。顺序有讲究:被外键引用的表要先建,否则加外键约束时会失败。
-func AllModels() []any {
-	return []any{
-		&BlockbeatsNews{},
-		&WorkflowDefinition{},
-		&WorkflowRuntimeState{},
-		&WorkflowRuntimeEntry{},
-		&WorkflowExecution{},
-		&WorkflowExecutionAttempt{},
-		&WorkflowExecutionNode{},
-		&WorkflowExecutionTransition{},
-		&TaskDefinitionConfig{},
-		&DomainEventOutbox{},
-		&SystemRole{},
-		&SystemUser{},
-		&SystemUserRole{},
-		&SystemMenu{},
-		&SystemMenuButton{},
-		&SystemRoleMenu{},
-		&SystemRoleButton{},
-		&SystemI18nText{},
-		&SystemAiModelConfig{},
-		&AssistantAgent{},
-		&AiModelAgentBinding{},
-		&SystemNotifyChannel{},
-		&SystemNotifyDelivery{},
-		&AssistantSession{},
-		&AssistantMessage{},
-		&RefreshTokenRecord{},
-	}
-}
-
-// versionedDomainEventOutbox 是 00003 应用后的 AutoMigrate 占位模型。
-// 两个外键列使用 -:migration，保证 GORM 不改列；关系本身保留，使 PostgreSQL 空 migration 库在父表
-// 由现有 AutoMigrate 建立后补齐 Outbox 外键。SQLite migration 已声明同名约束，因此不会触发表重建。
-type versionedDomainEventOutbox struct {
-	WorkflowExecutionID     *int64                 `gorm:"column:workflow_execution_id;-:migration"`
-	WorkflowExecution       *WorkflowExecution     `gorm:"foreignKey:WorkflowExecutionID;constraint:OnDelete:SET NULL"`
-	WorkflowExecutionNodeID *int64                 `gorm:"column:workflow_execution_node_id;-:migration"`
-	WorkflowExecutionNode   *WorkflowExecutionNode `gorm:"foreignKey:WorkflowExecutionNodeID;constraint:OnDelete:SET NULL"`
-}
-
-func (versionedDomainEventOutbox) TableName() string { return "domain_event_outbox" }
-
-// autoMigrateModels 在 00003 尚未应用时保留既有 Outbox AutoMigrate；一旦检测到版本化字段，
-// 用同表名空模型替换真实模型，避免 GORM 沿 notification_deliveries 关联把真实 Outbox 重新加入 DDL。
-// 这种单表隔离保留其他模型的关系迁移；A1-10 才整体移除生产 AutoMigrate。
-func autoMigrateModels(skipVersionedOutbox bool) []any {
-	models := AllModels()
-	if !skipVersionedOutbox {
-		return models
-	}
-
-	for index, model := range models {
-		if _, ok := model.(*DomainEventOutbox); ok {
-			models[index] = &versionedDomainEventOutbox{}
-			break
-		}
-	}
-	return models
-}

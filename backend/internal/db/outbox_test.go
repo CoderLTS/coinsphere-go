@@ -5,13 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"coinsphere/backend/internal/config"
 	"coinsphere/backend/internal/migration"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -26,28 +24,23 @@ type outboxContractDatabase struct {
 	openPeer func(t *testing.T) *gorm.DB
 }
 
-func TestOutboxLeaseContractSQLite(t *testing.T) {
-	runOutboxLeaseContract(t, openSQLiteOutboxContractDatabase)
-}
-
 func TestOutboxLeaseContractPostgres(t *testing.T) {
-	runOutboxLeaseContract(t, openPostgresOutboxContractDatabase)
+	runOutboxLeaseContract(t)
 }
 
-// runOutboxLeaseContract 对双方言执行同一套状态转换，防止某一实现只通过语法测试、
-// 却在真实并发、事务回滚或租约换代时偏离公共契约。
-func runOutboxLeaseContract(t *testing.T, open func(t *testing.T) *outboxContractDatabase) {
+// runOutboxLeaseContract 通过真实并发、事务回滚和租约换代固定 PostgreSQL Outbox 契约。
+func runOutboxLeaseContract(t *testing.T) {
 	t.Helper()
 
 	t.Run("concurrent batch claim", func(t *testing.T) {
-		database := open(t)
+		database := openPostgresOutboxContractDatabase(t)
 		peer := database.openPeer(t)
 		wantIDs := make(map[int64]struct{}, 7)
 		for index := range 6 {
 			wantIDs[insertPendingOutboxEvent(t, database.primary, fmt.Sprintf("contract.batch.%d", index), 3)] = struct{}{}
 		}
 
-		// 现有 producer 使用 time.Now，SQLite 会保留时区偏移；用相反偏移同时锁定“已到不漏、未来不抢”。
+		// 用相反时区偏移同时锁定“已到不漏、未来不抢”，防止比较本地墙钟而不是绝对时间。
 		eastEight := time.FixedZone("UTC+08:00", 8*60*60)
 		offsetDueID := insertPendingOutboxEvent(t, database.primary, "contract.offset-due", 3)
 		setOutboxAvailableAt(t, database.primary, offsetDueID, time.Now().In(eastEight).Add(-time.Minute))
@@ -57,8 +50,7 @@ func runOutboxLeaseContract(t *testing.T, open func(t *testing.T) *outboxContrac
 		futureID := insertPendingOutboxEvent(t, database.primary, "contract.future", 3)
 		setOutboxAvailableAt(t, database.primary, futureID, time.Now().In(westEight).Add(time.Hour))
 
-		// 两个独立数据库句柄同时开始，确保 SQLite 测到跨实例文件锁，PostgreSQL 测到
-		// SKIP LOCKED，而不是被同一 GORM 连接池或测试调用顺序人为串行化。
+		// 两个独立数据库句柄同时开始，确保测到 SKIP LOCKED，而不是被同一连接池或调用顺序人为串行化。
 		type claimResult struct {
 			rows []DomainEventOutbox
 			err  error
@@ -113,7 +105,7 @@ func runOutboxLeaseContract(t *testing.T, open func(t *testing.T) *outboxContrac
 	})
 
 	t.Run("claim rolls back with caller transaction", func(t *testing.T) {
-		database := open(t)
+		database := openPostgresOutboxContractDatabase(t)
 		eventID := insertPendingOutboxEvent(t, database.primary, "contract.rollback", 3)
 		rollback := errors.New("contract transaction rollback")
 
@@ -142,7 +134,7 @@ func runOutboxLeaseContract(t *testing.T, open func(t *testing.T) *outboxContrac
 	})
 
 	t.Run("batch statement failure is atomic", func(t *testing.T) {
-		database := open(t)
+		database := openPostgresOutboxContractDatabase(t)
 		firstID := insertPendingOutboxEvent(t, database.primary, "contract.atomic.first", 3)
 		failedID := insertPendingOutboxEvent(t, database.primary, "contract.atomic.fail", 3)
 		installOutboxClaimFailureTrigger(t, database.primary)
@@ -162,7 +154,7 @@ func runOutboxLeaseContract(t *testing.T, open func(t *testing.T) *outboxContrac
 	})
 
 	t.Run("expired recovery fences old lease", func(t *testing.T) {
-		database := open(t)
+		database := openPostgresOutboxContractDatabase(t)
 		retryID := insertPendingOutboxEvent(t, database.primary, "contract.recover", 2)
 		exhaustedID := insertPendingOutboxEvent(t, database.primary, "contract.exhausted", 1)
 		firstClaims, err := ClaimOutboxEvents(context.Background(), database.primary, "outbox-old-owner", 2, time.Minute)
@@ -175,7 +167,7 @@ func runOutboxLeaseContract(t *testing.T, open func(t *testing.T) *outboxContrac
 		}
 
 		// 直接推进数据库中的租约时间，不用 Sleep 制造慢测试；claimed_at 仍早于过期时间，
-		// 因而测试夹具继续满足 00003 的数据库约束。
+		// 因而测试夹具继续满足 PostgreSQL 基线的 Outbox 约束。
 		claimedAt := time.Now().UTC().Add(-2 * time.Minute).Truncate(time.Second)
 		expiresAt := claimedAt.Add(time.Minute)
 		result := database.primary.Exec(
@@ -251,7 +243,7 @@ func runOutboxLeaseContract(t *testing.T, open func(t *testing.T) *outboxContrac
 	})
 
 	t.Run("failed delivery retries then reaches dead letter", func(t *testing.T) {
-		database := open(t)
+		database := openPostgresOutboxContractDatabase(t)
 		eventID := insertPendingOutboxEvent(t, database.primary, "contract.delivery.retry", 2)
 		claims, err := ClaimOutboxEvents(context.Background(), database.primary, "outbox-delivery-old", 1, time.Minute)
 		if err != nil || len(claims) != 1 || claims[0].ID != eventID {
@@ -321,14 +313,14 @@ func runOutboxLeaseContract(t *testing.T, open func(t *testing.T) *outboxContrac
 	})
 
 	t.Run("dead letter alerts are claimed once across workers", func(t *testing.T) {
-		database := open(t)
+		database := openPostgresOutboxContractDatabase(t)
 		peer := database.openPeer(t)
 		wantIDs := make(map[int64]struct{}, 7)
 		for index := range 7 {
 			wantIDs[insertDeadLetterOutboxEvent(t, database.primary, fmt.Sprintf("contract.alert.%d", index))] = struct{}{}
 		}
 
-		// 两个独立句柄同时领取告警，验证 PostgreSQL 的 SKIP LOCKED 与 SQLite 文件写锁
+		// 两个独立句柄同时领取告警，验证 PostgreSQL 的 SKIP LOCKED
 		// 都只能让一个 ID 出现在一个批次中，且 limit 对每个批次独立生效。
 		type alertResult struct {
 			ids []int64
@@ -401,7 +393,7 @@ func runOutboxLeaseContract(t *testing.T, open func(t *testing.T) *outboxContrac
 	})
 
 	t.Run("dead letter alert batch failure is atomic", func(t *testing.T) {
-		database := open(t)
+		database := openPostgresOutboxContractDatabase(t)
 		firstID := insertDeadLetterOutboxEvent(t, database.primary, "contract.alert.atomic.first")
 		failedID := insertDeadLetterOutboxEvent(t, database.primary, "contract.alert.atomic.fail")
 		installOutboxAlertFailureTrigger(t, database.primary)
@@ -508,21 +500,8 @@ func assertOutboxRowsOrdered(t *testing.T, rows []DomainEventOutbox) {
 
 func installOutboxClaimFailureTrigger(t *testing.T, database *gorm.DB) {
 	t.Helper()
-	var statements []string
-	switch database.Dialector.Name() {
-	case "sqlite":
-		statements = []string{`
-CREATE TRIGGER outbox_contract_reject_claim
-BEFORE UPDATE ON domain_event_outbox
-FOR EACH ROW
-WHEN NEW.status = 'claimed' AND NEW.event_type = 'contract.atomic.fail'
-BEGIN
-    SELECT RAISE(ABORT, 'forced Outbox claim failure');
-END
-`}
-	case "postgres":
-		statements = []string{
-			`CREATE FUNCTION outbox_contract_reject_claim() RETURNS trigger LANGUAGE plpgsql AS $$
+	statements := []string{
+		`CREATE FUNCTION outbox_contract_reject_claim() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF NEW.status = 'claimed' AND NEW.event_type = 'contract.atomic.fail' THEN
         RAISE EXCEPTION 'forced Outbox claim failure';
@@ -530,12 +509,9 @@ BEGIN
     RETURN NEW;
 END
 $$`,
-			`CREATE TRIGGER outbox_contract_reject_claim
+		`CREATE TRIGGER outbox_contract_reject_claim
 BEFORE UPDATE ON domain_event_outbox
 FOR EACH ROW EXECUTE FUNCTION outbox_contract_reject_claim()`,
-		}
-	default:
-		t.Fatalf("unsupported Outbox contract driver %q", database.Dialector.Name())
 	}
 	for _, statement := range statements {
 		if err := database.Exec(statement).Error; err != nil {
@@ -546,21 +522,8 @@ FOR EACH ROW EXECUTE FUNCTION outbox_contract_reject_claim()`,
 
 func installOutboxAlertFailureTrigger(t *testing.T, database *gorm.DB) {
 	t.Helper()
-	var statements []string
-	switch database.Dialector.Name() {
-	case "sqlite":
-		statements = []string{`
-CREATE TRIGGER outbox_contract_reject_alert
-BEFORE UPDATE ON domain_event_outbox
-FOR EACH ROW
-WHEN NEW.alerted_at IS NOT NULL AND NEW.event_type = 'contract.alert.atomic.fail'
-BEGIN
-    SELECT RAISE(ABORT, 'forced Outbox alert failure');
-END
-`}
-	case "postgres":
-		statements = []string{
-			`CREATE FUNCTION outbox_contract_reject_alert() RETURNS trigger LANGUAGE plpgsql AS $$
+	statements := []string{
+		`CREATE FUNCTION outbox_contract_reject_alert() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF NEW.alerted_at IS NOT NULL AND NEW.event_type = 'contract.alert.atomic.fail' THEN
         RAISE EXCEPTION 'forced Outbox alert failure';
@@ -568,53 +531,15 @@ BEGIN
     RETURN NEW;
 END
 $$`,
-			`CREATE TRIGGER outbox_contract_reject_alert
+		`CREATE TRIGGER outbox_contract_reject_alert
 BEFORE UPDATE ON domain_event_outbox
 FOR EACH ROW EXECUTE FUNCTION outbox_contract_reject_alert()`,
-		}
-	default:
-		t.Fatalf("unsupported Outbox contract driver %q", database.Dialector.Name())
 	}
 	for _, statement := range statements {
 		if err := database.Exec(statement).Error; err != nil {
 			t.Fatalf("install Outbox alert failure trigger: %v", err)
 		}
 	}
-}
-
-func openSQLiteOutboxContractDatabase(t *testing.T) *outboxContractDatabase {
-	t.Helper()
-	cfg := config.DatabaseConfig{
-		Driver: "sqlite",
-		Path:   filepath.Join(t.TempDir(), "outbox-contract.db"),
-	}
-	primary := openOutboxContractHandle(t, cfg)
-	applyOutboxContractMigrations(t, primary, "sqlite")
-	prepareOutboxContractRelations(t, primary)
-	return &outboxContractDatabase{
-		primary: primary,
-		openPeer: func(t *testing.T) *gorm.DB {
-			return openOutboxContractHandle(t, cfg)
-		},
-	}
-}
-
-func openOutboxContractHandle(t *testing.T, cfg config.DatabaseConfig) *gorm.DB {
-	t.Helper()
-	database, err := Connect(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("open %s Outbox contract database: %v", cfg.Driver, err)
-	}
-	sqlDB, err := database.DB()
-	if err != nil {
-		t.Fatalf("get %s Outbox contract database: %v", cfg.Driver, err)
-	}
-	t.Cleanup(func() {
-		if err := sqlDB.Close(); err != nil {
-			t.Errorf("close %s Outbox contract database: %v", cfg.Driver, err)
-		}
-	})
-	return database
 }
 
 func openPostgresOutboxContractDatabase(t *testing.T) *outboxContractDatabase {
@@ -661,8 +586,7 @@ func openPostgresOutboxContractDatabase(t *testing.T) *outboxContractDatabase {
 	}
 	testConfig.RuntimeParams["search_path"] = schemaName
 	primary := openPostgresOutboxHandle(t, testConfig)
-	applyOutboxContractMigrations(t, primary, "postgres")
-	prepareOutboxContractRelations(t, primary)
+	applyOutboxContractMigrations(t, primary)
 	return &outboxContractDatabase{
 		primary: primary,
 		openPeer: func(t *testing.T) *gorm.DB {
@@ -691,26 +615,17 @@ func openPostgresOutboxHandle(t *testing.T, cfg *pgx.ConnConfig) *gorm.DB {
 	return database
 }
 
-func applyOutboxContractMigrations(t *testing.T, database *gorm.DB, driver string) {
+func applyOutboxContractMigrations(t *testing.T, database *gorm.DB) {
 	t.Helper()
 	sqlDB, err := database.DB()
 	if err != nil {
-		t.Fatalf("get %s migration database: %v", driver, err)
+		t.Fatalf("get PostgreSQL migration database: %v", err)
 	}
-	runner, err := migration.New(sqlDB, driver)
+	runner, err := migration.New(sqlDB)
 	if err != nil {
-		t.Fatalf("create %s Outbox migration runner: %v", driver, err)
+		t.Fatalf("create PostgreSQL Outbox migration runner: %v", err)
 	}
 	if _, err := runner.Up(context.Background(), 0); err != nil {
-		t.Fatalf("apply %s Outbox migrations: %v", driver, err)
-	}
-}
-
-// 00003 可先于业务父表应用；随后复现当前服务启动路径，只迁移其余模型并用占位模型
-// 保留 Outbox DDL，确保双方言契约测试运行在实际可写的最终关系结构上。
-func prepareOutboxContractRelations(t *testing.T, database *gorm.DB) {
-	t.Helper()
-	if err := database.AutoMigrate(autoMigrateModels(true)...); err != nil {
-		t.Fatalf("prepare Outbox contract relations: %v", err)
+		t.Fatalf("apply PostgreSQL Outbox migrations: %v", err)
 	}
 }

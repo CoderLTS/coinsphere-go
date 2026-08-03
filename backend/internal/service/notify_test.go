@@ -6,11 +6,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 
-	"coinsphere/backend/internal/config"
 	"coinsphere/backend/internal/db"
 )
 
@@ -63,18 +61,7 @@ func TestSMTPDialCancellation(t *testing.T) {
 }
 
 func TestExternalDeliveryFinalizesAfterCancellation(t *testing.T) {
-	gdb, err := db.Open(context.Background(), config.DatabaseConfig{
-		Driver: "sqlite",
-		Path:   filepath.Join(t.TempDir(), "notify.db"),
-	})
-	if err != nil {
-		t.Fatalf("open database: %v", err)
-	}
-	sqlDB, err := gdb.DB()
-	if err != nil {
-		t.Fatalf("get sql database: %v", err)
-	}
-	t.Cleanup(func() { _ = sqlDB.Close() })
+	gdb := openMigratedServiceDatabase(t)
 
 	definition := db.WorkflowDefinition{Code: "notify-cancel", Version: 1}
 	if err := gdb.Create(&definition).Error; err != nil {

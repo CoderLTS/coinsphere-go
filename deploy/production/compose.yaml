@@ -8,9 +8,11 @@ services:
     env_file:
       - runtime.env
     volumes:
-      - backend-data:/app/data
       - backend-uploads:/app/volumes/uploads
       - backend-static:/app/volumes/static
+    networks:
+      - default
+      - infrastructure
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:6987/health >/dev/null 2>&1 || exit 1"]
       interval: 15s
@@ -31,8 +33,6 @@ services:
       - infrastructure
 
 volumes:
-  backend-data:
-    name: coinsphere-backend-data
   backend-uploads:
     name: coinsphere-backend-uploads
   backend-static:

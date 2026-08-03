@@ -1,7 +1,37 @@
-# coinsphere-go 开发栈:web(nginx 托管前端 + 反代)→ backend(Go 单二进制)，
-# PostgreSQL 仅通过内部网络为 A1 Worker 队列提供协调。
-# 一键起:docker compose up -d --build,然后访问 http://localhost:8080
+# coinsphere-go 开发栈：Backend 与 Python Worker 共用一个内部 TimescaleDB，schema 只由一次性 migration 建立。
+# 一键启动：docker compose up -d --build，然后访问 http://localhost:8080
 services:
+  timescaledb:
+    image: timescale/timescaledb:2.29.0-pg17@sha256:3e65c273cbf7218f2a28692492b4625b49f35c7d2142e945561ef52311a8c83a
+    container_name: coinsphere-go-timescaledb
+    restart: unless-stopped
+    environment:
+      TZ: UTC
+      POSTGRES_DB: coinsphere
+      POSTGRES_USER: coinsphere
+      POSTGRES_PASSWORD: coinsphere-dev-only
+    volumes:
+      - timescale-data:/var/lib/postgresql/data
+    networks:
+      - database
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready --username=coinsphere --dbname=coinsphere"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  migrate:
+    image: coinsphere-go-backend
+    restart: "no"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    command: ["/app/coinsphere-migrate", "-config", "/app/config.yml", "-direction", "up"]
+    environment:
+      COINSPHERE_DATABASE__DSN: postgresql://coinsphere:coinsphere-dev-only@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic
+    networks:
+      - database
+
   backend:
     build:
       context: ./backend
@@ -10,72 +40,28 @@ services:
     restart: unless-stopped
     stop_grace_period: 40s
     depends_on:
-      migrate-backend:
+      migrate:
         condition: service_completed_successfully
     environment:
       TZ: ${TZ:-Asia/Shanghai}
-      # 必填:未设置则 compose 直接报错(见评审 #1)。生成随机值:openssl rand -hex 32
+      COINSPHERE_DATABASE__DSN: postgresql://coinsphere:coinsphere-dev-only@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic
+      # 必填：未设置则 compose 直接报错。生成随机值：openssl rand -hex 32
       COINSPHERE_AUTH__SECRET_KEY: ${COINSPHERE_AUTH__SECRET_KEY:?请设置 COINSPHERE_AUTH__SECRET_KEY(.env 或环境变量,如 openssl rand -hex 32)}
-      # 可选强化:内置超管初始密码 / 敏感配置加密密钥 / webhook pepper(留空各自回落到 secret_key)
       # COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD: ${COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD:-}
       # COINSPHERE_AUTH__ENCRYPTION_KEY: ${COINSPHERE_AUTH__ENCRYPTION_KEY:-}
       # COINSPHERE_AUTH__WEBHOOK_PEPPER: ${COINSPHERE_AUTH__WEBHOOK_PEPPER:-}
-      # 开发 Compose 固定使用共享 backend-data 卷中的 SQLite；其他数据库见 backend/README.md 的直接运行配置。
     volumes:
-      - backend-data:/app/data                  # sqlite 持久化
-      - backend-uploads:/app/volumes/uploads     # 上传文件持久化
-      - backend-static:/app/volumes/static       # 后端托管的静态资源
-    # 后端不对外暴露端口,仅经 web 反代访问;需直连调试可临时打开:
-    # ports:
-    #   - "6987:6987"
+      - backend-uploads:/app/volumes/uploads
+      - backend-static:/app/volumes/static
+    networks:
+      - default
+      - database
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:6987/health >/dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
-
-  migrate-backend:
-    image: coinsphere-go-backend
-    restart: "no"
-    command: ["/app/coinsphere-migrate", "-config", "/app/config.yml", "-direction", "up"]
-    volumes:
-      - backend-data:/app/data
-
-  postgres:
-    image: postgres:17.6-alpine3.21@sha256:849377bbbdb1143b82d1b87646eb8ab48241fe32b85ab6667e02e0af139aaa74
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: coinsphere
-      POSTGRES_USER: coinsphere
-      POSTGRES_PASSWORD: coinsphere-worker-dev-only
-    volumes:
-      - worker-postgres-data:/var/lib/postgresql/data
-    networks:
-      - worker-db
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready --username=coinsphere --dbname=coinsphere"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
-
-  migrate-worker:
-    image: coinsphere-go-backend
-    restart: "no"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    command: ["/app/coinsphere-migrate", "-config", "/app/config.yml", "-direction", "up"]
-    environment:
-      COINSPHERE_DATABASE__DRIVER: postgres
-      COINSPHERE_DATABASE__HOST: postgres
-      COINSPHERE_DATABASE__PORT: 5432
-      COINSPHERE_DATABASE__USER: coinsphere
-      COINSPHERE_DATABASE__PASSWORD: coinsphere-worker-dev-only
-      COINSPHERE_DATABASE__DATABASE: coinsphere
-      COINSPHERE_DATABASE__SCHEMA: coinsphere
-    networks:
-      - worker-db
 
   worker:
     build:
@@ -84,10 +70,10 @@ services:
     container_name: coinsphere-go-worker
     restart: unless-stopped
     depends_on:
-      migrate-worker:
+      migrate:
         condition: service_completed_successfully
     networks:
-      - worker-db
+      - database
     read_only: true
     cap_drop:
       - ALL
@@ -95,7 +81,7 @@ services:
       - "no-new-privileges:true"
     environment:
       TZ: UTC
-      COINSPHERE_WORKER_DATABASE_DSN: postgresql://coinsphere:coinsphere-worker-dev-only@postgres:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dcoinsphere
+      COINSPHERE_WORKER_DATABASE_DSN: postgresql://coinsphere:coinsphere-dev-only@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic
 
   web:
     build:
@@ -109,11 +95,10 @@ services:
       - "${COINSPHERE_WEB_PORT:-8080}:80"
 
 volumes:
-  backend-data:
   backend-uploads:
   backend-static:
-  worker-postgres-data:
+  timescale-data:
 
 networks:
-  worker-db:
+  database:
     internal: true

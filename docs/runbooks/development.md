@@ -20,11 +20,11 @@ Pop-Location
 
 Linux CI 额外执行 `go test -race ./...` 和 `SIGTERM` 进程测试。关机契约固定为 30 秒应用总预算，开发与生产 Compose 的 `stop_grace_period` 固定为 40 秒；超时必须报错退出，不能无限等待。手工运行后按 Ctrl+C 可验证 `SIGINT` 路径，但自动化测试不连接生产服务或使用真实凭据。
 
-`00002_a1_worker_tasks.sql` 与 Python Worker 已共同建立 A1 任务队列协议。Worker 只连接 PostgreSQL，在单事务内用 `FOR UPDATE SKIP LOCKED` 认领，并以数据库时间和唯一 `lease_id` 约束心跳、恢复与终态；当前只执行 `contract.noop` 和 `contract.sleep` 伪任务，不包含数据集、回测或交易能力。
+PostgreSQL 基线与 Python Worker 共同建立 A1 任务队列协议。Worker 在单事务内用 `FOR UPDATE SKIP LOCKED` 认领，并以数据库时间和唯一 `lease_id` 约束心跳、恢复与终态；当前只执行 `contract.noop` 和 `contract.sleep` 伪任务，不包含数据集、回测或交易能力。
 
-逻辑版本 `00003` 按驱动加载 SQLite 或 PostgreSQL Outbox SQL，验证既有事件保留、五态、尝试次数、活跃租约、死信/告警时间与索引契约。`internal/db` 在该 schema 上提供单语句原子批量认领、数据库时间续租与 fencing、失败重排、过期恢复及告警领取；SQLite 并发测试使用两个独立句柄指向同一 WAL 文件，PostgreSQL 使用 `FOR UPDATE SKIP LOCKED`。`drainPendingEvents` 已接入这些 API，按 `outbox_lease_seconds` 续租、按 `retry_backoff_seconds` 重排，并在尝试耗尽后原子领取死信日志告警。工作流终态与标准事件使用同一短事务，任一事件插入失败会回滚终态。
+单一基线建立 Outbox 五态、尝试次数、活跃租约、死信/告警时间与索引契约。`internal/db` 使用 PostgreSQL `FOR UPDATE SKIP LOCKED` 提供原子批量认领、数据库时间续租与 fencing、失败重排、过期恢复及告警领取。`drainPendingEvents` 按 `outbox_lease_seconds` 续租、按 `retry_backoff_seconds` 重排，并在尝试耗尽后原子领取死信日志告警。工作流终态与标准事件使用同一短事务，任一事件插入失败会回滚终态。
 
-A1-4 的 `internal/service` 契约在 SQLite 同一 WAL 文件的独立句柄和 PostgreSQL 隔离 schema 上执行同一测试：并发更新必须生成唯一、连续的新版本；并发激活最终只能保留一个 active 版本及其完整入口；激活或停用中途失败必须恢复原 active 版本、入口启停状态与密文；其他连接及运行态 API 只能观察完整旧快照或完整新快照。实现复用现有唯一约束和事务，不需要 schema migration，`AutoMigrate` 仍保留到 A1-10。
+`internal/service` 契约在随机 PostgreSQL schema 上执行：并发更新必须生成唯一、连续的新版本；并发激活最终只能保留一个 active 版本及其完整入口；激活或停用中途失败必须恢复原 active 版本、入口启停状态与密文；其他连接及运行态 API 只能观察完整旧快照或完整新快照。
 
 A1-5 的通知 WebSocket 定向契约覆盖并发单 writer、固定信封与连续序号、慢连接背压、RFC6455 Ping/Pong、失联超时、Hub 关闭和严格 Origin；前端单元测试覆盖信封版本、重复/倒退序号、重连与同源 URL。无需数据库、真实凭据或外部服务：
 
@@ -47,11 +47,10 @@ $env:COINSPHERE_AUTH__SECRET_KEY = 'local-compose-validation-only'
 docker compose build backend worker
 docker compose up --detach --no-build --wait worker
 docker compose exec -T worker python -m coinsphere_worker health
-docker compose stop worker postgres
-docker compose rm --force worker migrate-worker migrate-backend postgres
+docker compose down --volumes --remove-orphans
 ```
 
-Compose 会先由一次性 `migrate-backend` 在共享 SQLite 卷应用 migration，再启动 Backend；同时在内部 `worker-db` 网络启动 PostgreSQL，等待健康后由 `migrate-worker` 应用 migration，再启动 Worker。预期健康输出包含 `"mode":"a1-postgres"` 和 `"taskConsumer":true`。Worker 不开放端口、不挂载业务数据卷、不连接 Backend 网络，也不注入交易所凭据。
+Compose 会先等待内部 TimescaleDB 健康，由一次性 `migrate` 应用完整基线，再启动共享该数据库的 Backend 与 Worker。预期 Worker 健康输出包含 `"mode":"a1-postgres"` 和 `"taskConsumer":true`。Worker 不开放端口、不挂载业务数据卷，也不注入交易所凭据。
 
 本机已有仅供测试的 PostgreSQL 时，可直接运行真实并发与取消用例。测试会创建并删除随机隔离 schema，不会清空固定外部表：
 
@@ -87,7 +86,7 @@ CI 使用锁定依赖安装 Chromium、Firefox、WebKit，并在 `Playwright bro
 
 本门禁不改变业务接口、数据库、Compose 或部署产物。需要回滚时整体回退引入 Playwright 的 PR，删除测试依赖、配置、用例和 CI Job，并从 `Container builds` 的 `needs` 及仓库 Required checks/ruleset 中同步移除 `Playwright browser smoke`；无数据或运行时迁移。
 
-数据库契约默认在临时 SQLite 数据库执行。要同时验证 PostgreSQL migration 与 Outbox 并发租约，先设置仅供本地测试的 DSN：
+数据库核心契约只在随机隔离的 PostgreSQL schema 中执行。先设置仅供本地测试的 DSN：
 
 ```powershell
 $env:COINSPHERE_TEST_POSTGRES_DSN = 'postgres://coinsphere:test-only@127.0.0.1:5432/coinsphere_test?sslmode=disable'
@@ -104,7 +103,7 @@ Pop-Location
 
 GitHub Actions 负责 Linux、三类镜像构建、Compose 健康、Worker A1 PostgreSQL 集成契约和安全检查。本地缺少 Docker 或 PostgreSQL 时可以继续开发，但 PR 在 Worker 集成与容器 Job 通过前不得合并。
 
-CI 使用固定 PostgreSQL 17 镜像执行 migration、Outbox 存储、工作流服务与 Worker 运行时契约，包括 Worker 七态、租约、尝试次数、非空 Down 保护、并发认领、旧租约 fencing、崩溃回收和 5 秒取消，Outbox 五态、租约字段一致性、保数升级、重复 Up、回滚重放、双认领者争抢、批量与事务失败原子性、续租、失败退避、过期恢复、死信告警争抢和旧 token fencing，工作流并发版本、并发激活、失败回滚和完整快照可见性，以及通知 WebSocket 单 writer、序列、背压、心跳、关闭与 Origin 契约。本地与发布环境的迁移命令、编写约束和回滚步骤见[数据库迁移手册](./database-migrations.md)。
+CI 使用固定 TimescaleDB 镜像执行单一基线、Outbox、工作流服务与 Worker 运行时契约，包括空库 Up/Down/重放、非空及并发写入 Down 保护，Worker 七态、租约、并发认领、旧租约 fencing、崩溃回收和 5 秒取消，Outbox 五态、批量与事务失败原子性、续租、退避、过期恢复、死信争抢和旧 token fencing，工作流并发版本、激活回滚和完整快照可见性，以及通知 WebSocket 契约。本地与发布环境的迁移及回滚步骤见[数据库迁移手册](./database-migrations.md)。
 
 ## 安全约束
 

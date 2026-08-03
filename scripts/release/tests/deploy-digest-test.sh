@@ -8,6 +8,7 @@ COMMIT=0123456789abcdef0123456789abcdef01234567
 REGISTRY=127.0.0.1:5000
 BACKEND_DIGEST=$(printf 'a%.0s' {1..64})
 WEB_DIGEST=$(printf 'b%.0s' {1..64})
+POSTGRES_DSN='postgresql://coinsphere:test-only-password@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic'
 
 cleanup() {
   rm -rf -- "$TEST_DIR"
@@ -16,7 +17,8 @@ trap cleanup EXIT
 
 command -v jq >/dev/null || { echo "缺少命令: jq" >&2; exit 3; }
 mkdir -p "$TEST_DIR/bin" "$TEST_DIR/deploy"
-printf 'COINSPHERE_AUTH__SECRET_KEY=replace-with-random-value\n' >"$TEST_DIR/deploy/runtime.env"
+printf 'COINSPHERE_DATABASE__DSN=%s\nCOINSPHERE_AUTH__SECRET_KEY=replace-with-random-value\n' \
+  "$POSTGRES_DSN" >"$TEST_DIR/deploy/runtime.env"
 cat >"$TEST_DIR/release-manifest.json" <<EOF
 {
   "version": "$VERSION",
@@ -32,8 +34,9 @@ cat >"$TEST_DIR/bin/docker" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 printf '%s\n' "$*" >>"$DEPLOY_DOCKER_LOG"
-if [[ ${1:-} == volume && ${2:-} == inspect ]]; then
-  exit 1
+if [[ ${1:-} == volume || $* == *sqlite* || $* == *backup* ]]; then
+  echo "部署不得操作旧 SQLite 卷或备份" >&2
+  exit 97
 fi
 exit 0
 EOF
@@ -54,6 +57,19 @@ bash "$ROOT_DIR/deploy/production/deploy.sh" "$VERSION" "$TEST_DIR/release-manif
 if ! grep -Fxq "COINSPHERE_BACKEND_IMAGE=$REGISTRY/coinsphere/backend@sha256:$BACKEND_DIGEST" "$TEST_DIR/deploy/.env" \
   || ! grep -Fxq "COINSPHERE_WEB_IMAGE=$REGISTRY/coinsphere/web@sha256:$WEB_DIGEST" "$TEST_DIR/deploy/.env"; then
   echo "自动部署必须使用 Manifest 中的不可变镜像 digest" >&2
+  exit 1
+fi
+if ! grep -Fxq "COINSPHERE_DATABASE__DSN=$POSTGRES_DSN" "$TEST_DIR/deploy/runtime.env"; then
+  echo "生产部署必须保留 PostgreSQL DSN" >&2
+  exit 1
+fi
+if ! grep -Fq "run --rm backend /app/coinsphere-migrate -config /app/config.yml -direction up" "$DEPLOY_DOCKER_LOG"; then
+  echo "启动服务前必须通过后端镜像执行 PostgreSQL migration" >&2
+  exit 1
+fi
+if grep -Eiq '(^|[[:space:]])volume([[:space:]]|$)|sqlite|backup' "$DEPLOY_DOCKER_LOG" \
+  || find "$TEST_DIR/deploy" -maxdepth 1 -type f \( -iname '*sqlite*' -o -iname '*.db*' -o -iname '*backup*' \) -print -quit | grep -q .; then
+  echo "生产部署不得创建或操作旧 SQLite 卷与备份" >&2
   exit 1
 fi
 

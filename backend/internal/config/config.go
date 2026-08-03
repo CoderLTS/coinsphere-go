@@ -4,7 +4,6 @@ package config
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -21,20 +20,12 @@ const (
 // DefaultInsecureSecret 仓库自带的占位签名密钥;生产必须覆盖,否则 Validate 拒绝启动(见评审 #1)。
 const DefaultInsecureSecret = "coinsphere-dev-secret"
 
-// DatabaseConfig 数据库连接配置,driver 决定方言。
+// DatabaseConfig 是 PostgreSQL 连接与连接池配置。
 type DatabaseConfig struct {
-	// struct(结构体)= 一组字段打包;字段后反引号里的 `yaml:"driver"` 是 struct tag(标签),
-	// 告诉 YAML 库:配置文件里的 driver: 这一项对应本字段(见 GO入门笔记『框架:YAML』)。
-	// 字段首字母大写才能被别的包读写(见 GO入门笔记『可见性』),所以这里字段都是大写开头。
-	Driver   string `yaml:"driver"` // sqlite | mysql | postgres
-	Path     string `yaml:"path"`   // sqlite 文件路径
-	Host     string `yaml:"host"`
-	Port     int    `yaml:"port"`
-	User     string `yaml:"user"`
-	Password string `yaml:"password"`
-	Database string `yaml:"database"`
-	Schema   string `yaml:"schema"` // 仅 postgres
-	Params   string `yaml:"params"` // 追加到 DSN 的额外参数
+	DSN                    string `yaml:"dsn"`
+	MaxOpenConns           int    `yaml:"max_open_conns"`
+	MaxIdleConns           int    `yaml:"max_idle_conns"`
+	ConnMaxIdleTimeSeconds int    `yaml:"conn_max_idle_time_seconds"`
 }
 
 // ServerConfig HTTP 服务配置。
@@ -145,16 +136,19 @@ func Load(path string) (*AppConfig, error) {
 	if err := yaml.Unmarshal(merged, cfg); err != nil {
 		return nil, fmt.Errorf("decode config: %w", err)
 	}
-	// normalize 收尾修正。filepath.Dir(path) 取配置文件所在目录,用于把相对的 sqlite 路径补成绝对路径。
-	cfg.normalize(filepath.Dir(path))
+	cfg.normalize()
 	return cfg, nil
 }
 
 // defaultConfig 返回内置默认配置;配置文件与环境变量只需覆盖想改的项,其余保持这里的默认值。
 func defaultConfig() *AppConfig {
 	return &AppConfig{
-		Database: DatabaseConfig{Driver: "sqlite", Path: "data/coinsphere.db", Schema: "coinsphere"},
-		Server:   ServerConfig{Host: "0.0.0.0", Port: 6987},
+		Database: DatabaseConfig{
+			MaxOpenConns:           40,
+			MaxIdleConns:           10,
+			ConnMaxIdleTimeSeconds: 300,
+		},
+		Server: ServerConfig{Host: "0.0.0.0", Port: 6987},
 		Auth: AuthConfig{
 			SecretKey:             DefaultInsecureSecret,
 			AccessTokenTTLMinutes: 1440,
@@ -191,21 +185,20 @@ func defaultConfig() *AppConfig {
 
 // normalize 对读入的配置做规范化与兜底(补默认值、统一大小写、修正路径等)。
 // (c *AppConfig) 是"指针接收者":表示这是 AppConfig 的方法,方法内可直接修改 c 指向的配置对象。
-func (c *AppConfig) normalize(baseDir string) {
+func (c *AppConfig) normalize() {
 	if c.Server.PublicBaseURL == "" {
 		c.Server.PublicBaseURL = fmt.Sprintf("http://127.0.0.1:%d", c.Server.Port)
 	}
 	c.Server.PublicBaseURL = strings.TrimRight(c.Server.PublicBaseURL, "/")
-	if c.Database.Driver == "" {
-		c.Database.Driver = "sqlite"
+	c.Database.DSN = strings.TrimSpace(c.Database.DSN)
+	if c.Database.MaxOpenConns < 1 {
+		c.Database.MaxOpenConns = 40
 	}
-	c.Database.Driver = strings.ToLower(strings.TrimSpace(c.Database.Driver))
-	if c.Database.Driver == "postgresql" || c.Database.Driver == "pgsql" || c.Database.Driver == "psql" {
-		c.Database.Driver = "postgres"
+	if c.Database.MaxIdleConns < 1 {
+		c.Database.MaxIdleConns = 10
 	}
-	// sqlite 用相对路径时,以配置文件所在目录为基准拼成绝对路径,免得受"从哪个目录启动"影响。
-	if c.Database.Driver == "sqlite" && c.Database.Path != "" && !filepath.IsAbs(c.Database.Path) {
-		c.Database.Path = filepath.Join(baseDir, c.Database.Path)
+	if c.Database.ConnMaxIdleTimeSeconds < 1 {
+		c.Database.ConnMaxIdleTimeSeconds = 300
 	}
 	if len(c.Workflow.RetryBackoffSeconds) == 0 {
 		c.Workflow.RetryBackoffSeconds = []int{30, 120, 600}

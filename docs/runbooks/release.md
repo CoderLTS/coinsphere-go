@@ -2,9 +2,9 @@
 
 ## 当前边界
 
-当前生产 Compose 仍使用 SQLite，版本化 migration 已包含机制基线、`worker_tasks` 表和逻辑版本 `00003` 的 Outbox schema 契约，应用启动仍保留 GORM `AutoMigrate`。A1 Worker 运行时只接入开发 Compose 与 CI；Backend 内置 Outbox dispatcher 已使用原子租约、续租、失败退避和死信日志告警。生产流水线仍仅构建、扫描和部署 Backend/Web。A1-10 完成业务 schema 切换前，本流水线只用于现有管理平台，不得据此启用模拟盘或实盘交易能力。
+生产 Backend 通过主机 `runtime.env` 连接外部 PostgreSQL/TimescaleDB；镜像内的单一基线建立完整业务 schema，应用启动只读校验版本。生产流水线仍只构建、扫描和部署 Backend/Web，暂不部署 Python Worker，也不得据此启用模拟盘或实盘交易能力。
 
-A1-3 不修改 Release 工作流、部署脚本或生产拓扑，本 PR 也不触发发布或部署。后续用户手工发布固定 `main` 版本时，仍按既有流程先备份 SQLite，再执行镜像内 migration。
+数据库 migration 必须在独立 PR 中审查。用户手工发布固定 `main` 版本前，先由基础设施侧创建并验证 PostgreSQL 备份；部署脚本停止旧服务后执行目标镜像内 migration，再启动固定 digest 镜像。脚本不自动执行 Down 或恢复数据库。
 
 发布允许 Codex 和 GitHub Actions 连接生产主机，但不得接触真实交易所密钥或发起真实订单。生产发布必须由用户从 `main` 手工触发；PR、push 和定时任务不会使用生产 Runner。
 
@@ -17,6 +17,7 @@ A1-3 不修改 Release 工作流、部署脚本或生产拓扑，本 PR 也不�
 - DPanel Compose：`/home/infrastructure/dpanel/compose/coinsphere-go`。
 - Web 健康检查：生产主机 `http://127.0.0.1:8080/health`。
 - 生产运行配置：部署目录的 `runtime.env`，权限固定为 `0600`，不会进入仓库、日志或 Release。
+- 生产数据库：外部 TimescaleDB，由 `COINSPHERE_DATABASE__DSN` 连接；备份、恢复和保留策略由数据库基础设施负责。
 - Runner 必须提供 Python 3、GNU tar 和 gzip；最终产物扫描只使用 Python 标准库读取 ZIP、tar.gz 和 JSON，TAR 仅解压到系统临时文件且不会写入工作区。
 - 出站代理只配置在 Runner 服务环境中；Action 下载和其他出站工具仍会继承该环境。`build.sh` 统一大小写变量，并仅通过 BuildKit 预定义构建参数把代理传入构建步骤，镜像和运行容器不保存代理配置。
 - `${DOCKER_CONFIG:-$HOME/.docker}/config.json` 禁止包含顶层 `proxies`。发布前置检查发现该配置时会在调用 Docker 前终止，避免代理自动注入生产容器。
@@ -32,7 +33,7 @@ A1-3 不修改 Release 工作流、部署脚本或生产拓扑，本 PR 也不�
 4. 专用 Runner 构建三个发布包：Windows x86、Linux amd64 和 Docker Compose；后端和前端镜像分别推送版本标签与 `sha-<commit>` 标签到主机本地私有 Registry，以取得 RepoDigest，禁止使用 `latest`。
 5. 流水线从 Manifest 中的不可变 RepoDigest 生成双镜像 SPDX JSON SBOM，完成镜像漏洞扫描，并在 `dist` 内一次性生成覆盖三个归档、Manifest 和两份 SBOM 的 `SHA256SUMS`。
 6. 最终产物安全与完整性扫描通过后，才把候选产物上传为 Actions Artifact；扫描失败时禁止上传 Artifact、部署和创建 GitHub Release。
-7. 自动部署从已扫描 Manifest 读取不可变 RepoDigest，停止旧服务、备份 SQLite 数据卷、执行 migration、启动固定 digest 镜像并检查健康状态。
+7. 自动部署从已扫描 Manifest 读取不可变 RepoDigest，停止旧服务、执行 migration、启动固定 digest 镜像并检查健康状态；数据库备份必须在触发工作流前完成并验证。
 8. 部署成功后才创建 GitHub Release；只有扫描通过但部署失败的候选产物会在 Actions Artifact 保留 14 天，且不会创建版本标签。
 9. Release 创建后，Registry 对 backend/web 分别保留最近 10 个版本和当前部署版本，并删除对应的本地旧镜像标签。
 10. 无论发布成功或失败，最终步骤都会删除 `dist`、清理超过 24 小时的 Runner 临时文件、清理 CoinSphere 专用 Builder 中超过 7 天的缓存并停止 Builder 容器。
@@ -87,11 +88,10 @@ COINSPHERE_REGISTRY=127.0.0.1:5000 \
 migration、Compose 启动或 `/health` 任一步失败时，`deploy.sh` 会：
 
 1. 停止失败版本。
-2. 删除失败版本使用的 SQLite 数据卷，并从部署前 tar 备份恢复；首次部署前没有数据卷时直接清理新卷。
-3. 恢复上一份 Compose 和镜像版本文件。
-4. 拉取并重新启动上一固定版本。
+2. 恢复上一份 Compose 和镜像版本文件。
+3. 拉取并重新启动上一固定版本。
 
-脚本保留最近 10 份 SQLite 备份。它不会执行 migration Down，也不会修改 `schema_migrations` 伪造回滚。
+脚本保留当前 PostgreSQL schema，不执行 migration Down、不覆盖数据库，也不修改 `schema_migrations`。如果上一镜像不兼容新 schema，自动代码回滚可能失败，此时保持服务停止并按本次 migration 的数据库恢复方案处理。
 
 关机期间已认领的工作流执行会在可收尾时进入既有 `retry_waiting` 或 `failed`；若进程在 40 秒宽限后仍被强制停止，遗留的 `running` 记录继续由既有 stale recovery 在下一次启动后处理，不得手工改写状态。
 
@@ -102,7 +102,8 @@ migration、Compose 启动或 `/health` 任一步失败时，`deploy.sh` 会：
 ```bash
 cd /home/infrastructure/dpanel/compose/coinsphere-go
 docker compose --env-file .env -f compose.yaml ps
-ls -lt backups/
+docker compose --env-file .env -f compose.yaml run --rm backend \
+  /app/coinsphere-migrate -config /app/config.yml -direction version
 ```
 
 恢复到 Registry 中仍存在的上一版本，可在部署目录执行：
@@ -115,7 +116,7 @@ Release workflow 自动部署时调用 `./deploy.sh vX.Y.Z release-manifest.json
 
 管理员初始密码由服务器首次准备时随机生成。需要首次登录时，只在 SSH 终端读取 `runtime.env`，登录并改密后从该文件移除 `COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD`；不要把值发送到聊天、Issue、PR 或 Actions 日志。
 
-任何回滚都要记录失败版本、时间线、备份文件、健康检查和恢复结果。交易能力落地后，发布前还必须先停止新增敞口并按交易应急手册处理活动订单。
+任何回滚都要记录失败版本、时间线、数据库备份标识、migration 版本、健康检查和恢复结果。交易能力落地后，发布前还必须先停止新增敞口并按交易应急手册处理活动订单。
 
 ## 本门禁回滚
 
@@ -125,10 +126,10 @@ Release workflow 自动部署时调用 `./deploy.sh vX.Y.Z release-manifest.json
 
 A1-1 不修改 schema、业务数据、API 契约或 Release 工作流。需要回滚时整体回退本 PR，恢复上一固定镜像与 Compose 文件；无需执行 migration Down。已进入 `retry_waiting` 或 `failed` 的执行继续按原有运行时语义处理，禁止为回滚手工改写执行状态。Python Worker、Outbox、WebSocket 正常态协议、Auth 和迁移切换不属于本次回滚范围。
 
-## A1-2 Worker schema 与运行时回滚
+## A1 PostgreSQL 基线回滚
 
-生产 Release 当前不部署 Worker，因此回滚 Backend/Web 时不需要操作 `worker_tasks`。开发或后续环境回滚 Worker 运行时时，先停止全部消费者，再恢复上一兼容代码并保留队列、任务和 migration 版本；不得手工改写任务状态。只有队列确定为空且目标是撤销 schema 时才可执行 `00002` Down；非空队列会 fail-closed，禁止删除任务或篡改 migration 版本。自动发布回滚继续通过部署前 SQLite 备份恢复现有管理平台数据，不额外执行 Down。
+开发环境切换时直接删除未投产旧数据并从空 TimescaleDB 重建。代码回滚默认保留 `00001` schema、Outbox、Worker 任务和 migration 版本；不得清空表或修改版本记录来适配旧代码。
 
-## A1-3 Outbox schema 回滚
+只有目标 schema 从未产生任何业务数据，且 Backend、Worker 和其他写入者全部停止时，才允许使用当前 migration 二进制执行一次 Down。Down 会先锁住全部业务表，再检查所有表为空；任一表有数据都会在同一事务内 fail-closed。其他情况必须恢复经验证的 PostgreSQL 备份。
 
-代码回滚时恢复上一兼容 Backend，并保留 `domain_event_outbox`、既有事件和 migration 版本；旧 producer 不写新增列，可继续依赖数据库默认值。禁止为代码回滚执行 `00003` Down。只有停止全部 Outbox 写入且确认表完全为空时，才可显式回滚 schema；任何事件都会使 Down fail-closed。自动发布失败仍通过部署前 SQLite 备份恢复，不额外执行 Down，也不得清空事件或篡改 `schema_migrations`。
+旧 Compose 的 SQLite 卷不会被新部署挂载、修改或自动删除。需要回退到旧镜像时可以继续使用该卷；确认不再回退后由管理员单独清理。

@@ -136,7 +136,7 @@ func (a *App) StartRuntime(ctx context.Context) {
 // 所以我们的 mux(*http.ServeMux)天然就是一个 http.Handler,能直接交给 http.Server 用。
 ```
 本项目你会遇到的接口:
-- `gorm.Dialector` —— "数据库方言"接口。`sqlite.Open(...)`/`postgres.Open(...)` 各自返回一个满足该接口的对象,`db.go` 里就靠它一套代码支持三种数据库。
+- `gorm.Dialector` —— "数据库方言"接口。本项目的 `db.go` 固定使用 `postgres.Open(...)`，避免为非目标数据库维护不同事务和约束语义。
 - `http.Handler` —— HTTP 处理器,见『框架:net/http』。
 
 ---
@@ -269,7 +269,7 @@ db.Save(&u)                             // UPDATE(整行)
 cd backend
 go mod download          # 下载 go.mod 里列的依赖
 go build -o server.exe . # 编译成一个 exe
-.\server.exe             # 运行(默认读 ./config.yml,SQLite,监听 :6987)
+.\server.exe             # 运行（默认读 ./config.yml，连接 PostgreSQL，监听 :6987）
 ```
 改完代码重新 `go build` 即可。`go run .` 可以"编译+运行"一步到位(开发时方便)。
 
