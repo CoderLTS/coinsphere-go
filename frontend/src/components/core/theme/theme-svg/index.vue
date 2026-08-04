@@ -8,6 +8,7 @@
 
 <script setup lang="ts">
   import { ref, computed, watchEffect } from 'vue'
+  import { sanitizeSvg } from '@/utils/security/sanitize'
 
   interface Props {
     size?: string | number
@@ -71,7 +72,7 @@
       }
 
       const content = await response.text()
-      svgContent.value = applyThemeToSvg(content)
+      svgContent.value = sanitizeSvg(applyThemeToSvg(content))
     } catch (error) {
       console.error('Failed to load SVG:', error)
       svgContent.value = ''

@@ -14,6 +14,7 @@
   import MarkdownIt from 'markdown-it'
   import hljs from 'highlight.js'
   import mermaid from 'mermaid'
+  import { sanitizeRichHtml, sanitizeSvg } from '@/utils/security/sanitize'
   import '@styles/core/md.scss'
 
   defineOptions({ name: 'AssistantRichText' })
@@ -152,7 +153,8 @@
 
   const getMermaidConfig = () => ({
     startOnLoad: false,
-    securityLevel: 'loose' as const,
+    securityLevel: 'strict' as const,
+    htmlLabels: false,
     theme: 'base' as const,
     suppressErrorRendering: true,
     fontFamily: 'inherit',
@@ -273,7 +275,7 @@
     }
 
     return {
-      html: markdown.render(maskIncompleteMermaidFence(source || '')),
+      html: sanitizeRichHtml(markdown.render(maskIncompleteMermaidFence(source || ''))),
       mermaidBlocks
     }
   }
@@ -327,8 +329,7 @@
           `assistant-mermaid-${componentUid}-${currentSequence}-${blockIndex}`,
           source
         )
-        successPanel.canvas.innerHTML = rendered.svg
-        rendered.bindFunctions?.(successPanel.canvas)
+        successPanel.canvas.innerHTML = sanitizeSvg(rendered.svg)
 
         if (currentSequence !== renderSequence) {
           return
