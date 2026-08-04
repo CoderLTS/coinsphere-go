@@ -4,7 +4,7 @@
 
 CoinSphere 只支持 PostgreSQL/TimescaleDB。DDL 只由独立 Migrator 身份和 migration 命令执行；服务启动只读校验版本，不执行 `AutoMigrate`。普通角色与 Worker 首期共用受限应用身份，Executor 使用独立身份且只有它可读取交易凭据。
 
-`00001_a1_postgres_baseline.sql` 建立当前业务基线，`00002_a1_observability.sql` 增加审计表，当前 `00003_a2_market_contract.sql` 建立三张普通行情表。A2.1 实施 Timescale 生命周期时仍可在冻结前重写 `00003` 并重建开发/CI 空库；本手册不承诺升级任何旧 SQLite、MySQL 或未投产 PostgreSQL schema。
+`00001_a1_postgres_baseline.sql` 建立当前业务基线，`00002_a1_observability.sql` 增加审计表，`00003_a2_market_contract.sql` 建立两张普通行情表和唯一的 `market_candles` Timescale hypertable，并配置 7 天 chunk、30 天后 columnstore 压缩和默认 2 年 retention。该文件仍处于 A2-A5 冻结前整理窗口，重写后必须重建开发/CI 空库；本手册不承诺升级任何旧 SQLite、MySQL 或未投产 PostgreSQL schema。
 
 ## Migration 冻结点
 
@@ -65,13 +65,13 @@ docker compose run --rm migrate /app/coinsphere-migrate -config /app/config.yml 
 ```bash
 cd backend
 COINSPHERE_TEST_POSTGRES_DSN='postgres://coinsphere:test-only@127.0.0.1:5432/coinsphere_test?sslmode=disable' \
-  go test -count=1 ./internal/db ./internal/migration ./internal/service ./cmd/migrate
+  go test -count=1 ./internal/db ./internal/marketdata/... ./internal/migration ./internal/service ./cmd/migrate
 ```
 
 测试账户必须能创建和删除随机隔离 schema。CI 使用固定 TimescaleDB 镜像并覆盖：
 
 - 空 schema 应用全部内置 migration、重复 Up、空库 Down 和重新 Up。
-- `00003` 三张行情表的空表 Down/重放；任一表非空时必须原子保留三张表、数据和版本记录。
+- `00003` 的 Timescale extension、hypertable、chunk、columnstore/retention policy、空表 Down/重放；任一行情表非空时必须原子保留三张表、数据和版本记录。
 - 审计字段约束、外键、索引以及非空审计表的 Down 保护。
 - 服务启动对未迁移、落后或领先版本 fail-fast，且不执行 DDL。
 - 基线包含全部当前表、Worker 七态约束、Outbox 五态/租约/终态约束及必要索引。

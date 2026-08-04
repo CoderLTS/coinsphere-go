@@ -1,4 +1,6 @@
 -- +goose Up
+CREATE EXTENSION IF NOT EXISTS timescaledb WITH SCHEMA public;
+
 CREATE TABLE market_instruments (
     id UUID NOT NULL,
     venue VARCHAR(16) NOT NULL,
@@ -99,6 +101,28 @@ CREATE TABLE market_candles (
             low_price <= LEAST(open_price, close_price)
             AND high_price >= GREATEST(open_price, close_price)
         )
+) WITH (
+    tsdb.hypertable = true,
+    tsdb.columnstore = false,
+    tsdb.partition_column = 'open_time',
+    tsdb.chunk_interval = '7 days',
+    tsdb.create_default_indexes = false
+);
+
+ALTER TABLE market_candles SET (
+    timescaledb.enable_columnstore,
+    timescaledb.orderby = 'open_time DESC',
+    timescaledb.segmentby = 'venue,instrument_id,interval_code'
+);
+
+CALL public.add_columnstore_policy(
+    'market_candles',
+    after => INTERVAL '30 days'
+);
+
+SELECT public.add_retention_policy(
+    'market_candles',
+    drop_after => INTERVAL '2 years'
 );
 
 CREATE TABLE market_ticker_snapshots (
