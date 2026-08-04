@@ -322,6 +322,7 @@ func TestA2MarketContractSchemaAndUpserts(t *testing.T) {
 	}
 
 	assertA2Columns(t, database)
+	assertA2TimescaleLifecycle(t, database)
 	const instrumentID = "019c2f6d-7c00-7000-8000-000000000001"
 	insertA2Instrument(t, database, instrumentID)
 
@@ -613,6 +614,76 @@ WHERE table_schema = current_schema()
 	}
 	if len(expected) != 0 {
 		t.Fatalf("missing A2 columns: %v", expected)
+	}
+}
+
+// assertA2TimescaleLifecycle 固定 hypertable 与两个独立后台策略，避免物理生命周期静默漂移。
+func assertA2TimescaleLifecycle(t *testing.T, database *sql.DB) {
+	t.Helper()
+	var extensionReady, hypertableReady, dimensionReady bool
+	if err := database.QueryRow(`
+SELECT
+    EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb'),
+    EXISTS (
+        SELECT 1
+        FROM timescaledb_information.hypertables
+        WHERE hypertable_schema = current_schema()
+          AND hypertable_name = 'market_candles'
+          AND num_dimensions = 1
+          AND compression_enabled
+          AND primary_dimension = 'open_time'
+    ),
+    EXISTS (
+        SELECT 1
+        FROM timescaledb_information.dimensions
+        WHERE hypertable_schema = current_schema()
+          AND hypertable_name = 'market_candles'
+          AND dimension_number = 1
+          AND column_name = 'open_time'
+          AND time_interval = INTERVAL '7 days'
+    )
+`).Scan(&extensionReady, &hypertableReady, &dimensionReady); err != nil {
+		t.Fatalf("inspect A2 Timescale lifecycle: %v", err)
+	}
+	if !extensionReady || !hypertableReady || !dimensionReady {
+		t.Fatalf("A2 Timescale lifecycle = extension:%t hypertable:%t dimension:%t", extensionReady, hypertableReady, dimensionReady)
+	}
+
+	var columnstorePolicy, retentionPolicy, policyCountReady bool
+	if err := database.QueryRow(`
+SELECT
+    COUNT(*) FILTER (
+        WHERE proc_name = 'policy_compression'
+          AND scheduled
+          AND (config ->> 'compress_after')::interval = INTERVAL '30 days'
+    ) = 1,
+    COUNT(*) FILTER (
+        WHERE proc_name = 'policy_retention'
+          AND scheduled
+          AND (config ->> 'drop_after')::interval = INTERVAL '2 years'
+    ) = 1,
+    COUNT(*) = 2
+FROM timescaledb_information.jobs
+WHERE hypertable_schema = current_schema()
+  AND hypertable_name = 'market_candles'
+`).Scan(&columnstorePolicy, &retentionPolicy, &policyCountReady); err != nil {
+		t.Fatalf("inspect A2 Timescale policies: %v", err)
+	}
+	if !columnstorePolicy || !retentionPolicy || !policyCountReady {
+		t.Fatalf("A2 Timescale policies = columnstore:%t retention:%t count:%t", columnstorePolicy, retentionPolicy, policyCountReady)
+	}
+
+	var indexCount int
+	var primaryIndexOnly bool
+	if err := database.QueryRow(`
+SELECT COUNT(*), BOOL_AND(indexname = 'market_candles_pkey')
+FROM pg_indexes
+WHERE schemaname = current_schema() AND tablename = 'market_candles'
+`).Scan(&indexCount, &primaryIndexOnly); err != nil {
+		t.Fatalf("inspect A2 candle indexes: %v", err)
+	}
+	if indexCount != 1 || !primaryIndexOnly {
+		t.Fatalf("A2 candle indexes = count:%d primary-only:%t", indexCount, primaryIndexOnly)
 	}
 }
 
