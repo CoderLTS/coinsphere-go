@@ -87,6 +87,12 @@ Outbox 认领必须在单条数据库语句中完成候选选择、批量状态�
 
 工作流成功、最终失败和 stale 耗尽时，execution 终态、attempt、两条标准事件及对应入口状态必须在同一短事务提交；任一事件插入失败时整体回滚。显式 `event.emit` 节点的权威业务动作就是单条 Outbox 插入，不把整张图或外部副作用包入长事务。未告警死信通过原子设置 `alerted_at` 由一个实例领取，告警日志只允许固定 Outbox ID、尝试次数和分类，不得包含 payload、metadata、Owner、token 或异常正文。该标记提供 at-most-once 日志去重，不等同于可靠外部告警。
 
+## 浏览器内容安全
+
+- 助手 Markdown 保持 `html=false`，渲染结果在写入 DOM 前由固定版本的 DOMPurify 按 Markdown 标签白名单净化；第三方图片源被移除。
+- Mermaid 使用 `securityLevel=strict` 且禁用 HTML label 和交互绑定，生成的 SVG 与其他动态 SVG 都必须再次净化；脚本、事件属性、外部资源引用和可执行 CSS 引用不得进入 DOM。
+- 生产 Nginx 的 CSP 仅允许同源脚本，禁止 object、跨源 frame 和页面被嵌入；WebSocket 访问日志只记录 URI，不记录查询串。
+
 ## 交易命令
 
 所有订单意图必须携带稳定 `intentId` 和确定性 `clientOrderId`。订单状态未知时先对账，禁止通过无条件重试创建第二笔订单。
