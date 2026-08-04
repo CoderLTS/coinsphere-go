@@ -352,11 +352,27 @@ func TestA2MarketContractSchemaAndUpserts(t *testing.T) {
 		{"ticker non-finite occurred at", `INSERT INTO market_ticker_snapshots (venue, instrument_id, occurred_at, last_price, best_bid_price, best_ask_price) VALUES ('binance', '019c2f6d-7c00-7000-8000-000000000001', TIMESTAMPTZ 'infinity', 100, 99, 101)`},
 		{"ticker non-positive price", `INSERT INTO market_ticker_snapshots (venue, instrument_id, occurred_at, last_price, best_bid_price, best_ask_price) VALUES ('binance', '019c2f6d-7c00-7000-8000-000000000001', TIMESTAMPTZ '2026-08-01 00:03:30+00', 0, 99, 101)`},
 		{"ticker spread", `INSERT INTO market_ticker_snapshots (venue, instrument_id, occurred_at, last_price, best_bid_price, best_ask_price) VALUES ('binance', '019c2f6d-7c00-7000-8000-000000000001', TIMESTAMPTZ '2026-08-01 00:03:30+00', 100, 101, 99)`},
+		{"flow lease blank key", `INSERT INTO market_flow_leases (flow_key, owner_id, fencing_token, lease_expires_at, last_heartbeat_at, created_at, updated_at) VALUES (' ', 'collector-a', 1, CURRENT_TIMESTAMP + INTERVAL '1 minute', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`},
+		{"flow lease blank owner", `INSERT INTO market_flow_leases (flow_key, owner_id, fencing_token, lease_expires_at, last_heartbeat_at, created_at, updated_at) VALUES ('binance:spot:BTCUSDT:ticker', ' ', 1, CURRENT_TIMESTAMP + INTERVAL '1 minute', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`},
+		{"flow lease non-positive token", `INSERT INTO market_flow_leases (flow_key, owner_id, fencing_token, lease_expires_at, last_heartbeat_at, created_at, updated_at) VALUES ('binance:spot:BTCUSDT:ticker', 'collector-a', 0, CURRENT_TIMESTAMP + INTERVAL '1 minute', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`},
+		{"flow lease expired before heartbeat", `INSERT INTO market_flow_leases (flow_key, owner_id, fencing_token, lease_expires_at, last_heartbeat_at, created_at, updated_at) VALUES ('binance:spot:BTCUSDT:ticker', 'collector-a', 1, CURRENT_TIMESTAMP - INTERVAL '1 second', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`},
+		{"flow lease non-finite time", `INSERT INTO market_flow_leases (flow_key, owner_id, fencing_token, lease_expires_at, last_heartbeat_at, created_at, updated_at) VALUES ('binance:spot:BTCUSDT:ticker', 'collector-a', 1, TIMESTAMPTZ 'infinity', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`},
 	}
 	for _, test := range invalidRows {
 		if _, err := database.Exec(test.sql); err == nil {
 			t.Fatalf("A2 schema accepted %s", test.name)
 		}
+	}
+	if _, err := database.Exec(`
+INSERT INTO market_flow_leases (
+    flow_key, owner_id, fencing_token, lease_expires_at,
+    last_heartbeat_at, created_at, updated_at
+) VALUES (
+    'binance:spot:BTCUSDT:ticker', 'collector-a', 1,
+    CURRENT_TIMESTAMP + INTERVAL '1 minute', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+)
+`); err != nil {
+		t.Fatalf("insert valid flow lease: %v", err)
 	}
 
 	const replacementID = "019c2f6d-7c00-7000-8000-000000000007"
@@ -459,7 +475,7 @@ WHERE venue = 'binance' AND instrument_id = $1
 	assertRowCount(t, database, "SELECT COUNT(*) FROM market_ticker_snapshots WHERE venue = 'binance' AND instrument_id = '019c2f6d-7c00-7000-8000-000000000001'", 1)
 }
 
-// A2 Down 在单事务中先锁定三表再计数，失败时必须保持 schema 与版本。
+// A2 Down 在单事务中锁定四表但只统计三张事实表，失败时必须保持 schema 与版本。
 func TestA2MarketContractDownRejectsData(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -500,12 +516,54 @@ func TestA2MarketContractDownRejectsData(t *testing.T) {
 	}
 }
 
+func TestA2MarketContractDownDropsCoordinationLeases(t *testing.T) {
+	database := openPostgresSchema(t)
+	runner, err := New(database)
+	if err != nil {
+		t.Fatalf("create migration runner: %v", err)
+	}
+	if _, err := runner.Up(context.Background(), 0); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+	if _, err := database.Exec(`
+INSERT INTO market_flow_leases (
+    flow_key, owner_id, fencing_token, lease_expires_at,
+    last_heartbeat_at, created_at, updated_at
+) VALUES (
+    'binance:spot:BTCUSDT:ticker', 'collector-a', 1,
+    CURRENT_TIMESTAMP + INTERVAL '1 minute', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+)
+`); err != nil {
+		t.Fatalf("insert coordination lease: %v", err)
+	}
+
+	if _, err := runner.Down(context.Background(), 1); err != nil {
+		t.Fatalf("roll back A2 with only coordination state: %v", err)
+	}
+	current, latest, versionErr := runner.Versions(context.Background())
+	if versionErr != nil || current != 2 || latest != 3 {
+		t.Fatalf("A2 rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
+	}
+	var tableCount int
+	if err := database.QueryRow(`
+SELECT COUNT(*)
+FROM information_schema.tables
+WHERE table_schema = current_schema()
+  AND table_name IN ('market_instruments', 'market_candles', 'market_ticker_snapshots', 'market_flow_leases')
+`).Scan(&tableCount); err != nil {
+		t.Fatalf("inspect rolled-back A2 tables: %v", err)
+	}
+	if tableCount != 0 {
+		t.Fatalf("rolled-back A2 table count = %d, want 0", tableCount)
+	}
+}
+
 func assertCurrentTables(t *testing.T, database *sql.DB) {
 	t.Helper()
 	want := []string{
 		"ai_model_agent_bindings", "ai_model_configs", "assistant_agents", "assistant_messages", "audit_records",
 		"assistant_sessions", "domain_event_outbox", "i18n_texts", "menu_buttons", "menus",
-		"market_candles", "market_instruments", "market_ticker_snapshots",
+		"market_candles", "market_flow_leases", "market_instruments", "market_ticker_snapshots",
 		"news_items", "notification_channels", "notification_deliveries", "refresh_tokens", "role_menu_buttons",
 		"role_menus", "roles", "schema_migrations", "task_definition_configs", "user_roles", "users",
 		"worker_tasks", "workflow_definitions", "workflow_execution_attempts", "workflow_execution_nodes",
@@ -573,6 +631,13 @@ func assertA2Columns(t *testing.T, database *sql.DB) {
 		"market_ticker_snapshots.last_price":     {dataType: "numeric", precision: 38, scale: 18},
 		"market_ticker_snapshots.best_bid_price": {dataType: "numeric", precision: 38, scale: 18},
 		"market_ticker_snapshots.best_ask_price": {dataType: "numeric", precision: 38, scale: 18},
+		"market_flow_leases.flow_key":            {dataType: "character varying", length: 200},
+		"market_flow_leases.owner_id":            {dataType: "character varying", length: 120},
+		"market_flow_leases.fencing_token":       {dataType: "bigint"},
+		"market_flow_leases.lease_expires_at":    {dataType: "timestamp with time zone"},
+		"market_flow_leases.last_heartbeat_at":   {dataType: "timestamp with time zone"},
+		"market_flow_leases.created_at":          {dataType: "timestamp with time zone"},
+		"market_flow_leases.updated_at":          {dataType: "timestamp with time zone"},
 	}
 	rows, err := database.Query(`
 SELECT
@@ -586,7 +651,7 @@ SELECT
     column_default
 FROM information_schema.columns
 WHERE table_schema = current_schema()
-  AND table_name IN ('market_instruments', 'market_candles', 'market_ticker_snapshots')
+  AND table_name IN ('market_instruments', 'market_candles', 'market_ticker_snapshots', 'market_flow_leases')
 `)
 	if err != nil {
 		t.Fatalf("list A2 columns: %v", err)
@@ -705,7 +770,7 @@ SELECT table_name
 FROM information_schema.tables
 WHERE table_schema = current_schema()
   AND table_type = 'BASE TABLE'
-  AND table_name IN ('market_instruments', 'market_candles', 'market_ticker_snapshots')
+  AND table_name IN ('market_instruments', 'market_candles', 'market_ticker_snapshots', 'market_flow_leases')
 ORDER BY table_name
 `)
 	if err != nil {
@@ -723,7 +788,7 @@ ORDER BY table_name
 	if err := rows.Err(); err != nil {
 		t.Fatalf("iterate A2 tables: %v", err)
 	}
-	want := []string{"market_candles", "market_instruments", "market_ticker_snapshots"}
+	want := []string{"market_candles", "market_flow_leases", "market_instruments", "market_ticker_snapshots"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("A2 tables = %v, want %v", got, want)
 	}
