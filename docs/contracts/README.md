@@ -73,6 +73,12 @@ WebSocket 事件统一使用以下信封：
 
 浏览器握手必须携带唯一且合法的 `Origin`，其有效 scheme、主机和端口必须与请求完全同源；缺失、畸形、跨 scheme/主机/端口均拒绝。当前 A1 通知 WebSocket 通过 URL 查询参数传递 Access Token，代理、应用和测试日志不得记录查询串、令牌或事件 payload。A1 安全波次将改为固定 `Sec-WebSocket-Protocol` 鉴权并拒绝查询串 Token；开发和生产反向代理始终必须保留原始 Host（含非默认端口）及合法的有效 scheme。
 
+## 工作流 HTTP 外呼
+
+- `http.request` 只允许访问 `workflow.http_allowed_hosts` 中配置的精确域名；配置项不接受通配符、端口或 IP，空列表表示禁止全部外呼。
+- URL 只允许绝对 `http`/`https` 地址且不得包含 userinfo。首次校验、每次重定向和实际拨号都会解析域名；任一解析结果不是公网地址时整次请求被永久拒绝。
+- 拨号只使用当次重新解析并校验过的 IP，不使用环境代理或连接复用。`Authorization`、`Cookie`、`Proxy-Authorization` 及名称含 key/token/secret/credential 的请求头不得发出。
+
 ## 异步任务
 
 任务状态固定为 `queued`、`claimed`、`running`、`cancelRequested`、`succeeded`、`failed`、`canceled`。正常路径为 `queued -> claimed -> running -> succeeded/failed`；取消可从活跃状态进入 `cancelRequested -> canceled`。每次认领递增 `attempt_count` 并生成新的唯一 `lease_id`，启动、心跳和终态写入必须同时匹配任务 ID、租约 ID、合法前态及未过期的数据库时间。
