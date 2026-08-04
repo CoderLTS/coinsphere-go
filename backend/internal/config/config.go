@@ -51,23 +51,24 @@ type AuthConfig struct {
 
 // WorkflowConfig 工作流运行时配置。
 type WorkflowConfig struct {
-	ExecutorConcurrency              int   `yaml:"executor_concurrency"`
-	HeartbeatIntervalSeconds         int   `yaml:"heartbeat_interval_seconds"`
-	ExecutionStaleTimeoutSeconds     int   `yaml:"execution_stale_timeout_seconds"`
-	PollIntervalMs                   int   `yaml:"poll_interval_ms"`
-	OutboxPollIntervalMs             int   `yaml:"outbox_poll_interval_ms"`
-	OutboxBatchSize                  int   `yaml:"outbox_batch_size"`
-	OutboxLeaseSeconds               int   `yaml:"outbox_lease_seconds"`
-	ExecutionRetentionDays           int   `yaml:"execution_retention_days"`
-	RetentionDeleteBatchSize         int   `yaml:"retention_delete_batch_size"`
-	MaxInputSnapshotBytes            int   `yaml:"max_input_snapshot_bytes"`
-	MaxOutputSnapshotBytes           int   `yaml:"max_output_snapshot_bytes"`
-	ScheduleReconcileIntervalSeconds int   `yaml:"schedule_reconcile_interval_seconds"`
-	StaleRecoveryIntervalSeconds     int   `yaml:"stale_recovery_interval_seconds"`
-	BacklogLimitPerKey               int   `yaml:"backlog_limit_per_key"`
-	SemaphoreLimitPerKey             int   `yaml:"semaphore_limit_per_key"`
-	MaxAttempts                      int   `yaml:"max_attempts"`
-	RetryBackoffSeconds              []int `yaml:"retry_backoff_seconds"`
+	HTTPAllowedHosts                 []string `yaml:"http_allowed_hosts"`
+	ExecutorConcurrency              int      `yaml:"executor_concurrency"`
+	HeartbeatIntervalSeconds         int      `yaml:"heartbeat_interval_seconds"`
+	ExecutionStaleTimeoutSeconds     int      `yaml:"execution_stale_timeout_seconds"`
+	PollIntervalMs                   int      `yaml:"poll_interval_ms"`
+	OutboxPollIntervalMs             int      `yaml:"outbox_poll_interval_ms"`
+	OutboxBatchSize                  int      `yaml:"outbox_batch_size"`
+	OutboxLeaseSeconds               int      `yaml:"outbox_lease_seconds"`
+	ExecutionRetentionDays           int      `yaml:"execution_retention_days"`
+	RetentionDeleteBatchSize         int      `yaml:"retention_delete_batch_size"`
+	MaxInputSnapshotBytes            int      `yaml:"max_input_snapshot_bytes"`
+	MaxOutputSnapshotBytes           int      `yaml:"max_output_snapshot_bytes"`
+	ScheduleReconcileIntervalSeconds int      `yaml:"schedule_reconcile_interval_seconds"`
+	StaleRecoveryIntervalSeconds     int      `yaml:"stale_recovery_interval_seconds"`
+	BacklogLimitPerKey               int      `yaml:"backlog_limit_per_key"`
+	SemaphoreLimitPerKey             int      `yaml:"semaphore_limit_per_key"`
+	MaxAttempts                      int      `yaml:"max_attempts"`
+	RetryBackoffSeconds              []int    `yaml:"retry_backoff_seconds"`
 	// GraphNodeConcurrency 单张(子)图内同时执行的节点数上限,<=0 时 normalize 补成 8。
 	GraphNodeConcurrency int `yaml:"graph_node_concurrency"`
 	// DisableNodeInputSnapshot 关闭"每进一个节点就把整张共享状态序列化落库"。

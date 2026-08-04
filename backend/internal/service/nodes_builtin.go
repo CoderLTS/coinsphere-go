@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -320,8 +321,15 @@ func httpRequestExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 	for key, value := range headers {
 		request.Header.Set(key, asString(value))
 	}
-	response, err := http.DefaultClient.Do(request)
+	client, err := newSafeHTTPClient(ctx.App.Cfg.Workflow.HTTPAllowedHosts)
 	if err != nil {
+		return nil, permanentErr(err)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		if errors.Is(err, errUnsafeHTTPRequest) {
+			return nil, permanentErr(err)
+		}
 		// 连接失败 / 超时 / 被取消都属于基础设施问题,标成可重试。
 		return nil, retryableErr(err)
 	}
