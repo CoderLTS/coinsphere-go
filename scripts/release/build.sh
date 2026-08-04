@@ -129,7 +129,7 @@ install -m 0644 "$ROOT_DIR/deploy/production/runtime.env.example" "$work_dir/pac
 install -m 0644 "$ROOT_DIR/deploy/production/README.md" "$work_dir/packages/$docker_name/README.md"
 
 (cd "$work_dir/packages" && zip -X -qr "$OUTPUT_DIR/$windows_name.zip" "$windows_name")
-tar_options=(--sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner --format=gnu)
+tar_options=(--blocking-factor=20 --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner --format=gnu)
 tar "${tar_options[@]}" -C "$work_dir/packages" -cf - "$linux_name" |
   gzip -n >"$OUTPUT_DIR/$linux_name.tar.gz"
 tar "${tar_options[@]}" -C "$work_dir/packages" -cf - "$docker_name" |
