@@ -3,6 +3,7 @@
 Thumbs.db
 .idea/
 .vscode/
+.codegraph/
 
 # Local secrets and machine-specific environment overrides
 .env

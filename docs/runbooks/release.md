@@ -4,7 +4,7 @@
 
 生产 Backend 通过主机 `runtime.env` 连接外部 PostgreSQL/TimescaleDB；镜像内的初始基线与后续版本化 migration 建立当前业务 schema，应用启动只读校验版本。生产流水线仍只构建、扫描和部署 Backend/Web，暂不部署 Python Worker，也不得据此启用模拟盘或实盘交易能力。
 
-数据库 migration 必须在独立 PR 中审查。用户手工发布固定 `main` 版本前，先由基础设施侧创建并验证 PostgreSQL 备份；部署脚本停止旧服务后执行目标镜像内 migration，再启动固定 digest 镜像。脚本不自动执行 Down 或恢复数据库。
+数据库 migration 默认随所属纵向能力审查；共享基线、破坏性或跨领域 schema、凭据、风控和订单状态机使用独立 PR。用户手工发布固定 `main` 版本前，先由基础设施侧创建并验证 PostgreSQL 备份；部署脚本停止旧服务后执行目标镜像内 migration，再启动固定 digest 镜像。脚本不自动执行 Down 或恢复数据库。
 
 发布允许 Codex 和 GitHub Actions 连接生产主机，但不得接触真实交易所密钥或发起真实订单。生产发布必须由用户从 `main` 手工触发；PR、push 和定时任务不会使用生产 Runner。
 
@@ -24,6 +24,13 @@
 - Runner 的 `NO_PROXY`/`no_proxy` 必须至少包含 `127.0.0.1`、`localhost` 和本机 Registry 地址，确保推送、部署及健康检查不经过出站代理。
 
 仓库当前为 GitHub 私有仓库，现有套餐不支持 Branch Protection 或 Environment required reviewers。`production` Environment 已用自定义部署分支策略限制为 `main`，工作流还会校验最新 `origin/main`；当前人工门禁由 `workflow_dispatch` 和用户不直接推送 `main` 的流程约束保证。如需 GitHub 强制 PR 审查或“触发后再审批”，必须升级支持私有仓库保护规则的套餐。
+
+当前发布流可用于 A2-A6 研究与模拟阶段。进入 R2 小额现货前必须完成以下前置治理：
+
+- 无特权构建与生产固定部署器分离。构建侧只生成并扫描 digest/Manifest，部署器只验证和部署固定产物，不执行仓库脚本。
+- 构建侧、GitHub Actions 和普通应用角色不得接触 Executor 私钥或交易所密钥。
+- 实盘使用的策略包、审批证据、Manifest、账务和对账报告必须具备加密独立副本，并完成一次恢复演练。
+- 目标多角色 Backend、Worker 和数据库会话统一 UTC，并在 A2-A6 对应角色落地时完成；用户计划通过显式 IANA 时区计算触发时间。
 
 ## 手工发布
 

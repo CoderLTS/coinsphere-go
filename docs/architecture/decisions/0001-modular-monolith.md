@@ -1,24 +1,29 @@
-# ADR-0001：采用模块化单体、单镜像与多角色运行
+# ADR-0001：模块化单体、单镜像与多角色运行
 
-- 状态：已接受
-- 日期：2026-07-31
-- 修订：2026-08-03，明确单应用二进制与领域依赖方向
+- 状态：接受
+- 日期：2026-08-01
+- 修订：2026-08-04，冻结角色、扩容和通知边界
 
 ## 背景
 
-CoinSphere 需要持续行情采集、粗粒度调度、Python 回测、模拟盘与实盘执行，但部署目标仍是个人家用 Linux 主机。四套 Go 入口会重复启动、配置和依赖装配；微服务或动态插件则会提前引入网络契约、发布协调和故障面。
+CoinSphere 需要持续行情采集、粗粒度调度、隔离回测、模拟盘和实盘执行，但部署目标仍是个人 Linux 主机。拆成微服务会提前引入网络契约、发布协调和额外故障面；继续把所有职责放在一个进程又会让采集、调度和执行互相影响。
 
 ## 决策
 
-保持单仓库和模块化单体。A2 起，各 Go 常驻角色随实际能力落地到同一个应用二进制和镜像，通过 `COINSPHERE_ROLE=api|collector|scheduler|executor` 显式选择；角色选择在实现后对缺失或非法值启动失败。当前 A1 仍运行既有单进程后台，尚未实现该环境变量。Python Worker 是唯一独立语言边界，任务队列和事务 Outbox 使用 PostgreSQL 实现。
+保持单仓库、模块化单体、单 Go 二进制和单应用镜像。目标角色模型固定为 `COINSPHERE_ROLE=api|collector|scheduler|executor`；各阶段只接受已实现的角色值，缺失或非法值拒绝启动，不提供隐式 `all`。
 
-A2 起新增金融能力按 `marketdata`、`dataset`、`news`、`strategy`、`backtest`、`trading` 和 `risk` 领域组织。领域包不得依赖 `internal/api` 或现有 `internal/service.App`，由启动层和适配层完成装配。现有后台与工作流保留，不做与交付无关的全仓迁移。
+- A2.1 只实现并常驻 `api`、`collector`、`scheduler`；`executor` 连同交易凭据能力从 A6 开始实现和部署，不提前创建空壳入口。
+- `api` 可多实例；`collector` 按数据流 PostgreSQL 租约分片。
+- `scheduler` 使用 session advisory lock 单活生成 cron 触发，所有实例通过行租约认领已有任务与 Outbox。
+- `executor` 按交易账户独占租约并使用 fencing，禁止两个 Owner 同时执行同一账户。
+- 通知记录以数据库为事实源，`pg_notify` 只唤醒所有 API 实例；离线恢复依赖未读快照。
+- 普通角色与 Worker 首期共用受限应用数据库身份，Executor 和 Migrator 独立。普通身份不得读取交易凭据，长期进程不持有 DDL 权限。
+- 各角色使用驱动原生连接池，部署按最大实例数核算总预算并预留 migration 和运维连接；首期不引入 PgBouncer。
 
-只在同一外部边界已有两个真实实现后提取共享接口；Binance 与 OKX 共同证明 `MarketSource`，PostgreSQL 存储保持具体实现。工作流只编排资源 ID，Executor 独占交易凭据，API、AI 和通用 HTTP 节点不能直接下单。
+Python Worker Launcher 是唯一独立语言和容器执行边界。任务队列、租约、Outbox 和通知唤醒均复用 PostgreSQL，不引入 Redis、Kafka、NATS、Consul 或 Kubernetes。
 
 ## 结果
 
-- 目标角色落地后，采集、调度、API 和执行拥有进程级故障隔离，但构建、镜像、配置解析和依赖装配只维护一套。
-- 新金融代码获得明确依赖方向，不再继续扩大 `service.App`，旧管理功能无需一次性重写。
-- PostgreSQL 是多实例协调点；只有出现持续锁竞争、独立扩缩容或故障隔离证据时，才编写新 ADR 评估消息中间件或服务拆分。
-- 目标单镜像包含各角色代码，镜像体积不是当前优化目标；只有供应链扫描或部署数据证明成本不可接受时，才评估拆分产物。
+- 构建、版本、配置解析和依赖装配只维护一套，采集、调度、API 和执行获得进程级故障隔离。
+- PostgreSQL 同时承担事实存储和轻量协调；达到可量化的吞吐或连接上限后再评估专用基础设施。
+- 新金融领域不得依赖旧 API 或 service 层。当前依赖方向由 ADR、任务卡和最终只读复审约束，不增加第三方架构测试工具。

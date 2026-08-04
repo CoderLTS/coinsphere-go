@@ -47,6 +47,20 @@ Worker 和数据库契约使用随机 PostgreSQL schema，覆盖 `FOR UPDATE SKI
 
 本地缺少 Docker、WSL 或 PostgreSQL/TimescaleDB 时，将对应检查交给 GitHub Actions，或在统一环境主机的隔离目录和独立 Compose 项目中执行。
 
+## 仅文档治理变更
+
+只修改 `.gitignore`、`AGENTS.md` 和 `docs/**` 时，不运行应用测试或构建。以 PR base 为基线执行：
+
+```powershell
+$base = "origin/main" # stacked PR 改为实际父分支
+git diff --check $base
+git diff --name-only $base
+git diff --quiet $base -- backend frontend worker .github deploy scripts docker-compose.yml
+if ($LASTEXITCODE -ne 0) { throw "文档治理 PR 包含越界实现改动" }
+```
+
+随后只读检查相对链接、Mermaid 语法、术语、阶段依赖和权威文档归属；GitHub milestone、Issue 和 PR 状态直接在 GitHub 核对，不复制回仓库进度文档。
+
 ## PR 快速层
 
 - Draft stacked PR 可以指向父分支；上游进入 `main` 后，下游变基到 `main` 并将 base 改为 `main`，才能标记 Ready。
@@ -79,7 +93,7 @@ Worker 和数据库契约使用随机 PostgreSQL schema，覆盖 `FOR UPDATE SKI
 ## Migration
 
 - Migration 默认跟随所属纵向能力，仅共享基线、破坏性变更或跨领域 schema 使用独立 PR。
-- 基线建立后追加版本化 SQL，不修改已应用历史文件。
+- A2-A5 可在重置未投产开发/CI 数据库的前提下整理历史 migration；A6/R1 正式观察期开始前永久冻结，此后只能追加版本化 SQL。
 - 验证 PostgreSQL 升级、必要的保数与约束、重复执行、失败原子性和回滚；测试使用随机隔离 schema，不清空固定外部表。
 - 每个 migration PR 或含 migration 的能力 PR 必须写明回滚步骤。
 

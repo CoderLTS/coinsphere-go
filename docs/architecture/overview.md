@@ -2,23 +2,21 @@
 
 ## 原则
 
-- 保持模块化单体，在出现可量化的独立扩缩容或故障隔离需求前不拆微服务。
-- PostgreSQL/TimescaleDB 是在线事实源，Parquet 数据集不可变，工作流只传递任务类型、参数 Schema 和资源 ID。
-- Go 平台拥有账户、风控、订单路由和审计；Python Worker 只执行数据集生成与回测计算。
-- 模拟与实盘复用领域契约，但账户、凭据、订单、仓位和风控状态强逻辑隔离。
-- 不为未来的第三种交易所、存储或通知渠道建设插件系统、消息中间件或兼容层。
+- 保持模块化单体和单应用镜像，在出现实测的独立扩缩容或故障隔离需求前不拆微服务。
+- PostgreSQL/TimescaleDB 是在线事实源；不可变数据集和任务产物通过 Manifest 与内容哈希引用。
+- Go 拥有行情规范、账户、订单、风控和权威账本；Python 只执行隔离的研究计算。
+- 工作流只传递任务类型、参数 Schema 和资源 ID，不参与逐 K 线计算、交易所私有协议或下单。
+- 不为未来交易所、存储、渠道或执行引擎建设动态插件平台、消息中间件或兼容层。
 
-## 当前 A1 基线
+## 当前基线
 
-现有 Go 后台仍以单进程运行 HTTP/WebSocket、工作流和后台 Runtime；数据库 schema 由镜像内独立 migration 二进制演进。PostgreSQL 基线包含当前业务表、Worker 队列、Outbox、外键、索引和状态约束，后续 `00002_a1_observability.sql` 增加持久化审计表；服务启动只读校验版本，不执行 DDL。Backend 与开发/CI Worker 共用 TimescaleDB，生产 Release 暂不部署 Worker。
+本次重整以 `origin/main@69229e0` 为事实基线：该提交已包含 A0、A1 和 A2.0。Go 后台仍以单进程运行 HTTP/WebSocket、工作流和后台 Runtime；生产 Release 仍只部署 Backend/Web，尚未部署 Python Worker 或交易 Executor。
 
-平台可观测性使用标准库 `log/slog` JSON 日志和进程内固定指标。HTTP Request ID、审计事务/敏感字段边界、存活与数据库就绪语义见 [ADR-0003](./decisions/0003-a1-observability.md)；当前不引入 tracing 或外部指标系统。
+数据库由独立 migration 二进制演进，服务启动只读校验版本。现有 `00001` 建立 PostgreSQL 基线，`00002` 建立审计表，`00003` 建立三张普通行情表；A2.1 才处理 Timescale hypertable 和多角色运行。
 
-异步任务使用 PostgreSQL `FOR UPDATE SKIP LOCKED`，领域事件使用事务 Outbox。任务与 Outbox 的租约、数据库时间 fencing、失败恢复和终态约束见[公共契约](../contracts/README.md)，数据库演进见 [ADR-0002](./decisions/0002-versioned-sql-migrations.md)。工作流版本分配、激活、停用和入口替换在 PostgreSQL 短事务内提交，其他连接只能观察完整旧快照或完整新快照。
+通知 WebSocket 已使用有限队列、单 writer、连续序号、Ping/Pong、严格同源 Origin 和固定 `Sec-WebSocket-Protocol` 鉴权；查询串 Token 已被拒绝。生命周期、审计和健康检查见 [ADR-0003](./decisions/0003-a1-observability.md)。
 
-进程通过唯一根 Context 传播取消并执行有界收尾。通知 WebSocket 已使用有限队列、单 writer、连续序号、RFC6455 Ping/Pong 和严格同源 Origin；当前鉴权仍使用查询串 Token，安全波次完成前不得把它写入代理、应用或测试日志。
-
-## A2 起目标拓扑
+## 目标拓扑
 
 ```mermaid
 flowchart LR
@@ -26,47 +24,45 @@ flowchart LR
     API --> DB["PostgreSQL / TimescaleDB"]
     COL["Go role: collector"] --> DB
     SCH["Go role: scheduler"] --> DB
-    WRK["Python Quant Worker"] --> DB
-    WRK --> DATA["Parquet / Artifacts"]
-    EXE["Go role: executor"] --> DB
-    EXE --> VENUE["Binance / OKX"]
+    DB -. "NOTIFY wake-up" .-> API
+    WRK["Rootless Worker Launcher"] --> DB
+    WRK --> JOB["一次性研究容器"]
+    JOB --> DATA["不可变产物卷"]
     API --> DATA
+    EXE["Go role: executor"] --> DB
+    EXE --> VENUE["Binance / OKX private API"]
 ```
 
-A2 起，Go 常驻职责随实际能力落地到同一个应用二进制和镜像，通过 `COINSPHERE_ROLE=api|collector|scheduler|executor` 选择；不维护四套入口：
+同一个 Go 二进制和镜像通过 `COINSPHERE_ROLE=api|collector|scheduler|executor` 显式选择职责，缺失或非法值拒绝启动：
 
-- `api`：HTTP/WebSocket、认证、管理接口和只读领域查询。
-- `collector`：公共行情连接、补数和规范化写入。
-- `scheduler`：粗粒度计划任务与领域任务投递。
-- `executor`：模拟或实盘订单执行、恢复和对账；只有该角色可读取交易凭据。
+- `api`：HTTP/WebSocket、认证、管理接口和领域查询，可无状态多实例。
+- `collector`：公共行情连接、补数、规范化和质量事件，按数据流数据库租约分片。
+- `scheduler`：工作流调度、图执行、任务投递和 Outbox；advisory lock 单活产生定时触发，行租约多活消费。
+- `executor`：模拟或实盘订单执行、恢复和对账；按账户独占租约并使用 fencing，只有该角色可读取交易凭据。
 
-Compose 和发布配置在角色实现后必须显式设置合法值。版本化 migration 继续作为发布步骤，不是第五种常驻角色；首版不引入 Redis、Kafka 或 NATS。
+A2 只常驻前三个角色，Executor 从 A6 开始部署。普通角色与 Worker 首期共用受限应用数据库身份，Executor 和 Migrator 独立；连接池按最大实例数计算部署总预算，不引入 PgBouncer。
 
-## Go 领域边界
+通知记录先在数据库事务中持久化，`pg_notify` 只作唤醒提示。所有 API 实例监听同一频道并查询持久记录，只向自己持有的 WebSocket 连接推送；通知丢失或用户离线时由未读快照恢复。
 
-新金融代码按实际能力放入 `backend/internal/<domain>`，不创建空目录或预留接口：
+## 领域边界
 
-- `marketdata`：交易所公共连接、品种、行情规范化、补数和数据质量。
-- `dataset`：不可变 Manifest、Parquet 分区、校验和与引用保护。
-- `news`：来源采集、去重、许可策略和版本化因子。
-- `strategy`：草稿、多文件策略包、不可变发布版本和参数 Schema。
-- `backtest`：计算任务、双引擎适配、统一账本和统计指标。
-- `trading`：账户、订单、成交、仓位、余额和交易所私有连接。
-- `risk`：订单前检查、账户级限制、急停和风险事件。
-- `workflow`：补数、数据集、批量回测、报告和通知等粗粒度编排。
-- `platform`：认证、RBAC、配置、审计、可观测性和任务基础设施。
+新金融能力按实际交付放入 `backend/internal/<domain>`，不创建空目录：
 
-现有后台与工作流继续留在 `internal/service.App`，不做一次性全仓重构。A2 起新增的金融领域包不得依赖 `internal/api` 或 `internal/service`；API、角色启动层和工作流适配层从外向内调用领域能力。跨领域共享类型由拥有该概念的领域包定义，不建立无归属的 `common` 包。
+- `marketdata`：品种、公共连接、规范化、补数和数据质量。
+- `dataset`：不可变数据集、Manifest、校验和和引用保护。
+- `news`：来源、去重、许可和版本化因子。
+- `strategy`：草稿、多文件策略包、发布版本和参数 Schema。
+- `backtest`：研究任务、规范化订单/成交结果和统计。
+- `trading`：realm、账户、权限、订单、成交、仓位、余额和复式账本。
+- `risk`：账户硬限制、策略限制、急停和风险事件。
 
-## 接口与数据边界
+现有后台与工作流继续留在旧模块，按纵向能力迁移，不做一次性全仓重构。新金融领域不得依赖 `internal/api` 或 `internal/service`；当前通过 ADR、任务卡和最终只读复审检查，不引入额外架构测试框架。
 
-- 新金融 HTTP 接口统一位于 `/api/v1`，请求和响应使用强类型 DTO；`map[string]any` 只保留在旧管理接口、动态工作流图和外部无类型载荷边界。
-- 金融时间统一为 UTC；领域价格、金额、数量和费率使用 `shopspring/decimal`，数据库使用 `numeric(38,18)`，JSON 使用十进制字符串。
-- 只有同一外部边界已经存在两个真实实现时才抽取接口。`MarketSource` 仅包含 Binance 与 OKX 已共同需要的能力；存储保持 PostgreSQL/TimescaleDB 具体实现，不增加单实现 Repository 接口。
-- 工作流不得包含交易所协议、逐 K 线计算或下单逻辑；AI、工作流和通用 HTTP 节点不得调用交易所私有接口。
+## 数据、研究与交易边界
 
-## 可读性约束
+- `market_candles` 目标为 Timescale hypertable；具体周期、保留和质量口径见 [ADR-0005](./decisions/0005-market-data-lifecycle.md)。
+- Worker 与不可变产物边界见 [ADR-0006](./decisions/0006-worker-and-artifacts.md)。
+- 交易 realm、权限、账本和凭据边界见 [ADR-0007](./decisions/0007-trading-realm-and-ledger.md)。
+- OpenAPI 和 `/api/v1` 迁移方式见 [ADR-0004](./decisions/0004-openapi-v1-governance.md)。
 
-- 非平凡注释只解释设计目的、状态转换、并发/事务边界、失败处理和回滚语义。
-- Go 语法、类型断言和框架入门说明集中在 [Go 入门笔记](../../backend/GO入门笔记.md)；修改旧代码时删除触及区域的教学式注释，不为清理注释单独做全仓重构。
-- 仅当两个 Agent 会修改同一文件，或文件新增第二项独立职责时拆分文件；不按行数机械拆包。
+目标运行栈中的 Backend、Worker、数据库会话和金融事件统一 UTC。当前旧后台仍有依赖本地时区的路径，本治理 PR 不将其视为已完成；后续相关能力迁移时清理。用户计划保存 IANA 时区，触发时刻显式换算；前端只负责显示转换。金融 Decimal 使用 `numeric(38,18)` 持久化并以字符串输出 JSON。

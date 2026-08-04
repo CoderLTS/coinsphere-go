@@ -9,9 +9,11 @@
 
 ## HTTP API
 
-- 新金融接口统一位于 `/api/v1`，现有管理接口保持原路径直至单独迁移。
-- 列表接口使用游标分页，命令接口支持 `Idempotency-Key`。
+- A2.3 以 OpenAPI 3.0.3 作为 `/api/v1` 单一来源，并在一个原子纵向 PR 中同步迁移后端、前端、契约和测试，随后删除旧 `/api`；该 PR 合并前，现有 A1 接口仍按当前路径和信封运行。
+- OpenAPI 生成的 Go/TypeScript 类型随契约提交并校验漂移；生成规则与破坏性变更检查见 [ADR-0004](../architecture/decisions/0004-openapi-v1-governance.md)。
+- 列表接口使用默认 50、最大 200 的不透明游标，并以唯一 ID 保证稳定排序。筛选或排序条件变化时旧游标无效。
 - 错误响应使用 `application/problem+json`，至少包含 `type`、`title`、`status`、`code`、`requestId`、`retryable`。
+- 普通异步任务的 `Idempotency-Key` 保留 24 小时；交易命令的键、请求摘要、账户和订单与审计记录同寿命，同键不同载荷返回冲突。
 - A1 登录与 refresh 响应只返回 `{"token":"..."}`，Access Token 默认有效期 15 分钟且只保存在浏览器内存中。Refresh Token 只存在名为 `coinsphere_refresh_token` 的 Cookie：`HttpOnly`、`SameSite=Strict`、`Path=/api/auth`，HTTPS 请求同时设置 `Secure`。
 - `POST /api/auth/refresh` 和 `POST /api/auth/logout` 均无请求体。refresh 在 PostgreSQL 短事务中锁定旧记录、写入新记录并吊销旧记录；并发复用或已吊销令牌再次出现时吊销该用户全部 Refresh Token。logout 即使 Cookie 缺失或无效也清除浏览器 Cookie。
 - 管理员密码恢复通过 `go run ./cmd/admin -username <name>` 执行，密码只从隐藏回显的标准输入读取；密码更新与该用户全部 Refresh Token 吊销在同一事务提交。
@@ -149,7 +151,7 @@ Interval 映射固定如下：
 
 ### PostgreSQL 最小 schema
 
-新增 migration 固定为 `backend/internal/migration/sql/00003_a2_market_contract.sql`，不得修改 `00001` 或 `00002`。本次只建立普通 PostgreSQL 表；不创建 Timescale hypertable、分区、保留策略、连续聚合、触发器、视图或 Repository 接口。
+A2.0 合并时使用 `backend/internal/migration/sql/00003_a2_market_contract.sql`，且该切片只建立普通 PostgreSQL 表，不创建 Timescale hypertable、保留策略或 Repository 接口。A2.1 仍处于 ADR-0002 定义的投产前基线整理窗口，可重写 `00003` 并重建开发/CI 空库，但不得静默改变本节已冻结的公开类型、字段、枚举、规范化和持久化语义；任何语义变更必须先修订 ADR 与契约。A6/R1 开始前必须永久冻结历史 migration。
 
 `market_instruments`：
 
@@ -327,6 +329,8 @@ Metadata 样本分别保留 Binance exchange info 的 `PRICE_FILTER.tickSize`/`L
 
 这些样本是协议适配的可执行输入，不是网络客户端、回放服务或推荐数据集。缺口检测、补数调度、批量连接、质量报告、数据保留、衍生统计和 UI 查询模型继续留在后续 A2 切片。
 
+后续 A2 行情只采集启用集，默认包含 Binance/OKX 的 BTC/ETH USDT 现货和永续；保存交易所原生 `1m/5m/15m/1h/4h/1d`。Hypertable、闭合 K 线修订、跨周期差异、完整率和恢复计时的稳定决策见 [ADR-0005](../architecture/decisions/0005-market-data-lifecycle.md)。
+
 ## 实时事件
 
 WebSocket 事件统一使用以下信封：
@@ -352,6 +356,8 @@ WebSocket 事件统一使用以下信封：
 
 浏览器握手必须携带唯一且合法的 `Origin`，其有效 scheme、主机和端口必须与请求完全同源；缺失、畸形、跨 scheme/主机/端口均拒绝。通知连接必须按顺序提供 `Sec-WebSocket-Protocol: coinsphere.notifications.v1, <access-token>`，服务端只回显固定协议 `coinsphere.notifications.v1`；缺失、顺序错误、额外协议或任何查询串均拒绝。开发和生产反向代理始终必须保留原始 Host（含非默认端口）及合法的有效 scheme，且不得记录令牌或事件 payload。
 
+A2 多角色落地后，通知记录先在数据库事务中持久化，`pg_notify` 只唤醒全部 API 实例。每个实例查询持久记录并推送自己持有的连接；用户离线不视为投递失败，重连后仍由 `notice.unread` 快照恢复。
+
 ## 工作流 HTTP 外呼
 
 - `http.request` 只允许访问 `workflow.http_allowed_hosts` 中配置的精确域名；配置项不接受通配符、端口或 IP，空列表表示禁止全部外呼。
@@ -363,6 +369,8 @@ WebSocket 事件统一使用以下信封：
 任务状态固定为 `queued`、`claimed`、`running`、`cancelRequested`、`succeeded`、`failed`、`canceled`。正常路径为 `queued -> claimed -> running -> succeeded/failed`；取消可从活跃状态进入 `cancelRequested -> canceled`。每次认领递增 `attempt_count` 并生成新的唯一 `lease_id`，启动、心跳和终态写入必须同时匹配任务 ID、租约 ID、合法前态及未过期的数据库时间。
 
 Worker 必须周期续租；租约一旦过期，旧 Worker 立即失去心跳和终态写权限。过期的 `claimed/running` 在 `attempt_count < max_attempts` 时清除旧租约并重新排队，否则进入 `failed`。心跳观察到 `cancelRequested` 后不得继续续租；该状态在租约过期或取消请求满 4 秒时直接进入 `canceled`，禁止重试。任务取消从请求提交到伪任务停止并进入 `canceled` 不得超过 5 秒，即使 Owner 在观察取消后、确认终态前崩溃也必须满足该时限。
+
+A4 起由专用 Rootless Docker Launcher 直接认领同一队列。一次性任务容器不得获得网络、数据库 DSN、密钥或 Docker Socket，只挂载只读输入和独立产物目录；镜像必须是服务端白名单中的固定 digest。任务与产物契约见 [ADR-0006](../architecture/decisions/0006-worker-and-artifacts.md)。
 
 ## Outbox 投递租约
 
@@ -381,3 +389,11 @@ Outbox 认领必须在单条数据库语句中完成候选选择、批量状态�
 ## 交易命令
 
 所有订单意图必须携带稳定 `intentId` 和确定性 `clientOrderId`。订单状态未知时先对账，禁止通过无条件重试创建第二笔订单。
+
+- A4 最小语义包含市价、限价和止损。信号只使用闭合 Bar；同 Bar 冲突采用保守固定路径、止损优先和创建顺序，不模拟盘口排队或部分成交。跳空止损按不利开盘价，限价可获得更优开盘价。
+- Go 追加不可变复式分录并拥有权威订单、成交、仓位和账本；Python 只输出版本化的非权威回测事实与 Manifest。
+- `paper/live` realm 只覆盖交易账户及其凭据、权限、Intent、订单、成交、仓位、余额、账本和风控状态；公共行情、数据集和策略版本不带 realm。
+- 交易权限绑定账户、策略版本和 R1/R2/R3。缺少任一显式账户风控上限时保持禁用，策略只能使用相同或更严格的限制。
+- R2 需要 R1 模拟盘至少 30 天和 100 笔完成订单；R3 还需要小额现货稳定 30 天及永续模拟/Testnet 30 天、100 笔。
+
+完整 realm、权限状态机、账本、Web 凭据录入和版本化轮换边界见 [ADR-0007](../architecture/decisions/0007-trading-realm-and-ledger.md)。
