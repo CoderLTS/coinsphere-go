@@ -22,7 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 	"sync"
 	"time"
@@ -111,18 +111,20 @@ func (a *App) runExecutionGraph(ctx context.Context, executionID int64) (*runRes
 		return result, bizErr("Start entry does not exist in workflow definition")
 	}
 
-	log.Printf(
-		"[engine] execution started: execution_id=%d workflow_code=%s entry=%s trigger=%s",
-		execution.ID, definition.Code, execution.StartEntryKey, triggerType,
-	)
+	slog.InfoContext(ctx, "workflow execution started",
+		"execution_id", execution.ID,
+		"workflow_code", definition.Code,
+		"entry_key", execution.StartEntryKey,
+		"trigger_type", triggerType)
 	// 核心:从起始节点开始真正"跑图"。失败就记结束时间、打日志、把错误抛给调用方。
 	if err := a.runGraph(ctx, result, state, graph, asString(startNode["id"])); err != nil {
 		result.FinishedAt = time.Now()
-		log.Printf("[engine] execution failed: execution_id=%d workflow_code=%s err=%v", execution.ID, definition.Code, err)
+		category, _ := classifyFailure(err, err.Error())
+		slog.WarnContext(ctx, "workflow execution failed", "execution_id", execution.ID, "workflow_code", definition.Code, "error_category", category)
 		return result, err
 	}
 	result.FinishedAt = time.Now()
-	log.Printf("[engine] execution finished: execution_id=%d workflow_code=%s status=success", execution.ID, definition.Code)
+	slog.InfoContext(ctx, "workflow execution completed", "execution_id", execution.ID, "workflow_code", definition.Code, "status", "success")
 	return result, nil
 }
 
@@ -470,8 +472,8 @@ func (r *graphRun) closeNodeLog(ctx context.Context, nodeLog *db.WorkflowExecuti
 	if execErr != nil {
 		updates["status"] = "failed"
 		updates["error_message"] = execErr.Error()
-		log.Printf("[engine] node failed: execution_id=%d node_id=%s err=%v",
-			r.result.Execution.ID, nodeLog.NodeID, execErr)
+		category, _ := classifyFailure(execErr, execErr.Error())
+		slog.WarnContext(ctx, "workflow node failed", "execution_id", r.result.Execution.ID, "node_id", nodeLog.NodeID, "error_category", category)
 	} else {
 		updates["status"] = "success"
 		updates["output_snapshot_json"] = serializeSnapshot(nodeResult.Output, r.app.Cfg.Workflow.MaxOutputSnapshotBytes)
@@ -479,8 +481,7 @@ func (r *graphRun) closeNodeLog(ctx context.Context, nodeLog *db.WorkflowExecuti
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cleanupCancel()
 	if err := r.app.dbWithContext(cleanupCtx).Model(nodeLog).Updates(updates).Error; err != nil {
-		log.Printf("[engine] close node log failed: execution_id=%d node_id=%s err=%v",
-			r.result.Execution.ID, nodeLog.NodeID, err)
+		slog.ErrorContext(cleanupCtx, "workflow node log finalization failed", "execution_id", r.result.Execution.ID, "node_id", nodeLog.NodeID, "error_category", "database")
 	}
 }
 

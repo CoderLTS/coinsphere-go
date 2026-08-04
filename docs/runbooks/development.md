@@ -31,7 +31,17 @@ uv run --frozen pytest
 Pop-Location
 ```
 
-Go 生命周期测试覆盖 `SIGINT`/`SIGTERM` 根 Context、HTTP、Runtime、数据库和 WebSocket 的 30 秒有界收尾。通知 WebSocket 定向契约覆盖单 writer、固定信封、连续序号、背压、Ping/Pong、失联超时、关闭和严格 Origin；查询串 Token 仍是待安全波次替换的现有契约，不得进入日志。
+Go 生命周期测试覆盖 `SIGINT`/`SIGTERM` 根 Context、HTTP、Runtime、数据库和 WebSocket 的 30 秒有界收尾。通知 WebSocket 定向契约覆盖单 writer、固定信封、连续序号、背压、Ping/Pong、失联超时、关闭、严格 Origin 和固定子协议鉴权；查询串 Token 被拒绝且不得进入日志。
+
+本地运行后可用以下固定入口检查 A1 可观测性：
+
+```powershell
+Invoke-WebRequest http://127.0.0.1:6987/health/live
+Invoke-WebRequest http://127.0.0.1:6987/health/ready
+Invoke-WebRequest http://127.0.0.1:6987/metrics
+```
+
+`/health/live` 不访问数据库；`/health/ready` 与兼容 `/health` 执行有界 PostgreSQL Ping。`/metrics` 只有五个固定无标签进程指标，JSON 应用日志写标准输出。写请求审计通过 `request_id` 与日志关联；查询时不得把生产 DSN 或用户载荷拼入命令输出。
 
 Worker 和数据库契约使用随机 PostgreSQL schema，覆盖 `FOR UPDATE SKIP LOCKED` 认领、数据库时间租约、fencing、过期恢复、尝试耗尽和取消。当前 Worker 只执行契约伪任务，不包含数据集、回测或交易能力。
 

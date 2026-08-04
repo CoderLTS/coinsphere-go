@@ -16,6 +16,14 @@
 - `POST /api/auth/refresh` 和 `POST /api/auth/logout` 均无请求体。refresh 在 PostgreSQL 短事务中锁定旧记录、写入新记录并吊销旧记录；并发复用或已吊销令牌再次出现时吊销该用户全部 Refresh Token。logout 即使 Cookie 缺失或无效也清除浏览器 Cookie。
 - 管理员密码恢复通过 `go run ./cmd/admin -username <name>` 执行，密码只从隐藏回显的标准输入读取；密码更新与该用户全部 Refresh Token 吊销在同一事务提交。
 
+## A1 可观测性
+
+- 每个 HTTP 响应包含 `X-Request-ID`。请求提供的值仅在匹配 `[A-Za-z0-9._-]{1,64}` 时传播，否则服务生成新值；应用日志和审计使用同一值。
+- 匹配路由的 `POST`、`PUT`、`PATCH`、`DELETE` 请求写入 `audit_records`。记录只包含 Request ID、内部用户 ID、路由动作、无查询串资源路径、结果、HTTP 状态和 UTC 时间，不包含 Header、查询串、正文、令牌、凭据、错误正文、IP 或个人资料。
+- 审计在业务处理结束后使用独立短事务；写入失败不会把已提交动作伪装成回滚或向客户端返回可重试结果，只增加固定错误日志与审计失败指标。
+- `GET /health/live` 只检查进程存活；`GET /health/ready` 和兼容别名 `GET /health` 只检查 PostgreSQL 是否可访问。就绪失败返回 `503 {"status":"unavailable"}`，不得返回运行配置或驱动错误。
+- `GET /metrics` 只暴露五个无标签指标：HTTP 请求总数、失败数、在途数、审计写失败数和进程运行秒数。该接口不承诺外部存储、聚合或告警能力。
+
 ## A2 行情契约范围（待实现）
 
 本节只限定 A2 首个契约 PR 的边界，尚不是现行运行时契约；以下约束必须与 Binance/OKX 可执行样本一同合并后才生效。首个交付只冻结 Decimal/UTC 规则、`Instrument`、`Candle`、`Ticker`、最小数据库约束和 `MarketSource`。缺口质量模型、推荐算法、保留策略、衍生统计和 UI 查询模型留到对应纵向切片，不进入公共契约。

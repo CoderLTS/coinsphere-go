@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"coinsphere/backend/internal/service"
 )
@@ -31,24 +32,26 @@ type Server struct {
 	StaticDir    string
 	UploadsDir   string
 	loginLimiter *rateLimiter // 登录/刷新限流(见评审 #6)
+	metrics      *httpMetrics
 }
 
 // NewServer 是本项目约定的"构造函数":新建 Server,把所有 URL 与处理函数登记到路由表,返回给 main 启动 HTTP 服务。
-// 返回类型 *http.ServeMux 是"指向 ServeMux 的指针"。Go 函数可返回多个值,这里只返回一个。
+// 返回 http.Handler，使全部路由统一经过可观测性中间件。
 // NewServer 创建服务并注册全部路由。
-func NewServer(app *service.App, staticDir, uploadsDir string) *http.ServeMux {
+func NewServer(app *service.App, staticDir, uploadsDir string) http.Handler {
 	// &Server{...} 新建 Server 并用 & 取地址得到指针;:= 是函数内的短变量声明,自动推断类型(见 GO入门笔记『变量声明』)。
 	s := &Server{
 		App:          app,
 		StaticDir:    staticDir,
 		UploadsDir:   uploadsDir,
 		loginLimiter: newRateLimiter(app.Cfg.Auth.LoginRateLimitPerMinute),
+		metrics:      &httpMetrics{startedAt: time.Now()},
 	}
 	// http.NewServeMux() 创建标准库的路由表(见 GO入门笔记『框架:net/http』)。
 	mux := http.NewServeMux()
 	// s.registerRoutes(mux):用 . 调用 s 上的方法;s 是指针,Go 会自动解引用。
 	s.registerRoutes(mux)
-	return mux
+	return s.observe(mux)
 }
 
 // ---------- 统一响应 ----------
@@ -56,6 +59,11 @@ func NewServer(app *service.App, staticDir, uploadsDir string) *http.ServeMux {
 // writeJSON 把任意数据编码成 JSON 写回客户端,是所有响应的底层出口。
 // 参数 w http.ResponseWriter 是"用来写响应的对象",几乎每个处理函数都靠它输出(见 GO入门笔记『框架:net/http』)。
 func writeJSON(w http.ResponseWriter, status int, payload any) {
+	if object, ok := payload.(map[string]any); ok {
+		if code, ok := object["code"].(int); ok && code >= http.StatusBadRequest {
+			markResponseFailed(w)
+		}
+	}
 	// 顺序不能乱:先设响应头,再写状态码,最后写 body。WriteHeader 一旦调用,响应头就发出去了。
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
@@ -220,6 +228,7 @@ func (s *Server) requireAuth(next authedHandler) http.HandlerFunc {
 			failStatus(w, http.StatusUnauthorized, err.Error())
 			return
 		}
+		setAuditActor(r, principal.User.ID)
 		next(w, r, principal)
 	}
 }
@@ -243,6 +252,7 @@ func (s *Server) requireGuestOrAuth(next authedHandler) http.HandlerFunc {
 			failStatus(w, http.StatusUnauthorized, err.Error())
 			return
 		}
+		setAuditActor(r, principal.User.ID)
 		next(w, r, principal)
 	}
 }

@@ -2,7 +2,7 @@
 
 ## 当前边界
 
-生产 Backend 通过主机 `runtime.env` 连接外部 PostgreSQL/TimescaleDB；镜像内的单一基线建立完整业务 schema，应用启动只读校验版本。生产流水线仍只构建、扫描和部署 Backend/Web，暂不部署 Python Worker，也不得据此启用模拟盘或实盘交易能力。
+生产 Backend 通过主机 `runtime.env` 连接外部 PostgreSQL/TimescaleDB；镜像内的初始基线与后续版本化 migration 建立当前业务 schema，应用启动只读校验版本。生产流水线仍只构建、扫描和部署 Backend/Web，暂不部署 Python Worker，也不得据此启用模拟盘或实盘交易能力。
 
 数据库 migration 必须在独立 PR 中审查。用户手工发布固定 `main` 版本前，先由基础设施侧创建并验证 PostgreSQL 备份；部署脚本停止旧服务后执行目标镜像内 migration，再启动固定 digest 镜像。脚本不自动执行 Down 或恢复数据库。
 
@@ -15,7 +15,7 @@
 - Runner：`coinsphere-production`，标签为 `self-hosted`、`Linux`、`X64`、`coinsphere-release`、`production`。
 - Registry：`127.0.0.1:5000`，Runner 使用服务器本地 `coinsphere-ci` 登录信息，GitHub 不保存 Registry 密码。
 - DPanel Compose：`/home/infrastructure/dpanel/compose/coinsphere-go`。
-- Web 健康检查：生产主机 `http://127.0.0.1:8080/health`。
+- Web 就绪检查：生产主机 `http://127.0.0.1:8080/health`，该兼容入口等价于 Backend `/health/ready`；Backend `/health/live` 仅用于进程存活诊断。
 - 生产运行配置：部署目录的 `runtime.env`，权限固定为 `0600`，不会进入仓库、日志或 Release。
 - 生产数据库：外部 TimescaleDB，由 `COINSPHERE_DATABASE__DSN` 连接；备份、恢复和保留策略由数据库基础设施负责。
 - Runner 必须提供 Python 3、GNU tar 和 gzip；最终产物扫描只使用 Python 标准库读取 ZIP、tar.gz 和 JSON，TAR 仅解压到系统临时文件且不会写入工作区。
@@ -85,7 +85,7 @@ COINSPHERE_REGISTRY=127.0.0.1:5000 \
 
 最终产物扫描发生在部署前。扫描失败时没有服务或数据变更，不执行部署回滚，也不会上传 Actions Artifact 或创建 GitHub Release；构建阶段为取得 RepoDigest 已写入主机本地 Registry 的候选标签可能保留，按失败记录核对后由 Registry 保留策略或维护窗口清理，禁止为此自动删除仍可能被其他标签引用的 Manifest。
 
-migration、Compose 启动或 `/health` 任一步失败时，`deploy.sh` 会：
+migration、Compose 启动或数据库就绪 `/health` 任一步失败时，`deploy.sh` 会：
 
 1. 停止失败版本。
 2. 恢复上一份 Compose 和镜像版本文件。

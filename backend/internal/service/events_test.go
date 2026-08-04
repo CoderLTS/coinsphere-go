@@ -4,8 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -114,7 +113,7 @@ func TestBacklogExhaustionDeadLettersAndAlertsOnce(t *testing.T) {
 	if record.LastErrorCategory == nil || *record.LastErrorCategory != outboxFailureBacklog {
 		t.Fatalf("dead-letter category = %v, want %s", record.LastErrorCategory, outboxFailureBacklog)
 	}
-	alertLine := fmt.Sprintf("[alert] outbox dead letter: outbox_id=%d", outboxID)
+	alertLine := `"msg":"outbox dead letter"`
 	if count := strings.Count(logs.String(), alertLine); count != 1 {
 		t.Fatalf("dead letter alert count = %d, want 1; logs=%s", count, logs.String())
 	}
@@ -555,16 +554,10 @@ func assertServiceOutboxTypes(t *testing.T, database *gorm.DB, executionID int64
 func captureServiceTestLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buffer := &bytes.Buffer{}
-	previousOutput := log.Writer()
-	previousFlags := log.Flags()
-	previousPrefix := log.Prefix()
-	log.SetOutput(buffer)
-	log.SetFlags(0)
-	log.SetPrefix("")
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(buffer, nil)))
 	t.Cleanup(func() {
-		log.SetOutput(previousOutput)
-		log.SetFlags(previousFlags)
-		log.SetPrefix(previousPrefix)
+		slog.SetDefault(previous)
 	})
 	return buffer
 }

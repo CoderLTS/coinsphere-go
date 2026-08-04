@@ -4,8 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
-	"os"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -61,7 +60,7 @@ func Connect(ctx context.Context, cfg config.DatabaseConfig) (*gorm.DB, error) {
 
 	gdb, err := gorm.Open(postgres.Open(cfg.DSN), &gorm.Config{
 		Logger: redactingGORMLogger{Interface: logger.New(
-			log.New(os.Stderr, "\r\n", log.LstdFlags),
+			slog.NewLogLogger(slog.Default().Handler(), slog.LevelWarn),
 			logger.Config{
 				SlowThreshold:             500 * time.Millisecond,
 				LogLevel:                  logger.Warn,

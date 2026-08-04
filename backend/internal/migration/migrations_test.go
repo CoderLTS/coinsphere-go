@@ -44,8 +44,9 @@ WHERE table_schema = current_schema() AND table_name = 'schema_migrations'
 	if err != nil {
 		t.Fatalf("apply baseline: %v", err)
 	}
-	if len(results) != 1 || results[0].Version != 1 || results[0].Direction != "up" {
-		t.Fatalf("baseline results = %#v", results)
+	if len(results) != 2 || results[0].Version != 1 || results[1].Version != 2 ||
+		results[0].Direction != "up" || results[1].Direction != "up" {
+		t.Fatalf("migration results = %#v", results)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err != nil {
 		t.Fatalf("validate current baseline: %v", err)
@@ -60,12 +61,13 @@ WHERE table_schema = current_schema() AND table_name = 'schema_migrations'
 		t.Fatalf("repeat baseline applied %#v", results)
 	}
 
-	results, err = runner.Down(context.Background(), 1)
+	results, err = runner.Down(context.Background(), 2)
 	if err != nil {
-		t.Fatalf("roll back empty baseline: %v", err)
+		t.Fatalf("roll back empty migrations: %v", err)
 	}
-	if len(results) != 1 || results[0].Version != 1 || results[0].Direction != "down" {
-		t.Fatalf("baseline rollback results = %#v", results)
+	if len(results) != 2 || results[0].Version != 2 || results[1].Version != 1 ||
+		results[0].Direction != "down" || results[1].Direction != "down" {
+		t.Fatalf("migration rollback results = %#v", results)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err == nil {
 		t.Fatal("ValidateCurrent accepted a rolled-back baseline")
@@ -83,7 +85,10 @@ func TestPostgresBaselineDownRejectsData(t *testing.T) {
 		t.Fatalf("create migration runner: %v", err)
 	}
 	if _, err := runner.Up(context.Background(), 0); err != nil {
-		t.Fatalf("apply baseline: %v", err)
+		t.Fatalf("apply migrations: %v", err)
+	}
+	if _, err := runner.Down(context.Background(), 1); err != nil {
+		t.Fatalf("roll back empty observability migration: %v", err)
 	}
 	if _, err := database.Exec(`INSERT INTO roles (code) VALUES ('rollback-guard')`); err != nil {
 		t.Fatalf("insert rollback guard row: %v", err)
@@ -92,8 +97,9 @@ func TestPostgresBaselineDownRejectsData(t *testing.T) {
 	if _, err := runner.Down(context.Background(), 1); err == nil {
 		t.Fatal("baseline rollback removed a non-empty schema")
 	}
-	if err := runner.ValidateCurrent(context.Background()); err != nil {
-		t.Fatalf("failed rollback changed migration version: %v", err)
+	current, latest, versionErr := runner.Versions(context.Background())
+	if versionErr != nil || current != 1 || latest != 2 {
+		t.Fatalf("failed baseline rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	var count int
 	if err := database.QueryRow(`SELECT COUNT(*) FROM roles WHERE code = 'rollback-guard'`).Scan(&count); err != nil {
@@ -131,6 +137,9 @@ func TestPostgresBaselineStateConstraints(t *testing.T) {
 		{"outbox dead letter before attempts exhausted", `INSERT INTO domain_event_outbox (status, attempt_count, max_attempts, available_at, processed_at, dead_lettered_at) VALUES ('dead_letter', 2, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`},
 		{"outbox alert before dead letter", `INSERT INTO domain_event_outbox (status, attempt_count, max_attempts, available_at, processed_at, dead_lettered_at, alerted_at) VALUES ('dead_letter', 3, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP - INTERVAL '1 minute')`},
 		{"notification missing outbox reference", `INSERT INTO notification_deliveries (outbox_event_id) VALUES (9223372036854775807)`},
+		{"audit invalid request id", `INSERT INTO audit_records (request_id, action, resource_path, outcome, status_code) VALUES ('bad request id', 'POST /api/test', '/api/test', 'failure', 400)`},
+		{"audit invalid outcome", `INSERT INTO audit_records (request_id, action, resource_path, outcome, status_code) VALUES ('audit-invalid-outcome', 'POST /api/test', '/api/test', 'unknown', 400)`},
+		{"audit invalid status", `INSERT INTO audit_records (request_id, action, resource_path, outcome, status_code) VALUES ('audit-invalid-status', 'POST /api/test', '/api/test', 'failure', 99)`},
 	}
 	for _, test := range invalidRows {
 		if _, err := database.Exec(test.sql); err == nil {
@@ -191,7 +200,38 @@ INSERT INTO domain_event_outbox (
 		"ix_worker_tasks_claim",
 		"ix_worker_tasks_recovery",
 		"ux_worker_tasks_lease_id",
+		"ix_audit_records_created_at",
+		"ix_audit_records_actor_created_at",
+		"ix_audit_records_request_id",
 	})
+}
+
+func TestObservabilityDownRejectsAuditData(t *testing.T) {
+	database := openPostgresSchema(t)
+	runner, err := New(database)
+	if err != nil {
+		t.Fatalf("create migration runner: %v", err)
+	}
+	if _, err := runner.Up(context.Background(), 0); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO audit_records (request_id, action, resource_path, outcome, status_code) VALUES ('rollback-guard', 'POST /api/test', '/api/test', 'success', 200)`); err != nil {
+		t.Fatalf("insert audit rollback guard: %v", err)
+	}
+
+	if _, err := runner.Down(context.Background(), 1); err == nil {
+		t.Fatal("observability rollback removed persistent audit data")
+	}
+	if err := runner.ValidateCurrent(context.Background()); err != nil {
+		t.Fatalf("failed observability rollback changed migration version: %v", err)
+	}
+	var count int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM audit_records WHERE request_id = 'rollback-guard'`).Scan(&count); err != nil {
+		t.Fatalf("read audit rollback guard: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("audit rollback guard rows = %d, want 1", count)
+	}
 }
 
 func TestPostgresBaselineDownSeesConcurrentCommit(t *testing.T) {
@@ -202,6 +242,9 @@ func TestPostgresBaselineDownSeesConcurrentCommit(t *testing.T) {
 	}
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply baseline: %v", err)
+	}
+	if _, err := runner.Down(context.Background(), 1); err != nil {
+		t.Fatalf("roll back empty observability migration: %v", err)
 	}
 
 	writer, err := database.Begin()
@@ -231,8 +274,9 @@ func TestPostgresBaselineDownSeesConcurrentCommit(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("baseline rollback did not finish after concurrent commit")
 	}
-	if err := runner.ValidateCurrent(context.Background()); err != nil {
-		t.Fatalf("failed concurrent rollback changed migration version: %v", err)
+	current, latest, versionErr := runner.Versions(context.Background())
+	if versionErr != nil || current != 1 || latest != 2 {
+		t.Fatalf("failed concurrent rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	var count int
 	if err := database.QueryRow(`SELECT COUNT(*) FROM roles WHERE code = 'concurrent-rollback-guard'`).Scan(&count); err != nil {
@@ -252,7 +296,7 @@ func TestValidateCurrentRejectsDatabaseAhead(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply baseline: %v", err)
 	}
-	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES (2, TRUE)`); err != nil {
+	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES (3, TRUE)`); err != nil {
 		t.Fatalf("record newer migration: %v", err)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err == nil {
@@ -263,7 +307,7 @@ func TestValidateCurrentRejectsDatabaseAhead(t *testing.T) {
 func assertBaselineTables(t *testing.T, database *sql.DB) {
 	t.Helper()
 	want := []string{
-		"ai_model_agent_bindings", "ai_model_configs", "assistant_agents", "assistant_messages",
+		"ai_model_agent_bindings", "ai_model_configs", "assistant_agents", "assistant_messages", "audit_records",
 		"assistant_sessions", "domain_event_outbox", "i18n_texts", "menu_buttons", "menus",
 		"news_items", "notification_channels", "notification_deliveries", "refresh_tokens", "role_menu_buttons",
 		"role_menus", "roles", "schema_migrations", "task_definition_configs", "user_roles", "users",
