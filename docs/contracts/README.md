@@ -331,6 +331,31 @@ Metadata 样本分别保留 Binance exchange info 的 `PRICE_FILTER.tickSize`/`L
 
 后续 A2 行情只采集启用集，默认包含 Binance/OKX 的 BTC/ETH USDT 现货和永续；保存交易所原生 `1m/5m/15m/1h/4h/1d`。Hypertable、闭合 K 线修订、跨周期差异、完整率和恢复计时的稳定决策见 [ADR-0005](../architecture/decisions/0005-market-data-lifecycle.md)。
 
+## A2.1 Timescale 行情 Store
+
+本切片只交付 PostgreSQL 写入边界和 `market_candles` Timescale 生命周期，不连接交易所、不启动 Collector，也不实现补数、显式修复或查询 API。调用方拥有数据库连接和 Context 生命周期；Store 不启动 goroutine、不重试且不记录重复日志。
+
+### Go 写入边界
+
+```go
+func NewPostgresStore(db *sql.DB) *PostgresStore
+func (store *PostgresStore) UpsertInstrument(ctx context.Context, metadata InstrumentMetadata) (Instrument, error)
+func (store *PostgresStore) UpsertCandle(ctx context.Context, candle Candle) error
+func (store *PostgresStore) UpsertTicker(ctx context.Context, ticker Ticker) error
+```
+
+- `UpsertInstrument` 在写库前校验元数据。首次插入生成 UUIDv7；自然键冲突只更新资产、状态和步长，保留首次 ID，并返回完整 `Instrument`。
+- `UpsertCandle` 在写库前校验 Candle。未闭合行可被同逻辑键的新事件更新并可转为闭合；已闭合行保持冻结，普通写入不得覆盖。A2.4 的显式修复任务另行交付覆盖原因和质量事件。
+- `UpsertTicker` 在写库前校验 Ticker。同逻辑键只接受 `occurred_at` 不早于当前快照的写入，较旧事件无操作。
+- 三个方法都使用调用方 Context；取消和截止错误保持 `errors.Is` 可识别。Store 不暴露批量、查询、修复或生命周期管理接口，后续由实际消费者定义所需边界。
+
+### Timescale 生命周期
+
+- `00003_a2_market_contract.sql` 在投产前基线整理窗口内重写；migration 确保 TimescaleDB extension 可用，并把 `market_candles` 转为按 `open_time` 分区的唯一 hypertable。
+- chunk 时间间隔固定为 7 天；压缩按 `venue,instrument_id,interval_code` 分段并按 `open_time` 排序，30 天后由 Timescale 后台任务执行；默认 retention 为 2 年并由独立后台任务执行。
+- 压缩或 retention 后台任务失败不改变 Store 写入结果。后续调整在线保留期时修改 Timescale policy，不增加应用内删除循环。
+- Down 继续先锁定三张行情表并要求总行数为零；成功回滚时删除 hypertable 及其策略，但保留可能被其他领域复用的 TimescaleDB extension。
+
 ## 实时事件
 
 WebSocket 事件统一使用以下信封：
