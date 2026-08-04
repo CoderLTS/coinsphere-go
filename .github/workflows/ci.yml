@@ -2,10 +2,17 @@ name: CI
 
 on:
   pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+      - converted_to_draft
+      - edited
   push:
     branches:
       - main
-      - master
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,8 +22,82 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: PR base and change scope
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.scope.outputs.backend }}
+      frontend: ${{ steps.scope.outputs.frontend }}
+      release: ${{ steps.scope.outputs.release }}
+      worker: ${{ steps.scope.outputs.worker }}
+      full: ${{ steps.scope.outputs.full }}
+    steps:
+      - name: Validate PR base
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          IS_DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          if [[ "$IS_DRAFT" != "true" && "$BASE_REF" != "main" ]]; then
+            echo "::error title=PR base invalid::Ready PR must target main; keep stacked PRs as drafts."
+            exit 1
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Select affected modules
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -Eeuo pipefail
+          backend=false
+          frontend=false
+          release=false
+          worker=false
+          full=false
+
+          if [[ "$EVENT_NAME" != "pull_request" ]]; then
+            backend=true
+            frontend=true
+            release=true
+            worker=true
+            full=true
+          else
+            while IFS= read -r file; do
+              case "$file" in
+                backend/*) backend=true ;;
+                frontend/*) frontend=true ;;
+                scripts/release/*|deploy/production/*|.github/workflows/release.yml) release=true ;;
+                worker/*) worker=true ;;
+                .github/workflows/ci.yml)
+                  backend=true
+                  frontend=true
+                  release=true
+                  worker=true
+                  ;;
+              esac
+            done < <(git diff --name-only --diff-filter=ACMRTD "$BASE_SHA" "$HEAD_SHA")
+          fi
+
+          {
+            echo "backend=$backend"
+            echo "frontend=$frontend"
+            echo "release=$release"
+            echo "worker=$worker"
+            echo "full=$full"
+          } >>"$GITHUB_OUTPUT"
+
   backend:
     name: Go backend
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     services:
       timescaledb:
@@ -55,15 +136,18 @@ jobs:
         run: |
           go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
           staticcheck ./...
-      - name: Database contracts
-        run: go test -count=1 ./internal/db ./internal/migration ./internal/service ./cmd/migrate
+      - name: Tests
+        run: go test -count=1 ./...
       - name: Test with race detector
+        if: needs.changes.outputs.full == 'true'
         run: go test -race ./...
       - name: Build
         run: go build ./...
 
   frontend:
     name: Vue frontend
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -91,6 +175,8 @@ jobs:
 
   browser-smoke:
     name: Playwright browser smoke
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -108,9 +194,17 @@ jobs:
           cache-dependency-path: frontend/pnpm-lock.yaml
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Install Playwright browsers
+      - name: Install Chromium
+        if: needs.changes.outputs.full != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run Chromium smoke tests
+        if: needs.changes.outputs.full != 'true'
+        run: pnpm exec playwright test --project=chromium
+      - name: Install all Playwright browsers
+        if: needs.changes.outputs.full == 'true'
         run: pnpm exec playwright install --with-deps chromium firefox webkit
-      - name: Run critical browser smoke tests
+      - name: Run all browser smoke tests
+        if: needs.changes.outputs.full == 'true'
         run: pnpm test:e2e
       - name: Upload browser failure evidence
         if: failure()
@@ -125,6 +219,8 @@ jobs:
 
   worker:
     name: Python worker
+    needs: changes
+    if: needs.changes.outputs.worker == 'true'
     runs-on: ubuntu-latest
     services:
       timescaledb:
@@ -162,14 +258,31 @@ jobs:
       - name: Pytest
         run: uv run --frozen pytest
 
-  containers:
-    name: Container builds
+  release:
+    name: Release script checks
+    needs: changes
+    if: needs.changes.outputs.release == 'true' && needs.changes.outputs.full != 'true'
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Validate release maintenance scripts
+        run: |
+          bash -n scripts/release/*.sh scripts/release/tests/*.sh deploy/production/*.sh
+          shellcheck scripts/release/*.sh scripts/release/tests/*.sh deploy/production/*.sh
+          for test_script in scripts/release/tests/*.sh; do
+            bash "$test_script"
+          done
+
+  containers:
+    name: Wave integration and containers
     needs:
+      - changes
       - backend
       - browser-smoke
       - frontend
       - worker
+    if: needs.changes.outputs.full == 'true'
+    runs-on: ubuntu-latest
     env:
       COINSPHERE_AUTH__SECRET_KEY: ci-only-secret-key-that-is-never-deployed
     steps:
@@ -249,3 +362,34 @@ jobs:
       - name: Stop Compose stack
         if: always()
         run: docker compose down --volumes --remove-orphans
+
+  pr-gate:
+    name: PR summary gate
+    needs:
+      - changes
+      - backend
+      - browser-smoke
+      - frontend
+      - release
+      - worker
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all selected checks
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "${{ needs.changes.result }}" == "success" ]] || exit 1
+
+          require_selected() {
+            case "$1:$2" in
+              true:success|false:skipped) ;;
+              *) echo "::error title=PR gate failed::$3 check finished with $2"; return 1 ;;
+            esac
+          }
+
+          require_selected "${{ needs.changes.outputs.backend }}" "${{ needs.backend.result }}" backend
+          require_selected "${{ needs.changes.outputs.frontend }}" "${{ needs.frontend.result }}" frontend
+          require_selected "${{ needs.changes.outputs.frontend }}" "${{ needs.browser-smoke.result }}" browser-smoke
+          require_selected "${{ needs.changes.outputs.release }}" "${{ needs.release.result }}" release
+          require_selected "${{ needs.changes.outputs.worker }}" "${{ needs.worker.result }}" worker

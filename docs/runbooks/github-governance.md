@@ -1,8 +1,8 @@
 # GitHub 仓库治理手册
 
-远程仓库已经配置。Codex 可以推送 `codex/*` 分支并创建草稿 PR，但不能合并。
+配置远程仓库后，Codex 可以推送 `codex/*` 分支并创建草稿 PR，但不能合并。
 
-当前仓库为私有仓库，GitHub Free 不提供该仓库的 Branch Protection API。升级到支持私有仓库保护规则的套餐后，必须按下节启用；在升级前，用户仍需坚持 PR 审查和手工合并，发布 Workflow 通过 `production` Environment 的 `main` 分支白名单与脚本内最新 `origin/main` 校验阻止其他分支发布。
+若当前 GitHub 套餐不支持私有仓库保护规则，用户必须继续执行 PR 审查和手工合并；发布 Workflow 通过 `production` Environment 的 `main` 分支白名单与脚本内最新 `origin/main` 校验阻止其他分支发布。平台支持后按下节启用强制规则。
 
 ## 1. 连接远程仓库
 
@@ -25,19 +25,12 @@ git push -u origin main
 - Do not allow bypassing for Codex 使用的账号或 Token。
 - 禁止自动合并；合并动作由用户手工执行。
 
-基础必需检查：
+Required checks 只配置以下两个稳定名称：
 
-- `Go backend`
-- `Vue frontend`
-- `Playwright browser smoke`
-- `Python worker`
-- `Container builds`
+- `PR summary gate`
 - `Secret scan`
-- `Go vulnerability scan`
-- `Python dependency scan`
-- `Dependency and filesystem scan`
 
-新增迁移、镜像扫描和发布检查后，应同步加入 Required checks。
+`PR summary gate` 汇总按路径选择的 Go、Vue、Chromium、Python 和发布脚本快速检查；未受影响 Job 可以正常跳过。依赖扫描只在锁文件变化、`main`、定时或发布时执行，容器与三浏览器矩阵只在波次集成及 `main` 执行，因此不把这些动态或完整层 Job 单独设为 Required checks。
 
 ## 3. Actions 权限
 
@@ -52,8 +45,13 @@ git push -u origin main
 
 ## 5. PR 放行
 
-1. Codex 创建草稿 PR 并填写模板。
-2. CI 全部通过后，Codex 使用新上下文完成只读复审并处理发现。
-3. 用户检查代码、迁移、截图、风险和回滚说明。
-4. 用户将 PR 标记为 Ready 并手工合并。
-5. 交易能力仍需单独阶段放行，代码合并不等于允许模拟或实盘运行。
+1. Codex 使用 `codex/<phase>-<slug>` 分支创建草稿 PR，标题使用 `[type] 中文描述` 并填写模板。
+2. 独立 PR 以 `main` 为 base；stacked PR 在依赖未合并时必须保持 Draft 并指向父分支。所有 Ready PR 必须以 `main` 为 base，CI 会拒绝例外。
+3. CI 全部通过后，Codex 使用新上下文完成只读复审并处理发现。
+4. 用户检查代码、迁移、截图、风险和回滚说明。
+5. 用户将 PR 标记为 Ready 并手工合并。
+6. 交易能力仍需单独阶段放行，代码合并不等于允许模拟或实盘运行。
+
+## 6. 分支清理
+
+用户手工合并后，先确认 PR 状态为 `MERGED`、远端 `main` 包含合并提交、本地 `main` 已同步，并且分支未被活跃 worktree 使用，再删除对应本地和远端 `codex/*` 分支。不得删除 `main`、未合并分支或版本 Tag。
