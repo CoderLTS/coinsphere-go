@@ -502,9 +502,10 @@ def validate_tar_layout(tar_stream, label):
             raise ScanError(f"{label} TAR 结构不完整")
         if header == tarfile.NUL * tarfile.BLOCKSIZE:
             trailing_size = tar_size - offset
+            # 结束块从记录最后一块开始时，GNU tar 会补齐下一条完整记录。
             if (
                 trailing_size < tarfile.BLOCKSIZE * 2
-                or trailing_size > tarfile.RECORDSIZE
+                or trailing_size > tarfile.RECORDSIZE + tarfile.BLOCKSIZE
             ):
                 raise ScanError(f"{label} TAR 结束结构无效")
             tar_stream.seek(offset)

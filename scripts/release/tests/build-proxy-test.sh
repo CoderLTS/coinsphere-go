@@ -105,8 +105,10 @@ if tar -tzf "$TEST_DIR/output/coinsphere-v1.2.3-linux-amd64.tar.gz" |
 fi
 "$PYTHON" - "$ROOT_DIR" "$TEST_DIR/output" <<'PY'
 import importlib.util
+import io
 import os
 import sys
+import tarfile
 import tempfile
 from pathlib import Path
 
@@ -128,6 +130,22 @@ if os.name != "nt":
 scanner.scan_tar(
     output_dir / "coinsphere-v1.2.3-docker.tar.gz", "docker", "v1.2.3"
 )
+
+boundary_member = tarfile.TarInfo("boundary.bin")
+boundary_member.size = tarfile.RECORDSIZE - tarfile.BLOCKSIZE * 2
+boundary_tar = boundary_member.tobuf(format=tarfile.GNU_FORMAT)
+boundary_tar += b"x" * boundary_member.size
+boundary_tar += tarfile.NUL * (tarfile.RECORDSIZE * 2 - len(boundary_tar))
+scanner.validate_tar_layout(io.BytesIO(boundary_tar), "record-boundary.tar")
+try:
+    scanner.validate_tar_layout(
+        io.BytesIO(boundary_tar + tarfile.NUL * tarfile.RECORDSIZE),
+        "overpadded.tar",
+    )
+except scanner.ScanError:
+    pass
+else:
+    raise AssertionError("额外 TAR 零记录必须被拒绝")
 PY
 
 if [[ $(wc -l <"$BUILD_DOCKER_BUILD_LOG") -ne 5 ]]; then
