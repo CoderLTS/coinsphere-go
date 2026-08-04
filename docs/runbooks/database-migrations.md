@@ -4,7 +4,7 @@
 
 CoinSphere 只支持 PostgreSQL/TimescaleDB。Backend 与 Python Worker 共用同一数据库和 schema，DDL 只由独立 migration 命令执行；服务启动只读校验 migration 版本，不执行 `AutoMigrate`。
 
-`00001_a1_postgres_baseline.sql` 面向全新空 schema，一次建立当前业务表、`worker_tasks`、Outbox 状态约束、外键和索引。`00002_a1_observability.sql` 增加 `audit_records`；表内存在记录时 Down 会失败并保留表、数据和 migration 版本。项目尚未投产，旧 SQLite、MySQL 或旧 PostgreSQL 开发数据直接重置；基线不会识别、保留或升级旧 schema。
+`00001_a1_postgres_baseline.sql` 面向全新空 schema，一次建立当前业务表、`worker_tasks`、Outbox 状态约束、外键和索引。`00002_a1_observability.sql` 增加 `audit_records`；表内存在记录时 Down 会失败并保留表、数据和 migration 版本。`00003_a2_market_contract.sql` 增加 `market_instruments`、`market_candles`、`market_ticker_snapshots` 三张普通行情表；其 Down 会锁住三张表后确认总行数为零，任一表非空即原子失败并保留三张表、数据和 migration 版本。项目尚未投产，旧 SQLite、MySQL 或旧 PostgreSQL 开发数据直接重置；基线不会识别、保留或升级旧 schema。
 
 数据库配置只保留 DSN 与连接池参数：
 
@@ -64,6 +64,7 @@ COINSPHERE_TEST_POSTGRES_DSN='postgres://coinsphere:test-only@127.0.0.1:5432/coi
 测试账户必须能创建和删除随机隔离 schema。CI 使用固定 TimescaleDB 镜像并覆盖：
 
 - 空 schema 应用全部内置 migration、重复 Up、空库 Down 和重新 Up。
+- `00003` 三张行情表的空表 Down/重放；任一表非空时必须原子保留三张表、数据和版本记录。
 - 审计字段约束、外键、索引以及非空审计表的 Down 保护。
 - 服务启动对未迁移、落后或领先版本 fail-fast，且不执行 DDL。
 - 基线包含全部当前表、Worker 七态约束、Outbox 五态/租约/终态约束及必要索引。
@@ -87,8 +88,9 @@ COINSPHERE_TEST_POSTGRES_DSN='postgres://coinsphere:test-only@127.0.0.1:5432/coi
 
 1. 代码或健康检查失败时停止新版本，恢复上一固定镜像与 Compose，保留当前 schema 和 `schema_migrations`。
 2. 只有 PR 明确声明 Down 可逆时，才在备份副本演练后执行固定步数 Down。
-3. 基线 Down 只适用于从未产生任何业务数据的 schema。执行前停止 Backend、Worker 和所有其他写入者；Down 会锁住全部业务表并再次检查为空。
-4. 任一表非空或 Down 失败时停止尝试，保留现场并从发布前备份恢复。禁止删除业务行、手工修改 `schema_migrations` 或跳过版本。
-5. 恢复后重新执行 `version`、就绪检查和领域数据校验。
+3. `00003` Down 前停止所有会写入 `market_instruments`、`market_candles`、`market_ticker_snapshots` 的进程；只有三张表均为空时才会成功，任一表非空或失败时三张表、数据和版本记录都会保留。
+4. 基线 Down 只适用于从未产生任何业务数据的 schema。执行前停止 Backend、Worker 和所有其他写入者；Down 会锁住全部业务表并再次检查为空。
+5. 任一表非空或 Down 失败时停止尝试，保留现场并从发布前备份恢复。禁止删除业务行、手工修改 `schema_migrations` 或跳过版本。
+6. 恢复后重新执行 `version`、就绪检查和领域数据校验。
 
 部署脚本不会自动执行 Down，也不会自动覆盖 PostgreSQL 数据。旧 SQLite 卷不会被新 Compose 挂载或删除，需要时由管理员在确认不再回滚旧版本后单独清理。

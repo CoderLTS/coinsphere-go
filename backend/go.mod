@@ -4,10 +4,12 @@ go 1.26
 
 require (
 	github.com/fernet/fernet-go v0.0.0-20240119011108-303da6aec611
+	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/pressly/goose/v3 v3.27.3
 	github.com/robfig/cron/v3 v3.0.1
+	github.com/shopspring/decimal v1.4.0
 	golang.org/x/crypto v0.54.0
 	golang.org/x/sync v0.22.0
 	golang.org/x/term v0.45.0
