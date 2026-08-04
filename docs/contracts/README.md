@@ -75,6 +75,12 @@ WebSocket 事件统一使用以下信封：
 
 浏览器握手必须携带唯一且合法的 `Origin`，其有效 scheme、主机和端口必须与请求完全同源；缺失、畸形、跨 scheme/主机/端口均拒绝。通知连接必须按顺序提供 `Sec-WebSocket-Protocol: coinsphere.notifications.v1, <access-token>`，服务端只回显固定协议 `coinsphere.notifications.v1`；缺失、顺序错误、额外协议或任何查询串均拒绝。开发和生产反向代理始终必须保留原始 Host（含非默认端口）及合法的有效 scheme，且不得记录令牌或事件 payload。
 
+## 工作流 HTTP 外呼
+
+- `http.request` 只允许访问 `workflow.http_allowed_hosts` 中配置的精确域名；配置项不接受通配符、端口或 IP，空列表表示禁止全部外呼。
+- URL 只允许绝对 `http`/`https` 地址且不得包含 userinfo。首次校验、每次重定向和实际拨号都会解析域名；任一解析结果不是公网地址时整次请求被永久拒绝。
+- 拨号只使用当次重新解析并校验过的 IP，不使用环境代理或连接复用。`Authorization`、`Cookie`、`Proxy-Authorization` 及名称含 key/token/secret/credential 的请求头不得发出。
+
 ## 异步任务
 
 任务状态固定为 `queued`、`claimed`、`running`、`cancelRequested`、`succeeded`、`failed`、`canceled`。正常路径为 `queued -> claimed -> running -> succeeded/failed`；取消可从活跃状态进入 `cancelRequested -> canceled`。每次认领递增 `attempt_count` 并生成新的唯一 `lease_id`，启动、心跳和终态写入必须同时匹配任务 ID、租约 ID、合法前态及未过期的数据库时间。
@@ -88,6 +94,12 @@ Outbox 认领必须在单条数据库语句中完成候选选择、批量状态�
 续租、`claimed -> processed` 和订阅失败释放都必须同时匹配事件 ID、`lease_id`、Owner、`attempt_count` 和未过期的数据库时间。租约过期后旧 Owner 立即失去续租与终态写权限；即使事件已经恢复并重新认领，旧 token 的写入也只能影响零行。订阅失败保留已消耗的尝试次数并清空旧租约：仍有次数时按数据库时间与 `retry_backoff_seconds` 回到 `pending`，最后一次失败或租约过期时进入 `dead_letter`，且 `processed_at` 与 `dead_lettered_at` 相同。当前 `failed` 只表示旧 dispatcher 的既有终态，新 dispatcher 不再写入该状态。
 
 工作流成功、最终失败和 stale 耗尽时，execution 终态、attempt、两条标准事件及对应入口状态必须在同一短事务提交；任一事件插入失败时整体回滚。显式 `event.emit` 节点的权威业务动作就是单条 Outbox 插入，不把整张图或外部副作用包入长事务。未告警死信通过原子设置 `alerted_at` 由一个实例领取，告警日志只允许固定 Outbox ID、尝试次数和分类，不得包含 payload、metadata、Owner、token 或异常正文。该标记提供 at-most-once 日志去重，不等同于可靠外部告警。
+
+## 浏览器内容安全
+
+- 助手 Markdown 保持 `html=false`，渲染结果在写入 DOM 前由固定版本的 DOMPurify 按 Markdown 标签白名单净化；第三方图片源被移除。
+- Mermaid 使用 `securityLevel=strict` 且禁用 HTML label 和交互绑定，生成的 SVG 与其他动态 SVG 都必须再次净化；脚本、事件属性、外部资源引用和可执行 CSS 引用不得进入 DOM。
+- 生产 Nginx 的 CSP 仅允许同源脚本，禁止 object、跨源 frame 和页面被嵌入；WebSocket 访问日志只记录 URI，不记录查询串。
 
 ## 交易命令
 

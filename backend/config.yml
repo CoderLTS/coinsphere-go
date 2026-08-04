@@ -27,6 +27,8 @@ auth:
   password_iterations: 390000
 
 workflow:
+  # HTTP 请求节点只能访问这里列出的精确域名；不支持通配符、端口或 IP，空列表表示禁止外呼。
+  http_allowed_hosts: []
   executor_concurrency: 4
   heartbeat_interval_seconds: 10
   execution_stale_timeout_seconds: 900

@@ -21,23 +21,7 @@
       }
     </style>
 
-    <script>
-      // 初始化 html class 主题属性
-      ;(function () {
-        try {
-          if (typeof Storage === 'undefined' || !window.localStorage) {
-            return
-          }
-
-          const themeType = localStorage.getItem('sys-theme')
-          if (themeType === 'dark') {
-            document.documentElement.classList.add('dark')
-          }
-        } catch (e) {
-          console.warn('Failed to apply initial theme:', e)
-        }
-      })()
-    </script>
+    <script type="module" src="/src/theme-init.ts"></script>
   </head>
 
   <body>
@@ -45,4 +29,3 @@
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
-
