@@ -92,6 +92,7 @@ export http_proxy=$EXPECTED_HTTP_PROXY
 export https_proxy=$EXPECTED_HTTPS_PROXY
 export no_proxy=$EXPECTED_NO_PROXY
 
+TAR_OPTIONS=--blocking-factor=64 \
 DOCKER_CONFIG="$TEST_DIR/docker-clean" \
 COINSPHERE_BUILDER=coinsphere-proxy-test \
 bash "$ROOT_DIR/scripts/release/build.sh" \
