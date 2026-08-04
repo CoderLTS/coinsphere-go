@@ -76,6 +76,7 @@ async function fulfillApi(route: Route, data: unknown) {
 
 async function installBackendMocks(page: Page, accessMode: AccessMode) {
   const unexpectedApiCalls: string[] = []
+  const authApiCalls: string[] = []
   const schedulerApiCalls: string[] = []
   let createdPayload: WorkflowPayload | null = null
   let createdDefinition: Record<string, unknown> | null = null
@@ -107,7 +108,22 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
     if (path.startsWith('/api/scheduler/')) {
       schedulerApiCalls.push(`${method} ${path}`)
     }
+    if (path.startsWith('/api/auth/')) {
+      authApiCalls.push(`${method} ${path}`)
+    }
 
+    if (method === 'POST' && path === '/api/auth/refresh') {
+      if (accessMode === 'authenticated') {
+        await fulfillApi(route, { token: 'playwright-access-token' })
+        return
+      }
+      await route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        body: JSON.stringify({ code: 401, msg: '未登录', data: null })
+      })
+      return
+    }
     if (method === 'GET' && path === '/api/auth/me') {
       const hasTestSession = request.headers().authorization === 'Bearer playwright-access-token'
       const resolvedAccessMode =
@@ -176,6 +192,7 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
 
   return {
     unexpectedApiCalls,
+    authApiCalls,
     schedulerApiCalls,
     get createdPayload() {
       return createdPayload
@@ -192,13 +209,11 @@ test('游客访问工作流编辑器时被权限边界拦截', async ({ page }) 
   await expect(page.getByText('抱歉，您无权访问该页面')).toBeVisible()
   await expect(page.getByRole('button', { name: '返回首页' })).toBeVisible()
   expect(backend.schedulerApiCalls).toEqual([])
+  expect(backend.authApiCalls).toEqual(['POST /api/auth/refresh', 'GET /api/auth/me'])
   expect(backend.unexpectedApiCalls).toEqual([])
 })
 
 test('授权用户可以填写基础信息并保存默认工作流', async ({ page }) => {
-  await page.addInitScript(() => {
-    localStorage.setItem('user', JSON.stringify({ accessToken: 'playwright-access-token' }))
-  })
   const backend = await installBackendMocks(page, 'authenticated')
 
   await page.goto('/scheduler/workflow/create')
@@ -244,5 +259,6 @@ test('授权用户可以填写基础信息并保存默认工作流', async ({ pa
       'GET /api/scheduler/workflow-definitions/42'
     ])
   )
+  expect(backend.authApiCalls).toEqual(['POST /api/auth/refresh', 'GET /api/auth/me'])
   expect(backend.unexpectedApiCalls).toEqual([])
 })

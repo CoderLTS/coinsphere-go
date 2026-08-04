@@ -22,7 +22,7 @@ auth:
   # webhook_pepper: ""              # webhook 密钥哈希的 pepper
   # bootstrap_admin_password: ""    # 内置超管初始密码,留空默认 coinsphere(见评审 #2)
   # login_rate_limit_per_minute: 10 # 每 IP 每分钟登录/刷新上限(见评审 #6)
-  access_token_ttl_minutes: 1440
+  access_token_ttl_minutes: 15
   refresh_token_ttl_days: 7
   password_iterations: 390000
 

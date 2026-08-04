@@ -5,7 +5,7 @@ import { useNotificationStore } from './notification'
 
 const userStore = vi.hoisted(() => ({
   accessMode: 'authenticated' as 'authenticated' | 'guest',
-  accessToken: 'a+b /?=中文'
+  accessToken: 'header.payload.signature'
 }))
 
 vi.mock('./user', () => ({ useUserStore: () => userStore }))
@@ -23,14 +23,17 @@ class FakeWebSocket {
   static instances: FakeWebSocket[] = []
 
   readonly url: string
+  readonly protocols: string[]
+  readonly protocol = 'coinsphere.notifications.v1'
   readyState = FakeWebSocket.CONNECTING
   onopen: ((event: Event) => void) | null = null
   onmessage: ((event: MessageEvent) => void) | null = null
   onclose: ((event: CloseEvent) => void) | null = null
   onerror: ((event: Event) => void) | null = null
 
-  constructor(url: string | URL) {
+  constructor(url: string | URL, protocols: string | string[] = []) {
     this.url = String(url)
+    this.protocols = typeof protocols === 'string' ? [protocols] : protocols
     FakeWebSocket.instances.push(this)
   }
 
@@ -59,7 +62,7 @@ describe('notification websocket', () => {
     setActivePinia(createPinia())
     FakeWebSocket.instances = []
     userStore.accessMode = 'authenticated'
-    userStore.accessToken = 'a+b /?=中文'
+    userStore.accessToken = 'header.payload.signature'
     vi.stubGlobal('window', { location: { origin: 'https://app.example:8443' } })
     vi.stubGlobal('WebSocket', FakeWebSocket)
   })
@@ -74,7 +77,8 @@ describe('notification websocket', () => {
     expect(url.protocol).toBe('wss:')
     expect(url.host).toBe('app.example:8443')
     expect(url.pathname).toBe('/ws/notifications')
-    expect(url.searchParams.get('token')).toBe(userStore.accessToken)
+    expect(url.search).toBe('')
+    expect(socket.protocols).toEqual(['coinsphere.notifications.v1', userStore.accessToken])
 
     socket.open()
     expect(store.connected).toBe(true)

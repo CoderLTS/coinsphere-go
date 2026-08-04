@@ -1,37 +1,4 @@
-/** 状态管理模块：user。 */
-/**
- * 用户状态管理模块
- *
- * 提供用户相关的状态管理
- *
- * ## 主要功能
- *
- * - 用户登录状态管理
- * - 用户信息存储
- * - 访问令牌和刷新令牌管理
- * - 语言设置
- * - 搜索历史记录
- * - 锁屏状态和密码管理
- * - 登出清理逻辑
- *
- * ## 使用场景
- *
- * - 用户登录和认证
- * - 权限验证
- * - 个人信息展示
- * - 多语言切换
- * - 锁屏功能
- * - 搜索历史管理
- *
- * ## 持久化
- *
- * - 使用 localStorage 存储
- * - 存储键：sys-v{version}-user
- * - 登出时自动清理
- *
- * @module store/modules/user
- * @author Art Design Pro Team
- */
+/** 用户会话状态；访问令牌和锁屏密码只保存在当前页面内存中。 */
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { LanguageEnum } from '@/enums/appEnum'
@@ -44,10 +11,6 @@ import { resetRouterState } from '@/router/guards/beforeEach'
 import { useMenuStore } from './menu'
 import { StorageConfig } from '@/utils/storage/storage-config'
 
-/**
- * 用户状态管理
- * 管理用户登录状态、个人信息、语言设置、搜索历史、锁屏状态等
- */
 export const useUserStore = defineStore(
   'userStore',
   () => {
@@ -76,8 +39,7 @@ export const useUserStore = defineStore(
     const searchHistory = ref<AppRouteRecord[]>([])
     // 访问令牌
     const accessToken = ref('')
-    // 刷新令牌
-    const refreshToken = ref('')
+    let refreshPromise: Promise<string> | null = null
 
     // 计算属性：获取用户信息
     const getUserInfo = computed(() => info.value)
@@ -139,31 +101,13 @@ export const useUserStore = defineStore(
       lockPassword.value = password
     }
 
-    /**
-     * 设置令牌
-     * @param newAccessToken 访问令牌
-     * @param newRefreshToken 刷新令牌（可选）
-     */
-    const setToken = (newAccessToken: string, newRefreshToken?: string) => {
+    /** access token 只写入 Pinia 内存，refresh token 由 HttpOnly Cookie 承载。 */
+    const setToken = (newAccessToken: string) => {
       accessToken.value = newAccessToken
-      if (newRefreshToken) {
-        refreshToken.value = newRefreshToken
-      }
     }
 
-    /**
-     * 退出登录
-     * 清空所有用户相关状态并跳转到游客首页
-     * 如果是同一账号重新登录，保留工作台标签页
-     */
-    const logOut = () => {
-      // 先请求后端吊销 refresh 令牌(端到端登出，见评审 #4);best-effort，失败不影响本地登出。
-      // 用动态 import 而非顶部静态引入,避免与 http 客户端(其静态引入了本 store)形成循环依赖。
-      const revokeToken = refreshToken.value
-      if (revokeToken) {
-        import('@/api/auth').then(({ logout }) => logout(revokeToken)).catch(() => {})
-      }
-
+    /** 清理本地会话并回到游客首页。 */
+    const clearSession = () => {
       // 保存当前用户 ID，用于下次登录时判断是否为同一用户
       const currentUserId = info.value.userId
       if (currentUserId && accessMode.value === 'authenticated') {
@@ -181,9 +125,6 @@ export const useUserStore = defineStore(
       lockPassword.value = ''
       // 清空访问令牌
       accessToken.value = ''
-      // 清空刷新令牌
-      refreshToken.value = ''
-      // 注意：不清空工作台标签页，等下次登录时根据用户判断
       // 移除iframe路由缓存
       useWorktabStore().clearAll()
       sessionStorage.removeItem('iframeRoutes')
@@ -193,6 +134,36 @@ export const useUserStore = defineStore(
       resetRouterState(0)
       // 游客模式下直接回到首页，由路由守卫重新初始化游客菜单与首页路径
       router.replace({ path: '/home' })
+    }
+
+    /** 并发恢复和 401 请求共享一次 Cookie 刷新，失败后才清理既有登录态。 */
+    const refreshSession = () => {
+      if (refreshPromise) return refreshPromise
+
+      const hadAuthenticatedSession =
+        accessMode.value === 'authenticated' || Boolean(accessToken.value)
+      refreshPromise = import('@/api/auth')
+        .then(({ fetchRefreshSession }) => fetchRefreshSession())
+        .then(({ token }) => {
+          if (!token) throw new Error('Refresh failed - no token received')
+          accessToken.value = token
+          return token
+        })
+        .catch((error) => {
+          if (hadAuthenticatedSession) clearSession()
+          throw error
+        })
+        .finally(() => {
+          refreshPromise = null
+        })
+
+      return refreshPromise
+    }
+
+    /** 后端登出为 best-effort，本地会话立即清理。 */
+    const logOut = () => {
+      void import('@/api/auth').then(({ logout }) => logout()).catch(() => {})
+      clearSession()
     }
 
     /**
@@ -238,7 +209,6 @@ export const useUserStore = defineStore(
       info,
       searchHistory,
       accessToken,
-      refreshToken,
       getUserInfo,
       isGuest,
       getSettingState,
@@ -250,14 +220,19 @@ export const useUserStore = defineStore(
       setLockStatus,
       setLockPassword,
       setToken,
+      refreshSession,
+      clearSession,
       logOut,
       checkAndClearWorktabs
     }
   },
   {
     persist: {
-      key: 'user',
-      storage: localStorage
+      key: 'user-preferences',
+      storage: localStorage,
+      pick: ['language', 'searchHistory'],
+      // 旧键可能包含 accessToken、refreshToken、lockPassword，初始化前直接删除。
+      beforeHydrate: () => localStorage.removeItem('user')
     }
   }
 )

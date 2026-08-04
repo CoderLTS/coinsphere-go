@@ -1,19 +1,4 @@
-/** 前端工具模块：index。 */
-/**
- * HTTP 请求封装模块
- * 基于 Axios 封装的 HTTP 请求工具，提供统一的请求/响应处理
- *
- * ## 主要功能
- *
- * - 请求/响应拦截器（自动添加 Token、统一错误处理）
- * - 401 未授权自动登出（带防抖机制）
- * - 请求失败自动重试（可配置）
- * - 统一的成功/错误消息提示
- * - 支持 GET/POST/PUT/DELETE 等常用方法
- *
- * @module utils/http
- * @author Art Design Pro Team
- */
+/** Axios 请求封装：注入内存 access token，并统一处理刷新与错误信封。 */
 
 import axios, { AxiosRequestConfig, AxiosResponse, InternalAxiosRequestConfig } from 'axios'
 import { useUserStore } from '@/store/modules/user'
@@ -36,6 +21,8 @@ let unauthorizedTimer: NodeJS.Timeout | null = null
 interface ExtendedAxiosRequestConfig extends AxiosRequestConfig {
   showErrorMessage?: boolean
   showSuccessMessage?: boolean
+  skipAuthRefresh?: boolean
+  authRetried?: boolean
 }
 
 const { VITE_API_URL, VITE_WITH_CREDENTIALS } = import.meta.env
@@ -85,11 +72,9 @@ axiosInstance.interceptors.response.use(
   (response: AxiosResponse<BaseResponse>) => {
     const { code, msg } = response.data
     if (code === ApiStatus.success) return response
-    if (code === ApiStatus.unauthorized) handleUnauthorizedError(msg)
     throw createHttpError(msg || $t('httpMsg.requestFailed'), code)
   },
   (error) => {
-    if (error.response?.status === ApiStatus.unauthorized) handleUnauthorizedError()
     return Promise.reject(handleError(error))
   }
 )
@@ -99,21 +84,13 @@ function createHttpError(message: string, code: number) {
   return new HttpError(message, code)
 }
 
-/** 处理401错误（带防抖） */
-function handleUnauthorizedError(message?: string): never {
-  const error = createHttpError(message || $t('httpMsg.unauthorized'), ApiStatus.unauthorized)
-
+/** 并发 401 只提示一次，避免请求风暴重复打扰用户。 */
+function showUnauthorizedError(error: HttpError) {
   if (!isUnauthorizedErrorShown) {
     isUnauthorizedErrorShown = true
-    logOut()
-
     unauthorizedTimer = setTimeout(resetUnauthorizedError, UNAUTHORIZED_DEBOUNCE_TIME)
-
     showError(error, true)
-    throw error
   }
-
-  throw error
 }
 
 /** 重置401防抖状态 */
@@ -121,11 +98,6 @@ function resetUnauthorizedError() {
   isUnauthorizedErrorShown = false
   if (unauthorizedTimer) clearTimeout(unauthorizedTimer)
   unauthorizedTimer = null
-}
-
-/** 退出登录函数 */
-function logOut() {
-  useUserStore().logOut()
 }
 
 /** 是否需要重试 */
@@ -182,7 +154,25 @@ async function request<T = any>(config: ExtendedAxiosRequestConfig): Promise<T> 
 
     return res.data.data as T
   } catch (error) {
-    if (error instanceof HttpError && error.code !== ApiStatus.unauthorized) {
+    if (error instanceof HttpError && error.code === ApiStatus.unauthorized) {
+      if (!config.skipAuthRefresh && !config.authRetried) {
+        try {
+          await useUserStore().refreshSession()
+          return request<T>({ ...config, authRetried: true })
+        } catch {
+          if (config.showErrorMessage !== false) showUnauthorizedError(error)
+          return Promise.reject(error)
+        }
+      }
+
+      if (!config.skipAuthRefresh && config.authRetried) {
+        useUserStore().logOut()
+      }
+      if (config.showErrorMessage !== false) showUnauthorizedError(error)
+      return Promise.reject(error)
+    }
+
+    if (error instanceof HttpError) {
       const showMsg = config.showErrorMessage !== false
       showError(error, showMsg)
     }
