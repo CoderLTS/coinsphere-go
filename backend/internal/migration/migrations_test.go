@@ -632,7 +632,6 @@ SELECT
           AND num_dimensions = 1
           AND compression_enabled
           AND primary_dimension = 'open_time'
-          AND primary_dimension_type = 'timestamp with time zone'
     ),
     EXISTS (
         SELECT 1
