@@ -42,13 +42,14 @@ export function decodeNotificationWsEnvelope(
   return { ...envelope, version: 1, sequence } as NotificationWsEnvelope
 }
 
-export function buildNotificationWsUrl(pageOrigin: string, token: string) {
+const NOTIFICATION_WS_PROTOCOL = 'coinsphere.notifications.v1'
+
+export function buildNotificationWsUrl(pageOrigin: string) {
   const url = new URL('/ws/notifications', pageOrigin)
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new Error('notification websocket requires an HTTP page origin')
   }
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-  url.searchParams.set('token', token)
   return url.toString()
 }
 
@@ -193,12 +194,18 @@ export const useNotificationStore = defineStore('notificationStore', () => {
     }
     manualClose = false
     lastSequence = 0
-    const currentSocket = new WebSocket(
-      buildNotificationWsUrl(window.location.origin, userStore.accessToken)
-    )
+    const currentSocket = new WebSocket(buildNotificationWsUrl(window.location.origin), [
+      NOTIFICATION_WS_PROTOCOL,
+      userStore.accessToken
+    ])
     socket = currentSocket
     currentSocket.onopen = () => {
       if (socket !== currentSocket) return
+      if (currentSocket.protocol !== NOTIFICATION_WS_PROTOCOL) {
+        manualClose = true
+        currentSocket.close(1002, 'unexpected websocket protocol')
+        return
+      }
       connected.value = true
     }
     currentSocket.onmessage = (event) => {

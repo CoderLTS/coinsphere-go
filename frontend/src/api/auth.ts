@@ -7,7 +7,8 @@ import request from '@/utils/http'
 export function fetchLogin(params: Api.Auth.LoginParams) {
   return request.post<Api.Auth.LoginResponse>({
     url: '/api/auth/login',
-    params
+    params,
+    skipAuthRefresh: true
   })
 }
 
@@ -21,13 +22,21 @@ export function fetchGetUserInfo() {
 }
 
 /**
- * 退出登录：请求后端吊销该 refresh 令牌(端到端登出，见评审 #4)。
- * showErrorMessage:false —— 登出属 best-effort，失败不弹错误提示。
+ * 使用 HttpOnly Cookie 轮换刷新会话，调用方无需接触 refresh token。
  */
-export function logout(refreshToken: string) {
+export function fetchRefreshSession() {
+  return request.post<Api.Auth.LoginResponse>({
+    url: '/api/auth/refresh',
+    skipAuthRefresh: true,
+    showErrorMessage: false
+  })
+}
+
+/** 退出登录由后端吊销 Cookie 中的 refresh token，失败不阻塞本地清理。 */
+export function logout() {
   return request.post<null>({
     url: '/api/auth/logout',
-    params: { refreshToken },
+    skipAuthRefresh: true,
     showErrorMessage: false
   })
 }

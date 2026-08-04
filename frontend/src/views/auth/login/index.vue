@@ -65,9 +65,6 @@
               <ElCheckbox v-model="formData.rememberPassword">{{
                 $t('login.rememberPwd')
               }}</ElCheckbox>
-              <RouterLink class="text-theme" :to="{ name: 'ForgetPassword' }">{{
-                $t('login.forgetPwd')
-              }}</RouterLink>
             </div>
 
             <div style="margin-top: 30px">
@@ -80,13 +77,6 @@
               >
                 {{ $t('login.btnText') }}
               </ElButton>
-            </div>
-
-            <div class="mt-5 text-sm text-gray-600">
-              <span>{{ $t('login.noAccount') }}</span>
-              <RouterLink class="text-theme" :to="{ name: 'Register' }">{{
-                $t('login.register')
-              }}</RouterLink>
             </div>
           </ElForm>
         </div>
@@ -183,7 +173,7 @@
       // 登录请求
       const { username, password } = formData
 
-      const { token, refreshToken } = await fetchLogin({
+      const { token } = await fetchLogin({
         username,
         password
       })
@@ -194,7 +184,7 @@
       }
 
       // 存储 token 和登录状态
-      userStore.setToken(token, refreshToken)
+      userStore.setToken(token)
       userStore.setLoginStatus(true)
       resetRouterState(0)
 
