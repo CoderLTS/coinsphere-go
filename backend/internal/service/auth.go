@@ -1,11 +1,14 @@
 package service
 
 import (
+	"errors"
 	"time"
 
 	"coinsphere/backend/internal/db"
 	"coinsphere/backend/internal/perm"
 	"coinsphere/backend/internal/security"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Principal 当前请求主体(登录用户或游客)。
@@ -40,91 +43,115 @@ func (p *Principal) HasRole(code string) bool {
 
 const guestRoleCode = "R_GUEST"
 
-// Login 用户名密码登录,返回 access/refresh token。
-//
-// 登录主流程:① 按用户名查用户 → ② 校验账号已启用且密码正确 → ③ 签发 access / refresh 两个令牌
-// → ④ 把 refresh 令牌落库(便于以后校验/吊销)→ ⑤ 记录最后登录时间 → ⑥ 返回两个令牌。
-// (a *App) 表示这是 App 的方法,通过 a 拿到共享的 DB、Hasher、Tokens 等依赖。
-func (a *App) Login(username, password string) (M, error) {
-	// 无论用户是否存在/是否停用,都恰好跑一次 VerifyPassword,让各失败分支耗时一致,消除计时枚举(见评审 #7)。
+// AuthSession 只在 API 边界内短暂持有 Refresh Token；响应体不得直接序列化该结构。
+type AuthSession struct {
+	AccessToken      string
+	RefreshToken     string
+	RefreshExpiresAt time.Time
+}
+
+// Login 校验凭据并创建可轮换会话。
+func (a *App) Login(username, password string) (*AuthSession, error) {
 	var user db.SystemUser
 	lookupErr := a.DB.Where("username = ?", username).First(&user).Error
-	hashToCheck := a.dummyHash // 用户不存在时拿预算好的假哈希凑等量耗时
+	hashToCheck := a.dummyHash
 	if lookupErr == nil {
 		hashToCheck = user.PasswordHash
 	}
 	passwordOK := a.Hasher.VerifyPassword(password, hashToCheck)
-	// “用户不存在”“已停用”“密码错误”故意返回同一句提示,不让攻击者判断到底哪一步错了。
 	if lookupErr != nil || !user.IsActive || !passwordOK {
 		return nil, bizErr("用户名或密码错误")
 	}
 	accessToken := a.Tokens.CreateAccessToken(user.ID)
 	refreshToken := a.Tokens.CreateRefreshToken(user.ID)
-
-	// 把 refresh token 存进数据库,但只存它的哈希(HashToken)而非明文——即使数据库泄露也拿不到原始令牌。
-	// .Save(&record) 会写入这条记录(INSERT/更新)。
+	now := time.Now()
 	record := db.RefreshTokenRecord{
 		ID: refreshToken.TokenID, UserID: user.ID,
 		TokenHash: security.HashToken(refreshToken.Value),
-		ExpiresAt: refreshToken.ExpiresAt, CreatedAt: time.Now(),
+		ExpiresAt: refreshToken.ExpiresAt, CreatedAt: now,
 	}
-	if err := a.DB.Save(&record).Error; err != nil {
+	if err := a.DB.Create(&record).Error; err != nil {
 		return nil, err
 	}
-	now := time.Now()
-	// 更新最后登录时间:.Model(...).Where("id = ?").Updates(map) 等价 UPDATE users SET ... WHERE id=?,
-	// 只更新 map 里列出的这几列。最后返回 M{...} 拼成 JSON 响应体,nil 表示没有错误。
 	a.DB.Model(&db.SystemUser{}).Where("id = ?", user.ID).
 		Updates(map[string]any{"last_login_at": now, "updated_at": now})
-	return M{"token": accessToken.Value, "refreshToken": refreshToken.Value}, nil
+	return &AuthSession{
+		AccessToken: accessToken.Value, RefreshToken: refreshToken.Value,
+		RefreshExpiresAt: refreshToken.ExpiresAt,
+	}, nil
 }
 
-// RefreshAccessToken 用 refresh token 换取新的 access token。
-//
-// 流程:先验 refresh 令牌的签名 → 查库确认这条记录未被吊销 → 再校验它没过期、且哈希对得上,
-// 全部通过才签发新的 access 令牌。这样 access 令牌可以很短命,过期后不必让用户重新输密码。
-func (a *App) RefreshAccessToken(refreshToken string) (M, error) {
+// RefreshAccessToken 在同一事务中锁定、吊销旧令牌并写入新令牌，阻止并发复用。
+func (a *App) RefreshAccessToken(refreshToken string) (*AuthSession, error) {
 	payload, err := a.Tokens.VerifyToken(refreshToken, "refresh")
 	if err != nil {
 		return nil, err
 	}
-	// 按 token id 查记录(先不加 is_revoked 过滤,以便识别“复用已吊销令牌”)。
-	var record db.RefreshTokenRecord
-	if err := a.DB.Where("id = ?", payload.TokenID).First(&record).Error; err != nil {
-		return nil, security.ErrInvalidToken
-	}
-	// 复用检测:已吊销的 refresh 又被拿来换 token,视为令牌泄露 → 吊销该用户全部 refresh,强制重新登录(见评审 #5)。
-	if record.IsRevoked {
-		a.DB.Model(&db.RefreshTokenRecord{}).Where("user_id = ?", record.UserID).Update("is_revoked", true)
-		return nil, security.ErrInvalidToken
-	}
-	// ExpiresAt.After(now) 判断是否还没过期;哈希用恒定时间比较(见评审 #9)。任一不满足都视为无效。
-	if !record.ExpiresAt.After(time.Now()) || !security.SecureCompare(record.TokenHash, security.HashToken(refreshToken)) {
-		return nil, security.ErrInvalidToken
-	}
-	// 轮换:先把新 refresh 落库成功,再吊销旧的——顺序保证中途失败也不会把用户锁死(见评审 #5)。
 	newRefresh := a.Tokens.CreateRefreshToken(payload.UserID)
-	newRecord := db.RefreshTokenRecord{
-		ID: newRefresh.TokenID, UserID: payload.UserID,
-		TokenHash: security.HashToken(newRefresh.Value),
-		ExpiresAt: newRefresh.ExpiresAt, CreatedAt: time.Now(),
-	}
-	if err := a.DB.Save(&newRecord).Error; err != nil {
+	reused := false
+	err = a.DB.Transaction(func(tx *gorm.DB) error {
+		var record db.RefreshTokenRecord
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ?", payload.TokenID).First(&record).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return security.ErrInvalidToken
+		}
+		if err != nil {
+			return err
+		}
+		if record.UserID != payload.UserID {
+			return security.ErrInvalidToken
+		}
+		if record.IsRevoked {
+			reused = true
+			return tx.Model(&db.RefreshTokenRecord{}).
+				Where("user_id = ?", record.UserID).Update("is_revoked", true).Error
+		}
+		if !record.ExpiresAt.After(time.Now()) ||
+			!security.SecureCompare(record.TokenHash, security.HashToken(refreshToken)) {
+			return security.ErrInvalidToken
+		}
+		now := time.Now()
+		newRecord := db.RefreshTokenRecord{
+			ID: newRefresh.TokenID, UserID: payload.UserID,
+			TokenHash: security.HashToken(newRefresh.Value),
+			ExpiresAt: newRefresh.ExpiresAt, CreatedAt: now,
+		}
+		if err := tx.Create(&newRecord).Error; err != nil {
+			return err
+		}
+		result := tx.Model(&db.RefreshTokenRecord{}).
+			Where("id = ? AND is_revoked = ?", record.ID, false).
+			Update("is_revoked", true)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return security.ErrInvalidToken
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
-	a.DB.Model(&db.RefreshTokenRecord{}).Where("id = ?", record.ID).Update("is_revoked", true)
+	if reused {
+		return nil, security.ErrInvalidToken
+	}
 	accessToken := a.Tokens.CreateAccessToken(payload.UserID)
-	return M{"token": accessToken.Value, "refreshToken": newRefresh.Value}, nil
+	return &AuthSession{
+		AccessToken: accessToken.Value, RefreshToken: newRefresh.Value,
+		RefreshExpiresAt: newRefresh.ExpiresAt,
+	}, nil
 }
 
-// Logout 主动吊销一个 refresh 令牌(退出登录/踢下线)。即便令牌无效也返回成功,避免泄露信息(见评审 #4)。
+// Logout 主动吊销 Refresh Token；无效令牌仍返回成功，避免泄露会话状态。
 func (a *App) Logout(refreshToken string) error {
 	payload, err := a.Tokens.VerifyToken(refreshToken, "refresh")
 	if err != nil {
 		return nil
 	}
-	a.DB.Model(&db.RefreshTokenRecord{}).Where("id = ?", payload.TokenID).Update("is_revoked", true)
-	return nil
+	return a.DB.Model(&db.RefreshTokenRecord{}).
+		Where("id = ?", payload.TokenID).Update("is_revoked", true).Error
 }
 
 // AuthenticateAccessToken 校验 access token 并组装权限上下文。

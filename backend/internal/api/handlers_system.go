@@ -8,15 +8,37 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"coinsphere/backend/internal/service"
 )
 
 // ---------- 认证 ----------
 
-// handleLogin 处理 POST /api/auth/login。签名是 (w, r)——没有 principal,因为登录接口本身不需要先登录。
-// (s *Server) 是方法接收者,表示这是 Server 的方法;下面把请求体解析成一个只用一次的匿名 struct。
-// 字段后 `json:"username"` 是标签,指明该字段对应 JSON 里的 "username" 键(见 GO入门笔记『复合类型』)。
+const refreshCookieName = "coinsphere_refresh_token"
+
+func writeAuthSession(w http.ResponseWriter, r *http.Request, session *service.AuthSession) {
+	http.SetCookie(w, &http.Cookie{
+		Name: refreshCookieName, Value: session.RefreshToken,
+		Path: "/api/auth", Expires: session.RefreshExpiresAt,
+		HttpOnly: true, Secure: requestUsesHTTPS(r), SameSite: http.SameSiteStrictMode,
+	})
+	ok(w, M{"token": session.AccessToken})
+}
+
+func clearRefreshCookie(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name: refreshCookieName, Path: "/api/auth",
+		Expires: time.Unix(1, 0), MaxAge: -1,
+		HttpOnly: true, Secure: requestUsesHTTPS(r), SameSite: http.SameSiteStrictMode,
+	})
+}
+
+func requestUsesHTTPS(r *http.Request) bool {
+	scheme, ok := effectiveRequestScheme(r)
+	return ok && scheme == "https"
+}
+
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	payload, err := decodeBody[struct {
 		Username string `json:"username"`
@@ -30,34 +52,36 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		fail(w, "用户名或密码错误")
 		return
 	}
-	data, err := s.App.Login(payload.Username, payload.Password)
-	respond(w, data, err, "")
+	session, err := s.App.Login(payload.Username, payload.Password)
+	if err != nil {
+		respond(w, nil, err, "")
+		return
+	}
+	writeAuthSession(w, r, session)
 }
 
 func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
-	payload, err := decodeBody[struct {
-		RefreshToken string `json:"refreshToken"`
-	}](r)
+	cookie, err := r.Cookie(refreshCookieName)
 	if err != nil {
+		clearRefreshCookie(w, r)
+		writeJSON(w, http.StatusOK, M{"code": 401, "msg": "invalid token", "data": nil})
+		return
+	}
+	session, err := s.App.RefreshAccessToken(cookie.Value)
+	if err != nil {
+		clearRefreshCookie(w, r)
 		writeJSON(w, http.StatusOK, M{"code": 401, "msg": err.Error(), "data": nil})
 		return
 	}
-	data, err := s.App.RefreshAccessToken(payload.RefreshToken)
-	if err != nil {
-		writeJSON(w, http.StatusOK, M{"code": 401, "msg": err.Error(), "data": nil})
-		return
-	}
-	ok(w, data)
+	writeAuthSession(w, r, session)
 }
 
-// handleLogout 处理 POST /api/auth/logout:吊销请求体里的 refresh 令牌(见评审 #4)。无请求体或令牌无效也返回成功。
+// handleLogout 清理 Cookie 并尽力吊销对应 Refresh Token。
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	payload, err := decodeBody[struct {
-		RefreshToken string `json:"refreshToken"`
-	}](r)
-	if err == nil {
-		_ = s.App.Logout(payload.RefreshToken)
+	if cookie, err := r.Cookie(refreshCookieName); err == nil {
+		_ = s.App.Logout(cookie.Value)
 	}
+	clearRefreshCookie(w, r)
 	ok(w, M{})
 }
 

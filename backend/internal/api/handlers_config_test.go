@@ -78,13 +78,19 @@ func TestWebSocketUpgraderEnforcesOrigin(t *testing.T) {
 	wsURL := strings.Replace(server.URL, "http", "ws", 1)
 
 	sameOriginHeader := http.Header{"Origin": []string{server.URL}}
-	conn, response, err := websocket.DefaultDialer.Dial(wsURL, sameOriginHeader)
+	dialer := websocket.Dialer{
+		Subprotocols: []string{notificationsWebSocketProtocol, "test-access-token"},
+	}
+	conn, response, err := dialer.Dial(wsURL, sameOriginHeader)
 	if err != nil {
 		status := 0
 		if response != nil {
 			status = response.StatusCode
 		}
 		t.Fatalf("same-origin handshake failed: status=%d err=%v", status, err)
+	}
+	if conn.Subprotocol() != notificationsWebSocketProtocol {
+		t.Fatalf("selected protocol = %q, want fixed notification protocol", conn.Subprotocol())
 	}
 	_ = conn.Close()
 	if response != nil {
@@ -103,5 +109,38 @@ func TestWebSocketUpgraderEnforcesOrigin(t *testing.T) {
 	}
 	if err == nil || response == nil || response.StatusCode != http.StatusForbidden {
 		t.Fatalf("cross-origin handshake: status=%d err=%v, want 403", status, err)
+	}
+}
+
+func TestNotificationWebSocketTokenContract(t *testing.T) {
+	tests := []struct {
+		name       string
+		target     string
+		protocols  []string
+		headerSets [][]string
+		want       bool
+	}{
+		{name: "fixed protocol and token", target: "http://app/ws/notifications", protocols: []string{notificationsWebSocketProtocol, "test-access-token"}, want: true},
+		{name: "query rejected", target: "http://app/ws/notifications?token=test", protocols: []string{notificationsWebSocketProtocol, "test-access-token"}},
+		{name: "missing token", target: "http://app/ws/notifications", protocols: []string{notificationsWebSocketProtocol}},
+		{name: "wrong order", target: "http://app/ws/notifications", protocols: []string{"test-access-token", notificationsWebSocketProtocol}},
+		{name: "extra protocol", target: "http://app/ws/notifications", protocols: []string{notificationsWebSocketProtocol, "test-access-token", "extra"}},
+		{name: "duplicate header", target: "http://app/ws/notifications", headerSets: [][]string{{notificationsWebSocketProtocol, "test-access-token"}, {notificationsWebSocketProtocol, "test-access-token"}}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, test.target, nil)
+			if len(test.protocols) > 0 {
+				r.Header.Set("Sec-WebSocket-Protocol", strings.Join(test.protocols, ", "))
+			}
+			for _, protocols := range test.headerSets {
+				r.Header.Add("Sec-WebSocket-Protocol", strings.Join(protocols, ", "))
+			}
+			_, ok := notificationWebSocketToken(r)
+			if ok != test.want {
+				t.Fatalf("notificationWebSocketToken() accepted=%v, want %v", ok, test.want)
+			}
+		})
 	}
 }

@@ -151,7 +151,7 @@ func defaultConfig() *AppConfig {
 		Server: ServerConfig{Host: "0.0.0.0", Port: 6987},
 		Auth: AuthConfig{
 			SecretKey:             DefaultInsecureSecret,
-			AccessTokenTTLMinutes: 1440,
+			AccessTokenTTLMinutes: 15,
 			RefreshTokenTTLDays:   7,
 			PasswordIterations:    390000,
 		},

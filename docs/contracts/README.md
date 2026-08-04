@@ -12,7 +12,9 @@
 - 新金融接口统一位于 `/api/v1`，现有管理接口保持原路径直至单独迁移。
 - 列表接口使用游标分页，命令接口支持 `Idempotency-Key`。
 - 错误响应使用 `application/problem+json`，至少包含 `type`、`title`、`status`、`code`、`requestId`、`retryable`。
-- 当前 A1 登录、refresh 和 logout 接口通过 JSON 传递 Access/Refresh Token，前端状态同时持有两者。A1 安全波次的目标契约是 Access Token 只保存在浏览器内存中，Refresh Token 改为由 refresh/logout 接口轮换的 HttpOnly Cookie；目标实现合并前不得把它描述为现行行为。
+- A1 登录与 refresh 响应只返回 `{"token":"..."}`，Access Token 默认有效期 15 分钟且只保存在浏览器内存中。Refresh Token 只存在名为 `coinsphere_refresh_token` 的 Cookie：`HttpOnly`、`SameSite=Strict`、`Path=/api/auth`，HTTPS 请求同时设置 `Secure`。
+- `POST /api/auth/refresh` 和 `POST /api/auth/logout` 均无请求体。refresh 在 PostgreSQL 短事务中锁定旧记录、写入新记录并吊销旧记录；并发复用或已吊销令牌再次出现时吊销该用户全部 Refresh Token。logout 即使 Cookie 缺失或无效也清除浏览器 Cookie。
+- 管理员密码恢复通过 `go run ./cmd/admin -username <name>` 执行，密码只从隐藏回显的标准输入读取；密码更新与该用户全部 Refresh Token 吊销在同一事务提交。
 
 ## A2 行情契约范围（待实现）
 
@@ -71,7 +73,7 @@ WebSocket 事件统一使用以下信封：
 
 每条通知连接只有一个 writer，业务帧和 Ping 均由它写入。发送队列有界；队列满时服务端关闭慢连接，不阻塞生产者、不静默丢弃后续帧，客户端重连后以首个 `notice.unread` 快照恢复。服务端周期发送 RFC6455 Ping，Pong 延长读期限，失联连接到期关闭；Hub 关机后拒绝新连接并等待既有 writer 退出。
 
-浏览器握手必须携带唯一且合法的 `Origin`，其有效 scheme、主机和端口必须与请求完全同源；缺失、畸形、跨 scheme/主机/端口均拒绝。当前 A1 通知 WebSocket 通过 URL 查询参数传递 Access Token，代理、应用和测试日志不得记录查询串、令牌或事件 payload。A1 安全波次将改为固定 `Sec-WebSocket-Protocol` 鉴权并拒绝查询串 Token；开发和生产反向代理始终必须保留原始 Host（含非默认端口）及合法的有效 scheme。
+浏览器握手必须携带唯一且合法的 `Origin`，其有效 scheme、主机和端口必须与请求完全同源；缺失、畸形、跨 scheme/主机/端口均拒绝。通知连接必须按顺序提供 `Sec-WebSocket-Protocol: coinsphere.notifications.v1, <access-token>`，服务端只回显固定协议 `coinsphere.notifications.v1`；缺失、顺序错误、额外协议或任何查询串均拒绝。开发和生产反向代理始终必须保留原始 Host（含非默认端口）及合法的有效 scheme，且不得记录令牌或事件 payload。
 
 ## 异步任务
 

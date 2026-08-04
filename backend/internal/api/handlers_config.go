@@ -402,11 +402,14 @@ func (s *Server) handleTestInApp(w http.ResponseWriter, r *http.Request, princip
 
 // ---------- WebSocket ----------
 
+const notificationsWebSocketProtocol = "coinsphere.notifications.v1"
+
 // wsUpgrader 负责把普通 HTTP 连接升级成 WebSocket，并在握手阶段拒绝跨站来源。
 var wsUpgrader = websocket.Upgrader{
 	ReadBufferSize:  4096,
 	WriteBufferSize: 4096,
 	CheckOrigin:     checkWebSocketOrigin,
+	Subprotocols:    []string{notificationsWebSocketProtocol},
 }
 
 // checkWebSocketOrigin 按浏览器同源元组比较 scheme、主机和有效端口；缺失或含路径的 Origin 均拒绝。
@@ -478,15 +481,24 @@ func effectiveOriginPort(origin *url.URL) (string, bool) {
 	return "80", true
 }
 
-// handleNotificationsWS 处理 GET /ws/notifications:建立 WebSocket 连接推送未读通知。
-// token 优先从 URL 查询串取(浏览器建 WS 不便带请求头),取不到再退回 Authorization 头。
-func (s *Server) handleNotificationsWS(w http.ResponseWriter, r *http.Request) {
-	token := strings.TrimSpace(r.URL.Query().Get("token"))
-	if token == "" {
-		token = extractBearerToken(r)
+// notificationWebSocketToken 要求固定协议在前、Access Token 在后；查询串一律拒绝，避免令牌进入访问日志。
+func notificationWebSocketToken(r *http.Request) (string, bool) {
+	if r.URL.RawQuery != "" || len(r.Header.Values("Sec-WebSocket-Protocol")) != 1 {
+		return "", false
 	}
-	if token == "" {
-		http.Error(w, "missing token", http.StatusUnauthorized)
+	protocols := websocket.Subprotocols(r)
+	if len(protocols) != 2 || protocols[0] != notificationsWebSocketProtocol {
+		return "", false
+	}
+	token := strings.TrimSpace(protocols[1])
+	return token, token != ""
+}
+
+// handleNotificationsWS 建立只回显固定协议的通知连接。
+func (s *Server) handleNotificationsWS(w http.ResponseWriter, r *http.Request) {
+	token, ok := notificationWebSocketToken(r)
+	if !ok {
+		http.Error(w, "invalid websocket authentication", http.StatusUnauthorized)
 		return
 	}
 	principal, err := s.App.AuthenticateAccessToken(token)

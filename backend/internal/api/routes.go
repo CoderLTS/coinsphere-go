@@ -141,6 +141,6 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/notifications/in-app/read-all", s.requireAuth(s.handleReadAllInApp))
 	mux.HandleFunc("POST /api/notifications/in-app/tests", s.requireAuth(s.handleTestInApp))
 	mux.HandleFunc("POST /api/notifications/in-app/{deliveryId}/read", s.requireAuth(s.handleReadInApp))
-	// WebSocket 路由同样不套中间件:浏览器建 WS 连接不便带 Authorization 头,所以 token 放 URL 查询串里,在 handler 内部校验。
+	// WebSocket 在 handler 内校验固定子协议携带的 Access Token。
 	mux.HandleFunc("GET /ws/notifications", s.handleNotificationsWS)
 }
