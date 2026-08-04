@@ -7,11 +7,13 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -29,6 +31,7 @@ const (
 )
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	configPath := flag.String("config", "", "配置文件路径(默认 config.yml,可用 COINSPHERE_CONFIG_PATH 覆盖)")
 	flag.Parse()
 
@@ -40,9 +43,17 @@ func main() {
 	err := run(ctx, *configPath)
 	stop()
 	if err != nil {
-		log.Printf("backend stopped with error: %v", err)
+		slog.Error("backend stopped", "error_category", "runtime")
 		os.Exit(1)
 	}
+}
+
+// httpServerErrorWriter 丢弃可能携带客户端地址或 panic 正文的原始文本，只记录固定分类。
+type httpServerErrorWriter struct{}
+
+func (httpServerErrorWriter) Write(message []byte) (int, error) {
+	slog.Error("http server error", "error_category", "http_server")
+	return len(message), nil
 }
 
 func signalContext() (context.Context, context.CancelFunc) {
@@ -59,6 +70,9 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	}
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
+	}
+	if err := configureLogger(cfg.Log.Level); err != nil {
+		return err
 	}
 
 	gdb, err := db.Connect(ctx, cfg.Database)
@@ -88,9 +102,9 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 		return fmt.Errorf("seed database: %w", err)
 	}
 	if cfg.Auth.BootstrapAdminPassword == "coinsphere" {
-		log.Printf("[warn] 内置超管仍使用默认初始密码,请登录后尽快修改,或用 COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD 指定强密码")
+		slog.Warn("内置超管仍使用默认初始密码，请登录后尽快修改")
 	}
-	log.Printf("database ready: engine=postgres")
+	slog.Info("database ready", "engine", "postgres")
 
 	app.StartRuntime()
 
@@ -100,6 +114,7 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	server := &http.Server{
 		Addr:              fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 		Handler:           mux,
+		ErrorLog:          log.New(httpServerErrorWriter{}, "", 0),
 		ReadHeaderTimeout: readHeaderTimeout,
 		IdleTimeout:       idleTimeout,
 		BaseContext: func(net.Listener) context.Context {
@@ -108,7 +123,7 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	}
 	serveErr := make(chan error, 1)
 	go func() {
-		log.Printf("http server listening on %s", server.Addr)
+		slog.Info("http server started")
 		err := server.ListenAndServe()
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil
@@ -119,7 +134,7 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	var cause error
 	select {
 	case <-ctx.Done():
-		log.Printf("shutting down...")
+		slog.Info("backend shutdown started")
 	case err := <-serveErr:
 		if err != nil {
 			cause = fmt.Errorf("http server: %w", err)
@@ -141,7 +156,16 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 		shutdownErrs = append(shutdownErrs, fmt.Errorf("stop runtime: %w", err))
 	}
 	if cause == nil && len(shutdownErrs) == 0 {
-		log.Printf("bye")
+		slog.Info("backend shutdown completed")
 	}
 	return errors.Join(append([]error{cause}, shutdownErrs...)...)
+}
+
+func configureLogger(levelText string) error {
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(strings.TrimSpace(levelText))); err != nil {
+		return fmt.Errorf("invalid log level: %w", err)
+	}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})))
+	return nil
 }

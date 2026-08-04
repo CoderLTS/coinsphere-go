@@ -45,6 +45,7 @@ const guestRoleCode = "R_GUEST"
 
 // AuthSession 只在 API 边界内短暂持有 Refresh Token；响应体不得直接序列化该结构。
 type AuthSession struct {
+	UserID           int64
 	AccessToken      string
 	RefreshToken     string
 	RefreshExpiresAt time.Time
@@ -76,6 +77,7 @@ func (a *App) Login(username, password string) (*AuthSession, error) {
 	a.DB.Model(&db.SystemUser{}).Where("id = ?", user.ID).
 		Updates(map[string]any{"last_login_at": now, "updated_at": now})
 	return &AuthSession{
+		UserID:      user.ID,
 		AccessToken: accessToken.Value, RefreshToken: refreshToken.Value,
 		RefreshExpiresAt: refreshToken.ExpiresAt,
 	}, nil
@@ -139,19 +141,21 @@ func (a *App) RefreshAccessToken(refreshToken string) (*AuthSession, error) {
 	}
 	accessToken := a.Tokens.CreateAccessToken(payload.UserID)
 	return &AuthSession{
+		UserID:      payload.UserID,
 		AccessToken: accessToken.Value, RefreshToken: newRefresh.Value,
 		RefreshExpiresAt: newRefresh.ExpiresAt,
 	}, nil
 }
 
 // Logout 主动吊销 Refresh Token；无效令牌仍返回成功，避免泄露会话状态。
-func (a *App) Logout(refreshToken string) error {
+func (a *App) Logout(refreshToken string) (int64, error) {
 	payload, err := a.Tokens.VerifyToken(refreshToken, "refresh")
 	if err != nil {
-		return nil
+		return 0, nil
 	}
-	return a.DB.Model(&db.RefreshTokenRecord{}).
+	err = a.DB.Model(&db.RefreshTokenRecord{}).
 		Where("id = ?", payload.TokenID).Update("is_revoked", true).Error
+	return payload.UserID, err
 }
 
 // AuthenticateAccessToken 校验 access token 并组装权限上下文。

@@ -1,12 +1,12 @@
 package service
 
 // import:引入本文件用到的标准库与项目内部包。见 GO入门笔记『项目怎么组织』。
-// log = 打印日志;time = 时间与时长(time.Duration)。
+// slog = 结构化日志;time = 时间与时长(time.Duration)。
 // coinsphere/backend/internal/db = 本项目的数据库模型包(GORM 的表结构定义)。
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"coinsphere/backend/internal/db"
@@ -31,7 +31,7 @@ func (a *App) StartRuntime() {
 	a.spawn(a.eventOutboxLoop)
 	a.spawn(a.staleRecoveryLoop)
 	a.spawn(a.cleanupLoop)
-	log.Printf("[runtime] started: worker_id=%s concurrency=%d", a.WorkerID, a.Cfg.Workflow.ExecutorConcurrency)
+	slog.InfoContext(a.runtimeCtx, "runtime started", "worker_id", a.WorkerID, "concurrency", a.Cfg.Workflow.ExecutorConcurrency)
 }
 
 // StopRuntime 通知全部循环退出并等待收尾。
@@ -44,7 +44,7 @@ func (a *App) StopRuntime(ctx context.Context) error {
 	}()
 	select {
 	case <-done:
-		log.Printf("[runtime] stopped")
+		slog.Info("runtime stopped", "worker_id", a.WorkerID)
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -131,7 +131,7 @@ func (a *App) bootstrapRuntimeEntries(ctx context.Context) {
 			return a.reconcileRuntimeEntriesForStateWithDB(tx, current, false)
 		})
 		if err != nil {
-			log.Printf("[runtime] bootstrap entries failed: workflow_code=%s", state.WorkflowCode)
+			slog.ErrorContext(ctx, "runtime entry bootstrap failed", "workflow_code", state.WorkflowCode, "error_category", "database")
 		}
 	}
 }
@@ -212,7 +212,8 @@ func (a *App) fireDueScheduleEntries(ctx context.Context) {
 		})
 		// 忽略"积压超限"这类预期内的错误,其它错误才记进日志并回写到入口。&& 是逻辑与,! 是取反。
 		if err != nil && !isBacklogExceeded(err) {
-			log.Printf("[scheduler] fire entry failed: entry_id=%d err=%v", entry.ID, err)
+			category, _ := classifyFailure(err, err.Error())
+			slog.WarnContext(ctx, "scheduler entry failed", "entry_id", entry.ID, "error_category", category)
 			a.DB.Model(&db.WorkflowRuntimeEntry{}).Where("id = ?", entry.ID).
 				Updates(map[string]any{"last_error_message": err.Error(), "updated_at": time.Now()})
 		}
@@ -526,7 +527,7 @@ func (a *App) finalizeSuccess(ctx context.Context, execution *db.WorkflowExecuti
 		return nil
 	})
 	if err != nil {
-		log.Printf("[runtime] terminal transaction failed: execution_id=%d status=success", execution.ID)
+		slog.ErrorContext(ctx, "execution terminal transaction failed", "execution_id", execution.ID, "status", "success", "error_category", "database")
 		return
 	}
 }
@@ -597,7 +598,7 @@ func (a *App) finalizeFailure(ctx context.Context, execution *db.WorkflowExecuti
 		return nil
 	})
 	if err != nil {
-		log.Printf("[runtime] terminal transaction failed: execution_id=%d status=%s category=%s", execution.ID, nextStatus, failureCategory)
+		slog.ErrorContext(ctx, "execution terminal transaction failed", "execution_id", execution.ID, "status", nextStatus, "error_category", failureCategory)
 		return
 	}
 }
@@ -764,14 +765,14 @@ func (a *App) recoverStaleExecution(ctx context.Context, execution *db.WorkflowE
 		return nil
 	})
 	if err != nil {
-		log.Printf("[recovery] stale transaction failed: execution_id=%d next_status=%s", execution.ID, nextStatus)
+		slog.ErrorContext(ctx, "stale execution transaction failed", "execution_id", execution.ID, "next_status", nextStatus, "error_category", "database")
 		return
 	}
 	if !updated {
 		return
 	}
 	a.releaseKey(execution.ConcurrencyKey)
-	log.Printf("[recovery] stale execution recovered: execution_id=%d next_status=%s", execution.ID, nextStatus)
+	slog.InfoContext(ctx, "stale execution recovered", "execution_id", execution.ID, "next_status", nextStatus)
 }
 
 // ---------- 清理循环 ----------
@@ -806,7 +807,7 @@ func (a *App) cleanupLoop(ctx context.Context) {
 		}
 		lastCleanupDate = cleanupDate
 		if deletedTotal > 0 {
-			log.Printf("[cleanup] finished: deleted=%d", deletedTotal)
+			slog.InfoContext(ctx, "execution history cleanup completed", "deleted", deletedTotal)
 		}
 	}
 }

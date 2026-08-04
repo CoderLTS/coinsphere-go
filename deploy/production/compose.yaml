@@ -14,7 +14,7 @@ services:
       - default
       - infrastructure
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:6987/health >/dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:6987/health/ready >/dev/null 2>&1 || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 6

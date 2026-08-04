@@ -57,6 +57,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		respond(w, nil, err, "")
 		return
 	}
+	setAuditActor(r, session.UserID)
 	writeAuthSession(w, r, session)
 }
 
@@ -73,13 +74,15 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, M{"code": 401, "msg": err.Error(), "data": nil})
 		return
 	}
+	setAuditActor(r, session.UserID)
 	writeAuthSession(w, r, session)
 }
 
 // handleLogout 清理 Cookie 并尽力吊销对应 Refresh Token。
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie(refreshCookieName); err == nil {
-		_ = s.App.Logout(cookie.Value)
+		userID, _ := s.App.Logout(cookie.Value)
+		setAuditActor(r, userID)
 	}
 	clearRefreshCookie(w, r)
 	ok(w, M{})

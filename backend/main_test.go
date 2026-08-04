@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -95,14 +97,14 @@ func TestRunStopsCleanlyWhenRootContextIsCanceled(t *testing.T) {
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
 	_ = listener.Close()
-	configPath := writeLifecycleConfig(t, port)
+	configPath, database := writeLifecycleConfig(t, port)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- run(ctx, configPath) }()
 
 	client := &http.Client{Timeout: 100 * time.Millisecond}
-	healthURL := fmt.Sprintf("http://127.0.0.1:%d/health", port)
+	healthURL := fmt.Sprintf("http://127.0.0.1:%d/health/ready", port)
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		response, err := client.Get(healthURL)
@@ -116,6 +118,60 @@ func TestRunStopsCleanlyWhenRootContextIsCanceled(t *testing.T) {
 			t.Fatal("backend did not become healthy")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+
+	client.Timeout = 2 * time.Second
+	requestID := "lifecycle-audit-request"
+	loginRequest, err := http.NewRequest(http.MethodPost,
+		fmt.Sprintf("http://127.0.0.1:%d/api/auth/login?token=must-not-persist", port),
+		strings.NewReader(`{"username":"","password":""}`))
+	if err != nil {
+		t.Fatalf("build audit request: %v", err)
+	}
+	loginRequest.Header.Set("Content-Type", "application/json")
+	loginRequest.Header.Set("X-Request-ID", requestID)
+	response, err := client.Do(loginRequest)
+	if err != nil {
+		t.Fatalf("send audit request: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK || response.Header.Get("X-Request-ID") != requestID {
+		t.Fatalf("audit response = status:%d request-id:%q", response.StatusCode, response.Header.Get("X-Request-ID"))
+	}
+	var action, resourcePath, outcome string
+	var statusCode int
+	if err := database.QueryRow(`
+SELECT action, resource_path, outcome, status_code
+FROM audit_records
+WHERE request_id = $1
+`, requestID).Scan(&action, &resourcePath, &outcome, &statusCode); err != nil {
+		t.Fatalf("load HTTP audit record: %v", err)
+	}
+	if action != "POST /api/auth/login" || resourcePath != "/api/auth/login" || outcome != "failure" || statusCode != http.StatusOK {
+		t.Fatalf("unexpected HTTP audit record: action=%q path=%q outcome=%q status=%d", action, resourcePath, outcome, statusCode)
+	}
+
+	metricsResponse, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/metrics", port))
+	if err != nil {
+		t.Fatalf("read metrics: %v", err)
+	}
+	metricsBody, _ := io.ReadAll(metricsResponse.Body)
+	_ = metricsResponse.Body.Close()
+	metricsText := string(metricsBody)
+	for _, name := range []string{
+		"coinsphere_http_requests_total",
+		"coinsphere_http_requests_failed_total",
+		"coinsphere_http_requests_in_flight",
+		"coinsphere_audit_write_failures_total",
+		"coinsphere_process_uptime_seconds",
+	} {
+		if !strings.Contains(metricsText, name) {
+			t.Fatalf("metrics output missing %s: %s", name, metricsText)
+		}
+	}
+	if strings.Contains(metricsText, "{") {
+		t.Fatalf("metrics unexpectedly contain cardinality-bearing labels: %s", metricsText)
 	}
 
 	cancel()
@@ -136,7 +192,7 @@ func TestRunCleansUpAfterListenFailure(t *testing.T) {
 	}
 	defer listener.Close()
 	port := listener.Addr().(*net.TCPAddr).Port
-	configPath := writeLifecycleConfig(t, port)
+	configPath, _ := writeLifecycleConfig(t, port)
 
 	err = run(context.Background(), configPath)
 	if err == nil || !strings.Contains(err.Error(), "http server") {
@@ -144,7 +200,7 @@ func TestRunCleansUpAfterListenFailure(t *testing.T) {
 	}
 }
 
-func writeLifecycleConfig(t *testing.T, port int) string {
+func writeLifecycleConfig(t *testing.T, port int) (string, *sql.DB) {
 	t.Helper()
 	baseDSN := strings.TrimSpace(os.Getenv("COINSPHERE_TEST_POSTGRES_DSN"))
 	if baseDSN == "" {
@@ -208,7 +264,7 @@ auth:
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	return configPath
+	return configPath, database
 }
 
 func lifecyclePostgresURL(t *testing.T, dsn, schema string) string {

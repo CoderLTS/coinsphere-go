@@ -2,7 +2,7 @@ package service
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -228,7 +228,7 @@ func (h *Hub) CloseAll() {
 	}
 	h.connections = map[int64]map[*realtimeClient]struct{}{}
 	h.mu.Unlock()
-	log.Printf("[realtime] hub closing: client_count=%d", len(clients))
+	slog.Info("realtime hub closing", "client_count", len(clients))
 
 	for _, client := range clients {
 		client.stop()
@@ -270,7 +270,7 @@ func (h *Hub) SendToUser(userID int64, event RealtimeEvent) bool {
 
 	for _, client := range dropped {
 		client.stop()
-		log.Printf("[realtime] slow client disconnected: reason=send_queue_full")
+		slog.Warn("realtime client disconnected", "reason", "send_queue_full")
 	}
 	return accepted
 }

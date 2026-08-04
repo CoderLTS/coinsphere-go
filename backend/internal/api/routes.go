@@ -2,9 +2,11 @@ package api
 
 // import:标准库(net/http、os、path/filepath)在上,本项目内部包(perm 权限码、service 业务逻辑)在下。
 import (
+	"context"
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"coinsphere/backend/internal/perm"
 	"coinsphere/backend/internal/service"
@@ -19,10 +21,15 @@ import (
 // registerRoutes 注册全部路由(与原 FastAPI 路由一一对应)。
 func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// 处理函数的固定签名是 func(w http.ResponseWriter, r *http.Request);这里直接写了一个匿名函数当处理器。
-	// 健康检查。
+	// /health 保留为数据库就绪别名，供既有 Compose 与发布脚本平滑切换。
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		ok(w, M{"status": "ok"})
+		s.handleReady(w, r)
 	})
+	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, M{"status": "alive"})
+	})
+	mux.HandleFunc("GET /health/ready", s.handleReady)
+	mux.HandleFunc("GET /metrics", s.handleMetrics)
 
 	// 静态目录。
 	// os.MkdirAll 建目录(已存在也不报错);0o755 是八进制的目录权限;开头的 _ = 忽略返回的 error。
@@ -143,4 +150,14 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/notifications/in-app/{deliveryId}/read", s.requireAuth(s.handleReadInApp))
 	// WebSocket 在 handler 内校验固定子协议携带的 Access Token。
 	mux.HandleFunc("GET /ws/notifications", s.handleNotificationsWS)
+}
+
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), time.Second)
+	defer cancel()
+	if err := s.App.DatabaseReady(ctx); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, M{"status": "unavailable"})
+		return
+	}
+	writeJSON(w, http.StatusOK, M{"status": "ready"})
 }

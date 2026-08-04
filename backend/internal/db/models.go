@@ -501,3 +501,17 @@ type RefreshTokenRecord struct {
 }
 
 func (RefreshTokenRecord) TableName() string { return "refresh_tokens" }
+
+// AuditRecord 保存写请求的最小审计元数据，不接收请求正文、Header、查询串或错误正文。
+type AuditRecord struct {
+	ID           int64  `gorm:"primaryKey;autoIncrement"`
+	RequestID    string `gorm:"column:request_id;size:64"`
+	ActorUserID  *int64 `gorm:"column:actor_user_id"`
+	Action       string `gorm:"size:255"`
+	ResourcePath string `gorm:"column:resource_path;size:500"`
+	Outcome      string `gorm:"size:16"`
+	StatusCode   int    `gorm:"column:status_code"`
+	CreatedAt    time.Time
+}
+
+func (AuditRecord) TableName() string { return "audit_records" }

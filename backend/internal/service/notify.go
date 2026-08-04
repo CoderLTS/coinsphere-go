@@ -12,7 +12,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/smtp"
@@ -606,7 +606,7 @@ func (a *App) dispatchExternalChannel(
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cleanupCancel()
 	if err := a.dbWithContext(cleanupCtx).Model(&delivery).Updates(updates).Error; err != nil {
-		log.Printf("[notify] finalize delivery failed: delivery_id=%d err=%v", delivery.ID, err)
+		slog.ErrorContext(cleanupCtx, "notification delivery finalization failed", "delivery_id", delivery.ID, "error_category", "database")
 	}
 	return ok
 }

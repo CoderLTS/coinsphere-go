@@ -10,7 +10,9 @@
 
 ## 当前 A1 基线
 
-现有 Go 后台仍以单进程运行 HTTP/WebSocket、工作流和后台 Runtime；数据库 schema 由镜像内独立 migration 二进制演进。单一 PostgreSQL 基线包含当前业务表、Worker 队列、Outbox、外键、索引和状态约束，服务启动只读校验版本，不执行 DDL。Backend 与开发/CI Worker 共用 TimescaleDB，生产 Release 暂不部署 Worker。
+现有 Go 后台仍以单进程运行 HTTP/WebSocket、工作流和后台 Runtime；数据库 schema 由镜像内独立 migration 二进制演进。PostgreSQL 基线包含当前业务表、Worker 队列、Outbox、外键、索引和状态约束，后续 `00002_a1_observability.sql` 增加持久化审计表；服务启动只读校验版本，不执行 DDL。Backend 与开发/CI Worker 共用 TimescaleDB，生产 Release 暂不部署 Worker。
+
+平台可观测性使用标准库 `log/slog` JSON 日志和进程内固定指标。HTTP Request ID、审计事务/敏感字段边界、存活与数据库就绪语义见 [ADR-0003](./decisions/0003-a1-observability.md)；当前不引入 tracing 或外部指标系统。
 
 异步任务使用 PostgreSQL `FOR UPDATE SKIP LOCKED`，领域事件使用事务 Outbox。任务与 Outbox 的租约、数据库时间 fencing、失败恢复和终态约束见[公共契约](../contracts/README.md)，数据库演进见 [ADR-0002](./decisions/0002-versioned-sql-migrations.md)。工作流版本分配、激活、停用和入口替换在 PostgreSQL 短事务内提交，其他连接只能观察完整旧快照或完整新快照。
 

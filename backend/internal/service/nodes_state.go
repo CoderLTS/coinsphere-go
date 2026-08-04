@@ -10,7 +10,7 @@
 package service
 
 import (
-	"log"
+	"log/slog"
 	"strings"
 )
 
@@ -183,8 +183,19 @@ func logMessageExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 		return nil, bizErr("记录日志节点的日志内容不能为空")
 	}
 	level := strings.ToLower(cfgStr(config, "level", "info"))
-	log.Printf("[workflow:%s] execution_id=%d node_id=%s %s",
-		level, ctx.Execution.ID, asString(ctx.Node["id"]), truncateRunes(message, 2000))
+	slogLevel := slog.LevelInfo
+	switch level {
+	case "debug":
+		slogLevel = slog.LevelDebug
+	case "warn", "warning":
+		slogLevel = slog.LevelWarn
+	case "error":
+		slogLevel = slog.LevelError
+	}
+	slog.Log(ctx.Ctx, slogLevel, truncateRunes(message, 2000),
+		"execution_id", ctx.Execution.ID,
+		"node_id", asString(ctx.Node["id"]),
+		"event", "workflow.log_message")
 	output := M{"level": level, "message": message}
 	setNodeOutput(ctx, output)
 	return &nodeExecResult{Output: output}, nil

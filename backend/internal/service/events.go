@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"gorm.io/gorm"
@@ -85,9 +85,9 @@ func (a *App) drainPendingEvents(ctx context.Context, limit int) {
 	}
 	database := a.dbWithContext(ctx)
 	if recovered, err := db.RecoverExpiredOutboxEvents(ctx, database, limit); err != nil {
-		log.Printf("[events] outbox store failed: operation=recover")
+		slog.ErrorContext(ctx, "outbox store operation failed", "operation", "recover", "error_category", "database")
 	} else if len(recovered) > 0 {
-		log.Printf("[events] outbox leases recovered: count=%d", len(recovered))
+		slog.InfoContext(ctx, "outbox leases recovered", "count", len(recovered))
 	}
 
 	// 存储层保留原子批量认领契约；dispatcher 按实际处理能力逐条即时认领，
@@ -95,7 +95,7 @@ func (a *App) drainPendingEvents(ctx context.Context, limit int) {
 	for range limit {
 		claims, err := db.ClaimOutboxEvents(ctx, database, a.WorkerID, 1, a.outboxLeaseDuration())
 		if err != nil {
-			log.Printf("[events] outbox store failed: operation=claim")
+			slog.ErrorContext(ctx, "outbox store operation failed", "operation", "claim", "error_category", "database")
 			break
 		}
 		if len(claims) == 0 {
@@ -111,11 +111,11 @@ func (a *App) drainPendingEvents(ctx context.Context, limit int) {
 	}
 	alertIDs, err := db.MarkOutboxDeadLettersAlerted(ctx, database, limit)
 	if err != nil {
-		log.Printf("[events] outbox store failed: operation=alert")
+		slog.ErrorContext(ctx, "outbox store operation failed", "operation", "alert", "error_category", "database")
 		return
 	}
 	for _, id := range alertIDs {
-		log.Printf("[alert] outbox dead letter: outbox_id=%d", id)
+		slog.WarnContext(ctx, "outbox dead letter", "outbox_id", id)
 	}
 }
 
@@ -125,11 +125,11 @@ func (a *App) deliverClaimedOutboxEvent(ctx context.Context, claim db.DomainEven
 	leaseDuration := a.outboxLeaseDuration()
 	renewed, err := db.RenewOutboxEventLease(ctx, a.dbWithContext(ctx), claim, leaseDuration)
 	if err != nil {
-		log.Printf("[events] outbox store failed: operation=renew outbox_id=%d", claim.ID)
+		slog.ErrorContext(ctx, "outbox store operation failed", "operation", "renew", "outbox_id", claim.ID, "error_category", "database")
 		return
 	}
 	if !renewed {
-		log.Printf("[events] outbox lease lost: operation=renew outbox_id=%d attempt=%d", claim.ID, claim.AttemptCount)
+		slog.WarnContext(ctx, "outbox lease lost", "operation", "renew", "outbox_id", claim.ID, "attempt", claim.AttemptCount)
 		return
 	}
 
@@ -150,9 +150,9 @@ func (a *App) deliverClaimedOutboxEvent(ctx context.Context, claim db.DomainEven
 			case <-ticker.C:
 				ok, err := db.RenewOutboxEventLease(deliveryCtx, a.dbWithContext(deliveryCtx), claim, leaseDuration)
 				if err != nil {
-					log.Printf("[events] outbox store failed: operation=heartbeat outbox_id=%d", claim.ID)
+					slog.ErrorContext(deliveryCtx, "outbox store operation failed", "operation", "heartbeat", "outbox_id", claim.ID, "error_category", "database")
 				} else if !ok {
-					log.Printf("[events] outbox lease lost: operation=heartbeat outbox_id=%d attempt=%d", claim.ID, claim.AttemptCount)
+					slog.WarnContext(deliveryCtx, "outbox lease lost", "operation", "heartbeat", "outbox_id", claim.ID, "attempt", claim.AttemptCount)
 				}
 				if err != nil || !ok {
 					cancelDelivery()
@@ -180,9 +180,9 @@ func (a *App) deliverClaimedOutboxEvent(ctx context.Context, claim db.DomainEven
 	if deliveryErr == nil {
 		completed, err := db.CompleteOutboxEvent(ctx, a.dbWithContext(ctx), claim)
 		if err != nil {
-			log.Printf("[events] outbox store failed: operation=complete outbox_id=%d", claim.ID)
+			slog.ErrorContext(ctx, "outbox store operation failed", "operation", "complete", "outbox_id", claim.ID, "error_category", "database")
 		} else if !completed {
-			log.Printf("[events] outbox lease lost: operation=complete outbox_id=%d attempt=%d", claim.ID, claim.AttemptCount)
+			slog.WarnContext(ctx, "outbox lease lost", "operation", "complete", "outbox_id", claim.ID, "attempt", claim.AttemptCount)
 		}
 		return
 	}
@@ -195,11 +195,11 @@ func (a *App) deliverClaimedOutboxEvent(ctx context.Context, claim db.DomainEven
 	}
 	failed, err := db.FailOutboxEvent(ctx, a.dbWithContext(ctx), claim, a.retryBackoff(claim.AttemptCount), category)
 	if err != nil {
-		log.Printf("[events] outbox store failed: operation=fail outbox_id=%d", claim.ID)
+		slog.ErrorContext(ctx, "outbox store operation failed", "operation", "fail", "outbox_id", claim.ID, "error_category", "database")
 	} else if !failed {
-		log.Printf("[events] outbox lease lost: operation=fail outbox_id=%d attempt=%d", claim.ID, claim.AttemptCount)
+		slog.WarnContext(ctx, "outbox lease lost", "operation", "fail", "outbox_id", claim.ID, "attempt", claim.AttemptCount)
 	} else {
-		log.Printf("[events] outbox delivery failed: outbox_id=%d attempt=%d category=%s", claim.ID, claim.AttemptCount, category)
+		slog.WarnContext(ctx, "outbox delivery failed", "outbox_id", claim.ID, "attempt", claim.AttemptCount, "error_category", category)
 	}
 }
 
@@ -253,10 +253,10 @@ func (a *App) handleEventTriggeredEntries(ctx context.Context, event *domainEven
 		if !eventTriggerMatches(config, event) {
 			continue
 		}
-		log.Printf(
-			"[events] event matched runtime entry: outbox_id=%d workflow_code=%s entry_key=%s",
-			event.OutboxID, definition.Code, entry.EntryKey,
-		)
+		slog.DebugContext(ctx, "event matched runtime entry",
+			"outbox_id", event.OutboxID,
+			"workflow_code", definition.Code,
+			"entry_key", entry.EntryKey)
 		// 命中!把这条工作流入队执行。_, err := 里的 _ 丢弃第一个返回值,只关心错误。
 		// idempotencyKey(幂等键)确保同一事件不会把同一入口重复触发多次。
 		_, err := a.RunRuntimeEntry(entry.ID, M{
@@ -269,7 +269,7 @@ func (a *App) handleEventTriggeredEntries(ctx context.Context, event *domainEven
 		// 任一入口未能入队都让整条事件重排；已成功入口由稳定幂等键去重，积压入口则在退避后继续尝试。
 		if err != nil {
 			if isBacklogExceeded(err) {
-				log.Printf("[events] event enqueue deferred: outbox_id=%d entry=%s category=%s", event.OutboxID, entry.EntryKey, outboxFailureBacklog)
+				slog.WarnContext(ctx, "event enqueue deferred", "outbox_id", event.OutboxID, "entry_key", entry.EntryKey, "error_category", outboxFailureBacklog)
 			}
 			return err
 		}
