@@ -25,12 +25,12 @@
 
 仓库当前为 GitHub 私有仓库，现有套餐不支持 Branch Protection 或 Environment required reviewers。`production` Environment 已用自定义部署分支策略限制为 `main`，工作流还会校验最新 `origin/main`；当前人工门禁由 `workflow_dispatch` 和用户不直接推送 `main` 的流程约束保证。如需 GitHub 强制 PR 审查或“触发后再审批”，必须升级支持私有仓库保护规则的套餐。
 
-当前发布流可用于 A2-A6 研究与模拟阶段。进入 R2 小额现货前必须完成以下前置治理：
+当前发布流只用于已经交付的研究与 Paper 能力。进入首个小额 Live Spot 前必须完成以下前置治理：
 
 - 无特权构建与生产固定部署器分离。构建侧只生成并扫描 digest/Manifest，部署器只验证和部署固定产物，不执行仓库脚本。
 - 构建侧、GitHub Actions 和普通应用角色不得接触 Executor 私钥或交易所密钥。
 - 实盘使用的策略包、审批证据、Manifest、账务和对账报告必须具备加密独立副本，并完成一次恢复演练。
-- 目标多角色 Backend、Worker 和数据库会话统一 UTC，并在 A2-A6 对应角色落地时完成；用户计划通过显式 IANA 时区计算触发时间。
+- 目标 Go App、Worker、Executor 和数据库会话统一 UTC；用户计划通过显式 IANA 时区计算触发时间。
 
 ## 手工发布
 

@@ -1,465 +1,264 @@
-# 公共契约
+# CoinSphere 公共契约
 
-## 金融公共类型
+本文冻结自用优先架构下的公共类型、信任边界和跨模块语义。具体实现进度以 GitHub 为准；任何实现 Issue 若需要改变本契约，必须先修订 ADR 与本文件。
 
-- 时间统一使用 UTC。数据库使用 `timestamptz`，HTTP 和事件使用 RFC3339Nano；领域逻辑不得依赖本地时区。
-- 价格、数量、金额和费率在 Go 领域中使用 `github.com/shopspring/decimal`，数据库使用 `numeric(38,18)`，JSON 使用十进制字符串；金融计算和账务禁止使用 `float64`。
-- 新金融 HTTP 接口使用强类型请求/响应 DTO。`map[string]any` 只允许留在旧管理接口、动态工作流图和外部无类型载荷边界，不得作为 `/api/v1` 金融资源模型。
-- 金融资源 ID 使用 UUIDv7 字符串。
+## 通用类型
 
-## HTTP API
+- 金融时间统一使用 UTC。数据库使用 `timestamptz`，HTTP 和事件使用带 `Z` 的 RFC3339Nano；领域逻辑不得依赖本地时区。
+- 价格、数量、金额、费率、盈亏和目标仓位使用 Decimal；数据库使用 `numeric(38,18)`，JSON 使用十进制字符串，账务值禁止使用 `float64`。
+- 新金融资源 ID 使用 UUIDv7 字符串。旧后台资源可以在原子 `/api/v1` 迁移时保留既有 ID，但不得把旧 ID 约定扩散到新金融资源。
+- 新金融 HTTP DTO 使用强类型结构。`map[string]any` 只允许留在动态工作流图、外部无类型载荷和旧后台内部边界。
+- 所有外部枚举和金融状态在信任边界严格校验；未知值不能静默降级为默认值。
 
-- A2.3 以 OpenAPI 3.0.3 作为 `/api/v1` 单一来源，并在一个原子纵向 PR 中同步迁移后端、前端、契约和测试，随后删除旧 `/api`；该 PR 合并前，现有 A1 接口仍按当前路径和信封运行。
-- OpenAPI 生成的 Go/TypeScript 类型随契约提交并校验漂移；生成规则与破坏性变更检查见 [ADR-0004](../architecture/decisions/0004-openapi-v1-governance.md)。
-- 列表接口使用默认 50、最大 200 的不透明游标，并以唯一 ID 保证稳定排序。筛选或排序条件变化时旧游标无效。
-- 错误响应使用 `application/problem+json`，至少包含 `type`、`title`、`status`、`code`、`requestId`、`retryable`。
-- 普通异步任务的 `Idempotency-Key` 保留 24 小时；交易命令的键、请求摘要、账户和订单与审计记录同寿命，同键不同载荷返回冲突。
-- A1 登录与 refresh 响应只返回 `{"token":"..."}`，Access Token 默认有效期 15 分钟且只保存在浏览器内存中。Refresh Token 只存在名为 `coinsphere_refresh_token` 的 Cookie：`HttpOnly`、`SameSite=Strict`、`Path=/api/auth`，HTTPS 请求同时设置 `Secure`。
-- `POST /api/auth/refresh` 和 `POST /api/auth/logout` 均无请求体。refresh 在 PostgreSQL 短事务中锁定旧记录、写入新记录并吊销旧记录；并发复用或已吊销令牌再次出现时吊销该用户全部 Refresh Token。logout 即使 Cookie 缺失或无效也清除浏览器 Cookie。
-- 管理员密码恢复通过 `go run ./cmd/admin -username <name>` 执行，密码只从隐藏回显的标准输入读取；密码更新与该用户全部 Refresh Token 吊销在同一事务提交。
-
-## A1 可观测性
-
-- 每个 HTTP 响应包含 `X-Request-ID`。请求提供的值仅在匹配 `[A-Za-z0-9._-]{1,64}` 时传播，否则服务生成新值；应用日志和审计使用同一值。
-- 匹配路由的 `POST`、`PUT`、`PATCH`、`DELETE` 请求写入 `audit_records`。记录只包含 Request ID、内部用户 ID、路由动作、无查询串资源路径、结果、HTTP 状态和 UTC 时间，不包含 Header、查询串、正文、令牌、凭据、错误正文、IP 或个人资料。
-- 审计在业务处理结束后使用独立短事务；写入失败不会把已提交动作伪装成回滚或向客户端返回可重试结果，只增加固定错误日志与审计失败指标。
-- `GET /health/live` 只检查进程存活；`GET /health/ready` 和兼容别名 `GET /health` 只检查 PostgreSQL 是否可访问。就绪失败返回 `503 {"status":"unavailable"}`，不得返回运行配置或驱动错误。
-- `GET /metrics` 只暴露五个无标签指标：HTTP 请求总数、失败数、在途数、审计写失败数和进程运行秒数。该接口不承诺外部存储、聚合或告警能力。
-
-## A2 行情最小契约
-
-本节冻结 A2 首个纵向 PR 的实现规格。该 PR 只交付规范化领域类型、最小 PostgreSQL schema、`MarketSource`、纯载荷规范化代码和 Binance/OKX 脱敏可执行样本；不连接公网，不启动 collector，不提供行情 API，也不实现共享 runner 或具体 PostgreSQL 存储层。后续切片只能消费本节契约；需要增加字段、枚举、方法或表时必须先回到设计阶段。
-
-### Decimal、UTC 与 UUIDv7
-
-- Go 金融数值固定使用 `github.com/shopspring/decimal` v1.4.0 的 `decimal.Decimal`。原始 JSON DTO 先把价格、数量和成交量读为 `string`，再调用共享解析逻辑；禁止先进入 `float64`、未加引号的 JSON number 或科学计数法。
-- 接受的十进制文本匹配 `^[0-9]+(?:\.[0-9]+)?$`，小数位最多 18 位、整数位最多 20 位。解析器允许零，字段不变量再决定必须大于零还是允许等于零。Go 边界必须在写库前拒绝超出 `numeric(38,18)` 的值，不能依赖 PostgreSQL 对多余小数位静默舍入。
-- 规范化 JSON 中 Decimal 固定输出十进制字符串，使用 `decimal.Decimal.String()` 的无指数规范形式；不得设置全局 `decimal.MarshalJSONWithoutQuotes = true`。本 PR 不把领域结构体作为不可信 JSON 请求 DTO，交易所载荷只能先进入字段为字符串的原始 DTO。
-- 所有 `time.Time` 必须经 `.UTC()` 规范化，`Location()` 为 `time.UTC`。外部毫秒时间戳使用 `time.UnixMilli(...).UTC()`；JSON 使用带 `Z` 的 RFC3339Nano；数据库使用 `timestamptz`。K 线日线以 UTC 零点切分，OKX 必须映射 `1Dutc`，不得使用交易所本地日线。
-- 金融资源 ID 的 Go 类型固定为 `github.com/google/uuid` v1.6.0 的 `uuid.UUID`，新 Instrument 只用 `uuid.NewV7()` 生成。数据库使用 `uuid` 且校验 RFC 9562 version 7 与 RFC 4122 variant；没有数据库默认值。JSON 使用小写规范 UUID 字符串，`uuid.Nil` 不是合法持久化 ID。
-- Candle 与 Ticker 是由复合逻辑键标识的行情事实，不额外创建 UUID 或 surrogate ID；它们只引用 Instrument 的 UUIDv7。
-
-### 枚举与 Go 类型
-
-以下名称、字符串值、字段类型和 JSON 字段名是冻结契约：
-
-```go
-type Venue string
-
-const (
-	VenueBinance Venue = "binance"
-	VenueOKX     Venue = "okx"
-)
-
-type MarketType string
-
-const (
-	MarketTypeSpot          MarketType = "spot"
-	MarketTypeUSDTPerpetual MarketType = "usdt_perpetual"
-)
-
-type InstrumentStatus string
-
-const (
-	InstrumentStatusTrading   InstrumentStatus = "trading"
-	InstrumentStatusSuspended InstrumentStatus = "suspended"
-)
-
-type CandleInterval string
-
-const (
-	CandleInterval1m  CandleInterval = "1m"
-	CandleInterval5m  CandleInterval = "5m"
-	CandleInterval15m CandleInterval = "15m"
-	CandleInterval1h  CandleInterval = "1h"
-	CandleInterval4h  CandleInterval = "4h"
-	CandleInterval1d  CandleInterval = "1d"
-)
-
-// InstrumentMetadata 是交易所元数据快照项；内部 ID 只能由持久化边界首次创建。
-type InstrumentMetadata struct {
-	Venue        Venue            `json:"venue"`
-	MarketType   MarketType       `json:"marketType"`
-	NativeSymbol string           `json:"nativeSymbol"`
-	BaseAsset    string           `json:"baseAsset"`
-	QuoteAsset   string           `json:"quoteAsset"`
-	Status       InstrumentStatus `json:"status"`
-	PriceTick    decimal.Decimal  `json:"priceTick"`
-	QuantityStep decimal.Decimal  `json:"quantityStep"`
-}
-
-type Instrument struct {
-	ID           uuid.UUID        `json:"id"`
-	Venue        Venue            `json:"venue"`
-	MarketType   MarketType       `json:"marketType"`
-	NativeSymbol string           `json:"nativeSymbol"`
-	BaseAsset    string           `json:"baseAsset"`
-	QuoteAsset   string           `json:"quoteAsset"`
-	Status       InstrumentStatus `json:"status"`
-	PriceTick    decimal.Decimal  `json:"priceTick"`
-	QuantityStep decimal.Decimal  `json:"quantityStep"`
-}
-
-type Candle struct {
-	Venue        Venue           `json:"venue"`
-	InstrumentID uuid.UUID       `json:"instrumentId"`
-	Interval     CandleInterval  `json:"interval"`
-	OpenTime     time.Time       `json:"openTime"`
-	CloseTime    time.Time       `json:"closeTime"`
-	Open         decimal.Decimal `json:"open"`
-	High         decimal.Decimal `json:"high"`
-	Low          decimal.Decimal `json:"low"`
-	Close        decimal.Decimal `json:"close"`
-	BaseVolume   decimal.Decimal `json:"baseVolume"`
-	IsClosed     bool            `json:"isClosed"`
-}
-
-type Ticker struct {
-	Venue        Venue           `json:"venue"`
-	InstrumentID uuid.UUID       `json:"instrumentId"`
-	OccurredAt   time.Time       `json:"occurredAt"`
-	LastPrice    decimal.Decimal `json:"lastPrice"`
-	BestBidPrice decimal.Decimal `json:"bestBidPrice"`
-	BestAskPrice decimal.Decimal `json:"bestAskPrice"`
-}
-```
-
-`InstrumentMetadata` 解决外部 symbol 与内部 UUID 的职责边界：交易所快照不能创建稳定 ID；具体 PostgreSQL 存储在 `(venue, market_type, native_symbol)` 首次插入时生成 UUIDv7，冲突更新只更新元数据且永不替换原 ID，再把完整 `Instrument` 传给历史和订阅方法。禁止让适配器缓存、推导或每次重新生成 Instrument ID。
-
-### 类型不变量与交易所映射
-
-- `Venue`、`MarketType`、`InstrumentStatus` 和 `CandleInterval` 只接受上述值；未知外部枚举返回 `protocol` 错误，不能静默映射为零值。
-- `NativeSymbol` 保留交易所原始公开 symbol 并匹配 `^[A-Z0-9][A-Z0-9._-]*$`；`BaseAsset`、`QuoteAsset` 使用匹配同一字符集的大写资产代码。三者均无边界空白且非空，不在领域类型中保留交易所原始枚举、精度位数、quote volume 或其他单所字段。
-- 现货只接受 Binance spot 与 OKX `SPOT`。USDT 永续只接受 Binance USDT-M `PERPETUAL` 和 OKX `SWAP` 且 `ctType=linear`、`settleCcy=USDT`；OKX 永续的 `BaseAsset=ctValCcy`、`QuoteAsset=settleCcy`。其他币本位、交割合约、USDC 合约和期权不进入快照。
-- Binance spot 的 `TRADING` 映射为 `trading`，`PRE_TRADING`、`POST_TRADING`、`END_OF_DAY`、`HALT`、`AUCTION_MATCH`、`BREAK` 映射为 `suspended`；Binance USDT-M 的 `TRADING` 映射为 `trading`，`PENDING_TRADING`、`PRE_DELIVERING`、`DELIVERING`、`DELIVERED`、`PRE_SETTLE`、`SETTLING`、`CLOSE` 映射为 `suspended`。OKX 的 `live` 映射为 `trading`，`suspend`、`preopen`、`test` 映射为 `suspended`。未知状态使整个快照失败，禁止返回部分成功。
-- `PriceTick`、`QuantityStep`、OHLC、`LastPrice`、`BestBidPrice`、`BestAskPrice` 必须大于零；`BaseVolume` 可以为零但不能为负。所有值还必须满足 `numeric(38,18)` 边界。
-- Instrument 的 ID 必须是 UUIDv7。Candle/Ticker 的 `Venue` 与调用请求的 Instrument 一致，`InstrumentID` 原样复制请求 ID。
-- Candle 的 `OpenTime` 必须按 Unix epoch 对齐到 interval；`CloseTime` 是排他的下一根边界并严格等于 `OpenTime + interval`。Binance 原始闭区间毫秒 `closeTime` 必须加 1 ms 后验证；OKX 由 `OpenTime + interval` 推导。
-- Candle 满足 `Low <= min(Open, Close)`、`High >= max(Open, Close)`。历史样本固定 `IsClosed=true`；实时 Binance `k.x` 与 OKX `confirm` 分别映射 `IsClosed`，同一未闭合唯一键允许出现多次更新。
-- Ticker 的 `OccurredAt` 非零且为 UTC，`BestBidPrice <= BestAskPrice`。不要求最近成交价位于当前买卖价之间。
-
-Interval 映射固定如下：
-
-| 规范值 | 时长 | Binance | OKX |
-| --- | --- | --- | --- |
-| `1m` | 1 分钟 | `1m` | `1m` |
-| `5m` | 5 分钟 | `5m` | `5m` |
-| `15m` | 15 分钟 | `15m` | `15m` |
-| `1h` | 1 小时 | `1h` | `1H` |
-| `4h` | 4 小时 | `4h` | `4H` |
-| `1d` | 24 小时 UTC | `1d` | `1Dutc` |
-
-### PostgreSQL 最小 schema
-
-A2.0 合并时使用 `backend/internal/migration/sql/00003_a2_market_contract.sql`，且该切片只建立普通 PostgreSQL 表，不创建 Timescale hypertable、保留策略或 Repository 接口。A2.1 仍处于 ADR-0002 定义的投产前基线整理窗口，可重写 `00003` 并重建开发/CI 空库，但不得静默改变本节已冻结的公开类型、字段、枚举、规范化和持久化语义；任何语义变更必须先修订 ADR 与契约。A6/R1 开始前必须永久冻结历史 migration。
-
-`market_instruments`：
-
-| 列 | 类型与空值 |
-| --- | --- |
-| `id` | `uuid NOT NULL`，主键，无默认值 |
-| `venue` | `varchar(16) NOT NULL` |
-| `market_type` | `varchar(32) NOT NULL` |
-| `native_symbol` | `varchar(64) NOT NULL` |
-| `base_asset` | `varchar(32) NOT NULL` |
-| `quote_asset` | `varchar(32) NOT NULL` |
-| `status` | `varchar(16) NOT NULL` |
-| `price_tick` | `numeric(38,18) NOT NULL` |
-| `quantity_step` | `numeric(38,18) NOT NULL` |
-
-- 主键为 `id`；`uq_market_instruments_natural_key` 唯一约束为 `(venue, market_type, native_symbol)`。
-- `uq_market_instruments_venue_id` 唯一约束为 `(venue, id)`，只用于子表复合外键确保 Venue 与 Instrument 匹配。
-- Check 约束名称和语义固定为：`ck_market_instruments_id_uuidv7` 校验 `id::text ~ '^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'`；`ck_market_instruments_venue`、`ck_market_instruments_market_type`、`ck_market_instruments_status` 校验各自枚举；`ck_market_instruments_native_symbol` 校验 `^[A-Z0-9][A-Z0-9._-]*$`；`ck_market_instruments_base_asset`、`ck_market_instruments_quote_asset` 校验同一字符集且值等于大写形式；`ck_market_instruments_steps` 校验两个步长都大于零。
-
-`market_candles`：
-
-| 列 | 类型与空值 |
-| --- | --- |
-| `venue` | `varchar(16) NOT NULL` |
-| `instrument_id` | `uuid NOT NULL` |
-| `interval_code` | `varchar(4) NOT NULL` |
-| `open_time` | `timestamptz NOT NULL` |
-| `close_time` | `timestamptz NOT NULL` |
-| `open_price`、`high_price`、`low_price`、`close_price` | 各为 `numeric(38,18) NOT NULL` |
-| `base_volume` | `numeric(38,18) NOT NULL` |
-| `is_closed` | `boolean NOT NULL` |
-
-- 主键固定为 `(venue, instrument_id, interval_code, open_time)`；不再创建覆盖相同前缀的重复索引。
-- `fk_market_candles_instrument` 以 `(venue, instrument_id)` 引用 `market_instruments(venue, id) ON DELETE RESTRICT`。
-- Check 约束名称和语义固定为：`ck_market_candles_venue`、`ck_market_candles_interval` 校验枚举；`ck_market_candles_time` 校验两个时间有限、`open_time` 以 Unix epoch 为原点按 interval `date_bin` 对齐且 `close_time=open_time+interval`；`ck_market_candles_prices` 校验 OHLC 全部大于零；`ck_market_candles_volume` 校验基础成交量非负；`ck_market_candles_ohlc` 校验 Low/High 关系。
-
-`market_ticker_snapshots`：
-
-| 列 | 类型与空值 |
-| --- | --- |
-| `venue` | `varchar(16) NOT NULL` |
-| `instrument_id` | `uuid NOT NULL` |
-| `occurred_at` | `timestamptz NOT NULL` |
-| `last_price`、`best_bid_price`、`best_ask_price` | 各为 `numeric(38,18) NOT NULL` |
-
-- 主键固定为 `(venue, instrument_id)`；首轮只保留最新快照，不建立 Ticker 历史表或时间索引。
-- `fk_market_ticker_snapshots_instrument` 以 `(venue, instrument_id)` 引用 `market_instruments(venue, id) ON DELETE RESTRICT`。
-- Check 约束名称和语义固定为：`ck_market_ticker_snapshots_venue` 校验 Venue；`ck_market_ticker_snapshots_time` 校验事件时间有限；`ck_market_ticker_snapshots_prices` 校验三个价格都大于零；`ck_market_ticker_snapshots_spread` 校验 `best_bid_price <= best_ask_price`。
-
-自动生成的 `market_instruments_pkey`、`market_candles_pkey`、`market_ticker_snapshots_pkey`、`market_flow_leases_pkey` 与两个命名唯一约束是当前仅有的索引。后续具体存储必须用冲突更新实现幂等：Instrument 冲突时保留首次 UUIDv7；Candle 重复逻辑键保持一行；Ticker 只在新 `occurred_at` 不早于当前快照时覆盖。本契约 PR 仅用迁移测试执行这些标准冲突语句，不提前交付具体存储对象。
-
-Down 必须在同一 migration 事务中对 `market_flow_leases`、`market_candles`、`market_ticker_snapshots`、`market_instruments` 取得 `ACCESS EXCLUSIVE` 锁，再统计三张行情事实表总行数。只有事实表总数为零才能删除四表；任一事实表非空时 guard 失败，四张表、数据和 migration version 均原子保留。租约行是可丢弃的协调状态，不计入非空保护。
-
-### `MarketSource`
-
-分页、错误和订阅辅助类型及接口签名固定如下：
-
-```go
-type CandleCursor string
-
-type CandlePageRequest struct {
-	Instrument Instrument     `json:"instrument"`
-	Interval   CandleInterval `json:"interval"`
-	StartTime  time.Time      `json:"startTime"`
-	EndTime    time.Time      `json:"endTime"`
-	Limit      int            `json:"limit"`
-	Cursor     CandleCursor   `json:"cursor"`
-}
-
-type CandlePage struct {
-	Candles    []Candle    `json:"candles"`
-	NextCursor CandleCursor `json:"nextCursor"`
-}
-
-type CandleHandler func(Candle) error
-type TickerHandler func(Ticker) error
-
-type MarketSource interface {
-	SnapshotInstruments(ctx context.Context, marketType MarketType) ([]InstrumentMetadata, error)
-	FetchCandlePage(ctx context.Context, request CandlePageRequest) (CandlePage, error)
-	SubscribeCandles(ctx context.Context, instrument Instrument, interval CandleInterval, handle CandleHandler) error
-	SubscribeTickers(ctx context.Context, instrument Instrument, handle TickerHandler) error
-}
-```
-
-`MarketSource` 不是动态插件点，不得增加 `Name`、`Capabilities`、生命周期 hook、泛型事件、原始 payload 或存储方法。Binance 和 OKX 的具体源在后续切片实现；本 PR 的生产代码只提供共享契约与两所纯载荷规范化函数。
-
-包依赖固定为 `backend/internal/marketdata` 拥有公共类型、校验、Decimal 解析、错误和接口；`backend/internal/marketdata/binance` 与 `backend/internal/marketdata/okx` 只能向内依赖父包并各自拥有原始 DTO/纯规范化函数。父包不得反向导入子包，三者都不得依赖 `internal/api`、`internal/service` 或 `internal/db`，也不创建无归属的 `common` 包。
-
-分页语义：
-
-- `StartTime` 含、`EndTime` 不含，二者必须为 UTC、按 interval 对齐且 `StartTime < EndTime`；`Limit` 固定在 `1..300`。
-- 首次请求的 `Cursor` 为空。非空 `CandleCursor` 是下一根待请求 `OpenTime` 的 UTC RFC3339Nano `Z` 字符串，必须位于原窗口内且按同一 interval 对齐；除 `Cursor` 外重放请求不得改变其他字段。
-- `Candles` 按 `OpenTime` 严格升序、逻辑键不重复且全部位于窗口内。`NextCursor` 非空时严格前进；没有更多数据时为空。空页必须返回空 cursor，禁止制造无限分页。
-- Binance 与 OKX 原始响应即使顺序不同，也必须产生上述统一顺序。游标只负责一次历史拉取的确定前进；长期断点、缺口修复和重试由后续共享 runner 负责。
-
-订阅语义：
-
-- 两个订阅方法都是阻塞调用，每次只订阅一个已持久化 Instrument；它们串行调用 handler，以 handler 的阻塞形成显式背压，不在源内排队、丢弃或并发回调。
-- `ctx` 是唯一生命周期控制。取消时源先停止读取并释放自身资源，等待自有 goroutine 退出，再返回 `context.Cause(ctx)`；返回后不得再调用 handler。
-- handler 返回错误时立即停止并原样返回该错误。源不得重试、退避、写库或记录重复日志；连接重建、限频、断点、持久化和日志属于后续共享 runner。
-- 建连或读取失败返回下述分类错误。正常的实时 Candle 可以为同一逻辑键发送多次更新，Ticker 也不在适配器内去重。
-
-### 错误分类
-
-```go
-type SourceErrorKind string
-
-const (
-	SourceErrorInvalidRequest SourceErrorKind = "invalid_request"
-	SourceErrorRateLimited     SourceErrorKind = "rate_limited"
-	SourceErrorUnavailable     SourceErrorKind = "unavailable"
-	SourceErrorProtocol        SourceErrorKind = "protocol"
-)
-
-type SourceError struct {
-	Kind       SourceErrorKind
-	RetryAfter time.Duration
-	Err        error
-}
-```
-
-`SourceError` 必须实现 `error`、`Unwrap() error` 和 `Retryable() bool`。只有 `rate_limited`、`unavailable` 可重试；`RetryAfter` 只对 rate limit 有意义且不能为负。已知无效参数/不支持 symbol 是 `invalid_request`，429 或交易所限频码是 `rate_limited`，网络中断和 5xx 是 `unavailable`，非成功但无法识别的响应码、畸形 JSON、字段缺失、未知枚举和不变量失败是 `protocol`。错误不得包含响应原文、请求 Header、查询串、凭据或完整 URL。
-
-调用 Context 的取消与截止错误不包装为 `SourceError`，必须保持 `errors.Is(err, context.Canceled|context.DeadlineExceeded)`；handler 错误也原样返回。源不决定重试次数。
-
-### Binance/OKX 脱敏可执行样本
-
-样本只保留公开协议的最小字段，使用合成价格和固定 UTC 时间，不包含 Header、URL、账户、密钥、签名、限频标识或原始错误正文。两个目录各固定六个输入文件：
+核心枚举固定为：
 
 ```text
-backend/internal/marketdata/binance/testdata/
-  instruments_spot.json
-  instruments_usdt_perpetual.json
-  candles_1m_page_1.json
-  candles_1m_page_2.json
-  candle_1m_event.json
-  ticker_event.json
-backend/internal/marketdata/okx/testdata/
-  instruments_spot.json
-  instruments_usdt_perpetual.json
-  candles_1m_page_1.json
-  candles_1m_page_2.json
-  candle_1m_event.json
-  ticker_event.json
+Market           = spot | usd_m
+TradingEnv       = paper | testnet | live
+ExecutionMode    = signal_only | manual | auto
+WorkerLane       = realtime | backtest
+DecisionStatus   = not_required | pending | approved | rejected | expired
+ExecutionStatus  = not_requested | queued | blocked | submitted | completed | failed
 ```
 
-固定 Instrument ID 分别为 Binance spot `019c2f6d-7c00-7000-8000-000000000001`、OKX spot `019c2f6d-7c00-7000-8000-000000000002`、Binance USDT 永续 `019c2f6d-7c00-7000-8000-000000000003`、OKX USDT 永续 `019c2f6d-7c00-7000-8000-000000000004`。它们由测试的标准首次 upsert 提供，不写入元数据原始 JSON。
+## 身份与资源归属
 
-Metadata 样本分别保留 Binance exchange info 的 `PRICE_FILTER.tickSize`/`LOT_SIZE.stepSize` 与 OKX public instruments 的 `tickSz`/`lotSz`；OKX USDT 永续同时保留 `ctType`、`ctValCcy`、`settleCcy`。两所 spot 的规范化 `PriceTick="0.1"`、`QuantityStep="0.001"`，USDT 永续为 `"0.1"`、`"0.01"`，资产均为 BTC/USDT 且状态为 `trading`；NativeSymbol 分别保留 `BTCUSDT`、`BTC-USDT`、`BTCUSDT`、`BTC-USDT-SWAP`。
+- 不提供公开注册 API 或注册页面。用户只能由管理员创建、禁用或重置密码。
+- 登录页、登录接口、健康检查和静态资源是仅有的匿名入口；其他页面、HTTP API 和 WebSocket 都要求登录。
+- Binance 品种、K 线和管理员发布的策略版本向所有登录用户共享只读。
+- 自选、策略实例、回测、信号、交易账户、风险、订单、仓位、通知渠道和投递记录必须携带 `ownerUserId`，普通资源查询始终按当前用户过滤。
+- 管理员用户管理、策略发布和自动化审批使用独立管理接口。普通资源接口不因调用者是管理员而自动取消所有者过滤。
+- 首期使用应用层所有者过滤、复合外键和唯一约束，不引入 RLS。跨用户关联必须在数据库约束或同一事务的信任边界校验中拒绝。
 
-历史请求固定为 interval `1m`、窗口 `[2026-08-01T00:00:00Z, 2026-08-01T00:03:00Z)`、`Limit=2`。第一页包含前两根并返回 `2026-08-01T00:02:00Z`，第二页使用该 cursor 并包含最后一根后结束；Binance Kline 数组按升序存放，OKX history-candles 数组故意按降序存放以验证归一排序。原始时间统一使用对应 Unix 毫秒 `1785542400000`、`1785542460000`、`1785542520000`；Binance close time 分别为 `1785542459999`、`1785542519999`、`1785542579999`，OKX 只提供 open time 与 `confirm="1"`。
+## HTTP 与 WebSocket
 
-| OpenTime | Open | High | Low | Close | BaseVolume | CloseTime | IsClosed |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `2026-08-01T00:00:00Z` | `100.1` | `101.2` | `99.9` | `100.8` | `1.25` | `2026-08-01T00:01:00Z` | `true` |
-| `2026-08-01T00:01:00Z` | `100.8` | `102` | `100.5` | `101.5` | `2.5` | `2026-08-01T00:02:00Z` | `true` |
-| `2026-08-01T00:02:00Z` | `101.5` | `101.8` | `100.7` | `101` | `0.75` | `2026-08-01T00:03:00Z` | `true` |
+OpenAPI 3.0.3 是 `/api/v1` 的唯一来源。迁移实施时必须在一个 PR 中同步修改 OpenAPI、生成 Go/TypeScript 类型、后端路由、前端调用、WebSocket 和测试，随后删除旧 `/api`；不保留重定向、别名或兼容层。
 
-实时 Candle 的原始 open time 为 `1785542580000`，规范化值固定为 Open/High/Low/Close/BaseVolume `101`/`102.2`/`100.9`/`102`/`0.5`、OpenTime `2026-08-01T00:03:00Z`、CloseTime `2026-08-01T00:04:00Z`、`IsClosed=false`；Binance 使用 kline 事件的 `k.t/k.T/k.o/k.h/k.l/k.c/k.v/k.x`，其中原始 close time 为 `1785542639999`，OKX 使用 `candle1m` 数据数组与 `confirm="0"`。Ticker 原始事件时间为 `1785542610000`，规范化为 `2026-08-01T00:03:30Z`，Last/BestBid/BestAsk 固定为 `102`/`101.9`/`102.1`；Binance 固定使用 `24hrTicker` 的 `E/c/b/a`，OKX 使用 `tickers` 的 `ts/last/bidPx/askPx`，禁止用缺少 last price 的 Binance `bookTicker` 代替。
+目标路由分组固定为：
 
-最小验收矩阵：
+| 领域   | 路由                                                                                                  |
+| ------ | ----------------------------------------------------------------------------------------------------- |
+| 身份   | `/api/v1/auth/login`、`logout`、`reauth`、`/api/v1/me`、`/api/v1/admin/users`                         |
+| 行情   | `/api/v1/markets/symbols`、`/markets/candles`、`/watchlists`                                          |
+| 策略   | `/api/v1/strategies`、`/admin/strategies`、`/strategy-instances`、`/backtests`                        |
+| 信号   | `/api/v1/signals`、`/signals/{id}/approve`、`/signals/{id}/reject`                                    |
+| 交易   | `/api/v1/trading-accounts`、`/risk-limits`、`/positions`、`/orders`、`/automation`、`/emergency-stop` |
+| 通知   | `/api/v1/notification-channels`、`/notification-deliveries`、`/ws/notifications`                      |
+| 工作流 | 现有工作流资源统一迁移到 `/api/v1/workflows` 下                                                       |
 
-| 检查 | Binance 输入 | OKX 输入 | 必须得到的规范化结果 |
-| --- | --- | --- | --- |
-| 现货元数据 | `BTCUSDT` | `BTC-USDT` | `spot`、BTC/USDT、`trading`，Decimal 步长无浮点中转 |
-| USDT 永续元数据 | `BTCUSDT`/`PERPETUAL` | `BTC-USDT-SWAP`/linear/USDT | `usdt_perpetual`、BTC/USDT，单所字段不泄漏 |
-| 历史分页 | 两页 Kline 数组 | 两页 candle 数组 | 三根严格升序、00:00/00:01/00:02 无重无漏，close time 为排他边界，末页 cursor 为空 |
-| 实时 Candle | `k.x=false` | `confirm="0"` | 相同 OHLC/基础成交量语义、`IsClosed=false`、00:04 排他 close time |
-| 实时 Ticker | 事件时间、last/bid/ask 字符串 | `ts`、`last`/`bidPx`/`askPx` 字符串 | UTC `OccurredAt`、正数价格、bid 不大于 ask |
-| JSON/Decimal 负例 | 数值 token、指数、19 位小数、超 20 位整数 | 同左 | 均在边界失败；规范化 JSON 的 Decimal 均带引号 |
-| 枚举/结构负例 | 未知状态、缺 filter、错误 close time | 未知状态、非 linear/USDT、缺字段 | 返回不可重试 `protocol`，不返回部分结果 |
-| Context/handler | fixture 流首事件后取消或 handler 报错 | 同左 | 取消错误可用 `errors.Is` 识别，handler 错误原样返回，返回后零回调 |
-| 数据库键与 Down | 两所规范化结果 | 两所规范化结果 | UUIDv7、三类唯一键、重复标准 upsert 仍各一行；任一新表非空时 Down 原子失败 |
+- 错误响应使用 `application/problem+json`，至少包含 `type`、`title`、`status`、`detail` 和 `requestId`。
+- 列表默认 50、最大 200，使用不透明游标并以唯一 ID 作为最后稳定排序键。筛选或排序改变后旧游标无效。
+- 创建异步任务、批准信号、自动化开关、急停和其他命令型写操作要求 `Idempotency-Key`。普通键保留 24 小时；交易键、请求摘要和结果与订单审计同寿命。同键不同载荷返回 `409`。
+- `POST /api/v1/auth/login` 是唯一匿名身份 API；登录成功返回 Access Token，Token 失效后重新登录，不提供公开刷新入口。
+- `POST /api/v1/auth/reauth` 接收当前密码并返回绑定当前用户和会话的短期不透明 `reauthToken`，服务端只保存其哈希，五分钟后失效。敏感命令通过 `X-Reauth-Token` 提交；过期、跨用户或跨会话 Token 均拒绝。
 
-这些样本是协议适配的可执行输入，不是网络客户端、回放服务或推荐数据集。缺口检测、补数调度、批量连接、质量报告、数据保留、衍生统计和 UI 查询模型继续留在后续 A2 切片。
-
-后续 A2 行情只采集启用集，默认包含 Binance/OKX 的 BTC/ETH USDT 现货和永续；保存交易所原生 `1m/5m/15m/1h/4h/1d`。Hypertable、闭合 K 线修订、跨周期差异、完整率和恢复计时的稳定决策见 [ADR-0005](../architecture/decisions/0005-market-data-lifecycle.md)。
-
-## A2.1 Timescale 行情 Store
-
-本切片只交付 PostgreSQL 写入边界和 `market_candles` Timescale 生命周期，不连接交易所、不启动 Collector，也不实现补数、显式修复或查询 API。调用方拥有数据库连接和 Context 生命周期；Store 不启动 goroutine、不重试且不记录重复日志。
-
-### Go 写入边界
-
-```go
-func NewPostgresStore(db *sql.DB) *PostgresStore
-func (store *PostgresStore) UpsertInstrument(ctx context.Context, metadata InstrumentMetadata) (Instrument, error)
-func (store *PostgresStore) UpsertCandle(ctx context.Context, candle Candle) error
-func (store *PostgresStore) UpsertTicker(ctx context.Context, ticker Ticker) error
-```
-
-- `UpsertInstrument` 在写库前校验元数据。首次插入生成 UUIDv7；自然键冲突只更新资产、状态和步长，保留首次 ID，并返回完整 `Instrument`。
-- `UpsertCandle` 在写库前校验 Candle。未闭合行可被同逻辑键的新事件更新并可转为闭合；已闭合行保持冻结，普通写入不得覆盖。A2.4 的显式修复任务另行交付覆盖原因和质量事件。
-- `UpsertTicker` 在写库前校验 Ticker。同逻辑键只接受 `occurred_at` 不早于当前快照的写入，较旧事件无操作。
-- 三个方法都使用调用方 Context；取消和截止错误保持 `errors.Is` 可识别。Store 不暴露批量、查询、修复或生命周期管理接口，后续由实际消费者定义所需边界。
-
-### Timescale 生命周期
-
-- `00003_a2_market_contract.sql` 在投产前基线整理窗口内重写；migration 确保 TimescaleDB extension 可用，并把 `market_candles` 转为按 `open_time` 分区的唯一 hypertable。
-- chunk 时间间隔固定为 7 天；压缩按 `venue,instrument_id,interval_code` 分段并按 `open_time` 排序，30 天后由 Timescale 后台任务执行；默认 retention 为 2 年并由独立后台任务执行。
-- 压缩或 retention 后台任务失败不改变 Store 写入结果。后续调整在线保留期时修改 Timescale policy，不增加应用内删除循环。
-- Down 先锁定三张行情事实表和 `market_flow_leases`。租约行是可丢弃的协调状态，不计入非空保护；三张事实表总行数仍必须为零。成功回滚时删除四表、hypertable 及其策略，但保留可能被其他领域复用的 TimescaleDB extension。
-
-## A2.1 行情流租约 Runner
-
-本切片只提供后续 Binance/OKX 实时订阅复用的 PostgreSQL 单流租约和重试循环，不连接交易所、不实现历史补数，也不拆分运行角色、配置连接预算或修改部署拓扑。
-
-### PostgreSQL 租约
-
-`market_flow_leases` 每个 `flow_key` 恰好一行，保存 `owner_id`、从 1 开始且只增不减的 `fencing_token`、`lease_expires_at`、`last_heartbeat_at` 和 UTC 创建/更新时间。租约方法复用现有 `PostgresStore`：
-
-```go
-type FlowLease struct {
-	FlowKey         string
-	OwnerID         string
-	FencingToken    int64
-	LeaseExpiresAt  time.Time
-	LastHeartbeatAt time.Time
-}
-
-func (store *PostgresStore) ClaimFlowLease(ctx context.Context, flowKey, ownerID string, leaseDuration time.Duration) (FlowLease, bool, error)
-func (store *PostgresStore) RenewFlowLease(ctx context.Context, lease FlowLease, leaseDuration time.Duration) (bool, error)
-func (store *PostgresStore) ReleaseFlowLease(ctx context.Context, lease FlowLease) (bool, error)
-```
-
-- Claim 只允许不存在或按数据库 `statement_timestamp()` 已过期的 flow；未过期 flow 对任何 Owner 均不可重复认领。每次成功 Claim 都递增 token，Release 保留行和 token，仅把当前租约置为到期。
-- Renew 与 Release 必须同时匹配 `flow_key`、`owner_id`、`fencing_token` 且租约仍未过期，否则返回未生效。到期判断和写入时间只使用数据库时钟，Go 时钟不参与租约正确性。
-- `flow_key` 为去除首尾空白后 1..200 字符，`owner_id` 为 1..120 字符；租期必须大于 0，并向上取整到整秒。
-
-### 订阅 Runner
-
-```go
-type Subscription func(context.Context) error
-
-func NewFlowRunner(store *PostgresStore, ownerID string, leaseDuration, unavailableBackoff time.Duration) (*FlowRunner, error)
-func (runner *FlowRunner) Run(ctx context.Context, flowKey string, subscribe Subscription) error
-```
-
-- `Run` 阻塞到调用 Context 取消、永久来源错误或无法确认租约安全。初始租约被占用时等待并重试 Claim；成功后按 `leaseDuration / 3` 续租。任何 Renew 返回 false 或数据库错误都立即以可由 `errors.Is` 识别的 `ErrFlowLeaseLost` Cause 取消订阅 Context，等待订阅退出后返回失租错误。
-- `Subscription` 必须在传入 Context 取消后停止并返回。fencing token 只裁定本切片的 Claim、Renew 与 Release，不改变现有 Store 写入接口；行情事实仍由 Store 的幂等和单调冲突语义保护。
-- `rate_limited` 使用正数 `RetryAfter`，零值回退到固定 `unavailableBackoff`；`unavailable` 使用固定退避。`invalid_request`、`protocol` 和普通 handler 错误均原样返回且不重试。Runner 不设置最大重试次数。
-- 调用 Context 的取消和截止保持 `errors.Is` 可识别。返回前尽力执行 fenced Release；Release 失败不得覆盖原返回错误。
-- Runner 只记录 flow 与 Owner 的稳定 SHA-256 指纹、token、固定错误分类、状态和退避时长，不记录原始标识、wrapped error、交易所载荷、Header、查询串、凭据或完整 URL。
-
-## 实时事件
-
-WebSocket 事件统一使用以下信封：
+WebSocket 路径为 `GET /api/v1/ws/notifications`。握手继续使用固定 `Sec-WebSocket-Protocol: coinsphere.notifications.v1, <access-token>`，禁止查询串 Token。事件信封固定为：
 
 ```json
 {
-  "type": "market.candle.updated",
+  "type": "signal.created",
   "version": 1,
   "sequence": 42,
-  "occurredAt": "2026-07-31T08:00:00.000000000Z",
+  "occurredAt": "2026-08-05T08:00:00.000000000Z",
   "data": {}
 }
 ```
 
-信封 `version` 固定为 `1`，且只包含 `type`、`version`、`sequence`、`occurredAt`、`data` 五个字段。`sequence` 按单条连接实际写出的业务帧从 `1` 连续递增，重连后重置；RFC6455 Ping/Pong 等控制帧不占序号。`occurredAt` 是事件进入实时通道时的 UTC RFC3339Nano 时间，同一事件广播到多个连接时保持一致。客户端遇到未知类型可忽略业务内容，但应消费其合法序号；版本不支持或序号重复、倒退时不得更新状态。
+每条连接只有一个 writer；`sequence` 从 1 连续递增，重连后重置。持久通知记录是事实源，进程内唤醒和 WebSocket 只负责在线提示；离线用户通过未读快照恢复。
 
-`GET /ws/notifications` 发送两类通知事件：
+## Binance 行情
 
-- `notice.unread`：`data` 为 `{"unreadCount": 0}`。
-- `notice.created`：`data` 为 `{"record": {}, "unreadCount": 1}`。
+V1 只接受：
 
-每条通知连接只有一个 writer，业务帧和 Ping 均由它写入。发送队列有界；队列满时服务端关闭慢连接，不阻塞生产者、不静默丢弃后续帧，客户端重连后以首个 `notice.unread` 快照恢复。服务端周期发送 RFC6455 Ping，Pong 延长读期限，失联连接到期关闭；Hub 关机后拒绝新连接并等待既有 writer 退出。
+```go
+type Venue string
+const VenueBinance Venue = "binance"
 
-浏览器握手必须携带唯一且合法的 `Origin`，其有效 scheme、主机和端口必须与请求完全同源；缺失、畸形、跨 scheme/主机/端口均拒绝。通知连接必须按顺序提供 `Sec-WebSocket-Protocol: coinsphere.notifications.v1, <access-token>`，服务端只回显固定协议 `coinsphere.notifications.v1`；缺失、顺序错误、额外协议或任何查询串均拒绝。开发和生产反向代理始终必须保留原始 Host（含非默认端口）及合法的有效 scheme，且不得记录令牌或事件 payload。
+type Market string
+const (
+    MarketSpot Market = "spot"
+    MarketUSDM Market = "usd_m"
+)
+```
 
-A2 多角色落地后，通知记录先在数据库事务中持久化，`pg_notify` 只唤醒全部 API 实例。每个实例查询持久记录并推送自己持有的连接；用户离线不视为投递失败，重连后仍由 `notice.unread` 快照恢复。
+`Instrument` 至少包含 `id`、`venue`、`market`、`nativeSymbol`、`baseAsset`、`quoteAsset`、`status`、`priceTick`、`quantityStep`、`minQuantity`、`minNotional` 和 UTC 更新时间。Go App 同步 Binance Spot 与 USD-M 全量元数据，但只订阅自选和启用策略引用的数据流。
 
-## 工作流 HTTP 外呼
+`Candle` 固定包含：
 
-- `http.request` 只允许访问 `workflow.http_allowed_hosts` 中配置的精确域名；配置项不接受通配符、端口或 IP，空列表表示禁止全部外呼。
-- URL 只允许绝对 `http`/`https` 地址且不得包含 userinfo。首次校验、每次重定向和实际拨号都会解析域名；任一解析结果不是公网地址时整次请求被永久拒绝。
-- 拨号只使用当次重新解析并校验过的 IP，不使用环境代理或连接复用。`Authorization`、`Cookie`、`Proxy-Authorization` 及名称含 key/token/secret/credential 的请求头不得发出。
+```text
+instrumentId, interval, openTime, closeTime,
+open, high, low, close, baseVolume, isClosed
+```
 
-## 异步任务
+- `openTime` 按 Unix epoch 对齐；`closeTime` 是排他的下一根边界。Binance 原始闭区间 `closeTime` 加 1 ms 后必须等于该边界。
+- OHLCV 使用 Decimal，并满足 `low <= min(open, close)`、`high >= max(open, close)` 和非负成交量。
+- 最低周期为 `1m`；只保存策略、自选或回测实际使用的 Binance 原生周期，不自行从 1m 生成第二事实源。
+- 实时闭合状态只信任 Binance Kline 的 `k.x`。未闭合记录可以幂等更新；闭合记录默认冻结，只有显式修复任务可以覆盖并记录原因和质量事件。
+- 唯一键为 `instrumentId + interval + openTime`。WebSocket、REST 历史和断线补数进入同一规范化与 Upsert 路径。
+- 历史数据按回测窗口请求补齐，单次分页游标只保证窗口内确定前进。REST 同周期结果是修复权威来源。
+- `market_candles` 使用 7 天 chunk、30 天后压缩和默认两年 retention。策略候选引用的精确数据通过冻结产物保护，不延长全部在线 K 线寿命。
+- 只有闭合 K 线成功提交后才能创建实时策略任务；未闭合更新、Ticker 和补数中的旧 K 线不得重复触发同一信号。
 
-任务状态固定为 `queued`、`claimed`、`running`、`cancelRequested`、`succeeded`、`failed`、`canceled`。正常路径为 `queued -> claimed -> running -> succeeded/failed`；取消可从活跃状态进入 `cancelRequested -> canceled`。每次认领递增 `attempt_count` 并生成新的唯一 `lease_id`，启动、心跳和终态写入必须同时匹配任务 ID、租约 ID、合法前态及未过期的数据库时间。
+最新 Ticker 只用于展示、风险行情新鲜度和批准时估值，不保存 Ticker 历史。执行价格和订单状态以 Executor 从交易所获得的权威响应为准。
 
-Worker 必须周期续租；租约一旦过期，旧 Worker 立即失去心跳和终态写权限。过期的 `claimed/running` 在 `attempt_count < max_attempts` 时清除旧租约并重新排队，否则进入 `failed`。心跳观察到 `cancelRequested` 后不得继续续租；该状态在租约过期或取消请求满 4 秒时直接进入 `canceled`，禁止重试。任务取消从请求提交到伪任务停止并进入 `canceled` 不得超过 5 秒，即使 Owner 在观察取消后、确认终态前崩溃也必须满足该时限。
+## 策略版本与实例
 
-A4 起由专用 Rootless Docker Launcher 直接认领同一队列。一次性任务容器不得获得网络、数据库 DSN、密钥或 Docker Socket，只挂载只读输入和独立产物目录；镜像必须是服务端白名单中的固定 digest。任务与产物契约见 [ADR-0006](../architecture/decisions/0006-worker-and-artifacts.md)。
+只有管理员可以创建和修改策略草稿。V1 策略只有一个 Python 文件，发布时固定以下元数据：
 
-## Outbox 投递租约
+```text
+strategyVersionId, codeSha256, runtimeVersion,
+market, symbol, interval, lookbackBars, parameterSchema
+```
 
-Outbox 认领必须在单条数据库语句中完成候选选择、批量状态更新和结果返回，禁止先查后改。每条 `pending` 事件仅在 `available_at` 已到且 `attempt_count < max_attempts` 时可进入 `claimed`；认领递增一次尝试次数，并由数据库生成新的唯一 `lease_id`、记录 Owner、认领时间和租约到期时间。
+`parameterSchema` 只支持命名的 `integer | decimal | boolean | string` 标量、必填、默认值以及适用的最小/最大值或枚举；不支持嵌套对象、动态代码、依赖声明或运行时安装。
 
-续租、`claimed -> processed` 和订阅失败释放都必须同时匹配事件 ID、`lease_id`、Owner、`attempt_count` 和未过期的数据库时间。租约过期后旧 Owner 立即失去续租与终态写权限；即使事件已经恢复并重新认领，旧 token 的写入也只能影响零行。订阅失败保留已消耗的尝试次数并清空旧租约：仍有次数时按数据库时间与 `retry_backoff_seconds` 回到 `pending`，最后一次失败或租约过期时进入 `dead_letter`，且 `processed_at` 与 `dead_lettered_at` 相同。当前 `failed` 只表示旧 dispatcher 的既有终态，新 dispatcher 不再写入该状态。
+策略入口固定为：
 
-工作流成功、最终失败和 stale 耗尽时，execution 终态、attempt、两条标准事件及对应入口状态必须在同一短事务提交；任一事件插入失败时整体回滚。显式 `event.emit` 节点的权威业务动作就是单条 Outbox 插入，不把整张图或外部副作用包入长事务。未告警死信通过原子设置 `alerted_at` 由一个实例领取，告警日志只允许固定 Outbox ID、尝试次数和分类，不得包含 payload、metadata、Owner、token 或异常正文。该标记提供 at-most-once 日志去重，不等同于可靠外部告警。
+```python
+def on_bar(
+    candles: Sequence[Candle],
+    params: Mapping[str, JSONScalar],
+) -> Decimal:
+    ...
+```
 
-## 浏览器内容安全
+- `candles` 只包含按时间升序排列的闭合 K 线，长度不超过 `lookbackBars`；时间为 UTC，OHLCV 为 `Decimal`。
+- 函数必须无外部副作用，不访问网络、数据库、当前时间、随机源或交易凭据。
+- 返回值是相对于策略实例 `allocationUsdt` 的目标仓位。Spot 合法范围为 `0..1`，USD-M 为 `-1..1`，`0` 表示平仓。
+- 回测和实时使用完全相同的代码、参数、输入类型和范围校验。异常、超时、非 Decimal、NaN/Infinity 或越界结果使任务失败；实时任务还必须暂停对应实例并产生关键通知，不能生成交易意图。
+- 已发布版本不可修改或删除；更新代码或元数据必须发布新版本。普通用户只能读取已发布版本。
 
-- 助手 Markdown 保持 `html=false`，渲染结果在写入 DOM 前由固定版本的 DOMPurify 按 Markdown 标签白名单净化；第三方图片源被移除。
-- Mermaid 使用 `securityLevel=strict` 且禁用 HTML label 和交互绑定，生成的 SVG 与其他动态 SVG 都必须再次净化；脚本、事件属性、外部资源引用和可执行 CSS 引用不得进入 DOM。
-- 生产 Nginx 的 CSP 仅允许同源脚本，禁止 object、跨源 frame 和页面被嵌入；WebSocket 访问日志只记录 URI，不记录查询串。
+策略实例属于用户，至少固定 `strategyVersionId`、验证后的参数、`allocationUsdt`、执行模式、可选交易环境、可选账户和启用状态。已用于信号或回测的实例配置采用版本快照，修改配置不能改写历史结果。
 
-## 交易命令
+`signal_only` 不要求交易账户；`manual` 和 `auto` 必须绑定同一所有者的账户及适用环境。`auto` 还要求管理员对该实例版本授权，以及所有者显式启用。
 
-所有订单意图必须携带稳定 `intentId` 和确定性 `clientOrderId`。订单状态未知时先对账，禁止通过无条件重试创建第二笔订单。
+## 回测与冻结产物
 
-- A4 最小语义包含市价、限价和止损。信号只使用闭合 Bar；同 Bar 冲突采用保守固定路径、止损优先和创建顺序，不模拟盘口排队或部分成交。跳空止损按不利开盘价，限价可获得更优开盘价。
-- Go 追加不可变复式分录并拥有权威订单、成交、仓位和账本；Python 只输出版本化的非权威回测事实与 Manifest。
-- `paper/live` realm 只覆盖交易账户及其凭据、权限、Intent、订单、成交、仓位、余额、账本和风控状态；公共行情、数据集和策略版本不带 realm。
-- 交易权限绑定账户、策略版本和 R1/R2/R3。缺少任一显式账户风控上限时保持禁用，策略只能使用相同或更严格的限制。
-- R2 需要 R1 模拟盘至少 30 天和 100 笔完成订单；R3 还需要小额现货稳定 30 天及永续模拟/Testnet 30 天、100 笔。
+回测只消费闭合 K 线，并逐根调用 `on_bar`：
 
-完整 realm、权限状态机、账本、Web 凭据录入和版本化轮换边界见 [ADR-0007](../architecture/decisions/0007-trading-realm-and-ledger.md)。
+1. 在当前 K 线闭合后计算目标仓位。
+2. 目标变化在下一根 K 线开盘按差额成交，最后一根信号不产生没有下一开盘价的成交。
+3. Spot 禁止负仓位；USD-M 固定逐仓、单向和显式低杠杆。
+4. 手续费率和滑点基点是回测请求的显式 Decimal 参数，不提供隐藏默认值。
+5. USD-M 使用冻结窗口内的 Binance 资金费历史，并在对应 UTC 时间计入；缺失资金费使回测失败。
+6. 止损、跳空、强平或同 Bar 冲突无法确定先后时使用对策略更不利的可行路径；不模拟盘口排队、部分成交或价格改善。
+
+结果至少包含目标序列、规范化订单、成交、手续费、资金费、权益曲线、最大回撤、收益和强平事件。所有金额和费率使用 Decimal 字符串。
+
+普通回测记录策略版本、参数、数据范围、规范化输入 SHA-256、模拟器版本和结果 SHA-256。申请 Paper/Testnet/Live 晋级时必须冻结：
+
+- 按唯一键排序、字段顺序固定、Decimal 使用规范字符串、UTC 使用 RFC3339Nano 的 `JSONL.gz` 数据。
+- 策略源文件、参数、运行时版本、模拟器版本和完整结果。
+- 列出每个文件 SHA-256、大小和引用关系的 Manifest。
+
+产物先写临时路径，完成压缩和哈希校验后原子移动到内容寻址目录并登记。失败临时文件可按 Runbook 清理；被晋级证据引用的产物不得自动删除。
+
+## Worker 队列与隔离
+
+现有异步任务状态和租约协议保持不变，量化任务增加固定 `lane`：
+
+- `realtime` 消费者只认领实时策略任务，并始终保留一个执行槽。
+- `backtest` 消费者只认领回测任务，并始终限制为一个子进程槽。
+
+队列在各 lane 内按显式优先级、创建时间和唯一 ID 稳定认领。Backtest 不能借用 realtime 槽，realtime 也不在 backtest 子进程内执行。
+
+Worker 的墙钟超时、CPU、内存和产物空间上限必须在部署配置中显式提供；缺失或非法配置拒绝启动。生产 Linux 使用子进程资源限制和有界终止，开发环境使用相同墙钟与取消契约。
+
+任务子进程只获得规范化输入、策略文件、参数和独立产物目录；环境变量经过白名单重建。Worker 和子进程都不读取交易凭据或调用交易所私有接口。不再启动逐任务 Docker，也不支持自定义镜像、自定义依赖或运行时安装。
+
+实时任务从 Go App 接收闭合事件到信号成功持久化的正常负载 p99 目标为两秒。每次超时和排队超限都记录固定分类指标，但不得记录策略源代码、参数载荷或行情原始载荷。
+
+## 信号、批准与仓位归属
+
+每个信号固定策略实例、策略版本、触发 K 线、当前目标仓位、前一目标仓位、创建时间和适用账户。唯一约束 `strategyInstanceId + strategyVersionId + candleCloseTime` 防止重复闭合事件生成第二个信号。
+
+信号使用独立的决策和执行状态：
+
+- `signal_only`：`decisionStatus=not_required`、`executionStatus=not_requested`。
+- `manual`：创建时为 `pending`，`expiresAt` 等于下一根 K 线闭合时间；可以进入 `approved | rejected | expired`。批准后执行状态从 `queued` 开始。
+- `auto`：管理员授权和用户开关有效时 `decisionStatus=not_required` 并尝试排队；任一权限或风控缺失时 `executionStatus=blocked`。
+
+批准和拒绝必须由信号所有者执行，并要求未过期信号、五分钟内的 `X-Reauth-Token` 和 `Idempotency-Key`。批准按当时最新有效报价和账户状态重新风控，不使用信号生成时价格保证成交。
+
+通知操作 URL 使用至少 128 位随机 Token，数据库只保存哈希，并绑定用户、信号、用途和 `min(signal.expiresAt, tokenMaxExpiry)`。GET 只导航到站内页面，不能改变状态；成功使用、拒绝、过期或信号终态后 Token 失效。
+
+同一 `account + market + symbol` 最多一个 manual/auto 策略实例拥有活动仓位。数据库使用活动所有权记录和部分唯一约束保证；`signal_only` 不占用所有权。只有仓位归零且在途订单和保护单完成对账后才能释放所有权。
+
+## 交易账户、凭据与风险
+
+交易账户属于用户并固定 `paper | testnet | live` 环境和 `spot | usd_m` 市场。Paper 账户不含凭据；Testnet/Live 凭据经 HTTPS 提交，使用现有对称主密钥加密，API 永不返回密文或明文。
+
+保存凭据前，用户必须显式确认：
+
+- 交易所密钥已关闭提现权限。
+- 已配置固定出口 IP 白名单。
+
+V1 不自动调用 Binance 检查权限。测试、Issue、PR、CI、日志和 AI 上下文不得出现真实密钥；更新凭据必须提交完整新值，不能读取旧值。
+
+账户启用自动化前必须完整配置：
+
+```text
+allowedSymbols
+maxAccountGrossNotionalUsdt
+maxSymbolNotionalUsdt
+maxOrderNotionalUsdt
+maxDailyLossUsdt
+maxDrawdownRatio
+maxQuoteAgeSeconds
+```
+
+USD-M 账户还必须显式配置固定低杠杆，并强制 `isolated + one_way`。策略实例必须配置 `allocationUsdt` 和保护止损比例；策略级金额限制只能等于或严于账户限制。
+
+任一适用限制缺失、非法或无法计算时，自动化保持禁用。风险触发后暂停账户及相关实例，禁止增仓，只允许减仓、平仓和撤单。全局急停优先于账户、策略和批准状态；解除急停需要五分钟复验和独立审计记录，不能自动恢复已暂停策略。
+
+## Executor 与保护单
+
+Go App 只写入交易意图；Executor 认领后再次执行权限、风控、行情新鲜度和仓位所有权校验。意图状态固定为 `queued | processing | submitted | reconciling | completed | blocked | failed`。
+
+- 每个意图拥有稳定 `intentId` 和由账户、意图、用途派生的确定性 `clientOrderId`。
+- 网络超时或响应不完整时进入 `reconciling`，先按 `clientOrderId` 查询；只有交易所明确不存在原订单时才允许继续创建。
+- 自动调仓只使用市价差额单。请求数量必须按 `quantityStep` 向不增加风险的方向取整，并重新检查最小数量、最小名义金额和账户上限。
+- Spot 成交后按当前受管仓位数量创建或替换交易所侧止损；在新保护单确认前，旧保护单不得提前失效到留下无保护窗口。
+- USD-M 使用一向持仓的 `STOP_MARKET`，固定 `closePosition=true`、`workingType=MARK_PRICE`，不同时提交 `quantity` 或 `reduceOnly`。
+- 任何保护单无法确认时，Executor 立即使用市价减仓至零，暂停实例并生成关键通知；若平仓状态未知，进入对账并保持账户禁止增仓。
+
+工作流、通知 Bot、Go App 的通用 HTTP 节点和 Python Worker 均不能写入已通过 Executor 边界的订单状态，也不能直接调用交易所私有接口。
+
+## 交易事件与投影
+
+本地权威事实只包含追加式领域事件：
+
+```text
+order_events, fill_events, fee_events, funding_events
+```
+
+事件必须包含环境、账户、市场、品种、外部唯一标识、发生时间、接收时间和 Decimal 金融值。交易所重复回报由外部唯一标识和事件类型约束幂等；修正通过新的更正事件表达，不更新历史事件正文。
+
+`orders`、`positions`、`balances` 和 `pnl` 是可重建投影。每次在线更新和全量重建必须使用同一归约逻辑；重建结果与在线投影逐字段一致才算通过。V1 不建设复式分录、通用总账或通用事件溯源框架。
+
+## 内嵌通知网关
+
+通知扩展现有 `notification_channels`、`notification_deliveries`、加密配置、站内未读和工作流通知节点。内部最小发送契约为：
+
+```go
+type Sender interface {
+    Send(context.Context, ChannelConfig, Message) (Receipt, error)
+}
+```
+
+Provider 静态固定为 `in_app | dingtalk_webhook | qq_bot | smtp_email`。不提供动态注册、运行时插件或独立通知服务；企业微信只在产生实际需求后新增同类适配器。
+
+`Message` 固定标题、正文、级别、可选站内操作 URL 和去重键。投递以 `domainEventId + channelId` 唯一，失败按现有 Outbox/投递重试记录处理；日志只记录投递 ID、渠道类型和固定错误分类，不记录密钥、完整 URL、原始响应或正文。
+
+- 钉钉沿用现有签名和 Webhook 实现，增加 ActionCard URL 行为；每个机器人遵守 20 条/分钟限制，普通消息可合并，关键消息只延迟重试、不丢弃。
+- QQ 使用官方 Bot HTTP 鉴权和群/C2C Markdown 消息，域名白名单、ICP备案和固定出口 IP 是部署前置；不引入完整 Bot WebSocket/Redis SDK。
+- SMTP 和站内通知沿用现有实现。渠道测试只发送明确标记的测试消息并保存脱敏结果。
+
+固定关键事件为：待人工批准信号、订单未知或失败、保护单失败、风控暂停和全局急停。它们始终持久化站内通知，并尝试用户配置的外部渠道；投递失败不得绕过或反向改变交易风控状态。普通量化事件继续由工作流决定是否通知。
+
+## 工作流边界
+
+- 量化、风险和交易模块通过领域 Outbox 发布版本化事件；工作流只能以资源 ID 和脱敏摘要作为输入。
+- 工作流通知节点调用内嵌通知网关；通用 HTTP 节点继续受精确域名白名单和 SSRF 防护约束。
+- 工作流不能获得交易凭据、Executor 私有网络、逐 K 线回调或下单接口。任何试图把交易命令路由到工作流的变更都必须被契约测试拒绝。
+- 关键交易通知不依赖用户工作流是否存在、启用或成功，避免工作流配置错误掩盖安全事件。
