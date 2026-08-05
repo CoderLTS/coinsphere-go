@@ -633,7 +633,7 @@ func assertA2Columns(t *testing.T, database *sql.DB) {
 		"market_ticker_snapshots.best_ask_price": {dataType: "numeric", precision: 38, scale: 18},
 		"market_flow_leases.flow_key":            {dataType: "character varying", length: 200},
 		"market_flow_leases.owner_id":            {dataType: "character varying", length: 120},
-		"market_flow_leases.fencing_token":       {dataType: "bigint"},
+		"market_flow_leases.fencing_token":       {dataType: "bigint", precision: 64},
 		"market_flow_leases.lease_expires_at":    {dataType: "timestamp with time zone"},
 		"market_flow_leases.last_heartbeat_at":   {dataType: "timestamp with time zone"},
 		"market_flow_leases.created_at":          {dataType: "timestamp with time zone"},
