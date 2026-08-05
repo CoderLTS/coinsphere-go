@@ -201,9 +201,9 @@ A2.0 合并时使用 `backend/internal/migration/sql/00003_a2_market_contract.sq
 - `fk_market_ticker_snapshots_instrument` 以 `(venue, instrument_id)` 引用 `market_instruments(venue, id) ON DELETE RESTRICT`。
 - Check 约束名称和语义固定为：`ck_market_ticker_snapshots_venue` 校验 Venue；`ck_market_ticker_snapshots_time` 校验事件时间有限；`ck_market_ticker_snapshots_prices` 校验三个价格都大于零；`ck_market_ticker_snapshots_spread` 校验 `best_bid_price <= best_ask_price`。
 
-自动生成的 `market_instruments_pkey`、`market_candles_pkey`、`market_ticker_snapshots_pkey` 与两个命名唯一约束是本次仅有的索引。后续具体存储必须用冲突更新实现幂等：Instrument 冲突时保留首次 UUIDv7；Candle 重复逻辑键保持一行；Ticker 只在新 `occurred_at` 不早于当前快照时覆盖。本契约 PR 仅用迁移测试执行这些标准冲突语句，不提前交付具体存储对象。
+自动生成的 `market_instruments_pkey`、`market_candles_pkey`、`market_ticker_snapshots_pkey`、`market_flow_leases_pkey` 与两个命名唯一约束是当前仅有的索引。后续具体存储必须用冲突更新实现幂等：Instrument 冲突时保留首次 UUIDv7；Candle 重复逻辑键保持一行；Ticker 只在新 `occurred_at` 不早于当前快照时覆盖。本契约 PR 仅用迁移测试执行这些标准冲突语句，不提前交付具体存储对象。
 
-Down 必须在同一 migration 事务中按子表到父表顺序对 `market_candles`、`market_ticker_snapshots`、`market_instruments` 取得 `ACCESS EXCLUSIVE` 锁，再统计三表总行数。只有总数为零才能依次删除子表和父表；任一表非空时 guard 失败，三张表、数据和 migration version 均原子保留。
+Down 必须在同一 migration 事务中对 `market_flow_leases`、`market_candles`、`market_ticker_snapshots`、`market_instruments` 取得 `ACCESS EXCLUSIVE` 锁，再统计三张行情事实表总行数。只有事实表总数为零才能删除四表；任一事实表非空时 guard 失败，四张表、数据和 migration version 均原子保留。租约行是可丢弃的协调状态，不计入非空保护。
 
 ### `MarketSource`
 
@@ -354,7 +354,48 @@ func (store *PostgresStore) UpsertTicker(ctx context.Context, ticker Ticker) err
 - `00003_a2_market_contract.sql` 在投产前基线整理窗口内重写；migration 确保 TimescaleDB extension 可用，并把 `market_candles` 转为按 `open_time` 分区的唯一 hypertable。
 - chunk 时间间隔固定为 7 天；压缩按 `venue,instrument_id,interval_code` 分段并按 `open_time` 排序，30 天后由 Timescale 后台任务执行；默认 retention 为 2 年并由独立后台任务执行。
 - 压缩或 retention 后台任务失败不改变 Store 写入结果。后续调整在线保留期时修改 Timescale policy，不增加应用内删除循环。
-- Down 继续先锁定三张行情表并要求总行数为零；成功回滚时删除 hypertable 及其策略，但保留可能被其他领域复用的 TimescaleDB extension。
+- Down 先锁定三张行情事实表和 `market_flow_leases`。租约行是可丢弃的协调状态，不计入非空保护；三张事实表总行数仍必须为零。成功回滚时删除四表、hypertable 及其策略，但保留可能被其他领域复用的 TimescaleDB extension。
+
+## A2.1 行情流租约 Runner
+
+本切片只提供后续 Binance/OKX 实时订阅复用的 PostgreSQL 单流租约和重试循环，不连接交易所、不实现历史补数，也不拆分运行角色、配置连接预算或修改部署拓扑。
+
+### PostgreSQL 租约
+
+`market_flow_leases` 每个 `flow_key` 恰好一行，保存 `owner_id`、从 1 开始且只增不减的 `fencing_token`、`lease_expires_at`、`last_heartbeat_at` 和 UTC 创建/更新时间。租约方法复用现有 `PostgresStore`：
+
+```go
+type FlowLease struct {
+	FlowKey         string
+	OwnerID         string
+	FencingToken    int64
+	LeaseExpiresAt  time.Time
+	LastHeartbeatAt time.Time
+}
+
+func (store *PostgresStore) ClaimFlowLease(ctx context.Context, flowKey, ownerID string, leaseDuration time.Duration) (FlowLease, bool, error)
+func (store *PostgresStore) RenewFlowLease(ctx context.Context, lease FlowLease, leaseDuration time.Duration) (bool, error)
+func (store *PostgresStore) ReleaseFlowLease(ctx context.Context, lease FlowLease) (bool, error)
+```
+
+- Claim 只允许不存在或按数据库 `statement_timestamp()` 已过期的 flow；未过期 flow 对任何 Owner 均不可重复认领。每次成功 Claim 都递增 token，Release 保留行和 token，仅把当前租约置为到期。
+- Renew 与 Release 必须同时匹配 `flow_key`、`owner_id`、`fencing_token` 且租约仍未过期，否则返回未生效。到期判断和写入时间只使用数据库时钟，Go 时钟不参与租约正确性。
+- `flow_key` 为去除首尾空白后 1..200 字符，`owner_id` 为 1..120 字符；租期必须大于 0，并向上取整到整秒。
+
+### 订阅 Runner
+
+```go
+type Subscription func(context.Context) error
+
+func NewFlowRunner(store *PostgresStore, ownerID string, leaseDuration, unavailableBackoff time.Duration) (*FlowRunner, error)
+func (runner *FlowRunner) Run(ctx context.Context, flowKey string, subscribe Subscription) error
+```
+
+- `Run` 阻塞到调用 Context 取消、永久来源错误或无法确认租约安全。初始租约被占用时等待并重试 Claim；成功后按 `leaseDuration / 3` 续租。任何 Renew 返回 false 或数据库错误都立即以可由 `errors.Is` 识别的 `ErrFlowLeaseLost` Cause 取消订阅 Context，等待订阅退出后返回失租错误。
+- `Subscription` 必须在传入 Context 取消后停止并返回。fencing token 只裁定本切片的 Claim、Renew 与 Release，不改变现有 Store 写入接口；行情事实仍由 Store 的幂等和单调冲突语义保护。
+- `rate_limited` 使用正数 `RetryAfter`，零值回退到固定 `unavailableBackoff`；`unavailable` 使用固定退避。`invalid_request`、`protocol` 和普通 handler 错误均原样返回且不重试。Runner 不设置最大重试次数。
+- 调用 Context 的取消和截止保持 `errors.Is` 可识别。返回前尽力执行 fenced Release；Release 失败不得覆盖原返回错误。
+- Runner 只记录 flow 与 Owner 的稳定 SHA-256 指纹、token、固定错误分类、状态和退避时长，不记录原始标识、wrapped error、交易所载荷、Header、查询串、凭据或完整 URL。
 
 ## 实时事件
 

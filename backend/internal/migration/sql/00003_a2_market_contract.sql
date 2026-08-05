@@ -152,9 +152,36 @@ CREATE TABLE market_ticker_snapshots (
         CHECK (best_bid_price <= best_ask_price)
 );
 
+CREATE TABLE market_flow_leases (
+    flow_key VARCHAR(200) NOT NULL,
+    owner_id VARCHAR(120) NOT NULL,
+    fencing_token BIGINT NOT NULL,
+    lease_expires_at TIMESTAMPTZ NOT NULL,
+    last_heartbeat_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    CONSTRAINT market_flow_leases_pkey PRIMARY KEY (flow_key),
+    CONSTRAINT ck_market_flow_leases_flow_key
+        CHECK (flow_key = BTRIM(flow_key) AND CHAR_LENGTH(flow_key) > 0),
+    CONSTRAINT ck_market_flow_leases_owner_id
+        CHECK (owner_id = BTRIM(owner_id) AND CHAR_LENGTH(owner_id) > 0),
+    CONSTRAINT ck_market_flow_leases_fencing_token
+        CHECK (fencing_token > 0),
+    CONSTRAINT ck_market_flow_leases_time
+        CHECK (
+            isfinite(lease_expires_at)
+            AND isfinite(last_heartbeat_at)
+            AND isfinite(created_at)
+            AND isfinite(updated_at)
+            AND lease_expires_at >= last_heartbeat_at
+            AND updated_at >= created_at
+        )
+);
+
 -- +goose Down
--- A2 行情事实只允许在三张表均为空时回滚；锁表后检查，避免并发写入绕过保护。
+-- 租约是可丢弃的协调状态；仍需先锁定四表，再只以三张行情事实表保护回滚。
 LOCK TABLE
+    market_flow_leases,
     market_candles,
     market_ticker_snapshots,
     market_instruments
@@ -170,6 +197,7 @@ SELECT
     + (SELECT COUNT(*) FROM market_ticker_snapshots)
     + (SELECT COUNT(*) FROM market_instruments);
 
+DROP TABLE market_flow_leases;
 DROP TABLE market_candles;
 DROP TABLE market_ticker_snapshots;
 DROP TABLE market_instruments;
