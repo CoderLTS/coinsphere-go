@@ -4,12 +4,12 @@
 
 CoinSphere 只支持 PostgreSQL/TimescaleDB。DDL 只由独立 Migrator 身份和 migration 命令执行；服务启动只读校验版本，不执行 `AutoMigrate`。普通角色与 Worker 首期共用受限应用身份，Executor 使用独立身份且只有它可读取交易凭据。
 
-`00001_a1_postgres_baseline.sql` 建立当前业务基线，`00002_a1_observability.sql` 增加审计表，`00003_a2_market_contract.sql` 建立两张普通行情表、唯一的 `market_candles` Timescale hypertable 和 `market_flow_leases` 协调表，并配置 7 天 chunk、30 天后 columnstore 压缩和默认 2 年 retention。该文件仍处于 A2-A5 冻结前整理窗口，重写后必须重建开发/CI 空库；本手册不承诺升级任何旧 SQLite、MySQL 或未投产 PostgreSQL schema。
+`00001_a1_postgres_baseline.sql` 建立当前业务基线，`00002_a1_observability.sql` 增加审计表，`00003_a2_market_contract.sql` 当前建立两张普通行情表、唯一的 `market_candles` Timescale hypertable 和 `market_flow_leases` 协调表，并配置 7 天 chunk、30 天后 columnstore 压缩和默认 2 年 retention。ADR-0008 已决定在 Binance 行情纵向 PR 中删除不再需要的流租约；该文件仍处于正式 Paper 观察前的整理窗口，重写后必须重建开发/CI 空库。本手册不承诺升级任何旧 SQLite、MySQL 或未投产 PostgreSQL schema。
 
 ## Migration 冻结点
 
-- A2-A5 属于基线整理窗口。历史 migration 的重写必须来自已记录的设计决策，并同时要求所有开发和 CI 数据库从空库重建。
-- A6/R1 正式观察期开始前，执行最后一次空库 Up/Down/重放，记录基线版本和证据并永久冻结历史文件。
+- 正式 Paper 观察前属于基线整理窗口。历史 migration 的重写必须来自已记录的设计决策，并同时要求所有开发和 CI 数据库从空库重建。
+- 开始记录 Paper 晋级证据前，执行最后一次空库 Up/Down/重放，记录基线版本和证据并永久冻结历史文件。
 - 冻结后任何环境都只能追加新 migration，不得修改、重排或复用既有版本号。
 - 如果基线整理窗口内已经出现必须保留的数据，应立即提前冻结，不能继续依赖重置。
 
@@ -54,7 +54,7 @@ docker compose run --rm migrate /app/coinsphere-migrate -config /app/config.yml 
 
 - 文件位于 `backend/internal/migration/sql`，使用五位递增版本号，例如 `00002_market_data.sql`。
 - 每个文件同时包含 `-- +goose Up` 和 `-- +goose Down`。
-- R1 冻结后，已存在的文件禁止修改、重排或复用版本号；冻结前重整必须按上节重建全部非生产数据库。
+- Paper 晋级证据开始记录并冻结后，已存在的文件禁止修改、重排或复用版本号；冻结前重整必须按上节重建全部非生产数据库。
 - 默认保持事务执行。确需非事务 DDL 时必须使用独立 PR，写明失败恢复步骤并完成 PostgreSQL 演练。
 - Migration 默认跟随所属纵向能力；共享基线、破坏性或跨领域 schema、凭据、风控和订单状态机使用独立 PR。破坏性删除采用“扩展、回填、切换、收缩”多阶段流程。
 - 金融时间使用 UTC `timestamptz`；价格、金额、数量和费率使用 `numeric(38,18)`，不得使用浮点账务列。

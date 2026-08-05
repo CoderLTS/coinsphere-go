@@ -93,7 +93,7 @@ if ($LASTEXITCODE -ne 0) { throw "文档治理 PR 包含越界实现改动" }
 ## Migration
 
 - Migration 默认跟随所属纵向能力，仅共享基线、破坏性变更或跨领域 schema 使用独立 PR。
-- A2-A5 可在重置未投产开发/CI 数据库的前提下整理历史 migration；A6/R1 正式观察期开始前永久冻结，此后只能追加版本化 SQL。
+- 正式 Paper 观察前可在重置未投产开发/CI 数据库的前提下整理历史 migration；开始记录 Paper 晋级证据前永久冻结，此后只能追加版本化 SQL。
 - 验证 PostgreSQL 升级、必要的保数与约束、重复执行、失败原子性和回滚；测试使用随机隔离 schema，不清空固定外部表。
 - 每个 migration PR 或含 migration 的能力 PR 必须写明回滚步骤。
 
