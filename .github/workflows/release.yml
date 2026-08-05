@@ -119,9 +119,9 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Deploy through DPanel Compose
+      - name: Deploy through shared DPanel Stack
         shell: bash
-        run: bash deploy/production/deploy.sh "$VERSION" dist/release-manifest.json
+        run: bash scripts/release/deploy-dpanel-stack.sh "$VERSION" dist/release-manifest.json
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2

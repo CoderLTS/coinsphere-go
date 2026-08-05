@@ -8,17 +8,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "$TEST_DIR/bin" "$TEST_DIR/docker" "$TEST_DIR/deploy"
+mkdir -p "$TEST_DIR/bin" "$TEST_DIR/docker"
 cat >"$TEST_DIR/docker/config.json" <<'EOF'
 {"auths":{"127.0.0.1:5000":{"auth":"dGVzdDp0ZXN0"}}}
 EOF
-cat >"$TEST_DIR/deploy/.env" <<'EOF'
-COINSPHERE_VERSION=v1.0.1
-EOF
-
 cat >"$TEST_DIR/bin/docker" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
+if [[ ${1:-} == container && ${2:-} == inspect && ${3:-} == coinsphere-backend ]]; then
+  printf 'v1.0.1\n'
+  exit 0
+fi
 if [[ ${1:-} == image && ${2:-} == ls ]]; then
   exit 0
 fi
@@ -96,7 +96,6 @@ chmod +x "$TEST_DIR/bin/docker" "$TEST_DIR/bin/curl"
 
 export PATH="$TEST_DIR/bin:$PATH"
 export DOCKER_CONFIG="$TEST_DIR/docker"
-export COINSPHERE_DEPLOY_DIR="$TEST_DIR/deploy"
 export COINSPHERE_REGISTRY_KEEP_RELEASES=10
 export DELETE_LOG="$TEST_DIR/deleted"
 

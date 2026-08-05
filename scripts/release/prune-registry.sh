@@ -4,7 +4,6 @@ set -Eeuo pipefail
 MODE=${1:---dry-run}
 REGISTRY=${COINSPHERE_REGISTRY:-127.0.0.1:5000}
 KEEP_RELEASES=${COINSPHERE_REGISTRY_KEEP_RELEASES:-10}
-DEPLOY_DIR=${COINSPHERE_DEPLOY_DIR:-/home/infrastructure/dpanel/compose/coinsphere-go}
 DOCKER_CONFIG_FILE=${DOCKER_CONFIG:-$HOME/.docker}/config.json
 MANIFEST_ACCEPT='application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json'
 
@@ -49,10 +48,8 @@ printf 'header = "Authorization: Basic %s"\n' "$registry_auth" >"$curl_config"
 chmod 0600 "$curl_config"
 unset registry_auth
 
-current_version=
-if [[ -f $DEPLOY_DIR/.env ]]; then
-  current_version=$(sed -n 's/^COINSPHERE_VERSION=//p' "$DEPLOY_DIR/.env" | tail -n 1)
-fi
+current_version=$(docker container inspect coinsphere-backend \
+  --format '{{index .Config.Labels "org.opencontainers.image.version"}}' 2>/dev/null || true)
 
 manifest_digest() {
   local repository=$1

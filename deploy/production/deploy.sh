@@ -8,10 +8,10 @@ fi
 VERSION=$1
 MANIFEST_FILE=${2:-}
 REGISTRY=${COINSPHERE_REGISTRY:-127.0.0.1:5000}
-DEPLOY_DIR=${COINSPHERE_DEPLOY_DIR:-/home/infrastructure/dpanel/compose/coinsphere-go}
+SOURCE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+DEPLOY_DIR=${COINSPHERE_DEPLOY_DIR:-$SOURCE_DIR}
 WEB_BIND=${COINSPHERE_WEB_BIND:-127.0.0.1}
 WEB_PORT=${COINSPHERE_WEB_PORT:-8080}
-SOURCE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 DOCKER_CONFIG_FILE="${DOCKER_CONFIG:-${HOME:?HOME 未设置}/.docker}/config.json"
 
 if [[ ! $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
@@ -109,8 +109,8 @@ if [[ -f $DEPLOY_DIR/.env && -f $DEPLOY_DIR/compose.yaml ]]; then
   had_previous=true
 fi
 
-install -m 0644 "$SOURCE_DIR/compose.yaml" "$DEPLOY_DIR/compose.yaml"
 if [[ $SOURCE_DIR != "$DEPLOY_DIR" ]]; then
+  install -m 0644 "$SOURCE_DIR/compose.yaml" "$DEPLOY_DIR/compose.yaml"
   install -m 0755 "$SOURCE_DIR/deploy.sh" "$DEPLOY_DIR/deploy.sh"
   install -m 0644 "$SOURCE_DIR/runtime.env.example" "$DEPLOY_DIR/runtime.env.example"
 fi
