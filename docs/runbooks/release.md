@@ -13,11 +13,15 @@
 ## 生产基础设施
 
 - Runner：`coinsphere-production`，标签为 `self-hosted`、`Linux`、`X64`、`coinsphere-release`、`production`。
+- Runner 工作目录：`/home/lts/actions-runner`。
 - Registry：`127.0.0.1:5000`，Runner 使用服务器本地 `coinsphere-ci` 登录信息，GitHub 不保存 Registry 密码。
-- DPanel Compose：`/home/infrastructure/dpanel/compose/coinsphere-go`。
+- DPanel Stack 根目录：`/srv/dpanel-stack`；CoinSphere 位于共享 Compose 项目 `apps`，文件为 `compose/apps/docker-compose.yaml`，网络为 `dpanel_stack`。
+- Compose 插值配置为 `secrets/apps.env`，应用运行配置为 `secrets/coinsphere-runtime.env`，持久数据位于 `data/coinsphere-go`。这些文件只存在于服务器，不进入仓库、日志或 Release。
+- `apps` 同时包含 `new-api`。CoinSphere 发布只能操作 `coinsphere-backend` 和 `coinsphere-web`，禁止覆盖共享 Compose、执行项目级 `down` 或操作其他服务。
 - Web 就绪检查：生产主机 `http://127.0.0.1:8080/health`，该兼容入口等价于 Backend `/health/ready`；Backend `/health/live` 仅用于进程存活诊断。
-- 生产运行配置：部署目录的 `runtime.env`，权限固定为 `0600`，不会进入仓库、日志或 Release。
 - 生产数据库：外部 TimescaleDB，由 `COINSPHERE_DATABASE__DSN` 连接；备份、恢复和保留策略由数据库基础设施负责。
+- PostgreSQL 配置位于 `config/postgresql/postgresql.conf`。当前服务器时区仍为 `Asia/Shanghai`，统一 UTC 前不得把它视为已完成的环境门禁。
+- 旧 `/home/infrastructure` 已归档；`/etc/logrotate.d/infrastructure-nginx` 仍引用旧路径，属于待清理的失效配置，不得作为当前运维事实来源。
 - Runner 必须提供 Python 3、GNU tar 和 gzip；最终产物扫描只使用 Python 标准库读取 ZIP、tar.gz 和 JSON，TAR 仅解压到系统临时文件且不会写入工作区。
 - 出站代理只配置在 Runner 服务环境中；Action 下载和其他出站工具仍会继承该环境。`build.sh` 统一大小写变量，并仅通过 BuildKit 预定义构建参数把代理传入构建步骤，镜像和运行容器不保存代理配置。
 - `${DOCKER_CONFIG:-$HOME/.docker}/config.json` 禁止包含顶层 `proxies`。发布前置检查发现该配置时会在调用 Docker 前终止，避免代理自动注入生产容器。
@@ -40,14 +44,14 @@
 4. 专用 Runner 构建三个发布包：Windows x86、Linux amd64 和 Docker Compose；后端和前端镜像分别推送版本标签与 `sha-<commit>` 标签到主机本地私有 Registry，以取得 RepoDigest，禁止使用 `latest`。
 5. 流水线从 Manifest 中的不可变 RepoDigest 生成双镜像 SPDX JSON SBOM，完成镜像漏洞扫描，并在 `dist` 内一次性生成覆盖三个归档、Manifest 和两份 SBOM 的 `SHA256SUMS`。
 6. 最终产物安全与完整性扫描通过后，才把候选产物上传为 Actions Artifact；扫描失败时禁止上传 Artifact、部署和创建 GitHub Release。
-7. 自动部署从已扫描 Manifest 读取不可变 RepoDigest，停止旧服务、执行 migration、启动固定 digest 镜像并检查健康状态；数据库备份必须在触发工作流前完成并验证。
+7. `scripts/release/deploy-dpanel-stack.sh` 从已扫描 Manifest 读取不可变 RepoDigest，只停止 CoinSphere 服务、执行 migration、启动固定 digest 镜像并检查健康状态；数据库备份必须在触发工作流前完成并验证。
 8. 部署成功后才创建 GitHub Release；只有扫描通过但部署失败的候选产物会在 Actions Artifact 保留 14 天，且不会创建版本标签。
 9. Release 创建后，Registry 对 backend/web 分别保留最近 10 个版本和当前部署版本，并删除对应的本地旧镜像标签。
 10. 无论发布成功或失败，最终步骤都会删除 `dist`、清理超过 24 小时的 Runner 临时文件、清理 CoinSphere 专用 Builder 中超过 7 天的缓存并停止 Builder 容器。
 
 Windows/Linux 包不是桌面应用：包内后端二进制可直接运行，`web` 目录需要 Nginx 或等价 Web Server 托管并反向代理到后端。
 
-部署脚本的 `stop`、`down` 和回滚均使用相同关机契约：先发送 `SIGTERM`，由应用在 30 秒内完成 HTTP、Runtime、数据库和 WebSocket 收尾，Compose 最多等待 40 秒后才强制停止。发布工作流本身不因 A1-1 增加新的生产触发方式。
+部署脚本的定向 `stop` 和回滚使用相同关机契约：先发送 `SIGTERM`，由应用在 30 秒内完成 HTTP、Runtime、数据库和 WebSocket 收尾，Compose 最多等待 40 秒后才强制停止。共享 `apps` 项目禁止执行 `down`。发布工作流本身不因 A1-1 增加新的生产触发方式。
 
 ## 最终产物门禁
 
@@ -84,7 +88,7 @@ COINSPHERE_REGISTRY=127.0.0.1:5000 \
 - Go 模块、Go 编译结果和 pnpm store 使用 CoinSphere 专用 BuildKit cache mount；发布版本号变化只会重建前端产物，不会使依赖安装层失效。缓存仍在保留期内时，依赖锁文件变化只下载缺失内容。
 - Runner 的 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`（或对应小写变量）供发布作业的出站工具使用；只有构建脚本会把这些变量显式转交给 BuildKit。不得通过 Docker 客户端全局 `proxies` 为 Builder 配置代理，因为该配置也会注入 Compose 运行容器。
 - `scripts/release/cleanup-runner.sh` 只删除当前仓库的 `dist`、过期的 `RUNNER_TEMP` 内容和 CoinSphere Builder 缓存，不执行 `docker system prune`，不删除容器、数据卷或其他仓库镜像。
-- `scripts/release/prune-registry.sh` 只允许访问 `127.0.0.1:5000`，默认仅预演；发布工作流显式传入 `--apply`。认证复用 Runner 本地 Docker 登录配置，凭据不会进入命令参数或日志。
+- `scripts/release/prune-registry.sh` 只允许访问 `127.0.0.1:5000`，默认仅预演；发布工作流显式传入 `--apply`。当前版本从运行中的 `coinsphere-backend` OCI version 标签读取，不依赖服务器部署目录；认证复用 Runner 本地 Docker 登录配置，凭据不会进入命令参数或日志。
 - Registry Manifest 删除后，未引用 Blob 仍需在独立维护窗口执行 Registry garbage collection。共享 Registry 运行期间禁止自动执行 GC，避免与其他项目推送并发造成数据损坏。
 - Action 下载目录、工具缓存和 Runner 诊断日志保留给 Runner 自身管理；GitHub Artifact 按 14 天策略由 GitHub 清理，GitHub Release 长期保留。
 
@@ -92,10 +96,10 @@ COINSPHERE_REGISTRY=127.0.0.1:5000 \
 
 最终产物扫描发生在部署前。扫描失败时没有服务或数据变更，不执行部署回滚，也不会上传 Actions Artifact 或创建 GitHub Release；构建阶段为取得 RepoDigest 已写入主机本地 Registry 的候选标签可能保留，按失败记录核对后由 Registry 保留策略或维护窗口清理，禁止为此自动删除仍可能被其他标签引用的 Manifest。
 
-migration、Compose 启动或数据库就绪 `/health` 任一步失败时，`deploy.sh` 会：
+migration、Compose 启动或数据库就绪 `/health` 任一步失败时，`deploy-dpanel-stack.sh` 会：
 
 1. 停止失败版本。
-2. 恢复上一份 Compose 和镜像版本文件。
+2. 保持共享 Compose 不变，恢复上一份 CoinSphere 镜像环境文件。
 3. 拉取并重新启动上一固定版本。
 
 脚本保留当前 PostgreSQL schema，不执行 migration Down、不覆盖数据库，也不修改 `schema_migrations`。如果上一镜像不兼容新 schema，自动代码回滚可能失败，此时保持服务停止并按本次 migration 的数据库恢复方案处理。
@@ -107,21 +111,25 @@ migration、Compose 启动或数据库就绪 `/health` 任一步失败时，`dep
 自动回滚失败时，先保持服务停止，再检查：
 
 ```bash
-cd /home/infrastructure/dpanel/compose/coinsphere-go
-docker compose --env-file .env -f compose.yaml ps
-docker compose --env-file .env -f compose.yaml run --rm backend \
+cd /srv/dpanel-stack/compose/apps
+docker compose --project-name apps --env-file /srv/dpanel-stack/secrets/apps.env \
+  -f docker-compose.yaml ps coinsphere-backend coinsphere-web
+coinsphere_backend_image=$(sed -n 's/^COINSPHERE_BACKEND_IMAGE=//p' \
+  /srv/dpanel-stack/secrets/apps.env)
+docker run --rm --network dpanel_stack \
+  --env-file /srv/dpanel-stack/secrets/coinsphere-runtime.env "$coinsphere_backend_image" \
   /app/coinsphere-migrate -config /app/config.yml -direction version
 ```
 
-恢复到 Registry 中仍存在的上一版本，可在部署目录执行：
+恢复到 Registry 中仍存在的上一版本，使用该版本已扫描的 Release Manifest 执行：
 
 ```bash
-./deploy.sh vX.Y.Z
+bash scripts/release/deploy-dpanel-stack.sh vX.Y.Z /path/to/release-manifest.json
 ```
 
-Release workflow 自动部署时调用 `./deploy.sh vX.Y.Z release-manifest.json`，脚本严格校验 Manifest 后把两个镜像 digest 写入部署 `.env`。不传 Manifest 的单参数模式只用于管理员明确选择旧版本标签的手工恢复。
+Release workflow 也调用该双参数命令。脚本严格校验 Manifest，健康检查通过后才原子更新 `secrets/apps.env` 中的 CoinSphere 版本与两个镜像 digest；没有按标签直接恢复的单参数模式。
 
-管理员初始密码由服务器首次准备时随机生成。需要首次登录时，只在 SSH 终端读取 `runtime.env`，登录并改密后从该文件移除 `COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD`；不要把值发送到聊天、Issue、PR 或 Actions 日志。
+管理员初始密码由服务器首次准备时随机生成。需要首次登录时，只在 SSH 终端读取 `secrets/coinsphere-runtime.env`，登录并改密后从该文件移除 `COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD`；不要把值发送到聊天、Issue、PR 或 Actions 日志。
 
 任何回滚都要记录失败版本、时间线、数据库备份标识、migration 版本、健康检查和恢复结果。交易能力落地后，发布前还必须先停止新增敞口并按交易应急手册处理活动订单。
 
