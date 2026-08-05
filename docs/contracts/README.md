@@ -392,9 +392,10 @@ func (runner *FlowRunner) Run(ctx context.Context, flowKey string, subscribe Sub
 ```
 
 - `Run` 阻塞到调用 Context 取消、永久来源错误或无法确认租约安全。初始租约被占用时等待并重试 Claim；成功后按 `leaseDuration / 3` 续租。任何 Renew 返回 false 或数据库错误都立即以可由 `errors.Is` 识别的 `ErrFlowLeaseLost` Cause 取消订阅 Context，等待订阅退出后返回失租错误。
+- `Subscription` 必须在传入 Context 取消后停止并返回。fencing token 只裁定本切片的 Claim、Renew 与 Release，不改变现有 Store 写入接口；行情事实仍由 Store 的幂等和单调冲突语义保护。
 - `rate_limited` 使用正数 `RetryAfter`，零值回退到固定 `unavailableBackoff`；`unavailable` 使用固定退避。`invalid_request`、`protocol` 和普通 handler 错误均原样返回且不重试。Runner 不设置最大重试次数。
 - 调用 Context 的取消和截止保持 `errors.Is` 可识别。返回前尽力执行 fenced Release；Release 失败不得覆盖原返回错误。
-- Runner 只记录 flow、Owner、token、固定错误分类、状态和退避时长，不记录 wrapped error、交易所载荷、Header、查询串、凭据或完整 URL。
+- Runner 只记录 flow 与 Owner 的稳定 SHA-256 指纹、token、固定错误分类、状态和退避时长，不记录原始标识、wrapped error、交易所载荷、Header、查询串、凭据或完整 URL。
 
 ## 实时事件
 

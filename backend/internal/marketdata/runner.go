@@ -2,7 +2,9 @@ package marketdata
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"strings"
@@ -10,7 +12,7 @@ import (
 	"unicode/utf8"
 )
 
-// ErrFlowLeaseLost 表示当前进程已无法确认自己仍拥有行情流的写入权。
+// ErrFlowLeaseLost 表示当前进程无法确认仍持有订阅租约或流归属。
 var ErrFlowLeaseLost = errors.New("market flow lease lost")
 
 // FlowLease 是由 PostgreSQL 时钟裁定的单条行情流租约。
@@ -187,7 +189,7 @@ func (runner *FlowRunner) Run(ctx context.Context, flowKey string, subscribe Sub
 			if ctx.Err() != nil {
 				return contextError(ctx)
 			}
-			slog.ErrorContext(ctx, "market flow lease claim failed", "flow", flowKey, "owner", runner.ownerID, "error_category", "database")
+			slog.ErrorContext(ctx, "market flow lease claim failed", "flow_fingerprint", logFingerprint(flowKey), "owner_fingerprint", logFingerprint(runner.ownerID), "error_category", "database")
 			return ErrFlowLeaseLost
 		}
 		if !claimed {
@@ -197,7 +199,7 @@ func (runner *FlowRunner) Run(ctx context.Context, flowKey string, subscribe Sub
 			continue
 		}
 
-		slog.InfoContext(ctx, "market flow lease claimed", "flow", lease.FlowKey, "owner", lease.OwnerID, "token", lease.FencingToken, "status", "claimed")
+		slog.InfoContext(ctx, "market flow lease claimed", "flow_fingerprint", logFingerprint(lease.FlowKey), "owner_fingerprint", logFingerprint(lease.OwnerID), "token", lease.FencingToken, "status", "claimed")
 		result := contextError(ctx)
 		if ctx.Err() == nil {
 			result = runner.runLease(ctx, lease, subscribe)
@@ -208,11 +210,11 @@ func (runner *FlowRunner) Run(ctx context.Context, flowKey string, subscribe Sub
 		released, releaseErr := runner.store.ReleaseFlowLease(releaseCtx, lease)
 		cancelRelease()
 		if releaseErr != nil {
-			slog.ErrorContext(ctx, "market flow lease release failed", "flow", lease.FlowKey, "owner", lease.OwnerID, "token", lease.FencingToken, "error_category", "database")
+			slog.ErrorContext(ctx, "market flow lease release failed", "flow_fingerprint", logFingerprint(lease.FlowKey), "owner_fingerprint", logFingerprint(lease.OwnerID), "token", lease.FencingToken, "error_category", "database")
 		} else if !released {
-			slog.WarnContext(ctx, "market flow lease release lost", "flow", lease.FlowKey, "owner", lease.OwnerID, "token", lease.FencingToken, "error_category", "lease_lost")
+			slog.WarnContext(ctx, "market flow lease release lost", "flow_fingerprint", logFingerprint(lease.FlowKey), "owner_fingerprint", logFingerprint(lease.OwnerID), "token", lease.FencingToken, "error_category", "lease_lost")
 		}
-		slog.InfoContext(ctx, "market flow runner stopped", "flow", lease.FlowKey, "owner", lease.OwnerID, "token", lease.FencingToken, "status", "stopped")
+		slog.InfoContext(ctx, "market flow runner stopped", "flow_fingerprint", logFingerprint(lease.FlowKey), "owner_fingerprint", logFingerprint(lease.OwnerID), "token", lease.FencingToken, "status", "stopped")
 		return result
 	}
 }
@@ -241,7 +243,7 @@ func (runner *FlowRunner) runLease(ctx context.Context, lease FlowLease, subscri
 		if !retry {
 			return err
 		}
-		slog.WarnContext(ctx, "market flow subscription retry", "flow", lease.FlowKey, "owner", lease.OwnerID, "token", lease.FencingToken, "error_category", category, "backoff", delay)
+		slog.WarnContext(ctx, "market flow subscription retry", "flow_fingerprint", logFingerprint(lease.FlowKey), "owner_fingerprint", logFingerprint(lease.OwnerID), "token", lease.FencingToken, "error_category", category, "backoff", delay)
 		if err := runner.waitForRetry(ctx, lease, renewal.C, delay); err != nil {
 			return err
 		}
@@ -304,11 +306,11 @@ func (runner *FlowRunner) renewLease(ctx context.Context, lease FlowLease) error
 		if ctx.Err() != nil {
 			return contextError(ctx)
 		}
-		slog.ErrorContext(ctx, "market flow lease renewal failed", "flow", lease.FlowKey, "owner", lease.OwnerID, "token", lease.FencingToken, "error_category", "database")
+		slog.ErrorContext(ctx, "market flow lease renewal failed", "flow_fingerprint", logFingerprint(lease.FlowKey), "owner_fingerprint", logFingerprint(lease.OwnerID), "token", lease.FencingToken, "error_category", "database")
 		return ErrFlowLeaseLost
 	}
 	if !renewed {
-		slog.WarnContext(ctx, "market flow lease lost", "flow", lease.FlowKey, "owner", lease.OwnerID, "token", lease.FencingToken, "error_category", "lease_lost")
+		slog.WarnContext(ctx, "market flow lease lost", "flow_fingerprint", logFingerprint(lease.FlowKey), "owner_fingerprint", logFingerprint(lease.OwnerID), "token", lease.FencingToken, "error_category", "lease_lost")
 		return ErrFlowLeaseLost
 	}
 	return nil
@@ -399,4 +401,9 @@ func contextError(ctx context.Context) error {
 		return err
 	}
 	return context.Cause(ctx)
+}
+
+func logFingerprint(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
 }

@@ -1,8 +1,12 @@
 package marketdata_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -280,6 +284,40 @@ WHERE flow_key = 'fenced-flow'
 			t.Fatalf("runner after release error = %v", err)
 		}
 	})
+}
+
+func TestFlowRunnerLogsFingerprints(t *testing.T) {
+	database := openStoreTestDatabase(t)
+	flowKey := "binance:spot:BTCUSDT:ws?token=flow-secret"
+	ownerID := "collector?token=owner-secret"
+	runner, err := marketdata.NewFlowRunner(marketdata.NewPostgresStore(database), ownerID, time.Second, time.Millisecond)
+	if err != nil {
+		t.Fatalf("new runner: %v", err)
+	}
+
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	completed := errors.New("subscription completed")
+	if err := runner.Run(context.Background(), flowKey, func(context.Context) error { return completed }); err != completed {
+		t.Fatalf("run result = %v", err)
+	}
+
+	logs := output.String()
+	for _, value := range []string{flowKey, ownerID, "flow-secret", "owner-secret"} {
+		if strings.Contains(logs, value) {
+			t.Fatalf("log exposed sensitive identifier %q: %s", value, logs)
+		}
+	}
+	flowHash := sha256.Sum256([]byte(flowKey))
+	ownerHash := sha256.Sum256([]byte(ownerID))
+	if want := "flow_fingerprint=" + hex.EncodeToString(flowHash[:]); !strings.Contains(logs, want) {
+		t.Fatalf("log missing flow fingerprint %q: %s", want, logs)
+	}
+	if want := "owner_fingerprint=" + hex.EncodeToString(ownerHash[:]); !strings.Contains(logs, want) {
+		t.Fatalf("log missing owner fingerprint %q: %s", want, logs)
+	}
 }
 
 func awaitRunner(t *testing.T, result <-chan error) error {
