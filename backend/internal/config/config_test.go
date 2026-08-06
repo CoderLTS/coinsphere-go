@@ -30,3 +30,18 @@ func TestValidateAllowsInsecureSecretOnlyForExplicitLocalOverride(t *testing.T) 
 		t.Fatalf("Validate() rejected the explicit local override: %v", err)
 	}
 }
+
+func TestMarketDataConfigBounds(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Auth.SecretKey = "test-only-random-secret"
+	cfg.MarketData.ReconcileIntervalSeconds = 31
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() accepted market-data reconciliation above 30 seconds")
+	}
+
+	cfg.MarketData.ReconcileIntervalSeconds = 30
+	cfg.MarketData.BackfillPageSize = 301
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() accepted a Binance page size above 300")
+	}
+}

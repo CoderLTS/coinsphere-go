@@ -100,6 +100,72 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/v1/markets/symbols': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get: operations['listMarketSymbols']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/markets/candles': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get: operations['listMarketCandles']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/watchlists': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get: operations['listWatchlistItems']
+    put?: never
+    post: operations['createWatchlistItem']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/watchlists/{watchlistId}': {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        watchlistId: components['schemas']['FinancialResourceId']
+      }
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post?: never
+    delete: operations['deleteWatchlistItem']
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/v1/data/news': {
     parameters: {
       query?: never
@@ -1136,6 +1202,92 @@ export interface components {
       detail: string
       requestId: string
     }
+    /** Format: uuid */
+    FinancialResourceId: string
+    DecimalString: string
+    /** @enum {string} */
+    Venue: 'binance'
+    /** @enum {string} */
+    Market: 'spot' | 'usd_m'
+    /** @enum {string} */
+    InstrumentStatus: 'trading' | 'suspended'
+    /** @enum {string} */
+    CandleInterval: '1m' | '5m' | '15m' | '1h' | '4h' | '1d'
+    MarketSymbol: {
+      id: components['schemas']['FinancialResourceId']
+      venue: components['schemas']['Venue']
+      market: components['schemas']['Market']
+      nativeSymbol: string
+      baseAsset: string
+      quoteAsset: string
+      status: components['schemas']['InstrumentStatus']
+      priceTick: components['schemas']['DecimalString']
+      quantityStep: components['schemas']['DecimalString']
+      minQuantity: components['schemas']['DecimalString']
+      minNotional: components['schemas']['DecimalString']
+      /** Format: date-time */
+      updatedAt: string
+    }
+    MarketSymbolPageData: {
+      records: components['schemas']['MarketSymbol'][]
+      nextCursor: string
+      hasMore: boolean
+      /** Format: int64 */
+      total: number
+    }
+    MarketSymbolPageResponse: components['schemas']['SuccessResponse'] & {
+      data?: components['schemas']['MarketSymbolPageData']
+    }
+    MarketCandle: {
+      instrumentId: components['schemas']['FinancialResourceId']
+      interval: components['schemas']['CandleInterval']
+      /** Format: date-time */
+      openTime: string
+      /** Format: date-time */
+      closeTime: string
+      open: components['schemas']['DecimalString']
+      high: components['schemas']['DecimalString']
+      low: components['schemas']['DecimalString']
+      close: components['schemas']['DecimalString']
+      baseVolume: components['schemas']['DecimalString']
+      isClosed: boolean
+    }
+    MarketCandlePageData: {
+      records: components['schemas']['MarketCandle'][]
+      nextCursor: string
+      hasMore: boolean
+      /** Format: int64 */
+      total: number
+    }
+    MarketCandlePageResponse: components['schemas']['SuccessResponse'] & {
+      data?: components['schemas']['MarketCandlePageData']
+    }
+    WatchlistCreateRequest: {
+      instrumentId: components['schemas']['FinancialResourceId']
+      interval: components['schemas']['CandleInterval']
+    }
+    WatchlistItem: {
+      id: components['schemas']['FinancialResourceId']
+      /** Format: int64 */
+      ownerUserId: number
+      instrumentId: components['schemas']['FinancialResourceId']
+      interval: components['schemas']['CandleInterval']
+      /** Format: date-time */
+      createdAt: string
+    }
+    WatchlistPageData: {
+      records: components['schemas']['WatchlistItem'][]
+      nextCursor: string
+      hasMore: boolean
+      /** Format: int64 */
+      total: number
+    }
+    WatchlistPageResponse: components['schemas']['SuccessResponse'] & {
+      data?: components['schemas']['WatchlistPageData']
+    }
+    WatchlistItemResponse: components['schemas']['SuccessResponse'] & {
+      data?: components['schemas']['WatchlistItem']
+    }
     LoginRequest: {
       username: string
       /** Format: password */
@@ -1220,6 +1372,15 @@ export interface components {
     }
     /** @description Authenticated principal lacks permission or ownership */
     Forbidden: {
+      headers: {
+        [name: string]: unknown
+      }
+      content: {
+        'application/problem+json': components['schemas']['Problem']
+      }
+    }
+    /** @description Resource not found */
+    NotFound: {
       headers: {
         [name: string]: unknown
       }
@@ -1392,6 +1553,135 @@ export interface operations {
     responses: {
       200: components['responses']['Success']
       401: components['responses']['Unauthorized']
+    }
+  }
+  listMarketSymbols: {
+    parameters: {
+      query?: {
+        /** @description Opaque cursor returned by the same route and filter set. */
+        cursor?: components['parameters']['Cursor']
+        limit?: components['parameters']['Limit']
+        market?: components['schemas']['Market']
+        keyword?: string
+      }
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Binance Spot and USD-M instrument metadata */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['MarketSymbolPageResponse']
+        }
+      }
+      400: components['responses']['BadRequest']
+      401: components['responses']['Unauthorized']
+    }
+  }
+  listMarketCandles: {
+    parameters: {
+      query: {
+        /** @description Opaque cursor returned by the same route and filter set. */
+        cursor?: components['parameters']['Cursor']
+        limit?: components['parameters']['Limit']
+        instrumentId: components['schemas']['FinancialResourceId']
+        interval: components['schemas']['CandleInterval']
+        startTime?: string
+        endTime?: string
+      }
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Persisted normalized Binance candles */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['MarketCandlePageResponse']
+        }
+      }
+      400: components['responses']['BadRequest']
+      401: components['responses']['Unauthorized']
+    }
+  }
+  listWatchlistItems: {
+    parameters: {
+      query?: {
+        /** @description Opaque cursor returned by the same route and filter set. */
+        cursor?: components['parameters']['Cursor']
+        limit?: components['parameters']['Limit']
+      }
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Current user's watchlist items */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['WatchlistPageResponse']
+        }
+      }
+      400: components['responses']['BadRequest']
+      401: components['responses']['Unauthorized']
+    }
+  }
+  createWatchlistItem: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['WatchlistCreateRequest']
+      }
+    }
+    responses: {
+      /** @description Watchlist item created */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['WatchlistItemResponse']
+        }
+      }
+      400: components['responses']['BadRequest']
+      401: components['responses']['Unauthorized']
+      404: components['responses']['NotFound']
+      409: components['responses']['Conflict']
+    }
+  }
+  deleteWatchlistItem: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        watchlistId: components['schemas']['FinancialResourceId']
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      200: components['responses']['Success']
+      400: components['responses']['BadRequest']
+      401: components['responses']['Unauthorized']
+      404: components['responses']['NotFound']
     }
   }
   listNews: {

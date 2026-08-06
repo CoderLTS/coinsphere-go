@@ -8,6 +8,11 @@ database:
   max_idle_conns: 10
   conn_max_idle_time_seconds: 300
 
+market_data:
+  enabled: true
+  reconcile_interval_seconds: 10
+  backfill_page_size: 300
+
 server:
   host: 0.0.0.0
   port: 6987

@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"coinsphere/backend/internal/config"
+	"coinsphere/backend/internal/marketdata"
 	"coinsphere/backend/internal/security"
 )
 
@@ -40,13 +41,14 @@ type App struct {
 	//   Cipher —— 敏感信息的对称加解密
 	//   Hub    —— WebSocket 连接中心,负责给前端实时推送
 	// 用指针可以避免复制大对象,并让多处共享同一份实例。见 GO入门笔记『复合类型』。
-	DB       *gorm.DB
-	Cfg      *config.AppConfig
-	Hasher   *security.PasswordHasher
-	Tokens   *security.TokenManager
-	Cipher   *security.SecretCipher
-	Hub      *Hub
-	database *gorm.DB
+	DB         *gorm.DB
+	Cfg        *config.AppConfig
+	Hasher     *security.PasswordHasher
+	Tokens     *security.TokenManager
+	Cipher     *security.SecretCipher
+	Hub        *Hub
+	MarketData *marketdata.Manager
+	database   *gorm.DB
 
 	// authState stores short-lived, process-local authentication state that cannot
 	// be represented by a signed access token alone. Reauthentication tokens are

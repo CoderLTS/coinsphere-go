@@ -44,8 +44,8 @@ WHERE table_schema = current_schema() AND table_name = 'schema_migrations'
 	if err != nil {
 		t.Fatalf("apply baseline: %v", err)
 	}
-	if len(results) != 3 || results[0].Version != 1 || results[1].Version != 2 || results[2].Version != 3 ||
-		results[0].Direction != "up" || results[1].Direction != "up" || results[2].Direction != "up" {
+	if len(results) != 4 || results[0].Version != 1 || results[1].Version != 2 || results[2].Version != 3 || results[3].Version != 4 ||
+		results[0].Direction != "up" || results[1].Direction != "up" || results[2].Direction != "up" || results[3].Direction != "up" {
 		t.Fatalf("migration results = %#v", results)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err != nil {
@@ -61,12 +61,12 @@ WHERE table_schema = current_schema() AND table_name = 'schema_migrations'
 		t.Fatalf("repeat baseline applied %#v", results)
 	}
 
-	results, err = runner.Down(context.Background(), 3)
+	results, err = runner.Down(context.Background(), 4)
 	if err != nil {
 		t.Fatalf("roll back empty migrations: %v", err)
 	}
-	if len(results) != 3 || results[0].Version != 3 || results[1].Version != 2 || results[2].Version != 1 ||
-		results[0].Direction != "down" || results[1].Direction != "down" || results[2].Direction != "down" {
+	if len(results) != 4 || results[0].Version != 4 || results[1].Version != 3 || results[2].Version != 2 || results[3].Version != 1 ||
+		results[0].Direction != "down" || results[1].Direction != "down" || results[2].Direction != "down" || results[3].Direction != "down" {
 		t.Fatalf("migration rollback results = %#v", results)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err == nil {
@@ -87,8 +87,8 @@ func TestPostgresBaselineDownRejectsData(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 1); err != nil {
-		t.Fatalf("roll back empty A2 migration: %v", err)
+	if _, err := runner.Down(context.Background(), 2); err != nil {
+		t.Fatalf("roll back empty market migrations: %v", err)
 	}
 	if _, err := runner.Down(context.Background(), 1); err != nil {
 		t.Fatalf("roll back empty observability migration: %v", err)
@@ -101,7 +101,7 @@ func TestPostgresBaselineDownRejectsData(t *testing.T) {
 		t.Fatal("baseline rollback removed a non-empty schema")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 1 || latest != 3 {
+	if versionErr != nil || current != 1 || latest != 4 {
 		t.Fatalf("failed baseline rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	var count int
@@ -220,8 +220,8 @@ func TestObservabilityDownRejectsAuditData(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 1); err != nil {
-		t.Fatalf("roll back empty A2 migration: %v", err)
+	if _, err := runner.Down(context.Background(), 2); err != nil {
+		t.Fatalf("roll back empty market migrations: %v", err)
 	}
 	if _, err := database.Exec(`INSERT INTO audit_records (request_id, action, resource_path, outcome, status_code) VALUES ('rollback-guard', 'POST /api/v1/test', '/api/v1/test', 'success', 200)`); err != nil {
 		t.Fatalf("insert audit rollback guard: %v", err)
@@ -231,7 +231,7 @@ func TestObservabilityDownRejectsAuditData(t *testing.T) {
 		t.Fatal("observability rollback removed persistent audit data")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 2 || latest != 3 {
+	if versionErr != nil || current != 2 || latest != 4 {
 		t.Fatalf("failed observability rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	var count int
@@ -252,8 +252,8 @@ func TestPostgresBaselineDownSeesConcurrentCommit(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply baseline: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 2); err != nil {
-		t.Fatalf("roll back empty A2 and observability migrations: %v", err)
+	if _, err := runner.Down(context.Background(), 3); err != nil {
+		t.Fatalf("roll back empty market and observability migrations: %v", err)
 	}
 
 	writer, err := database.Begin()
@@ -284,7 +284,7 @@ func TestPostgresBaselineDownSeesConcurrentCommit(t *testing.T) {
 		t.Fatal("baseline rollback did not finish after concurrent commit")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 1 || latest != 3 {
+	if versionErr != nil || current != 1 || latest != 4 {
 		t.Fatalf("failed concurrent rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	var count int
@@ -305,7 +305,7 @@ func TestValidateCurrentRejectsDatabaseAhead(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply baseline: %v", err)
 	}
-	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES (4, TRUE)`); err != nil {
+	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES (5, TRUE)`); err != nil {
 		t.Fatalf("record newer migration: %v", err)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err == nil {
@@ -510,11 +510,11 @@ func TestA2MarketContractDownRejectsData(t *testing.T) {
 				}
 			}
 
-			if _, err := runner.Down(context.Background(), 1); err == nil {
+			if _, err := runner.Down(context.Background(), 2); err == nil {
 				t.Fatalf("A2 rollback removed non-empty %s", test.table)
 			}
 			current, latest, versionErr := runner.Versions(context.Background())
-			if versionErr != nil || current != 3 || latest != 3 {
+			if versionErr != nil || current != 3 || latest != 4 {
 				t.Fatalf("A2 rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 			}
 			assertA2Tables(t, database)
@@ -523,12 +523,62 @@ func TestA2MarketContractDownRejectsData(t *testing.T) {
 	}
 }
 
+func TestM1MarketWatchlistConstraintsAndDownGuard(t *testing.T) {
+	database := openPostgresSchema(t)
+	runner, err := New(database)
+	if err != nil {
+		t.Fatalf("create migration runner: %v", err)
+	}
+	if _, err := runner.Up(context.Background(), 0); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+
+	const instrumentID = "019c2f6d-7c00-7000-8000-000000000001"
+	insertA2Instrument(t, database, instrumentID)
+	var ownerID int64
+	if err := database.QueryRow(`INSERT INTO users (username) VALUES ('watchlist-owner') RETURNING id`).Scan(&ownerID); err != nil {
+		t.Fatalf("insert watchlist owner: %v", err)
+	}
+	if _, err := database.Exec(`
+INSERT INTO watchlist_items (id, owner_user_id, instrument_id, interval_code)
+VALUES ('019c2f6d-7c00-7000-8000-000000000010', $1, $2, '1m')
+`, ownerID, instrumentID); err != nil {
+		t.Fatalf("insert watchlist item: %v", err)
+	}
+
+	invalidRows := []struct {
+		name string
+		sql  string
+	}{
+		{"UUIDv4", `INSERT INTO watchlist_items (id, owner_user_id, instrument_id, interval_code) VALUES ('019c2f6d-7c00-4000-8000-000000000011', 1, '019c2f6d-7c00-7000-8000-000000000001', '5m')`},
+		{"interval", `INSERT INTO watchlist_items (id, owner_user_id, instrument_id, interval_code) VALUES ('019c2f6d-7c00-7000-8000-000000000012', 1, '019c2f6d-7c00-7000-8000-000000000001', '2m')`},
+		{"duplicate", `INSERT INTO watchlist_items (id, owner_user_id, instrument_id, interval_code) VALUES ('019c2f6d-7c00-7000-8000-000000000013', 1, '019c2f6d-7c00-7000-8000-000000000001', '1m')`},
+		{"missing owner", `INSERT INTO watchlist_items (id, owner_user_id, instrument_id, interval_code) VALUES ('019c2f6d-7c00-7000-8000-000000000014', 9223372036854775807, '019c2f6d-7c00-7000-8000-000000000001', '5m')`},
+		{"missing instrument", `INSERT INTO watchlist_items (id, owner_user_id, instrument_id, interval_code) VALUES ('019c2f6d-7c00-7000-8000-000000000015', 1, '019c2f6d-7c00-7000-8000-000000000099', '5m')`},
+	}
+	for _, test := range invalidRows {
+		if _, err := database.Exec(test.sql); err == nil {
+			t.Fatalf("watchlist schema accepted %s", test.name)
+		}
+	}
+	assertPostgresIndexes(t, database, []string{"ix_watchlist_items_instrument_interval"})
+
+	if _, err := runner.Down(context.Background(), 1); err == nil {
+		t.Fatal("watchlist rollback removed persistent user data")
+	}
+	current, latest, versionErr := runner.Versions(context.Background())
+	if versionErr != nil || current != 4 || latest != 4 {
+		t.Fatalf("watchlist rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
+	}
+	assertRowCount(t, database, "SELECT COUNT(*) FROM watchlist_items", 1)
+}
+
 func assertCurrentTables(t *testing.T, database *sql.DB) {
 	t.Helper()
 	want := []string{
 		"ai_model_agent_bindings", "ai_model_configs", "assistant_agents", "assistant_messages", "audit_records",
 		"assistant_sessions", "domain_event_outbox", "i18n_texts", "idempotency_records", "menu_buttons", "menus",
-		"market_candles", "market_instruments", "market_ticker_snapshots",
+		"market_candles", "market_instruments", "market_ticker_snapshots", "watchlist_items",
 		"news_items", "notification_channels", "notification_deliveries", "role_menu_buttons",
 		"role_menus", "roles", "schema_migrations", "task_definition_configs", "user_roles", "users",
 		"worker_tasks", "workflow_definitions", "workflow_execution_attempts", "workflow_execution_nodes",

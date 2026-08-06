@@ -57,6 +57,13 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		respond(w, data, err, "")
 	}))
 
+	// Binance 行情元数据和 K 线共享只读，自选始终按当前用户隔离。
+	mux.HandleFunc("GET /api/v1/markets/symbols", s.requireAuth(s.handleListMarketSymbols))
+	mux.HandleFunc("GET /api/v1/markets/candles", s.requireAuth(s.handleListMarketCandles))
+	mux.HandleFunc("GET /api/v1/watchlists", s.requireAuth(s.handleListWatchlists))
+	mux.HandleFunc("POST /api/v1/watchlists", s.requireAuth(s.handleCreateWatchlist))
+	mux.HandleFunc("DELETE /api/v1/watchlists/{watchlistId}", s.requireAuth(s.handleDeleteWatchlist))
+
 	// 数据管理。
 	// 第二个参数 perm.DataNewsView 是 perm 包里定义的权限码常量;requirePermission 会检查当前用户是否持有它。
 	// 像 {newsId} 这样的花括号段是路径参数,对应 handler 里的 r.PathValue("newsId")。

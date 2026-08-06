@@ -20,6 +20,8 @@ import (
 	"coinsphere/backend/internal/api"
 	"coinsphere/backend/internal/config"
 	"coinsphere/backend/internal/db"
+	"coinsphere/backend/internal/marketdata"
+	binancemarket "coinsphere/backend/internal/marketdata/binance"
 	"coinsphere/backend/internal/migration"
 	"coinsphere/backend/internal/service"
 )
@@ -105,6 +107,19 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 		slog.Warn("内置超管仍使用默认初始密码，请登录后尽快修改")
 	}
 	slog.Info("database ready", "engine", "postgres")
+	if cfg.MarketData.Enabled {
+		source, err := binancemarket.NewPublicSource(binancemarket.SourceConfig{})
+		if err != nil {
+			return fmt.Errorf("build Binance public market source: %w", err)
+		}
+		app.MarketData, err = marketdata.NewManager(sqlDB, source, marketdata.ManagerConfig{
+			ReconcileInterval: time.Duration(cfg.MarketData.ReconcileIntervalSeconds) * time.Second,
+			BackfillPageSize:  cfg.MarketData.BackfillPageSize,
+		})
+		if err != nil {
+			return fmt.Errorf("build market data runtime: %w", err)
+		}
+	}
 
 	app.StartRuntime()
 
