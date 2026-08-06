@@ -13,14 +13,13 @@ type Venue string
 
 const (
 	VenueBinance Venue = "binance"
-	VenueOKX     Venue = "okx"
 )
 
 type MarketType string
 
 const (
-	MarketTypeSpot          MarketType = "spot"
-	MarketTypeUSDTPerpetual MarketType = "usdt_perpetual"
+	MarketTypeSpot MarketType = "spot"
+	MarketTypeUSDM MarketType = "usd_m"
 )
 
 type InstrumentStatus string
@@ -51,6 +50,9 @@ type InstrumentMetadata struct {
 	Status       InstrumentStatus `json:"status"`
 	PriceTick    decimal.Decimal  `json:"priceTick"`
 	QuantityStep decimal.Decimal  `json:"quantityStep"`
+	MinQuantity  decimal.Decimal  `json:"minQuantity"`
+	MinNotional  decimal.Decimal  `json:"minNotional"`
+	UpdatedAt    time.Time        `json:"updatedAt"`
 }
 
 type Instrument struct {
@@ -63,6 +65,9 @@ type Instrument struct {
 	Status       InstrumentStatus `json:"status"`
 	PriceTick    decimal.Decimal  `json:"priceTick"`
 	QuantityStep decimal.Decimal  `json:"quantityStep"`
+	MinQuantity  decimal.Decimal  `json:"minQuantity"`
+	MinNotional  decimal.Decimal  `json:"minNotional"`
+	UpdatedAt    time.Time        `json:"updatedAt"`
 }
 
 type Candle struct {
@@ -107,7 +112,7 @@ type CandlePage struct {
 type CandleHandler func(Candle) error
 type TickerHandler func(Ticker) error
 
-// MarketSource 仅抽取 Binance 与 OKX 共享的行情生命周期，不是动态插件扩展点。
+// MarketSource 抽取 Binance public 行情生命周期，不是动态插件扩展点。
 type MarketSource interface {
 	SnapshotInstruments(ctx context.Context, marketType MarketType) ([]InstrumentMetadata, error)
 	FetchCandlePage(ctx context.Context, request CandlePageRequest) (CandlePage, error)

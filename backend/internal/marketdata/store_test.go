@@ -31,6 +31,9 @@ func TestPostgresStoreUpserts(t *testing.T) {
 		Status:       marketdata.InstrumentStatusTrading,
 		PriceTick:    decimal.RequireFromString("0.1"),
 		QuantityStep: decimal.RequireFromString("0.001"),
+		MinQuantity:  decimal.RequireFromString("0.001"),
+		MinNotional:  decimal.RequireFromString("5"),
+		UpdatedAt:    time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC),
 	}
 
 	instrument, err := store.UpsertInstrument(context.Background(), metadata)
@@ -44,7 +47,9 @@ func TestPostgresStoreUpserts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update instrument: %v", err)
 	}
-	if instrument.ID != firstID || instrument.Status != metadata.Status || !instrument.PriceTick.Equal(metadata.PriceTick) {
+	if instrument.ID != firstID || instrument.Status != metadata.Status || !instrument.PriceTick.Equal(metadata.PriceTick) ||
+		!instrument.MinQuantity.Equal(metadata.MinQuantity) || !instrument.MinNotional.Equal(metadata.MinNotional) ||
+		!instrument.UpdatedAt.Equal(metadata.UpdatedAt) {
 		t.Fatalf("instrument upsert = %#v", instrument)
 	}
 

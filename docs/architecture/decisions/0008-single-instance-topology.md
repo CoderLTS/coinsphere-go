@@ -13,7 +13,7 @@ CoinSphere 的实际目标是一台 Linux 主机上的个人自用系统，额�
 - 保持单仓库和模块化单体，但生产拓扑固定为 Web、单实例 Go App、单实例 Python Worker、单实例 Go Executor 和 PostgreSQL/TimescaleDB。
 - Go App 合并 API、认证/RBAC、工作流、调度、公共行情采集、信号协调和通知，不再使用 `COINSPHERE_ROLE` 拆分 API、Collector 或 Scheduler。
 - Executor 从 Paper 阶段开始部署，是唯一调用 Binance 私有接口的组件。Go App、Worker、工作流和通用 HTTP 节点不得调用私有接口。
-- 不建设多实例协调。行情流不再使用 PostgreSQL 租约；现有 `market_flow_leases` 和 Runner 在 Binance 行情纵向 PR 中删除。
+- 不建设多实例协调。行情流不使用 PostgreSQL 租约；`market_flow_leases` 和 Runner 已在 Binance 行情纵向能力中删除。
 - PostgreSQL 继续承担事实存储、任务队列和 Outbox。任务租约与 Outbox 租约用于崩溃恢复和事务投递，保留它们不代表支持多实例扩容。
 - 通知记录以数据库为事实源，单 Go App 在事务提交后直接唤醒本进程 WebSocket Hub；不增加跨 API 实例 `pg_notify` 中继。
 - 不引入 Redis、Kafka、NATS、Consul、PgBouncer、Kubernetes 或服务发现。

@@ -88,6 +88,15 @@ func ValidateInstrumentMetadata(metadata InstrumentMetadata) error {
 	if err := validateDecimal(metadata.QuantityStep, false); err != nil {
 		return errors.New("invalid quantity step")
 	}
+	if err := validateDecimal(metadata.MinQuantity, false); err != nil {
+		return errors.New("invalid minimum quantity")
+	}
+	if err := validateDecimal(metadata.MinNotional, false); err != nil {
+		return errors.New("invalid minimum notional")
+	}
+	if err := validateUTC(metadata.UpdatedAt); err != nil {
+		return errors.New("invalid instrument update time")
+	}
 	return nil
 }
 
@@ -105,6 +114,9 @@ func ValidateInstrument(instrument Instrument) error {
 		Status:       instrument.Status,
 		PriceTick:    instrument.PriceTick,
 		QuantityStep: instrument.QuantityStep,
+		MinQuantity:  instrument.MinQuantity,
+		MinNotional:  instrument.MinNotional,
+		UpdatedAt:    instrument.UpdatedAt,
 	})
 }
 
@@ -248,11 +260,11 @@ func ValidateCandlePage(request CandlePageRequest, page CandlePage) error {
 }
 
 func validVenue(value Venue) bool {
-	return value == VenueBinance || value == VenueOKX
+	return value == VenueBinance
 }
 
 func validMarketType(value MarketType) bool {
-	return value == MarketTypeSpot || value == MarketTypeUSDTPerpetual
+	return value == MarketTypeSpot || value == MarketTypeUSDM
 }
 
 func validInstrumentStatus(value InstrumentStatus) bool {

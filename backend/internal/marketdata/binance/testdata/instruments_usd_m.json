@@ -8,7 +8,8 @@
       "contractType": "PERPETUAL",
       "filters": [
         {"filterType": "PRICE_FILTER", "tickSize": "0.1"},
-        {"filterType": "LOT_SIZE", "stepSize": "0.01"}
+        {"filterType": "LOT_SIZE", "minQty": "0.01", "stepSize": "0.01"},
+        {"filterType": "MIN_NOTIONAL", "minNotional": "5"}
       ]
     }
   ]

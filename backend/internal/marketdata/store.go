@@ -30,20 +30,26 @@ func (store *PostgresStore) UpsertInstrument(ctx context.Context, metadata Instr
 	var instrument Instrument
 	err = store.db.QueryRowContext(ctx, `
 INSERT INTO market_instruments (
-    id, venue, market_type, native_symbol, base_asset, quote_asset, status, price_tick, quantity_step
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    id, venue, market_type, native_symbol, base_asset, quote_asset, status,
+    price_tick, quantity_step, min_quantity, min_notional, updated_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 ON CONFLICT (venue, market_type, native_symbol) DO UPDATE SET
     base_asset = EXCLUDED.base_asset,
     quote_asset = EXCLUDED.quote_asset,
     status = EXCLUDED.status,
     price_tick = EXCLUDED.price_tick,
-    quantity_step = EXCLUDED.quantity_step
-RETURNING id, venue, market_type, native_symbol, base_asset, quote_asset, status, price_tick, quantity_step
+    quantity_step = EXCLUDED.quantity_step,
+    min_quantity = EXCLUDED.min_quantity,
+    min_notional = EXCLUDED.min_notional,
+    updated_at = EXCLUDED.updated_at
+RETURNING id, venue, market_type, native_symbol, base_asset, quote_asset, status,
+    price_tick, quantity_step, min_quantity, min_notional, updated_at
 `, id, metadata.Venue, metadata.MarketType, metadata.NativeSymbol, metadata.BaseAsset, metadata.QuoteAsset,
-		metadata.Status, metadata.PriceTick, metadata.QuantityStep,
+		metadata.Status, metadata.PriceTick, metadata.QuantityStep, metadata.MinQuantity, metadata.MinNotional, metadata.UpdatedAt,
 	).Scan(
 		&instrument.ID, &instrument.Venue, &instrument.MarketType, &instrument.NativeSymbol, &instrument.BaseAsset,
 		&instrument.QuoteAsset, &instrument.Status, &instrument.PriceTick, &instrument.QuantityStep,
+		&instrument.MinQuantity, &instrument.MinNotional, &instrument.UpdatedAt,
 	)
 	if err != nil {
 		return Instrument{}, err
