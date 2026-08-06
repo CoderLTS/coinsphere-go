@@ -119,6 +119,9 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
       - name: Regenerate contract types
         run: bash scripts/contracts/generate.sh
       - name: Require generated files to be committed
