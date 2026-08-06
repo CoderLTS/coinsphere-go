@@ -54,7 +54,7 @@ Executor 每次执行前重新检查全局急停、账户状态、策略授权�
 PostgreSQL/TimescaleDB 是唯一在线数据库，同时承担轻量任务队列、领域 Outbox 和持久通知记录。不引入 Redis、Kafka、NATS、Consul、PgBouncer 或额外通知服务。
 
 - `market_candles` 是唯一 K 线 hypertable，默认在线保留两年。
-- 单实例行情采集不再需要 `market_flow_leases`；对应表和 Runner 在 Binance 行情纵向 PR 中删除。
+- 单实例行情采集不需要 PostgreSQL 流租约；`market_flow_leases` 与单流 Runner 已随 Binance 行情纵向能力删除。
 - Outbox 和任务租约继续用于事务一致性、失败重试和崩溃恢复，不因单实例而删除。
 - 普通回测只保存查询范围和规范化数据校验和；晋级候选把完整数据、策略、参数、运行时和结果冻结为规范化 `JSONL.gz`，并以 SHA-256 注册 Manifest。
 - 冻结产物先使用本机内容寻址目录，不建设对象存储或多机复制协议；进入真实交易前按发布 Runbook 完成加密独立备份与恢复演练。

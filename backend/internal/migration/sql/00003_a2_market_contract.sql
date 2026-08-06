@@ -11,6 +11,9 @@ CREATE TABLE market_instruments (
     status VARCHAR(16) NOT NULL,
     price_tick NUMERIC(38,18) NOT NULL,
     quantity_step NUMERIC(38,18) NOT NULL,
+    min_quantity NUMERIC(38,18) NOT NULL,
+    min_notional NUMERIC(38,18) NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
     CONSTRAINT market_instruments_pkey PRIMARY KEY (id),
     CONSTRAINT uq_market_instruments_natural_key
         UNIQUE (venue, market_type, native_symbol),
@@ -19,9 +22,9 @@ CREATE TABLE market_instruments (
     CONSTRAINT ck_market_instruments_id_uuidv7
         CHECK (id::text ~ '^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'),
     CONSTRAINT ck_market_instruments_venue
-        CHECK (venue IN ('binance', 'okx')),
+        CHECK (venue = 'binance'),
     CONSTRAINT ck_market_instruments_market_type
-        CHECK (market_type IN ('spot', 'usdt_perpetual')),
+        CHECK (market_type IN ('spot', 'usd_m')),
     CONSTRAINT ck_market_instruments_native_symbol
         CHECK (native_symbol ~ '^[A-Z0-9][A-Z0-9._-]*$'),
     CONSTRAINT ck_market_instruments_base_asset
@@ -37,7 +40,13 @@ CREATE TABLE market_instruments (
     CONSTRAINT ck_market_instruments_status
         CHECK (status IN ('trading', 'suspended')),
     CONSTRAINT ck_market_instruments_steps
-        CHECK (price_tick > 0 AND quantity_step > 0)
+        CHECK (
+            price_tick > 0
+            AND quantity_step > 0
+            AND min_quantity > 0
+            AND min_notional > 0
+            AND isfinite(updated_at)
+        )
 );
 
 CREATE TABLE market_candles (
@@ -59,7 +68,7 @@ CREATE TABLE market_candles (
         REFERENCES market_instruments (venue, id)
         ON DELETE RESTRICT,
     CONSTRAINT ck_market_candles_venue
-        CHECK (venue IN ('binance', 'okx')),
+        CHECK (venue = 'binance'),
     CONSTRAINT ck_market_candles_interval
         CHECK (interval_code IN ('1m', '5m', '15m', '1h', '4h', '1d')),
     CONSTRAINT ck_market_candles_time
@@ -139,7 +148,7 @@ CREATE TABLE market_ticker_snapshots (
         REFERENCES market_instruments (venue, id)
         ON DELETE RESTRICT,
     CONSTRAINT ck_market_ticker_snapshots_venue
-        CHECK (venue IN ('binance', 'okx')),
+        CHECK (venue = 'binance'),
     CONSTRAINT ck_market_ticker_snapshots_time
         CHECK (isfinite(occurred_at)),
     CONSTRAINT ck_market_ticker_snapshots_prices
@@ -152,36 +161,9 @@ CREATE TABLE market_ticker_snapshots (
         CHECK (best_bid_price <= best_ask_price)
 );
 
-CREATE TABLE market_flow_leases (
-    flow_key VARCHAR(200) NOT NULL,
-    owner_id VARCHAR(120) NOT NULL,
-    fencing_token BIGINT NOT NULL,
-    lease_expires_at TIMESTAMPTZ NOT NULL,
-    last_heartbeat_at TIMESTAMPTZ NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL,
-    CONSTRAINT market_flow_leases_pkey PRIMARY KEY (flow_key),
-    CONSTRAINT ck_market_flow_leases_flow_key
-        CHECK (flow_key = BTRIM(flow_key) AND CHAR_LENGTH(flow_key) > 0),
-    CONSTRAINT ck_market_flow_leases_owner_id
-        CHECK (owner_id = BTRIM(owner_id) AND CHAR_LENGTH(owner_id) > 0),
-    CONSTRAINT ck_market_flow_leases_fencing_token
-        CHECK (fencing_token > 0),
-    CONSTRAINT ck_market_flow_leases_time
-        CHECK (
-            isfinite(lease_expires_at)
-            AND isfinite(last_heartbeat_at)
-            AND isfinite(created_at)
-            AND isfinite(updated_at)
-            AND lease_expires_at >= last_heartbeat_at
-            AND updated_at >= created_at
-        )
-);
-
 -- +goose Down
--- 租约是可丢弃的协调状态；仍需先锁定四表，再只以三张行情事实表保护回滚。
+-- Down 先锁定三张行情表，再以空表 guard 保护无损回滚。
 LOCK TABLE
-    market_flow_leases,
     market_candles,
     market_ticker_snapshots,
     market_instruments
@@ -197,7 +179,6 @@ SELECT
     + (SELECT COUNT(*) FROM market_ticker_snapshots)
     + (SELECT COUNT(*) FROM market_instruments);
 
-DROP TABLE market_flow_leases;
 DROP TABLE market_candles;
 DROP TABLE market_ticker_snapshots;
 DROP TABLE market_instruments;

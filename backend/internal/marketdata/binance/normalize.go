@@ -29,9 +29,12 @@ type instrumentDTO struct {
 }
 
 type filterDTO struct {
-	FilterType string `json:"filterType"`
-	TickSize   string `json:"tickSize"`
-	StepSize   string `json:"stepSize"`
+	FilterType  string `json:"filterType"`
+	TickSize    string `json:"tickSize"`
+	MinQty      string `json:"minQty"`
+	StepSize    string `json:"stepSize"`
+	MinNotional string `json:"minNotional"`
+	Notional    string `json:"notional"`
 }
 
 type klineEventDTO struct {
@@ -58,7 +61,7 @@ type tickerEventDTO struct {
 
 // NormalizeInstrumentSnapshot 将 exchangeInfo 响应完整转换为同一市场类型的有序元数据快照。
 func NormalizeInstrumentSnapshot(payload []byte, marketType marketdata.MarketType) ([]marketdata.InstrumentMetadata, error) {
-	if marketType != marketdata.MarketTypeSpot && marketType != marketdata.MarketTypeUSDTPerpetual {
+	if marketType != marketdata.MarketTypeSpot && marketType != marketdata.MarketTypeUSDM {
 		return nil, invalidRequestError("invalid market type")
 	}
 
@@ -69,8 +72,9 @@ func NormalizeInstrumentSnapshot(payload []byte, marketType marketdata.MarketTyp
 
 	metadata := make([]marketdata.InstrumentMetadata, 0, len(response.Symbols))
 	seen := make(map[string]struct{}, len(response.Symbols))
+	updatedAt := time.Now().UTC()
 	for _, source := range response.Symbols {
-		item, err := normalizeInstrument(source, marketType)
+		item, err := normalizeInstrument(source, marketType, updatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -173,18 +177,18 @@ func NormalizeTickerEvent(payload []byte, instrument marketdata.Instrument) (mar
 	return ticker, nil
 }
 
-func normalizeInstrument(source instrumentDTO, marketType marketdata.MarketType) (marketdata.InstrumentMetadata, error) {
+func normalizeInstrument(source instrumentDTO, marketType marketdata.MarketType, updatedAt time.Time) (marketdata.InstrumentMetadata, error) {
 	if marketType == marketdata.MarketTypeSpot && source.ContractType != "" {
 		return marketdata.InstrumentMetadata{}, protocolError("unexpected spot contract type")
 	}
-	if marketType == marketdata.MarketTypeUSDTPerpetual && (source.ContractType != "PERPETUAL" || source.QuoteAsset != "USDT") {
+	if marketType == marketdata.MarketTypeUSDM && (source.ContractType != "PERPETUAL" || source.QuoteAsset != "USDT") {
 		return marketdata.InstrumentMetadata{}, protocolError("invalid perpetual contract")
 	}
 	status, err := mapStatus(marketType, source.Status)
 	if err != nil {
 		return marketdata.InstrumentMetadata{}, err
 	}
-	priceTick, quantityStep, err := parseFilters(source.Filters)
+	priceTick, quantityStep, minQuantity, minNotional, err := parseFilters(source.Filters)
 	if err != nil {
 		return marketdata.InstrumentMetadata{}, err
 	}
@@ -197,6 +201,9 @@ func normalizeInstrument(source instrumentDTO, marketType marketdata.MarketType)
 		Status:       status,
 		PriceTick:    priceTick,
 		QuantityStep: quantityStep,
+		MinQuantity:  minQuantity,
+		MinNotional:  minNotional,
+		UpdatedAt:    updatedAt,
 	}
 	if err := marketdata.ValidateInstrumentMetadata(item); err != nil {
 		return marketdata.InstrumentMetadata{}, protocolError("invalid instrument metadata")
@@ -222,39 +229,63 @@ func mapStatus(marketType marketdata.MarketType, status string) (marketdata.Inst
 	return "", protocolError("unknown instrument status")
 }
 
-func parseFilters(filters []filterDTO) (decimal.Decimal, decimal.Decimal, error) {
+func parseFilters(filters []filterDTO) (decimal.Decimal, decimal.Decimal, decimal.Decimal, decimal.Decimal, error) {
 	var priceTick decimal.Decimal
 	var quantityStep decimal.Decimal
+	var minQuantity decimal.Decimal
+	var minNotional decimal.Decimal
 	var hasPriceTick bool
 	var hasQuantityStep bool
+	var hasMinQuantity bool
+	var hasMinNotional bool
 	for _, filter := range filters {
 		switch filter.FilterType {
 		case "PRICE_FILTER":
 			if hasPriceTick {
-				return decimal.Zero, decimal.Zero, protocolError("duplicate price filter")
+				return decimal.Zero, decimal.Zero, decimal.Zero, decimal.Zero, protocolError("duplicate price filter")
 			}
 			value, err := marketdata.ParseDecimal(filter.TickSize)
 			if err != nil {
-				return decimal.Zero, decimal.Zero, protocolError("invalid price filter")
+				return decimal.Zero, decimal.Zero, decimal.Zero, decimal.Zero, protocolError("invalid price filter")
 			}
 			priceTick = value
 			hasPriceTick = true
 		case "LOT_SIZE":
 			if hasQuantityStep {
-				return decimal.Zero, decimal.Zero, protocolError("duplicate lot size filter")
+				return decimal.Zero, decimal.Zero, decimal.Zero, decimal.Zero, protocolError("duplicate lot size filter")
 			}
 			value, err := marketdata.ParseDecimal(filter.StepSize)
 			if err != nil {
-				return decimal.Zero, decimal.Zero, protocolError("invalid lot size filter")
+				return decimal.Zero, decimal.Zero, decimal.Zero, decimal.Zero, protocolError("invalid lot size filter")
+			}
+			minimum, err := marketdata.ParseDecimal(filter.MinQty)
+			if err != nil {
+				return decimal.Zero, decimal.Zero, decimal.Zero, decimal.Zero, protocolError("invalid minimum quantity filter")
 			}
 			quantityStep = value
+			minQuantity = minimum
 			hasQuantityStep = true
+			hasMinQuantity = true
+		case "MIN_NOTIONAL", "NOTIONAL":
+			if hasMinNotional {
+				return decimal.Zero, decimal.Zero, decimal.Zero, decimal.Zero, protocolError("duplicate notional filter")
+			}
+			text := filter.MinNotional
+			if text == "" {
+				text = filter.Notional
+			}
+			value, err := marketdata.ParseDecimal(text)
+			if err != nil {
+				return decimal.Zero, decimal.Zero, decimal.Zero, decimal.Zero, protocolError("invalid notional filter")
+			}
+			minNotional = value
+			hasMinNotional = true
 		}
 	}
-	if !hasPriceTick || !hasQuantityStep {
-		return decimal.Zero, decimal.Zero, protocolError("missing required filter")
+	if !hasPriceTick || !hasQuantityStep || !hasMinQuantity || !hasMinNotional {
+		return decimal.Zero, decimal.Zero, decimal.Zero, decimal.Zero, protocolError("missing required filter")
 	}
-	return priceTick, quantityStep, nil
+	return priceTick, quantityStep, minQuantity, minNotional, nil
 }
 
 func normalizeHistoricalCandle(row json.RawMessage, instrument marketdata.Instrument, interval marketdata.CandleInterval) (marketdata.Candle, error) {

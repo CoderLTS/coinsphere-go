@@ -4,7 +4,7 @@
 
 CoinSphere 只支持 PostgreSQL/TimescaleDB。DDL 只由独立 Migrator 身份和 migration 命令执行；服务启动只读校验版本，不执行 `AutoMigrate`。普通角色与 Worker 首期共用受限应用身份，Executor 使用独立身份且只有它可读取交易凭据。
 
-`00001_a1_postgres_baseline.sql` 建立当前业务基线，`00002_a1_observability.sql` 增加审计表，`00003_a2_market_contract.sql` 当前建立两张普通行情表、唯一的 `market_candles` Timescale hypertable 和 `market_flow_leases` 协调表，并配置 7 天 chunk、30 天后 columnstore 压缩和默认 2 年 retention。ADR-0008 已决定在 Binance 行情纵向 PR 中删除不再需要的流租约；该文件仍处于正式 Paper 观察前的整理窗口，重写后必须重建开发/CI 空库。本手册不承诺升级任何旧 SQLite、MySQL 或未投产 PostgreSQL schema。
+`00001_a1_postgres_baseline.sql` 建立当前业务基线，`00002_a1_observability.sql` 增加审计表，`00003_a2_market_contract.sql` 建立 Binance-only 的 `market_instruments`、`market_candles` 和 `market_ticker_snapshots` 三张行情表，其中 `market_candles` 是 Timescale hypertable，并配置 7 天 chunk、30 天后 columnstore 压缩和默认 2 年 retention。市场类型当前只允许 `spot` 与 `usd_m`；该文件仍处于正式 Paper 观察前的整理窗口，重写后必须重建开发/CI 空库。本手册不承诺升级任何旧 SQLite、MySQL 或未投产 PostgreSQL schema。
 
 ## Migration 冻结点
 
@@ -71,7 +71,7 @@ COINSPHERE_TEST_POSTGRES_DSN='postgres://coinsphere:test-only@127.0.0.1:5432/coi
 测试账户必须能创建和删除随机隔离 schema。CI 使用固定 TimescaleDB 镜像并覆盖：
 
 - 空 schema 应用全部内置 migration、重复 Up、空库 Down 和重新 Up。
-- `00003` 的 Timescale extension、hypertable、chunk、columnstore/retention policy、租约约束、空事实表 Down/重放；任一行情事实表非空时必须原子保留四张表、数据和版本记录，只有租约行时允许回滚。
+- `00003` 的 Timescale extension、hypertable、chunk、columnstore/retention policy、Binance 行情约束、空表 Down/重放；任一行情表非空时必须原子保留三张表、数据和版本记录。
 - 审计字段约束、外键、索引以及非空审计表的 Down 保护。
 - 服务启动对未迁移、落后或领先版本 fail-fast，且不执行 DDL。
 - 基线包含全部当前表、Worker 七态约束、Outbox 五态/租约/终态约束及必要索引。
@@ -95,7 +95,7 @@ COINSPHERE_TEST_POSTGRES_DSN='postgres://coinsphere:test-only@127.0.0.1:5432/coi
 
 1. 代码或健康检查失败时停止新版本，恢复上一固定镜像与 Compose，保留当前 schema 和 `schema_migrations`。
 2. 只有 PR 明确声明 Down 可逆时，才在备份副本演练后执行固定步数 Down。
-3. `00003` Down 前停止所有 Collector 和会写入 `market_instruments`、`market_candles`、`market_ticker_snapshots`、`market_flow_leases` 的进程；三张事实表均为空时才会成功，协调租约行会随表丢弃且不阻塞回滚。任一事实表非空或 Down 失败时四张表、数据和版本记录都会保留。
+3. `00003` Down 前停止所有 Collector 和会写入 `market_instruments`、`market_candles`、`market_ticker_snapshots` 的进程；三张行情表均为空时才会成功。任一行情表非空或 Down 失败时三张表、数据和版本记录都会保留。
 4. 基线 Down 只适用于从未产生任何业务数据的 schema。执行前停止 Backend、Worker 和所有其他写入者；Down 会锁住全部业务表并再次检查为空。
 5. 任一表非空或 Down 失败时停止尝试，保留现场并从发布前备份恢复。禁止删除业务行、手工修改 `schema_migrations` 或跳过版本。
 6. 恢复后重新执行 `version`、就绪检查和领域数据校验。
