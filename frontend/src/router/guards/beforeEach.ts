@@ -224,9 +224,20 @@ function handleLoginStatus(
   userStore: ReturnType<typeof useUserStore>,
   next: NavigationGuardNext
 ): boolean {
-  void to
-  void userStore
-  void next
+  if (to.name === 'Login') {
+    if (userStore.isLogin && userStore.accessToken) {
+      next({ path: '/home', replace: true })
+    } else {
+      next()
+    }
+    return false
+  }
+
+  if (!userStore.isLogin || !userStore.accessToken) {
+    next({ name: 'Login', query: { redirect: to.fullPath }, replace: true })
+    return false
+  }
+
   return true
 }
 
@@ -382,10 +393,6 @@ async function handleDynamicRoutes(
  */
 async function fetchUserInfo(): Promise<void> {
   const userStore = useUserStore()
-  // 页面刷新后 access token 已丢失，先尝试用 HttpOnly Cookie 恢复；失败时继续游客流程。
-  if (!userStore.accessToken) {
-    await userStore.refreshSession().catch(() => {})
-  }
   const data = await fetchGetUserInfo()
   userStore.setUserInfo(data)
   // 如果检测到切换了登录用户，这里顺带清理旧工作台标签页。

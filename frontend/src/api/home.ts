@@ -30,12 +30,12 @@ export interface HomeOverview {
 
 export function fetchHomeOverview() {
   return request.get<HomeOverview>({
-    url: '/api/home/overview'
+    url: '/api/v1/home/overview'
   })
 }
 
 export function fetchHomeMeta() {
   return request.get<{ service: string; version: string }>({
-    url: '/api/home/meta'
+    url: '/api/v1/home/meta'
   })
 }

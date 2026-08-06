@@ -96,66 +96,84 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
     await route.abort('blockedbyclient')
   })
 
-  await page.routeWebSocket('**/ws/**', async (webSocket) => {
+  await page.routeWebSocket('**/api/v1/ws/**', async (webSocket) => {
     await webSocket.close({ code: 1000, reason: 'Playwright API isolation' })
   })
 
-  await page.route('http://127.0.0.1:4173/api/**', async (route) => {
+  await page.route('http://127.0.0.1:4173/api/v1/**', async (route) => {
     const request = route.request()
     const path = new URL(request.url()).pathname
     const method = request.method()
 
-    if (path.startsWith('/api/scheduler/')) {
+    if (path.startsWith('/api/v1/workflows')) {
       schedulerApiCalls.push(`${method} ${path}`)
     }
-    if (path.startsWith('/api/auth/')) {
+    if (path.startsWith('/api/v1/auth/')) {
       authApiCalls.push(`${method} ${path}`)
     }
 
-    if (method === 'POST' && path === '/api/auth/refresh') {
+    if (method === 'POST' && path === '/api/v1/auth/login') {
       if (accessMode === 'authenticated') {
-        await fulfillApi(route, { token: 'playwright-access-token' })
+        await fulfillApi(route, { accessToken: 'playwright-access-token' })
         return
       }
       await route.fulfill({
         status: 401,
-        contentType: 'application/json',
-        body: JSON.stringify({ code: 401, msg: '未登录', data: null })
+        contentType: 'application/problem+json',
+        body: JSON.stringify({
+          type: 'about:blank',
+          title: 'Unauthorized',
+          status: 401,
+          detail: 'invalid credentials',
+          requestId: 'e2e-request'
+        })
       })
       return
     }
-    if (method === 'GET' && path === '/api/auth/me') {
+    if (method === 'GET' && path === '/api/v1/me') {
       const hasTestSession = request.headers().authorization === 'Bearer playwright-access-token'
-      const resolvedAccessMode =
-        accessMode === 'authenticated' && hasTestSession ? 'authenticated' : 'guest'
-      await fulfillApi(route, userInfo(resolvedAccessMode))
+      if (accessMode === 'authenticated' && hasTestSession) {
+        await fulfillApi(route, userInfo('authenticated'))
+        return
+      }
+      await route.fulfill({
+        status: 401,
+        contentType: 'application/problem+json',
+        body: JSON.stringify({
+          type: 'about:blank',
+          title: 'Unauthorized',
+          status: 401,
+          detail: 'missing authorization',
+          requestId: 'e2e-request'
+        })
+      })
       return
     }
-    if (method === 'GET' && path === '/api/system/i18n-dictionaries') {
+    if (method === 'GET' && path === '/api/v1/system/i18n-dictionaries') {
       await fulfillApi(route, { zh: {}, en: {} })
       return
     }
-    if (method === 'GET' && path === '/api/system/menus') {
+    if (method === 'GET' && path === '/api/v1/system/menus') {
       await fulfillApi(route, [homeMenu])
       return
     }
-    if (method === 'GET' && path === '/api/scheduler/task-definitions') {
+    if (method === 'GET' && path === '/api/v1/workflows/task-definitions') {
       await fulfillApi(route, [])
       return
     }
-    if (method === 'GET' && path === '/api/scheduler/node-definitions') {
+    if (method === 'GET' && path === '/api/v1/workflows/node-definitions') {
       await fulfillApi(route, nodeDefinitions)
       return
     }
-    if (method === 'GET' && path === '/api/scheduler/agent-options') {
+    if (method === 'GET' && path === '/api/v1/workflows/agent-options') {
       await fulfillApi(route, [])
       return
     }
-    if (method === 'POST' && path === '/api/scheduler/workflow-definitions/validate') {
+    if (method === 'POST' && path === '/api/v1/workflows/validate') {
       await fulfillApi(route, { valid: true, issues: [] })
       return
     }
-    if (method === 'POST' && path === '/api/scheduler/workflow-definitions') {
+    if (method === 'POST' && path === '/api/v1/workflows') {
       createdPayload = request.postDataJSON() as WorkflowPayload
       createdDefinition = {
         id: 42,
@@ -175,7 +193,7 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
       await fulfillApi(route, createdDefinition)
       return
     }
-    if (method === 'GET' && path === '/api/scheduler/workflow-definitions/42') {
+    if (method === 'GET' && path === '/api/v1/workflows/42') {
       if (createdDefinition) {
         await fulfillApi(route, createdDefinition)
         return
@@ -200,23 +218,39 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
   }
 }
 
-test('游客访问工作流编辑器时被权限边界拦截', async ({ page }) => {
+async function loginAsTestUser(page: Page, protectedPath: string) {
+  await page.goto(protectedPath)
+  await page.locator('input').nth(0).fill('e2e-user')
+  await page.locator('input').nth(1).fill('e2e-password')
+
+  const slider = page.locator('.drag_verify')
+  const handler = page.locator('.dv_handler')
+  const box = await slider.boundingBox()
+  if (!box) throw new Error('login slider is not visible')
+  await handler.hover()
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width - 4, box.y + box.height / 2)
+  await page.mouse.up()
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await expect(page).toHaveURL(new RegExp(`${protectedPath}$`))
+}
+
+test('匿名访问工作流编辑器时被登录边界拦截', async ({ page }) => {
   const backend = await installBackendMocks(page, 'guest')
 
   await page.goto('/scheduler/workflow/create')
 
-  await expect(page).toHaveURL(/\/403$/)
-  await expect(page.getByText('抱歉，您无权访问该页面')).toBeVisible()
-  await expect(page.getByRole('button', { name: '返回首页' })).toBeVisible()
+  await expect(page).toHaveURL(/\/auth\/login\?redirect=/)
+  await expect(page.getByRole('button', { name: '登录', exact: true })).toBeVisible()
   expect(backend.schedulerApiCalls).toEqual([])
-  expect(backend.authApiCalls).toEqual(['POST /api/auth/refresh', 'GET /api/auth/me'])
+  expect(backend.authApiCalls).toEqual([])
   expect(backend.unexpectedApiCalls).toEqual([])
 })
 
 test('授权用户可以填写基础信息并保存默认工作流', async ({ page }) => {
   const backend = await installBackendMocks(page, 'authenticated')
 
-  await page.goto('/scheduler/workflow/create')
+  await loginAsTestUser(page, '/scheduler/workflow/create')
 
   await expect(page.getByText('新建工作流定义', { exact: true })).toBeVisible()
   await page.getByLabel('工作流名称').fill('浏览器门禁工作流')
@@ -228,7 +262,7 @@ test('授权用户可以填写基础信息并保存默认工作流', async ({ pa
   const detailResponse = page.waitForResponse(
     (response) =>
       response.request().method() === 'GET' &&
-      new URL(response.url()).pathname === '/api/scheduler/workflow-definitions/42'
+      new URL(response.url()).pathname === '/api/v1/workflows/42'
   )
   await page.getByRole('button', { name: '离开', exact: true }).click()
   await detailResponse
@@ -251,14 +285,14 @@ test('授权用户可以填写基础信息并保存默认工作流', async ({ pa
   expect(payload?.graph.edges).toHaveLength(1)
   expect(backend.schedulerApiCalls).toEqual(
     expect.arrayContaining([
-      'GET /api/scheduler/task-definitions',
-      'GET /api/scheduler/node-definitions',
-      'GET /api/scheduler/agent-options',
-      'POST /api/scheduler/workflow-definitions/validate',
-      'POST /api/scheduler/workflow-definitions',
-      'GET /api/scheduler/workflow-definitions/42'
+      'GET /api/v1/workflows/task-definitions',
+      'GET /api/v1/workflows/node-definitions',
+      'GET /api/v1/workflows/agent-options',
+      'POST /api/v1/workflows/validate',
+      'POST /api/v1/workflows',
+      'GET /api/v1/workflows/42'
     ])
   )
-  expect(backend.authApiCalls).toEqual(['POST /api/auth/refresh', 'GET /api/auth/me'])
+  expect(backend.authApiCalls).toEqual(['POST /api/v1/auth/login'])
   expect(backend.unexpectedApiCalls).toEqual([])
 })

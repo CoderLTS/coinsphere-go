@@ -52,8 +52,8 @@ export interface ApiResponse<T = unknown> {
   records?: T[]
   data?: T[]
   total?: number
-  current?: number
-  size?: number
+  nextCursor?: string
+  hasMore?: boolean
   [key: string]: unknown
 }
 
@@ -118,7 +118,7 @@ export class TableCache<T> {
     }
 
     // 添加分页标签
-    tags.add(`pagination:${params.size || 10}`)
+    tags.add(`pagination:${params.limit || 10}`)
     // 添加通用分页标签，用于清理所有分页缓存
     tags.add('pagination')
 

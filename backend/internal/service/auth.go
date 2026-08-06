@@ -1,14 +1,12 @@
 package service
 
 import (
-	"errors"
+	"strings"
 	"time"
 
 	"coinsphere/backend/internal/db"
 	"coinsphere/backend/internal/perm"
 	"coinsphere/backend/internal/security"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // Principal 当前请求主体(登录用户或游客)。
@@ -21,7 +19,9 @@ type Principal struct {
 	RoleIDs         []int64
 	RoleCodes       []string
 	PermissionCodes map[string]bool
-	AccessMode      string // authenticated | guest
+	AccessMode      string // authenticated
+	AccessTokenID   string
+	AccessTokenExp  time.Time
 }
 
 // HasPermission 判断是否拥有权限码。
@@ -41,17 +41,17 @@ func (p *Principal) HasRole(code string) bool {
 	return false
 }
 
+// guestRoleCode remains a seed identifier for existing role data; no HTTP route
+// constructs a guest principal after the authentication boundary migration.
 const guestRoleCode = "R_GUEST"
 
-// AuthSession 只在 API 边界内短暂持有 Refresh Token；响应体不得直接序列化该结构。
+// AuthSession 是登录后签发的短期 access-token 会话。
 type AuthSession struct {
-	UserID           int64
-	AccessToken      string
-	RefreshToken     string
-	RefreshExpiresAt time.Time
+	UserID      int64
+	AccessToken string
 }
 
-// Login 校验凭据并创建可轮换会话。
+// Login 校验凭据并签发 access token。
 func (a *App) Login(username, password string) (*AuthSession, error) {
 	var user db.SystemUser
 	lookupErr := a.DB.Where("username = ?", username).First(&user).Error
@@ -64,109 +64,32 @@ func (a *App) Login(username, password string) (*AuthSession, error) {
 		return nil, bizErr("用户名或密码错误")
 	}
 	accessToken := a.Tokens.CreateAccessToken(user.ID)
-	refreshToken := a.Tokens.CreateRefreshToken(user.ID)
 	now := time.Now()
-	record := db.RefreshTokenRecord{
-		ID: refreshToken.TokenID, UserID: user.ID,
-		TokenHash: security.HashToken(refreshToken.Value),
-		ExpiresAt: refreshToken.ExpiresAt, CreatedAt: now,
-	}
-	if err := a.DB.Create(&record).Error; err != nil {
-		return nil, err
-	}
 	a.DB.Model(&db.SystemUser{}).Where("id = ?", user.ID).
 		Updates(map[string]any{"last_login_at": now, "updated_at": now})
 	return &AuthSession{
-		UserID:      user.ID,
-		AccessToken: accessToken.Value, RefreshToken: refreshToken.Value,
-		RefreshExpiresAt: refreshToken.ExpiresAt,
+		UserID: user.ID, AccessToken: accessToken.Value,
 	}, nil
-}
-
-// RefreshAccessToken 在同一事务中锁定、吊销旧令牌并写入新令牌，阻止并发复用。
-func (a *App) RefreshAccessToken(refreshToken string) (*AuthSession, error) {
-	payload, err := a.Tokens.VerifyToken(refreshToken, "refresh")
-	if err != nil {
-		return nil, err
-	}
-	newRefresh := a.Tokens.CreateRefreshToken(payload.UserID)
-	reused := false
-	err = a.DB.Transaction(func(tx *gorm.DB) error {
-		var record db.RefreshTokenRecord
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("id = ?", payload.TokenID).First(&record).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return security.ErrInvalidToken
-		}
-		if err != nil {
-			return err
-		}
-		if record.UserID != payload.UserID {
-			return security.ErrInvalidToken
-		}
-		if record.IsRevoked {
-			reused = true
-			return tx.Model(&db.RefreshTokenRecord{}).
-				Where("user_id = ?", record.UserID).Update("is_revoked", true).Error
-		}
-		if !record.ExpiresAt.After(time.Now()) ||
-			!security.SecureCompare(record.TokenHash, security.HashToken(refreshToken)) {
-			return security.ErrInvalidToken
-		}
-		now := time.Now()
-		newRecord := db.RefreshTokenRecord{
-			ID: newRefresh.TokenID, UserID: payload.UserID,
-			TokenHash: security.HashToken(newRefresh.Value),
-			ExpiresAt: newRefresh.ExpiresAt, CreatedAt: now,
-		}
-		if err := tx.Create(&newRecord).Error; err != nil {
-			return err
-		}
-		result := tx.Model(&db.RefreshTokenRecord{}).
-			Where("id = ? AND is_revoked = ?", record.ID, false).
-			Update("is_revoked", true)
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected != 1 {
-			return security.ErrInvalidToken
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	if reused {
-		return nil, security.ErrInvalidToken
-	}
-	accessToken := a.Tokens.CreateAccessToken(payload.UserID)
-	return &AuthSession{
-		UserID:      payload.UserID,
-		AccessToken: accessToken.Value, RefreshToken: newRefresh.Value,
-		RefreshExpiresAt: newRefresh.ExpiresAt,
-	}, nil
-}
-
-// Logout 主动吊销 Refresh Token；无效令牌仍返回成功，避免泄露会话状态。
-func (a *App) Logout(refreshToken string) (int64, error) {
-	payload, err := a.Tokens.VerifyToken(refreshToken, "refresh")
-	if err != nil {
-		return 0, nil
-	}
-	err = a.DB.Model(&db.RefreshTokenRecord{}).
-		Where("id = ?", payload.TokenID).Update("is_revoked", true).Error
-	return payload.UserID, err
 }
 
 // AuthenticateAccessToken 校验 access token 并组装权限上下文。
 // 每个需要登录的接口都会先走这里:验 access 令牌拿到 userID,再交给 buildPrincipal 查出
 // 用户 + 角色 + 权限,组装成 *Principal 供后续鉴权。
 func (a *App) AuthenticateAccessToken(rawToken string) (*Principal, error) {
-	payload, err := a.Tokens.VerifyToken(rawToken, "access")
+	payload, err := a.Tokens.VerifyAccessToken(rawToken)
 	if err != nil {
 		return nil, err
 	}
-	return a.buildPrincipal(payload.UserID)
+	if a.isAccessTokenRevoked(payload.TokenID) {
+		return nil, security.ErrInvalidToken
+	}
+	principal, err := a.buildPrincipal(payload.UserID)
+	if err != nil {
+		return nil, err
+	}
+	principal.AccessTokenID = payload.TokenID
+	principal.AccessTokenExp = payload.ExpiresAt
+	return principal, nil
 }
 
 // buildPrincipal 小写开头 = 包内私有(只能在本包调用)。按 userID 查出用户,再查他的角色、
@@ -199,27 +122,6 @@ func (a *App) buildPrincipal(userID int64) (*Principal, error) {
 	}, nil
 }
 
-// BuildGuestPrincipal 游客访问上下文。
-// 造一个"游客"身份:先从库里查出启用的游客角色,再手工拼一个只存在内存里的匿名用户
-// (不写库,ID=0),让未登录的人也能以受限权限浏览首页。
-func (a *App) BuildGuestPrincipal() (*Principal, error) {
-	var guestRole db.SystemRole
-	if err := a.DB.Where("code = ? AND is_enabled = ?", guestRoleCode, true).First(&guestRole).Error; err != nil {
-		return nil, security.ErrInvalidToken
-	}
-	now := time.Now()
-	guestUser := &db.SystemUser{
-		ID: 0, Username: "guest", Nickname: "游客", FullName: "游客",
-		Gender: "unknown", IsActive: true, Company: "coinsphere",
-		Bio: "游客默认以匿名方式访问首页。", TagsJSON: "[]",
-		CreatedBy: "system", UpdatedBy: "system", CreatedAt: now, UpdatedAt: now,
-	}
-	return &Principal{
-		User: guestUser, RoleIDs: []int64{guestRole.ID}, RoleCodes: []string{guestRole.Code},
-		PermissionCodes: map[string]bool{}, AccessMode: "guest",
-	}, nil
-}
-
 // BuildUserInfo 序列化当前用户信息。
 func (a *App) BuildUserInfo(principal *Principal) M {
 	permissions := make([]string, 0, len(principal.PermissionCodes))
@@ -230,9 +132,6 @@ func (a *App) BuildUserInfo(principal *Principal) M {
 	}
 	sortStrings(permissions)
 	username := principal.User.Username
-	if principal.AccessMode == "guest" {
-		username = "guest"
-	}
 	return M{
 		"permissions": permissions,
 		"roleCodes":   principal.RoleCodes,
@@ -241,6 +140,98 @@ func (a *App) BuildUserInfo(principal *Principal) M {
 		"email":       principal.User.Email,
 		"avatar":      principal.User.Avatar,
 		"accessMode":  principal.AccessMode,
+	}
+}
+
+type reauthTokenRecord struct {
+	userID        int64
+	accessTokenID string
+	expiresAt     time.Time
+}
+
+const reauthTokenTTL = 5 * time.Minute
+
+// Reauthenticate verifies the current password before issuing a one-time token
+// bound to the exact access-token session.
+func (a *App) Reauthenticate(principal *Principal, password string) (string, error) {
+	if principal == nil || principal.User == nil || principal.User.ID <= 0 ||
+		principal.AccessTokenID == "" || strings.TrimSpace(password) == "" {
+		return "", security.ErrInvalidToken
+	}
+
+	var user db.SystemUser
+	if err := a.DB.First(&user, principal.User.ID).Error; err != nil || !user.IsActive ||
+		!a.Hasher.VerifyPassword(password, user.PasswordHash) {
+		return "", security.ErrInvalidToken
+	}
+	return a.issueReauthToken(principal, time.Now()), nil
+}
+
+func (a *App) issueReauthToken(principal *Principal, now time.Time) string {
+	raw := security.RandomURLSafe(32)
+	hash := security.HashToken(raw)
+	a.authStateMu.Lock()
+	a.pruneAuthStateLocked(now)
+	a.reauthTokens[hash] = reauthTokenRecord{
+		userID: principal.User.ID, accessTokenID: principal.AccessTokenID,
+		expiresAt: now.Add(reauthTokenTTL),
+	}
+	a.authStateMu.Unlock()
+	return raw
+}
+
+// ConsumeReauthToken permits exactly one matching user/session use. A token
+// presented by another user or session remains unusable and cannot be consumed.
+func (a *App) ConsumeReauthToken(raw string, principal *Principal) bool {
+	if principal == nil || principal.User == nil || principal.User.ID <= 0 || principal.AccessTokenID == "" || raw == "" {
+		return false
+	}
+	hash := security.HashToken(raw)
+	now := time.Now()
+	a.authStateMu.Lock()
+	defer a.authStateMu.Unlock()
+	a.pruneAuthStateLocked(now)
+	record, ok := a.reauthTokens[hash]
+	if !ok || record.userID != principal.User.ID || record.accessTokenID != principal.AccessTokenID {
+		return false
+	}
+	delete(a.reauthTokens, hash)
+	return true
+}
+
+// LogoutAccessToken revokes the current signed token until its natural expiry.
+// ponytail: process-local revocation is sufficient for the current single-app topology; use a shared store only with multiple API instances.
+func (a *App) LogoutAccessToken(principal *Principal) {
+	if principal == nil || principal.AccessTokenID == "" || principal.AccessTokenExp.IsZero() {
+		return
+	}
+	a.authStateMu.Lock()
+	a.pruneAuthStateLocked(time.Now())
+	a.revokedAccessTokens[principal.AccessTokenID] = principal.AccessTokenExp
+	a.authStateMu.Unlock()
+}
+
+func (a *App) isAccessTokenRevoked(tokenID string) bool {
+	if tokenID == "" {
+		return true
+	}
+	a.authStateMu.Lock()
+	defer a.authStateMu.Unlock()
+	a.pruneAuthStateLocked(time.Now())
+	_, revoked := a.revokedAccessTokens[tokenID]
+	return revoked
+}
+
+func (a *App) pruneAuthStateLocked(now time.Time) {
+	for hash, record := range a.reauthTokens {
+		if !record.expiresAt.After(now) {
+			delete(a.reauthTokens, hash)
+		}
+	}
+	for tokenID, expiresAt := range a.revokedAccessTokens {
+		if !expiresAt.After(now) {
+			delete(a.revokedAccessTokens, tokenID)
+		}
 	}
 }
 

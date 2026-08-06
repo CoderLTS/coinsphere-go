@@ -140,9 +140,9 @@ func TestPostgresBaselineStateConstraints(t *testing.T) {
 		{"outbox dead letter before attempts exhausted", `INSERT INTO domain_event_outbox (status, attempt_count, max_attempts, available_at, processed_at, dead_lettered_at) VALUES ('dead_letter', 2, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`},
 		{"outbox alert before dead letter", `INSERT INTO domain_event_outbox (status, attempt_count, max_attempts, available_at, processed_at, dead_lettered_at, alerted_at) VALUES ('dead_letter', 3, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP - INTERVAL '1 minute')`},
 		{"notification missing outbox reference", `INSERT INTO notification_deliveries (outbox_event_id) VALUES (9223372036854775807)`},
-		{"audit invalid request id", `INSERT INTO audit_records (request_id, action, resource_path, outcome, status_code) VALUES ('bad request id', 'POST /api/test', '/api/test', 'failure', 400)`},
-		{"audit invalid outcome", `INSERT INTO audit_records (request_id, action, resource_path, outcome, status_code) VALUES ('audit-invalid-outcome', 'POST /api/test', '/api/test', 'unknown', 400)`},
-		{"audit invalid status", `INSERT INTO audit_records (request_id, action, resource_path, outcome, status_code) VALUES ('audit-invalid-status', 'POST /api/test', '/api/test', 'failure', 99)`},
+		{"audit invalid request id", `INSERT INTO audit_records (request_id, action, resource_path, outcome, status_code) VALUES ('bad request id', 'POST /api/v1/test', '/api/v1/test', 'failure', 400)`},
+		{"audit invalid outcome", `INSERT INTO audit_records (request_id, action, resource_path, outcome, status_code) VALUES ('audit-invalid-outcome', 'POST /api/v1/test', '/api/v1/test', 'unknown', 400)`},
+		{"audit invalid status", `INSERT INTO audit_records (request_id, action, resource_path, outcome, status_code) VALUES ('audit-invalid-status', 'POST /api/v1/test', '/api/v1/test', 'failure', 99)`},
 	}
 	for _, test := range invalidRows {
 		if _, err := database.Exec(test.sql); err == nil {
@@ -195,6 +195,8 @@ INSERT INTO domain_event_outbox (
 	}
 
 	assertPostgresIndexes(t, database, []string{
+		"ix_idempotency_records_expires_at",
+		"ux_idempotency_records_user_scope_key",
 		"ix_event_outbox_pending",
 		"ix_event_outbox_recovery",
 		"ux_event_outbox_lease_id",
@@ -221,7 +223,7 @@ func TestObservabilityDownRejectsAuditData(t *testing.T) {
 	if _, err := runner.Down(context.Background(), 1); err != nil {
 		t.Fatalf("roll back empty A2 migration: %v", err)
 	}
-	if _, err := database.Exec(`INSERT INTO audit_records (request_id, action, resource_path, outcome, status_code) VALUES ('rollback-guard', 'POST /api/test', '/api/test', 'success', 200)`); err != nil {
+	if _, err := database.Exec(`INSERT INTO audit_records (request_id, action, resource_path, outcome, status_code) VALUES ('rollback-guard', 'POST /api/v1/test', '/api/v1/test', 'success', 200)`); err != nil {
 		t.Fatalf("insert audit rollback guard: %v", err)
 	}
 
@@ -562,9 +564,9 @@ func assertCurrentTables(t *testing.T, database *sql.DB) {
 	t.Helper()
 	want := []string{
 		"ai_model_agent_bindings", "ai_model_configs", "assistant_agents", "assistant_messages", "audit_records",
-		"assistant_sessions", "domain_event_outbox", "i18n_texts", "menu_buttons", "menus",
+		"assistant_sessions", "domain_event_outbox", "i18n_texts", "idempotency_records", "menu_buttons", "menus",
 		"market_candles", "market_flow_leases", "market_instruments", "market_ticker_snapshots",
-		"news_items", "notification_channels", "notification_deliveries", "refresh_tokens", "role_menu_buttons",
+		"news_items", "notification_channels", "notification_deliveries", "role_menu_buttons",
 		"role_menus", "roles", "schema_migrations", "task_definition_configs", "user_roles", "users",
 		"worker_tasks", "workflow_definitions", "workflow_execution_attempts", "workflow_execution_nodes",
 		"workflow_execution_transitions", "workflow_executions", "workflow_runtime_entries", "workflow_runtime_states",

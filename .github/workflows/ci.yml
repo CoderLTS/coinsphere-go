@@ -74,6 +74,10 @@ jobs:
               case "$file" in
                 backend/*) backend=true ;;
                 frontend/*) frontend=true ;;
+                docs/contracts/*|scripts/contracts/*)
+                  backend=true
+                  frontend=true
+                  ;;
                 scripts/release/*|deploy/production/*|.github/workflows/release.yml) release=true ;;
                 worker/*) worker=true ;;
                 .github/workflows/ci.yml)
@@ -93,6 +97,50 @@ jobs:
             echo "worker=$worker"
             echo "full=$full"
           } >>"$GITHUB_OUTPUT"
+
+  contracts:
+    name: OpenAPI contract drift
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: backend/go.mod
+          cache: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: Regenerate contract types
+        run: bash scripts/contracts/generate.sh
+      - name: Require generated files to be committed
+        shell: bash
+        run: git diff --exit-code -- backend/internal/api/openapi.gen.go frontend/src/types/generated/openapi.d.ts
+      - name: Check declared breaking changes
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -Eeuo pipefail
+          base_file="$(mktemp)"
+          trap 'rm -f "$base_file"' EXIT
+          if ! git show "$BASE_SHA:docs/contracts/openapi.yaml" >"$base_file" 2>/dev/null; then
+            echo 'No base OpenAPI document; skipping first-version breaking-change comparison.'
+            exit 0
+          fi
+          go run github.com/tufin/oasdiff@v1.10.21 breaking "$base_file" docs/contracts/openapi.yaml
 
   backend:
     name: Go backend
@@ -369,6 +417,7 @@ jobs:
       - changes
       - backend
       - browser-smoke
+      - contracts
       - frontend
       - release
       - worker
@@ -389,6 +438,7 @@ jobs:
           }
 
           require_selected "${{ needs.changes.outputs.backend }}" "${{ needs.backend.result }}" backend
+          require_selected "${{ needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true' }}" "${{ needs.contracts.result }}" contracts
           require_selected "${{ needs.changes.outputs.frontend }}" "${{ needs.frontend.result }}" frontend
           require_selected "${{ needs.changes.outputs.frontend }}" "${{ needs.browser-smoke.result }}" browser-smoke
           require_selected "${{ needs.changes.outputs.release }}" "${{ needs.release.result }}" release

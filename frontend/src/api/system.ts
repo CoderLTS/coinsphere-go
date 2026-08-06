@@ -4,21 +4,21 @@ import { AppRouteRecord } from '@/types/router'
 
 export function fetchGetUserList(params: Api.System.UserSearchParams) {
   return request.get<Api.System.UserList>({
-    url: '/api/system/users',
+    url: '/api/v1/admin/users',
     params
   })
 }
 
 export function fetchGetRoleList(params: Api.System.RoleSearchParams) {
   return request.get<Api.System.RoleList>({
-    url: '/api/system/roles',
+    url: '/api/v1/system/roles',
     params
   })
 }
 
 export function fetchCreateRole(params: Api.System.RoleUpsertPayload) {
   return request.post<Api.System.RoleListItem>({
-    url: '/api/system/roles',
+    url: '/api/v1/system/roles',
     params,
     showSuccessMessage: true
   })
@@ -26,7 +26,7 @@ export function fetchCreateRole(params: Api.System.RoleUpsertPayload) {
 
 export function fetchUpdateRole(roleId: number, params: Api.System.RoleUpsertPayload) {
   return request.put<Api.System.RoleListItem>({
-    url: `/api/system/roles/${roleId}`,
+    url: `/api/v1/system/roles/${roleId}`,
     params,
     showSuccessMessage: true
   })
@@ -34,14 +34,14 @@ export function fetchUpdateRole(roleId: number, params: Api.System.RoleUpsertPay
 
 export function fetchDeleteRole(roleId: number) {
   return request.del<void>({
-    url: `/api/system/roles/${roleId}`,
+    url: `/api/v1/system/roles/${roleId}`,
     showSuccessMessage: true
   })
 }
 
 export function fetchSaveRolePermissions(roleId: number, params: Api.System.RolePermissionPayload) {
   return request.put<void>({
-    url: `/api/system/roles/${roleId}/permissions`,
+    url: `/api/v1/system/roles/${roleId}/permissions`,
     params,
     showSuccessMessage: true
   })
@@ -49,26 +49,26 @@ export function fetchSaveRolePermissions(roleId: number, params: Api.System.Role
 
 export function fetchGetMenuList() {
   return request.get<AppRouteRecord[]>({
-    url: '/api/system/menus'
+    url: '/api/v1/system/menus'
   })
 }
 
 export function fetchGetManageMenuTree() {
   return request.get<AppRouteRecord[]>({
-    url: '/api/system/menus/manage-tree'
+    url: '/api/v1/system/menus/manage-tree'
   })
 }
 
 export function fetchGetMenuI18nDict() {
   return request.get<Api.System.MenuI18nDict>({
-    url: '/api/system/i18n-dictionaries',
+    url: '/api/v1/system/i18n-dictionaries',
     params: { scope: 'menu' }
   })
 }
 
 export function fetchCreateUser(params: Record<string, any>) {
   return request.post<Api.System.UserListItem>({
-    url: '/api/system/users',
+    url: '/api/v1/admin/users',
     params,
     showSuccessMessage: true
   })
@@ -76,7 +76,7 @@ export function fetchCreateUser(params: Record<string, any>) {
 
 export function fetchUpdateUser(userId: number, params: Record<string, any>) {
   return request.put<Api.System.UserListItem>({
-    url: `/api/system/users/${userId}`,
+    url: `/api/v1/admin/users/${userId}`,
     params,
     showSuccessMessage: true
   })
@@ -84,7 +84,7 @@ export function fetchUpdateUser(userId: number, params: Record<string, any>) {
 
 export function fetchDeleteUser(userId: number) {
   return request.del<void>({
-    url: `/api/system/users/${userId}`,
+    url: `/api/v1/admin/users/${userId}`,
     showSuccessMessage: true
   })
 }
@@ -93,7 +93,7 @@ export function fetchUploadAvatarAsset(file: File) {
   const formData = new FormData()
   formData.append('avatar', file)
   return request.post<{ url: string }>({
-    url: '/api/system/uploads/avatars',
+    url: '/api/v1/system/uploads/avatars',
     data: formData,
     showSuccessMessage: true
   })
@@ -105,7 +105,7 @@ export function fetchUploadUserAvatar(file: File) {
 
 export function fetchCreateMenu(params: Record<string, any>) {
   return request.post<{ id: number }>({
-    url: '/api/system/menus',
+    url: '/api/v1/system/menus',
     params,
     showSuccessMessage: true
   })
@@ -113,7 +113,7 @@ export function fetchCreateMenu(params: Record<string, any>) {
 
 export function fetchUpdateMenu(menuId: number, params: Record<string, any>) {
   return request.put<{ id: number }>({
-    url: `/api/system/menus/${menuId}`,
+    url: `/api/v1/system/menus/${menuId}`,
     params,
     showSuccessMessage: true
   })
@@ -121,14 +121,14 @@ export function fetchUpdateMenu(menuId: number, params: Record<string, any>) {
 
 export function fetchDeleteMenu(menuId: number) {
   return request.del<void>({
-    url: `/api/system/menus/${menuId}`,
+    url: `/api/v1/system/menus/${menuId}`,
     showSuccessMessage: true
   })
 }
 
 export function fetchCreateMenuButton(params: Record<string, any>) {
   return request.post<{ id: number }>({
-    url: '/api/system/menu-buttons',
+    url: '/api/v1/system/menu-buttons',
     params,
     showSuccessMessage: true
   })
@@ -136,7 +136,7 @@ export function fetchCreateMenuButton(params: Record<string, any>) {
 
 export function fetchUpdateMenuButton(buttonId: number, params: Record<string, any>) {
   return request.put<{ id: number }>({
-    url: `/api/system/menu-buttons/${buttonId}`,
+    url: `/api/v1/system/menu-buttons/${buttonId}`,
     params,
     showSuccessMessage: true
   })
@@ -144,7 +144,7 @@ export function fetchUpdateMenuButton(buttonId: number, params: Record<string, a
 
 export function fetchDeleteMenuButton(buttonId: number) {
   return request.del<void>({
-    url: `/api/system/menu-buttons/${buttonId}`,
+    url: `/api/v1/system/menu-buttons/${buttonId}`,
     showSuccessMessage: true
   })
 }

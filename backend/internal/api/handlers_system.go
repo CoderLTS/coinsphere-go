@@ -8,87 +8,51 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"coinsphere/backend/internal/service"
 )
 
 // ---------- 认证 ----------
 
-const refreshCookieName = "coinsphere_refresh_token"
-
-func writeAuthSession(w http.ResponseWriter, r *http.Request, session *service.AuthSession) {
-	http.SetCookie(w, &http.Cookie{
-		Name: refreshCookieName, Value: session.RefreshToken,
-		Path: "/api/auth", Expires: session.RefreshExpiresAt,
-		HttpOnly: true, Secure: requestUsesHTTPS(r), SameSite: http.SameSiteStrictMode,
-	})
-	ok(w, M{"token": session.AccessToken})
-}
-
-func clearRefreshCookie(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{
-		Name: refreshCookieName, Path: "/api/auth",
-		Expires: time.Unix(1, 0), MaxAge: -1,
-		HttpOnly: true, Secure: requestUsesHTTPS(r), SameSite: http.SameSiteStrictMode,
-	})
-}
-
-func requestUsesHTTPS(r *http.Request) bool {
-	scheme, ok := effectiveRequestScheme(r)
-	return ok && scheme == "https"
-}
-
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	payload, err := decodeBody[struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}](r)
+	payload, err := decodeBody[LoginRequest](r)
 	if err != nil {
-		fail(w, err.Error())
+		writeProblem(w, r, http.StatusBadRequest, "invalid login request")
 		return
 	}
 	if payload.Username == "" || payload.Password == "" {
-		fail(w, "用户名或密码错误")
+		writeProblem(w, r, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
 	session, err := s.App.Login(payload.Username, payload.Password)
 	if err != nil {
-		respond(w, nil, err, "")
+		writeProblem(w, r, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
 	setAuditActor(r, session.UserID)
-	writeAuthSession(w, r, session)
+	ok(w, M{"accessToken": session.AccessToken})
 }
 
-func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
-	cookie, err := r.Cookie(refreshCookieName)
-	if err != nil {
-		clearRefreshCookie(w, r)
-		writeJSON(w, http.StatusOK, M{"code": 401, "msg": "invalid token", "data": nil})
-		return
-	}
-	session, err := s.App.RefreshAccessToken(cookie.Value)
-	if err != nil {
-		clearRefreshCookie(w, r)
-		writeJSON(w, http.StatusOK, M{"code": 401, "msg": err.Error(), "data": nil})
-		return
-	}
-	setAuditActor(r, session.UserID)
-	writeAuthSession(w, r, session)
-}
-
-// handleLogout 清理 Cookie 并尽力吊销对应 Refresh Token。
-func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	if cookie, err := r.Cookie(refreshCookieName); err == nil {
-		userID, _ := s.App.Logout(cookie.Value)
-		setAuditActor(r, userID)
-	}
-	clearRefreshCookie(w, r)
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	s.App.LogoutAccessToken(principal)
 	ok(w, M{})
 }
 
-// handleMe 处理 GET /api/auth/me。多出的参数 principal 是鉴权中间件解析好、注入进来的当前登录用户。
+func (s *Server) handleReauth(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	payload, err := decodeBody[ReauthRequest](r)
+	if err != nil || strings.TrimSpace(payload.Password) == "" {
+		writeProblem(w, r, http.StatusBadRequest, "password is required")
+		return
+	}
+	token, err := s.App.Reauthenticate(principal, payload.Password)
+	if err != nil {
+		writeProblem(w, r, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	ok(w, M{"reauthToken": token})
+}
+
+// handleMe 处理 GET /api/v1/me。
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
 	ok(w, s.App.BuildUserInfo(principal))
 }
@@ -96,9 +60,11 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, principal *ser
 // ---------- 新闻数据 ----------
 
 func (s *Server) handleListNews(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	current := queryInt(r, "current", 1)
-	size := clampSize(queryInt(r, "size", 10), 100)
-	data, err := s.App.ListNews(current, size, queryStr(r, "keyword"))
+	page, ok := cursorPage(w, r)
+	if !ok {
+		return
+	}
+	data, err := s.App.ListNews(page, queryStr(r, "keyword"))
 	respond(w, data, err, "")
 }
 
@@ -137,9 +103,12 @@ func (s *Server) handleDeleteNews(w http.ResponseWriter, r *http.Request, princi
 }
 
 func (s *Server) handleListPushDeliveries(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	page, ok := cursorPage(w, r)
+	if !ok {
+		return
+	}
 	query := service.DeliveryHistoryQuery{
-		Current:              queryInt(r, "current", 1),
-		Size:                 clampSize(queryInt(r, "size", 10), 100),
+		Page:                 page,
 		Keyword:              queryStr(r, "keyword"),
 		WorkflowDefinitionID: queryInt64Ptr(r, "workflowDefinitionId"),
 		ChannelType:          queryStr(r, "channelType"),
@@ -152,9 +121,12 @@ func (s *Server) handleListPushDeliveries(w http.ResponseWriter, r *http.Request
 // ---------- 系统管理 ----------
 
 func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	page, ok := cursorPage(w, r)
+	if !ok {
+		return
+	}
 	query := service.UserListQuery{
-		Current:  queryInt(r, "current", 1),
-		Size:     clampSize(queryInt(r, "size", 20), 100),
+		Page:     page,
 		ID:       queryInt64Ptr(r, "id"),
 		Username: queryStr(r, "username"),
 		Gender:   queryStr(r, "gender"),
@@ -265,9 +237,12 @@ func (s *Server) handleUploadAvatar(w http.ResponseWriter, r *http.Request, prin
 }
 
 func (s *Server) handleListRoles(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	page, ok := cursorPage(w, r)
+	if !ok {
+		return
+	}
 	query := service.RoleListQuery{
-		Current:     queryInt(r, "current", 1),
-		Size:        clampSize(queryInt(r, "size", 20), 100),
+		Page:        page,
 		ID:          queryInt64Ptr(r, "id"),
 		DisplayName: queryStr(r, "displayName"),
 		Code:        queryStr(r, "code"),

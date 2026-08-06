@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# 前端:node 构建 dist → nginx 托管 SPA 并反代 /api、/static、/uploads、/ws、/health 到 Go 后端。
+# 前端:node 构建 dist → nginx 托管 SPA 并反代 /api/v1、静态资源和健康检查到 Go 后端。
 # 构建上下文 = ./frontend
 FROM node:24-alpine@sha256:f70403e87646dc51b45295f4b8b70cdad0b63d2297c4c9899119b03f7af7a6b3 AS build
 WORKDIR /app

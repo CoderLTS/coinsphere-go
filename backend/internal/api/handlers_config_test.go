@@ -49,7 +49,7 @@ func TestCheckWebSocketOrigin(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodGet, "http://backend/ws/notifications", nil)
+			r := httptest.NewRequest(http.MethodGet, "http://backend/api/v1/ws/notifications", nil)
 			r.Host = test.host
 			for _, origin := range test.origins {
 				r.Header.Add("Origin", origin)
@@ -120,12 +120,12 @@ func TestNotificationWebSocketTokenContract(t *testing.T) {
 		headerSets [][]string
 		want       bool
 	}{
-		{name: "fixed protocol and token", target: "http://app/ws/notifications", protocols: []string{notificationsWebSocketProtocol, "test-access-token"}, want: true},
-		{name: "query rejected", target: "http://app/ws/notifications?token=test", protocols: []string{notificationsWebSocketProtocol, "test-access-token"}},
-		{name: "missing token", target: "http://app/ws/notifications", protocols: []string{notificationsWebSocketProtocol}},
-		{name: "wrong order", target: "http://app/ws/notifications", protocols: []string{"test-access-token", notificationsWebSocketProtocol}},
-		{name: "extra protocol", target: "http://app/ws/notifications", protocols: []string{notificationsWebSocketProtocol, "test-access-token", "extra"}},
-		{name: "duplicate header", target: "http://app/ws/notifications", headerSets: [][]string{{notificationsWebSocketProtocol, "test-access-token"}, {notificationsWebSocketProtocol, "test-access-token"}}},
+		{name: "fixed protocol and token", target: "http://app/api/v1/ws/notifications", protocols: []string{notificationsWebSocketProtocol, "test-access-token"}, want: true},
+		{name: "query rejected", target: "http://app/api/v1/ws/notifications?token=test", protocols: []string{notificationsWebSocketProtocol, "test-access-token"}},
+		{name: "missing token", target: "http://app/api/v1/ws/notifications", protocols: []string{notificationsWebSocketProtocol}},
+		{name: "wrong order", target: "http://app/api/v1/ws/notifications", protocols: []string{"test-access-token", notificationsWebSocketProtocol}},
+		{name: "extra protocol", target: "http://app/api/v1/ws/notifications", protocols: []string{notificationsWebSocketProtocol, "test-access-token", "extra"}},
+		{name: "duplicate header", target: "http://app/api/v1/ws/notifications", headerSets: [][]string{{notificationsWebSocketProtocol, "test-access-token"}, {notificationsWebSocketProtocol, "test-access-token"}}},
 	}
 
 	for _, test := range tests {

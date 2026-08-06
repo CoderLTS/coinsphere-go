@@ -116,6 +116,20 @@ type WorkflowExecution struct {
 
 func (WorkflowExecution) TableName() string { return "workflow_executions" }
 
+// IdempotencyRecord binds a public command key to one authenticated user and request payload.
+// Only hashes are persisted; workflow executions use a key derived from this record's ID.
+type IdempotencyRecord struct {
+	ID          int64     `gorm:"primaryKey;autoIncrement"`
+	UserID      int64     `gorm:"column:user_id;uniqueIndex:ux_idempotency_records_user_scope_key,priority:1"`
+	Scope       string    `gorm:"size:255;uniqueIndex:ux_idempotency_records_user_scope_key,priority:2"`
+	KeyHash     string    `gorm:"column:key_hash;size:64;uniqueIndex:ux_idempotency_records_user_scope_key,priority:3"`
+	RequestHash string    `gorm:"column:request_hash;size:64"`
+	ExpiresAt   time.Time `gorm:"index:ix_idempotency_records_expires_at"`
+	CreatedAt   time.Time
+}
+
+func (IdempotencyRecord) TableName() string { return "idempotency_records" }
+
 // WorkflowExecutionAttempt 单次执行的 attempt 历史。
 type WorkflowExecutionAttempt struct {
 	ID                  int64              `gorm:"primaryKey;autoIncrement"`
@@ -488,19 +502,6 @@ type AssistantMessage struct {
 }
 
 func (AssistantMessage) TableName() string { return "assistant_messages" }
-
-// RefreshTokenRecord refresh token 哈希存储。
-type RefreshTokenRecord struct {
-	ID        string      `gorm:"primaryKey;size:64"`
-	UserID    int64       `gorm:"column:user_id"`
-	User      *SystemUser `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
-	TokenHash string      `gorm:"size:128;uniqueIndex"`
-	ExpiresAt time.Time
-	IsRevoked bool `gorm:"default:false"`
-	CreatedAt time.Time
-}
-
-func (RefreshTokenRecord) TableName() string { return "refresh_tokens" }
 
 // AuditRecord 保存写请求的最小审计元数据，不接收请求正文、Header、查询串或错误正文。
 type AuditRecord struct {

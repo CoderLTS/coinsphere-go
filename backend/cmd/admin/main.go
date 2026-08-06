@@ -74,11 +74,10 @@ func run(parent context.Context, args []string, stdin io.Reader, stdout, stderr 
 	if err != nil {
 		return err
 	}
-	revoked, err := resetPassword(ctx, database, security.NewPasswordHasher(cfg.Auth.PasswordIterations), opts.username, password)
-	if err != nil {
+	if err := resetPassword(ctx, database, security.NewPasswordHasher(cfg.Auth.PasswordIterations), opts.username, password); err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(stdout, "password reset; revoked_refresh_tokens=%d\n", revoked)
+	_, _ = fmt.Fprintln(stdout, "password reset")
 	return nil
 }
 
@@ -153,9 +152,8 @@ func resetPassword(
 	hasher *security.PasswordHasher,
 	username string,
 	password string,
-) (int64, error) {
-	var revoked int64
-	err := database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+) error {
+	return database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var user db.SystemUser
 		if err := tx.Where("username = ?", username).First(&user).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -170,11 +168,6 @@ func resetPassword(
 		}).Error; err != nil {
 			return err
 		}
-		result := tx.Model(&db.RefreshTokenRecord{}).
-			Where("user_id = ? AND is_revoked = ?", user.ID, false).
-			Update("is_revoked", true)
-		revoked = result.RowsAffected
-		return result.Error
+		return nil
 	})
-	return revoked, err
 }

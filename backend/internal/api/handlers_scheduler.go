@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -22,11 +21,13 @@ func (s *Server) handleListTaskDefinitions(w http.ResponseWriter, r *http.Reques
 	ok(w, s.App.ListTaskDefinitions())
 }
 
-// handleListTaskDefinitionPage 分页查询任务定义:current 是页码(默认 1),size 是每页条数(默认 10,上限 100)。
+// handleListTaskDefinitionPage 使用稳定游标查询任务定义。
 func (s *Server) handleListTaskDefinitionPage(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	current := queryInt(r, "current", 1)
-	size := clampSize(queryInt(r, "size", 10), 100)
-	ok(w, s.App.ListTaskDefinitionPage(current, size, queryStr(r, "keyword")))
+	page, valid := cursorPage(w, r)
+	if !valid {
+		return
+	}
+	ok(w, s.App.ListTaskDefinitionPage(page, queryStr(r, "keyword")))
 }
 
 // handleUpdateTaskDefaultParams 处理 PUT .../task-definitions/{taskCode}/default-params:更新某任务的默认参数。
@@ -175,7 +176,7 @@ func (s *Server) handleRotateWebhookSecret(w http.ResponseWriter, r *http.Reques
 func (s *Server) handleRunWorkflowStarts(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
 	definitionID, err := pathInt64(r, "definitionId")
 	if err != nil {
-		fail(w, err.Error())
+		writeWorkflowProblem(w, r, err)
 		return
 	}
 	// []string 是字符串切片(可变长数组,见 GO入门笔记『复合类型』);Inputs 用 M 承接任意 JSON 对象。
@@ -184,17 +185,12 @@ func (s *Server) handleRunWorkflowStarts(w http.ResponseWriter, r *http.Request,
 		Inputs         M        `json:"inputs"`
 	}](r)
 	if err != nil {
-		fail(w, err.Error())
+		writeWorkflowProblem(w, r, err)
 		return
 	}
-	executions, err := s.App.RunManualStarts(definitionID, payload.StartEntryKeys, principal.User.ID, payload.Inputs)
+	executions, err := s.App.RunManualStarts(definitionID, payload.StartEntryKeys, principal.User.ID, payload.Inputs, r.Header.Get("Idempotency-Key"))
 	if err != nil {
-		// 队列积压过多时返回 429(Too Many Requests),提示前端稍后再试,而不是当成普通业务错误。
-		if service.IsBacklogExceeded(err) {
-			writeJSON(w, http.StatusTooManyRequests, M{"code": 429, "msg": err.Error(), "data": nil})
-			return
-		}
-		fail(w, err.Error())
+		writeWorkflowProblem(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, M{
@@ -203,15 +199,28 @@ func (s *Server) handleRunWorkflowStarts(w http.ResponseWriter, r *http.Request,
 	})
 }
 
+func writeWorkflowProblem(w http.ResponseWriter, r *http.Request, err error) {
+	status := http.StatusBadRequest
+	if service.IsBacklogExceeded(err) {
+		status = http.StatusTooManyRequests
+	} else if service.IsIdempotencyConflict(err) {
+		status = http.StatusConflict
+	}
+	writeProblem(w, r, status, err.Error())
+}
+
 func (s *Server) handleListDefinitionExecutions(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
 	definitionID, err := pathInt64(r, "definitionId")
 	if err != nil {
 		fail(w, err.Error())
 		return
 	}
+	page, ok := cursorPage(w, r)
+	if !ok {
+		return
+	}
 	query := service.WorkflowExecutionQuery{
-		Current:      queryInt(r, "current", 1),
-		Size:         clampSize(queryInt(r, "size", 10), 100),
+		Page:         page,
 		Keyword:      queryStr(r, "keyword"),
 		TriggerType:  queryStr(r, "triggerType"),
 		Status:       queryStr(r, "status"),
@@ -222,9 +231,12 @@ func (s *Server) handleListDefinitionExecutions(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) handleListAllExecutions(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	page, ok := cursorPage(w, r)
+	if !ok {
+		return
+	}
 	query := service.WorkflowExecutionQuery{
-		Current:                queryInt(r, "current", 1),
-		Size:                   clampSize(queryInt(r, "size", 10), 100),
+		Page:                   page,
 		WorkflowDefinitionCode: queryStr(r, "workflowDefinitionCode"),
 		Keyword:                queryStr(r, "keyword"),
 		TriggerType:            queryStr(r, "triggerType"),
@@ -244,28 +256,33 @@ func (s *Server) handleGetExecutionDetail(w http.ResponseWriter, r *http.Request
 	respond(w, data, err, "")
 }
 
-// handleWebhookTrigger 处理外部系统回调的 webhook。注意签名只有 (w, r) 没有 principal —— 它不走登录鉴权,靠请求头里的 secret 校验。
-func (s *Server) handleWebhookTrigger(w http.ResponseWriter, r *http.Request) {
-	// var payload M 声明一个 map 变量(零值为 nil);下面尽力解析请求体,解析失败就退回空对象,不让整个请求挂掉。
-	var payload M
-	if r.Body != nil {
-		decoder := json.NewDecoder(r.Body)
-		if err := decoder.Decode(&payload); err != nil {
-			payload = M{}
-		}
+// handleWorkflowCatchAll dispatches the one ambiguous execution-detail shape
+// that cannot be expressed alongside numeric-looking definition wildcards in
+// Go's ServeMux pattern lattice.
+func (s *Server) handleWorkflowCatchAll(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	path := r.PathValue("workflowPath")
+	if strings.HasPrefix(path, "executions/") && !strings.Contains(strings.TrimPrefix(path, "executions/"), "/") {
+		r.SetPathValue("executionId", strings.TrimPrefix(path, "executions/"))
+		s.handleGetExecutionDetail(w, r, principal)
+		return
 	}
-	if payload == nil {
-		payload = M{}
+	writeProblem(w, r, http.StatusNotFound, "workflow resource was not found")
+}
+
+// handleWebhookTrigger 处理已通过登录鉴权、并额外携带工作流 secret 的 webhook 回调。
+func (s *Server) handleWebhookTrigger(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	payload, err := decodeBody[M](r)
+	if err != nil {
+		writeWorkflowProblem(w, r, err)
+		return
+	}
+	if *payload == nil {
+		*payload = M{}
 	}
 	secret := strings.TrimSpace(r.Header.Get("X-Workflow-Secret"))
-	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
-	data, err := s.App.TriggerWebhook(r.PathValue("workflowCode"), r.PathValue("entryKey"), secret, payload, idempotencyKey)
+	data, err := s.App.TriggerWebhook(principal.User.ID, r.PathValue("workflowCode"), r.PathValue("entryKey"), secret, *payload, r.Header.Get("Idempotency-Key"))
 	if err != nil {
-		if service.IsBacklogExceeded(err) {
-			writeJSON(w, http.StatusTooManyRequests, M{"code": 429, "msg": err.Error(), "data": nil})
-			return
-		}
-		fail(w, err.Error())
+		writeWorkflowProblem(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, M{"code": 200, "msg": "Webhook 已加入执行队列", "data": data})

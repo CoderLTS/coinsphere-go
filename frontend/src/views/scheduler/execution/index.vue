@@ -36,7 +36,7 @@
         }"
         :pagination-options="{
           pageSizes: [10, 20, 50],
-          layout: 'total, prev, pager, next, sizes',
+          layout: 'total, prev, next, sizes',
           align: 'center'
         }"
         :stripe="false"
@@ -50,6 +50,7 @@
 <script setup lang="ts">
   import { View } from '@element-plus/icons-vue'
   import { ElButton, ElTag } from 'element-plus'
+  import { useCursorPagination } from '@/hooks/core/useCursorPagination'
   import { useTableColumns } from '@/hooks/core/useTableColumns'
   import {
     fetchWorkflowDefinitionList,
@@ -65,14 +66,16 @@
 
   const router = useRouter()
   const loading = ref(false)
-  const executionList = ref<WorkflowExecutionList>({ records: [], current: 1, size: 10, total: 0 })
+  const executionList = ref<WorkflowExecutionList>({
+    records: [],
+    nextCursor: '',
+    hasMore: false,
+    total: 0
+  })
   const definitionOptions = ref<Array<{ value: string; label: string }>>([])
   let pollTimer: number | null = null
 
-  const pagination = reactive({
-    current: 1,
-    size: 10
-  })
+  const { pagination, requestParams, applyPage, reset, moveTo } = useCursorPagination(10)
 
   const initialFilters = {
     keyword: '',
@@ -296,13 +299,13 @@
     }
     try {
       executionList.value = await fetchWorkflowExecutionList({
-        current: pagination.current,
-        size: pagination.size,
+        ...requestParams(),
         workflowDefinitionCode: formFilters.workflowDefinitionCode || undefined,
         keyword: formFilters.keyword.trim() || undefined,
         triggerType: formFilters.triggerType || undefined,
         status: formFilters.status || undefined
       } satisfies WorkflowExecutionQueryParams)
+      applyPage(executionList.value)
     } catch (error) {
       if (!options.silent) {
         console.error(error)
@@ -316,24 +319,22 @@
   }
 
   const handleSearch = () => {
-    pagination.current = 1
+    reset()
     void loadPageData()
   }
 
   const handleReset = () => {
     Object.assign(formFilters, { ...initialFilters })
-    pagination.current = 1
+    reset()
     void loadPageData()
   }
 
   const handleCurrentChange = (current: number) => {
-    pagination.current = current
-    void loadPageData()
+    if (moveTo(current)) void loadPageData()
   }
 
   const handleSizeChange = (size: number) => {
-    pagination.size = size
-    pagination.current = 1
+    reset(size)
     void loadPageData()
   }
 

@@ -30,8 +30,8 @@ export type TaskDefinitionManagementList =
   Api.Common.PaginatedResponse<TaskDefinitionManagementItem>
 
 export interface TaskDefinitionQueryParams {
-  current: number
-  size: number
+  cursor?: string
+  limit?: number
   keyword?: string
 }
 
@@ -257,8 +257,8 @@ export interface WorkflowExecutionDetail extends WorkflowExecutionItem {
 export type WorkflowExecutionList = Api.Common.PaginatedResponse<WorkflowExecutionItem>
 
 export interface WorkflowExecutionQueryParams {
-  current: number
-  size: number
+  cursor?: string
+  limit?: number
   workflowDefinitionCode?: string
   keyword?: string
   triggerType?: WorkflowTriggerType | string
@@ -301,19 +301,19 @@ export interface WorkflowOverview {
 
 export function fetchSchedulerOverview() {
   return request.get<WorkflowOverview>({
-    url: '/api/scheduler/overview'
+    url: '/api/v1/workflows/overview'
   })
 }
 
 export function fetchTaskDefinitions() {
   return request.get<TaskDefinitionItem[]>({
-    url: '/api/scheduler/task-definitions'
+    url: '/api/v1/workflows/task-definitions'
   })
 }
 
 export function fetchTaskDefinitionPage(params: TaskDefinitionQueryParams) {
   return request.get<TaskDefinitionManagementList>({
-    url: '/api/scheduler/task-definitions/page',
+    url: '/api/v1/workflows/task-definitions/page',
     params
   })
 }
@@ -323,7 +323,7 @@ export function fetchUpdateTaskDefinitionDefaultParams(
   params: TaskDefinitionDefaultParamsPayload
 ) {
   return request.put<TaskDefinitionManagementItem>({
-    url: `/api/scheduler/task-definitions/${taskCode}/default-params`,
+    url: `/api/v1/workflows/task-definitions/${taskCode}/default-params`,
     params,
     showSuccessMessage: true
   })
@@ -331,32 +331,32 @@ export function fetchUpdateTaskDefinitionDefaultParams(
 
 export function fetchNodeDefinitions() {
   return request.get<WorkflowNodeDefinitionItem[]>({
-    url: '/api/scheduler/node-definitions'
+    url: '/api/v1/workflows/node-definitions'
   })
 }
 
 /** 工作流编辑器里 assistant.agent 节点的智能体下拉选项。 */
 export function fetchWorkflowAgentOptions() {
   return request.get<WorkflowAgentOption[]>({
-    url: '/api/scheduler/agent-options'
+    url: '/api/v1/workflows/agent-options'
   })
 }
 
 export function fetchWorkflowDefinitionList() {
   return request.get<WorkflowDefinitionItem[]>({
-    url: '/api/scheduler/workflow-definitions'
+    url: '/api/v1/workflows'
   })
 }
 
 export function fetchWorkflowDefinitionDetail(definitionId: number) {
   return request.get<WorkflowDefinitionItem>({
-    url: `/api/scheduler/workflow-definitions/${definitionId}`
+    url: `/api/v1/workflows/${definitionId}`
   })
 }
 
 export function fetchCreateWorkflowDefinition(params: WorkflowDefinitionUpsertPayload) {
   return request.post<WorkflowDefinitionItem>({
-    url: '/api/scheduler/workflow-definitions',
+    url: '/api/v1/workflows',
     params,
     showSuccessMessage: true
   })
@@ -367,7 +367,7 @@ export function fetchUpdateWorkflowDefinition(
   params: WorkflowDefinitionUpsertPayload
 ) {
   return request.put<WorkflowDefinitionItem>({
-    url: `/api/scheduler/workflow-definitions/${definitionId}`,
+    url: `/api/v1/workflows/${definitionId}`,
     params,
     showSuccessMessage: false
   })
@@ -375,35 +375,35 @@ export function fetchUpdateWorkflowDefinition(
 
 export function fetchDeleteWorkflowDefinition(definitionId: number) {
   return request.del<void>({
-    url: `/api/scheduler/workflow-definitions/${definitionId}`,
+    url: `/api/v1/workflows/${definitionId}`,
     showSuccessMessage: true
   })
 }
 
 export function fetchValidateWorkflowDefinition(params: WorkflowDefinitionUpsertPayload) {
   return request.post<WorkflowDefinitionValidationResult>({
-    url: '/api/scheduler/workflow-definitions/validate',
+    url: '/api/v1/workflows/validate',
     params
   })
 }
 
 export function fetchActivateWorkflowDefinition(definitionId: number) {
   return request.post<WorkflowRuntimeStateItem>({
-    url: `/api/scheduler/workflow-definitions/${definitionId}/activate`,
+    url: `/api/v1/workflows/${definitionId}/activate`,
     showSuccessMessage: true
   })
 }
 
 export function fetchDeactivateWorkflowDefinition(definitionId: number) {
   return request.post<WorkflowRuntimeStateItem>({
-    url: `/api/scheduler/workflow-definitions/${definitionId}/deactivate`,
+    url: `/api/v1/workflows/${definitionId}/deactivate`,
     showSuccessMessage: true
   })
 }
 
 export function fetchWorkflowRuntime(definitionId: number) {
   return request.get<WorkflowRuntimeStateItem>({
-    url: `/api/scheduler/workflow-definitions/${definitionId}/runtime`
+    url: `/api/v1/workflows/${definitionId}/runtime`
   })
 }
 
@@ -413,7 +413,7 @@ export function fetchUpdateWorkflowRuntimeEntryStatus(
   isEnabled: boolean
 ) {
   return request.request<WorkflowRuntimeStateItem>({
-    url: `/api/scheduler/workflow-definitions/${definitionId}/runtime/entries/${encodeURIComponent(entryKey)}`,
+    url: `/api/v1/workflows/${definitionId}/runtime/entries/${encodeURIComponent(entryKey)}`,
     method: 'PATCH',
     data: { isEnabled },
     showSuccessMessage: true
@@ -422,15 +422,18 @@ export function fetchUpdateWorkflowRuntimeEntryStatus(
 
 export function fetchRotateWorkflowRuntimeEntrySecret(definitionId: number, entryKey: string) {
   return request.post<WorkflowRuntimeSecretRotationResult>({
-    url: `/api/scheduler/workflow-definitions/${definitionId}/runtime/entries/${encodeURIComponent(entryKey)}/rotate-secret`,
+    url: `/api/v1/workflows/${definitionId}/runtime/entries/${encodeURIComponent(entryKey)}/rotate-secret`,
     showSuccessMessage: true
   })
 }
 
 export function fetchRunWorkflowDefinition(definitionId: number, params: WorkflowManualRunPayload) {
+  const idempotencyKey = crypto.randomUUID()
+
   return request.post<RunWorkflowDefinitionResponse>({
-    url: `/api/scheduler/workflow-definitions/${definitionId}/executions`,
+    url: `/api/v1/workflows/${definitionId}/executions`,
     params,
+    headers: { 'Idempotency-Key': idempotencyKey },
     showSuccessMessage: true
   })
 }
@@ -440,20 +443,20 @@ export function fetchWorkflowDefinitionExecutions(
   params: WorkflowExecutionQueryParams
 ) {
   return request.get<WorkflowExecutionList>({
-    url: `/api/scheduler/workflow-definitions/${definitionId}/executions`,
+    url: `/api/v1/workflows/${definitionId}/executions`,
     params
   })
 }
 
 export function fetchWorkflowExecutionList(params: WorkflowExecutionQueryParams) {
   return request.get<WorkflowExecutionList>({
-    url: '/api/scheduler/workflow-executions',
+    url: '/api/v1/workflows/executions',
     params
   })
 }
 
 export function fetchWorkflowExecutionDetail(executionId: number) {
   return request.get<WorkflowExecutionDetail>({
-    url: `/api/scheduler/workflow-executions/${executionId}`
+    url: `/api/v1/workflows/executions/${executionId}`
   })
 }

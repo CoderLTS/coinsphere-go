@@ -1,13 +1,15 @@
 // 本文件是 HTTP 接口层的地基:统一响应格式、请求参数解析、登录/权限中间件。新手可对照 GO入门笔记.md 阅读。
 // package:同一文件夹下所有 .go 文件都写 package api,包内函数/变量互相直接可见(见 GO入门笔记『项目怎么组织』)。
 // internal/ 是 Go 的特殊约定:里面的包只能被本项目引用,用来放内部实现,外部项目无法 import。
-// Package api HTTP 路由与中间件。响应契约与原 FastAPI 后端保持一致。
+// Package api HTTP 路由与中间件。
 package api
 
 // import:声明本文件用到的外部包。第一组是 Go 自带的标准库,空行后一组是本项目内部包(见 GO入门笔记『项目怎么组织』)。
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -31,7 +33,7 @@ type Server struct {
 	App          *service.App
 	StaticDir    string
 	UploadsDir   string
-	loginLimiter *rateLimiter // 登录/刷新限流(见评审 #6)
+	loginLimiter *rateLimiter // 登录限流(见评审 #6)
 	metrics      *httpMetrics
 }
 
@@ -61,7 +63,12 @@ func NewServer(app *service.App, staticDir, uploadsDir string) http.Handler {
 func writeJSON(w http.ResponseWriter, status int, payload any) {
 	if object, ok := payload.(map[string]any); ok {
 		if code, ok := object["code"].(int); ok && code >= http.StatusBadRequest {
-			markResponseFailed(w)
+			detail, _ := object["detail"].(string)
+			if detail == "" {
+				detail, _ = object["msg"].(string)
+			}
+			writeProblemResponse(w, statusForProblem(status, code), detail, "")
+			return
 		}
 	}
 	// 顺序不能乱:先设响应头,再写状态码,最后写 body。WriteHeader 一旦调用,响应头就发出去了。
@@ -73,7 +80,7 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	_ = encoder.Encode(payload)
 }
 
-// ok 返回成功响应。全项目统一用 {code, msg, data} 这个"信封"结构,与原 FastAPI 后端保持一致。
+// ok 返回成功响应。成功响应沿用 {code, msg, data} 信封。
 // M{...} 是上面定义的 map 别名,这里现场拼出一个 JSON 对象。
 func ok(w http.ResponseWriter, data any) {
 	writeJSON(w, http.StatusOK, M{"code": 200, "msg": "success", "data": data})
@@ -83,20 +90,58 @@ func okMsg(w http.ResponseWriter, data any, msg string) {
 	writeJSON(w, http.StatusOK, M{"code": 200, "msg": msg, "data": data})
 }
 
-// fail 返回业务失败:注意 HTTP 状态仍是 200,只把信封里的 code 置为 400,前端按 code 判断成败。
+// fail 返回 HTTP 400 Problem Details。
 func fail(w http.ResponseWriter, msg string) {
-	writeJSON(w, http.StatusOK, M{"code": 400, "msg": msg, "data": nil})
+	writeJSON(w, http.StatusBadRequest, M{"code": http.StatusBadRequest, "msg": msg})
 }
 
-// failStatus 与 fail 不同:它让 HTTP 状态码本身变成非 200(如 401/403),用于鉴权类错误。
-// failStatus FastAPI HTTPException 等价物:非 200 状态 + detail。
+// failStatus 返回指定状态的 Problem Details。
 func failStatus(w http.ResponseWriter, status int, detail string) {
-	writeJSON(w, status, M{"code": status, "msg": detail, "detail": detail, "data": nil})
+	writeJSON(w, status, M{"code": status, "detail": detail})
+}
+
+func writeProblem(w http.ResponseWriter, r *http.Request, status int, detail string) {
+	requestID := ""
+	if state, ok := r.Context().Value(requestStateKey{}).(*requestState); ok {
+		requestID = state.requestID
+	}
+	if requestID == "" {
+		requestID = incomingRequestID(r.Header.Get(requestIDHeader))
+	}
+	writeProblemResponse(w, status, detail, requestID)
+}
+
+func writeProblemResponse(w http.ResponseWriter, status int, detail, requestID string) {
+	if requestID == "" {
+		requestID = incomingRequestID(w.Header().Get(requestIDHeader))
+	}
+	markResponseFailed(w)
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(status)
+	encoder := json.NewEncoder(w)
+	encoder.SetEscapeHTML(false)
+	_ = encoder.Encode(M{
+		"type":      "about:blank",
+		"title":     http.StatusText(status),
+		"status":    status,
+		"detail":    detail,
+		"requestId": requestID,
+	})
+}
+
+func statusForProblem(status, code int) int {
+	if status >= http.StatusBadRequest {
+		return status
+	}
+	if code >= http.StatusBadRequest && code <= 599 {
+		return code
+	}
+	return http.StatusBadRequest
 }
 
 // respond 业务结果统一出口:多数处理函数拿到 (data, err) 后直接交给它,由它决定成功/失败怎么回。
 // Go 不用异常,而是把"出错了吗"作为最后一个返回值 err 传出来;err != nil 即代表出错(见 GO入门笔记『错误处理』)。
-// respond 业务结果统一出口:权限错误 403,其余业务错误 code=400。
+// respond 业务结果统一出口:权限错误 403,其余业务错误 400。
 func respond(w http.ResponseWriter, data any, err error, successMsg string) {
 	if err != nil {
 		// errors.Is 判断 err 是否就是(或包裹了)指定的哨兵错误 ErrPermission;是权限问题就回 403。
@@ -131,20 +176,6 @@ func decodeBody[T any](r *http.Request) (*T, error) {
 		return nil, errors.New("请求体解析失败: " + err.Error())
 	}
 	return &payload, nil
-}
-
-// queryInt 从 URL 查询串(?name=...)取整数;取不到或非法就返回兜底值 fallback。分页参数 current/size 就靠它。
-func queryInt(r *http.Request, name string, fallback int) int {
-	// r.URL.Query().Get(name) 读取查询参数字符串;下面用 strconv.Atoi 转成 int。
-	raw := strings.TrimSpace(r.URL.Query().Get(name))
-	if raw == "" {
-		return fallback
-	}
-	value, err := strconv.Atoi(raw)
-	if err != nil || value <= 0 {
-		return fallback
-	}
-	return value
 }
 
 func queryStr(r *http.Request, name string) string {
@@ -183,12 +214,33 @@ func pathInt64(r *http.Request, name string) (int64, error) {
 	return value, nil
 }
 
-// clampSize 给分页每页条数封顶,防止前端传个超大 size 拖垮数据库。
-func clampSize(size, max int) int {
-	if size > max {
-		return max
+func queryCursorPage(r *http.Request) (service.CursorPage, error) {
+	limit := 50
+	if raw := queryStr(r, "limit"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > 200 {
+			return service.CursorPage{}, errors.New("limit must be between 1 and 200")
+		}
+		limit = value
 	}
-	return size
+	values := r.URL.Query()
+	values.Del("cursor")
+	values.Del("limit")
+	pattern := r.Pattern
+	if pattern == "" {
+		pattern = r.Method + " " + r.URL.Path
+	}
+	scope := fmt.Sprintf("%x", sha256.Sum256([]byte(pattern+"?"+values.Encode())))
+	return service.ParseCursorPage(queryStr(r, "cursor"), limit, scope)
+}
+
+func cursorPage(w http.ResponseWriter, r *http.Request) (service.CursorPage, bool) {
+	page, err := queryCursorPage(r)
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, err.Error())
+		return service.CursorPage{}, false
+	}
+	return page, true
 }
 
 // ---------- 认证中间件 ----------
@@ -219,37 +271,13 @@ func (s *Server) requireAuth(next authedHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := extractBearerToken(r)
 		if token == "" {
-			failStatus(w, http.StatusUnauthorized, "Missing authorization header")
+			writeProblem(w, r, http.StatusUnauthorized, "missing authorization header")
 			return
 		}
 		// 一次接住两个返回值:principal 是解析出的用户,err 是错误。这就是 Go 的多返回值(见 GO入门笔记『函数 & 多返回值』)。
 		principal, err := s.App.AuthenticateAccessToken(token)
 		if err != nil {
-			failStatus(w, http.StatusUnauthorized, err.Error())
-			return
-		}
-		setAuditActor(r, principal.User.ID)
-		next(w, r, principal)
-	}
-}
-
-// requireGuestOrAuth 与 requireAuth 类似,但没带 token 时不报错,而是构造一个"游客"身份继续访问(用于登录页也要用的接口)。
-// requireGuestOrAuth 允许游客访问。
-func (s *Server) requireGuestOrAuth(next authedHandler) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		token := extractBearerToken(r)
-		if token == "" {
-			principal, err := s.App.BuildGuestPrincipal()
-			if err != nil {
-				failStatus(w, http.StatusUnauthorized, err.Error())
-				return
-			}
-			next(w, r, principal)
-			return
-		}
-		principal, err := s.App.AuthenticateAccessToken(token)
-		if err != nil {
-			failStatus(w, http.StatusUnauthorized, err.Error())
+			writeProblem(w, r, http.StatusUnauthorized, "invalid access token")
 			return
 		}
 		setAuditActor(r, principal.User.ID)
@@ -264,7 +292,7 @@ func (s *Server) requireGuestOrAuth(next authedHandler) http.HandlerFunc {
 func (s *Server) requirePermission(code string, next authedHandler) http.HandlerFunc {
 	return s.requireAuth(func(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
 		if !principal.HasPermission(code) {
-			failStatus(w, http.StatusForbidden, "无权访问")
+			writeProblem(w, r, http.StatusForbidden, "permission denied")
 			return
 		}
 		next(w, r, principal)

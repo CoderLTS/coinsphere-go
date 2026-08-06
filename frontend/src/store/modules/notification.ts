@@ -45,7 +45,7 @@ export function decodeNotificationWsEnvelope(
 const NOTIFICATION_WS_PROTOCOL = 'coinsphere.notifications.v1'
 
 export function buildNotificationWsUrl(pageOrigin: string) {
-  const url = new URL('/ws/notifications', pageOrigin)
+  const url = new URL('/api/v1/ws/notifications', pageOrigin)
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new Error('notification websocket requires an HTTP page origin')
   }
@@ -56,8 +56,8 @@ export function buildNotificationWsUrl(pageOrigin: string) {
 export const useNotificationStore = defineStore('notificationStore', () => {
   const records = ref<Api.Notifications.InAppNoticeItem[]>([])
   const unreadCount = ref(0)
-  const current = ref(1)
   const size = ref(20)
+  const nextCursor = ref('')
   const total = ref(0)
   const hasMore = ref(false)
   const loading = ref(false)
@@ -74,7 +74,7 @@ export const useNotificationStore = defineStore('notificationStore', () => {
   const resetState = () => {
     records.value = []
     unreadCount.value = 0
-    current.value = 1
+    nextCursor.value = ''
     total.value = 0
     hasMore.value = false
     loading.value = false
@@ -85,8 +85,7 @@ export const useNotificationStore = defineStore('notificationStore', () => {
     const normalizedRecords = page.records.map(normalizeNoticeRecord)
     records.value = append ? [...records.value, ...normalizedRecords] : normalizedRecords
     unreadCount.value = page.unreadCount
-    current.value = page.current
-    size.value = page.size
+    nextCursor.value = page.nextCursor
     total.value = page.total
     hasMore.value = page.hasMore
   }
@@ -97,8 +96,10 @@ export const useNotificationStore = defineStore('notificationStore', () => {
     }
     loading.value = true
     try {
-      const nextCurrent = options?.append ? current.value + 1 : 1
-      const page = await fetchInAppNoticeList({ current: nextCurrent, size: size.value })
+      const page = await fetchInAppNoticeList({
+        cursor: options?.append ? nextCursor.value || undefined : undefined,
+        limit: size.value
+      })
       applyPage(page, Boolean(options?.append))
     } finally {
       loading.value = false
@@ -251,7 +252,6 @@ export const useNotificationStore = defineStore('notificationStore', () => {
   return {
     records,
     unreadCount,
-    current,
     size,
     total,
     hasMore,

@@ -21,7 +21,6 @@ const mocks = vi.hoisted(() => {
   vi.stubGlobal('sessionStorage', createStorage())
 
   return {
-    fetchRefreshSession: vi.fn(),
     logout: vi.fn(),
     routerReplace: vi.fn(),
     resetRouterState: vi.fn(),
@@ -31,7 +30,6 @@ const mocks = vi.hoisted(() => {
 })
 
 vi.mock('@/api/auth', () => ({
-  fetchRefreshSession: mocks.fetchRefreshSession,
   logout: mocks.logout
 }))
 vi.mock('@/router', () => ({
@@ -61,9 +59,12 @@ vi.mock('./error', () => {
     HttpError,
     handleError: (error: {
       message: string
-      response?: { status?: number; data?: { msg?: string } }
+      response?: { status?: number; data?: { detail?: string } }
     }) => {
-      throw new HttpError(error.response?.data?.msg || error.message, error.response?.status || 400)
+      throw new HttpError(
+        error.response?.data?.detail || error.message,
+        error.response?.status || 400
+      )
     },
     showError: vi.fn(),
     showSuccess: vi.fn()
@@ -73,66 +74,79 @@ vi.mock('./error', () => {
 import { useUserStore } from '@/store/modules/user'
 import request from './index'
 
-function createProtectedAdapter(unauthorizedAs: 'http' | 'envelope') {
+function createProtectedAdapter() {
   let attempts = 0
   const adapter: AxiosAdapter = async (config) => {
     attempts += 1
-    const authorized = config.headers.get('Authorization') === 'Bearer refreshed-access-token'
     const response = {
-      data: authorized
-        ? { code: 200, msg: '', data: config.url }
-        : { code: 401, msg: 'expired', data: null },
-      status: 200,
-      statusText: 'OK',
-      headers: {},
+      data: {
+        type: 'about:blank',
+        title: 'Unauthorized',
+        status: 401,
+        detail: 'expired',
+        requestId: 'test-request'
+      },
+      status: 401,
+      statusText: 'Unauthorized',
+      headers: { 'content-type': 'application/problem+json' },
       config
     }
-    if (!authorized && unauthorizedAs === 'http') {
-      response.status = 401
-      throw new AxiosError('expired', AxiosError.ERR_BAD_REQUEST, config, undefined, response)
-    }
-    return response
+    throw new AxiosError('expired', AxiosError.ERR_BAD_REQUEST, config, undefined, response)
   }
 
   return { adapter, attempts: () => attempts }
 }
 
-describe('HTTP 会话恢复', () => {
+describe('HTTP 会话边界', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
-    mocks.fetchRefreshSession.mockReset()
-    mocks.fetchRefreshSession.mockResolvedValue({ token: 'refreshed-access-token' })
+    mocks.logout.mockReset()
   })
 
-  it('页面恢复期间的并发刷新共享同一个请求', async () => {
-    const userStore = useUserStore()
-
-    const first = userStore.refreshSession()
-    const second = userStore.refreshSession()
-
-    await expect(Promise.all([first, second])).resolves.toEqual([
-      'refreshed-access-token',
-      'refreshed-access-token'
-    ])
-    expect(mocks.fetchRefreshSession).toHaveBeenCalledTimes(1)
-    expect(userStore.accessToken).toBe('refreshed-access-token')
-  })
-
-  it('并发 HTTP 与业务信封 401 只刷新一次并分别重试一次', async () => {
+  it('401 清理内存会话且不刷新或重试', async () => {
     const userStore = useUserStore()
     userStore.setToken('expired-access-token')
-    const first = createProtectedAdapter('http')
-    const second = createProtectedAdapter('envelope')
+    userStore.setLoginStatus(true)
+    const protectedRequest = createProtectedAdapter()
+
+    await expect(
+      request.get<string>({ url: '/api/v1/protected', adapter: protectedRequest.adapter })
+    ).rejects.toMatchObject({ code: 401, message: 'expired' })
+
+    expect(protectedRequest.attempts()).toBe(1)
+    expect(userStore.accessToken).toBe('')
+    expect(userStore.isLogin).toBe(false)
+  })
+
+  it('并发 401 不会调用登出网络接口', async () => {
+    const userStore = useUserStore()
+    userStore.setToken('expired-access-token')
+    userStore.setLoginStatus(true)
+    const first = createProtectedAdapter()
+    const second = createProtectedAdapter()
 
     await expect(
       Promise.all([
-        request.get<string>({ url: '/api/protected/first', adapter: first.adapter }),
-        request.get<string>({ url: '/api/protected/second', adapter: second.adapter })
+        request.get<string>({ url: '/api/v1/protected/first', adapter: first.adapter }),
+        request.get<string>({ url: '/api/v1/protected/second', adapter: second.adapter })
       ])
-    ).resolves.toEqual(['/api/protected/first', '/api/protected/second'])
+    ).rejects.toBeTruthy()
 
-    expect(mocks.fetchRefreshSession).toHaveBeenCalledTimes(1)
-    expect(first.attempts()).toBe(2)
-    expect(second.attempts()).toBe(2)
+    expect(first.attempts()).toBe(1)
+    expect(second.attempts()).toBe(1)
+    expect(mocks.logout).not.toHaveBeenCalled()
+  })
+
+  it('登出在清理会话前捕获访问令牌', async () => {
+    const userStore = useUserStore()
+    userStore.setToken('active-access-token')
+    userStore.setLoginStatus(true)
+
+    userStore.logOut()
+
+    expect(userStore.accessToken).toBe('')
+    await vi.waitFor(() => {
+      expect(mocks.logout).toHaveBeenCalledWith('active-access-token')
+    })
   })
 })

@@ -411,8 +411,8 @@
     try {
       // 通知节点的用户/角色选项按需加载，避免编辑器首次进入时拉太多非必要数据。
       const [userListResult, roleListResult] = await Promise.all([
-        fetchGetUserList({ current: 1, size: 100, isActive: true }).catch(() => null),
-        fetchGetRoleList({ current: 1, size: 100, isEnabled: true }).catch(() => null)
+        fetchGetUserList({ limit: 100, isActive: true }).catch(() => null),
+        fetchGetRoleList({ limit: 100, isEnabled: true }).catch(() => null)
       ])
 
       notifyUserOptions.value = (userListResult?.records || []).map((item) => ({

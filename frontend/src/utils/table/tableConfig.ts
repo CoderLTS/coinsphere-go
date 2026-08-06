@@ -22,9 +22,6 @@
  *
  * - recordFields: 列表数据字段名（按优先级顺序查找）
  * - totalFields: 总条数字段名
- * - currentFields: 当前页码字段名
- * - sizeFields: 每页大小字段名
- * - paginationKey: 前端发送请求时使用的分页参数名
  *
  * ## 扩展方式
  *
@@ -39,18 +36,5 @@ export const tableConfig = {
   // 列表数据
   recordFields: ['list', 'data', 'records', 'items', 'result', 'rows'],
   // 总条数
-  totalFields: ['total', 'count'],
-  // 当前页码
-  currentFields: ['current', 'page', 'pageNum'],
-  // 每页大小
-  sizeFields: ['size', 'pageSize', 'limit'],
-
-  // 请求参数映射配置，前端发送请求时使用的分页参数名
-  // useTable 组合式函数传递分页参数的时候 用 current 跟 size
-  paginationKey: {
-    // 当前页码
-    current: 'current',
-    // 每页大小
-    size: 'size'
-  }
+  totalFields: ['total', 'count']
 }

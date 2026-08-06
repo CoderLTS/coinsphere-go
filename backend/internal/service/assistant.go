@@ -149,7 +149,7 @@ func (a *App) ListSessionMessages(principal *Principal, sessionID int64) ([]M, e
 }
 
 // ListSessions 会话历史分页。
-func (a *App) ListSessions(principal *Principal, agentCode string, current, size int) (M, error) {
+func (a *App) ListSessions(principal *Principal, agentCode string, page CursorPage) (M, error) {
 	var agent db.AssistantAgent
 	if err := a.DB.Where("code = ?", agentCode).First(&agent).Error; err != nil {
 		return nil, bizErr("智能体不存在")
@@ -158,14 +158,26 @@ func (a *App) ListSessions(principal *Principal, agentCode string, current, size
 		return nil, ErrPermission
 	}
 	userID := principal.User.ID
+	afterID, err := page.AfterID()
+	if err != nil {
+		return nil, err
+	}
 	var total int64
 	a.DB.Model(&db.AssistantSession{}).Where("user_id = ? AND agent_id = ?", userID, agent.ID).Count(&total)
 	// GORM 链式查询可以跨多行:Where 条件、Order 排序、Offset/Limit 分页(跳过前几条、每页取几条),
 	// 最后 Find 把结果写回 sessions(见 GO入门笔记『框架:GORM』)。? 是占位符,防 SQL 注入。
 	var sessions []db.AssistantSession
-	a.DB.Where("user_id = ? AND agent_id = ?", userID, agent.ID).
-		Order("last_message_at DESC, updated_at DESC, id DESC").
-		Offset((current - 1) * size).Limit(size).Find(&sessions)
+	query := a.DB.Where("user_id = ? AND agent_id = ?", userID, agent.ID)
+	if afterID > 0 {
+		query = query.Where("id < ?", afterID)
+	}
+	if err := query.Order("id DESC").Limit(page.Limit + 1).Find(&sessions).Error; err != nil {
+		return nil, err
+	}
+	hasMore := len(sessions) > page.Limit
+	if hasMore {
+		sessions = sessions[:page.Limit]
+	}
 
 	// 预览和条数一次性批量查出来。早先是在循环里对每个会话各查两次,
 	// 一页 20 条就是 41 次查询(N+1)。
@@ -181,9 +193,11 @@ func (a *App) ListSessions(principal *Principal, agentCode string, current, size
 		item["latestPreview"] = truncateRunes(previewMap[session.ID], 160)
 		records = append(records, item)
 	}
-	result := pagedResult(records, current, size, total)
-	result["hasMore"] = int64(current*size) < total
-	return result, nil
+	lastKey := ""
+	if len(sessions) > 0 {
+		lastKey = int64CursorKey(sessions[len(sessions)-1].ID)
+	}
+	return cursorResult(records, page, lastKey, hasMore, total), nil
 }
 
 // DeleteSession 删除会话。

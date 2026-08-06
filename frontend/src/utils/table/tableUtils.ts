@@ -44,7 +44,7 @@ import type { ApiResponse } from './tableCache'
 import { tableConfig } from './tableConfig'
 
 // 请求参数基础接口，扩展分页参数
-export interface BaseRequestParams extends Api.Common.PaginationParams {
+export interface BaseRequestParams extends Api.Common.CursorParams {
   [key: string]: unknown
 }
 
@@ -75,38 +75,18 @@ function extractTotal(obj: Record<string, unknown>, records: unknown[], fields: 
   return records.length
 }
 
-// 辅助函数：提取分页参数
-function extractPagination(
+// 辅助函数：提取游标分页结果
+function extractCursorPagination(
   obj: Record<string, unknown>,
   data?: Record<string, unknown>
-): Pick<ApiResponse<unknown>, 'current' | 'size'> | undefined {
-  const result: Partial<Pick<ApiResponse<unknown>, 'current' | 'size'>> = {}
+): Pick<ApiResponse<unknown>, 'nextCursor' | 'hasMore'> {
   const sources = [obj, data ?? {}]
-
-  const currentFields = tableConfig.currentFields
   for (const src of sources) {
-    for (const field of currentFields) {
-      if (field in src && typeof src[field] === 'number') {
-        result.current = src[field] as number
-        break
-      }
+    if (typeof src.nextCursor === 'string' && typeof src.hasMore === 'boolean') {
+      return { nextCursor: src.nextCursor, hasMore: src.hasMore }
     }
-    if (result.current !== undefined) break
   }
-
-  const sizeFields = tableConfig.sizeFields
-  for (const src of sources) {
-    for (const field of sizeFields) {
-      if (field in src && typeof src[field] === 'number') {
-        result.size = src[field] as number
-        break
-      }
-    }
-    if (result.size !== undefined) break
-  }
-
-  if (result.current === undefined && result.size === undefined) return undefined
-  return result
+  return { nextCursor: '', hasMore: false }
 }
 
 /**
@@ -137,19 +117,19 @@ export const defaultResponseAdapter = <T>(response: unknown): ApiResponse<T> => 
   const res = response as Record<string, unknown>
   let records: T[] = []
   let total = 0
-  let pagination: Pick<ApiResponse<unknown>, 'current' | 'size'> | undefined
+  let pagination: Pick<ApiResponse<unknown>, 'nextCursor' | 'hasMore'>
 
   // 处理标准格式或直接列表
   records = extractRecords(res, recordFields)
   total = extractTotal(res, records, tableConfig.totalFields)
-  pagination = extractPagination(res)
+  pagination = extractCursorPagination(res)
 
   // 如果没有找到，检查嵌套data
   if (records.length === 0 && 'data' in res && typeof res.data === 'object') {
     const data = res.data as Record<string, unknown>
     records = extractRecords(data, ['list', 'records', 'items'])
     total = extractTotal(data, records, tableConfig.totalFields)
-    pagination = extractPagination(res, data)
+    pagination = extractCursorPagination(res, data)
 
     if (Array.isArray(res.data)) {
       records = res.data as T[]
@@ -163,11 +143,7 @@ export const defaultResponseAdapter = <T>(response: unknown): ApiResponse<T> => 
     console.warn('扩展字段请到 utils/table/tableConfig 文件配置')
   }
 
-  const result: ApiResponse<T> = { records, total }
-  if (pagination) {
-    Object.assign(result, pagination)
-  }
-  return result
+  return { records, total, ...pagination }
 }
 
 /**
@@ -181,25 +157,7 @@ export const extractTableData = <T>(response: ApiResponse<T>): T[] => {
 /**
  * 根据API响应更新分页信息
  */
-export const updatePaginationFromResponse = <T>(
-  pagination: Api.Common.PaginationParams,
-  response: ApiResponse<T>
-): void => {
-  pagination.total = response.total ?? pagination.total ?? 0
-
-  if (response.current !== undefined) {
-    pagination.current = response.current
-  }
-
-  const maxPage = Math.max(1, Math.ceil(pagination.total / (pagination.size || 1)))
-  if (pagination.current > maxPage) {
-    pagination.current = maxPage
-  }
-}
-
-/**
- * 创建智能防抖函数 - 支持取消和立即执行
- */
+/** 创建智能防抖函数 - 支持取消和立即执行 */
 export const createSmartDebounce = <T extends (...args: any[]) => Promise<any>>(
   fn: T,
   delay: number

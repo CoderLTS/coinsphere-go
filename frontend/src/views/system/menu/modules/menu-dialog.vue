@@ -441,7 +441,7 @@
   }
 
   const loadRoles = async () => {
-    const data = await fetchGetRoleList({ current: 1, size: 50, isEnabled: true })
+    const data = await fetchGetRoleList({ limit: 50, isEnabled: true })
     roleList.value = data.records
   }
 

@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// rateLimiter 进程内按 key(客户端 IP)的固定窗口限流,用于挡住登录/刷新的暴力尝试(见评审 #6)。
+// rateLimiter 进程内按 key(客户端 IP)的固定窗口限流,用于挡住登录暴力尝试(见评审 #6)。
 // ponytail: 单实例内存实现,重启即清零、不跨实例共享;多实例部署需换成 Redis 等集中式限流。
 // ponytail: counts 无主动淘汰,登录来源 IP 有限、过期窗口会被下次访问覆盖,故可接受;IP 面极大时再加定期清扫。
 type rateLimiter struct {
@@ -64,7 +64,7 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
-// rateLimit 给登录/刷新接口套一层限流:同一 IP 在窗口内尝试过多返回 429。
+// rateLimit 给登录接口套一层限流:同一 IP 在窗口内尝试过多返回 429。
 func (s *Server) rateLimit(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.loginLimiter.allow(clientIP(r)) {

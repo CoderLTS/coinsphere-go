@@ -29,19 +29,19 @@ export interface ConfigOverviewResponse {
 
 export function fetchConfigOverview() {
   return request.get<ConfigOverviewResponse>({
-    url: '/api/config/overview'
+    url: '/api/v1/config/overview'
   })
 }
 
 export function fetchAiModelList() {
   return request.get<AiModelConfigItem[]>({
-    url: '/api/config/ai-models'
+    url: '/api/v1/config/ai-models'
   })
 }
 
 export function fetchCreateAiModel(params: AiModelUpsertPayload) {
   return request.post<{ id: number }>({
-    url: '/api/config/ai-models',
+    url: '/api/v1/config/ai-models',
     params,
     showSuccessMessage: true
   })
@@ -49,7 +49,7 @@ export function fetchCreateAiModel(params: AiModelUpsertPayload) {
 
 export function fetchUpdateAiModel(configId: number, params: AiModelUpsertPayload) {
   return request.put<{ id: number }>({
-    url: `/api/config/ai-models/${configId}`,
+    url: `/api/v1/config/ai-models/${configId}`,
     params,
     showSuccessMessage: true
   })
@@ -57,14 +57,14 @@ export function fetchUpdateAiModel(configId: number, params: AiModelUpsertPayloa
 
 export function fetchDeleteAiModel(configId: number) {
   return request.del<void>({
-    url: `/api/config/ai-models/${configId}`,
+    url: `/api/v1/config/ai-models/${configId}`,
     showSuccessMessage: true
   })
 }
 
 export function fetchEnableAiModel(configId: number) {
   return request.request<void>({
-    url: `/api/config/ai-models/${configId}`,
+    url: `/api/v1/config/ai-models/${configId}`,
     method: 'PATCH',
     data: { isEnabled: true },
     showSuccessMessage: true
@@ -73,7 +73,7 @@ export function fetchEnableAiModel(configId: number) {
 
 export function fetchDisableAiModel(configId: number) {
   return request.request<void>({
-    url: `/api/config/ai-models/${configId}`,
+    url: `/api/v1/config/ai-models/${configId}`,
     method: 'PATCH',
     data: { isEnabled: false },
     showSuccessMessage: true
@@ -87,14 +87,14 @@ export function fetchValidateAiModel(configId: number) {
     message: string
     validatedAt?: string
   }>({
-    url: `/api/config/ai-models/${configId}/validations`,
+    url: `/api/v1/config/ai-models/${configId}/validations`,
     showSuccessMessage: true
   })
 }
 
 export function fetchBindAiModelAgents(configId: number, params: AiModelAgentBindingPayload) {
   return request.put<void>({
-    url: `/api/config/ai-models/${configId}/agent-bindings`,
+    url: `/api/v1/config/ai-models/${configId}/agent-bindings`,
     params,
     showSuccessMessage: true
   })
@@ -102,19 +102,19 @@ export function fetchBindAiModelAgents(configId: number, params: AiModelAgentBin
 
 export function fetchAiProviderMeta() {
   return request.get<AiProviderMeta>({
-    url: '/api/config/ai-models/meta'
+    url: '/api/v1/config/ai-models/meta'
   })
 }
 
 export function fetchAssistantAgentList() {
   return request.get<AssistantAgentItem[]>({
-    url: '/api/config/assistant-agents'
+    url: '/api/v1/config/assistant-agents'
   })
 }
 
 export function fetchCreateAssistantAgent(params: AssistantAgentUpsertPayload) {
   return request.post<{ id: number }>({
-    url: '/api/config/assistant-agents',
+    url: '/api/v1/config/assistant-agents',
     params,
     showSuccessMessage: true
   })
@@ -122,7 +122,7 @@ export function fetchCreateAssistantAgent(params: AssistantAgentUpsertPayload) {
 
 export function fetchUpdateAssistantAgent(agentId: number, params: AssistantAgentUpsertPayload) {
   return request.put<{ id: number }>({
-    url: `/api/config/assistant-agents/${agentId}`,
+    url: `/api/v1/config/assistant-agents/${agentId}`,
     params,
     showSuccessMessage: true
   })
@@ -130,14 +130,14 @@ export function fetchUpdateAssistantAgent(agentId: number, params: AssistantAgen
 
 export function fetchDeleteAssistantAgent(agentId: number) {
   return request.del<void>({
-    url: `/api/config/assistant-agents/${agentId}`,
+    url: `/api/v1/config/assistant-agents/${agentId}`,
     showSuccessMessage: true
   })
 }
 
 export function fetchEnableAssistantAgent(agentId: number) {
   return request.request<void>({
-    url: `/api/config/assistant-agents/${agentId}`,
+    url: `/api/v1/config/assistant-agents/${agentId}`,
     method: 'PATCH',
     data: { isEnabled: true },
     showSuccessMessage: true
@@ -146,7 +146,7 @@ export function fetchEnableAssistantAgent(agentId: number) {
 
 export function fetchDisableAssistantAgent(agentId: number) {
   return request.request<void>({
-    url: `/api/config/assistant-agents/${agentId}`,
+    url: `/api/v1/config/assistant-agents/${agentId}`,
     method: 'PATCH',
     data: { isEnabled: false },
     showSuccessMessage: true
@@ -155,25 +155,25 @@ export function fetchDisableAssistantAgent(agentId: number) {
 
 export function fetchAssistantAgentMeta() {
   return request.get<AssistantAgentMeta>({
-    url: '/api/config/assistant-agents/meta'
+    url: '/api/v1/config/assistant-agents/meta'
   })
 }
 
 export function fetchNotifyChannelList() {
   return request.get<NotifyChannelItem[]>({
-    url: '/api/config/notification-channels'
+    url: '/api/v1/notification-channels'
   })
 }
 
 export function fetchNotifyChannelMeta() {
   return request.get<NotifyChannelMeta>({
-    url: '/api/config/notification-channels/meta'
+    url: '/api/v1/notification-channels/meta'
   })
 }
 
 export function fetchCreateNotifyChannel(params: NotifyChannelUpsertPayload) {
   return request.post<{ id: number }>({
-    url: '/api/config/notification-channels',
+    url: '/api/v1/notification-channels',
     params,
     showSuccessMessage: true
   })
@@ -181,7 +181,7 @@ export function fetchCreateNotifyChannel(params: NotifyChannelUpsertPayload) {
 
 export function fetchUpdateNotifyChannel(channelId: number, params: NotifyChannelUpsertPayload) {
   return request.put<{ id: number }>({
-    url: `/api/config/notification-channels/${channelId}`,
+    url: `/api/v1/notification-channels/${channelId}`,
     params,
     showSuccessMessage: true
   })
@@ -189,14 +189,14 @@ export function fetchUpdateNotifyChannel(channelId: number, params: NotifyChanne
 
 export function fetchDeleteNotifyChannel(channelId: number) {
   return request.del<void>({
-    url: `/api/config/notification-channels/${channelId}`,
+    url: `/api/v1/notification-channels/${channelId}`,
     showSuccessMessage: true
   })
 }
 
 export function fetchEnableNotifyChannel(channelId: number) {
   return request.request<void>({
-    url: `/api/config/notification-channels/${channelId}`,
+    url: `/api/v1/notification-channels/${channelId}`,
     method: 'PATCH',
     data: { isEnabled: true },
     showSuccessMessage: true
@@ -205,7 +205,7 @@ export function fetchEnableNotifyChannel(channelId: number) {
 
 export function fetchDisableNotifyChannel(channelId: number) {
   return request.request<void>({
-    url: `/api/config/notification-channels/${channelId}`,
+    url: `/api/v1/notification-channels/${channelId}`,
     method: 'PATCH',
     data: { isEnabled: false },
     showSuccessMessage: true
@@ -219,7 +219,7 @@ export function fetchTestNotifyChannel(channelId: number) {
     message: string
     testedAt: string
   }>({
-    url: `/api/config/notification-channels/${channelId}/tests`,
+    url: `/api/v1/notification-channels/${channelId}/tests`,
     showSuccessMessage: true
   })
 }

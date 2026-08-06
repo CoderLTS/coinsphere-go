@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"coinsphere/backend/internal/db"
 	"coinsphere/backend/internal/security"
@@ -18,7 +19,9 @@ import (
 // var 在函数外声明的是"包级变量",整个包都能用。errors.New 造一个固定的错误值(称"哨兵错误"),
 // 之后用 errors.Is 判断"是不是这个错误",比直接比较字符串更可靠。见 GO入门笔记『变量、函数、错误』。
 // errBacklogExceeded 同一并发键等待队列超限(HTTP 429)。
-var errBacklogExceeded = errors.New("current start entry backlog exceeded the configured limit")
+var ErrBacklogExceeded = errors.New("current start entry backlog exceeded the configured limit")
+
+var errBacklogExceeded = ErrBacklogExceeded
 
 // isBacklogExceeded 判断错误是否为积压超限。
 func isBacklogExceeded(err error) bool { return errors.Is(err, errBacklogExceeded) }
@@ -306,9 +309,16 @@ func (a *App) RotateWebhookSecret(definitionID int64, entryKey string) (M, error
 // ---------- 触发入队 ----------
 
 // RunManualStarts 手动触发一个或多个 start.manual 入口。
-func (a *App) RunManualStarts(definitionID int64, startEntryKeys []string, triggeredBy int64, inputs M) ([]M, error) {
+func (a *App) RunManualStarts(definitionID int64, startEntryKeys []string, triggeredBy int64, inputs M, idempotencyKey string) ([]M, error) {
 	if len(startEntryKeys) == 0 {
 		return nil, bizErr("At least one start entry must be selected")
+	}
+	requestHash, err := canonicalRequestHash(struct {
+		StartEntryKeys []string `json:"startEntryKeys"`
+		Inputs         M        `json:"inputs"`
+	}{StartEntryKeys: startEntryKeys, Inputs: inputs})
+	if err != nil {
+		return nil, err
 	}
 	definition, err := a.requireDefinition(definitionID)
 	if err != nil {
@@ -330,24 +340,60 @@ func (a *App) RunManualStarts(definitionID int64, startEntryKeys []string, trigg
 			manualStartNodes[entryKey] = node
 		}
 	}
-	executions := make([]M, 0, len(startEntryKeys))
+	startNodes := make([]M, 0, len(startEntryKeys))
+	entryKeys := make([]string, 0, len(startEntryKeys))
 	for _, entryKey := range startEntryKeys {
 		normalized := strings.TrimSpace(entryKey)
 		startNode := manualStartNodes[normalized]
 		if startNode == nil {
 			return nil, bizErr("Manual start entry does not exist: %s", normalized)
 		}
-		execution, _, err := a.enqueueStartNodeExecution(definition, startNode, M{
-			"triggerType": "manual",
-			"triggeredBy": triggeredBy,
-			"triggerKey":  "manual:" + definition.Code + ":" + normalized + ":" + int64Text(time.Now().UnixNano()),
-			"payload":     M{},
-			"inputs":      inputs,
-		})
+		startNodes = append(startNodes, startNode)
+		entryKeys = append(entryKeys, normalized)
+	}
+
+	executions := make([]M, 0, len(startNodes))
+	created := false
+	err = a.DB.Transaction(func(tx *gorm.DB) error {
+		record, reused, err := a.reserveIdempotencyRecord(tx, triggeredBy, "workflow:manual:"+int64Text(definitionID), idempotencyKey, requestHash)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		executions = append(executions, a.serializeExecutionSummary(execution))
+		for index, startNode := range startNodes {
+			entryKey := entryKeys[index]
+			internalKey := workflowExecutionIdempotencyKey(record.ID, "manual:"+int64Text(definitionID)+":"+entryKey)
+			if reused {
+				execution, err := a.getExecutionByIdempotencyKeyWithDB(tx, "manual", internalKey)
+				if err != nil {
+					return err
+				}
+				if execution == nil {
+					return errors.New("idempotency record has no workflow execution")
+				}
+				executions = append(executions, a.serializeExecutionSummary(execution))
+				continue
+			}
+			execution, duplicate, err := a.enqueueStartNodeExecutionWithDB(tx, definition, startNode, M{
+				"triggerType":    "manual",
+				"triggeredBy":    triggeredBy,
+				"triggerKey":     "manual:" + definition.Code + ":" + entryKey + ":record:" + int64Text(record.ID),
+				"payload":        M{},
+				"inputs":         inputs,
+				"idempotencyKey": internalKey,
+			})
+			if err != nil {
+				return err
+			}
+			created = created || !duplicate
+			executions = append(executions, a.serializeExecutionSummary(execution))
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if created {
+		a.wakeDispatcher()
 	}
 	return executions, nil
 }
@@ -389,8 +435,15 @@ func (a *App) RunRuntimeEntry(runtimeEntryID int64, triggerCtx M) (M, error) {
 	return M{"execution": a.serializeExecutionSummary(execution), "duplicate": duplicate}, nil
 }
 
-// TriggerWebhook 校验 secret 后触发 webhook 入口。
-func (a *App) TriggerWebhook(workflowCode, entryKey, secret string, payload M, idempotencyKey string) (M, error) {
+// TriggerWebhook 校验已登录用户和 secret 后触发 webhook 入口。
+func (a *App) TriggerWebhook(triggeredBy int64, workflowCode, entryKey, secret string, payload M, idempotencyKey string) (M, error) {
+	if triggeredBy <= 0 {
+		return nil, bizErr("Webhook trigger user is required")
+	}
+	requestHash, err := canonicalRequestHash(payload)
+	if err != nil {
+		return nil, err
+	}
 	state := a.getRuntimeStateByCode(workflowCode)
 	if state == nil || state.ActiveWorkflowDefinitionID == nil {
 		return nil, bizErr("Workflow code is not active")
@@ -402,33 +455,78 @@ func (a *App) TriggerWebhook(workflowCode, entryKey, secret string, payload M, i
 	if !entry.IsEnabled {
 		return nil, bizErr("Webhook start entry is disabled")
 	}
+	if *state.ActiveWorkflowDefinitionID != entry.WorkflowDefinitionID {
+		return nil, bizErr("Webhook start entry is not bound to the active definition")
+	}
 	// 校验密钥:把传入明文按同样算法哈希后,与库里存的 secret_hash 做恒定时间比对,不一致就拒绝(库里从不存明文)。见评审 #3/#9。
 	if secret == "" || entry.SecretHash == "" ||
 		!security.SecureCompare(security.HashWebhookSecret(a.Cfg.Auth.WebhookPepper, secret), entry.SecretHash) {
 		return nil, bizErr("Webhook secret is invalid")
 	}
-	normalizedIdempotency := strings.TrimSpace(idempotencyKey)
-	triggerKey := "webhook:" + workflowCode + ":" + entryKey + ":"
-	if normalizedIdempotency != "" {
-		triggerKey += normalizedIdempotency
-	} else {
-		triggerKey += int64Text(time.Now().UnixNano())
+	definition, err := a.requireDefinition(entry.WorkflowDefinitionID)
+	if err != nil {
+		return nil, err
 	}
-	triggerCtx := M{
-		"triggerType": "webhook",
-		"triggerKey":  triggerKey,
-		"payload":     payload,
+	startNode := findStartNodeByEntryKey(loadJSONObject(definition.GraphJSON), entry.EntryKey, "")
+	if startNode == nil {
+		return nil, bizErr("Workflow start entry does not exist in definition")
 	}
-	if normalizedIdempotency != "" {
-		triggerCtx["idempotencyKey"] = normalizedIdempotency
+
+	var result M
+	created := false
+	err = a.DB.Transaction(func(tx *gorm.DB) error {
+		record, reused, err := a.reserveIdempotencyRecord(tx, triggeredBy, "workflow:webhook:"+workflowCode+":"+entryKey, idempotencyKey, requestHash)
+		if err != nil {
+			return err
+		}
+		internalKey := workflowExecutionIdempotencyKey(record.ID, "webhook:"+workflowCode+":"+entryKey)
+		if reused {
+			execution, err := a.getExecutionByIdempotencyKeyWithDB(tx, "webhook", internalKey)
+			if err != nil {
+				return err
+			}
+			if execution == nil {
+				return errors.New("idempotency record has no workflow execution")
+			}
+			result = M{"execution": a.serializeExecutionSummary(execution), "duplicate": true}
+			return nil
+		}
+
+		execution, duplicate, err := a.enqueueStartNodeExecutionWithDB(tx, definition, startNode, M{
+			"triggerType":    "webhook",
+			"triggeredBy":    triggeredBy,
+			"triggerKey":     "webhook:" + workflowCode + ":" + entryKey + ":record:" + int64Text(record.ID),
+			"payload":        payload,
+			"idempotencyKey": internalKey,
+		})
+		if err != nil {
+			return err
+		}
+		created = !duplicate
+		result = M{"execution": a.serializeExecutionSummary(execution), "duplicate": duplicate}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	return a.RunRuntimeEntry(entry.ID, triggerCtx)
+	if created {
+		a.wakeDispatcher()
+	}
+	return result, nil
 }
 
 // 这是"数据库即队列"的入队口:把一次触发变成 workflow_executions 表里一条 status='queued' 的记录。
 // 之后由 loops.go 的 dispatchLoop / claimNextExecution 用带条件的 UPDATE 把它认领走——整条队列就是这张表,不需要 Redis / 消息中间件。
 // enqueueStartNodeExecution 创建 queued 状态的执行记录(DB 即队列)。
 func (a *App) enqueueStartNodeExecution(definition *db.WorkflowDefinition, startNode M, triggerCtx M) (*db.WorkflowExecution, bool, error) {
+	execution, duplicate, err := a.enqueueStartNodeExecutionWithDB(a.DB, definition, startNode, triggerCtx)
+	if err == nil && !duplicate {
+		a.wakeDispatcher()
+	}
+	return execution, duplicate, err
+}
+
+func (a *App) enqueueStartNodeExecutionWithDB(database *gorm.DB, definition *db.WorkflowDefinition, startNode M, triggerCtx M) (*db.WorkflowExecution, bool, error) {
 	config, _ := startNode["config"].(map[string]any)
 	startEntryKey := strings.TrimSpace(asString(config["entryKey"]))
 	if startEntryKey == "" {
@@ -447,7 +545,11 @@ func (a *App) enqueueStartNodeExecution(definition *db.WorkflowDefinition, start
 	// 幂等键去重:同一个 idempotencyKey 若已入过队,直接返回那条已存在的执行(第二个返回值 true 表示"这是重复")。
 	// 这让"同一次触发被重试 / 重复投递"只产生一条执行,是把分布式里"至少投递一次"变成"效果只一次"的关键。
 	if idempotencyKey != "" {
-		if duplicated := a.getExecutionByIdempotencyKey(triggerType, idempotencyKey); duplicated != nil {
+		duplicated, err := a.getExecutionByIdempotencyKeyWithDB(database, triggerType, idempotencyKey)
+		if err != nil {
+			return nil, false, err
+		}
+		if duplicated != nil {
 			return duplicated, true, nil
 		}
 	}
@@ -456,7 +558,7 @@ func (a *App) enqueueStartNodeExecution(definition *db.WorkflowDefinition, start
 	concurrencyKey := definition.Code + ":" + startEntryKey
 	var backlogCount int64
 	// 数一下该键还有多少条在排队 / 待重试(status IN ('queued','retry_waiting'));IN ? 里传一个切片当列表。见 GO入门笔记『框架:GORM』。
-	a.DB.Model(&db.WorkflowExecution{}).
+	database.Model(&db.WorkflowExecution{}).
 		Where("concurrency_key = ? AND status IN ?", concurrencyKey, []string{"queued", "retry_waiting"}).
 		Count(&backlogCount)
 	// 积压超过上限就拒绝入队(返回前面定义的哨兵错误),防止某个入口把队列撑爆。int64(...) 是类型转换。
@@ -494,23 +596,27 @@ func (a *App) enqueueStartNodeExecution(definition *db.WorkflowDefinition, start
 		execution.TriggerOutboxID = &outboxID
 	}
 	// Create = INSERT 这条执行记录。见 GO入门笔记『框架:GORM』。
-	if err := a.DB.Create(&execution).Error; err != nil {
-		// 唯一约束冲突时按幂等键复用已有执行。
-		// (幂等键在数据库上有唯一索引:即使两个请求同时抢着 INSERT,也只会有一条成功,另一条撞唯一约束而失败;
-		//  这里再查一次,把那条已成功的返回——这是比"先查后插"更可靠的一层去重兜底。)
+	result := database.Clauses(clause.OnConflict{DoNothing: true}).Create(&execution)
+	if result.Error != nil {
+		return nil, false, result.Error
+	}
+	if result.RowsAffected == 0 {
 		if idempotencyKey != "" {
-			if duplicated := a.getExecutionByIdempotencyKey(triggerType, idempotencyKey); duplicated != nil {
+			duplicated, err := a.getExecutionByIdempotencyKeyWithDB(database, triggerType, idempotencyKey)
+			if err != nil {
+				return nil, false, err
+			}
+			if duplicated != nil {
 				return duplicated, true, nil
 			}
 		}
-		return nil, false, err
+		return nil, false, errors.New("workflow execution insert conflicted")
 	}
-	created, err := a.getExecutionByID(execution.ID)
+	created, err := a.getExecutionByIDWithDB(database, execution.ID)
 	if err != nil {
 		return nil, false, err
 	}
-	// 入队成功,立刻叫醒派发循环去认领(不必干等下一个轮询周期)。见 loops.go 的 wakeDispatcher。
-	a.wakeDispatcher()
+	// 非事务调用由包装方法唤醒，事务调用方在提交后唤醒 dispatcher。
 	// 返回 (新建的执行, false=不是重复, nil=无错误)。
 	return created, false, nil
 }
@@ -739,8 +845,7 @@ func computeNextScheduleTime(config map[string]any, after time.Time) (*time.Time
 // struct 是"把一组字段打包"的类型;字段首字母大写表示导出(能被别的包访问)。见 GO入门笔记『复合类型』『项目怎么组织』。
 // DefinitionID 是 *int64(指针):用 nil 表示"未指定这个过滤条件",以区别于"指定为 0"。
 type WorkflowExecutionQuery struct {
-	Current                int
-	Size                   int
+	Page                   CursorPage
 	WorkflowDefinitionCode string
 	Keyword                string
 	TriggerType            string
@@ -785,18 +890,31 @@ func (a *App) ListExecutions(query WorkflowExecutionQuery) (M, error) {
 		return nil, err
 	}
 	var executions []db.WorkflowExecution
-	// Offset / Limit 做分页:跳过前面 (页码-1)*每页数 条,再取 每页数 条(等价 SQL 的 OFFSET / LIMIT)。见 GO入门笔记『框架:GORM』。
+	afterID, err := query.Page.AfterID()
+	if err != nil {
+		return nil, err
+	}
+	if afterID > 0 {
+		q = q.Where("workflow_executions.id < ?", afterID)
+	}
 	if err := q.Preload("WorkflowDefinition").
-		Order("COALESCE(workflow_executions.started_at, workflow_executions.queued_at) DESC, workflow_executions.id DESC").
-		Offset((query.Current - 1) * query.Size).Limit(query.Size).
+		Order("workflow_executions.id DESC").Limit(query.Page.Limit + 1).
 		Find(&executions).Error; err != nil {
 		return nil, err
+	}
+	hasMore := len(executions) > query.Page.Limit
+	if hasMore {
+		executions = executions[:query.Page.Limit]
 	}
 	records := make([]M, 0, len(executions))
 	for i := range executions {
 		records = append(records, a.serializeExecutionSummary(&executions[i]))
 	}
-	return pagedResult(records, query.Current, query.Size, total), nil
+	lastKey := ""
+	if len(executions) > 0 {
+		lastKey = int64CursorKey(executions[len(executions)-1].ID)
+	}
+	return cursorResult(records, query.Page, lastKey, hasMore, total), nil
 }
 
 // GetExecutionDetail 执行详情(图 + 节点日志 + attempt + 边日志)。
@@ -893,8 +1011,12 @@ func (a *App) cleanupTerminalHistory() int {
 // ---------- 序列化与内部查询 ----------
 
 func (a *App) getExecutionByID(executionID int64) (*db.WorkflowExecution, error) {
+	return a.getExecutionByIDWithDB(a.DB, executionID)
+}
+
+func (a *App) getExecutionByIDWithDB(database *gorm.DB, executionID int64) (*db.WorkflowExecution, error) {
 	var execution db.WorkflowExecution
-	err := a.DB.Preload("WorkflowDefinition").First(&execution, executionID).Error
+	err := database.Preload("WorkflowDefinition").First(&execution, executionID).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, bizErr("Workflow execution does not exist")
 	}
@@ -904,18 +1026,20 @@ func (a *App) getExecutionByID(executionID int64) (*db.WorkflowExecution, error)
 	return &execution, nil
 }
 
-// getExecutionByIdempotencyKey 按 (触发类型, 幂等键) 查最近一条已存在的执行;查不到返回 nil。供入队时去重使用。
-func (a *App) getExecutionByIdempotencyKey(triggerType, idempotencyKey string) *db.WorkflowExecution {
+func (a *App) getExecutionByIdempotencyKeyWithDB(database *gorm.DB, triggerType, idempotencyKey string) (*db.WorkflowExecution, error) {
 	if idempotencyKey == "" {
-		return nil
+		return nil, nil
 	}
 	var execution db.WorkflowExecution
-	if err := a.DB.Preload("WorkflowDefinition").
+	if err := database.Preload("WorkflowDefinition").
 		Where("trigger_type = ? AND idempotency_key = ?", triggerType, idempotencyKey).
 		Order("id DESC").First(&execution).Error; err != nil {
-		return nil
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
 	}
-	return &execution
+	return &execution, nil
 }
 
 func (a *App) getRuntimeEntryByDefinitionAndKey(definitionID int64, entryKey string) *db.WorkflowRuntimeEntry {

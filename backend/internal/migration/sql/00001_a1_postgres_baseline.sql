@@ -293,6 +293,20 @@ CREATE TABLE users (
 );
 CREATE UNIQUE INDEX idx_users_username ON users (username);
 
+CREATE TABLE idempotency_records (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    scope VARCHAR(255) NOT NULL,
+    key_hash VARCHAR(64) NOT NULL,
+    request_hash VARCHAR(64) NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    CONSTRAINT fk_idempotency_records_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+);
+CREATE UNIQUE INDEX ux_idempotency_records_user_scope_key
+    ON idempotency_records (user_id, scope, key_hash);
+CREATE INDEX ix_idempotency_records_expires_at ON idempotency_records (expires_at);
+
 CREATE TABLE user_roles (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT,
@@ -514,17 +528,6 @@ CREATE TABLE assistant_messages (
 );
 CREATE INDEX ix_assistant_msg_session ON assistant_messages (created_at, session_id);
 
-CREATE TABLE refresh_tokens (
-    id VARCHAR(64) PRIMARY KEY,
-    user_id BIGINT,
-    token_hash VARCHAR(128),
-    expires_at TIMESTAMPTZ,
-    is_revoked BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMPTZ,
-    CONSTRAINT fk_refresh_tokens_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
-);
-CREATE UNIQUE INDEX idx_refresh_tokens_token_hash ON refresh_tokens (token_hash);
-
 -- Python Worker 与 Backend 使用同一 PostgreSQL schema；活跃租约、取消与终态时间由数据库保持一致。
 CREATE TABLE worker_tasks (
     id VARCHAR(36) PRIMARY KEY,
@@ -601,6 +604,7 @@ LOCK TABLE
     domain_event_outbox,
     roles,
     users,
+    idempotency_records,
     user_roles,
     menus,
     menu_buttons,
@@ -614,7 +618,6 @@ LOCK TABLE
     notification_deliveries,
     assistant_sessions,
     assistant_messages,
-    refresh_tokens,
     worker_tasks
 IN ACCESS EXCLUSIVE MODE;
 
@@ -636,6 +639,7 @@ SELECT
     + (SELECT COUNT(*) FROM domain_event_outbox)
     + (SELECT COUNT(*) FROM roles)
     + (SELECT COUNT(*) FROM users)
+    + (SELECT COUNT(*) FROM idempotency_records)
     + (SELECT COUNT(*) FROM user_roles)
     + (SELECT COUNT(*) FROM menus)
     + (SELECT COUNT(*) FROM menu_buttons)
@@ -649,11 +653,9 @@ SELECT
     + (SELECT COUNT(*) FROM notification_deliveries)
     + (SELECT COUNT(*) FROM assistant_sessions)
     + (SELECT COUNT(*) FROM assistant_messages)
-    + (SELECT COUNT(*) FROM refresh_tokens)
     + (SELECT COUNT(*) FROM worker_tasks);
 
 DROP TABLE worker_tasks;
-DROP TABLE refresh_tokens;
 DROP TABLE assistant_messages;
 DROP TABLE assistant_sessions;
 DROP TABLE notification_deliveries;
@@ -667,6 +669,7 @@ DROP TABLE role_menus;
 DROP TABLE menu_buttons;
 DROP TABLE menus;
 DROP TABLE user_roles;
+DROP TABLE idempotency_records;
 DROP TABLE users;
 DROP TABLE roles;
 DROP TABLE domain_event_outbox;
