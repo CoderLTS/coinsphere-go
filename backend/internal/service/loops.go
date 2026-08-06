@@ -31,6 +31,13 @@ func (a *App) StartRuntime() {
 	a.spawn(a.eventOutboxLoop)
 	a.spawn(a.staleRecoveryLoop)
 	a.spawn(a.cleanupLoop)
+	if a.MarketData != nil {
+		a.spawn(func(ctx context.Context) {
+			if err := a.MarketData.Run(ctx); err != nil && ctx.Err() == nil {
+				slog.ErrorContext(ctx, "market data runtime stopped", "error_category", "market_data")
+			}
+		})
+	}
 	slog.InfoContext(a.runtimeCtx, "runtime started", "worker_id", a.WorkerID, "concurrency", a.Cfg.Workflow.ExecutorConcurrency)
 }
 

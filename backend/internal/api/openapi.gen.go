@@ -4,6 +4,8 @@
 package api
 
 import (
+	"time"
+
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
@@ -11,10 +13,40 @@ const (
 	BearerAuthScopes = "bearerAuth.Scopes"
 )
 
+// Defines values for CandleInterval.
+const (
+	N15m CandleInterval = "15m"
+	N1d  CandleInterval = "1d"
+	N1h  CandleInterval = "1h"
+	N1m  CandleInterval = "1m"
+	N4h  CandleInterval = "4h"
+	N5m  CandleInterval = "5m"
+)
+
+// Defines values for InstrumentStatus.
+const (
+	Suspended InstrumentStatus = "suspended"
+	Trading   InstrumentStatus = "trading"
+)
+
+// Defines values for Market.
+const (
+	Spot Market = "spot"
+	UsdM Market = "usd_m"
+)
+
 // Defines values for UserInfoAccessMode.
 const (
 	Authenticated UserInfoAccessMode = "authenticated"
 )
+
+// Defines values for Venue.
+const (
+	Binance Venue = "binance"
+)
+
+// CandleInterval defines model for CandleInterval.
+type CandleInterval string
 
 // CursorPageData defines model for CursorPageData.
 type CursorPageData struct {
@@ -31,6 +63,12 @@ type CursorPageResponse struct {
 	Msg  string         `json:"msg"`
 }
 
+// DecimalString defines model for DecimalString.
+type DecimalString = string
+
+// FinancialResourceId defines model for FinancialResourceId.
+type FinancialResourceId = openapi_types.UUID
+
 // InAppCursorPageData defines model for InAppCursorPageData.
 type InAppCursorPageData struct {
 	HasMore     bool         `json:"hasMore"`
@@ -46,6 +84,9 @@ type InAppCursorPageResponse struct {
 	Data InAppCursorPageData `json:"data"`
 	Msg  string              `json:"msg"`
 }
+
+// InstrumentStatus defines model for InstrumentStatus.
+type InstrumentStatus string
 
 // JsonObject defines model for JsonObject.
 type JsonObject map[string]interface{}
@@ -66,6 +107,69 @@ type LoginResponse struct {
 	Code int32     `json:"code"`
 	Data LoginData `json:"data"`
 	Msg  string    `json:"msg"`
+}
+
+// Market defines model for Market.
+type Market string
+
+// MarketCandle defines model for MarketCandle.
+type MarketCandle struct {
+	BaseVolume   DecimalString       `json:"baseVolume"`
+	Close        DecimalString       `json:"close"`
+	CloseTime    time.Time           `json:"closeTime"`
+	High         DecimalString       `json:"high"`
+	InstrumentId FinancialResourceId `json:"instrumentId"`
+	Interval     CandleInterval      `json:"interval"`
+	IsClosed     bool                `json:"isClosed"`
+	Low          DecimalString       `json:"low"`
+	Open         DecimalString       `json:"open"`
+	OpenTime     time.Time           `json:"openTime"`
+}
+
+// MarketCandlePageData defines model for MarketCandlePageData.
+type MarketCandlePageData struct {
+	HasMore    bool           `json:"hasMore"`
+	NextCursor string         `json:"nextCursor"`
+	Records    []MarketCandle `json:"records"`
+	Total      int64          `json:"total"`
+}
+
+// MarketCandlePageResponse defines model for MarketCandlePageResponse.
+type MarketCandlePageResponse struct {
+	Code int32                `json:"code"`
+	Data MarketCandlePageData `json:"data"`
+	Msg  string               `json:"msg"`
+}
+
+// MarketSymbol defines model for MarketSymbol.
+type MarketSymbol struct {
+	BaseAsset    string              `json:"baseAsset"`
+	Id           FinancialResourceId `json:"id"`
+	Market       Market              `json:"market"`
+	MinNotional  DecimalString       `json:"minNotional"`
+	MinQuantity  DecimalString       `json:"minQuantity"`
+	NativeSymbol string              `json:"nativeSymbol"`
+	PriceTick    DecimalString       `json:"priceTick"`
+	QuantityStep DecimalString       `json:"quantityStep"`
+	QuoteAsset   string              `json:"quoteAsset"`
+	Status       InstrumentStatus    `json:"status"`
+	UpdatedAt    time.Time           `json:"updatedAt"`
+	Venue        Venue               `json:"venue"`
+}
+
+// MarketSymbolPageData defines model for MarketSymbolPageData.
+type MarketSymbolPageData struct {
+	HasMore    bool           `json:"hasMore"`
+	NextCursor string         `json:"nextCursor"`
+	Records    []MarketSymbol `json:"records"`
+	Total      int64          `json:"total"`
+}
+
+// MarketSymbolPageResponse defines model for MarketSymbolPageResponse.
+type MarketSymbolPageResponse struct {
+	Code int32                `json:"code"`
+	Data MarketSymbolPageData `json:"data"`
+	Msg  string               `json:"msg"`
 }
 
 // Problem defines model for Problem.
@@ -120,6 +224,46 @@ type UserResponse struct {
 	Code int32    `json:"code"`
 	Data UserInfo `json:"data"`
 	Msg  string   `json:"msg"`
+}
+
+// Venue defines model for Venue.
+type Venue string
+
+// WatchlistCreateRequest defines model for WatchlistCreateRequest.
+type WatchlistCreateRequest struct {
+	InstrumentId FinancialResourceId `json:"instrumentId"`
+	Interval     CandleInterval      `json:"interval"`
+}
+
+// WatchlistItem defines model for WatchlistItem.
+type WatchlistItem struct {
+	CreatedAt    time.Time           `json:"createdAt"`
+	Id           FinancialResourceId `json:"id"`
+	InstrumentId FinancialResourceId `json:"instrumentId"`
+	Interval     CandleInterval      `json:"interval"`
+	OwnerUserId  int64               `json:"ownerUserId"`
+}
+
+// WatchlistItemResponse defines model for WatchlistItemResponse.
+type WatchlistItemResponse struct {
+	Code int32         `json:"code"`
+	Data WatchlistItem `json:"data"`
+	Msg  string        `json:"msg"`
+}
+
+// WatchlistPageData defines model for WatchlistPageData.
+type WatchlistPageData struct {
+	HasMore    bool            `json:"hasMore"`
+	NextCursor string          `json:"nextCursor"`
+	Records    []WatchlistItem `json:"records"`
+	Total      int64           `json:"total"`
+}
+
+// WatchlistPageResponse defines model for WatchlistPageResponse.
+type WatchlistPageResponse struct {
+	Code int32             `json:"code"`
+	Data WatchlistPageData `json:"data"`
+	Msg  string            `json:"msg"`
 }
 
 // AgentCode defines model for AgentCode.
@@ -200,6 +344,9 @@ type Forbidden = Problem
 // InAppCursorPage defines model for InAppCursorPage.
 type InAppCursorPage = InAppCursorPageResponse
 
+// NotFound defines model for NotFound.
+type NotFound = Problem
+
 // Success defines model for Success.
 type Success = SuccessResponse
 
@@ -257,6 +404,26 @@ type ListNewsParams struct {
 	Keyword *Keyword `form:"keyword,omitempty" json:"keyword,omitempty"`
 }
 
+// ListMarketCandlesParams defines parameters for ListMarketCandles.
+type ListMarketCandlesParams struct {
+	// Cursor Opaque cursor returned by the same route and filter set.
+	Cursor       *Cursor             `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit        *Limit              `form:"limit,omitempty" json:"limit,omitempty"`
+	InstrumentId FinancialResourceId `form:"instrumentId" json:"instrumentId"`
+	Interval     CandleInterval      `form:"interval" json:"interval"`
+	StartTime    *time.Time          `form:"startTime,omitempty" json:"startTime,omitempty"`
+	EndTime      *time.Time          `form:"endTime,omitempty" json:"endTime,omitempty"`
+}
+
+// ListMarketSymbolsParams defines parameters for ListMarketSymbols.
+type ListMarketSymbolsParams struct {
+	// Cursor Opaque cursor returned by the same route and filter set.
+	Cursor  *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit   *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
+	Market  *Market `form:"market,omitempty" json:"market,omitempty"`
+	Keyword *string `form:"keyword,omitempty" json:"keyword,omitempty"`
+}
+
 // ListNotificationDeliveriesParams defines parameters for ListNotificationDeliveries.
 type ListNotificationDeliveriesParams struct {
 	// Cursor Opaque cursor returned by the same route and filter set.
@@ -284,6 +451,13 @@ type ListRolesParams struct {
 // UploadAvatarMultipartBody defines parameters for UploadAvatar.
 type UploadAvatarMultipartBody struct {
 	Avatar openapi_types.File `json:"avatar"`
+}
+
+// ListWatchlistItemsParams defines parameters for ListWatchlistItems.
+type ListWatchlistItemsParams struct {
+	// Cursor Opaque cursor returned by the same route and filter set.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // ListAllWorkflowExecutionsParams defines parameters for ListAllWorkflowExecutions.
@@ -405,6 +579,9 @@ type SaveRolePermissionsJSONRequestBody = JsonObject
 
 // UploadAvatarMultipartRequestBody defines body for UploadAvatar for multipart/form-data ContentType.
 type UploadAvatarMultipartRequestBody UploadAvatarMultipartBody
+
+// CreateWatchlistItemJSONRequestBody defines body for CreateWatchlistItem for application/json ContentType.
+type CreateWatchlistItemJSONRequestBody = WatchlistCreateRequest
 
 // CreateWorkflowJSONRequestBody defines body for CreateWorkflow for application/json ContentType.
 type CreateWorkflowJSONRequestBody = JsonObject

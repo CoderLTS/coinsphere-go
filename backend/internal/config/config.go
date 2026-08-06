@@ -28,6 +28,13 @@ type DatabaseConfig struct {
 	ConnMaxIdleTimeSeconds int    `yaml:"conn_max_idle_time_seconds"`
 }
 
+// MarketDataConfig 控制仅使用公开接口的 Binance 市场数据运行时。
+type MarketDataConfig struct {
+	Enabled                  bool `yaml:"enabled"`
+	ReconcileIntervalSeconds int  `yaml:"reconcile_interval_seconds"`
+	BackfillPageSize         int  `yaml:"backfill_page_size"`
+}
+
 // ServerConfig HTTP 服务配置。
 type ServerConfig struct {
 	Host          string `yaml:"host"`
@@ -92,12 +99,13 @@ type LogConfig struct {
 
 // AppConfig 完整配置树。
 type AppConfig struct {
-	Database  DatabaseConfig  `yaml:"database"`
-	Server    ServerConfig    `yaml:"server"`
-	Auth      AuthConfig      `yaml:"auth"`
-	Workflow  WorkflowConfig  `yaml:"workflow"`
-	Assistant AssistantConfig `yaml:"assistant"`
-	Log       LogConfig       `yaml:"log"`
+	Database   DatabaseConfig   `yaml:"database"`
+	MarketData MarketDataConfig `yaml:"market_data"`
+	Server     ServerConfig     `yaml:"server"`
+	Auth       AuthConfig       `yaml:"auth"`
+	Workflow   WorkflowConfig   `yaml:"workflow"`
+	Assistant  AssistantConfig  `yaml:"assistant"`
+	Log        LogConfig        `yaml:"log"`
 }
 
 // Load 读取配置文件并应用环境变量覆盖。
@@ -147,6 +155,10 @@ func defaultConfig() *AppConfig {
 			MaxOpenConns:           40,
 			MaxIdleConns:           10,
 			ConnMaxIdleTimeSeconds: 300,
+		},
+		MarketData: MarketDataConfig{
+			ReconcileIntervalSeconds: 10,
+			BackfillPageSize:         300,
 		},
 		Server: ServerConfig{Host: "0.0.0.0", Port: 6987},
 		Auth: AuthConfig{
@@ -199,6 +211,12 @@ func (c *AppConfig) normalize() {
 	if c.Database.ConnMaxIdleTimeSeconds < 1 {
 		c.Database.ConnMaxIdleTimeSeconds = 300
 	}
+	if c.MarketData.ReconcileIntervalSeconds < 1 {
+		c.MarketData.ReconcileIntervalSeconds = 10
+	}
+	if c.MarketData.BackfillPageSize < 1 {
+		c.MarketData.BackfillPageSize = 300
+	}
 	if len(c.Workflow.RetryBackoffSeconds) == 0 {
 		c.Workflow.RetryBackoffSeconds = []int{30, 120, 600}
 	}
@@ -242,6 +260,12 @@ func (c *AppConfig) Validate() error {
 		if os.Getenv("COINSPHERE_ALLOW_INSECURE_SECRET") != "1" {
 			return fmt.Errorf("auth.secret_key 未设置或仍为默认值,存在令牌伪造风险:请用环境变量 COINSPHERE_AUTH__SECRET_KEY 或 config.yml 配一个随机密钥(如 `openssl rand -hex 32`);本地开发可临时设 COINSPHERE_ALLOW_INSECURE_SECRET=1 放行")
 		}
+	}
+	if c.MarketData.ReconcileIntervalSeconds > 30 {
+		return fmt.Errorf("market_data.reconcile_interval_seconds must not exceed 30")
+	}
+	if c.MarketData.BackfillPageSize > 300 {
+		return fmt.Errorf("market_data.backfill_page_size must not exceed 300")
 	}
 	return nil
 }

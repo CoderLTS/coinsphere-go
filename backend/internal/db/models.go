@@ -1,7 +1,12 @@
 // Package db GORM 模型定义。表名与列名与原 Python(Peewee)后端保持一致。
 package db
 
-import "time"
+import (
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
+)
 
 // BlockbeatsNews 新闻数据行。
 type BlockbeatsNews struct {
@@ -23,6 +28,52 @@ type BlockbeatsNews struct {
 // TableName 方法让 GORM 用返回的字符串当表名,而不是按 struct 名自动推断(这样才能对齐原 Python 表名)。
 // 接收者写成 (BlockbeatsNews) 不带变量名,是因为方法体里用不到具体对象。下面每个模型都有一个同名方法。
 func (BlockbeatsNews) TableName() string { return "news_items" }
+
+// MarketInstrument 是共享的 Binance 交易标的元数据。
+type MarketInstrument struct {
+	ID           uuid.UUID       `gorm:"type:uuid;primaryKey"`
+	Venue        string          `gorm:"size:16"`
+	Market       string          `gorm:"column:market_type;size:32"`
+	NativeSymbol string          `gorm:"size:64"`
+	BaseAsset    string          `gorm:"size:32"`
+	QuoteAsset   string          `gorm:"size:32"`
+	Status       string          `gorm:"size:16"`
+	PriceTick    decimal.Decimal `gorm:"type:numeric(38,18)"`
+	QuantityStep decimal.Decimal `gorm:"type:numeric(38,18)"`
+	MinQuantity  decimal.Decimal `gorm:"type:numeric(38,18)"`
+	MinNotional  decimal.Decimal `gorm:"type:numeric(38,18)"`
+	UpdatedAt    time.Time
+}
+
+func (MarketInstrument) TableName() string { return "market_instruments" }
+
+// MarketCandle 是持久化的标准化 OHLCV 数据。
+type MarketCandle struct {
+	Venue        string          `gorm:"size:16;primaryKey"`
+	InstrumentID uuid.UUID       `gorm:"column:instrument_id;type:uuid;primaryKey"`
+	Interval     string          `gorm:"column:interval_code;size:4;primaryKey"`
+	OpenTime     time.Time       `gorm:"column:open_time;primaryKey"`
+	CloseTime    time.Time       `gorm:"column:close_time"`
+	Open         decimal.Decimal `gorm:"column:open_price;type:numeric(38,18)"`
+	High         decimal.Decimal `gorm:"column:high_price;type:numeric(38,18)"`
+	Low          decimal.Decimal `gorm:"column:low_price;type:numeric(38,18)"`
+	Close        decimal.Decimal `gorm:"column:close_price;type:numeric(38,18)"`
+	BaseVolume   decimal.Decimal `gorm:"column:base_volume;type:numeric(38,18)"`
+	IsClosed     bool            `gorm:"column:is_closed"`
+}
+
+func (MarketCandle) TableName() string { return "market_candles" }
+
+// WatchlistItem 是用户私有自选，资源 API 始终按 OwnerUserID 过滤。
+type WatchlistItem struct {
+	ID           uuid.UUID `gorm:"type:uuid;primaryKey"`
+	OwnerUserID  int64     `gorm:"column:owner_user_id"`
+	InstrumentID uuid.UUID `gorm:"column:instrument_id;type:uuid"`
+	Interval     string    `gorm:"column:interval_code;size:4"`
+	CreatedAt    time.Time `gorm:"column:created_at"`
+}
+
+func (WatchlistItem) TableName() string { return "watchlist_items" }
 
 // WorkflowDefinition 不可变的工作流定义版本。
 type WorkflowDefinition struct {

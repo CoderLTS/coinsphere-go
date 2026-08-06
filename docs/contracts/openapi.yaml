@@ -18,6 +18,7 @@ tags:
   - name: assistant
   - name: config
   - name: data
+  - name: markets
 security:
   - bearerAuth: []
 paths:
@@ -93,6 +94,103 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/Success' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/markets/symbols:
+    get:
+      tags: [markets]
+      operationId: listMarketSymbols
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - name: market
+          in: query
+          schema: { $ref: '#/components/schemas/Market' }
+        - name: keyword
+          in: query
+          schema: { type: string, maxLength: 64 }
+      responses:
+        '200':
+          description: Binance Spot and USD-M instrument metadata
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MarketSymbolPageResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/markets/candles:
+    get:
+      tags: [markets]
+      operationId: listMarketCandles
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - name: instrumentId
+          in: query
+          required: true
+          schema: { $ref: '#/components/schemas/FinancialResourceId' }
+        - name: interval
+          in: query
+          required: true
+          schema: { $ref: '#/components/schemas/CandleInterval' }
+        - name: startTime
+          in: query
+          schema: { type: string, format: date-time }
+        - name: endTime
+          in: query
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Persisted normalized Binance candles
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MarketCandlePageResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/watchlists:
+    get:
+      tags: [markets]
+      operationId: listWatchlistItems
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Current user's watchlist items
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WatchlistPageResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [markets]
+      operationId: createWatchlistItem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WatchlistCreateRequest' }
+      responses:
+        '200':
+          description: Watchlist item created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WatchlistItemResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/watchlists/{watchlistId}:
+    parameters:
+      - name: watchlistId
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/FinancialResourceId' }
+    delete:
+      tags: [markets]
+      operationId: deleteWatchlistItem
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /api/v1/data/news:
     get:
       tags: [data]
@@ -1047,6 +1145,11 @@ components:
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: Resource not found
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
     Conflict:
       description: Idempotency or state conflict
       content:
@@ -1106,6 +1209,128 @@ components:
         status: { type: integer, format: int32, example: 401 }
         detail: { type: string }
         requestId: { type: string }
+    FinancialResourceId:
+      type: string
+      format: uuid
+      pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+    DecimalString:
+      type: string
+      pattern: '^[0-9]+(?:\.[0-9]+)?$'
+    Venue:
+      type: string
+      enum: [binance]
+    Market:
+      type: string
+      enum: [spot, usd_m]
+    InstrumentStatus:
+      type: string
+      enum: [trading, suspended]
+    CandleInterval:
+      type: string
+      enum: [1m, 5m, 15m, 1h, 4h, 1d]
+    MarketSymbol:
+      type: object
+      required:
+        [id, venue, market, nativeSymbol, baseAsset, quoteAsset, status,
+         priceTick, quantityStep, minQuantity, minNotional, updatedAt]
+      properties:
+        id: { $ref: '#/components/schemas/FinancialResourceId' }
+        venue: { $ref: '#/components/schemas/Venue' }
+        market: { $ref: '#/components/schemas/Market' }
+        nativeSymbol: { type: string, maxLength: 64 }
+        baseAsset: { type: string, maxLength: 32 }
+        quoteAsset: { type: string, maxLength: 32 }
+        status: { $ref: '#/components/schemas/InstrumentStatus' }
+        priceTick: { $ref: '#/components/schemas/DecimalString' }
+        quantityStep: { $ref: '#/components/schemas/DecimalString' }
+        minQuantity: { $ref: '#/components/schemas/DecimalString' }
+        minNotional: { $ref: '#/components/schemas/DecimalString' }
+        updatedAt: { type: string, format: date-time }
+    MarketSymbolPageData:
+      type: object
+      required: [records, nextCursor, hasMore, total]
+      properties:
+        records:
+          type: array
+          items: { $ref: '#/components/schemas/MarketSymbol' }
+        nextCursor: { type: string }
+        hasMore: { type: boolean }
+        total: { type: integer, format: int64, minimum: 0 }
+    MarketSymbolPageResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties:
+            data: { $ref: '#/components/schemas/MarketSymbolPageData' }
+    MarketCandle:
+      type: object
+      required:
+        [instrumentId, interval, openTime, closeTime, open, high, low, close,
+         baseVolume, isClosed]
+      properties:
+        instrumentId: { $ref: '#/components/schemas/FinancialResourceId' }
+        interval: { $ref: '#/components/schemas/CandleInterval' }
+        openTime: { type: string, format: date-time }
+        closeTime: { type: string, format: date-time }
+        open: { $ref: '#/components/schemas/DecimalString' }
+        high: { $ref: '#/components/schemas/DecimalString' }
+        low: { $ref: '#/components/schemas/DecimalString' }
+        close: { $ref: '#/components/schemas/DecimalString' }
+        baseVolume: { $ref: '#/components/schemas/DecimalString' }
+        isClosed: { type: boolean }
+    MarketCandlePageData:
+      type: object
+      required: [records, nextCursor, hasMore, total]
+      properties:
+        records:
+          type: array
+          items: { $ref: '#/components/schemas/MarketCandle' }
+        nextCursor: { type: string }
+        hasMore: { type: boolean }
+        total: { type: integer, format: int64, minimum: 0 }
+    MarketCandlePageResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties:
+            data: { $ref: '#/components/schemas/MarketCandlePageData' }
+    WatchlistCreateRequest:
+      type: object
+      required: [instrumentId, interval]
+      properties:
+        instrumentId: { $ref: '#/components/schemas/FinancialResourceId' }
+        interval: { $ref: '#/components/schemas/CandleInterval' }
+    WatchlistItem:
+      type: object
+      required: [id, ownerUserId, instrumentId, interval, createdAt]
+      properties:
+        id: { $ref: '#/components/schemas/FinancialResourceId' }
+        ownerUserId: { type: integer, format: int64, minimum: 1 }
+        instrumentId: { $ref: '#/components/schemas/FinancialResourceId' }
+        interval: { $ref: '#/components/schemas/CandleInterval' }
+        createdAt: { type: string, format: date-time }
+    WatchlistPageData:
+      type: object
+      required: [records, nextCursor, hasMore, total]
+      properties:
+        records:
+          type: array
+          items: { $ref: '#/components/schemas/WatchlistItem' }
+        nextCursor: { type: string }
+        hasMore: { type: boolean }
+        total: { type: integer, format: int64, minimum: 0 }
+    WatchlistPageResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties:
+            data: { $ref: '#/components/schemas/WatchlistPageData' }
+    WatchlistItemResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties:
+            data: { $ref: '#/components/schemas/WatchlistItem' }
     LoginRequest:
       type: object
       required: [username, password]

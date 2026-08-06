@@ -84,6 +84,12 @@ type Candle struct {
 	IsClosed     bool            `json:"isClosed"`
 }
 
+// CandleWriteResult 说明本次 Upsert 是否真正写入，以及是否首次把该 K 线闭合。
+type CandleWriteResult struct {
+	Changed     bool
+	FirstClosed bool
+}
+
 type Ticker struct {
 	Venue        Venue           `json:"venue"`
 	InstrumentID uuid.UUID       `json:"instrumentId"`

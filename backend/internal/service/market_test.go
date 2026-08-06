@@ -1,0 +1,60 @@
+package service
+
+import (
+	"errors"
+	"testing"
+	"time"
+
+	"coinsphere/backend/internal/db"
+	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
+)
+
+func TestMarketDTOsUseDecimalStringsAndUTC(t *testing.T) {
+	id := uuid.MustParse("019c2f6d-7c00-7000-8000-000000000001")
+	localTime := time.Date(2026, time.August, 6, 16, 0, 0, 123, time.FixedZone("UTC+8", 8*60*60))
+	symbol := serializeMarketSymbol(db.MarketInstrument{
+		ID: id, Venue: "binance", Market: "spot", NativeSymbol: "BTCUSDT",
+		PriceTick: decimal.RequireFromString("0.0100"), QuantityStep: decimal.RequireFromString("0.0010"),
+		MinQuantity: decimal.RequireFromString("0.0010"), MinNotional: decimal.RequireFromString("5.0000"), UpdatedAt: localTime,
+	})
+	if symbol.ID != id.String() || symbol.PriceTick != "0.01" || symbol.QuantityStep != "0.001" || symbol.UpdatedAt != "2026-08-06T08:00:00.000000123Z" {
+		t.Fatalf("symbol DTO = %#v", symbol)
+	}
+	candle := serializeMarketCandle(db.MarketCandle{
+		InstrumentID: id, Interval: "1m", OpenTime: localTime, CloseTime: localTime.Add(time.Minute),
+		Open: decimal.RequireFromString("100.10"), High: decimal.RequireFromString("101.20"),
+		Low: decimal.RequireFromString("99.90"), Close: decimal.RequireFromString("100.80"),
+		BaseVolume: decimal.RequireFromString("1.250"), IsClosed: true,
+	})
+	if candle.Open != "100.1" || candle.BaseVolume != "1.25" || candle.OpenTime != "2026-08-06T08:00:00.000000123Z" || !candle.IsClosed {
+		t.Fatalf("candle DTO = %#v", candle)
+	}
+}
+
+func TestMarketBoundaryValidationStopsBeforeDatabase(t *testing.T) {
+	app := &App{}
+	page := CursorPage{Limit: 50}
+	for _, query := range []CandleListQuery{
+		{Page: page, Interval: "1m"},
+		{Page: page, InstrumentID: "019c2f6d-7c00-4000-8000-000000000001", Interval: "1m"},
+		{Page: page, InstrumentID: "019c2f6d-7c00-7000-8000-000000000001", Interval: "2m"},
+		{Page: page, InstrumentID: "019c2f6d-7c00-7000-8000-000000000001", Interval: "1m", StartTime: "2026-08-06T08:00:00+00:00"},
+	} {
+		if _, err := app.ListMarketCandles(t.Context(), query); !errors.Is(err, ErrInvalidMarketRequest) {
+			t.Fatalf("query %#v error = %v", query, err)
+		}
+	}
+	if err := app.DeleteWatchlistItem(t.Context(), 42, "019c2f6d-7c00-4000-8000-000000000001"); !errors.Is(err, ErrInvalidMarketRequest) {
+		t.Fatalf("invalid watchlist ID error = %v", err)
+	}
+}
+
+func TestTypedMarketCursorReusesOpaqueCursorContract(t *testing.T) {
+	page := CursorPage{Limit: 1, scope: "market-symbols"}
+	result := typedCursorResult([]string{"first"}, page, "019c2f6d-7c00-7000-8000-000000000001", true, 2)
+	next, err := ParseCursorPage(result.NextCursor, 1, "market-symbols")
+	if err != nil || next.After != "019c2f6d-7c00-7000-8000-000000000001" || !result.HasMore || result.Total != 2 {
+		t.Fatalf("cursor result = %#v, next = %#v, err = %v", result, next, err)
+	}
+}

@@ -119,24 +119,43 @@ WHERE venue = $1 AND market_type = $2 AND native_symbol = $3
 		Close:        decimal.NewFromInt(100),
 		BaseVolume:   decimal.NewFromInt(1),
 	}
-	if err := store.UpsertCandle(context.Background(), candle); err != nil {
+	write, err := store.UpsertCandle(context.Background(), candle)
+	if err != nil {
 		t.Fatalf("insert open candle: %v", err)
+	}
+	if !write.Changed || write.FirstClosed {
+		t.Fatalf("open candle write = %#v", write)
 	}
 	closed := candle
 	closed.High = decimal.NewFromInt(102)
 	closed.Close = decimal.NewFromInt(101)
 	closed.BaseVolume = decimal.NewFromInt(2)
 	closed.IsClosed = true
-	if err := store.UpsertCandle(context.Background(), closed); err != nil {
+	write, err = store.UpsertCandle(context.Background(), closed)
+	if err != nil {
 		t.Fatalf("close candle: %v", err)
+	}
+	if !write.Changed || !write.FirstClosed {
+		t.Fatalf("closed candle write = %#v", write)
+	}
+	write, err = store.UpsertCandle(context.Background(), closed)
+	if err != nil {
+		t.Fatalf("repeat closed candle: %v", err)
+	}
+	if write.Changed || write.FirstClosed {
+		t.Fatalf("repeated closed candle write = %#v", write)
 	}
 	frozen := closed
 	frozen.High = decimal.NewFromInt(103)
 	frozen.Close = decimal.NewFromInt(102)
 	frozen.BaseVolume = decimal.NewFromInt(3)
 	frozen.IsClosed = false
-	if err := store.UpsertCandle(context.Background(), frozen); err != nil {
+	write, err = store.UpsertCandle(context.Background(), frozen)
+	if err != nil {
 		t.Fatalf("rewrite closed candle: %v", err)
+	}
+	if write.Changed || write.FirstClosed {
+		t.Fatalf("frozen candle write = %#v", write)
 	}
 	var high, closePrice, volume decimal.Decimal
 	var isClosed bool

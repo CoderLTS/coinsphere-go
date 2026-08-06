@@ -3,6 +3,7 @@ package marketdata
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	"github.com/google/uuid"
 )
@@ -54,15 +55,21 @@ RETURNING id, venue, market_type, native_symbol, base_asset, quote_asset, status
 	if err != nil {
 		return Instrument{}, err
 	}
+	instrument.UpdatedAt = instrument.UpdatedAt.UTC()
 	return instrument, nil
 }
 
 // UpsertCandle 允许未闭合 K 线更新，首次闭合后由冲突条件冻结。
-func (store *PostgresStore) UpsertCandle(ctx context.Context, candle Candle) error {
+func (store *PostgresStore) UpsertCandle(ctx context.Context, candle Candle) (CandleWriteResult, error) {
 	if err := ValidateCandle(candle); err != nil {
-		return err
+		return CandleWriteResult{}, err
 	}
-	_, err := store.db.ExecContext(ctx, `
+	if store == nil || store.db == nil {
+		return CandleWriteResult{}, errors.New("postgres store is required")
+	}
+
+	var closed bool
+	err := store.db.QueryRowContext(ctx, `
 INSERT INTO market_candles (
     venue, instrument_id, interval_code, open_time, close_time,
     open_price, high_price, low_price, close_price, base_volume, is_closed
@@ -76,10 +83,17 @@ ON CONFLICT (venue, instrument_id, interval_code, open_time) DO UPDATE SET
     base_volume = EXCLUDED.base_volume,
     is_closed = EXCLUDED.is_closed
 WHERE NOT market_candles.is_closed
+RETURNING is_closed
 `, candle.Venue, candle.InstrumentID, candle.Interval, candle.OpenTime, candle.CloseTime, candle.Open,
 		candle.High, candle.Low, candle.Close, candle.BaseVolume, candle.IsClosed,
-	)
-	return err
+	).Scan(&closed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return CandleWriteResult{}, nil
+	}
+	if err != nil {
+		return CandleWriteResult{}, err
+	}
+	return CandleWriteResult{Changed: true, FirstClosed: closed}, nil
 }
 
 // UpsertTicker 只以不早于当前快照的事件推进最新行情。
