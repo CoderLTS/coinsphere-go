@@ -44,9 +44,8 @@ type AuthConfig struct {
 	WebhookPepper           string `yaml:"webhook_pepper"`
 	BootstrapAdminPassword  string `yaml:"bootstrap_admin_password"` // 内置超管初始密码,留空默认 coinsphere(见评审 #2)
 	AccessTokenTTLMinutes   int    `yaml:"access_token_ttl_minutes"`
-	RefreshTokenTTLDays     int    `yaml:"refresh_token_ttl_days"`
 	PasswordIterations      int    `yaml:"password_iterations"`
-	LoginRateLimitPerMinute int    `yaml:"login_rate_limit_per_minute"` // 每 IP 每分钟登录/刷新上限,<=0 用默认 10(见评审 #6)
+	LoginRateLimitPerMinute int    `yaml:"login_rate_limit_per_minute"` // 每 IP 每分钟登录上限,<=0 用默认 10(见评审 #6)
 }
 
 // WorkflowConfig 工作流运行时配置。
@@ -153,7 +152,6 @@ func defaultConfig() *AppConfig {
 		Auth: AuthConfig{
 			SecretKey:             DefaultInsecureSecret,
 			AccessTokenTTLMinutes: 15,
-			RefreshTokenTTLDays:   7,
 			PasswordIterations:    390000,
 		},
 		Workflow: WorkflowConfig{

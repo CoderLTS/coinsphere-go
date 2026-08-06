@@ -74,37 +74,30 @@ type TokenPayload struct {
 
 // TokenManager HS256 签名 token(JWT 兼容格式)。
 type TokenManager struct {
-	secret     []byte
-	accessTTL  time.Duration
-	refreshTTL time.Duration
+	secret    []byte
+	accessTTL time.Duration
 }
 
-func NewTokenManager(secretKey string, accessTTLMinutes, refreshTTLDays int) *TokenManager {
+func NewTokenManager(secretKey string, accessTTLMinutes int) *TokenManager {
 	return &TokenManager{
-		secret:     []byte(secretKey),
-		accessTTL:  time.Duration(accessTTLMinutes) * time.Minute,
-		refreshTTL: time.Duration(refreshTTLDays) * 24 * time.Hour,
+		secret: []byte(secretKey), accessTTL: time.Duration(accessTTLMinutes) * time.Minute,
 	}
 }
 
 func (m *TokenManager) CreateAccessToken(userID int64) AuthToken {
-	return m.create(userID, "access", m.accessTTL)
-}
-
-func (m *TokenManager) CreateRefreshToken(userID int64) AuthToken {
-	return m.create(userID, "refresh", m.refreshTTL)
+	return m.create(userID, m.accessTTL)
 }
 
 // create 签发一个 JWT(登录令牌):由 header.payload.signature 三段组成,用点号连接,各段做 base64 编码。
 // signature 是用服务端密钥对前两段做的 HS256 签名;别人改了内容但没有密钥,就算不出能对上的签名 → token 判为无效。
-func (m *TokenManager) create(userID int64, tokenType string, ttl time.Duration) AuthToken {
+func (m *TokenManager) create(userID int64, ttl time.Duration) AuthToken {
 	tokenID := randomHex(16)
 	issuedAt := time.Now().Unix()
 	expiresAt := issuedAt + int64(ttl.Seconds())
 	header := b64JSON(map[string]any{"alg": "HS256", "typ": "JWT"})
 	payload := b64JSON(map[string]any{
 		"sub": userID,
-		"typ": tokenType,
+		"typ": "access",
 		"iat": issuedAt,
 		"exp": expiresAt,
 		"jti": tokenID,
@@ -118,8 +111,8 @@ func (m *TokenManager) create(userID int64, tokenType string, ttl time.Duration)
 	}
 }
 
-// VerifyToken 反向校验令牌:先用同一密钥重算签名比对(防篡改),再依次检查类型、是否过期、载荷是否合法。
-func (m *TokenManager) VerifyToken(token, expectedType string) (*TokenPayload, error) {
+// VerifyAccessToken 反向校验令牌:先用同一密钥重算签名比对(防篡改),再依次检查类型、是否过期、载荷是否合法。
+func (m *TokenManager) VerifyAccessToken(token string) (*TokenPayload, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return nil, fmt.Errorf("%w: malformed", ErrInvalidToken)
@@ -141,7 +134,7 @@ func (m *TokenManager) VerifyToken(token, expectedType string) (*TokenPayload, e
 	if err := json.Unmarshal(rawPayload, &payload); err != nil {
 		return nil, fmt.Errorf("%w: bad payload", ErrInvalidToken)
 	}
-	if payload.Typ != expectedType {
+	if payload.Typ != "access" {
 		return nil, fmt.Errorf("%w: unexpected type", ErrInvalidToken)
 	}
 	if payload.Exp <= time.Now().Unix() {
@@ -158,7 +151,7 @@ func (m *TokenManager) VerifyToken(token, expectedType string) (*TokenPayload, e
 	}, nil
 }
 
-// HashToken refresh token 入库前的 SHA256 摘要。
+// HashToken 为短期不透明 token 生成 SHA-256 摘要。
 func HashToken(token string) string {
 	digest := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(digest[:])

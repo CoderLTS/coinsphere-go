@@ -98,7 +98,7 @@ func (a *App) ListTaskDefinitions() []M {
 }
 
 // ListTaskDefinitionPage 任务定义管理页分页。
-func (a *App) ListTaskDefinitionPage(current, size int, keyword string) M {
+func (a *App) ListTaskDefinitionPage(page CursorPage, keyword string) M {
 	// 先 copy 一份再排序,避免打乱全局 taskDefinitions 的顺序。
 	items := make([]*taskDefinition, len(taskDefinitions))
 	copy(items, taskDefinitions)
@@ -118,16 +118,14 @@ func (a *App) ListTaskDefinitionPage(current, size int, keyword string) M {
 		}
 		items = filtered
 	}
-	// 按页码算出切片的起止下标,并夹到合法范围内;items[start:end] 就是本页数据(左闭右开)。
 	total := len(items)
-	start := (current - 1) * size
-	if start < 0 {
-		start = 0
+	start := 0
+	if page.After != "" {
+		for start < total && items[start].Code <= page.After {
+			start++
+		}
 	}
-	if start > total {
-		start = total
-	}
-	end := start + size
+	end := start + page.Limit
 	if end > total {
 		end = total
 	}
@@ -136,7 +134,11 @@ func (a *App) ListTaskDefinitionPage(current, size int, keyword string) M {
 	for _, item := range pageItems {
 		records = append(records, a.serializeTaskDefinitionItem(item))
 	}
-	return pagedResult(records, current, size, int64(total))
+	lastKey := ""
+	if len(pageItems) > 0 {
+		lastKey = pageItems[len(pageItems)-1].Code
+	}
+	return cursorResult(records, page, lastKey, end < total, int64(total))
 }
 
 // UpdateTaskDefinitionDefaultParams 保存全局默认参数覆盖。

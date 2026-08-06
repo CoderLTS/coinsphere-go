@@ -241,8 +241,8 @@ func decodeBody[T any](r *http.Request) (*T, error)   // T 是"类型参数",调
 ### 框架:net/http(Go 1.22+ 新路由)
 ```go
 mux := http.NewServeMux()                          // 路由表
-mux.HandleFunc("GET /api/auth/login", s.handleLogin) // 方法+路径 → 处理函数(1.22 新语法)
-mux.HandleFunc("PUT /api/system/users/{userId}", ...) // {userId} 是路径参数
+mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin) // 方法+路径 → 处理函数(1.22 新语法)
+mux.HandleFunc("PUT /api/v1/admin/users/{userId}", ...) // {userId} 是路径参数
 // 处理函数签名固定:func(w http.ResponseWriter, r *http.Request)
 //   w 用来写响应,r 是请求。r.PathValue("userId") 取路径参数。
 ```

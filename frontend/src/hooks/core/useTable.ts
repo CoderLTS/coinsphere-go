@@ -31,11 +31,10 @@ import {
   type TableError,
   defaultResponseAdapter,
   extractTableData,
-  updatePaginationFromResponse,
   createSmartDebounce,
   createErrorHandler
 } from '../../utils/table/tableUtils'
-import { tableConfig } from '../../utils/table/tableConfig'
+import { useCursorPagination } from './useCursorPagination'
 
 // 类型推导工具类型
 type InferApiParams<T> = T extends (params: infer P) => any ? P : never
@@ -61,13 +60,6 @@ export interface UseTableConfig<
     immediate?: boolean
     /** 列配置工厂函数 */
     columnsFactory?: () => ColumnOption<TRecord>[]
-    /** 自定义分页字段映射 */
-    paginationKey?: {
-      /** 当前页码字段名，默认为 'current' */
-      current?: string
-      /** 每页条数字段名，默认为 'size' */
-      size?: string
-    }
   }
 
   // 数据处理
@@ -141,8 +133,7 @@ function useTableImpl<TApiFn extends (params: any) => Promise<any>>(
       apiParams = {} as Partial<TParams>,
       excludeParams = [],
       immediate = true,
-      columnsFactory,
-      paginationKey
+      columnsFactory
     },
     transform: { dataTransformer, responseAdapter = defaultResponseAdapter } = {},
     performance: {
@@ -154,10 +145,6 @@ function useTableImpl<TApiFn extends (params: any) => Promise<any>>(
     hooks: { onSuccess, onError, onCacheHit, resetFormCallback } = {},
     debug: { enableLog = false } = {}
   } = config
-
-  // 分页字段名配置：优先使用传入的配置，否则使用全局配置
-  const pageKey = paginationKey?.current || tableConfig.paginationKey.current
-  const sizeKey = paginationKey?.size || tableConfig.paginationKey.size
 
   // 响应式触发器，用于手动更新缓存统计信息
   const cacheUpdateTrigger = ref(0)
@@ -202,22 +189,15 @@ function useTableImpl<TApiFn extends (params: any) => Promise<any>>(
   let cacheCleanupTimer: NodeJS.Timeout | null = null
 
   // 搜索参数
-  const searchParams = reactive(
-    Object.assign(
-      {
-        [pageKey]: 1,
-        [sizeKey]: 10
-      },
-      apiParams || {}
-    ) as TParams
-  )
-
-  // 分页配置
-  const pagination = reactive<Api.Common.PaginationParams>({
-    current: ((searchParams as Record<string, unknown>)[pageKey] as number) || 1,
-    size: ((searchParams as Record<string, unknown>)[sizeKey] as number) || 10,
-    total: 0
-  })
+  const initialLimit = ((apiParams as Record<string, unknown>).limit as number) || 10
+  const searchParams = reactive(Object.assign({ limit: initialLimit }, apiParams) as TParams)
+  const {
+    pagination,
+    requestParams: cursorRequestParams,
+    applyPage,
+    reset: resetCursorPagination,
+    moveTo
+  } = useCursorPagination(initialLimit)
 
   // 移动端分页 (响应式)
   const { width } = useWindowSize()
@@ -298,10 +278,7 @@ function useTableImpl<TApiFn extends (params: any) => Promise<any>>(
       let requestParams = Object.assign(
         {},
         searchParams,
-        {
-          [pageKey]: pagination.current,
-          [sizeKey]: pagination.size
-        },
+        cursorRequestParams(),
         params || {}
       ) as TParams
 
@@ -319,16 +296,12 @@ function useTableImpl<TApiFn extends (params: any) => Promise<any>>(
         const cachedItem = cache.get(requestParams)
         if (cachedItem) {
           data.value = cachedItem.data
-          updatePaginationFromResponse(pagination, cachedItem.response)
-
-          // 修复：避免重复设置相同的值，防止响应式循环更新
-          const paramsRecord = searchParams as Record<string, unknown>
-          if (paramsRecord[pageKey] !== pagination.current) {
-            paramsRecord[pageKey] = pagination.current
-          }
-          if (paramsRecord[sizeKey] !== pagination.size) {
-            paramsRecord[sizeKey] = pagination.size
-          }
+          applyPage({
+            records: cachedItem.data,
+            nextCursor: cachedItem.response.nextCursor || '',
+            hasMore: cachedItem.response.hasMore === true,
+            total: cachedItem.response.total ?? cachedItem.data.length
+          })
 
           // 状态机：缓存命中，进入 success 状态
           loadingState.value = 'success'
@@ -363,16 +336,12 @@ function useTableImpl<TApiFn extends (params: any) => Promise<any>>(
 
       // 更新状态
       data.value = tableData
-      updatePaginationFromResponse(pagination, standardResponse)
-
-      // 修复：避免重复设置相同的值，防止响应式循环更新
-      const paramsRecord = searchParams as Record<string, unknown>
-      if (paramsRecord[pageKey] !== pagination.current) {
-        paramsRecord[pageKey] = pagination.current
-      }
-      if (paramsRecord[sizeKey] !== pagination.size) {
-        paramsRecord[sizeKey] = pagination.size
-      }
+      applyPage({
+        records: tableData,
+        nextCursor: standardResponse.nextCursor || '',
+        hasMore: standardResponse.hasMore === true,
+        total: standardResponse.total ?? tableData.length
+      })
 
       // 缓存数据
       if (useCache && cache) {
@@ -395,7 +364,7 @@ function useTableImpl<TApiFn extends (params: any) => Promise<any>>(
       if (err instanceof Error && err.message === '请求已取消') {
         // 请求被取消，回到 idle 状态
         loadingState.value = 'idle'
-        return { records: [], total: 0, current: 1, size: 10 }
+        return { records: [], total: 0, nextCursor: '', hasMore: false }
       }
 
       // 状态机：请求失败，进入 error 状态
@@ -423,8 +392,7 @@ function useTableImpl<TApiFn extends (params: any) => Promise<any>>(
 
   // 分页获取数据 (重置到第一页) - 专门用于搜索场景
   const getDataByPage = async (params?: Partial<TParams>): Promise<ApiResponse<TRecord> | void> => {
-    pagination.current = 1
-    ;(searchParams as Record<string, unknown>)[pageKey] = 1
+    resetCursorPagination()
 
     // 搜索时清空当前搜索条件的缓存，确保获取最新数据
     clearCache(CacheInvalidationStrategy.CLEAR_CURRENT, '搜索数据')
@@ -443,25 +411,17 @@ function useTableImpl<TApiFn extends (params: any) => Promise<any>>(
   // 替换搜索参数：适用于表单查询，避免旧字段残留
   const replaceSearchParams = (params?: Partial<TParams>): void => {
     const paramsRecord = searchParams as Record<string, unknown>
-    const currentSize = pagination.size || ((paramsRecord[sizeKey] as number) ?? 10)
+    const currentLimit = pagination.size || ((paramsRecord.limit as number) ?? 10)
 
     Object.keys(searchParams).forEach((key) => {
-      if (key !== pageKey && key !== sizeKey) {
+      if (key !== 'limit') {
         delete paramsRecord[key]
       }
     })
 
-    Object.assign(
-      searchParams,
-      {
-        [pageKey]: 1,
-        [sizeKey]: currentSize
-      },
-      params || {}
-    )
-
-    pagination.current = 1
-    pagination.size = currentSize
+    Object.assign(searchParams, { limit: currentLimit }, params || {})
+    delete paramsRecord.cursor
+    resetCursorPagination(currentLimit)
   }
 
   // 重置搜索参数
@@ -471,10 +431,7 @@ function useTableImpl<TApiFn extends (params: any) => Promise<any>>(
 
     // 保存分页相关的默认值
     const paramsRecord = searchParams as Record<string, unknown>
-    const defaultPagination = {
-      [pageKey]: 1,
-      [sizeKey]: (paramsRecord[sizeKey] as number) || 10
-    }
+    const defaultLimit = ((apiParams as Record<string, unknown>).limit as number) || 10
 
     // 清空所有搜索参数
     Object.keys(searchParams).forEach((key) => {
@@ -482,11 +439,9 @@ function useTableImpl<TApiFn extends (params: any) => Promise<any>>(
     })
 
     // 重新设置默认参数
-    Object.assign(searchParams, apiParams || {}, defaultPagination)
-
-    // 重置分页
-    pagination.current = 1
-    pagination.size = defaultPagination[sizeKey] as number
+    Object.assign(searchParams, apiParams || {}, { limit: defaultLimit })
+    delete paramsRecord.cursor
+    resetCursorPagination(defaultLimit)
 
     // 清空错误状态
     error.value = null
@@ -514,10 +469,9 @@ function useTableImpl<TApiFn extends (params: any) => Promise<any>>(
     debouncedGetDataByPage.cancel()
 
     const paramsRecord = searchParams as Record<string, unknown>
-    pagination.size = newSize
-    pagination.current = 1
-    paramsRecord[sizeKey] = newSize
-    paramsRecord[pageKey] = 1
+    paramsRecord.limit = newSize
+    delete paramsRecord.cursor
+    resetCursorPagination(newSize)
 
     clearCache(CacheInvalidationStrategy.CLEAR_CURRENT, '分页大小变化')
 
@@ -539,16 +493,10 @@ function useTableImpl<TApiFn extends (params: any) => Promise<any>>(
       return
     }
 
+    if (!moveTo(newCurrent)) return
+
     try {
       isCurrentChanging = true
-
-      // 修复：只更新必要的状态
-      const paramsRecord = searchParams as Record<string, unknown>
-      pagination.current = newCurrent
-      // 只有当 searchParams 的分页字段与新值不同时才更新
-      if (paramsRecord[pageKey] !== newCurrent) {
-        paramsRecord[pageKey] = newCurrent
-      }
 
       await getData()
     } finally {
@@ -561,8 +509,7 @@ function useTableImpl<TApiFn extends (params: any) => Promise<any>>(
   // 新增后刷新：回到第一页并清空分页缓存（适用于新增数据后）
   const refreshCreate = async (): Promise<void> => {
     debouncedGetDataByPage.cancel()
-    pagination.current = 1
-    ;(searchParams as Record<string, unknown>)[pageKey] = 1
+    resetCursorPagination()
     clearCache(CacheInvalidationStrategy.CLEAR_PAGINATION, '新增数据')
     await getData()
   }
@@ -583,9 +530,7 @@ function useTableImpl<TApiFn extends (params: any) => Promise<any>>(
 
     // 如果当前页为空且不是第一页，回到上一页
     if (data.value.length === 0 && current > 1) {
-      pagination.current = current - 1
-      ;(searchParams as Record<string, unknown>)[pageKey] = current - 1
-      await getData()
+      if (moveTo(current - 1)) await getData()
     }
   }
 

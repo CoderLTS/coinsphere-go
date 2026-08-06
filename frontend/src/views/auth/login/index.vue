@@ -173,18 +173,18 @@
       // 登录请求
       const { username, password } = formData
 
-      const { token } = await fetchLogin({
+      const { accessToken } = await fetchLogin({
         username,
         password
       })
 
       // 验证token
-      if (!token) {
-        throw new Error('Login failed - no token received')
+      if (!accessToken) {
+        throw new Error('Login failed - no access token received')
       }
 
       // 存储 token 和登录状态
-      userStore.setToken(token)
+      userStore.setToken(accessToken)
       userStore.setLoginStatus(true)
       resetRouterState(0)
 

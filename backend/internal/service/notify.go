@@ -59,17 +59,18 @@ type NotifyChannelUpsertPayload struct {
 	Remark       string  `json:"remark"`
 }
 
-// GetNotifyOverviewSummary 配置概览的通知摘要。
+// GetNotifyOverviewSummary 当前用户配置概览的通知摘要。
 // 返回类型 M 是本项目别名:type M = map[string]any(见 app.go),即"键为字符串、值任意"的字典,用来拼 JSON 响应。
 // (a *App) 是方法接收者,a 即当前 App 实例;a.DB 是 GORM 的数据库句柄(*gorm.DB)。见 GO入门笔记『框架:GORM』
-func (a *App) GetNotifyOverviewSummary() M {
+func (a *App) GetNotifyOverviewSummary(principal *Principal) M {
 	// var 声明变量并给"零值";先建一个空记录,等 GORM 把查询结果写回它。
 	var latest db.SystemNotifyDelivery
 	// 链式查询:Order 排序 → First(&latest) 取第一条并写回;末尾 .Error 是本次错误,==nil 表示查到了。传 &latest(指针)让 GORM 把结果写回。
-	latestFound := a.DB.Order("created_at DESC, id DESC").First(&latest).Error == nil
+	deliveryQuery := a.DB.Where("recipient_user_id = ?", principal.User.ID)
+	latestFound := deliveryQuery.Order("created_at DESC, id DESC").First(&latest).Error == nil
 	// []db.SystemNotifyChannel 是"渠道切片"(一堆渠道);Find(&channels) 查出全部并写回。
 	var channels []db.SystemNotifyChannel
-	a.DB.Find(&channels)
+	a.DB.Where("is_builtin = ? OR owner_id = ?", true, principal.User.ID).Find(&channels)
 	enabledCount := 0
 	// for _, v := range slice 遍历切片:_ 丢弃下标,channel 是每个元素。range 是本文件第一次出现。见 GO入门笔记『复合类型』
 	for _, channel := range channels {
@@ -78,7 +79,7 @@ func (a *App) GetNotifyOverviewSummary() M {
 		}
 	}
 	var deliveryCount int64
-	a.DB.Model(&db.SystemNotifyDelivery{}).Count(&deliveryCount)
+	deliveryQuery.Model(&db.SystemNotifyDelivery{}).Count(&deliveryCount)
 	latestStatus := "unknown"
 	latestAt := ""
 	if latestFound {
@@ -92,22 +93,16 @@ func (a *App) GetNotifyOverviewSummary() M {
 	}
 }
 
-// ListNotifyChannels 渠道列表(非超管仅可见内置与自有)。
+// ListNotifyChannels 渠道列表(所有角色仅可见内置与自有)。
 func (a *App) ListNotifyChannels(principal *Principal) []M {
 	var channels []db.SystemNotifyChannel
-	a.DB.Order("updated_at DESC, id DESC").Find(&channels)
+	a.DB.Where("is_builtin = ? OR owner_id = ?", true, principal.User.ID).
+		Order("updated_at DESC, id DESC").Find(&channels)
 	result := make([]M, 0, len(channels))
 	// 用 for i := range + channel := &channels[i](取第 i 个元素的地址),而不是 for _, channel := range channels。
 	// 因为 range 的第二返回值是元素"副本",改它不影响原切片;要拿到指向真实元素的指针,就得用 &channels[i]。见 GO入门笔记『复合类型』
 	for i := range channels {
 		channel := &channels[i]
-		if !principal.HasRole("R_SUPER") {
-			// 数据隔离:owned 判断"这条渠道是不是我的"。先判指针非 nil,再用 *p 解引用取值比较(顺序不能反,否则解引用 nil 会崩)。
-			owned := channel.OwnerID != nil && *channel.OwnerID == principal.User.ID
-			if !channel.IsBuiltin && !owned {
-				continue
-			}
-		}
 		result = append(result, a.serializeChannel(channel))
 	}
 	return result
@@ -272,8 +267,7 @@ func (a *App) GetNotifyChannelMeta() M {
 
 // DeliveryHistoryQuery 投递历史查询。
 type DeliveryHistoryQuery struct {
-	Current              int
-	Size                 int
+	Page                 CursorPage
 	Keyword              string
 	WorkflowDefinitionID *int64
 	ChannelType          string
@@ -317,46 +311,70 @@ func (a *App) ListDeliveryHistory(principal *Principal, query DeliveryHistoryQue
 	if err := q.Count(&total).Error; err != nil {
 		return nil, err
 	}
-	// 分页第二步:Preload 顺带把关联对象一次查出来(避免逐条再查的 N+1 问题);
-	// Offset((页码-1)*每页) 跳过前面几页,Limit(每页) 只取本页这一批 —— 这就是标准的"分页"写法。
+	afterID, err := query.Page.AfterID()
+	if err != nil {
+		return nil, err
+	}
+	if afterID > 0 {
+		q = q.Where("notification_deliveries.id < ?", afterID)
+	}
 	var deliveries []db.SystemNotifyDelivery
 	if err := q.Preload("Channel").Preload("RecipientUser").
 		Preload("WorkflowExecution").Preload("WorkflowExecution.WorkflowDefinition").
-		Order("notification_deliveries.created_at DESC, notification_deliveries.id DESC").
-		Offset((query.Current - 1) * query.Size).Limit(query.Size).
+		Order("notification_deliveries.id DESC").Limit(query.Page.Limit + 1).
 		Find(&deliveries).Error; err != nil {
 		return nil, err
+	}
+	hasMore := len(deliveries) > query.Page.Limit
+	if hasMore {
+		deliveries = deliveries[:query.Page.Limit]
 	}
 	records := make([]M, 0, len(deliveries))
 	for i := range deliveries {
 		records = append(records, a.serializeDelivery(&deliveries[i]))
 	}
-	return pagedResult(records, query.Current, query.Size, total), nil
+	lastKey := ""
+	if len(deliveries) > 0 {
+		lastKey = int64CursorKey(deliveries[len(deliveries)-1].ID)
+	}
+	return cursorResult(records, query.Page, lastKey, hasMore, total), nil
 }
 
 // ListInAppNotifications 站内通知分页。
 // 前端"通知面板"的数据源:只查该用户、渠道 in_app、状态 success 的记录,分页返回并附未读数(分页写法见上面 ListDeliveryHistory)。
-func (a *App) ListInAppNotifications(userID int64, current, size int) (M, error) {
+func (a *App) ListInAppNotifications(userID int64, page CursorPage) (M, error) {
 	q := a.DB.Model(&db.SystemNotifyDelivery{}).
 		Where("recipient_user_id = ? AND channel_type = ? AND status = ?", userID, "in_app", "success")
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
 		return nil, err
 	}
+	afterID, err := page.AfterID()
+	if err != nil {
+		return nil, err
+	}
+	if afterID > 0 {
+		q = q.Where("id < ?", afterID)
+	}
 	var deliveries []db.SystemNotifyDelivery
-	if err := a.DB.Preload("WorkflowExecution").Preload("WorkflowExecution.WorkflowDefinition").
-		Where("recipient_user_id = ? AND channel_type = ? AND status = ?", userID, "in_app", "success").
-		Order("created_at DESC, id DESC").
-		Offset((current - 1) * size).Limit(size).
+	if err := q.Preload("WorkflowExecution").Preload("WorkflowExecution.WorkflowDefinition").
+		Order("id DESC").Limit(page.Limit + 1).
 		Find(&deliveries).Error; err != nil {
 		return nil, err
+	}
+	hasMore := len(deliveries) > page.Limit
+	if hasMore {
+		deliveries = deliveries[:page.Limit]
 	}
 	records := make([]M, 0, len(deliveries))
 	for i := range deliveries {
 		records = append(records, a.serializeDelivery(&deliveries[i]))
 	}
-	// result 是 M(map),可直接用 result["键"]=值 再塞一个未读数字段进去。
-	result := pagedResult(records, current, size, total)
+	lastKey := ""
+	if len(deliveries) > 0 {
+		lastKey = int64CursorKey(deliveries[len(deliveries)-1].ID)
+	}
+	result := cursorResult(records, page, lastKey, hasMore, total)
 	result["unreadCount"] = a.countUnreadInApp(userID)
 	return result, nil
 }
@@ -994,10 +1012,8 @@ func (a *App) requireChannel(channelID int64, principal *Principal) (*db.SystemN
 	if err := a.DB.First(&channel, channelID).Error; err != nil {
 		return nil, bizErr("通知渠道不存在")
 	}
-	if !principal.HasRole("R_SUPER") && !channel.IsBuiltin {
-		if channel.OwnerID == nil || *channel.OwnerID != principal.User.ID {
-			return nil, bizErr("无权访问当前通知渠道")
-		}
+	if !channel.IsBuiltin && (channel.OwnerID == nil || *channel.OwnerID != principal.User.ID) {
+		return nil, bizErr("无权访问当前通知渠道")
 	}
 	return &channel, nil
 }

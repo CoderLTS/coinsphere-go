@@ -1,4 +1,4 @@
-/** Axios 请求封装：注入内存 access token，并统一处理刷新与错误信封。 */
+/** Axios 请求封装：注入内存 access token，并统一处理错误信封。 */
 
 import axios, { AxiosRequestConfig, AxiosResponse, InternalAxiosRequestConfig } from 'axios'
 import { useUserStore } from '@/store/modules/user'
@@ -21,8 +21,6 @@ let unauthorizedTimer: NodeJS.Timeout | null = null
 interface ExtendedAxiosRequestConfig extends AxiosRequestConfig {
   showErrorMessage?: boolean
   showSuccessMessage?: boolean
-  skipAuthRefresh?: boolean
-  authRetried?: boolean
 }
 
 const { VITE_API_URL, VITE_WITH_CREDENTIALS } = import.meta.env
@@ -36,7 +34,7 @@ const axiosInstance = axios.create({
   transformResponse: [
     (data, headers) => {
       const contentType = headers['content-type']
-      if (contentType?.includes('application/json')) {
+      if (contentType?.includes('json')) {
         try {
           return JSON.parse(data)
         } catch {
@@ -155,19 +153,7 @@ async function request<T = any>(config: ExtendedAxiosRequestConfig): Promise<T> 
     return res.data.data as T
   } catch (error) {
     if (error instanceof HttpError && error.code === ApiStatus.unauthorized) {
-      if (!config.skipAuthRefresh && !config.authRetried) {
-        try {
-          await useUserStore().refreshSession()
-          return request<T>({ ...config, authRetried: true })
-        } catch {
-          if (config.showErrorMessage !== false) showUnauthorizedError(error)
-          return Promise.reject(error)
-        }
-      }
-
-      if (!config.skipAuthRefresh && config.authRetried) {
-        useUserStore().logOut()
-      }
+      useUserStore().clearSession()
       if (config.showErrorMessage !== false) showUnauthorizedError(error)
       return Promise.reject(error)
     }

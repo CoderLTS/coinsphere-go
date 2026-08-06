@@ -43,7 +43,7 @@ OpenAPI 3.0.3 是 `/api/v1` 的唯一来源。迁移实施时必须在一个 PR 
 | 策略   | `/api/v1/strategies`、`/admin/strategies`、`/strategy-instances`、`/backtests`                        |
 | 信号   | `/api/v1/signals`、`/signals/{id}/approve`、`/signals/{id}/reject`                                    |
 | 交易   | `/api/v1/trading-accounts`、`/risk-limits`、`/positions`、`/orders`、`/automation`、`/emergency-stop` |
-| 通知   | `/api/v1/notification-channels`、`/notification-deliveries`、`/ws/notifications`                      |
+| 通知   | `/api/v1/notification-channels`、`/api/v1/notification-deliveries`、`/api/v1/ws/notifications`        |
 | 工作流 | 现有工作流资源统一迁移到 `/api/v1/workflows` 下                                                       |
 
 - 错误响应使用 `application/problem+json`，至少包含 `type`、`title`、`status`、`detail` 和 `requestId`。

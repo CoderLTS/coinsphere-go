@@ -132,21 +132,9 @@ const fastEnterConfig: FastEnterConfig = {
       routeName: 'Login'
     },
     {
-      name: '注册',
-      enabled: true,
-      order: 2,
-      routeName: 'Register'
-    },
-    {
-      name: '忘记密码',
-      enabled: true,
-      order: 3,
-      routeName: 'ForgetPassword'
-    },
-    {
       name: '个人中心',
       enabled: true,
-      order: 4,
+      order: 2,
       routeName: 'UserCenter'
     }
   ]
@@ -159,25 +147,6 @@ export default Object.freeze(fastEnterConfig)
     console.log(`     ${icons.success} ${fmt.success('清理快速入口配置完成')}`)
   } catch (err) {
     console.log(`     ${icons.error} ${fmt.error('清理快速入口配置失败')}`)
-    console.log(`     ${fmt.dim('错误详情: ' + err)}`)
-  }
-}
-
-// 更新菜单接口
-async function updateMenuApi() {
-  const apiPath = path.resolve(process.cwd(), 'src/api/system-manage.ts')
-
-  try {
-    const content = await fs.readFile(apiPath, 'utf-8')
-    const updatedContent = content.replace(
-      "url: '/api/v3/system/menus'",
-      "url: '/api/v3/system/menus/simple'"
-    )
-
-    await fs.writeFile(apiPath, updatedContent, 'utf-8')
-    console.log(`     ${icons.success} ${fmt.success('更新菜单接口完成')}`)
-  } catch (err) {
-    console.log(`     ${icons.error} ${fmt.error('更新菜单接口失败')}`)
     console.log(`     ${fmt.dim('错误详情: ' + err)}`)
   }
 }
@@ -362,36 +331,32 @@ async function main() {
   console.log()
 
   // 开始清理过程
-  console.log(`  ${fmt.badge('步骤 1/6', theme.bgBlue)} ${fmt.title('删除演示文件')}`)
+  console.log(`  ${fmt.badge('步骤 1/5', theme.bgBlue)} ${fmt.title('删除演示文件')}`)
   console.log()
   for (let i = 0; i < targets.length; i++) {
     await remove(targets[i], i)
   }
   console.log()
 
-  console.log(`  ${fmt.badge('步骤 2/6', theme.bgBlue)} ${fmt.title('清理路由模块')}`)
+  console.log(`  ${fmt.badge('步骤 2/5', theme.bgBlue)} ${fmt.title('清理路由模块')}`)
   console.log()
   await cleanRouteModules()
   console.log()
 
-  console.log(`  ${fmt.badge('步骤 3/6', theme.bgBlue)} ${fmt.title('重写路由别名')}`)
+  console.log(`  ${fmt.badge('步骤 3/5', theme.bgBlue)} ${fmt.title('重写路由别名')}`)
   console.log()
   await cleanRoutesAlias()
   console.log()
 
-  console.log(`  ${fmt.badge('步骤 4/6', theme.bgBlue)} ${fmt.title('清理语言文件')}`)
+  console.log(`  ${fmt.badge('步骤 4/5', theme.bgBlue)} ${fmt.title('清理语言文件')}`)
   console.log()
   await cleanLanguageFiles()
   console.log()
 
-  console.log(`  ${fmt.badge('步骤 5/6', theme.bgBlue)} ${fmt.title('清理快速入口')}`)
+  console.log(`  ${fmt.badge('步骤 5/5', theme.bgBlue)} ${fmt.title('清理快速入口')}`)
   console.log()
   await cleanFastEnterComponent()
   console.log()
-
-  console.log(`  ${fmt.badge('步骤 6/6', theme.bgBlue)} ${fmt.title('更新菜单接口')}`)
-  console.log()
-  await updateMenuApi()
 
   // 显示统计信息
   await showStats()

@@ -28,7 +28,7 @@
         }"
         :pagination-options="{
           pageSizes: [10, 20, 50],
-          layout: 'total, prev, pager, next, sizes',
+          layout: 'total, prev, next, sizes',
           align: 'center'
         }"
         :stripe="false"
@@ -136,6 +136,7 @@
     ElTag
   } from 'element-plus'
   import { useAuth } from '@/hooks/core/useAuth'
+  import { useCursorPagination } from '@/hooks/core/useCursorPagination'
   import { useTableColumns } from '@/hooks/core/useTableColumns'
   import {
     fetchTaskDefinitionPage,
@@ -170,15 +171,12 @@
   const dialogForm = reactive<Record<string, any>>({})
   const taskDefinitionPage = ref<TaskDefinitionManagementList>({
     records: [],
-    current: 1,
-    size: 10,
+    nextCursor: '',
+    hasMore: false,
     total: 0
   })
 
-  const pagination = reactive({
-    current: 1,
-    size: 10
-  })
+  const { pagination, requestParams, applyPage, reset, moveTo } = useCursorPagination(10)
 
   const initialFilters = {
     keyword: ''
@@ -332,34 +330,32 @@
     loading.value = true
     try {
       taskDefinitionPage.value = await fetchTaskDefinitionPage({
-        current: pagination.current,
-        size: pagination.size,
+        ...requestParams(),
         keyword: formFilters.keyword.trim() || undefined
       } satisfies TaskDefinitionQueryParams)
+      applyPage(taskDefinitionPage.value)
     } finally {
       loading.value = false
     }
   }
 
   const handleSearch = () => {
-    pagination.current = 1
+    reset()
     void loadPageData()
   }
 
   const handleReset = () => {
     Object.assign(formFilters, { ...initialFilters })
-    pagination.current = 1
+    reset()
     void loadPageData()
   }
 
   const handleCurrentChange = (current: number) => {
-    pagination.current = current
-    void loadPageData()
+    if (moveTo(current)) void loadPageData()
   }
 
   const handleSizeChange = (size: number) => {
-    pagination.size = size
-    pagination.current = 1
+    reset(size)
     void loadPageData()
   }
 

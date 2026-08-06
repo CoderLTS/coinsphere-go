@@ -76,7 +76,7 @@ describe('notification websocket', () => {
     const url = new URL(socket.url)
     expect(url.protocol).toBe('wss:')
     expect(url.host).toBe('app.example:8443')
-    expect(url.pathname).toBe('/ws/notifications')
+    expect(url.pathname).toBe('/api/v1/ws/notifications')
     expect(url.search).toBe('')
     expect(socket.protocols).toEqual(['coinsphere.notifications.v1', userStore.accessToken])
 

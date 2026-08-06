@@ -151,10 +151,7 @@ func Seed(ctx context.Context, gdb *gorm.DB, hasher *security.PasswordHasher, ad
 		if err := seedWorkflows(tx, roles["R_SUPER"].ID); err != nil {
 			return err
 		}
-		// 顺手清理过期的刷新令牌:等价 SQL 是 DELETE FROM refresh_token_record WHERE expires_at < ?。
-		// ? 是占位符,真实值(time.Now())单独传,由 GORM 转义以防 SQL 注入;&RefreshTokenRecord{}
-		// 传一个空结构体的指针(& 取地址),只是告诉 GORM“操作哪张表”。末尾 .Error 取这步的执行错误。
-		return tx.Where("expires_at < ?", time.Now()).Delete(&RefreshTokenRecord{}).Error
+		return nil
 	})
 }
 

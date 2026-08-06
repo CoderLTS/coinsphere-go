@@ -331,7 +331,7 @@
   const historyLoading = ref(false)
   const historyLoadingMore = ref(false)
   const historyHasMore = ref(true)
-  const historyPage = ref(1)
+  const historyCursor = ref('')
   const isStreaming = ref(false)
   const deletingSessionId = ref<number | null>(null)
   const currentAgentCode = ref<Api.Assistant.AgentCode>('system_general')
@@ -490,7 +490,7 @@
     currentNewsTitle.value = ''
     selectedModelId.value = null
     deletingSessionId.value = null
-    historyPage.value = 1
+    historyCursor.value = ''
     historyHasMore.value = true
     abortStream()
   }
@@ -585,7 +585,7 @@
   const loadHistory = async (reset = false) => {
     if (!currentPayload.value) return
     if (reset) {
-      historyPage.value = 1
+      historyCursor.value = ''
       historyHasMore.value = true
       historyItems.value = []
     }
@@ -596,12 +596,12 @@
     try {
       const result = await fetchAssistantSessions({
         agentCode: currentPayload.value.agentCode,
-        current: historyPage.value,
-        size: 10
+        cursor: historyCursor.value || undefined,
+        limit: 10
       })
       historyItems.value = reset ? result.records : [...historyItems.value, ...result.records]
       historyHasMore.value = Boolean(result.hasMore)
-      historyPage.value = result.current + 1
+      historyCursor.value = result.nextCursor
     } catch (error) {
       ElMessage.error(resolveErrorMessage(error, 'assistant.errors.loadHistory'))
     } finally {

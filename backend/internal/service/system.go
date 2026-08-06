@@ -23,8 +23,7 @@ var protectedRoleCodes = map[string]bool{"R_SUPER": true, "R_GUEST": true}
 // 注意 ID *int64、IsActive *bool 用的是指针:nil 表示"这个条件没填、不参与过滤",
 // 以此区分于 0 / false 这种"填了、但值恰好是零"的情况。见 GO入门笔记『复合类型』。
 type UserListQuery struct {
-	Current  int
-	Size     int
+	Page     CursorPage
 	ID       *int64
 	Username string
 	Gender   string
@@ -65,10 +64,19 @@ func (a *App) ListUsers(query UserListQuery) (M, error) {
 		return nil, err
 	}
 	var users []db.SystemUser
-	// Offset/Limit 就是分页:跳过前 (页码-1)*每页 条,再取 每页 条;Order 指定排序。.Find(&users) 取多行。
-	if err := q.Order("created_at DESC, id DESC").
-		Offset((query.Current - 1) * query.Size).Limit(query.Size).Find(&users).Error; err != nil {
+	afterID, err := query.Page.AfterID()
+	if err != nil {
 		return nil, err
+	}
+	if afterID > 0 {
+		q = q.Where("id < ?", afterID)
+	}
+	if err := q.Order("id DESC").Limit(query.Page.Limit + 1).Find(&users).Error; err != nil {
+		return nil, err
+	}
+	hasMore := len(users) > query.Page.Limit
+	if hasMore {
+		users = users[:query.Page.Limit]
 	}
 	userIDs := make([]int64, 0, len(users))
 	for _, user := range users {
@@ -81,13 +89,16 @@ func (a *App) ListUsers(query UserListQuery) (M, error) {
 	for i := range users {
 		records = append(records, serializeUser(&users[i], roleMap[users[i].ID]))
 	}
-	return pagedResult(records, query.Current, query.Size, total), nil
+	lastKey := ""
+	if len(users) > 0 {
+		lastKey = int64CursorKey(users[len(users)-1].ID)
+	}
+	return cursorResult(records, query.Page, lastKey, hasMore, total), nil
 }
 
 // RoleListQuery 角色分页过滤。
 type RoleListQuery struct {
-	Current     int
-	Size        int
+	Page        CursorPage
 	ID          *int64
 	DisplayName string
 	Code        string
@@ -119,14 +130,29 @@ func (a *App) ListRoles(query RoleListQuery) (M, error) {
 		return nil, err
 	}
 	var roles []db.SystemRole
-	if err := q.Order("id ASC").Offset((query.Current - 1) * query.Size).Limit(query.Size).Find(&roles).Error; err != nil {
+	afterID, err := query.Page.AfterID()
+	if err != nil {
 		return nil, err
+	}
+	if afterID > 0 {
+		q = q.Where("id > ?", afterID)
+	}
+	if err := q.Order("id ASC").Limit(query.Page.Limit + 1).Find(&roles).Error; err != nil {
+		return nil, err
+	}
+	hasMore := len(roles) > query.Page.Limit
+	if hasMore {
+		roles = roles[:query.Page.Limit]
 	}
 	records := make([]M, 0, len(roles))
 	for i := range roles {
 		records = append(records, serializeRole(&roles[i]))
 	}
-	return pagedResult(records, query.Current, query.Size, total), nil
+	lastKey := ""
+	if len(roles) > 0 {
+		lastKey = int64CursorKey(roles[len(roles)-1].ID)
+	}
+	return cursorResult(records, query.Page, lastKey, hasMore, total), nil
 }
 
 // GetMenuTree 按角色返回可访问菜单树。

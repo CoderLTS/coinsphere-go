@@ -39,7 +39,6 @@ export const useUserStore = defineStore(
     const searchHistory = ref<AppRouteRecord[]>([])
     // 访问令牌
     const accessToken = ref('')
-    let refreshPromise: Promise<string> | null = null
 
     // 计算属性：获取用户信息
     const getUserInfo = computed(() => info.value)
@@ -101,12 +100,12 @@ export const useUserStore = defineStore(
       lockPassword.value = password
     }
 
-    /** access token 只写入 Pinia 内存，refresh token 由 HttpOnly Cookie 承载。 */
+    /** access token 只写入 Pinia 内存，刷新页面后必须重新登录。 */
     const setToken = (newAccessToken: string) => {
       accessToken.value = newAccessToken
     }
 
-    /** 清理本地会话并回到游客首页。 */
+    /** 清理本地会话并回到登录页。 */
     const clearSession = () => {
       // 保存当前用户 ID，用于下次登录时判断是否为同一用户
       const currentUserId = info.value.userId
@@ -132,37 +131,15 @@ export const useUserStore = defineStore(
       useMenuStore().setHomePath('')
       // 重置路由状态
       resetRouterState(0)
-      // 游客模式下直接回到首页，由路由守卫重新初始化游客菜单与首页路径
-      router.replace({ path: '/home' })
-    }
-
-    /** 并发恢复和 401 请求共享一次 Cookie 刷新，失败后才清理既有登录态。 */
-    const refreshSession = () => {
-      if (refreshPromise) return refreshPromise
-
-      const hadAuthenticatedSession =
-        accessMode.value === 'authenticated' || Boolean(accessToken.value)
-      refreshPromise = import('@/api/auth')
-        .then(({ fetchRefreshSession }) => fetchRefreshSession())
-        .then(({ token }) => {
-          if (!token) throw new Error('Refresh failed - no token received')
-          accessToken.value = token
-          return token
-        })
-        .catch((error) => {
-          if (hadAuthenticatedSession) clearSession()
-          throw error
-        })
-        .finally(() => {
-          refreshPromise = null
-        })
-
-      return refreshPromise
+      router.replace({ name: 'Login' })
     }
 
     /** 后端登出为 best-effort，本地会话立即清理。 */
     const logOut = () => {
-      void import('@/api/auth').then(({ logout }) => logout()).catch(() => {})
+      const token = accessToken.value
+      if (token) {
+        void import('@/api/auth').then(({ logout }) => logout(token)).catch(() => {})
+      }
       clearSession()
     }
 
@@ -220,7 +197,6 @@ export const useUserStore = defineStore(
       setLockStatus,
       setLockPassword,
       setToken,
-      refreshSession,
       clearSession,
       logOut,
       checkAndClearWorktabs
@@ -231,7 +207,7 @@ export const useUserStore = defineStore(
       key: 'user-preferences',
       storage: localStorage,
       pick: ['language', 'searchHistory'],
-      // 旧键可能包含 accessToken、refreshToken、lockPassword，初始化前直接删除。
+      // 旧键可能包含 accessToken、lockPassword，初始化前直接删除。
       beforeHydrate: () => localStorage.removeItem('user')
     }
   }

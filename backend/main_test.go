@@ -123,7 +123,7 @@ func TestRunStopsCleanlyWhenRootContextIsCanceled(t *testing.T) {
 	client.Timeout = 2 * time.Second
 	requestID := "lifecycle-audit-request"
 	loginRequest, err := http.NewRequest(http.MethodPost,
-		fmt.Sprintf("http://127.0.0.1:%d/api/auth/login?token=must-not-persist", port),
+		fmt.Sprintf("http://127.0.0.1:%d/api/v1/auth/login?token=must-not-persist", port),
 		strings.NewReader(`{"username":"","password":""}`))
 	if err != nil {
 		t.Fatalf("build audit request: %v", err)
@@ -136,7 +136,7 @@ func TestRunStopsCleanlyWhenRootContextIsCanceled(t *testing.T) {
 	}
 	_, _ = io.Copy(io.Discard, response.Body)
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusOK || response.Header.Get("X-Request-ID") != requestID {
+	if response.StatusCode != http.StatusUnauthorized || response.Header.Get("X-Request-ID") != requestID {
 		t.Fatalf("audit response = status:%d request-id:%q", response.StatusCode, response.Header.Get("X-Request-ID"))
 	}
 	var action, resourcePath, outcome string
@@ -148,7 +148,7 @@ WHERE request_id = $1
 `, requestID).Scan(&action, &resourcePath, &outcome, &statusCode); err != nil {
 		t.Fatalf("load HTTP audit record: %v", err)
 	}
-	if action != "POST /api/auth/login" || resourcePath != "/api/auth/login" || outcome != "failure" || statusCode != http.StatusOK {
+	if action != "POST /api/v1/auth/login" || resourcePath != "/api/v1/auth/login" || outcome != "failure" || statusCode != http.StatusUnauthorized {
 		t.Fatalf("unexpected HTTP audit record: action=%q path=%q outcome=%q status=%d", action, resourcePath, outcome, statusCode)
 	}
 

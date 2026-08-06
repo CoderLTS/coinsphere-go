@@ -24,7 +24,7 @@
         :columns="columns"
         :data="records"
         :pagination="pagination"
-        :pagination-options="{ pageSizes: [10, 20, 50] }"
+        :pagination-options="{ pageSizes: [10, 20, 50], layout: 'total, prev, next, sizes' }"
         :stripe="false"
         @pagination:size-change="handleSizeChange"
         @pagination:current-change="handleCurrentChange"
@@ -37,17 +37,14 @@
   import { ElTag, ElTooltip } from 'element-plus'
   import { fetchPushDeliveryList, type NotifyDeliveryItem } from '@/api/data'
   import { fetchWorkflowDefinitionList } from '@/api/scheduler'
+  import { useCursorPagination } from '@/hooks/core/useCursorPagination'
   import { useTableColumns } from '@/hooks/core/useTableColumns'
 
   defineOptions({ name: 'PushDataPage' })
 
   const loading = ref(false)
   const records = ref<NotifyDeliveryItem[]>([])
-  const pagination = reactive({
-    current: 1,
-    size: 10,
-    total: 0
-  })
+  const { pagination, requestParams, applyPage, reset, moveTo } = useCursorPagination(10)
   const definitionOptions = ref<Array<{ value: number; label: string }>>([])
 
   const initialFilters = {
@@ -205,39 +202,36 @@
     loading.value = true
     try {
       const data = await fetchPushDeliveryList({
-        current: pagination.current,
-        size: pagination.size,
+        ...requestParams(),
         keyword: formFilters.keyword || undefined,
         workflowDefinitionId: formFilters.workflowDefinitionId || undefined,
         channelType: formFilters.channelType || undefined,
         deliveryStatus: formFilters.deliveryStatus || undefined
       })
       records.value = data.records
-      pagination.total = data.total
+      applyPage(data)
     } finally {
       loading.value = false
     }
   }
 
   const handleSearch = () => {
-    pagination.current = 1
+    reset()
     void loadRecords()
   }
 
   const handleReset = () => {
     Object.assign(formFilters, { ...initialFilters })
-    pagination.current = 1
+    reset()
     void loadRecords()
   }
 
   const handleCurrentChange = (current: number) => {
-    pagination.current = current
-    void loadRecords()
+    if (moveTo(current)) void loadRecords()
   }
 
   const handleSizeChange = (size: number) => {
-    pagination.size = size
-    pagination.current = 1
+    reset(size)
     void loadRecords()
   }
 

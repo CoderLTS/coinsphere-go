@@ -36,7 +36,7 @@ type App struct {
 	//   DB     —— 数据库句柄(GORM),所有增删改查都通过它
 	//   Cfg    —— 全局配置(来自 config.yml)
 	//   Hasher —— 密码哈希/校验工具
-	//   Tokens —— 登录令牌(access/refresh token)的签发与校验
+	//   Tokens —— access token 的签发与校验
 	//   Cipher —— 敏感信息的对称加解密
 	//   Hub    —— WebSocket 连接中心,负责给前端实时推送
 	// 用指针可以避免复制大对象,并让多处共享同一份实例。见 GO入门笔记『复合类型』。
@@ -47,6 +47,13 @@ type App struct {
 	Cipher   *security.SecretCipher
 	Hub      *Hub
 	database *gorm.DB
+
+	// authState stores short-lived, process-local authentication state that cannot
+	// be represented by a signed access token alone. Reauthentication tokens are
+	// intentionally not persisted: only their hashes live here for five minutes.
+	authStateMu         sync.Mutex
+	reauthTokens        map[string]reauthTokenRecord
+	revokedAccessTokens map[string]time.Time
 
 	// dummyHash 预先算好的“假密码哈希”:登录时若用户不存在/停用,也拿它跑一次校验,
 	// 让各分支耗时一致,消除通过响应快慢枚举用户名的可能(见评审 #7)。
@@ -97,19 +104,21 @@ func NewApp(parentCtx context.Context, gdb *gorm.DB, cfg *config.AppConfig, work
 	// 字段名后跟冒号按名赋值,顺序随意。make(chan struct{}, 1) 造一个容量为 1 的带缓冲 channel。
 	// 结尾的 nil 占据 error 返回值的位置,表示"没有错误"。
 	return &App{
-		DB:             gdb.WithContext(runtimeCtx),
-		Cfg:            cfg,
-		Hasher:         hasher,
-		Tokens:         security.NewTokenManager(cfg.Auth.SecretKey, cfg.Auth.AccessTokenTTLMinutes, cfg.Auth.RefreshTokenTTLDays),
-		Cipher:         cipher,
-		Hub:            NewHub(),
-		WorkerID:       workerID,
-		dummyHash:      hasher.HashPassword(security.RandomToken()),
-		runningKeys:    map[string]int{},
-		dispatcherWake: make(chan struct{}, 1),
-		runtimeCtx:     runtimeCtx,
-		runtimeCancel:  runtimeCancel,
-		database:       gdb,
+		DB:                  gdb.WithContext(runtimeCtx),
+		Cfg:                 cfg,
+		Hasher:              hasher,
+		Tokens:              security.NewTokenManager(cfg.Auth.SecretKey, cfg.Auth.AccessTokenTTLMinutes),
+		Cipher:              cipher,
+		Hub:                 NewHub(),
+		WorkerID:            workerID,
+		dummyHash:           hasher.HashPassword(security.RandomToken()),
+		reauthTokens:        map[string]reauthTokenRecord{},
+		revokedAccessTokens: map[string]time.Time{},
+		runningKeys:         map[string]int{},
+		dispatcherWake:      make(chan struct{}, 1),
+		runtimeCtx:          runtimeCtx,
+		runtimeCancel:       runtimeCancel,
+		database:            gdb,
 	}, nil
 }
 
@@ -221,11 +230,6 @@ func serializeSnapshot(value any, maxBytes int) string {
 		preview = preview[:len(preview)-1]
 	}
 	return dumpJSON(M{"_truncated": true, "preview": preview})
-}
-
-// pagedResult 统一分页响应。
-func pagedResult(records any, current, size int, total int64) M {
-	return M{"records": records, "current": current, "size": size, "total": total}
 }
 
 // bizErr 业务错误(等价原后端的 ValueError,统一转为 code=400)。

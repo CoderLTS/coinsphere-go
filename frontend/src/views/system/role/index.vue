@@ -115,8 +115,7 @@
     core: {
       apiFn: fetchGetRoleList,
       apiParams: {
-        current: 1,
-        size: 20
+        limit: 20
       },
       excludeParams: ['daterange'],
       columnsFactory: () => [

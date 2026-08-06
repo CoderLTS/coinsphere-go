@@ -13,38 +13,38 @@ interface AssistantStreamHandlers {
 
 export function fetchAssistantAgents() {
   return request.get<Api.Assistant.AgentSummary[]>({
-    url: '/api/assistant/agents'
+    url: '/api/v1/assistant/agents'
   })
 }
 
 export function fetchAssistantSession(params: Api.Assistant.SessionQuery) {
   return request.get<Api.Assistant.Session>({
-    url: '/api/assistant/sessions/current',
+    url: '/api/v1/assistant/sessions/current',
     params
   })
 }
 
 export function fetchAssistantModelOptions(agentCode: string) {
   return request.get<Api.Assistant.ModelOptions>({
-    url: `/api/assistant/agents/${agentCode}/model-options`
+    url: `/api/v1/assistant/agents/${agentCode}/model-options`
   })
 }
 
 export function fetchAssistantMessages(sessionId: number) {
   return request.get<Api.Assistant.Message[]>({
-    url: `/api/assistant/sessions/${sessionId}/messages`
+    url: `/api/v1/assistant/sessions/${sessionId}/messages`
   })
 }
 
 export function deleteAssistantSession(sessionId: number) {
   return request.del<{ id: number }>({
-    url: `/api/assistant/sessions/${sessionId}`
+    url: `/api/v1/assistant/sessions/${sessionId}`
   })
 }
 
 export function fetchAssistantSessions(params: Api.Assistant.SessionHistoryQuery) {
   return request.get<Api.Assistant.SessionHistoryResponse>({
-    url: '/api/assistant/sessions',
+    url: '/api/v1/assistant/sessions',
     params
   })
 }
@@ -57,7 +57,7 @@ export async function streamAssistantSession(
 ) {
   const userStore = useUserStore()
   const baseUrl = (import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '')
-  const requestUrl = `${baseUrl}/api/assistant/sessions/${sessionId}/stream`
+  const requestUrl = `${baseUrl}/api/v1/assistant/sessions/${sessionId}/stream`
 
   const response = await fetch(requestUrl, {
     method: 'POST',

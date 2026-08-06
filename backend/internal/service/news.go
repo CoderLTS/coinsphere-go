@@ -33,7 +33,7 @@ type NewsUpsertPayload struct {
 
 // ListNews 分页查询新闻。
 // (a *App) 是方法接收者;返回 (M, error) 是多返回值:结果 + 错误(见 GO入门笔记『方法与接收者』『变量、函数、错误』)。
-func (a *App) ListNews(current, size int, keyword string) (M, error) {
+func (a *App) ListNews(page CursorPage, keyword string) (M, error) {
 	// q 是一个 GORM 查询构造器,可以按条件逐步叠加(见 GO入门笔记『框架:GORM』)。
 	// &db.BlockbeatsNews{} 传一个空结构体指针,GORM 借它知道要查哪张表。
 	q := a.DB.Model(&db.BlockbeatsNews{})
@@ -45,9 +45,20 @@ func (a *App) ListNews(current, size int, keyword string) (M, error) {
 	if err := q.Count(&total).Error; err != nil {
 		return nil, err
 	}
-	var records []db.BlockbeatsNews
-	if err := q.Order("published_at DESC, id DESC").Offset((current - 1) * size).Limit(size).Find(&records).Error; err != nil {
+	afterID, err := page.AfterID()
+	if err != nil {
 		return nil, err
+	}
+	if afterID > 0 {
+		q = q.Where("id < ?", afterID)
+	}
+	var records []db.BlockbeatsNews
+	if err := q.Order("id DESC").Limit(page.Limit + 1).Find(&records).Error; err != nil {
+		return nil, err
+	}
+	hasMore := len(records) > page.Limit
+	if hasMore {
+		records = records[:page.Limit]
 	}
 	// make 预建切片,for ... range 遍历,append 逐条追加(见 GO入门笔记『复合类型』)。
 	// 用 &records[i] 取元素地址,避免拷贝整个结构体。
@@ -55,7 +66,11 @@ func (a *App) ListNews(current, size int, keyword string) (M, error) {
 	for i := range records {
 		items = append(items, serializeNews(&records[i]))
 	}
-	return pagedResult(items, current, size, total), nil
+	lastKey := ""
+	if len(records) > 0 {
+		lastKey = int64CursorKey(records[len(records)-1].ID)
+	}
+	return cursorResult(items, page, lastKey, hasMore, total), nil
 }
 
 // CreateNews 创建新闻。

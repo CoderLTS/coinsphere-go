@@ -16,7 +16,7 @@ import (
 // ---------- 配置中心 ----------
 
 // 本文件同样都是处理函数,签名 (w, r, principal) 见 handlers_scheduler.go 顶部说明。
-// handleConfigOverview 处理 GET /api/config/overview:把模型、智能体、通知汇总拼成一个 JSON 对象返回。
+// handleConfigOverview 处理 GET /api/v1/config/overview:把模型、智能体、通知汇总拼成一个 JSON 对象返回。
 func (s *Server) handleConfigOverview(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
 	models, err := s.App.ListAiModelConfigs(principal)
 	if err != nil {
@@ -27,7 +27,7 @@ func (s *Server) handleConfigOverview(w http.ResponseWriter, r *http.Request, pr
 	ok(w, M{
 		"models":        models,
 		"agents":        s.App.ListAssistantAgents(true),
-		"notifySummary": s.App.GetNotifyOverviewSummary(),
+		"notifySummary": s.App.GetNotifyOverviewSummary(principal),
 	})
 }
 
@@ -36,7 +36,7 @@ func (s *Server) handleListAiModels(w http.ResponseWriter, r *http.Request, prin
 	respond(w, data, err, "")
 }
 
-// handleCreateAiModel 处理 POST /api/config/ai-models:新建一个 AI 模型配置。
+// handleCreateAiModel 处理 POST /api/v1/config/ai-models:新建一个 AI 模型配置。
 func (s *Server) handleCreateAiModel(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
 	// decodeBody 把请求体 JSON 解析成 AiModelUpsertPayload;下面的 *payload 是解引用,取出指针指向的结构体值传给业务层。
 	payload, err := decodeBody[service.AiModelUpsertPayload](r)
@@ -280,9 +280,11 @@ func (s *Server) handleAssistantSessionCurrent(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleAssistantSessions(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	current := queryInt(r, "current", 1)
-	size := clampSize(queryInt(r, "size", 10), 50)
-	data, err := s.App.ListSessions(principal, queryStr(r, "agentCode"), current, size)
+	page, ok := cursorPage(w, r)
+	if !ok {
+		return
+	}
+	data, err := s.App.ListSessions(principal, queryStr(r, "agentCode"), page)
 	respondAssistant(w, data, err)
 }
 
@@ -373,9 +375,11 @@ func principalCanUseAgent(principal *service.Principal, agentCode string) bool {
 // ---------- 站内通知 ----------
 
 func (s *Server) handleListInApp(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	current := queryInt(r, "current", 1)
-	size := clampSize(queryInt(r, "size", 20), 100)
-	data, err := s.App.ListInAppNotifications(principal.User.ID, current, size)
+	page, ok := cursorPage(w, r)
+	if !ok {
+		return
+	}
+	data, err := s.App.ListInAppNotifications(principal.User.ID, page)
 	respond(w, data, err, "")
 }
 
@@ -498,12 +502,12 @@ func notificationWebSocketToken(r *http.Request) (string, bool) {
 func (s *Server) handleNotificationsWS(w http.ResponseWriter, r *http.Request) {
 	token, ok := notificationWebSocketToken(r)
 	if !ok {
-		http.Error(w, "invalid websocket authentication", http.StatusUnauthorized)
+		writeProblem(w, r, http.StatusUnauthorized, "invalid websocket authentication")
 		return
 	}
 	principal, err := s.App.AuthenticateAccessToken(token)
 	if err != nil {
-		http.Error(w, "invalid token", http.StatusUnauthorized)
+		writeProblem(w, r, http.StatusUnauthorized, "invalid access token")
 		return
 	}
 	// Upgrade 把这次 HTTP 请求升级成 WebSocket 连接 conn;之后就用 conn 收发消息,不再用 w。

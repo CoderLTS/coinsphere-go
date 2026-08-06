@@ -30,7 +30,7 @@
         :columns="columns"
         :data="records"
         :pagination="pagination"
-        :pagination-options="{ pageSizes: [10, 20, 50] }"
+        :pagination-options="{ pageSizes: [10, 20, 50], layout: 'total, prev, next, sizes' }"
         :stripe="false"
         @pagination:size-change="handleSizeChange"
         @pagination:current-change="handleCurrentChange"
@@ -54,6 +54,7 @@
   import { fetchAssistantModelOptions } from '@/api/assistant'
   import { fetchCreateNews, fetchDeleteNews, fetchNewsList, fetchUpdateNews } from '@/api/data'
   import { useAuth } from '@/hooks/core/useAuth'
+  import { useCursorPagination } from '@/hooks/core/useCursorPagination'
   import { useTableColumns } from '@/hooks/core/useTableColumns'
   import { mittBus } from '@/utils/sys'
   import NewsDialog, { type NewsFormPayload } from './modules/news-dialog.vue'
@@ -72,11 +73,7 @@
   const dialogVisible = ref(false)
   const dialogType = ref<'add' | 'edit'>('add')
   const currentNews = ref<Api.Data.NewsListItem | null>(null)
-  const pagination = reactive({
-    current: 1,
-    size: 10,
-    total: 0
-  })
+  const { pagination, requestParams, applyPage, reset, moveTo } = useCursorPagination(10)
 
   const formItems = computed(() => [
     {
@@ -219,36 +216,33 @@
     loading.value = true
     try {
       const data = await fetchNewsList({
-        current: pagination.current,
-        size: pagination.size,
+        ...requestParams(),
         keyword: searchForm.keyword || undefined
       })
       records.value = data.records
-      pagination.total = data.total
+      applyPage(data)
     } finally {
       loading.value = false
     }
   }
 
   const handleSearch = () => {
-    pagination.current = 1
+    reset()
     loadNews()
   }
 
   const handleReset = () => {
     searchForm.keyword = ''
-    pagination.current = 1
+    reset()
     loadNews()
   }
 
   const handleCurrentChange = (current: number) => {
-    pagination.current = current
-    loadNews()
+    if (moveTo(current)) loadNews()
   }
 
   const handleSizeChange = (size: number) => {
-    pagination.size = size
-    pagination.current = 1
+    reset(size)
     loadNews()
   }
 
@@ -290,7 +284,7 @@
     }
     await fetchDeleteNews(row.id)
     if (records.value.length === 1 && pagination.current > 1) {
-      pagination.current -= 1
+      moveTo(pagination.current - 1)
     }
     loadNews()
   }

@@ -1,0 +1,1162 @@
+openapi: 3.0.3
+info:
+  title: CoinSphere API
+  version: 1.0.0
+  description: >-
+    The versioned HTTP and WebSocket contract for the CoinSphere modular
+    monolith. This document is the source for the generated Go and TypeScript
+    contract types.
+servers:
+  - url: /
+    description: Same-origin deployment
+tags:
+  - name: auth
+  - name: me
+  - name: admin
+  - name: workflows
+  - name: notifications
+  - name: assistant
+  - name: config
+  - name: data
+security:
+  - bearerAuth: []
+paths:
+  /api/v1/auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Access token issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/auth/reauth:
+    post:
+      tags: [auth]
+      operationId: reauthenticate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReauthRequest'
+      responses:
+        '200':
+          description: One-time token issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReauthResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/me:
+    get:
+      tags: [me]
+      operationId: getCurrentUser
+      responses:
+        '200':
+          description: Current authenticated user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/home/meta:
+    get:
+      tags: [me]
+      operationId: getHomeMeta
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/home/overview:
+    get:
+      tags: [me]
+      operationId: getHomeOverview
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/data/news:
+    get:
+      tags: [data]
+      operationId: listNews
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Keyword'
+      responses:
+        '200': { $ref: '#/components/responses/CursorPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [data]
+      operationId: createNews
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/data/news/{newsId}:
+    parameters:
+      - $ref: '#/components/parameters/NewsId'
+    put:
+      tags: [data]
+      operationId: updateNews
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    delete:
+      tags: [data]
+      operationId: deleteNews
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/admin/notification-deliveries:
+    get:
+      tags: [notifications]
+      operationId: listPushDeliveries
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Keyword'
+        - name: workflowDefinitionId
+          in: query
+          schema: { type: integer, format: int64, minimum: 1 }
+        - name: channelType
+          in: query
+          schema: { type: string }
+        - name: deliveryStatus
+          in: query
+          schema: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/CursorPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/admin/users:
+    get:
+      tags: [admin]
+      operationId: listUsers
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - name: id
+          in: query
+          schema: { type: integer, format: int64, minimum: 1 }
+        - name: username
+          in: query
+          schema: { type: string }
+        - name: gender
+          in: query
+          schema: { type: string }
+        - name: phone
+          in: query
+          schema: { type: string }
+        - name: email
+          in: query
+          schema: { type: string }
+        - name: isActive
+          in: query
+          schema: { type: boolean }
+      responses:
+        '200': { $ref: '#/components/responses/CursorPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [admin]
+      operationId: createUser
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/admin/users/{userId}:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    put:
+      tags: [admin]
+      operationId: updateUser
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [admin]
+      operationId: deleteUser
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/system/uploads/avatars:
+    post:
+      tags: [admin]
+      operationId: uploadAvatar
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                avatar: { type: string, format: binary }
+              required: [avatar]
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/system/roles:
+    get:
+      tags: [admin]
+      operationId: listRoles
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - name: id
+          in: query
+          schema: { type: integer, format: int64, minimum: 1 }
+        - name: displayName
+          in: query
+          schema: { type: string }
+        - name: code
+          in: query
+          schema: { type: string }
+        - name: description
+          in: query
+          schema: { type: string }
+        - name: isEnabled
+          in: query
+          schema: { type: boolean }
+      responses:
+        '200': { $ref: '#/components/responses/CursorPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [admin]
+      operationId: createRole
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/system/roles/{roleId}:
+    parameters:
+      - $ref: '#/components/parameters/RoleId'
+    put:
+      tags: [admin]
+      operationId: updateRole
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [admin]
+      operationId: deleteRole
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/system/roles/{roleId}/permissions:
+    parameters:
+      - $ref: '#/components/parameters/RoleId'
+    put:
+      tags: [admin]
+      operationId: saveRolePermissions
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/system/menus:
+    get:
+      tags: [admin]
+      operationId: listMenus
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [admin]
+      operationId: createMenu
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/system/menus/manage-tree:
+    get:
+      tags: [admin]
+      operationId: getManageMenuTree
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/system/i18n-dictionaries:
+    get:
+      tags: [admin]
+      operationId: getI18nDictionaries
+      parameters:
+        - name: scope
+          in: query
+          schema: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/system/menus/{menuId}:
+    parameters:
+      - $ref: '#/components/parameters/MenuId'
+    put:
+      tags: [admin]
+      operationId: updateMenu
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [admin]
+      operationId: deleteMenu
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/system/menu-buttons:
+    post:
+      tags: [admin]
+      operationId: createMenuButton
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/system/menu-buttons/{buttonId}:
+    parameters:
+      - $ref: '#/components/parameters/ButtonId'
+    put:
+      tags: [admin]
+      operationId: updateMenuButton
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [admin]
+      operationId: deleteMenuButton
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/workflows/overview:
+    get:
+      tags: [workflows]
+      operationId: getWorkflowOverview
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/workflows/task-definitions:
+    get:
+      tags: [workflows]
+      operationId: listTaskDefinitions
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/workflows/task-definitions/page:
+    get:
+      tags: [workflows]
+      operationId: listTaskDefinitionPage
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Keyword'
+      responses:
+        '200': { $ref: '#/components/responses/CursorPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/workflows/task-definitions/{taskCode}/default-params:
+    parameters:
+      - $ref: '#/components/parameters/TaskCode'
+    put:
+      tags: [workflows]
+      operationId: updateTaskDefinitionDefaults
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/workflows/node-definitions:
+    get:
+      tags: [workflows]
+      operationId: listWorkflowNodeDefinitions
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/workflows/agent-options:
+    get:
+      tags: [workflows]
+      operationId: listWorkflowAgentOptions
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/workflows:
+    get:
+      tags: [workflows]
+      operationId: listWorkflows
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [workflows]
+      operationId: createWorkflow
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/workflows/validate:
+    post:
+      tags: [workflows]
+      operationId: validateWorkflow
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/workflows/{definitionId}:
+    parameters:
+      - $ref: '#/components/parameters/DefinitionId'
+    get:
+      tags: [workflows]
+      operationId: getWorkflow
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      tags: [workflows]
+      operationId: updateWorkflow
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [workflows]
+      operationId: deleteWorkflow
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/workflows/{definitionId}/activate:
+    parameters:
+      - $ref: '#/components/parameters/DefinitionId'
+    post:
+      tags: [workflows]
+      operationId: activateWorkflow
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/workflows/{definitionId}/deactivate:
+    parameters:
+      - $ref: '#/components/parameters/DefinitionId'
+    post:
+      tags: [workflows]
+      operationId: deactivateWorkflow
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/workflows/{definitionId}/runtime:
+    parameters:
+      - $ref: '#/components/parameters/DefinitionId'
+    get:
+      tags: [workflows]
+      operationId: getWorkflowRuntime
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/workflows/{definitionId}/runtime/entries/{entryKey}:
+    parameters:
+      - $ref: '#/components/parameters/DefinitionId'
+      - $ref: '#/components/parameters/EntryKey'
+    patch:
+      tags: [workflows]
+      operationId: updateWorkflowRuntimeEntry
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/workflows/{definitionId}/runtime/entries/{entryKey}/rotate-secret:
+    parameters:
+      - $ref: '#/components/parameters/DefinitionId'
+      - $ref: '#/components/parameters/EntryKey'
+    post:
+      tags: [workflows]
+      operationId: rotateWorkflowSecret
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/workflows/{definitionId}/executions:
+    parameters:
+      - $ref: '#/components/parameters/DefinitionId'
+    get:
+      tags: [workflows]
+      operationId: listWorkflowExecutions
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Keyword'
+        - name: triggerType
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/CursorPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [workflows]
+      operationId: runWorkflow
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '202': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /api/v1/workflows/executions:
+    get:
+      tags: [workflows]
+      operationId: listAllWorkflowExecutions
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - name: workflowDefinitionCode
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/Keyword'
+        - name: triggerType
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/CursorPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/workflows/executions/{executionId}:
+    parameters:
+      - $ref: '#/components/parameters/ExecutionId'
+    get:
+      tags: [workflows]
+      operationId: getWorkflowExecution
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/workflows/webhooks/{workflowCode}/{entryKey}:
+    parameters:
+      - $ref: '#/components/parameters/WorkflowCode'
+      - $ref: '#/components/parameters/EntryKey'
+    post:
+      tags: [workflows]
+      operationId: triggerWorkflowWebhook
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/WorkflowSecret'
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '202': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /api/v1/config/overview:
+    get:
+      tags: [config]
+      operationId: getConfigOverview
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/config/ai-models:
+    get:
+      tags: [config]
+      operationId: listAiModels
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [config]
+      operationId: createAiModel
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/config/ai-models/meta:
+    get:
+      tags: [config]
+      operationId: getAiModelMeta
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/config/ai-models/{configId}:
+    parameters:
+      - $ref: '#/components/parameters/ConfigId'
+    put:
+      tags: [config]
+      operationId: updateAiModel
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    patch:
+      tags: [config]
+      operationId: patchAiModel
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [config]
+      operationId: deleteAiModel
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/config/ai-models/{configId}/validations:
+    parameters:
+      - $ref: '#/components/parameters/ConfigId'
+    post:
+      tags: [config]
+      operationId: validateAiModel
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/config/ai-models/{configId}/agent-bindings:
+    parameters:
+      - $ref: '#/components/parameters/ConfigId'
+    put:
+      tags: [config]
+      operationId: bindAiModelAgents
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/config/assistant-agents:
+    get:
+      tags: [config]
+      operationId: listAssistantAgents
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [config]
+      operationId: createAssistantAgent
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/config/assistant-agents/meta:
+    get:
+      tags: [config]
+      operationId: getAssistantAgentMeta
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/config/assistant-agents/{agentId}:
+    parameters:
+      - $ref: '#/components/parameters/AgentId'
+    put:
+      tags: [config]
+      operationId: updateAssistantAgent
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    patch:
+      tags: [config]
+      operationId: patchAssistantAgent
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [config]
+      operationId: deleteAssistantAgent
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/notification-channels:
+    get:
+      tags: [notifications]
+      operationId: listNotificationChannels
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [notifications]
+      operationId: createNotificationChannel
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/notification-channels/meta:
+    get:
+      tags: [notifications]
+      operationId: getNotificationChannelMeta
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/notification-channels/{channelId}:
+    parameters:
+      - $ref: '#/components/parameters/ChannelId'
+    put:
+      tags: [notifications]
+      operationId: updateNotificationChannel
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    patch:
+      tags: [notifications]
+      operationId: patchNotificationChannel
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [notifications]
+      operationId: deleteNotificationChannel
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/notification-channels/{channelId}/tests:
+    parameters:
+      - $ref: '#/components/parameters/ChannelId'
+    post:
+      tags: [notifications]
+      operationId: testNotificationChannel
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/assistant/agents:
+    get:
+      tags: [assistant]
+      operationId: getAssistantAgents
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/assistant/agents/{agentCode}/model-options:
+    parameters:
+      - $ref: '#/components/parameters/AgentCode'
+    get:
+      tags: [assistant]
+      operationId: getAssistantModelOptions
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/assistant/sessions/current:
+    get:
+      tags: [assistant]
+      operationId: getCurrentAssistantSession
+      parameters:
+        - name: agentCode
+          in: query
+          required: true
+          schema: { type: string }
+        - name: newsId
+          in: query
+          schema: { type: integer, format: int64, minimum: 1 }
+        - name: modelConfigId
+          in: query
+          schema: { type: integer, format: int64, minimum: 1 }
+        - name: forceNew
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/assistant/sessions:
+    get:
+      tags: [assistant]
+      operationId: listAssistantSessions
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - name: agentCode
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/CursorPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/assistant/sessions/{sessionId}/messages:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    get:
+      tags: [assistant]
+      operationId: listAssistantMessages
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/assistant/sessions/{sessionId}:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    delete:
+      tags: [assistant]
+      operationId: deleteAssistantSession
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/assistant/sessions/{sessionId}/stream:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    post:
+      tags: [assistant]
+      operationId: streamAssistantSession
+      requestBody: { $ref: '#/components/requestBodies/JsonObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/notification-deliveries:
+    get:
+      tags: [notifications]
+      operationId: listNotificationDeliveries
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200': { $ref: '#/components/responses/InAppCursorPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/notification-deliveries/read-all:
+    post:
+      tags: [notifications]
+      operationId: readAllNotificationDeliveries
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/notification-deliveries/tests:
+    post:
+      tags: [notifications]
+      operationId: createTestNotificationDelivery
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/notification-deliveries/{deliveryId}/read:
+    parameters:
+      - $ref: '#/components/parameters/DeliveryId'
+    post:
+      tags: [notifications]
+      operationId: readNotificationDelivery
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/ws/notifications:
+    get:
+      tags: [notifications]
+      operationId: notificationsWebSocket
+      security: []
+      description: >-
+        WebSocket handshake. Send exactly two subprotocol values: the fixed
+        `coinsphere.notifications.v1` value followed by the bearer access token.
+        Query-string tokens are rejected.
+      parameters:
+        - name: Sec-WebSocket-Protocol
+          in: header
+          required: true
+          schema:
+            type: string
+            example: coinsphere.notifications.v1, eyJ...
+      responses:
+        '101': { description: Switching Protocols }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor returned by the same route and filter set.
+      schema: { type: string, maxLength: 2048 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    Keyword:
+      name: keyword
+      in: query
+      schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 16, maxLength: 200 }
+    WorkflowSecret:
+      name: X-Workflow-Secret
+      in: header
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 512 }
+    NewsId: { name: newsId, in: path, required: true, schema: { type: integer, format: int64 } }
+    UserId: { name: userId, in: path, required: true, schema: { type: integer, format: int64 } }
+    RoleId: { name: roleId, in: path, required: true, schema: { type: integer, format: int64 } }
+    MenuId: { name: menuId, in: path, required: true, schema: { type: integer, format: int64 } }
+    ButtonId: { name: buttonId, in: path, required: true, schema: { type: integer, format: int64 } }
+    DefinitionId: { name: definitionId, in: path, required: true, schema: { type: integer, format: int64 } }
+    ExecutionId: { name: executionId, in: path, required: true, schema: { type: integer, format: int64 } }
+    ConfigId: { name: configId, in: path, required: true, schema: { type: integer, format: int64 } }
+    AgentId: { name: agentId, in: path, required: true, schema: { type: integer, format: int64 } }
+    ChannelId: { name: channelId, in: path, required: true, schema: { type: integer, format: int64 } }
+    SessionId: { name: sessionId, in: path, required: true, schema: { type: integer, format: int64 } }
+    DeliveryId: { name: deliveryId, in: path, required: true, schema: { type: integer, format: int64 } }
+    TaskCode: { name: taskCode, in: path, required: true, schema: { type: string } }
+    EntryKey: { name: entryKey, in: path, required: true, schema: { type: string } }
+    WorkflowCode: { name: workflowCode, in: path, required: true, schema: { type: string } }
+    AgentCode: { name: agentCode, in: path, required: true, schema: { type: string } }
+  requestBodies:
+    JsonObject:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/JsonObject'
+  responses:
+    Success:
+      description: Successful data envelope
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SuccessResponse'
+    CursorPage:
+      description: Successful opaque-cursor page
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CursorPageResponse'
+    InAppCursorPage:
+      description: Successful user-scoped in-app notification page
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/InAppCursorPageResponse'
+    BadRequest:
+      description: Invalid request
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Unauthorized:
+      description: Missing, expired, revoked, or invalid authentication
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Forbidden:
+      description: Authenticated principal lacks permission or ownership
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: Idempotency or state conflict
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    TooManyRequests:
+      description: Command backlog limit exceeded
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+  schemas:
+    JsonObject:
+      type: object
+      additionalProperties: true
+    SuccessResponse:
+      type: object
+      required: [code, msg, data]
+      properties:
+        code: { type: integer, format: int32, example: 200 }
+        msg: { type: string, example: success }
+        data: {}
+    CursorPageData:
+      type: object
+      required: [records, nextCursor, hasMore, total]
+      properties:
+        records:
+          type: array
+          items: { $ref: '#/components/schemas/JsonObject' }
+        nextCursor: { type: string }
+        hasMore: { type: boolean }
+        total: { type: integer, format: int64, minimum: 0 }
+    CursorPageResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties:
+            data: { $ref: '#/components/schemas/CursorPageData' }
+    InAppCursorPageData:
+      allOf:
+        - $ref: '#/components/schemas/CursorPageData'
+        - type: object
+          required: [unreadCount]
+          properties:
+            unreadCount: { type: integer, format: int64, minimum: 0 }
+    InAppCursorPageResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties:
+            data: { $ref: '#/components/schemas/InAppCursorPageData' }
+    Problem:
+      type: object
+      required: [type, title, status, detail, requestId]
+      properties:
+        type: { type: string, format: uri-reference, example: about:blank }
+        title: { type: string, example: Unauthorized }
+        status: { type: integer, format: int32, example: 401 }
+        detail: { type: string }
+        requestId: { type: string }
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, minLength: 1, maxLength: 128 }
+        password: { type: string, format: password, minLength: 1, maxLength: 256 }
+    LoginData:
+      type: object
+      required: [accessToken]
+      properties:
+        accessToken: { type: string }
+    LoginResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties:
+            data: { $ref: '#/components/schemas/LoginData' }
+    ReauthRequest:
+      type: object
+      required: [password]
+      properties:
+        password: { type: string, format: password, minLength: 1, maxLength: 256 }
+    ReauthData:
+      type: object
+      required: [reauthToken]
+      properties:
+        reauthToken: { type: string, minLength: 43 }
+    ReauthResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties:
+            data: { $ref: '#/components/schemas/ReauthData' }
+    UserInfo:
+      type: object
+      required: [userId, username, roleCodes, permissions, accessMode]
+      properties:
+        userId: { type: integer, format: int64 }
+        username: { type: string }
+        email: { type: string }
+        avatar: { type: string }
+        roleCodes:
+          type: array
+          items: { type: string }
+        permissions:
+          type: array
+          items: { type: string }
+        accessMode: { type: string, enum: [authenticated] }
+    UserResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties:
+            data: { $ref: '#/components/schemas/UserInfo' }

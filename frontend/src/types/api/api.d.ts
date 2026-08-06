@@ -46,14 +46,20 @@ declare namespace Api {
       total: number
     }
 
+    /** API 游标分页参数 */
+    interface CursorParams {
+      cursor?: string
+      limit?: number
+    }
+
     /** 通用搜索参数 */
-    type CommonSearchParams = Pick<PaginationParams, 'current' | 'size'>
+    type CommonSearchParams = CursorParams
 
     /** 分页响应基础结构 */
     interface PaginatedResponse<T = any> {
       records: T[]
-      current: number
-      size: number
+      nextCursor: string
+      hasMore: boolean
       total: number
     }
 
@@ -71,7 +77,11 @@ declare namespace Api {
 
     /** 登录响应 */
     interface LoginResponse {
-      token: string
+      accessToken: string
+    }
+
+    interface ReauthResponse {
+      reauthToken: string
     }
 
     /** 用户信息 */
@@ -500,8 +510,7 @@ declare namespace Api {
 
     interface InAppNoticePage {
       records: InAppNoticeItem[]
-      current: number
-      size: number
+      nextCursor: string
       total: number
       hasMore: boolean
       unreadCount: number
@@ -581,8 +590,7 @@ declare namespace Api {
 
     interface SessionHistoryResponse {
       records: SessionHistoryItem[]
-      current: number
-      size: number
+      nextCursor: string
       total: number
       hasMore: boolean
     }
@@ -620,8 +628,8 @@ declare namespace Api {
 
     interface SessionHistoryQuery {
       agentCode: AgentCode
-      current?: number
-      size?: number
+      cursor?: string
+      limit?: number
     }
 
     interface StreamRequest {

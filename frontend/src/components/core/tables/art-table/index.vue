@@ -151,9 +151,9 @@
   const attrs = useAttrs()
 
   const LAYOUT = {
-    MOBILE: 'prev, pager, next, sizes, jumper, total',
-    IPAD: 'prev, pager, next, jumper, total',
-    DESKTOP: 'total, prev, pager, next, sizes, jumper'
+    MOBILE: 'prev, next, sizes, total',
+    IPAD: 'prev, next, total',
+    DESKTOP: 'total, prev, next, sizes'
   }
 
   const layout = computed(() => {

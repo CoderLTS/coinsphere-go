@@ -143,8 +143,7 @@
     core: {
       apiFn: fetchGetUserList,
       apiParams: {
-        current: 1,
-        size: 20,
+        limit: 20,
         ...searchForm.value
       },
       columnsFactory: () => [

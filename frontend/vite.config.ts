@@ -28,14 +28,10 @@ export default ({ mode }: { mode: string }) => {
     server: {
       port: Number(VITE_PORT),
       proxy: {
-        '/api': {
-          target: VITE_API_PROXY_URL,
-          changeOrigin: true
-        },
-        '/ws': {
+        '/api/v1': {
           target: VITE_API_PROXY_URL,
           ws: true,
-          changeOrigin: false
+          changeOrigin: true
         }
       },
       host: true

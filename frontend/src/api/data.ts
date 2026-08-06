@@ -2,8 +2,8 @@
 import request from '@/utils/http'
 
 export interface NotifyDeliverySearchParams {
-  current: number
-  size: number
+  cursor?: string
+  limit?: number
   keyword?: string
   workflowDefinitionId?: number
   channelType?: Api.Config.NotifyChannelType | string
@@ -41,14 +41,14 @@ export type NotifyDeliveryList = Api.Common.PaginatedResponse<NotifyDeliveryItem
 
 export function fetchNewsList(params: Api.Data.NewsSearchParams) {
   return request.get<Api.Data.NewsList>({
-    url: '/api/data/news',
+    url: '/api/v1/data/news',
     params
   })
 }
 
 export function fetchCreateNews(params: Api.Data.NewsUpsertPayload) {
   return request.post<Api.Data.NewsListItem>({
-    url: '/api/data/news',
+    url: '/api/v1/data/news',
     params,
     showSuccessMessage: true
   })
@@ -56,7 +56,7 @@ export function fetchCreateNews(params: Api.Data.NewsUpsertPayload) {
 
 export function fetchUpdateNews(newsId: number, params: Api.Data.NewsUpsertPayload) {
   return request.put<Api.Data.NewsListItem>({
-    url: `/api/data/news/${newsId}`,
+    url: `/api/v1/data/news/${newsId}`,
     params,
     showSuccessMessage: true
   })
@@ -64,17 +64,17 @@ export function fetchUpdateNews(newsId: number, params: Api.Data.NewsUpsertPaylo
 
 export function fetchDeleteNews(newsId: number) {
   return request.del<void>({
-    url: `/api/data/news/${newsId}`,
+    url: `/api/v1/data/news/${newsId}`,
     showSuccessMessage: true
   })
 }
 
 export function fetchPushDeliveryList(params: NotifyDeliverySearchParams) {
   return request.get<NotifyDeliveryList>({
-    url: '/api/data/push-deliveries',
+    url: '/api/v1/admin/notification-deliveries',
     params: {
-      current: params.current,
-      size: params.size,
+      cursor: params.cursor,
+      limit: params.limit,
       keyword: params.keyword,
       workflowDefinitionId: params.workflowDefinitionId,
       channelType: params.channelType,

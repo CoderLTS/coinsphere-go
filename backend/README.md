@@ -70,7 +70,7 @@ DSN 必须指向已经存在的数据库和 schema；连接入口不会创建 sc
 - **调度**:每秒扫描 `next_run_at` 到期的 schedule 入口,先乐观推进 `next_run_at` 抢占触发权,再以 `schedule:{entryId}:{dueUnix}` 幂等键入队。
 - **执行**:dispatcher 认领 queued 执行(每 key 并发受限),worker goroutine 跑图并写节点/边日志,心跳写 `last_heartbeat_at`。
 - **生命周期**:`signal.NotifyContext` 将 `SIGINT`/`SIGTERM` 统一传给 HTTP、Runtime、数据库和 WebSocket；应用最多用 30 秒收尾，Compose 提供 40 秒宽限。
-- **通知 WebSocket**:`/ws/notifications` 每连接使用有限队列和唯一 writer，统一写固定五字段信封与 RFC6455 Ping；业务序号从 1 连续递增，慢连接摘除不阻塞健康连接，Origin 必须与有效 scheme、Host 和端口同源，关机等待 writer 退出。
+- **通知 WebSocket**:`/api/v1/ws/notifications` 每连接使用有限队列和唯一 writer，统一写固定五字段信封与 RFC6455 Ping；业务序号从 1 连续递增，慢连接摘除不阻塞健康连接，Origin 必须与有效 scheme、Host 和端口同源，关机等待 writer 退出。
 - **取消**:停止后不再接收请求或认领执行；被取消的既有执行按当前重试策略进入 `retry_waiting` 或 `failed`。
 - **重试**:可重试失败(timeout/connection/429/5xx)按 `retry_backoff_seconds` 退避,`retry_waiting → queued` 自动提升。
 - **恢复**:心跳超时(含进程崩溃重启后的孤儿执行)标记 `worker_lost` 并按剩余次数重试或失败。

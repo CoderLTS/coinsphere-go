@@ -26,14 +26,13 @@ import { AxiosError } from 'axios'
 import { ApiStatus } from './status'
 import { $t } from '@/locales'
 
-// 错误响应接口
-export interface ErrorResponse {
-  /** 错误状态码 */
-  code: number
-  /** 错误消息 */
-  msg: string
-  /** 错误附加数据 */
-  data?: unknown
+// RFC 9457 问题详情响应。
+export interface ProblemDetails {
+  type: string
+  title: string
+  status: number
+  detail: string
+  requestId: string
 }
 
 // 错误日志数据接口
@@ -119,7 +118,7 @@ const getErrorMessage = (status: number): string => {
  * @param error 错误对象
  * @returns 错误对象
  */
-export function handleError(error: AxiosError<ErrorResponse>): never {
+export function handleError(error: AxiosError<ProblemDetails>): never {
   // 处理取消的请求
   if (error.code === 'ERR_CANCELED') {
     console.warn('Request cancelled:', error.message)
@@ -127,7 +126,7 @@ export function handleError(error: AxiosError<ErrorResponse>): never {
   }
 
   const statusCode = error.response?.status
-  const errorMessage = error.response?.data?.msg || error.message
+  const errorMessage = error.response?.data?.detail || error.message
   const requestConfig = error.config
 
   // 处理网络错误
@@ -140,7 +139,7 @@ export function handleError(error: AxiosError<ErrorResponse>): never {
 
   // 处理 HTTP 状态码错误
   const message =
-    error.response?.data?.msg ||
+    error.response?.data?.detail ||
     (statusCode ? getErrorMessage(statusCode) : '') ||
     errorMessage ||
     $t('httpMsg.requestFailed')
