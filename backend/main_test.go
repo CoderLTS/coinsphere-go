@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -152,13 +153,54 @@ WHERE request_id = $1
 		t.Fatalf("unexpected HTTP audit record: action=%q path=%q outcome=%q status=%d", action, resourcePath, outcome, statusCode)
 	}
 
-	metricsResponse, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/metrics", port))
+	metricsURL := fmt.Sprintf("http://127.0.0.1:%d/metrics", port)
+	anonymousMetricsResponse, err := client.Get(metricsURL)
+	if err != nil {
+		t.Fatalf("read anonymous metrics response: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, anonymousMetricsResponse.Body)
+	_ = anonymousMetricsResponse.Body.Close()
+	if anonymousMetricsResponse.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous metrics status = %d, want %d", anonymousMetricsResponse.StatusCode, http.StatusUnauthorized)
+	}
+
+	validLoginRequest, err := http.NewRequest(http.MethodPost,
+		fmt.Sprintf("http://127.0.0.1:%d/api/v1/auth/login", port),
+		strings.NewReader(`{"username":"coinsphere","password":"test-only-admin-password"}`))
+	if err != nil {
+		t.Fatalf("build valid login request: %v", err)
+	}
+	validLoginRequest.Header.Set("Content-Type", "application/json")
+	validLoginResponse, err := client.Do(validLoginRequest)
+	if err != nil {
+		t.Fatalf("send valid login request: %v", err)
+	}
+	var loginEnvelope struct {
+		Data struct {
+			AccessToken string `json:"accessToken"`
+		} `json:"data"`
+	}
+	decodeErr := json.NewDecoder(validLoginResponse.Body).Decode(&loginEnvelope)
+	_ = validLoginResponse.Body.Close()
+	if decodeErr != nil || validLoginResponse.StatusCode != http.StatusOK || loginEnvelope.Data.AccessToken == "" {
+		t.Fatalf("valid login response = status:%d token:%t decode:%v", validLoginResponse.StatusCode, loginEnvelope.Data.AccessToken != "", decodeErr)
+	}
+
+	metricsRequest, err := http.NewRequest(http.MethodGet, metricsURL, nil)
+	if err != nil {
+		t.Fatalf("build metrics request: %v", err)
+	}
+	metricsRequest.Header.Set("Authorization", "Bearer "+loginEnvelope.Data.AccessToken)
+	metricsResponse, err := client.Do(metricsRequest)
 	if err != nil {
 		t.Fatalf("read metrics: %v", err)
 	}
 	metricsBody, _ := io.ReadAll(metricsResponse.Body)
 	_ = metricsResponse.Body.Close()
 	metricsText := string(metricsBody)
+	if metricsResponse.StatusCode != http.StatusOK {
+		t.Fatalf("authenticated metrics status = %d: %s", metricsResponse.StatusCode, metricsText)
+	}
 	for _, name := range []string{
 		"coinsphere_http_requests_total",
 		"coinsphere_http_requests_failed_total",
