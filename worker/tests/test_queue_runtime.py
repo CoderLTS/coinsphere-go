@@ -17,6 +17,7 @@ import pytest
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
+from coinsphere_worker.lanes import WorkerLane
 from coinsphere_worker.queue_runtime import PostgresTaskStore, TaskLease, WorkerRuntime
 
 POSTGRES_DSN_ENV = "COINSPHERE_TEST_POSTGRES_DSN"
@@ -38,19 +39,21 @@ def postgres_dsn() -> Iterator[str]:
 
     schema = f"worker_runtime_test_{uuid.uuid4().hex}"
     isolated_dsn = make_conninfo(base_dsn, options=f"-c search_path={schema}")
-    migration_path = (
+    migration_directory = (
         Path(__file__).resolve().parents[2]
         / "backend"
         / "internal"
         / "migration"
         / "sql"
-        / "00001_a1_postgres_baseline.sql"
     )
-    up_sql, separator, _down_sql = migration_path.read_text(encoding="utf-8").partition(
-        "-- +goose Down"
-    )
-    assert separator, "Worker migration 缺少 Down 分隔符"
-    up_sql = up_sql.replace("-- +goose Up", "", 1)
+    up_parts: list[str] = []
+    for migration_path in sorted(migration_directory.glob("*.sql")):
+        up_sql, separator, _down_sql = migration_path.read_text(encoding="utf-8").partition(
+            "-- +goose Down"
+        )
+        assert separator, f"Worker migration {migration_path.name} 缺少 Down 分隔符"
+        up_parts.append(up_sql.replace("-- +goose Up", "", 1))
+    up_sql = "\n".join(up_parts)
 
     with psycopg.connect(base_dsn, autocommit=True) as admin:
         admin.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
@@ -80,15 +83,17 @@ def insert_task(
     payload_json: str = "{}",
     attempt_count: int = 0,
     max_attempts: int = 3,
+    lane: str = "realtime",
+    priority: int = 0,
 ) -> None:
     with psycopg.connect(dsn, autocommit=True) as connection:
         connection.execute(
             """
             INSERT INTO worker_tasks (
-                id, task_type, payload_json, attempt_count, max_attempts
-            ) VALUES (%s, %s, %s, %s, %s)
+                id, task_type, payload_json, attempt_count, max_attempts, lane, priority
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
             """,
-            (task_id, task_type, payload_json, attempt_count, max_attempts),
+            (task_id, task_type, payload_json, attempt_count, max_attempts, lane, priority),
         )
 
 
@@ -127,9 +132,14 @@ def wait_for_status(dsn: str, task_id: str, status: str, timeout: float = 5.0) -
     pytest.fail(f"任务 {task_id} 未在 {timeout} 秒内进入 {status}")
 
 
-def claim_with_worker(dsn: str, worker_id: str, barrier: threading.Barrier) -> TaskLease | None:
+def claim_with_worker(
+    dsn: str,
+    worker_id: str,
+    barrier: threading.Barrier,
+    lane: WorkerLane = WorkerLane.REALTIME,
+) -> TaskLease | None:
     with psycopg.connect(dsn) as connection:
-        store = PostgresTaskStore(connection, worker_id)
+        store = PostgresTaskStore(connection, worker_id, lane=lane)
         barrier.wait()
         return store.claim()
 
@@ -151,6 +161,36 @@ def test_concurrent_workers_do_not_claim_the_same_task(postgres_dsn: str) -> Non
     assert len(claimed) == 1
     assert claimed[0].task_id == task_id
     assert task_row(postgres_dsn, task_id)["attempt_count"] == 1
+
+
+def test_worker_lanes_claim_only_their_own_priority_queue(postgres_dsn: str) -> None:
+    insert_task(postgres_dsn, "018f0000-0000-7000-8000-000000000208", priority=1)
+    insert_task(
+        postgres_dsn,
+        "018f0000-0000-7000-8000-000000000209",
+        lane=WorkerLane.BACKTEST.value,
+        priority=1,
+    )
+    insert_task(
+        postgres_dsn,
+        "018f0000-0000-7000-8000-000000000210",
+        lane=WorkerLane.BACKTEST.value,
+        priority=10,
+    )
+
+    with psycopg.connect(postgres_dsn) as connection:
+        realtime = PostgresTaskStore(connection, "worker-realtime", lane=WorkerLane.REALTIME)
+        realtime_task = realtime.claim()
+        assert realtime_task is not None
+        assert realtime_task.lane == WorkerLane.REALTIME.value
+        assert realtime_task.task_id == "018f0000-0000-7000-8000-000000000208"
+
+    with psycopg.connect(postgres_dsn) as connection:
+        backtest = PostgresTaskStore(connection, "worker-backtest", lane=WorkerLane.BACKTEST)
+        backtest_task = backtest.claim()
+        assert backtest_task is not None
+        assert backtest_task.lane == WorkerLane.BACKTEST.value
+        assert backtest_task.task_id == "018f0000-0000-7000-8000-000000000210"
 
 
 def test_heartbeat_renews_lease_and_expired_lease_is_fenced(postgres_dsn: str) -> None:
