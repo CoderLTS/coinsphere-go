@@ -530,10 +530,10 @@ def test_strategy_failure_and_backtest_result_commit(
             """
             INSERT INTO strategy_versions (
                 id, strategy_id, version_number, worker_task_id, idempotency_record_id,
-                name, source_code, code_sha256, market_type, instrument_id, symbol,
+                name, source_code, code_sha256, runtime_version, market_type, instrument_id, symbol,
                 interval_code, lookback_bars, parameter_schema_json, published_by_user_id
             ) VALUES (%s, %s, 1, %s, %s, 'invalid', 'invalid source', repeat('e', 64),
-                      'spot', %s, 'BTCUSDT', '1m', 1, '{}', %s)
+                      'python3.12', 'spot', %s, 'BTCUSDT', '1m', 1, '{}', %s)
             """,
             (
                 failed_version_id,
@@ -580,9 +580,9 @@ def test_strategy_failure_and_backtest_result_commit(
             """
             INSERT INTO strategy_versions (
                 id, strategy_id, version_number, worker_task_id, idempotency_record_id,
-                name, source_code, code_sha256, market_type, instrument_id, symbol,
+                name, source_code, code_sha256, runtime_version, market_type, instrument_id, symbol,
                 interval_code, lookback_bars, parameter_schema_json, published_by_user_id
-            ) VALUES (%s, %s, 2, %s, %s, 'hold', %s, %s, 'spot', %s, 'BTCUSDT',
+            ) VALUES (%s, %s, 2, %s, %s, 'hold', %s, %s, 'python3.12', 'spot', %s, 'BTCUSDT',
                       '1m', 1, '{"count":{"type":"integer","default":1,
                       "minimum":"1","maximum":"2"}}', %s)
             """,

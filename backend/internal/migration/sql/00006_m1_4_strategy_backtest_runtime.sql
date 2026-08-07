@@ -131,6 +131,7 @@ CREATE TABLE strategy_versions (
     )
 );
 
+-- +goose StatementBegin
 CREATE FUNCTION reject_strategy_version_mutation()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -164,6 +165,7 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+-- +goose StatementEnd
 
 CREATE TRIGGER strategy_versions_immutable
 BEFORE UPDATE OR DELETE ON strategy_versions

@@ -692,10 +692,10 @@ VALUES
 	if _, err := database.Exec(`
 INSERT INTO strategy_versions (
     id, strategy_id, version_number, worker_task_id, idempotency_record_id, name,
-    source_code, code_sha256, market_type, instrument_id, symbol, interval_code,
+    source_code, code_sha256, runtime_version, market_type, instrument_id, symbol, interval_code,
     lookback_bars, parameter_schema_json, published_by_user_id
 ) VALUES ($1, $2, 1, $3, $4, 'hold', 'def on_bar(candles, params): return Decimal(''0'')',
-          repeat('e', 64), 'spot', $5, 'BTCUSDT', '1m', 1, '{}', $6)
+          repeat('e', 64), 'python3.12', 'spot', $5, 'BTCUSDT', '1m', 1, '{}', $6)
 `, versionID, strategyID, publishTaskID, publishRecordID, instrumentID, ownerID); err != nil {
 		t.Fatalf("insert pending strategy version: %v", err)
 	}
