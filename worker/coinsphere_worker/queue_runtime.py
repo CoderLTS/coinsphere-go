@@ -19,6 +19,8 @@ import psycopg
 from psycopg import Connection
 from psycopg.rows import TupleRow
 
+from .lanes import WorkerLane
+
 LOGGER = logging.getLogger("coinsphere.worker")
 
 DEFAULT_LEASE_SECONDS: Final = 15
@@ -46,6 +48,8 @@ class TaskLease:
     max_attempts: int
     lease_id: str
     worker_id: str
+    lane: str = WorkerLane.REALTIME.value
+    priority: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,11 +75,16 @@ class PostgresTaskStore:
         connection: Connection[TupleRow],
         worker_id: str,
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
+        lane: WorkerLane | str = WorkerLane.REALTIME,
     ) -> None:
         if not worker_id or len(worker_id) > 120:
             raise ValueError("worker_id 必须为 1 到 120 个字符")
         if lease_seconds < 2:
             raise ValueError("lease_seconds 必须至少为 2")
+        try:
+            self._lane = WorkerLane(lane).value
+        except ValueError as exc:
+            raise ValueError("lane 必须为 realtime 或 backtest") from exc
         self._connection = connection
         self._worker_id = worker_id
         self._lease_seconds = lease_seconds
@@ -93,8 +102,9 @@ class PostgresTaskStore:
                     SELECT id
                     FROM worker_tasks
                     WHERE status = 'queued'
+                      AND lane = %s
                       AND attempt_count < max_attempts
-                    ORDER BY queued_at, id
+                    ORDER BY priority DESC, queued_at, id
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
                 )
@@ -115,9 +125,10 @@ class PostgresTaskStore:
                 FROM candidate
                 WHERE task.id = candidate.id
                 RETURNING task.id, task.task_type, task.payload_json,
-                          task.attempt_count, task.max_attempts, task.lease_id, task.worker_id
+                          task.attempt_count, task.max_attempts, task.lease_id, task.worker_id,
+                          task.lane, task.priority
                 """,
-                (lease_id, self._worker_id, self._lease_seconds),
+                (self._lane, lease_id, self._worker_id, self._lease_seconds),
             ).fetchone()
         if row is None:
             return None
@@ -129,6 +140,8 @@ class PostgresTaskStore:
             max_attempts=cast(int, row[4]),
             lease_id=cast(str, row[5]),
             worker_id=cast(str, row[6]),
+            lane=cast(str, row[7]),
+            priority=cast(int, row[8]),
         )
 
     def start(self, task: TaskLease) -> bool:
@@ -331,6 +344,7 @@ class PostgresTaskStore:
                         SELECT id, lease_id
                         FROM worker_tasks
                         WHERE status = 'cancelRequested'
+                          AND lane = %s
                           AND (
                               lease_expires_at <= CURRENT_TIMESTAMP
                               OR cancel_requested_at <= CURRENT_TIMESTAMP - INTERVAL '4 seconds'
@@ -363,6 +377,7 @@ class PostgresTaskStore:
                         SELECT id, lease_id
                         FROM worker_tasks
                         WHERE status IN ('claimed', 'running')
+                          AND lane = %s
                           AND lease_expires_at <= CURRENT_TIMESTAMP
                           AND attempt_count < max_attempts
                         FOR UPDATE SKIP LOCKED
@@ -393,12 +408,15 @@ class PostgresTaskStore:
                     WITH exhausted AS (
                         SELECT id, lease_id
                         FROM worker_tasks
-                        WHERE (
-                                status IN ('claimed', 'running')
-                                AND lease_expires_at <= CURRENT_TIMESTAMP
-                                AND attempt_count >= max_attempts
+                        WHERE lane = %s
+                          AND (
+                                (
+                                    status IN ('claimed', 'running')
+                                    AND lease_expires_at <= CURRENT_TIMESTAMP
+                                    AND attempt_count >= max_attempts
+                                )
+                                OR (status = 'queued' AND attempt_count >= max_attempts)
                             )
-                            OR (status = 'queued' AND attempt_count >= max_attempts)
                         FOR UPDATE SKIP LOCKED
                     )
                     UPDATE worker_tasks AS task
@@ -427,7 +445,7 @@ class PostgresTaskStore:
             return self._connection.execute(statement, parameters).fetchone() is not None
 
     def _recover(self, statement: str, *, status: str, category: str) -> list[Recovery]:
-        rows = self._connection.execute(statement).fetchall()
+        rows = self._connection.execute(statement, (self._lane,)).fetchall()
         return [
             Recovery(
                 task_id=cast(str, row[0]),
@@ -455,6 +473,7 @@ class WorkerRuntime:
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
         heartbeat_seconds: float = DEFAULT_HEARTBEAT_SECONDS,
         poll_seconds: float = DEFAULT_POLL_SECONDS,
+        lane: WorkerLane | str = WorkerLane.REALTIME,
     ) -> None:
         if not dsn.strip():
             raise ValueError("数据库 DSN 不能为空")
@@ -462,6 +481,10 @@ class WorkerRuntime:
             raise ValueError("heartbeat_seconds 必须大于 0 且小于租约时长")
         if poll_seconds <= 0:
             raise ValueError("poll_seconds 必须大于 0")
+        try:
+            self._lane = WorkerLane(lane).value
+        except ValueError as exc:
+            raise ValueError("lane 必须为 realtime 或 backtest") from exc
         self._dsn = dsn
         self._worker_id = worker_id
         self._lease_seconds = lease_seconds
@@ -471,10 +494,14 @@ class WorkerRuntime:
     def run(self, stop_event: Event) -> None:
         """运行消费循环，数据库边界异常时直接退出并等待租约恢复。"""
 
-        LOGGER.info("event=worker.start worker_id=%s mode=a1-postgres", self._worker_id)
+        LOGGER.info(
+            "event=worker.start worker_id=%s mode=a1-postgres lane=%s", self._worker_id, self._lane
+        )
         try:
             with psycopg.connect(self._dsn) as connection:
-                store = PostgresTaskStore(connection, self._worker_id, self._lease_seconds)
+                store = PostgresTaskStore(
+                    connection, self._worker_id, self._lease_seconds, self._lane
+                )
                 while not stop_event.is_set():
                     self._log_recoveries(store.recover_expired())
                     task = store.claim()

@@ -14,6 +14,7 @@ from types import FrameType
 
 import psycopg
 
+from .lanes import WorkerLane
 from .queue_runtime import WorkerRuntime
 from .runtime import runtime_info
 
@@ -48,7 +49,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(description="CoinSphere Python Worker A1 runtime")
     parser.add_argument("command", choices=("run", "health"))
-    command = parser.parse_args(argv).command
+    parser.add_argument(
+        "--lane",
+        choices=tuple(item.value for item in WorkerLane),
+        default=WorkerLane.REALTIME.value,
+        help="task lane consumed by the worker",
+    )
+    args = parser.parse_args(argv)
+    command = args.command
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
@@ -92,7 +100,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     previous_sigint = signal.signal(signal.SIGINT, request_stop)
     previous_sigterm = signal.signal(signal.SIGTERM, request_stop)
     try:
-        WorkerRuntime(dsn, worker_id).run(stop_event)
+        WorkerRuntime(dsn, worker_id, lane=args.lane).run(stop_event)
     except Exception:
         # 运行时已按异常类型输出固定分类；入口不打印可能包含连接信息的异常正文。
         return 1

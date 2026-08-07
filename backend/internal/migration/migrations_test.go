@@ -44,8 +44,8 @@ WHERE table_schema = current_schema() AND table_name = 'schema_migrations'
 	if err != nil {
 		t.Fatalf("apply baseline: %v", err)
 	}
-	if len(results) != 4 || results[0].Version != 1 || results[1].Version != 2 || results[2].Version != 3 || results[3].Version != 4 ||
-		results[0].Direction != "up" || results[1].Direction != "up" || results[2].Direction != "up" || results[3].Direction != "up" {
+	if len(results) != 5 || results[0].Version != 1 || results[1].Version != 2 || results[2].Version != 3 || results[3].Version != 4 || results[4].Version != 5 ||
+		results[0].Direction != "up" || results[1].Direction != "up" || results[2].Direction != "up" || results[3].Direction != "up" || results[4].Direction != "up" {
 		t.Fatalf("migration results = %#v", results)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err != nil {
@@ -61,12 +61,12 @@ WHERE table_schema = current_schema() AND table_name = 'schema_migrations'
 		t.Fatalf("repeat baseline applied %#v", results)
 	}
 
-	results, err = runner.Down(context.Background(), 4)
+	results, err = runner.Down(context.Background(), 5)
 	if err != nil {
 		t.Fatalf("roll back empty migrations: %v", err)
 	}
-	if len(results) != 4 || results[0].Version != 4 || results[1].Version != 3 || results[2].Version != 2 || results[3].Version != 1 ||
-		results[0].Direction != "down" || results[1].Direction != "down" || results[2].Direction != "down" || results[3].Direction != "down" {
+	if len(results) != 5 || results[0].Version != 5 || results[1].Version != 4 || results[2].Version != 3 || results[3].Version != 2 || results[4].Version != 1 ||
+		results[0].Direction != "down" || results[1].Direction != "down" || results[2].Direction != "down" || results[3].Direction != "down" || results[4].Direction != "down" {
 		t.Fatalf("migration rollback results = %#v", results)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err == nil {
@@ -87,7 +87,7 @@ func TestPostgresBaselineDownRejectsData(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 2); err != nil {
+	if _, err := runner.Down(context.Background(), 3); err != nil {
 		t.Fatalf("roll back empty market migrations: %v", err)
 	}
 	if _, err := runner.Down(context.Background(), 1); err != nil {
@@ -101,7 +101,7 @@ func TestPostgresBaselineDownRejectsData(t *testing.T) {
 		t.Fatal("baseline rollback removed a non-empty schema")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 1 || latest != 4 {
+	if versionErr != nil || current != 1 || latest != 5 {
 		t.Fatalf("failed baseline rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	var count int
@@ -203,6 +203,7 @@ INSERT INTO domain_event_outbox (
 		"ix_event_outbox_dead_letter_alert",
 		"ix_event_outbox_terminal_retention",
 		"ix_worker_tasks_claim",
+		"ix_worker_tasks_lane_claim",
 		"ix_worker_tasks_recovery",
 		"ux_worker_tasks_lease_id",
 		"ix_audit_records_created_at",
@@ -220,7 +221,7 @@ func TestObservabilityDownRejectsAuditData(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 2); err != nil {
+	if _, err := runner.Down(context.Background(), 3); err != nil {
 		t.Fatalf("roll back empty market migrations: %v", err)
 	}
 	if _, err := database.Exec(`INSERT INTO audit_records (request_id, action, resource_path, outcome, status_code) VALUES ('rollback-guard', 'POST /api/v1/test', '/api/v1/test', 'success', 200)`); err != nil {
@@ -231,7 +232,7 @@ func TestObservabilityDownRejectsAuditData(t *testing.T) {
 		t.Fatal("observability rollback removed persistent audit data")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 2 || latest != 4 {
+	if versionErr != nil || current != 2 || latest != 5 {
 		t.Fatalf("failed observability rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	var count int
@@ -252,7 +253,7 @@ func TestPostgresBaselineDownSeesConcurrentCommit(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply baseline: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 3); err != nil {
+	if _, err := runner.Down(context.Background(), 4); err != nil {
 		t.Fatalf("roll back empty market and observability migrations: %v", err)
 	}
 
@@ -284,7 +285,7 @@ func TestPostgresBaselineDownSeesConcurrentCommit(t *testing.T) {
 		t.Fatal("baseline rollback did not finish after concurrent commit")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 1 || latest != 4 {
+	if versionErr != nil || current != 1 || latest != 5 {
 		t.Fatalf("failed concurrent rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	var count int
@@ -305,7 +306,7 @@ func TestValidateCurrentRejectsDatabaseAhead(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply baseline: %v", err)
 	}
-	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES (5, TRUE)`); err != nil {
+	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES (6, TRUE)`); err != nil {
 		t.Fatalf("record newer migration: %v", err)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err == nil {
@@ -510,11 +511,11 @@ func TestA2MarketContractDownRejectsData(t *testing.T) {
 				}
 			}
 
-			if _, err := runner.Down(context.Background(), 2); err == nil {
+			if _, err := runner.Down(context.Background(), 3); err == nil {
 				t.Fatalf("A2 rollback removed non-empty %s", test.table)
 			}
 			current, latest, versionErr := runner.Versions(context.Background())
-			if versionErr != nil || current != 3 || latest != 4 {
+			if versionErr != nil || current != 3 || latest != 5 {
 				t.Fatalf("A2 rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 			}
 			assertA2Tables(t, database)
@@ -563,14 +564,60 @@ VALUES ('019c2f6d-7c00-7000-8000-000000000010', $1, $2, '1m')
 	}
 	assertPostgresIndexes(t, database, []string{"ix_watchlist_items_instrument_interval"})
 
-	if _, err := runner.Down(context.Background(), 1); err == nil {
+	if _, err := runner.Down(context.Background(), 2); err == nil {
 		t.Fatal("watchlist rollback removed persistent user data")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 4 || latest != 4 {
+	if versionErr != nil || current != 4 || latest != 5 {
 		t.Fatalf("watchlist rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	assertRowCount(t, database, "SELECT COUNT(*) FROM watchlist_items", 1)
+}
+
+func TestM14WorkerLaneConstraintsAndDownGuard(t *testing.T) {
+	database := openPostgresSchema(t)
+	runner, err := New(database)
+	if err != nil {
+		t.Fatalf("create migration runner: %v", err)
+	}
+	if _, err := runner.Up(context.Background(), 0); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+
+	if _, err := database.Exec(`
+INSERT INTO worker_tasks (id, task_type, payload_json, lane, priority)
+VALUES ('worker-backtest-lane', 'strategy.backtest', '{}', 'backtest', 10)
+`); err != nil {
+		t.Fatalf("insert backtest task: %v", err)
+	}
+	if _, err := database.Exec(`
+INSERT INTO worker_tasks (id, task_type, payload_json)
+VALUES ('worker-realtime-default-lane', 'strategy.realtime', '{}')
+`); err != nil {
+		t.Fatalf("insert default realtime task: %v", err)
+	}
+
+	invalidRows := []struct {
+		name string
+		sql  string
+	}{
+		{"unknown lane", `INSERT INTO worker_tasks (id, task_type, payload_json, lane) VALUES ('worker-invalid-lane', 'strategy.backtest', '{}', 'other')`},
+		{"negative priority", `INSERT INTO worker_tasks (id, task_type, payload_json, priority) VALUES ('worker-invalid-priority', 'strategy.backtest', '{}', -1)`},
+	}
+	for _, test := range invalidRows {
+		if _, err := database.Exec(test.sql); err == nil {
+			t.Fatalf("worker lane schema accepted %s", test.name)
+		}
+	}
+
+	if _, err := runner.Down(context.Background(), 1); err == nil {
+		t.Fatal("worker lane rollback removed persistent tasks")
+	}
+	current, latest, versionErr := runner.Versions(context.Background())
+	if versionErr != nil || current != 5 || latest != 5 {
+		t.Fatalf("worker lane rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
+	}
+	assertRowCount(t, database, "SELECT COUNT(*) FROM worker_tasks", 2)
 }
 
 func assertCurrentTables(t *testing.T, database *sql.DB) {
