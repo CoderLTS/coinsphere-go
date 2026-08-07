@@ -87,7 +87,7 @@ func TestPostgresBaselineDownRejectsData(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 3); err != nil {
+	if _, err := runner.Down(context.Background(), 4); err != nil {
 		t.Fatalf("roll back empty market migrations: %v", err)
 	}
 	if _, err := runner.Down(context.Background(), 1); err != nil {
@@ -221,7 +221,7 @@ func TestObservabilityDownRejectsAuditData(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 3); err != nil {
+	if _, err := runner.Down(context.Background(), 4); err != nil {
 		t.Fatalf("roll back empty market migrations: %v", err)
 	}
 	if _, err := database.Exec(`INSERT INTO audit_records (request_id, action, resource_path, outcome, status_code) VALUES ('rollback-guard', 'POST /api/v1/test', '/api/v1/test', 'success', 200)`); err != nil {
@@ -253,7 +253,7 @@ func TestPostgresBaselineDownSeesConcurrentCommit(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply baseline: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 4); err != nil {
+	if _, err := runner.Down(context.Background(), 5); err != nil {
 		t.Fatalf("roll back empty market and observability migrations: %v", err)
 	}
 
@@ -306,7 +306,7 @@ func TestValidateCurrentRejectsDatabaseAhead(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply baseline: %v", err)
 	}
-	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES (6, TRUE)`); err != nil {
+	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES (7, TRUE)`); err != nil {
 		t.Fatalf("record newer migration: %v", err)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err == nil {
@@ -511,7 +511,7 @@ func TestA2MarketContractDownRejectsData(t *testing.T) {
 				}
 			}
 
-			if _, err := runner.Down(context.Background(), 3); err == nil {
+			if _, err := runner.Down(context.Background(), 4); err == nil {
 				t.Fatalf("A2 rollback removed non-empty %s", test.table)
 			}
 			current, latest, versionErr := runner.Versions(context.Background())
@@ -564,7 +564,7 @@ VALUES ('019c2f6d-7c00-7000-8000-000000000010', $1, $2, '1m')
 	}
 	assertPostgresIndexes(t, database, []string{"ix_watchlist_items_instrument_interval"})
 
-	if _, err := runner.Down(context.Background(), 2); err == nil {
+	if _, err := runner.Down(context.Background(), 3); err == nil {
 		t.Fatal("watchlist rollback removed persistent user data")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())

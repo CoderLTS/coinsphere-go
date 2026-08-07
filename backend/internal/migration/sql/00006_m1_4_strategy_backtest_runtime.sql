@@ -231,7 +231,11 @@ CREATE TABLE backtests (
         (summary_json IS NULL AND input_sha256 IS NULL AND result_sha256 IS NULL AND manifest_sha256 IS NULL)
         OR
         (
-            jsonb_typeof(summary_json) = 'object'
+            summary_json IS NOT NULL
+            AND input_sha256 IS NOT NULL
+            AND result_sha256 IS NOT NULL
+            AND manifest_sha256 IS NOT NULL
+            AND jsonb_typeof(summary_json) = 'object'
             AND input_sha256 ~ '^[0-9a-f]{64}$'
             AND result_sha256 ~ '^[0-9a-f]{64}$'
             AND manifest_sha256 ~ '^[0-9a-f]{64}$'
