@@ -19,6 +19,8 @@ tags:
   - name: config
   - name: data
   - name: markets
+  - name: strategies
+  - name: backtests
 security:
   - bearerAuth: []
 paths:
@@ -191,6 +193,185 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/admin/strategies:
+    get:
+      tags: [strategies]
+      operationId: listStrategyDrafts
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Administrator strategy drafts
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StrategyDraftPageResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [strategies]
+      operationId: createStrategyDraft
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StrategyDraftRequest' }
+      responses:
+        '200':
+          description: Strategy draft created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StrategyDraftResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/admin/strategies/{strategyId}:
+    parameters:
+      - $ref: '#/components/parameters/StrategyId'
+    get:
+      tags: [strategies]
+      operationId: getStrategyDraft
+      responses:
+        '200':
+          description: Strategy draft
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StrategyDraftResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [strategies]
+      operationId: updateStrategyDraft
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StrategyDraftRequest' }
+      responses:
+        '200':
+          description: Strategy draft updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StrategyDraftResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/admin/strategies/{strategyId}/publish:
+    parameters:
+      - $ref: '#/components/parameters/StrategyId'
+    post:
+      tags: [strategies]
+      operationId: publishStrategy
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Immutable strategy version queued for validation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StrategyVersionResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/strategies:
+    get:
+      tags: [strategies]
+      operationId: listPublishedStrategies
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Published immutable strategy versions
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StrategyVersionPageResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/strategies/{strategyVersionId}:
+    parameters:
+      - $ref: '#/components/parameters/StrategyVersionId'
+    get:
+      tags: [strategies]
+      operationId: getPublishedStrategy
+      responses:
+        '200':
+          description: Published immutable strategy version
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StrategyVersionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/backtests:
+    get:
+      tags: [backtests]
+      operationId: listBacktests
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Current user's backtests
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BacktestPageResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [backtests]
+      operationId: createBacktest
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BacktestCreateRequest' }
+      responses:
+        '200':
+          description: Private backtest queued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BacktestResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/backtests/{backtestId}:
+    parameters:
+      - $ref: '#/components/parameters/BacktestId'
+    get:
+      tags: [backtests]
+      operationId: getBacktest
+      responses:
+        '200':
+          description: Current user's backtest
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BacktestResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/backtests/{backtestId}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/BacktestId'
+    post:
+      tags: [backtests]
+      operationId: cancelBacktest
+      responses:
+        '200':
+          description: Backtest cancellation requested or completed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BacktestResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
   /api/v1/data/news:
     get:
       tags: [data]
@@ -1083,6 +1264,21 @@ components:
       in: header
       required: true
       schema: { type: string, minLength: 16, maxLength: 200 }
+    StrategyId:
+      name: strategyId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/FinancialResourceId' }
+    StrategyVersionId:
+      name: strategyVersionId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/FinancialResourceId' }
+    BacktestId:
+      name: backtestId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/FinancialResourceId' }
     WorkflowSecret:
       name: X-Workflow-Secret
       in: header
@@ -1216,6 +1412,9 @@ components:
     DecimalString:
       type: string
       pattern: '^[0-9]+(?:\.[0-9]+)?$'
+    SignedDecimalString:
+      type: string
+      pattern: '^-?[0-9]+(?:\.[0-9]+)?$'
     Venue:
       type: string
       enum: [binance]
@@ -1331,6 +1530,197 @@ components:
         - type: object
           properties:
             data: { $ref: '#/components/schemas/WatchlistItem' }
+    StrategyParameterValue:
+      description: Integer, Decimal string, boolean, or bounded string validated by parameterSchema.
+    StrategyParameterSpec:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [integer, decimal, boolean, string]
+        required: { type: boolean, default: true }
+        default: { $ref: '#/components/schemas/StrategyParameterValue' }
+        minimum: { $ref: '#/components/schemas/SignedDecimalString' }
+        maximum: { $ref: '#/components/schemas/SignedDecimalString' }
+        enum:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/StrategyParameterValue' }
+    StrategyParameterSchema:
+      type: object
+      maxProperties: 64
+      additionalProperties: { $ref: '#/components/schemas/StrategyParameterSpec' }
+    StrategyDraftRequest:
+      type: object
+      additionalProperties: false
+      required: [name, sourceCode, market, instrumentId, interval, lookbackBars, parameterSchema]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        sourceCode: { type: string, minLength: 1, maxLength: 65536 }
+        market: { $ref: '#/components/schemas/Market' }
+        instrumentId: { $ref: '#/components/schemas/FinancialResourceId' }
+        interval: { $ref: '#/components/schemas/CandleInterval' }
+        lookbackBars: { type: integer, minimum: 1, maximum: 10000 }
+        parameterSchema: { $ref: '#/components/schemas/StrategyParameterSchema' }
+    StrategyDraft:
+      allOf:
+        - $ref: '#/components/schemas/StrategyDraftRequest'
+        - type: object
+          required: [id, runtimeVersion, createdAt, updatedAt]
+          properties:
+            id: { $ref: '#/components/schemas/FinancialResourceId' }
+            runtimeVersion: { type: string, enum: [python3.12] }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    StrategyDraftPageData:
+      type: object
+      required: [records, nextCursor, hasMore, total]
+      properties:
+        records:
+          type: array
+          items: { $ref: '#/components/schemas/StrategyDraft' }
+        nextCursor: { type: string }
+        hasMore: { type: boolean }
+        total: { type: integer, format: int64, minimum: 0 }
+    StrategyDraftPageResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties:
+            data: { $ref: '#/components/schemas/StrategyDraftPageData' }
+    StrategyDraftResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties:
+            data: { $ref: '#/components/schemas/StrategyDraft' }
+    StrategyVersion:
+      type: object
+      required:
+        [id, strategyId, versionNumber, status, name, sourceCode, codeSha256,
+         runtimeVersion, market, instrumentId, symbol, interval, lookbackBars,
+         parameterSchema, createdAt]
+      properties:
+        id: { $ref: '#/components/schemas/FinancialResourceId' }
+        strategyId: { $ref: '#/components/schemas/FinancialResourceId' }
+        versionNumber: { type: integer, minimum: 1 }
+        status: { type: string, enum: [pending, published, failed] }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        sourceCode: { type: string, minLength: 1, maxLength: 65536 }
+        codeSha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        runtimeVersion: { type: string, enum: [python3.12] }
+        market: { $ref: '#/components/schemas/Market' }
+        instrumentId: { $ref: '#/components/schemas/FinancialResourceId' }
+        symbol: { type: string, minLength: 1, maxLength: 64 }
+        interval: { $ref: '#/components/schemas/CandleInterval' }
+        lookbackBars: { type: integer, minimum: 1, maximum: 10000 }
+        parameterSchema: { $ref: '#/components/schemas/StrategyParameterSchema' }
+        publishedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+    StrategyVersionPageData:
+      type: object
+      required: [records, nextCursor, hasMore, total]
+      properties:
+        records:
+          type: array
+          items: { $ref: '#/components/schemas/StrategyVersion' }
+        nextCursor: { type: string }
+        hasMore: { type: boolean }
+        total: { type: integer, format: int64, minimum: 0 }
+    StrategyVersionPageResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties:
+            data: { $ref: '#/components/schemas/StrategyVersionPageData' }
+    StrategyVersionResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties:
+            data: { $ref: '#/components/schemas/StrategyVersion' }
+    BacktestCreateRequest:
+      type: object
+      additionalProperties: false
+      required:
+        [strategyVersionId, parameters, startTime, endTime, allocationUsdt,
+         initialEquity, feeRate, slippageRate]
+      properties:
+        strategyVersionId: { $ref: '#/components/schemas/FinancialResourceId' }
+        parameters:
+          type: object
+          maxProperties: 64
+          additionalProperties: { $ref: '#/components/schemas/StrategyParameterValue' }
+        startTime:
+          type: string
+          format: date-time
+          description: Inclusive UTC candle open time; must end in Z.
+        endTime:
+          type: string
+          format: date-time
+          description: Exclusive UTC candle close boundary; must end in Z.
+        allocationUsdt: { $ref: '#/components/schemas/DecimalString' }
+        initialEquity: { $ref: '#/components/schemas/DecimalString' }
+        feeRate: { $ref: '#/components/schemas/DecimalString' }
+        slippageRate: { $ref: '#/components/schemas/DecimalString' }
+        fundingRates:
+          type: array
+          description: Required for USD-M with exactly one frozen rate per candle; omitted for Spot.
+          items: { $ref: '#/components/schemas/SignedDecimalString' }
+        stopLossRatio: { $ref: '#/components/schemas/DecimalString' }
+        maintenanceMarginRatio: { $ref: '#/components/schemas/DecimalString' }
+    BacktestSummary:
+      type: object
+      required: [initialEquity, finalEquity, returnUsdt, returnRatio, maxDrawdown, type]
+      properties:
+        initialEquity: { $ref: '#/components/schemas/SignedDecimalString' }
+        finalEquity: { $ref: '#/components/schemas/SignedDecimalString' }
+        returnUsdt: { $ref: '#/components/schemas/SignedDecimalString' }
+        returnRatio: { $ref: '#/components/schemas/SignedDecimalString' }
+        maxDrawdown: { $ref: '#/components/schemas/SignedDecimalString' }
+        type: { type: string, enum: [summary] }
+    Backtest:
+      allOf:
+        - $ref: '#/components/schemas/BacktestCreateRequest'
+        - type: object
+          required: [id, ownerUserId, simulatorVersion, status, createdAt]
+          properties:
+            id: { $ref: '#/components/schemas/FinancialResourceId' }
+            ownerUserId: { type: integer, format: int64, minimum: 1 }
+            simulatorVersion: { type: string, enum: [decimal-bar-v1] }
+            status:
+              type: string
+              enum: [queued, claimed, running, cancelRequested, succeeded, failed, canceled]
+            failureCategory: { type: string, maxLength: 64, nullable: true }
+            summary: { $ref: '#/components/schemas/BacktestSummary' }
+            inputSha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+            resultSha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+            manifestSha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+            createdAt: { type: string, format: date-time }
+    BacktestPageData:
+      type: object
+      required: [records, nextCursor, hasMore, total]
+      properties:
+        records:
+          type: array
+          items: { $ref: '#/components/schemas/Backtest' }
+        nextCursor: { type: string }
+        hasMore: { type: boolean }
+        total: { type: integer, format: int64, minimum: 0 }
+    BacktestPageResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties:
+            data: { $ref: '#/components/schemas/BacktestPageData' }
+    BacktestResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties:
+            data: { $ref: '#/components/schemas/Backtest' }
     LoginRequest:
       type: object
       required: [username, password]

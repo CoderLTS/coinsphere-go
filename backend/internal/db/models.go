@@ -75,6 +75,77 @@ type WatchlistItem struct {
 
 func (WatchlistItem) TableName() string { return "watchlist_items" }
 
+// StrategyDraft 是管理员可编辑的单文件策略草稿。
+type StrategyDraft struct {
+	ID                  uuid.UUID `gorm:"type:uuid;primaryKey"`
+	Name                string
+	SourceCode          string `gorm:"column:source_code;type:text"`
+	Market              string `gorm:"column:market_type"`
+	InstrumentID        uuid.UUID
+	Interval            string `gorm:"column:interval_code"`
+	LookbackBars        int
+	ParameterSchemaJSON string `gorm:"column:parameter_schema_json;type:jsonb"`
+	RuntimeVersion      string
+	CreatedByUserID     int64
+	UpdatedByUserID     int64
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+}
+
+func (StrategyDraft) TableName() string { return "strategies" }
+
+// StrategyVersion 是发布后由数据库保护的不可变策略快照。
+type StrategyVersion struct {
+	ID                  uuid.UUID `gorm:"type:uuid;primaryKey"`
+	StrategyID          uuid.UUID
+	VersionNumber       int
+	Status              string
+	WorkerTaskID        string
+	IdempotencyRecordID int64
+	Name                string
+	SourceCode          string `gorm:"column:source_code;type:text"`
+	CodeSHA256          string `gorm:"column:code_sha256"`
+	RuntimeVersion      string
+	Market              string `gorm:"column:market_type"`
+	InstrumentID        uuid.UUID
+	Symbol              string
+	Interval            string `gorm:"column:interval_code"`
+	LookbackBars        int
+	ParameterSchemaJSON string `gorm:"column:parameter_schema_json;type:jsonb"`
+	PublishedByUserID   int64
+	PublishedAt         *time.Time
+	CreatedAt           time.Time
+}
+
+func (StrategyVersion) TableName() string { return "strategy_versions" }
+
+// Backtest 是用户私有回测请求；执行状态由关联的 worker_tasks 行持有。
+type Backtest struct {
+	ID                     uuid.UUID `gorm:"type:uuid;primaryKey"`
+	OwnerUserID            int64
+	StrategyVersionID      uuid.UUID
+	WorkerTaskID           string
+	IdempotencyRecordID    int64
+	SimulatorVersion       string
+	ParametersJSON         string `gorm:"column:parameters_json;type:jsonb"`
+	StartTime              time.Time
+	EndTime                time.Time
+	AllocationUSDT         decimal.Decimal  `gorm:"column:allocation_usdt;type:numeric(38,18)"`
+	InitialEquity          decimal.Decimal  `gorm:"type:numeric(38,18)"`
+	FeeRate                decimal.Decimal  `gorm:"type:numeric(38,18)"`
+	SlippageRate           decimal.Decimal  `gorm:"type:numeric(38,18)"`
+	FundingRatesJSON       string           `gorm:"column:funding_rates_json;type:jsonb"`
+	StopLossRatio          *decimal.Decimal `gorm:"type:numeric(38,18)"`
+	MaintenanceMarginRatio *decimal.Decimal `gorm:"type:numeric(38,18)"`
+	SummaryJSON            *string          `gorm:"column:summary_json;type:jsonb"`
+	InputSHA256            *string          `gorm:"column:input_sha256"`
+	ResultSHA256           *string          `gorm:"column:result_sha256"`
+	ManifestSHA256         *string          `gorm:"column:manifest_sha256"`
+	CreatedAt              time.Time
+}
+
+func (Backtest) TableName() string { return "backtests" }
+
 // WorkflowDefinition 不可变的工作流定义版本。
 type WorkflowDefinition struct {
 	// 多个字段共用同一个 uniqueIndex 名(ux_workflow_def_code_version)并带 priority = 联合唯一索引:

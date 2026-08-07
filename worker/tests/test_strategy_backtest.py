@@ -20,6 +20,7 @@ from coinsphere_worker.artifacts import (
     utc_text,
 )
 from coinsphere_worker.backtest import (
+    SIMULATOR_VERSION,
     BacktestCanceledError,
     BacktestConfig,
     BacktestError,
@@ -31,6 +32,7 @@ from coinsphere_worker.backtest import (
     run_backtest_isolated,
 )
 from coinsphere_worker.lanes import LaneBusyError, LaneRuntime, WorkerLane
+from coinsphere_worker.queue_runtime import WorkerRuntime
 from coinsphere_worker.strategy import (
     Candle,
     JSONScalar,
@@ -304,6 +306,52 @@ def test_long_backtest_lane_does_not_occupy_realtime_slot() -> None:
         release.set()
         thread.join(1)
     assert not thread.is_alive()
+
+
+def test_backtest_worker_requires_resources_and_parses_numeric_schema(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    names = (
+        "COINSPHERE_WORKER_ARTIFACT_DIR",
+        "COINSPHERE_WORKER_BACKTEST_WALL_SECONDS",
+        "COINSPHERE_WORKER_BACKTEST_CPU_SECONDS",
+        "COINSPHERE_WORKER_BACKTEST_MEMORY_BYTES",
+        "COINSPHERE_WORKER_BACKTEST_ARTIFACT_BYTES",
+    )
+    for name in names:
+        monkeypatch.delenv(name, raising=False)
+    with pytest.raises(ValueError, match="resource limits"):
+        WorkerRuntime("postgresql://unused", "worker", lane=WorkerLane.BACKTEST)
+
+    values = (str(tmp_path / "artifacts"), "30", "30", "536870912", "1048576")
+    for name, value in zip(names, values, strict=True):
+        monkeypatch.setenv(name, value)
+    runtime = WorkerRuntime("postgresql://unused", "worker", lane=WorkerLane.BACKTEST)
+    schema = runtime._schema(
+        {
+            "count": {
+                "type": "integer",
+                "default": "2",
+                "minimum": "1",
+                "maximum": "3",
+                "enum": [1, "2"],
+            },
+            "threshold": {
+                "type": "decimal",
+                "default": "0.25",
+                "minimum": "-1",
+                "maximum": "1",
+            },
+            "side": {"type": "string", "enum": ["long", "flat"]},
+        }
+    )
+    assert schema is not None
+    assert SIMULATOR_VERSION == "decimal-bar-v1"
+    assert schema["count"].default == 2
+    assert schema["count"].minimum == 1
+    assert schema["count"].enum == (1, 2)
+    assert schema["threshold"].default == Decimal("0.25")
+    assert schema["side"].enum == ("long", "flat")
 
 
 def test_isolated_backtest_returns_result_and_terminates_timeout() -> None:

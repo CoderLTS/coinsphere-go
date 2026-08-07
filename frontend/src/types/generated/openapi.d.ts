@@ -166,6 +166,144 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/v1/admin/strategies': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get: operations['listStrategyDrafts']
+    put?: never
+    post: operations['createStrategyDraft']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/admin/strategies/{strategyId}': {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        strategyId: components['parameters']['StrategyId']
+      }
+      cookie?: never
+    }
+    get: operations['getStrategyDraft']
+    put: operations['updateStrategyDraft']
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/admin/strategies/{strategyId}/publish': {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        strategyId: components['parameters']['StrategyId']
+      }
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post: operations['publishStrategy']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/strategies': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get: operations['listPublishedStrategies']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/strategies/{strategyVersionId}': {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        strategyVersionId: components['parameters']['StrategyVersionId']
+      }
+      cookie?: never
+    }
+    get: operations['getPublishedStrategy']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/backtests': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get: operations['listBacktests']
+    put?: never
+    post: operations['createBacktest']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/backtests/{backtestId}': {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        backtestId: components['parameters']['BacktestId']
+      }
+      cookie?: never
+    }
+    get: operations['getBacktest']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/backtests/{backtestId}/cancel': {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        backtestId: components['parameters']['BacktestId']
+      }
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post: operations['cancelBacktest']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/v1/data/news': {
     parameters: {
       query?: never
@@ -1205,6 +1343,7 @@ export interface components {
     /** Format: uuid */
     FinancialResourceId: string
     DecimalString: string
+    SignedDecimalString: string
     /** @enum {string} */
     Venue: 'binance'
     /** @enum {string} */
@@ -1287,6 +1426,156 @@ export interface components {
     }
     WatchlistItemResponse: components['schemas']['SuccessResponse'] & {
       data?: components['schemas']['WatchlistItem']
+    }
+    /** @description Integer, Decimal string, boolean, or bounded string validated by parameterSchema. */
+    StrategyParameterValue: unknown
+    StrategyParameterSpec: {
+      /** @enum {string} */
+      type: 'integer' | 'decimal' | 'boolean' | 'string'
+      /** @default true */
+      required: boolean
+      default?: components['schemas']['StrategyParameterValue']
+      minimum?: components['schemas']['SignedDecimalString']
+      maximum?: components['schemas']['SignedDecimalString']
+      enum?: components['schemas']['StrategyParameterValue'][]
+    }
+    StrategyParameterSchema: {
+      [key: string]: components['schemas']['StrategyParameterSpec']
+    }
+    StrategyDraftRequest: {
+      name: string
+      sourceCode: string
+      market: components['schemas']['Market']
+      instrumentId: components['schemas']['FinancialResourceId']
+      interval: components['schemas']['CandleInterval']
+      lookbackBars: number
+      parameterSchema: components['schemas']['StrategyParameterSchema']
+    }
+    StrategyDraft: components['schemas']['StrategyDraftRequest'] & {
+      id: components['schemas']['FinancialResourceId']
+      /** @enum {string} */
+      runtimeVersion: 'python3.12'
+      /** Format: date-time */
+      createdAt: string
+      /** Format: date-time */
+      updatedAt: string
+    }
+    StrategyDraftPageData: {
+      records: components['schemas']['StrategyDraft'][]
+      nextCursor: string
+      hasMore: boolean
+      /** Format: int64 */
+      total: number
+    }
+    StrategyDraftPageResponse: components['schemas']['SuccessResponse'] & {
+      data?: components['schemas']['StrategyDraftPageData']
+    }
+    StrategyDraftResponse: components['schemas']['SuccessResponse'] & {
+      data?: components['schemas']['StrategyDraft']
+    }
+    StrategyVersion: {
+      id: components['schemas']['FinancialResourceId']
+      strategyId: components['schemas']['FinancialResourceId']
+      versionNumber: number
+      /** @enum {string} */
+      status: 'pending' | 'published' | 'failed'
+      name: string
+      sourceCode: string
+      codeSha256: string
+      /** @enum {string} */
+      runtimeVersion: 'python3.12'
+      market: components['schemas']['Market']
+      instrumentId: components['schemas']['FinancialResourceId']
+      symbol: string
+      interval: components['schemas']['CandleInterval']
+      lookbackBars: number
+      parameterSchema: components['schemas']['StrategyParameterSchema']
+      /** Format: date-time */
+      publishedAt?: string | null
+      /** Format: date-time */
+      createdAt: string
+    }
+    StrategyVersionPageData: {
+      records: components['schemas']['StrategyVersion'][]
+      nextCursor: string
+      hasMore: boolean
+      /** Format: int64 */
+      total: number
+    }
+    StrategyVersionPageResponse: components['schemas']['SuccessResponse'] & {
+      data?: components['schemas']['StrategyVersionPageData']
+    }
+    StrategyVersionResponse: components['schemas']['SuccessResponse'] & {
+      data?: components['schemas']['StrategyVersion']
+    }
+    BacktestCreateRequest: {
+      strategyVersionId: components['schemas']['FinancialResourceId']
+      parameters: {
+        [key: string]: components['schemas']['StrategyParameterValue']
+      }
+      /**
+       * Format: date-time
+       * @description Inclusive UTC candle open time; must end in Z.
+       */
+      startTime: string
+      /**
+       * Format: date-time
+       * @description Exclusive UTC candle close boundary; must end in Z.
+       */
+      endTime: string
+      allocationUsdt: components['schemas']['DecimalString']
+      initialEquity: components['schemas']['DecimalString']
+      feeRate: components['schemas']['DecimalString']
+      slippageRate: components['schemas']['DecimalString']
+      /** @description Required for USD-M with exactly one frozen rate per candle; omitted for Spot. */
+      fundingRates?: components['schemas']['SignedDecimalString'][]
+      stopLossRatio?: components['schemas']['DecimalString']
+      maintenanceMarginRatio?: components['schemas']['DecimalString']
+    }
+    BacktestSummary: {
+      initialEquity: components['schemas']['SignedDecimalString']
+      finalEquity: components['schemas']['SignedDecimalString']
+      returnUsdt: components['schemas']['SignedDecimalString']
+      returnRatio: components['schemas']['SignedDecimalString']
+      maxDrawdown: components['schemas']['SignedDecimalString']
+      /** @enum {string} */
+      type: 'summary'
+    }
+    Backtest: components['schemas']['BacktestCreateRequest'] & {
+      id: components['schemas']['FinancialResourceId']
+      /** Format: int64 */
+      ownerUserId: number
+      /** @enum {string} */
+      simulatorVersion: 'decimal-bar-v1'
+      /** @enum {string} */
+      status:
+        | 'queued'
+        | 'claimed'
+        | 'running'
+        | 'cancelRequested'
+        | 'succeeded'
+        | 'failed'
+        | 'canceled'
+      failureCategory?: string | null
+      summary?: components['schemas']['BacktestSummary']
+      inputSha256?: string
+      resultSha256?: string
+      manifestSha256?: string
+      /** Format: date-time */
+      createdAt: string
+    }
+    BacktestPageData: {
+      records: components['schemas']['Backtest'][]
+      nextCursor: string
+      hasMore: boolean
+      /** Format: int64 */
+      total: number
+    }
+    BacktestPageResponse: components['schemas']['SuccessResponse'] & {
+      data?: components['schemas']['BacktestPageData']
+    }
+    BacktestResponse: components['schemas']['SuccessResponse'] & {
+      data?: components['schemas']['Backtest']
     }
     LoginRequest: {
       username: string
@@ -1413,6 +1702,9 @@ export interface components {
     Limit: number
     Keyword: string
     IdempotencyKey: string
+    StrategyId: components['schemas']['FinancialResourceId']
+    StrategyVersionId: components['schemas']['FinancialResourceId']
+    BacktestId: components['schemas']['FinancialResourceId']
     WorkflowSecret: string
     NewsId: number
     UserId: number
@@ -1682,6 +1974,300 @@ export interface operations {
       400: components['responses']['BadRequest']
       401: components['responses']['Unauthorized']
       404: components['responses']['NotFound']
+    }
+  }
+  listStrategyDrafts: {
+    parameters: {
+      query?: {
+        /** @description Opaque cursor returned by the same route and filter set. */
+        cursor?: components['parameters']['Cursor']
+        limit?: components['parameters']['Limit']
+      }
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Administrator strategy drafts */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['StrategyDraftPageResponse']
+        }
+      }
+      400: components['responses']['BadRequest']
+      401: components['responses']['Unauthorized']
+      403: components['responses']['Forbidden']
+    }
+  }
+  createStrategyDraft: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['StrategyDraftRequest']
+      }
+    }
+    responses: {
+      /** @description Strategy draft created */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['StrategyDraftResponse']
+        }
+      }
+      400: components['responses']['BadRequest']
+      401: components['responses']['Unauthorized']
+      403: components['responses']['Forbidden']
+    }
+  }
+  getStrategyDraft: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        strategyId: components['parameters']['StrategyId']
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Strategy draft */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['StrategyDraftResponse']
+        }
+      }
+      401: components['responses']['Unauthorized']
+      403: components['responses']['Forbidden']
+      404: components['responses']['NotFound']
+    }
+  }
+  updateStrategyDraft: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        strategyId: components['parameters']['StrategyId']
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['StrategyDraftRequest']
+      }
+    }
+    responses: {
+      /** @description Strategy draft updated */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['StrategyDraftResponse']
+        }
+      }
+      400: components['responses']['BadRequest']
+      401: components['responses']['Unauthorized']
+      403: components['responses']['Forbidden']
+      404: components['responses']['NotFound']
+    }
+  }
+  publishStrategy: {
+    parameters: {
+      query?: never
+      header: {
+        'Idempotency-Key': components['parameters']['IdempotencyKey']
+      }
+      path: {
+        strategyId: components['parameters']['StrategyId']
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Immutable strategy version queued for validation */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['StrategyVersionResponse']
+        }
+      }
+      400: components['responses']['BadRequest']
+      401: components['responses']['Unauthorized']
+      403: components['responses']['Forbidden']
+      404: components['responses']['NotFound']
+      409: components['responses']['Conflict']
+    }
+  }
+  listPublishedStrategies: {
+    parameters: {
+      query?: {
+        /** @description Opaque cursor returned by the same route and filter set. */
+        cursor?: components['parameters']['Cursor']
+        limit?: components['parameters']['Limit']
+      }
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Published immutable strategy versions */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['StrategyVersionPageResponse']
+        }
+      }
+      400: components['responses']['BadRequest']
+      401: components['responses']['Unauthorized']
+    }
+  }
+  getPublishedStrategy: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        strategyVersionId: components['parameters']['StrategyVersionId']
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Published immutable strategy version */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['StrategyVersionResponse']
+        }
+      }
+      401: components['responses']['Unauthorized']
+      404: components['responses']['NotFound']
+    }
+  }
+  listBacktests: {
+    parameters: {
+      query?: {
+        /** @description Opaque cursor returned by the same route and filter set. */
+        cursor?: components['parameters']['Cursor']
+        limit?: components['parameters']['Limit']
+      }
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Current user's backtests */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['BacktestPageResponse']
+        }
+      }
+      400: components['responses']['BadRequest']
+      401: components['responses']['Unauthorized']
+    }
+  }
+  createBacktest: {
+    parameters: {
+      query?: never
+      header: {
+        'Idempotency-Key': components['parameters']['IdempotencyKey']
+      }
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['BacktestCreateRequest']
+      }
+    }
+    responses: {
+      /** @description Private backtest queued */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['BacktestResponse']
+        }
+      }
+      400: components['responses']['BadRequest']
+      401: components['responses']['Unauthorized']
+      404: components['responses']['NotFound']
+      409: components['responses']['Conflict']
+    }
+  }
+  getBacktest: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        backtestId: components['parameters']['BacktestId']
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Current user's backtest */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['BacktestResponse']
+        }
+      }
+      401: components['responses']['Unauthorized']
+      404: components['responses']['NotFound']
+    }
+  }
+  cancelBacktest: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        backtestId: components['parameters']['BacktestId']
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Backtest cancellation requested or completed */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['BacktestResponse']
+        }
+      }
+      400: components['responses']['BadRequest']
+      401: components['responses']['Unauthorized']
+      404: components['responses']['NotFound']
+      409: components['responses']['Conflict']
     }
   }
   listNews: {

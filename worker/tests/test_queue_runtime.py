@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import threading
@@ -9,7 +11,9 @@ import time
 import uuid
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from gzip import decompress
 from pathlib import Path
+from queue import Queue
 from typing import Any, cast
 
 import psycopg
@@ -68,10 +72,10 @@ def postgres_dsn() -> Iterator[str]:
 
 @pytest.fixture(autouse=True)
 def empty_queue(postgres_dsn: str) -> Iterator[None]:
-    """每个用例只清理随机测试 schema 中的队列。"""
+    """每个用例只清理随机测试 schema 中的量化任务与资源。"""
 
     with psycopg.connect(postgres_dsn, autocommit=True) as connection:
-        connection.execute("TRUNCATE worker_tasks")
+        connection.execute("TRUNCATE backtests, strategy_versions, strategies, worker_tasks")
     yield
 
 
@@ -442,3 +446,236 @@ def test_invalid_task_fails_without_logging_payload(
     row = task_row(postgres_dsn, task_id)
     assert row["failure_category"] == "invalid_task"
     assert row["error_message"] == "任务契约无效或不受支持"
+
+
+def test_strategy_failure_and_backtest_result_commit(
+    postgres_dsn: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    instrument_id = "019d0000-0000-7000-8000-000000000001"
+    strategy_id = "019d0000-0000-7000-8000-000000000010"
+    failed_version_id = "019d0000-0000-7000-8000-000000000011"
+    failed_task_id = "019d0000-0000-7000-8000-000000000012"
+    published_version_id = "019d0000-0000-7000-8000-000000000021"
+    published_task_id = "019d0000-0000-7000-8000-000000000022"
+    backtest_id = "019d0000-0000-7000-8000-000000000023"
+    backtest_task_id = "019d0000-0000-7000-8000-000000000024"
+    source = "def on_bar(candles, params):\n    return Decimal('0')\n"
+    code_sha = hashlib.sha256(source.encode()).hexdigest()
+    artifact_root = tmp_path / "artifacts"
+    for name, value in {
+        "COINSPHERE_WORKER_ARTIFACT_DIR": str(artifact_root),
+        "COINSPHERE_WORKER_BACKTEST_WALL_SECONDS": "10",
+        "COINSPHERE_WORKER_BACKTEST_CPU_SECONDS": "10",
+        "COINSPHERE_WORKER_BACKTEST_MEMORY_BYTES": "536870912",
+        "COINSPHERE_WORKER_BACKTEST_ARTIFACT_BYTES": "1048576",
+    }.items():
+        monkeypatch.setenv(name, value)
+    runtime = WorkerRuntime(postgres_dsn, "worker-backtest", lane=WorkerLane.BACKTEST)
+
+    with psycopg.connect(postgres_dsn, autocommit=True) as connection:
+        connection.execute(
+            """
+            INSERT INTO market_instruments (
+                id, venue, market_type, native_symbol, base_asset, quote_asset, status,
+                price_tick, quantity_step, min_quantity, min_notional, updated_at
+            ) VALUES (%s, 'binance', 'spot', 'BTCUSDT', 'BTC', 'USDT', 'trading',
+                      0.1, 0.001, 0.001, 5, CURRENT_TIMESTAMP)
+            """,
+            (instrument_id,),
+        )
+        owner = connection.execute(
+            "INSERT INTO users (username) VALUES ('worker-strategy-owner') RETURNING id"
+        ).fetchone()
+        assert owner is not None
+        record_ids: list[int] = []
+        for scope, key in (
+            ("strategy:publish:failed", "a"),
+            ("strategy:publish:published", "b"),
+            ("backtest:create", "c"),
+        ):
+            record = connection.execute(
+                """
+                INSERT INTO idempotency_records (
+                    user_id, scope, key_hash, request_hash, expires_at, created_at
+                ) VALUES (%s, %s, repeat(%s, 64), repeat('d', 64),
+                          CURRENT_TIMESTAMP + INTERVAL '1 day', CURRENT_TIMESTAMP)
+                RETURNING id
+                """,
+                (owner[0], scope, key),
+            ).fetchone()
+            assert record is not None
+            record_ids.append(cast(int, record[0]))
+        connection.execute(
+            """
+            INSERT INTO strategies (
+                id, name, source_code, market_type, instrument_id, interval_code,
+                lookback_bars, parameter_schema_json, created_by_user_id, updated_by_user_id
+            ) VALUES (%s, 'hold', %s, 'spot', %s, '1m', 1, '{}', %s, %s)
+            """,
+            (strategy_id, source, instrument_id, owner[0], owner[0]),
+        )
+        connection.execute(
+            """
+            INSERT INTO worker_tasks (id, task_type, payload_json, lane)
+            VALUES (%s, 'strategy.publish', %s, 'backtest')
+            """,
+            (
+                failed_task_id,
+                json.dumps(
+                    {"strategyId": strategy_id, "strategyVersionId": failed_version_id}
+                ),
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO strategy_versions (
+                id, strategy_id, version_number, worker_task_id, idempotency_record_id,
+                name, source_code, code_sha256, market_type, instrument_id, symbol,
+                interval_code, lookback_bars, parameter_schema_json, published_by_user_id
+            ) VALUES (%s, %s, 1, %s, %s, 'invalid', 'invalid source', repeat('e', 64),
+                      'spot', %s, 'BTCUSDT', '1m', 1, '{}', %s)
+            """,
+            (
+                failed_version_id,
+                strategy_id,
+                failed_task_id,
+                record_ids[0],
+                instrument_id,
+                owner[0],
+            ),
+        )
+
+    with psycopg.connect(postgres_dsn) as connection:
+        store = PostgresTaskStore(connection, "worker-publish", lane=WorkerLane.BACKTEST)
+        failed_lease = cast(TaskLease, store.claim())
+        assert failed_lease.task_id == failed_task_id
+        assert store.start(failed_lease)
+        output: Queue[tuple[str, object | None]] = Queue(maxsize=1)
+        runtime._execute_task(failed_lease, threading.Event(), output)
+        assert output.get_nowait()[0] == "invalid_task"
+        assert store.fail(failed_lease, "invalid_task", retryable=False) == "failed"
+    with psycopg.connect(postgres_dsn) as connection:
+        failed_status = connection.execute(
+            "SELECT status FROM strategy_versions WHERE id = %s", (failed_version_id,)
+        ).fetchone()
+    assert failed_status == ("failed",)
+
+    with psycopg.connect(postgres_dsn, autocommit=True) as connection:
+        connection.execute(
+            """
+            INSERT INTO worker_tasks (
+                id, task_type, payload_json, status, attempt_count, lane,
+                finished_at, result_json
+            ) VALUES (%s, 'strategy.publish', %s, 'succeeded', 1, 'backtest',
+                      CURRENT_TIMESTAMP, '{"status":"completed"}')
+            """,
+            (
+                published_task_id,
+                json.dumps(
+                    {"strategyId": strategy_id, "strategyVersionId": published_version_id}
+                ),
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO strategy_versions (
+                id, strategy_id, version_number, worker_task_id, idempotency_record_id,
+                name, source_code, code_sha256, market_type, instrument_id, symbol,
+                interval_code, lookback_bars, parameter_schema_json, published_by_user_id
+            ) VALUES (%s, %s, 2, %s, %s, 'hold', %s, %s, 'spot', %s, 'BTCUSDT',
+                      '1m', 1, '{"count":{"type":"integer","default":1,
+                      "minimum":"1","maximum":"2"}}', %s)
+            """,
+            (
+                published_version_id,
+                strategy_id,
+                published_task_id,
+                record_ids[1],
+                source,
+                code_sha,
+                instrument_id,
+                owner[0],
+            ),
+        )
+        connection.execute(
+            """
+            UPDATE strategy_versions
+            SET status = 'published', published_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            """,
+            (published_version_id,),
+        )
+        connection.execute(
+            """
+            INSERT INTO worker_tasks (id, task_type, payload_json, lane)
+            VALUES (%s, 'strategy.backtest', %s, 'backtest')
+            """,
+            (backtest_task_id, json.dumps({"backtestId": backtest_id})),
+        )
+        connection.execute(
+            """
+            INSERT INTO backtests (
+                id, owner_user_id, strategy_version_id, worker_task_id,
+                idempotency_record_id, simulator_version, parameters_json,
+                start_time, end_time, allocation_usdt, initial_equity, fee_rate,
+                slippage_rate, funding_rates_json
+            ) VALUES (%s, %s, %s, %s, %s, 'decimal-bar-v1', '{}',
+                      TIMESTAMPTZ '2026-08-01 00:00:00+00',
+                      TIMESTAMPTZ '2026-08-01 00:01:00+00', 100, 1000, 0, 0, '[]')
+            """,
+            (
+                backtest_id,
+                owner[0],
+                published_version_id,
+                backtest_task_id,
+                record_ids[2],
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO market_candles (
+                venue, instrument_id, interval_code, open_time, close_time,
+                open_price, high_price, low_price, close_price, base_volume, is_closed
+            ) VALUES ('binance', %s, '1m', TIMESTAMPTZ '2026-08-01 00:00:00+00',
+                      TIMESTAMPTZ '2026-08-01 00:01:00+00', 100, 101, 99, 100, 10, TRUE)
+            """,
+            (instrument_id,),
+        )
+
+    with psycopg.connect(postgres_dsn) as connection:
+        store = PostgresTaskStore(
+            connection, "worker-backtest", lease_seconds=30, lane=WorkerLane.BACKTEST
+        )
+        lease = cast(TaskLease, store.claim())
+        assert lease.task_id == backtest_task_id
+        assert store.start(lease)
+    result = runtime._backtest(lease, threading.Event())
+    assert runtime._complete_domain_task(lease, result)
+
+    manifest = cast(dict[str, Any], result["manifest"])
+    references = cast(dict[str, str], manifest["references"])
+    input_path = artifact_root / backtest_id / references["input"]
+    input_lines = decompress(input_path.read_bytes()).decode().splitlines()
+    configuration = json.loads(input_lines[0])
+    assert len(input_lines) == 2
+    assert configuration["type"] == "configuration"
+    assert configuration["sourceCode"] == source
+    assert configuration["simulatorVersion"] == "decimal-bar-v1"
+    assert configuration["allocationUsdt"] == "100"
+
+    with psycopg.connect(postgres_dsn) as connection:
+        row = connection.execute(
+            """
+            SELECT task.status, backtest.summary_json, backtest.input_sha256,
+                   backtest.result_sha256, backtest.manifest_sha256
+            FROM backtests AS backtest
+            JOIN worker_tasks AS task ON task.id = backtest.worker_task_id
+            WHERE backtest.id = %s
+            """,
+            (backtest_id,),
+        ).fetchone()
+    assert row is not None
+    assert row[0] == "succeeded"
+    assert row[1]["type"] == "summary"
+    assert all(isinstance(value, str) and len(value) == 64 for value in row[2:])
+    assert row[4] == manifest["sha256"]

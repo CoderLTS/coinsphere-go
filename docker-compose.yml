@@ -69,6 +69,7 @@ services:
     image: coinsphere-go-worker
     container_name: coinsphere-go-worker
     restart: unless-stopped
+    command: ["python", "-m", "coinsphere_worker", "run", "--lane", "realtime"]
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -82,6 +83,34 @@ services:
     environment:
       TZ: UTC
       COINSPHERE_WORKER_DATABASE_DSN: postgresql://coinsphere:coinsphere-dev-only@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic
+
+  worker-backtest:
+    build:
+      context: ./worker
+    image: coinsphere-go-worker
+    container_name: coinsphere-go-worker-backtest
+    restart: unless-stopped
+    command: ["python", "-m", "coinsphere_worker", "run", "--lane", "backtest"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - database
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+    environment:
+      TZ: UTC
+      COINSPHERE_WORKER_DATABASE_DSN: postgresql://coinsphere:coinsphere-dev-only@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic
+      COINSPHERE_WORKER_ARTIFACT_DIR: /app/artifacts
+      COINSPHERE_WORKER_BACKTEST_WALL_SECONDS: "300"
+      COINSPHERE_WORKER_BACKTEST_CPU_SECONDS: "300"
+      COINSPHERE_WORKER_BACKTEST_MEMORY_BYTES: "536870912"
+      COINSPHERE_WORKER_BACKTEST_ARTIFACT_BYTES: "134217728"
+    volumes:
+      - worker-artifacts:/app/artifacts
 
   web:
     build:
@@ -98,6 +127,7 @@ volumes:
   backend-uploads:
   backend-static:
   timescale-data:
+  worker-artifacts:
 
 networks:
   database:

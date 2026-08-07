@@ -43,7 +43,7 @@ Invoke-WebRequest http://127.0.0.1:6987/metrics
 
 `/health/live` 不访问数据库；`/health/ready` 与兼容 `/health` 执行有界 PostgreSQL Ping。`/metrics` 只有五个固定无标签进程指标，JSON 应用日志写标准输出。写请求审计通过 `request_id` 与日志关联；查询时不得把生产 DSN 或用户载荷拼入命令输出。
 
-Worker 和数据库契约使用随机 PostgreSQL schema，覆盖 `FOR UPDATE SKIP LOCKED` 认领、数据库时间租约、fencing、过期恢复、尝试耗尽和取消。当前 Worker 只执行契约伪任务，不包含数据集、回测或交易能力。
+Worker 和数据库契约使用随机 PostgreSQL schema，覆盖 `FOR UPDATE SKIP LOCKED` 认领、数据库时间租约、fencing、过期恢复、尝试耗尽和取消。realtime/backtest 消费者按 lane 隔离；backtest Worker 还覆盖可信策略发布、受限子进程回测和内容寻址产物，且不包含真实交易能力。
 
 本地缺少 Docker、WSL 或 PostgreSQL/TimescaleDB 时，将对应检查交给 GitHub Actions，或在统一环境主机的隔离目录和独立 Compose 项目中执行。
 

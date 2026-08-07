@@ -12,6 +12,7 @@ RUN --mount=type=cache,id=coinsphere-uv,target=/root/.cache/uv \
     UV_LINK_MODE=copy uv sync --locked --no-dev --no-install-project
 COPY coinsphere_worker ./coinsphere_worker
 RUN adduser -D -H -u 10001 worker \
+    && mkdir -p /app/artifacts \
     && chown -R worker:worker /app
 USER worker
 HEALTHCHECK --interval=10s --timeout=3s --start-period=3s --retries=3 \
