@@ -64,6 +64,19 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/watchlists", s.requireAuth(s.handleCreateWatchlist))
 	mux.HandleFunc("DELETE /api/v1/watchlists/{watchlistId}", s.requireAuth(s.handleDeleteWatchlist))
 
+	// 管理员维护可信单文件草稿；已发布版本共享只读，回测始终按当前用户隔离。
+	mux.HandleFunc("GET /api/v1/admin/strategies", s.requireAuth(s.handleListStrategyDrafts))
+	mux.HandleFunc("POST /api/v1/admin/strategies", s.requireAuth(s.handleCreateStrategyDraft))
+	mux.HandleFunc("GET /api/v1/admin/strategies/{strategyId}", s.requireAuth(s.handleGetStrategyDraft))
+	mux.HandleFunc("PUT /api/v1/admin/strategies/{strategyId}", s.requireAuth(s.handleUpdateStrategyDraft))
+	mux.HandleFunc("POST /api/v1/admin/strategies/{strategyId}/publish", s.requireAuth(s.handlePublishStrategy))
+	mux.HandleFunc("GET /api/v1/strategies", s.requireAuth(s.handleListPublishedStrategies))
+	mux.HandleFunc("GET /api/v1/strategies/{strategyVersionId}", s.requireAuth(s.handleGetPublishedStrategy))
+	mux.HandleFunc("GET /api/v1/backtests", s.requireAuth(s.handleListBacktests))
+	mux.HandleFunc("POST /api/v1/backtests", s.requireAuth(s.handleCreateBacktest))
+	mux.HandleFunc("GET /api/v1/backtests/{backtestId}", s.requireAuth(s.handleGetBacktest))
+	mux.HandleFunc("POST /api/v1/backtests/{backtestId}/cancel", s.requireAuth(s.handleCancelBacktest))
+
 	// 数据管理。
 	// 第二个参数 perm.DataNewsView 是 perm 包里定义的权限码常量;requirePermission 会检查当前用户是否持有它。
 	// 像 {newsId} 这样的花括号段是路径参数,对应 handler 里的 r.PathValue("newsId")。

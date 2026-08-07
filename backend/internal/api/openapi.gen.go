@@ -13,6 +13,27 @@ const (
 	BearerAuthScopes = "bearerAuth.Scopes"
 )
 
+// Defines values for BacktestSimulatorVersion.
+const (
+	DecimalBarV1 BacktestSimulatorVersion = "decimal-bar-v1"
+)
+
+// Defines values for BacktestStatus.
+const (
+	BacktestStatusCancelRequested BacktestStatus = "cancelRequested"
+	BacktestStatusCanceled        BacktestStatus = "canceled"
+	BacktestStatusClaimed         BacktestStatus = "claimed"
+	BacktestStatusFailed          BacktestStatus = "failed"
+	BacktestStatusQueued          BacktestStatus = "queued"
+	BacktestStatusRunning         BacktestStatus = "running"
+	BacktestStatusSucceeded       BacktestStatus = "succeeded"
+)
+
+// Defines values for BacktestSummaryType.
+const (
+	Summary BacktestSummaryType = "summary"
+)
+
 // Defines values for CandleInterval.
 const (
 	N15m CandleInterval = "15m"
@@ -35,6 +56,31 @@ const (
 	UsdM Market = "usd_m"
 )
 
+// Defines values for StrategyDraftRuntimeVersion.
+const (
+	StrategyDraftRuntimeVersionPython312 StrategyDraftRuntimeVersion = "python3.12"
+)
+
+// Defines values for StrategyParameterSpecType.
+const (
+	Boolean StrategyParameterSpecType = "boolean"
+	Decimal StrategyParameterSpecType = "decimal"
+	Integer StrategyParameterSpecType = "integer"
+	String  StrategyParameterSpecType = "string"
+)
+
+// Defines values for StrategyVersionRuntimeVersion.
+const (
+	StrategyVersionRuntimeVersionPython312 StrategyVersionRuntimeVersion = "python3.12"
+)
+
+// Defines values for StrategyVersionStatus.
+const (
+	StrategyVersionStatusFailed    StrategyVersionStatus = "failed"
+	StrategyVersionStatusPending   StrategyVersionStatus = "pending"
+	StrategyVersionStatusPublished StrategyVersionStatus = "published"
+)
+
 // Defines values for UserInfoAccessMode.
 const (
 	Authenticated UserInfoAccessMode = "authenticated"
@@ -44,6 +90,99 @@ const (
 const (
 	Binance Venue = "binance"
 )
+
+// Backtest defines model for Backtest.
+type Backtest struct {
+	AllocationUsdt DecimalString `json:"allocationUsdt"`
+	CreatedAt      time.Time     `json:"createdAt"`
+
+	// EndTime Exclusive UTC candle close boundary; must end in Z.
+	EndTime         time.Time     `json:"endTime"`
+	FailureCategory *string       `json:"failureCategory"`
+	FeeRate         DecimalString `json:"feeRate"`
+
+	// FundingRates Required for USD-M with exactly one frozen rate per candle; omitted for Spot.
+	FundingRates           *[]SignedDecimalString            `json:"fundingRates,omitempty"`
+	Id                     FinancialResourceId               `json:"id"`
+	InitialEquity          DecimalString                     `json:"initialEquity"`
+	InputSha256            *string                           `json:"inputSha256,omitempty"`
+	MaintenanceMarginRatio *DecimalString                    `json:"maintenanceMarginRatio,omitempty"`
+	ManifestSha256         *string                           `json:"manifestSha256,omitempty"`
+	OwnerUserId            int64                             `json:"ownerUserId"`
+	Parameters             map[string]StrategyParameterValue `json:"parameters"`
+	ResultSha256           *string                           `json:"resultSha256,omitempty"`
+	SimulatorVersion       BacktestSimulatorVersion          `json:"simulatorVersion"`
+	SlippageRate           DecimalString                     `json:"slippageRate"`
+
+	// StartTime Inclusive UTC candle open time; must end in Z.
+	StartTime         time.Time           `json:"startTime"`
+	Status            BacktestStatus      `json:"status"`
+	StopLossRatio     *DecimalString      `json:"stopLossRatio,omitempty"`
+	StrategyVersionId FinancialResourceId `json:"strategyVersionId"`
+	Summary           *BacktestSummary    `json:"summary,omitempty"`
+}
+
+// BacktestSimulatorVersion defines model for Backtest.SimulatorVersion.
+type BacktestSimulatorVersion string
+
+// BacktestStatus defines model for Backtest.Status.
+type BacktestStatus string
+
+// BacktestCreateRequest defines model for BacktestCreateRequest.
+type BacktestCreateRequest struct {
+	AllocationUsdt DecimalString `json:"allocationUsdt"`
+
+	// EndTime Exclusive UTC candle close boundary; must end in Z.
+	EndTime time.Time     `json:"endTime"`
+	FeeRate DecimalString `json:"feeRate"`
+
+	// FundingRates Required for USD-M with exactly one frozen rate per candle; omitted for Spot.
+	FundingRates           *[]SignedDecimalString            `json:"fundingRates,omitempty"`
+	InitialEquity          DecimalString                     `json:"initialEquity"`
+	MaintenanceMarginRatio *DecimalString                    `json:"maintenanceMarginRatio,omitempty"`
+	Parameters             map[string]StrategyParameterValue `json:"parameters"`
+	SlippageRate           DecimalString                     `json:"slippageRate"`
+
+	// StartTime Inclusive UTC candle open time; must end in Z.
+	StartTime         time.Time           `json:"startTime"`
+	StopLossRatio     *DecimalString      `json:"stopLossRatio,omitempty"`
+	StrategyVersionId FinancialResourceId `json:"strategyVersionId"`
+}
+
+// BacktestPageData defines model for BacktestPageData.
+type BacktestPageData struct {
+	HasMore    bool       `json:"hasMore"`
+	NextCursor string     `json:"nextCursor"`
+	Records    []Backtest `json:"records"`
+	Total      int64      `json:"total"`
+}
+
+// BacktestPageResponse defines model for BacktestPageResponse.
+type BacktestPageResponse struct {
+	Code int32            `json:"code"`
+	Data BacktestPageData `json:"data"`
+	Msg  string           `json:"msg"`
+}
+
+// BacktestResponse defines model for BacktestResponse.
+type BacktestResponse struct {
+	Code int32    `json:"code"`
+	Data Backtest `json:"data"`
+	Msg  string   `json:"msg"`
+}
+
+// BacktestSummary defines model for BacktestSummary.
+type BacktestSummary struct {
+	FinalEquity   SignedDecimalString `json:"finalEquity"`
+	InitialEquity SignedDecimalString `json:"initialEquity"`
+	MaxDrawdown   SignedDecimalString `json:"maxDrawdown"`
+	ReturnRatio   SignedDecimalString `json:"returnRatio"`
+	ReturnUsdt    SignedDecimalString `json:"returnUsdt"`
+	Type          BacktestSummaryType `json:"type"`
+}
+
+// BacktestSummaryType defines model for BacktestSummary.Type.
+type BacktestSummaryType string
 
 // CandleInterval defines model for CandleInterval.
 type CandleInterval string
@@ -198,6 +337,128 @@ type ReauthResponse struct {
 	Msg  string     `json:"msg"`
 }
 
+// SignedDecimalString defines model for SignedDecimalString.
+type SignedDecimalString = string
+
+// StrategyDraft defines model for StrategyDraft.
+type StrategyDraft struct {
+	CreatedAt       time.Time                   `json:"createdAt"`
+	Id              FinancialResourceId         `json:"id"`
+	InstrumentId    FinancialResourceId         `json:"instrumentId"`
+	Interval        CandleInterval              `json:"interval"`
+	LookbackBars    int                         `json:"lookbackBars"`
+	Market          Market                      `json:"market"`
+	Name            string                      `json:"name"`
+	ParameterSchema StrategyParameterSchema     `json:"parameterSchema"`
+	RuntimeVersion  StrategyDraftRuntimeVersion `json:"runtimeVersion"`
+	SourceCode      string                      `json:"sourceCode"`
+	UpdatedAt       time.Time                   `json:"updatedAt"`
+}
+
+// StrategyDraftRuntimeVersion defines model for StrategyDraft.RuntimeVersion.
+type StrategyDraftRuntimeVersion string
+
+// StrategyDraftPageData defines model for StrategyDraftPageData.
+type StrategyDraftPageData struct {
+	HasMore    bool            `json:"hasMore"`
+	NextCursor string          `json:"nextCursor"`
+	Records    []StrategyDraft `json:"records"`
+	Total      int64           `json:"total"`
+}
+
+// StrategyDraftPageResponse defines model for StrategyDraftPageResponse.
+type StrategyDraftPageResponse struct {
+	Code int32                 `json:"code"`
+	Data StrategyDraftPageData `json:"data"`
+	Msg  string                `json:"msg"`
+}
+
+// StrategyDraftRequest defines model for StrategyDraftRequest.
+type StrategyDraftRequest struct {
+	InstrumentId    FinancialResourceId     `json:"instrumentId"`
+	Interval        CandleInterval          `json:"interval"`
+	LookbackBars    int                     `json:"lookbackBars"`
+	Market          Market                  `json:"market"`
+	Name            string                  `json:"name"`
+	ParameterSchema StrategyParameterSchema `json:"parameterSchema"`
+	SourceCode      string                  `json:"sourceCode"`
+}
+
+// StrategyDraftResponse defines model for StrategyDraftResponse.
+type StrategyDraftResponse struct {
+	Code int32         `json:"code"`
+	Data StrategyDraft `json:"data"`
+	Msg  string        `json:"msg"`
+}
+
+// StrategyParameterSchema defines model for StrategyParameterSchema.
+type StrategyParameterSchema map[string]StrategyParameterSpec
+
+// StrategyParameterSpec defines model for StrategyParameterSpec.
+type StrategyParameterSpec struct {
+	// Default Integer, Decimal string, boolean, or bounded string validated by parameterSchema.
+	Default  *StrategyParameterValue   `json:"default,omitempty"`
+	Enum     *[]StrategyParameterValue `json:"enum,omitempty"`
+	Maximum  *SignedDecimalString      `json:"maximum,omitempty"`
+	Minimum  *SignedDecimalString      `json:"minimum,omitempty"`
+	Required *bool                     `json:"required,omitempty"`
+	Type     StrategyParameterSpecType `json:"type"`
+}
+
+// StrategyParameterSpecType defines model for StrategyParameterSpec.Type.
+type StrategyParameterSpecType string
+
+// StrategyParameterValue Integer, Decimal string, boolean, or bounded string validated by parameterSchema.
+type StrategyParameterValue = interface{}
+
+// StrategyVersion defines model for StrategyVersion.
+type StrategyVersion struct {
+	CodeSha256      string                        `json:"codeSha256"`
+	CreatedAt       time.Time                     `json:"createdAt"`
+	Id              FinancialResourceId           `json:"id"`
+	InstrumentId    FinancialResourceId           `json:"instrumentId"`
+	Interval        CandleInterval                `json:"interval"`
+	LookbackBars    int                           `json:"lookbackBars"`
+	Market          Market                        `json:"market"`
+	Name            string                        `json:"name"`
+	ParameterSchema StrategyParameterSchema       `json:"parameterSchema"`
+	PublishedAt     *time.Time                    `json:"publishedAt"`
+	RuntimeVersion  StrategyVersionRuntimeVersion `json:"runtimeVersion"`
+	SourceCode      string                        `json:"sourceCode"`
+	Status          StrategyVersionStatus         `json:"status"`
+	StrategyId      FinancialResourceId           `json:"strategyId"`
+	Symbol          string                        `json:"symbol"`
+	VersionNumber   int                           `json:"versionNumber"`
+}
+
+// StrategyVersionRuntimeVersion defines model for StrategyVersion.RuntimeVersion.
+type StrategyVersionRuntimeVersion string
+
+// StrategyVersionStatus defines model for StrategyVersion.Status.
+type StrategyVersionStatus string
+
+// StrategyVersionPageData defines model for StrategyVersionPageData.
+type StrategyVersionPageData struct {
+	HasMore    bool              `json:"hasMore"`
+	NextCursor string            `json:"nextCursor"`
+	Records    []StrategyVersion `json:"records"`
+	Total      int64             `json:"total"`
+}
+
+// StrategyVersionPageResponse defines model for StrategyVersionPageResponse.
+type StrategyVersionPageResponse struct {
+	Code int32                   `json:"code"`
+	Data StrategyVersionPageData `json:"data"`
+	Msg  string                  `json:"msg"`
+}
+
+// StrategyVersionResponse defines model for StrategyVersionResponse.
+type StrategyVersionResponse struct {
+	Code int32           `json:"code"`
+	Data StrategyVersion `json:"data"`
+	Msg  string          `json:"msg"`
+}
+
 // SuccessResponse defines model for SuccessResponse.
 type SuccessResponse struct {
 	Code int32       `json:"code"`
@@ -272,6 +533,9 @@ type AgentCode = string
 // AgentId defines model for AgentId.
 type AgentId = int64
 
+// BacktestId defines model for BacktestId.
+type BacktestId = FinancialResourceId
+
 // ButtonId defines model for ButtonId.
 type ButtonId = int64
 
@@ -316,6 +580,12 @@ type RoleId = int64
 
 // SessionId defines model for SessionId.
 type SessionId = int64
+
+// StrategyId defines model for StrategyId.
+type StrategyId = FinancialResourceId
+
+// StrategyVersionId defines model for StrategyVersionId.
+type StrategyVersionId = FinancialResourceId
 
 // TaskCode defines model for TaskCode.
 type TaskCode = string
@@ -367,6 +637,18 @@ type ListPushDeliveriesParams struct {
 	DeliveryStatus       *string  `form:"deliveryStatus,omitempty" json:"deliveryStatus,omitempty"`
 }
 
+// ListStrategyDraftsParams defines parameters for ListStrategyDrafts.
+type ListStrategyDraftsParams struct {
+	// Cursor Opaque cursor returned by the same route and filter set.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// PublishStrategyParams defines parameters for PublishStrategy.
+type PublishStrategyParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
 // ListUsersParams defines parameters for ListUsers.
 type ListUsersParams struct {
 	// Cursor Opaque cursor returned by the same route and filter set.
@@ -394,6 +676,18 @@ type GetCurrentAssistantSessionParams struct {
 	NewsId        *int64 `form:"newsId,omitempty" json:"newsId,omitempty"`
 	ModelConfigId *int64 `form:"modelConfigId,omitempty" json:"modelConfigId,omitempty"`
 	ForceNew      *bool  `form:"forceNew,omitempty" json:"forceNew,omitempty"`
+}
+
+// ListBacktestsParams defines parameters for ListBacktests.
+type ListBacktestsParams struct {
+	// Cursor Opaque cursor returned by the same route and filter set.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// CreateBacktestParams defines parameters for CreateBacktest.
+type CreateBacktestParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
 // ListNewsParams defines parameters for ListNews.
@@ -426,6 +720,13 @@ type ListMarketSymbolsParams struct {
 
 // ListNotificationDeliveriesParams defines parameters for ListNotificationDeliveries.
 type ListNotificationDeliveriesParams struct {
+	// Cursor Opaque cursor returned by the same route and filter set.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ListPublishedStrategiesParams defines parameters for ListPublishedStrategies.
+type ListPublishedStrategiesParams struct {
 	// Cursor Opaque cursor returned by the same route and filter set.
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
@@ -505,6 +806,12 @@ type NotificationsWebSocketParams struct {
 	SecWebSocketProtocol string `json:"Sec-WebSocket-Protocol"`
 }
 
+// CreateStrategyDraftJSONRequestBody defines body for CreateStrategyDraft for application/json ContentType.
+type CreateStrategyDraftJSONRequestBody = StrategyDraftRequest
+
+// UpdateStrategyDraftJSONRequestBody defines body for UpdateStrategyDraft for application/json ContentType.
+type UpdateStrategyDraftJSONRequestBody = StrategyDraftRequest
+
 // CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
 type CreateUserJSONRequestBody = JsonObject
 
@@ -519,6 +826,9 @@ type LoginJSONRequestBody = LoginRequest
 
 // ReauthenticateJSONRequestBody defines body for Reauthenticate for application/json ContentType.
 type ReauthenticateJSONRequestBody = ReauthRequest
+
+// CreateBacktestJSONRequestBody defines body for CreateBacktest for application/json ContentType.
+type CreateBacktestJSONRequestBody = BacktestCreateRequest
 
 // CreateAiModelJSONRequestBody defines body for CreateAiModel for application/json ContentType.
 type CreateAiModelJSONRequestBody = JsonObject

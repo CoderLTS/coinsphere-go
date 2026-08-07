@@ -54,6 +54,7 @@ class BacktestProcessError(BacktestError):
 
 
 _BACKTEST_CONTEXT = Context(prec=50)
+SIMULATOR_VERSION: Final = "decimal-bar-v1"
 
 
 @dataclass(frozen=True, slots=True)
