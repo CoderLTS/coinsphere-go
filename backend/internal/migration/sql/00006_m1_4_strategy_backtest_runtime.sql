@@ -9,8 +9,8 @@ ALTER TABLE worker_tasks
         OR CASE task_type
             WHEN 'strategy.publish' THEN
                 jsonb_typeof(payload_json::jsonb) = 'object'
-                AND jsonb_object_length(payload_json::jsonb) = 2
                 AND payload_json::jsonb ?& ARRAY['strategyId', 'strategyVersionId']
+                AND payload_json::jsonb - 'strategyId' - 'strategyVersionId' = '{}'::jsonb
                 AND COALESCE(
                     payload_json::jsonb ->> 'strategyId'
                         ~ '^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
@@ -23,8 +23,8 @@ ALTER TABLE worker_tasks
                 )
             WHEN 'strategy.backtest' THEN
                 jsonb_typeof(payload_json::jsonb) = 'object'
-                AND jsonb_object_length(payload_json::jsonb) = 1
                 AND payload_json::jsonb ? 'backtestId'
+                AND payload_json::jsonb - 'backtestId' = '{}'::jsonb
                 AND COALESCE(
                     payload_json::jsonb ->> 'backtestId'
                         ~ '^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
