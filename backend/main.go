@@ -115,6 +115,9 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 		app.MarketData, err = marketdata.NewManager(sqlDB, source, marketdata.ManagerConfig{
 			ReconcileInterval: time.Duration(cfg.MarketData.ReconcileIntervalSeconds) * time.Second,
 			BackfillPageSize:  cfg.MarketData.BackfillPageSize,
+			OnFirstClosed: func(candle marketdata.Candle) error {
+				return app.EnqueueRealtimeSignals(ctx, candle)
+			},
 		})
 		if err != nil {
 			return fmt.Errorf("build market data runtime: %w", err)

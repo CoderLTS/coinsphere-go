@@ -1,17 +1,11 @@
 /** 前端接口封装：auth。 */
 import request from '@/utils/http'
-import type { components } from '@/types/generated/openapi'
-
-type LoginRequest = components['schemas']['LoginRequest']
-type LoginData = components['schemas']['LoginData']
-type ReauthRequest = components['schemas']['ReauthRequest']
-type ReauthData = components['schemas']['ReauthData']
 
 /**
  * 用户登录。
  */
-export function fetchLogin(params: LoginRequest) {
-  return request.post<LoginData>({
+export function fetchLogin(params: Api.Auth.LoginParams) {
+  return request.post<Api.Auth.LoginResponse>({
     url: '/api/v1/auth/login',
     params
   })
@@ -27,10 +21,9 @@ export function fetchGetUserInfo() {
 }
 
 export function fetchReauth(password: string) {
-  const params: ReauthRequest = { password }
-  return request.post<ReauthData>({
+  return request.post<Api.Auth.ReauthResponse>({
     url: '/api/v1/auth/reauth',
-    params,
+    params: { password },
     showErrorMessage: false
   })
 }

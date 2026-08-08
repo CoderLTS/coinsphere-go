@@ -11,6 +11,7 @@ import time
 import uuid
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from decimal import Decimal
 from gzip import decompress
 from pathlib import Path
 from queue import Queue
@@ -21,10 +22,54 @@ import pytest
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
-from coinsphere_worker.lanes import WorkerLane
-from coinsphere_worker.queue_runtime import PostgresTaskStore, TaskLease, WorkerRuntime
+from coinsphere_worker.queue_runtime import PostgresTaskStore, TaskLease, WorkerLane, WorkerRuntime
 
 POSTGRES_DSN_ENV = "COINSPHERE_TEST_POSTGRES_DSN"
+
+
+def test_realtime_payload_requires_exact_uuidv7_and_utc_keys() -> None:
+    task = TaskLease(
+        task_id="019d2000-0000-7000-8000-000000000001",
+        task_type="strategy.realtime",
+        payload_json=(
+            '{"instanceId":"019d2000-0000-7000-8000-000000000002",'
+            '"candleOpenTime":"2026-08-08T00:00:00Z"}'
+        ),
+        attempt_count=1,
+        max_attempts=3,
+        lease_id="lease",
+        worker_id="worker",
+    )
+    instance_id, candle_time = WorkerRuntime._realtime_payload(task)
+    assert instance_id == "019d2000-0000-7000-8000-000000000002"
+    assert candle_time.isoformat() == "2026-08-08T00:00:00+00:00"
+
+    for payload in (
+        '{"instanceId":"019d2000-0000-4000-8000-000000000002","candleOpenTime":"2026-08-08T00:00:00Z"}',
+        (
+            '{"instanceId":"019d2000-0000-7000-8000-000000000002",'
+            '"candleOpenTime":"2026-08-08 00:00:00Z"}'
+        ),
+        (
+            '{"instanceId":"019d2000-0000-7000-8000-000000000002",'
+            '"candleOpenTime":"2026-08-08T00:00:00+00:00"}'
+        ),
+        (
+            '{"instanceId":"019d2000-0000-7000-8000-000000000002",'
+            '"candleOpenTime":"2026-08-08T00:00:00Z","extra":1}'
+        ),
+    ):
+        invalid = TaskLease(
+            task_id=task.task_id,
+            task_type=task.task_type,
+            payload_json=payload,
+            attempt_count=task.attempt_count,
+            max_attempts=task.max_attempts,
+            lease_id=task.lease_id,
+            worker_id=task.worker_id,
+        )
+        with pytest.raises(ValueError):
+            WorkerRuntime._realtime_payload(invalid)
 
 
 @pytest.fixture(scope="session")
@@ -71,11 +116,18 @@ def postgres_dsn() -> Iterator[str]:
 
 
 @pytest.fixture(autouse=True)
-def empty_queue(postgres_dsn: str) -> Iterator[None]:
+def empty_queue(request: pytest.FixtureRequest) -> Iterator[None]:
     """每个用例只清理随机测试 schema 中的量化任务与资源。"""
 
+    if "postgres_dsn" not in request.fixturenames:
+        yield
+        return
+    postgres_dsn = cast(str, request.getfixturevalue("postgres_dsn"))
     with psycopg.connect(postgres_dsn, autocommit=True) as connection:
-        connection.execute("TRUNCATE backtests, strategy_versions, strategies, worker_tasks")
+        connection.execute(
+            "TRUNCATE notification_deliveries, domain_event_outbox, strategy_signals, "
+            "strategy_instances, backtests, strategy_versions, strategies, worker_tasks"
+        )
     yield
 
 
@@ -679,3 +731,210 @@ def test_strategy_failure_and_backtest_result_commit(
     assert row[1]["type"] == "summary"
     assert all(isinstance(value, str) and len(value) == 64 for value in row[2:])
     assert row[4] == manifest["sha256"]
+
+
+def test_realtime_signal_is_idempotent_and_expires_manual(postgres_dsn: str) -> None:
+    instrument_id = "019d3000-0000-7000-8000-000000000001"
+    strategy_id = "019d3000-0000-7000-8000-000000000010"
+    version_id = "019d3000-0000-7000-8000-000000000011"
+    publish_task_id = "019d3000-0000-7000-8000-000000000012"
+    instance_id = "019d3000-0000-7000-8000-000000000013"
+    first_task_id = "019d3000-0000-7000-8000-000000000014"
+    second_task_id = "019d3000-0000-7000-8000-000000000015"
+    duplicate_task_id = "019d3000-0000-7000-8000-000000000016"
+    out_of_order_instance_id = "019d3000-0000-7000-8000-000000000017"
+    later_task_id = "019d3000-0000-7000-8000-000000000018"
+    delayed_task_id = "019d3000-0000-7000-8000-000000000019"
+    source = "def on_bar(candles, params):\n    return Decimal('0.5')\n"
+    code_sha = hashlib.sha256(source.encode()).hexdigest()
+
+    with psycopg.connect(postgres_dsn, autocommit=True) as connection:
+        connection.execute(
+            """
+            INSERT INTO market_instruments (
+                id, venue, market_type, native_symbol, base_asset, quote_asset, status,
+                price_tick, quantity_step, min_quantity, min_notional, updated_at
+            ) VALUES (%s, 'binance', 'spot', 'ETHUSDT', 'ETH', 'USDT', 'trading',
+                      0.1, 0.001, 0.001, 5, CURRENT_TIMESTAMP)
+            """,
+            (instrument_id,),
+        )
+        owner = connection.execute(
+            "INSERT INTO users (username) VALUES ('worker-realtime-owner') RETURNING id"
+        ).fetchone()
+        assert owner is not None
+        record = connection.execute(
+            """
+            INSERT INTO idempotency_records (
+                user_id, scope, key_hash, request_hash, expires_at, created_at
+            ) VALUES (%s, 'strategy:publish:realtime', repeat('r', 64), repeat('s', 64),
+                      CURRENT_TIMESTAMP + INTERVAL '1 day', CURRENT_TIMESTAMP)
+            RETURNING id
+            """,
+            (owner[0],),
+        ).fetchone()
+        assert record is not None
+        connection.execute(
+            """
+            INSERT INTO strategies (
+                id, name, source_code, market_type, instrument_id, interval_code,
+                lookback_bars, parameter_schema_json, created_by_user_id, updated_by_user_id
+            ) VALUES (%s, 'realtime hold', %s, 'spot', %s, '1m', 2, '{}', %s, %s)
+            """,
+            (strategy_id, source, instrument_id, owner[0], owner[0]),
+        )
+        connection.execute(
+            """
+            INSERT INTO worker_tasks (
+                id, task_type, payload_json, status, attempt_count, lane, finished_at
+            ) VALUES (%s, 'strategy.publish', %s, 'succeeded', 1, 'backtest', CURRENT_TIMESTAMP)
+            """,
+            (
+                publish_task_id,
+                json.dumps({"strategyId": strategy_id, "strategyVersionId": version_id}),
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO strategy_versions (
+                id, strategy_id, version_number, status, worker_task_id, idempotency_record_id,
+                name, source_code, code_sha256, runtime_version, market_type, instrument_id,
+                symbol, interval_code, lookback_bars, parameter_schema_json,
+                published_by_user_id, published_at
+            ) VALUES (%s, %s, 1, 'published', %s, %s, 'realtime hold', %s, %s,
+                      'python3.12', 'spot', %s, 'ETHUSDT', '1m', 2, '{}', %s,
+                      CURRENT_TIMESTAMP)
+            """,
+            (
+                version_id,
+                strategy_id,
+                publish_task_id,
+                record[0],
+                source,
+                code_sha,
+                instrument_id,
+                owner[0],
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO strategy_instances (
+                id, owner_user_id, strategy_version_id, name, mode, environment, is_enabled
+            ) VALUES (%s, %s, %s, 'realtime manual', 'manual', 'paper', TRUE)
+            """,
+            (instance_id, owner[0], version_id),
+        )
+        connection.execute(
+            """
+            INSERT INTO strategy_instances (
+                id, owner_user_id, strategy_version_id, name, mode, environment, is_enabled
+            ) VALUES (%s, %s, %s, 'out of order manual', 'manual', 'paper', TRUE)
+            """,
+            (out_of_order_instance_id, owner[0], version_id),
+        )
+        for index in range(2):
+            connection.execute(
+                """
+                INSERT INTO market_candles (
+                    venue, instrument_id, interval_code, open_time, close_time,
+                    open_price, high_price, low_price, close_price, base_volume, is_closed
+                ) VALUES ('binance', %s, '1m', %s, %s, 100, 101, 99, 100, 10, TRUE)
+                """,
+                (
+                    instrument_id,
+                    f"2099-08-08 00:0{index}:00+00",
+                    f"2099-08-08 00:0{index + 1}:00+00",
+                ),
+            )
+
+    def insert_realtime_task(
+        task_id: str, candle_open_time: str, strategy_instance_id: str = instance_id
+    ) -> None:
+        payload = json.dumps(
+            {"instanceId": strategy_instance_id, "candleOpenTime": candle_open_time},
+            separators=(",", ":"),
+        )
+        with psycopg.connect(postgres_dsn, autocommit=True) as connection:
+            connection.execute(
+                """
+                INSERT INTO worker_tasks (id, task_type, payload_json, lane, dedupe_key)
+                VALUES (%s, 'strategy.realtime', %s, 'realtime', %s)
+                """,
+                (task_id, payload, f"test:{task_id}"),
+            )
+
+    runtime = WorkerRuntime(postgres_dsn, "worker-realtime", lease_seconds=30)
+
+    def execute_realtime(
+        task_id: str, candle_open_time: str, strategy_instance_id: str = instance_id
+    ) -> dict[str, object]:
+        insert_realtime_task(task_id, candle_open_time, strategy_instance_id)
+        with psycopg.connect(postgres_dsn) as connection:
+            store = PostgresTaskStore(
+                connection, "worker-realtime", lease_seconds=30, lane=WorkerLane.REALTIME
+            )
+            lease = cast(TaskLease, store.claim())
+            assert lease.task_id == task_id
+            assert store.start(lease)
+        result = runtime._realtime(lease)
+        assert runtime._complete_domain_task(lease, result)
+        return result
+
+    first = execute_realtime(first_task_id, "2099-08-08T00:00:00Z")
+    assert first["target"] == Decimal("0.5")
+    second = execute_realtime(second_task_id, "2099-08-08T00:01:00Z")
+    assert second["expiresAt"] is not None
+    duplicate = execute_realtime(duplicate_task_id, "2099-08-08T00:01:00Z")
+    assert duplicate["target"] == second["target"]
+
+    with psycopg.connect(postgres_dsn) as connection:
+        signals = connection.execute(
+            """
+            SELECT candle_open_time, status, target
+            FROM strategy_signals
+            WHERE strategy_instance_id = %s
+            ORDER BY candle_open_time
+            """,
+            (instance_id,),
+        ).fetchall()
+        tasks = connection.execute(
+            "SELECT id, status FROM worker_tasks WHERE id IN (%s, %s, %s) ORDER BY id",
+            (first_task_id, second_task_id, duplicate_task_id),
+        ).fetchall()
+        events = connection.execute(
+            """
+            SELECT aggregate_id, payload_json::jsonb
+            FROM domain_event_outbox
+            WHERE event_type = 'strategy.signal.created'
+            ORDER BY aggregate_id
+            """
+        ).fetchall()
+    assert [(row[0].isoformat(), row[1], row[2]) for row in signals] == [
+        ("2099-08-08T00:00:00+00:00", "expired", Decimal("0.5")),
+        ("2099-08-08T00:01:00+00:00", "active", Decimal("0.5")),
+    ]
+    assert tasks == [
+        (first_task_id, "succeeded"),
+        (second_task_id, "succeeded"),
+        (duplicate_task_id, "succeeded"),
+    ]
+    assert [row[0] for row in events] == [first_task_id, second_task_id]
+    assert [row[1]["signalId"] for row in events] == [first_task_id, second_task_id]
+    assert all(row[1]["target"] == "0.5" for row in events)
+
+    execute_realtime(later_task_id, "2099-08-08T00:01:00Z", out_of_order_instance_id)
+    execute_realtime(delayed_task_id, "2099-08-08T00:00:00Z", out_of_order_instance_id)
+    with psycopg.connect(postgres_dsn) as connection:
+        out_of_order_signals = connection.execute(
+            """
+            SELECT candle_open_time, status
+            FROM strategy_signals
+            WHERE strategy_instance_id = %s
+            ORDER BY candle_open_time
+            """,
+            (out_of_order_instance_id,),
+        ).fetchall()
+    assert [(row[0].isoformat(), row[1]) for row in out_of_order_signals] == [
+        ("2099-08-08T00:00:00+00:00", "expired"),
+        ("2099-08-08T00:01:00+00:00", "active"),
+    ]

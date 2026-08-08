@@ -1,10 +1,8 @@
 package service
 
-// import:引入本文件用到的标准库与项目内部包。见 GO入门笔记『项目怎么组织』。
-// slog = 结构化日志;time = 时间与时长(time.Duration)。
-// coinsphere/backend/internal/db = 本项目的数据库模型包(GORM 的表结构定义)。
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -13,8 +11,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// 下面每个 func (a *App) Xxx() 都是 App 类型的"方法":(a *App) 叫"接收者",
-// 方法体里用 a 指代当前这个 App 对象(相当于别的语言的 this / self)。见 GO入门笔记『方法与接收者』。
 // StartRuntime 启动全部后台循环:调度、派发、事件、恢复与清理。
 // 单进程内 goroutine 协作,替代原 orchestrator/worker 双进程 + Redis。
 func (a *App) StartRuntime() {
@@ -217,8 +213,8 @@ func (a *App) fireDueScheduleEntries(ctx context.Context) {
 			"idempotencyKey": "schedule:" + int64Text(entry.ID) + ":" + timestamp,
 			"payload":        M{},
 		})
-		// 忽略"积压超限"这类预期内的错误,其它错误才记进日志并回写到入口。&& 是逻辑与,! 是取反。
-		if err != nil && !isBacklogExceeded(err) {
+		// 忽略积压超限；其他错误记录分类并回写入口。
+		if err != nil && !errors.Is(err, ErrBacklogExceeded) {
 			category, _ := classifyFailure(err, err.Error())
 			slog.WarnContext(ctx, "scheduler entry failed", "entry_id", entry.ID, "error_category", category)
 			a.DB.Model(&db.WorkflowRuntimeEntry{}).Where("id = ?", entry.ID).

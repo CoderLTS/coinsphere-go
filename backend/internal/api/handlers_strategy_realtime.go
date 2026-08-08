@@ -1,0 +1,61 @@
+package api
+
+import (
+	"net/http"
+
+	"coinsphere/backend/internal/service"
+)
+
+func (s *Server) handleListStrategyInstances(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	page, valid := cursorPage(w, r)
+	if !valid {
+		return
+	}
+	data, err := s.App.ListStrategyInstances(r.Context(), principal.User.ID, page)
+	writeStrategyBacktestResult(w, r, data, err)
+}
+
+func (s *Server) handleCreateStrategyInstance(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	payload, err := decodeStrictBody[service.StrategyInstanceCreatePayload](r)
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "invalid strategy instance request")
+		return
+	}
+	data, err := s.App.CreateStrategyInstance(r.Context(), principal.User.ID, *payload)
+	writeStrategyBacktestResult(w, r, data, err)
+}
+
+func (s *Server) handleEnableStrategyInstance(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	data, err := s.App.SetStrategyInstanceEnabled(r.Context(), principal.User.ID, r.PathValue("instanceId"), true)
+	writeStrategyBacktestResult(w, r, data, err)
+}
+
+func (s *Server) handleDisableStrategyInstance(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	data, err := s.App.SetStrategyInstanceEnabled(r.Context(), principal.User.ID, r.PathValue("instanceId"), false)
+	writeStrategyBacktestResult(w, r, data, err)
+}
+
+func (s *Server) handleListStrategySignals(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	page, valid := cursorPage(w, r)
+	if !valid {
+		return
+	}
+	data, err := s.App.ListStrategySignals(r.Context(), principal.User.ID, page)
+	writeStrategyBacktestResult(w, r, data, err)
+}
+
+func (s *Server) handleApproveStrategySignal(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	data, err := s.App.DecideStrategySignal(
+		r.Context(), principal, r.PathValue("signalId"), "approved",
+		r.Header.Get("Idempotency-Key"), r.Header.Get("X-Reauth-Token"),
+	)
+	writeStrategyBacktestResult(w, r, data, err)
+}
+
+func (s *Server) handleRejectStrategySignal(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	data, err := s.App.DecideStrategySignal(
+		r.Context(), principal, r.PathValue("signalId"), "rejected",
+		r.Header.Get("Idempotency-Key"), "",
+	)
+	writeStrategyBacktestResult(w, r, data, err)
+}

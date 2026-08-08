@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"coinsphere/backend/internal/db"
+	"gorm.io/gorm/clause"
 )
 
 // channelTypeLabels 渠道类型代号 → 中文名(包级变量,程序启动即存在)。
@@ -451,6 +452,83 @@ func (a *App) SendTestInAppNotification(userID int64) M {
 		Data: M{"record": record, "unreadCount": unreadCount},
 	})
 	return M{"record": record, "unreadCount": unreadCount}
+}
+
+// deliverStrategySignalNotification 将持久信号事件幂等转换为一条持久站内通知。
+func (a *App) deliverStrategySignalNotification(ctx context.Context, event *domainEvent) error {
+	if event.EventType != "strategy.signal.created" {
+		return nil
+	}
+	if event.AggregateType != "strategy_signal" {
+		return fmt.Errorf("strategy signal event has invalid aggregate type")
+	}
+	signalID, err := requiredStrategyUUID(event.AggregateID, "aggregateId")
+	if err != nil {
+		return err
+	}
+
+	database := a.dbWithContext(ctx)
+	var signal db.StrategySignal
+	if err := database.Where("id = ?", signalID).Take(&signal).Error; err != nil {
+		return fmt.Errorf("load strategy signal notification: %w", err)
+	}
+	var version db.StrategyVersion
+	if err := database.Where("id = ?", signal.StrategyVersionID).Take(&version).Error; err != nil {
+		return fmt.Errorf("load strategy version notification: %w", err)
+	}
+
+	var channelID *int64
+	var builtin db.SystemNotifyChannel
+	if err := database.Where("channel_type = ? AND is_builtin = ?", "in_app", true).First(&builtin).Error; err == nil {
+		channelID = &builtin.ID
+	}
+	now := time.Now().UTC()
+	title := "策略信号已生成"
+	if signal.Mode == "manual" {
+		switch {
+		case signal.Status == "approved":
+			title = "策略信号已批准"
+		case signal.Status == "rejected":
+			title = "策略信号已拒绝"
+		case signal.Status == "expired" || signal.ExpiresAt == nil || !signal.ExpiresAt.After(now):
+			title = "策略信号已过期"
+		default:
+			title = "策略信号待批准"
+		}
+	}
+	content := fmt.Sprintf(
+		"%s %s 目标仓位 %s（%s/%s）",
+		version.Symbol, signal.Interval, signal.Target.String(), signal.Environment, signal.Mode,
+	)
+	if signal.ExpiresAt != nil {
+		content += "，有效期至 " + formatUTC(*signal.ExpiresAt)
+	}
+	outboxID := event.OutboxID
+	delivery := db.SystemNotifyDelivery{
+		OutboxEventID: &outboxID, StrategySignalID: &signal.ID,
+		TargetType: "strategy_signal", RecipientUserID: &signal.OwnerUserID,
+		ChannelID: channelID, ChannelType: "in_app", Status: "success",
+		Title: title, Content: content, SentAt: &now, CreatedAt: now,
+	}
+	result := database.Clauses(clause.OnConflict{DoNothing: true}).Create(&delivery)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil
+	}
+	if channelID != nil {
+		delivery.Channel = &builtin
+	}
+	record := a.serializeDelivery(&delivery)
+	unreadCount := a.countUnreadInApp(signal.OwnerUserID)
+	if a.Hub != nil {
+		a.Hub.SendToUser(signal.OwnerUserID, RealtimeEvent{
+			Type: "notice.created",
+			Data: M{"record": record, "unreadCount": unreadCount},
+		})
+	}
+	return nil
 }
 
 // GetTargetMeta 通知目标元数据(工作流通知节点用)。
@@ -1086,12 +1164,15 @@ func (a *App) serializeDelivery(delivery *db.SystemNotifyDelivery) M {
 	if delivery.WorkflowExecution != nil {
 		definition = delivery.WorkflowExecution.WorkflowDefinition
 	}
-	var workflowExecutionID, workflowExecutionNodeID, workflowDefinitionID, targetID, recipientID any
+	var workflowExecutionID, workflowExecutionNodeID, workflowDefinitionID, strategySignalID, targetID, recipientID any
 	if delivery.WorkflowExecutionID != nil {
 		workflowExecutionID = *delivery.WorkflowExecutionID
 	}
 	if delivery.WorkflowExecutionNodeID != nil {
 		workflowExecutionNodeID = *delivery.WorkflowExecutionNodeID
+	}
+	if delivery.StrategySignalID != nil {
+		strategySignalID = delivery.StrategySignalID.String()
 	}
 	definitionCode, definitionName := "", ""
 	if definition != nil {
@@ -1122,6 +1203,7 @@ func (a *App) serializeDelivery(delivery *db.SystemNotifyDelivery) M {
 		"workflowDefinitionId":    workflowDefinitionID,
 		"workflowDefinitionCode":  definitionCode,
 		"workflowDefinitionName":  definitionName,
+		"strategySignalId":        strategySignalID,
 		"targetType":              delivery.TargetType, "targetId": targetID, "targetLabel": targetLabel,
 		"recipientId": recipientID, "recipientLabel": recipientLabel,
 		"channelType":         delivery.ChannelType,

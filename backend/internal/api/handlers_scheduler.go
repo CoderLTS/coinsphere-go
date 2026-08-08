@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -201,7 +202,7 @@ func (s *Server) handleRunWorkflowStarts(w http.ResponseWriter, r *http.Request,
 
 func writeWorkflowProblem(w http.ResponseWriter, r *http.Request, err error) {
 	status := http.StatusBadRequest
-	if service.IsBacklogExceeded(err) {
+	if errors.Is(err, service.ErrBacklogExceeded) {
 		status = http.StatusTooManyRequests
 	} else if service.IsIdempotencyConflict(err) {
 		status = http.StatusConflict

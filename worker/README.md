@@ -1,6 +1,6 @@
 # CoinSphere Quant Worker
 
-Python 3.12 Worker 实现 PostgreSQL 任务租约以及 M1.4 单文件策略与确定性回测核心：`strategy.py` 固定可信 Python 文件和统一 `on_bar` 契约，`backtest.py` 提供 Decimal Bar 模拟器与显式资源限制的子进程入口，`artifacts.py` 生成内容寻址 `JSONL.gz` 和 SHA-256 Manifest。未引入动态插件、运行时依赖安装、vectorbt、NautilusTrader 或逐任务 Docker。
+Python 3.12 Worker 实现 PostgreSQL 任务租约、实时信号、单文件策略与确定性回测：`strategy.py` 固定可信 Python 文件和统一 `on_bar` 契约，`backtest.py` 提供 Decimal Bar 模拟器与显式资源限制的子进程入口，`artifacts.py` 生成内容寻址 `JSONL.gz` 和 SHA-256 Manifest。未引入动态插件、运行时依赖安装、vectorbt、NautilusTrader 或逐任务 Docker。
 
 ```bash
 uv sync --locked --all-groups
@@ -21,6 +21,8 @@ uv run pytest tests/test_queue_runtime.py
 `python -m coinsphere_worker run --lane realtime` 和 `python -m coinsphere_worker run --lane backtest` 必须通过 `COINSPHERE_WORKER_DATABASE_DSN` 连接已经应用 CoinSphere migration 的 PostgreSQL/TimescaleDB；配置缺失、lane 非法或数据库异常时进程 fail-closed 非零退出。每个消费者只认领本 lane，并按优先级、创建时间和任务 ID 稳定排序；两个消费者各自串行执行一个任务，不共享槽位，也不使用 Redis、Kafka 或 NATS。
 
 回测业务处理器调用 `run_backtest_isolated` 时必须显式传入墙钟、CPU、内存和产物大小上限。子进程使用 `spawn`、清空环境并在 Linux 应用原生资源限制；超时会有界终止整个子进程。纯 `run_backtest` 只承载固定 `decimal-bar-v1` 的确定性金融计算，不读取时钟、环境、数据库或网络。输入 JSONL 首条冻结策略、参数、运行时、模拟器和费用配置，后续记录冻结完整闭合 K 线。
+
+`strategy.realtime` 只加载已启用实例、已发布策略版本和对应闭合 K 线，复用同一 `on_bar` 参数校验与 Decimal 目标边界。有效租约内，Worker 按策略实例串行提交，在一个事务中使上一条到期手动信号失效、将延迟完成的旧信号记为过期、幂等插入当前信号、写入 `strategy.signal.created` Outbox，并完成任务；实例被关闭或同一 K 线已处理时不会产生重复信号或事件。该路径不读取交易凭据，也不创建订单。
 
 认领会递增 `attempt_count` 并创建新的 `lease_id`。启动、心跳、成功、失败和取消均同时校验任务 ID、租约 ID、合法前态和数据库时间；租约过期后旧 Worker 不能再续租或写终态。过期的 `claimed/running` 在仍有尝试次数时重新排队，否则进入 `failed`。心跳对 `cancelRequested` 只观察、不续租；恢复器在租约过期或取消请求满 4 秒时将其转为 `canceled`，以默认 1 秒轮询保证 Owner 在确认取消前崩溃时仍满足 5 秒时限。SIGINT/SIGTERM 会停止认领和心跳，在途任务由同一过期租约路径恢复。
 
@@ -44,4 +46,4 @@ docker compose exec -T worker-backtest python -m coinsphere_worker health
 
 ## 回滚
 
-先停止 realtime/backtest 消费者，确认不再产生心跳或认领，再回退本纵向 PR。`00006` 只允许在策略草稿、版本、回测及其量化任务均为空时回退；否则保留 schema 和任务，等待兼容版本恢复消费，不得删除任务或手工修改 migration 版本。未被晋级证据引用的临时产物按 Runbook 清理，已引用内容不得自动删除。生产 Release 当前不部署 Worker，不修改生产、真实交易或凭据配置。
+先停止 realtime/backtest 消费者，确认不再产生心跳或认领，再回退本纵向 PR。`00008` 只允许在信号决策和信号通知均为空时回退；`00007` 只允许在策略实例、信号和 realtime 任务均为空时回退；`00006` 只允许在策略草稿、版本、回测及其量化任务均为空时回退。否则保留 schema 和任务，等待兼容版本恢复消费，不得删除任务或手工修改 migration 版本。生产 Release 当前不部署 Worker，不修改生产、真实交易或凭据配置。

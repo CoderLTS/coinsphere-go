@@ -44,8 +44,8 @@ WHERE table_schema = current_schema() AND table_name = 'schema_migrations'
 	if err != nil {
 		t.Fatalf("apply baseline: %v", err)
 	}
-	if len(results) != 6 || results[0].Version != 1 || results[1].Version != 2 || results[2].Version != 3 || results[3].Version != 4 || results[4].Version != 5 || results[5].Version != 6 ||
-		results[0].Direction != "up" || results[1].Direction != "up" || results[2].Direction != "up" || results[3].Direction != "up" || results[4].Direction != "up" || results[5].Direction != "up" {
+	if len(results) != 8 || results[0].Version != 1 || results[1].Version != 2 || results[2].Version != 3 || results[3].Version != 4 || results[4].Version != 5 || results[5].Version != 6 || results[6].Version != 7 || results[7].Version != 8 ||
+		results[0].Direction != "up" || results[1].Direction != "up" || results[2].Direction != "up" || results[3].Direction != "up" || results[4].Direction != "up" || results[5].Direction != "up" || results[6].Direction != "up" || results[7].Direction != "up" {
 		t.Fatalf("migration results = %#v", results)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err != nil {
@@ -61,12 +61,12 @@ WHERE table_schema = current_schema() AND table_name = 'schema_migrations'
 		t.Fatalf("repeat baseline applied %#v", results)
 	}
 
-	results, err = runner.Down(context.Background(), 6)
+	results, err = runner.Down(context.Background(), 8)
 	if err != nil {
 		t.Fatalf("roll back empty migrations: %v", err)
 	}
-	if len(results) != 6 || results[0].Version != 6 || results[1].Version != 5 || results[2].Version != 4 || results[3].Version != 3 || results[4].Version != 2 || results[5].Version != 1 ||
-		results[0].Direction != "down" || results[1].Direction != "down" || results[2].Direction != "down" || results[3].Direction != "down" || results[4].Direction != "down" || results[5].Direction != "down" {
+	if len(results) != 8 || results[0].Version != 8 || results[1].Version != 7 || results[2].Version != 6 || results[3].Version != 5 || results[4].Version != 4 || results[5].Version != 3 || results[6].Version != 2 || results[7].Version != 1 ||
+		results[0].Direction != "down" || results[1].Direction != "down" || results[2].Direction != "down" || results[3].Direction != "down" || results[4].Direction != "down" || results[5].Direction != "down" || results[6].Direction != "down" || results[7].Direction != "down" {
 		t.Fatalf("migration rollback results = %#v", results)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err == nil {
@@ -87,7 +87,7 @@ func TestPostgresBaselineDownRejectsData(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 4); err != nil {
+	if _, err := runner.Down(context.Background(), 6); err != nil {
 		t.Fatalf("roll back empty market migrations: %v", err)
 	}
 	if _, err := runner.Down(context.Background(), 1); err != nil {
@@ -101,7 +101,7 @@ func TestPostgresBaselineDownRejectsData(t *testing.T) {
 		t.Fatal("baseline rollback removed a non-empty schema")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 1 || latest != 6 {
+	if versionErr != nil || current != 1 || latest != 8 {
 		t.Fatalf("failed baseline rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	var count int
@@ -221,7 +221,7 @@ func TestObservabilityDownRejectsAuditData(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 4); err != nil {
+	if _, err := runner.Down(context.Background(), 6); err != nil {
 		t.Fatalf("roll back empty market migrations: %v", err)
 	}
 	if _, err := database.Exec(`INSERT INTO audit_records (request_id, action, resource_path, outcome, status_code) VALUES ('rollback-guard', 'POST /api/v1/test', '/api/v1/test', 'success', 200)`); err != nil {
@@ -232,7 +232,7 @@ func TestObservabilityDownRejectsAuditData(t *testing.T) {
 		t.Fatal("observability rollback removed persistent audit data")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 2 || latest != 6 {
+	if versionErr != nil || current != 2 || latest != 8 {
 		t.Fatalf("failed observability rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	var count int
@@ -253,7 +253,7 @@ func TestPostgresBaselineDownSeesConcurrentCommit(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply baseline: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 5); err != nil {
+	if _, err := runner.Down(context.Background(), 7); err != nil {
 		t.Fatalf("roll back empty market and observability migrations: %v", err)
 	}
 
@@ -285,7 +285,7 @@ func TestPostgresBaselineDownSeesConcurrentCommit(t *testing.T) {
 		t.Fatal("baseline rollback did not finish after concurrent commit")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 1 || latest != 6 {
+	if versionErr != nil || current != 1 || latest != 8 {
 		t.Fatalf("failed concurrent rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	var count int
@@ -306,7 +306,7 @@ func TestValidateCurrentRejectsDatabaseAhead(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply baseline: %v", err)
 	}
-	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES (7, TRUE)`); err != nil {
+	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES (9, TRUE)`); err != nil {
 		t.Fatalf("record newer migration: %v", err)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err == nil {
@@ -511,11 +511,11 @@ func TestA2MarketContractDownRejectsData(t *testing.T) {
 				}
 			}
 
-			if _, err := runner.Down(context.Background(), 4); err == nil {
+			if _, err := runner.Down(context.Background(), 6); err == nil {
 				t.Fatalf("A2 rollback removed non-empty %s", test.table)
 			}
 			current, latest, versionErr := runner.Versions(context.Background())
-			if versionErr != nil || current != 3 || latest != 6 {
+			if versionErr != nil || current != 3 || latest != 8 {
 				t.Fatalf("A2 rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 			}
 			assertA2Tables(t, database)
@@ -564,11 +564,11 @@ VALUES ('019c2f6d-7c00-7000-8000-000000000010', $1, $2, '1m')
 	}
 	assertPostgresIndexes(t, database, []string{"ix_watchlist_items_instrument_interval"})
 
-	if _, err := runner.Down(context.Background(), 3); err == nil {
+	if _, err := runner.Down(context.Background(), 5); err == nil {
 		t.Fatal("watchlist rollback removed persistent user data")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 4 || latest != 6 {
+	if versionErr != nil || current != 4 || latest != 8 {
 		t.Fatalf("watchlist rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	assertRowCount(t, database, "SELECT COUNT(*) FROM watchlist_items", 1)
@@ -592,7 +592,7 @@ INSERT INTO worker_tasks (id, task_type, payload_json, lane, priority)
 	}
 	if _, err := database.Exec(`
 INSERT INTO worker_tasks (id, task_type, payload_json)
-VALUES ('worker-realtime-default-lane', 'strategy.realtime', '{}')
+VALUES ('worker-realtime-default-lane', 'contract.noop', '{}')
 `); err != nil {
 		t.Fatalf("insert default realtime task: %v", err)
 	}
@@ -610,11 +610,11 @@ VALUES ('worker-realtime-default-lane', 'strategy.realtime', '{}')
 		}
 	}
 
-	if _, err := runner.Down(context.Background(), 2); err == nil {
+	if _, err := runner.Down(context.Background(), 4); err == nil {
 		t.Fatal("worker lane rollback removed persistent tasks")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 5 || latest != 6 {
+	if versionErr != nil || current != 5 || latest != 8 {
 		t.Fatalf("worker lane rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	assertRowCount(t, database, "SELECT COUNT(*) FROM worker_tasks", 2)
@@ -741,15 +741,205 @@ WHERE id = $1
 	}
 	assertPostgresIndexes(t, database, []string{"ix_backtests_owner_created", "ix_strategy_versions_published"})
 
-	if _, err := runner.Down(context.Background(), 1); err == nil {
+	if _, err := runner.Down(context.Background(), 3); err == nil {
 		t.Fatal("strategy runtime rollback removed persistent data")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 6 || latest != 6 {
+	if versionErr != nil || current != 6 || latest != 8 {
 		t.Fatalf("strategy runtime rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	assertRowCount(t, database, "SELECT COUNT(*) FROM strategies", 1)
 	assertRowCount(t, database, "SELECT COUNT(*) FROM backtests", 1)
+}
+
+func TestM2RealtimeSignalConstraintsAndDownGuard(t *testing.T) {
+	database := openPostgresSchema(t)
+	runner, err := New(database)
+	if err != nil {
+		t.Fatalf("create migration runner: %v", err)
+	}
+	if _, err := runner.Up(context.Background(), 0); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+
+	const instrumentID = "019d1000-0000-7000-8000-000000000001"
+	const strategyID = "019d1000-0000-7000-8000-000000000010"
+	const versionID = "019d1000-0000-7000-8000-000000000011"
+	const publishTaskID = "019d1000-0000-7000-8000-000000000012"
+	const instanceID = "019d1000-0000-7000-8000-000000000013"
+	const realtimeTaskID = "019d1000-0000-7000-8000-000000000014"
+	const signalID = "019d1000-0000-7000-8000-000000000030"
+	const candleTime = "2026-08-08T00:00:00Z"
+	insertA2Instrument(t, database, instrumentID)
+	var ownerID, recordID int64
+	if err := database.QueryRow(`INSERT INTO users (username) VALUES ('m2-owner') RETURNING id`).Scan(&ownerID); err != nil {
+		t.Fatalf("insert M2 owner: %v", err)
+	}
+	if err := database.QueryRow(`
+INSERT INTO idempotency_records (user_id, scope, key_hash, request_hash, expires_at, created_at)
+VALUES ($1, 'strategy:publish:m2', repeat('a', 64), repeat('b', 64),
+        CURRENT_TIMESTAMP + INTERVAL '1 day', CURRENT_TIMESTAMP)
+RETURNING id
+`, ownerID).Scan(&recordID); err != nil {
+		t.Fatalf("insert M2 idempotency record: %v", err)
+	}
+	if _, err := database.Exec(`
+INSERT INTO strategies (
+    id, name, source_code, market_type, instrument_id, interval_code, lookback_bars,
+    parameter_schema_json, created_by_user_id, updated_by_user_id
+) VALUES ($1, 'm2 hold', 'def on_bar(candles, params): return Decimal(''0'')',
+          'spot', $2, '1m', 2, '{}', $3, $3)
+`, strategyID, instrumentID, ownerID); err != nil {
+		t.Fatalf("insert M2 strategy: %v", err)
+	}
+	if _, err := database.Exec(`
+INSERT INTO worker_tasks (id, task_type, payload_json, status, attempt_count, lane, finished_at)
+VALUES ($1, 'strategy.publish', $2, 'succeeded', 1, 'backtest', CURRENT_TIMESTAMP)
+`, publishTaskID, `{"strategyId":"`+strategyID+`","strategyVersionId":"`+versionID+`"}`); err != nil {
+		t.Fatalf("insert M2 publish task: %v", err)
+	}
+	if _, err := database.Exec(`
+INSERT INTO strategy_versions (
+    id, strategy_id, version_number, status, worker_task_id, idempotency_record_id,
+    name, source_code, code_sha256, runtime_version, market_type, instrument_id, symbol,
+    interval_code, lookback_bars, parameter_schema_json, published_by_user_id, published_at
+) VALUES ($1, $2, 1, 'published', $3, $4, 'm2 hold',
+          'def on_bar(candles, params): return Decimal(''0'')', repeat('c', 64),
+          'python3.12', 'spot', $5, 'BTCUSDT', '1m', 2, '{}', $6, CURRENT_TIMESTAMP)
+`, versionID, strategyID, publishTaskID, recordID, instrumentID, ownerID); err != nil {
+		t.Fatalf("insert M2 strategy version: %v", err)
+	}
+	if _, err := database.Exec(`
+INSERT INTO strategy_instances (
+    id, owner_user_id, strategy_version_id, name, mode, environment
+) VALUES ($1, $2, $3, 'manual paper', 'manual', 'paper')
+`, instanceID, ownerID, versionID); err != nil {
+		t.Fatalf("insert M2 strategy instance: %v", err)
+	}
+	var enabled bool
+	if err := database.QueryRow(`SELECT is_enabled FROM strategy_instances WHERE id = $1`, instanceID).Scan(&enabled); err != nil || enabled {
+		t.Fatalf("strategy instance default enabled=%v err=%v", enabled, err)
+	}
+	if _, err := database.Exec(`UPDATE strategy_instances SET is_enabled = TRUE WHERE id = $1`, instanceID); err != nil {
+		t.Fatalf("enable M2 strategy instance: %v", err)
+	}
+
+	payload := `{"instanceId":"` + instanceID + `","candleOpenTime":"` + candleTime + `"}`
+	dedupe := "strategy.realtime:" + instanceID + ":" + candleTime
+	if _, err := database.Exec(`
+INSERT INTO worker_tasks (id, task_type, payload_json, lane, dedupe_key)
+VALUES ($1, 'strategy.realtime', $2, 'realtime', $3)
+`, realtimeTaskID, payload, dedupe); err != nil {
+		t.Fatalf("insert realtime task: %v", err)
+	}
+	invalidTasks := []struct {
+		name string
+		sql  string
+	}{
+		{"wrong lane", `INSERT INTO worker_tasks (id, task_type, payload_json, lane, dedupe_key) VALUES ('019d1000-0000-7000-8000-000000000020', 'strategy.realtime', '` + payload + `', 'backtest', 'wrong-lane')`},
+		{"missing dedupe", `INSERT INTO worker_tasks (id, task_type, payload_json) VALUES ('019d1000-0000-7000-8000-000000000021', 'strategy.realtime', '` + payload + `')`},
+		{"extra payload", `INSERT INTO worker_tasks (id, task_type, payload_json, dedupe_key) VALUES ('019d1000-0000-7000-8000-000000000022', 'strategy.realtime', '{"instanceId":"` + instanceID + `","candleOpenTime":"` + candleTime + `","extra":true}', 'extra')`},
+		{"duplicate dedupe", `INSERT INTO worker_tasks (id, task_type, payload_json, dedupe_key) VALUES ('019d1000-0000-7000-8000-000000000023', 'strategy.realtime', '` + payload + `', '` + dedupe + `')`},
+	}
+	for _, test := range invalidTasks {
+		if _, err := database.Exec(test.sql); err == nil {
+			t.Fatalf("realtime task schema accepted %s", test.name)
+		}
+	}
+	if _, err := database.Exec(`INSERT INTO worker_tasks (id, task_type, payload_json) VALUES ('m2-unrelated-text', 'contract.noop', 'not-json')`); err != nil {
+		t.Fatalf("realtime payload constraint affected unrelated task: %v", err)
+	}
+
+	if _, err := database.Exec(`
+INSERT INTO strategy_signals (
+    id, owner_user_id, strategy_instance_id, strategy_version_id, instrument_id,
+    interval_code, candle_open_time, candle_close_time, target, mode, environment, expires_at
+) VALUES ($1, $2, $3, $4, $5, '1m',
+          TIMESTAMPTZ '2026-08-08 00:00:00+00', TIMESTAMPTZ '2026-08-08 00:01:00+00',
+          0.5, 'manual', 'paper', TIMESTAMPTZ '2026-08-08 00:02:00+00')
+`, signalID, ownerID, instanceID, versionID, instrumentID); err != nil {
+		t.Fatalf("insert M2 signal: %v", err)
+	}
+	invalidSignals := []string{
+		`INSERT INTO strategy_signals (id, owner_user_id, strategy_instance_id, strategy_version_id, instrument_id, interval_code, candle_open_time, candle_close_time, target, mode, environment, expires_at) VALUES ('019d1000-0000-7000-8000-000000000031', ` + fmt.Sprint(ownerID) + `, '` + instanceID + `', '` + versionID + `', '` + instrumentID + `', '1m', TIMESTAMPTZ '2026-08-08 00:00:00+00', TIMESTAMPTZ '2026-08-08 00:01:00+00', 0, 'manual', 'paper', TIMESTAMPTZ '2026-08-08 00:02:00+00')`,
+		`INSERT INTO strategy_signals (id, owner_user_id, strategy_instance_id, strategy_version_id, instrument_id, interval_code, candle_open_time, candle_close_time, target, mode, environment) VALUES ('019d1000-0000-7000-8000-000000000032', ` + fmt.Sprint(ownerID) + `, '` + instanceID + `', '` + versionID + `', '` + instrumentID + `', '1m', TIMESTAMPTZ '2026-08-08 00:01:00+00', TIMESTAMPTZ '2026-08-08 00:02:00+00', 0, 'manual', 'paper')`,
+		`INSERT INTO strategy_signals (id, owner_user_id, strategy_instance_id, strategy_version_id, instrument_id, interval_code, candle_open_time, candle_close_time, target, mode, environment) VALUES ('019d1000-0000-7000-8000-000000000033', ` + fmt.Sprint(ownerID) + `, '` + instanceID + `', '` + versionID + `', '` + instrumentID + `', '1m', TIMESTAMPTZ '2026-08-08 00:02:00+00', TIMESTAMPTZ '2026-08-08 00:03:00+00', 2, 'signal_only', 'paper')`,
+		`INSERT INTO strategy_signals (id, owner_user_id, strategy_instance_id, strategy_version_id, instrument_id, interval_code, candle_open_time, candle_close_time, target, mode, environment, expires_at) VALUES ('019d1000-0000-7000-8000-000000000034', ` + fmt.Sprint(ownerID) + `, '` + instanceID + `', '` + versionID + `', '` + instrumentID + `', '1m', TIMESTAMPTZ '2026-08-08 00:03:00+00', TIMESTAMPTZ '2026-08-08 00:04:00+00', 0.25, 'manual', 'paper', TIMESTAMPTZ '2026-08-08 00:05:00+00')`,
+	}
+	for _, statement := range invalidSignals {
+		if _, err := database.Exec(statement); err == nil {
+			t.Fatalf("signal schema accepted invalid row: %s", statement)
+		}
+	}
+	var decisionRecordID int64
+	if err := database.QueryRow(`
+INSERT INTO idempotency_records (user_id, scope, key_hash, request_hash, expires_at, created_at)
+VALUES ($1, 'strategy-signal:decision:m2', repeat('d', 64), repeat('e', 64),
+        CURRENT_TIMESTAMP + INTERVAL '1 day', CURRENT_TIMESTAMP)
+RETURNING id
+`, ownerID).Scan(&decisionRecordID); err != nil {
+		t.Fatalf("insert M2 decision idempotency record: %v", err)
+	}
+	if _, err := database.Exec(`
+UPDATE strategy_signals
+SET status = 'approved', decision_idempotency_record_id = $1,
+    decided_by_user_id = $2, decided_at = TIMESTAMPTZ '2026-08-08 00:01:30+00'
+WHERE id = $3
+`, decisionRecordID, ownerID, signalID); err != nil {
+		t.Fatalf("approve M2 signal: %v", err)
+	}
+	if _, err := database.Exec(`UPDATE strategy_signals SET decided_at = NULL WHERE id = $1`, signalID); err == nil {
+		t.Fatal("approved signal accepted an incomplete decision state")
+	}
+	if _, err := database.Exec(`
+INSERT INTO notification_deliveries (
+    strategy_signal_id, target_type, recipient_user_id, channel_type, status, title, content, created_at
+) VALUES ($1, 'strategy_signal', $2, 'in_app', 'success', 'signal', 'created', CURRENT_TIMESTAMP)
+`, signalID, ownerID); err != nil {
+		t.Fatalf("insert M2 signal notification: %v", err)
+	}
+	if _, err := database.Exec(`
+INSERT INTO notification_deliveries (
+    strategy_signal_id, target_type, recipient_user_id, channel_type, status, title, content, created_at
+) VALUES ($1, 'strategy_signal', $2, 'in_app', 'success', 'duplicate', 'duplicate', CURRENT_TIMESTAMP)
+`, signalID, ownerID); err == nil {
+		t.Fatal("signal accepted a duplicate in-app notification")
+	}
+	assertPostgresIndexes(t, database, []string{
+		"ix_strategy_instances_owner_enabled", "ix_strategy_signals_owner_created",
+		"ux_worker_tasks_type_dedupe", "ux_notification_deliveries_in_app_signal",
+		"ux_strategy_signals_manual_active_instance",
+	})
+
+	if _, err := runner.Down(context.Background(), 1); err == nil {
+		t.Fatal("M2 decision rollback removed persistent decision data")
+	}
+	current, latest, versionErr := runner.Versions(context.Background())
+	if versionErr != nil || current != 8 || latest != 8 {
+		t.Fatalf("M2 decision rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
+	}
+	if _, err := database.Exec(`DELETE FROM notification_deliveries WHERE strategy_signal_id = $1`, signalID); err != nil {
+		t.Fatalf("clear isolated signal notification: %v", err)
+	}
+	if _, err := database.Exec(`
+UPDATE strategy_signals
+SET status = 'active', decision_idempotency_record_id = NULL,
+    decided_by_user_id = NULL, decided_at = NULL
+WHERE id = $1
+`, signalID); err != nil {
+		t.Fatalf("clear isolated signal decision: %v", err)
+	}
+	if _, err := runner.Down(context.Background(), 1); err != nil {
+		t.Fatalf("roll back empty M2 decision migration: %v", err)
+	}
+	if _, err := runner.Down(context.Background(), 1); err == nil {
+		t.Fatal("M2 realtime rollback removed persistent signal data")
+	}
+	current, latest, versionErr = runner.Versions(context.Background())
+	if versionErr != nil || current != 7 || latest != 8 {
+		t.Fatalf("M2 realtime rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
+	}
+	assertRowCount(t, database, "SELECT COUNT(*) FROM strategy_signals", 1)
 }
 
 func assertCurrentTables(t *testing.T, database *sql.DB) {
@@ -760,7 +950,7 @@ func assertCurrentTables(t *testing.T, database *sql.DB) {
 		"market_candles", "market_instruments", "market_ticker_snapshots", "watchlist_items",
 		"news_items", "notification_channels", "notification_deliveries", "backtests", "role_menu_buttons",
 		"role_menus", "roles", "schema_migrations", "task_definition_configs", "user_roles", "users",
-		"strategies", "strategy_versions",
+		"strategies", "strategy_instances", "strategy_signals", "strategy_versions",
 		"worker_tasks", "workflow_definitions", "workflow_execution_attempts", "workflow_execution_nodes",
 		"workflow_execution_transitions", "workflow_executions", "workflow_runtime_entries", "workflow_runtime_states",
 	}

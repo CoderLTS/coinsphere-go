@@ -1,7 +1,5 @@
 package service
 
-// import:引入标准库(errors 错误、strings 字符串、time 时间)与本项目的包
-// (internal/db 数据库模型、internal/security 加密工具)。见 GO入门笔记『项目怎么组织』。
 import (
 	"database/sql"
 	"errors"
@@ -16,19 +14,8 @@ import (
 	"coinsphere/backend/internal/security"
 )
 
-// var 在函数外声明的是"包级变量",整个包都能用。errors.New 造一个固定的错误值(称"哨兵错误"),
-// 之后用 errors.Is 判断"是不是这个错误",比直接比较字符串更可靠。见 GO入门笔记『变量、函数、错误』。
-// errBacklogExceeded 同一并发键等待队列超限(HTTP 429)。
+// ErrBacklogExceeded 表示同一并发键的等待队列已满。
 var ErrBacklogExceeded = errors.New("current start entry backlog exceeded the configured limit")
-
-var errBacklogExceeded = ErrBacklogExceeded
-
-// isBacklogExceeded 判断错误是否为积压超限。
-func isBacklogExceeded(err error) bool { return errors.Is(err, errBacklogExceeded) }
-
-// 命名的大小写决定可见性:isBacklogExceeded 小写=只在本包用;IsBacklogExceeded 大写=导出给别的包用。见 GO入门笔记『项目怎么组织』。
-// IsBacklogExceeded 导出给 API 层使用。
-func IsBacklogExceeded(err error) bool { return isBacklogExceeded(err) }
 
 // ---------- 概览与查询 ----------
 
@@ -563,7 +550,7 @@ func (a *App) enqueueStartNodeExecutionWithDB(database *gorm.DB, definition *db.
 		Count(&backlogCount)
 	// 积压超过上限就拒绝入队(返回前面定义的哨兵错误),防止某个入口把队列撑爆。int64(...) 是类型转换。
 	if backlogCount >= int64(a.Cfg.Workflow.BacklogLimitPerKey) {
-		return nil, false, errBacklogExceeded
+		return nil, false, ErrBacklogExceeded
 	}
 
 	inputs := buildStartInputs(startNode, triggerCtx)

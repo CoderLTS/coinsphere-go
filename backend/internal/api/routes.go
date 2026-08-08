@@ -76,6 +76,13 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/backtests", s.requireAuth(s.handleCreateBacktest))
 	mux.HandleFunc("GET /api/v1/backtests/{backtestId}", s.requireAuth(s.handleGetBacktest))
 	mux.HandleFunc("POST /api/v1/backtests/{backtestId}/cancel", s.requireAuth(s.handleCancelBacktest))
+	mux.HandleFunc("GET /api/v1/strategy-instances", s.requireAuth(s.handleListStrategyInstances))
+	mux.HandleFunc("POST /api/v1/strategy-instances", s.requireAuth(s.handleCreateStrategyInstance))
+	mux.HandleFunc("POST /api/v1/strategy-instances/{instanceId}/enable", s.requireAuth(s.handleEnableStrategyInstance))
+	mux.HandleFunc("POST /api/v1/strategy-instances/{instanceId}/disable", s.requireAuth(s.handleDisableStrategyInstance))
+	mux.HandleFunc("GET /api/v1/signals", s.requireAuth(s.handleListStrategySignals))
+	mux.HandleFunc("POST /api/v1/signals/{signalId}/approve", s.requireAuth(s.handleApproveStrategySignal))
+	mux.HandleFunc("POST /api/v1/signals/{signalId}/reject", s.requireAuth(s.handleRejectStrategySignal))
 
 	// 数据管理。
 	// 第二个参数 perm.DataNewsView 是 perm 包里定义的权限码常量;requirePermission 会检查当前用户是否持有它。

@@ -1,18 +1,16 @@
-"""PostgreSQL Worker 任务队列的租约运行时。
-
-本模块只实现 A1-2 的任务基础设施协议：单事务认领、租约 fencing、心跳、
-过期回收和取消。它刻意不提供业务任务注册框架；当前两个 ``contract.*``
-伪任务仅用于在没有数据集、回测或交易能力时验证并发与取消语义。
-"""
+"""PostgreSQL Worker 任务队列、租约与策略任务运行时。"""
 
 from __future__ import annotations
 
 import json
 import logging
 import os
+import re
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
+from enum import StrEnum
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Event, Thread
@@ -30,7 +28,6 @@ from .backtest import (
     BacktestProcessLimits,
     run_backtest_isolated,
 )
-from .lanes import WorkerLane
 from .strategy import Candle, ParameterSpec, StrategyValidationError, load_strategy
 
 LOGGER = logging.getLogger("coinsphere.worker")
@@ -39,6 +36,15 @@ DEFAULT_LEASE_SECONDS: Final = 15
 DEFAULT_HEARTBEAT_SECONDS: Final = 1.0
 DEFAULT_POLL_SECONDS: Final = 1.0
 MAX_CONTRACT_SLEEP_SECONDS: Final = 300
+REALTIME_STRATEGY_TIMEOUT_SECONDS: Final = 1.0
+REALTIME_CANDLE_TIME_PATTERN: Final = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?Z$"
+)
+
+
+class WorkerLane(StrEnum):
+    REALTIME = "realtime"
+    BACKTEST = "backtest"
 
 
 class InvalidTaskError(ValueError):
@@ -494,12 +500,7 @@ class PostgresTaskStore:
 
 
 class WorkerRuntime:
-    """串行消费 PostgreSQL 队列并维护当前任务租约。
-
-    单进程只执行一个任务，足以验证 A1 并发协议，也避免提前引入任务池。多个容器
-    仍可依赖数据库行锁横向扩展。正常停止时不篡改在途任务状态，而是停止心跳，
-    让与崩溃相同的租约过期路径完成唯一、可 fencing 的恢复。
-    """
+    """串行消费指定 lane；停止时让在途任务沿统一的租约过期路径恢复。"""
 
     def __init__(
         self,
@@ -673,6 +674,10 @@ class WorkerRuntime:
                 if task.lane != WorkerLane.BACKTEST.value:
                     raise InvalidTaskError
                 output.put(("ok", self._backtest(task, cancel_event)))
+            elif task.task_type == "strategy.realtime":
+                if task.lane != WorkerLane.REALTIME.value:
+                    raise InvalidTaskError
+                output.put(("ok", self._realtime(task)))
             elif task.task_type in {"contract.noop", "contract.sleep"}:
                 duration = self._contract_duration(task)
                 cancel_event.wait(duration)
@@ -771,6 +776,155 @@ class WorkerRuntime:
             raise InvalidTaskError
         return {"strategyVersionId": ids["strategyVersionId"]}
 
+    @staticmethod
+    def _realtime_payload(task: TaskLease) -> tuple[str, datetime]:
+        try:
+            payload = json.loads(task.payload_json)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise InvalidTaskError from exc
+        if not isinstance(payload, dict) or set(payload) != {"instanceId", "candleOpenTime"}:
+            raise InvalidTaskError
+        instance_id = payload.get("instanceId")
+        candle_time = payload.get("candleOpenTime")
+        if not isinstance(instance_id, str) or not isinstance(candle_time, str):
+            raise InvalidTaskError
+        try:
+            parsed_instance = uuid.UUID(instance_id)
+            parsed_task = uuid.UUID(task.task_id)
+            parsed_time = datetime.fromisoformat(candle_time[:-1] + "+00:00")
+        except (ValueError, AttributeError) as exc:
+            raise InvalidTaskError from exc
+        if (
+            parsed_instance.version != 7
+            or str(parsed_instance) != instance_id
+            or parsed_task.version != 7
+            or str(parsed_task) != task.task_id
+            or REALTIME_CANDLE_TIME_PATTERN.fullmatch(candle_time) is None
+            or parsed_time.tzinfo is None
+            or parsed_time.utcoffset() != UTC.utcoffset(parsed_time)
+        ):
+            raise InvalidTaskError
+        return instance_id, parsed_time.astimezone(UTC)
+
+    def _realtime(self, task: TaskLease) -> dict[str, object]:
+        instance_id, candle_open_time = self._realtime_payload(task)
+        with psycopg.connect(self._dsn) as connection:
+            row = connection.execute(
+                """
+                SELECT instance.owner_user_id, instance.strategy_version_id,
+                       instance.mode, instance.environment, instance.parameters_json,
+                       instance.is_enabled, version.source_code, version.market_type,
+                       version.instrument_id, version.symbol, version.interval_code,
+                       version.lookback_bars, version.parameter_schema_json,
+                       version.runtime_version, version.code_sha256
+                FROM strategy_instances AS instance
+                JOIN strategy_versions AS version
+                  ON version.id = instance.strategy_version_id
+                WHERE instance.id = %s AND version.status = 'published'
+                """,
+                (instance_id,),
+            ).fetchone()
+            if row is None:
+                raise InvalidTaskError
+            (
+                owner_user_id,
+                version_id,
+                mode,
+                environment,
+                parameters,
+                is_enabled,
+                source,
+                market,
+                instrument_id,
+                symbol,
+                interval,
+                lookback,
+                schema,
+                runtime,
+                code_sha,
+            ) = row
+            if not is_enabled:
+                return {"strategyInstanceId": instance_id, "skipped": True}
+            candle_rows = connection.execute(
+                """
+                SELECT open_time, close_time, open_price, high_price, low_price, close_price,
+                       base_volume, is_closed
+                FROM market_candles
+                WHERE venue = 'binance' AND instrument_id = %s AND interval_code = %s
+                  AND is_closed AND open_time <= %s
+                ORDER BY open_time DESC
+                LIMIT %s
+                """,
+                (instrument_id, interval, candle_open_time, lookback),
+            ).fetchall()
+        if not candle_rows or candle_rows[0][0] != candle_open_time:
+            raise InvalidTaskError
+        candles = tuple(
+            Candle(
+                instrument_id=str(symbol),
+                interval=str(interval),
+                open_time=item[0],
+                close_time=item[1],
+                open=item[2],
+                high=item[3],
+                low=item[4],
+                close=item[5],
+                base_volume=item[6],
+                is_closed=item[7],
+            )
+            for item in reversed(candle_rows)
+        )
+        if any(
+            left.close_time != right.open_time
+            for left, right in zip(candles, candles[1:], strict=False)
+        ):
+            raise InvalidTaskError
+        parameter_schema = self._schema(schema)
+        loaded = load_strategy(
+            cast(str, source),
+            market=cast(str, market),
+            symbol=cast(str, symbol),
+            interval=cast(str, interval),
+            lookback_bars=cast(int, lookback),
+            parameter_schema=parameter_schema,
+            runtime_version=cast(str, runtime),
+        )
+        if loaded.source_sha256 != str(code_sha) or not isinstance(parameters, dict):
+            raise InvalidTaskError
+        schema_values = parameter_schema or {}
+        params = {
+            key: (
+                Decimal(str(value))
+                if schema_values.get(key, None) and schema_values[key].type == "decimal"
+                else value
+            )
+            for key, value in parameters.items()
+        }
+        target = loaded.signal(
+            candles,
+            cast(dict[str, Any], params),
+            timeout_seconds=REALTIME_STRATEGY_TIMEOUT_SECONDS,
+        )
+        current = candles[-1]
+        expires_at = (
+            current.close_time + (current.close_time - current.open_time)
+            if mode == "manual"
+            else None
+        )
+        return {
+            "strategyInstanceId": instance_id,
+            "strategyVersionId": str(version_id),
+            "ownerUserId": int(owner_user_id),
+            "instrumentId": str(instrument_id),
+            "interval": str(interval),
+            "candleOpenTime": current.open_time,
+            "candleCloseTime": current.close_time,
+            "target": target,
+            "mode": str(mode),
+            "environment": str(environment),
+            "expiresAt": expires_at,
+        }
+
     def _backtest(self, task: TaskLease, cancel_event: Event) -> dict[str, object]:
         ids = self._ids(task, ("backtestId",))
         with psycopg.connect(self._dsn) as connection:
@@ -865,13 +1019,14 @@ class WorkerRuntime:
             )
         ):
             raise InvalidTaskError
+        parameter_schema = self._schema(schema)
         loaded = load_strategy(
             cast(str, source),
             market=cast(str, market),
             symbol=cast(str, symbol),
             interval=cast(str, interval),
             lookback_bars=cast(int, lookback),
-            parameter_schema=self._schema(schema),
+            parameter_schema=parameter_schema,
             runtime_version=cast(str, runtime),
         )
         if loaded.source_sha256 != str(code_sha):
@@ -879,7 +1034,7 @@ class WorkerRuntime:
         params = cast(dict[str, Any], parameters)
         if not isinstance(params, dict):
             raise InvalidTaskError
-        schema_values = self._schema(schema) or {}
+        schema_values = parameter_schema or {}
         params = {
             key: (
                 Decimal(str(value))
@@ -1004,6 +1159,124 @@ class WorkerRuntime:
                             task.lease_id,
                         ),
                     ).fetchone()
+                elif task.task_type == "strategy.realtime":
+                    lease = connection.execute(
+                        "SELECT id FROM worker_tasks WHERE id = %s AND lease_id = %s "
+                        "AND status = 'running' AND lease_expires_at > CURRENT_TIMESTAMP "
+                        "FOR UPDATE",
+                        (task.task_id, task.lease_id),
+                    ).fetchone()
+                    if lease is None:
+                        return False
+                    if result.get("skipped") is not True:
+                        # Serialize per instance so delayed tasks observe newer signals.
+                        active = connection.execute(
+                            "SELECT id FROM strategy_instances WHERE id = %s "
+                            "AND strategy_version_id = %s AND owner_user_id = %s "
+                            "AND mode = %s AND environment = %s AND is_enabled FOR UPDATE",
+                            (
+                                result["strategyInstanceId"],
+                                result["strategyVersionId"],
+                                result["ownerUserId"],
+                                result["mode"],
+                                result["environment"],
+                            ),
+                        ).fetchone()
+                        if active is not None:
+                            connection.execute(
+                                "UPDATE strategy_signals SET status = 'expired' "
+                                "WHERE strategy_instance_id = %s AND mode = 'manual' "
+                                "AND status = 'active' AND candle_open_time < %s "
+                                "AND expires_at <= %s",
+                                (
+                                    result["strategyInstanceId"],
+                                    result["candleOpenTime"],
+                                    result["candleCloseTime"],
+                                ),
+                            )
+                            signal_status = "active"
+                            if result["mode"] == "manual":
+                                stale = connection.execute(
+                                    "SELECT %s <= CURRENT_TIMESTAMP OR EXISTS ("
+                                    "SELECT 1 FROM strategy_signals "
+                                    "WHERE strategy_instance_id = %s "
+                                    "AND candle_open_time > %s)",
+                                    (
+                                        result["expiresAt"],
+                                        result["strategyInstanceId"],
+                                        result["candleOpenTime"],
+                                    ),
+                                ).fetchone()
+                                if stale is None:
+                                    raise InvalidTaskError
+                                if stale[0]:
+                                    signal_status = "expired"
+                            inserted_signal = connection.execute(
+                                "INSERT INTO strategy_signals ("
+                                "id, owner_user_id, strategy_instance_id, strategy_version_id, "
+                                "instrument_id, interval_code, candle_open_time, "
+                                "candle_close_time, "
+                                "target, mode, environment, status, expires_at) "
+                                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+                                "%s, %s) "
+                                "ON CONFLICT (strategy_instance_id, candle_open_time) DO NOTHING "
+                                "RETURNING id",
+                                (
+                                    task.task_id,
+                                    result["ownerUserId"],
+                                    result["strategyInstanceId"],
+                                    result["strategyVersionId"],
+                                    result["instrumentId"],
+                                    result["interval"],
+                                    result["candleOpenTime"],
+                                    result["candleCloseTime"],
+                                    result["target"],
+                                    result["mode"],
+                                    result["environment"],
+                                    signal_status,
+                                    result["expiresAt"],
+                                ),
+                            ).fetchone()
+                            if inserted_signal is not None:
+                                candle_open = cast(datetime, result["candleOpenTime"])
+                                candle_close = cast(datetime, result["candleCloseTime"])
+                                expires_at = cast(datetime | None, result["expiresAt"])
+                                event_payload = json.dumps(
+                                    {
+                                        "candleCloseTime": candle_close.isoformat().replace(
+                                            "+00:00", "Z"
+                                        ),
+                                        "candleOpenTime": candle_open.isoformat().replace(
+                                            "+00:00", "Z"
+                                        ),
+                                        "environment": result["environment"],
+                                        "expiresAt": (
+                                            None
+                                            if expires_at is None
+                                            else expires_at.isoformat().replace("+00:00", "Z")
+                                        ),
+                                        "instrumentId": result["instrumentId"],
+                                        "interval": result["interval"],
+                                        "mode": result["mode"],
+                                        "ownerUserId": result["ownerUserId"],
+                                        "signalId": task.task_id,
+                                        "strategyInstanceId": result["strategyInstanceId"],
+                                        "strategyVersionId": result["strategyVersionId"],
+                                        "target": str(result["target"]),
+                                    },
+                                    separators=(",", ":"),
+                                    sort_keys=True,
+                                )
+                                connection.execute(
+                                    "INSERT INTO domain_event_outbox ("
+                                    "event_type, aggregate_type, aggregate_id, payload_json, "
+                                    "metadata_json, status, available_at, created_at, updated_at) "
+                                    "VALUES ('strategy.signal.created', 'strategy_signal', %s, %s, "
+                                    "'{}', 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, "
+                                    "CURRENT_TIMESTAMP)",
+                                    (task.task_id, event_payload),
+                                )
+                    updated = lease
                 else:
                     return False
                 if updated is None:

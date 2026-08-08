@@ -161,7 +161,7 @@ func respond(w http.ResponseWriter, data any, err error, successMsg string) {
 
 // ---------- 请求解析 ----------
 
-// decodeBody 是泛型函数:[T any] 表示"对任意类型 T";调用处写 decodeBody[LoginRequest](r),T 就变成 LoginRequest(见 GO入门笔记『泛型』)。
+// decodeBody 是泛型函数:[T any] 表示"对任意类型 T"。
 // 作用:把请求体里的 JSON 解析成一个 *T(指向 T 的指针)。返回两个值:结果指针 + error。
 func decodeBody[T any](r *http.Request) (*T, error) {
 	// var payload T 声明一个 T 类型的零值变量。

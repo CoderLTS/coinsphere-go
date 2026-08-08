@@ -45,8 +45,8 @@ docker compose up -d --build
 - A1 `worker` 使用 PostgreSQL 租约消费任务，健康状态为 `a1-postgres`；不开放端口、不挂载业务数据卷、不持有交易凭据。
 - 持久化：TimescaleDB（`timescale-data` 卷）、上传文件（`backend-uploads`）、后端静态（`backend-static`）。
 - 数据库只支持 PostgreSQL/TimescaleDB；直接运行时通过 `COINSPHERE_DATABASE__DSN` 注入 DSN，Compose 已提供开发专用 DSN。
-- 前端构建用项目自带 `pnpm build`(含 `vue-tsc` 类型检查);若类型检查阻塞出镜像,把 `frontend/Dockerfile` 的 `pnpm build` 换成 `pnpm exec vite build`。
+- 前端使用项目自带的 `pnpm build`，包含 `vue-tsc` 类型检查。
 
-> 说明:Go 后端只在 `/static/`、`/uploads/` 提供文件、`/api` `/ws` `/health` 提供接口,**不在根路径托管 SPA**——所以由 nginx 托管前端并反代后端,而不是把 dist 塞进后端的 `volumes/static`。
+> 说明:Go 后端只在 `/static/`、`/uploads/` 提供文件，并在 `/api/v1`、`/api/v1/ws`、`/health` 提供接口；**不在根路径托管 SPA**，由 nginx 托管前端并反代后端。
 
 数据库配置与迁移规则见 `backend/README.md` 和 `docs/runbooks/database-migrations.md`。

@@ -11,12 +11,10 @@
 | api / orchestrator / worker / init 四种进程角色 | 一个 Go 服务二进制，启动写入种子数据并以 goroutine 承载后台循环；独立 migration 二进制拥有 DDL |
 | Redis Stream + 消费组做执行派发 | 数据库即队列:`workflow_executions.status` + 乐观锁 `UPDATE ... WHERE status='queued'` 认领 |
 | Redis ZSet 做重试到期索引 | 直接查 `status='retry_waiting' AND next_retry_at <= now` |
-| Redis 分布式锁选 leader | 单实例,无需选主(多实例部署需自行加数据库级锁) |
+| Redis 分布式锁选 leader | 单实例,无需选主 |
 | Redis 并发租约限制同 key 并发 | 进程内信号量(`semaphore_limit_per_key`) |
 | APScheduler + pickle 任务表 | 调度循环直接按 runtime entry 的 `next_run_at` 轮询触发(Quartz 6 位 cron / interval / once) |
 | PostgreSQL 专属 | **PostgreSQL/TimescaleDB-only** 的版本化 SQL 基线 |
-
-已删除的表:`scheduler_jobs`(APScheduler pickle)、`workflow_dispatch_outbox`(Redis 中转)。其余表名、列名与 API 响应契约与 Python 版保持一致,前端无需改动。
 
 ## 快速开始
 
@@ -62,7 +60,7 @@ $env:COINSPHERE_DATABASE__DSN = 'postgresql://coinsphere:test-only@127.0.0.1:543
 $env:COINSPHERE_SERVER__PORT = '7000'
 ```
 
-DSN 必须指向已经存在的数据库和 schema；连接入口不会创建 schema。密码哈希（pbkdf2_sha256）、JWT 格式和 Fernet 密文仍与 Python 版兼容，但数据库只允许使用全新 CoinSphere schema，不能直接复用旧 Python 或旧 Go schema。
+DSN 必须指向已经存在的数据库和全新 CoinSphere schema；连接入口不会创建 schema。
 
 ## 运行时行为
 
@@ -106,5 +104,5 @@ internal/service        全部业务逻辑(App 结构,按领域分文件)
   loops.go              调度/派发/事件/恢复/清理 goroutine
   engine.go nodes.go    图执行引擎与节点注册表
   runtime.go            激活/入口/入队/查询
-internal/api            路由、中间件、handlers(响应契约同 Python 版)
+internal/api            路由、中间件、handlers
 ```

@@ -31,8 +31,7 @@ from coinsphere_worker.backtest import (
     run_backtest,
     run_backtest_isolated,
 )
-from coinsphere_worker.lanes import LaneBusyError, LaneRuntime, WorkerLane
-from coinsphere_worker.queue_runtime import WorkerRuntime
+from coinsphere_worker.queue_runtime import WorkerLane, WorkerRuntime
 from coinsphere_worker.strategy import (
     Candle,
     JSONScalar,
@@ -284,28 +283,6 @@ def test_usdm_allocation_cannot_exceed_equity_without_leverage() -> None:
             slippage_rate=Decimal("0"),
             funding_rates=[],
         )
-
-
-def test_long_backtest_lane_does_not_occupy_realtime_slot() -> None:
-    runtime = LaneRuntime()
-    started = threading.Event()
-    release = threading.Event()
-
-    def long_backtest() -> None:
-        started.set()
-        release.wait(1)
-
-    thread = threading.Thread(target=lambda: runtime.run_backtest(long_backtest))
-    thread.start()
-    assert started.wait(1)
-    try:
-        assert runtime.run_realtime(lambda: "realtime") == "realtime"
-        with pytest.raises(LaneBusyError):
-            runtime.run(WorkerLane.BACKTEST, lambda: None)
-    finally:
-        release.set()
-        thread.join(1)
-    assert not thread.is_alive()
 
 
 def test_backtest_worker_requires_resources_and_parses_numeric_schema(
