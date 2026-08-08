@@ -24,6 +24,7 @@ if [[ ! $REGISTRY =~ ^[0-9A-Za-z.-]+(:[0-9]{1,5})?$ ]]; then
 fi
 BACKEND_IMAGE=$REGISTRY/coinsphere/backend:$VERSION
 WEB_IMAGE=$REGISTRY/coinsphere/web:$VERSION
+WORKER_IMAGE=$REGISTRY/coinsphere/worker:$VERSION
 if [[ -n $MANIFEST_FILE ]]; then
   command -v jq >/dev/null || { echo "缺少命令: jq" >&2; exit 3; }
   if [[ ! -f $MANIFEST_FILE || -L $MANIFEST_FILE ]]; then
@@ -31,20 +32,23 @@ if [[ -n $MANIFEST_FILE ]]; then
     exit 2
   fi
   if ! manifest_images=$(jq -er --arg version "$VERSION" \
-    --arg backend "$REGISTRY/coinsphere/backend" --arg web "$REGISTRY/coinsphere/web" '
+    --arg backend "$REGISTRY/coinsphere/backend" --arg web "$REGISTRY/coinsphere/web" \
+    --arg worker "$REGISTRY/coinsphere/worker" '
     def digest($repository):
       type == "string"
       and startswith($repository + "@sha256:")
       and (ltrimstr($repository + "@sha256:") | test("^[0-9a-f]{64}$"));
     if type == "object"
-      and (keys == ["backendDigest", "backendImage", "commit", "version", "webDigest", "webImage"])
+      and (keys == ["backendDigest", "backendImage", "commit", "version", "webDigest", "webImage", "workerDigest", "workerImage"])
       and .version == $version
       and (.commit | type == "string" and test("^[0-9a-f]{40}$"))
       and .backendImage == ($backend + ":" + $version)
       and .webImage == ($web + ":" + $version)
+      and .workerImage == ($worker + ":" + $version)
       and (.backendDigest | digest($backend))
       and (.webDigest | digest($web))
-    then .backendDigest, .webDigest
+      and (.workerDigest | digest($worker))
+    then .backendDigest, .webDigest, .workerDigest
     else error("invalid release manifest")
     end
   ' "$MANIFEST_FILE" 2>/dev/null); then
@@ -52,12 +56,13 @@ if [[ -n $MANIFEST_FILE ]]; then
     exit 2
   fi
   mapfile -t release_images <<<"$manifest_images"
-  if [[ ${#release_images[@]} -ne 2 ]]; then
+  if [[ ${#release_images[@]} -ne 3 ]]; then
     echo "发布 Manifest 镜像字段无效" >&2
     exit 2
   fi
   BACKEND_IMAGE=${release_images[0]}
   WEB_IMAGE=${release_images[1]}
+  WORKER_IMAGE=${release_images[2]}
 fi
 if [[ -f $DOCKER_CONFIG_FILE ]]; then
   command -v jq >/dev/null || { echo "缺少命令: jq" >&2; exit 3; }
@@ -88,6 +93,10 @@ if [[ ! -f $DEPLOY_DIR/runtime.env ]]; then
   echo "缺少 $DEPLOY_DIR/runtime.env，请先按 runtime.env.example 创建生产配置" >&2
   exit 3
 fi
+if [[ ! -f $DEPLOY_DIR/worker-runtime.env ]]; then
+  echo "缺少 $DEPLOY_DIR/worker-runtime.env，请先按 worker-runtime.env.example 创建 Worker 配置" >&2
+  exit 3
+fi
 if ! docker network inspect infrastructure >/dev/null 2>&1; then
   echo "缺少 Docker external network: infrastructure" >&2
   exit 4
@@ -113,11 +122,13 @@ if [[ $SOURCE_DIR != "$DEPLOY_DIR" ]]; then
   install -m 0644 "$SOURCE_DIR/compose.yaml" "$DEPLOY_DIR/compose.yaml"
   install -m 0755 "$SOURCE_DIR/deploy.sh" "$DEPLOY_DIR/deploy.sh"
   install -m 0644 "$SOURCE_DIR/runtime.env.example" "$DEPLOY_DIR/runtime.env.example"
+  install -m 0644 "$SOURCE_DIR/worker-runtime.env.example" "$DEPLOY_DIR/worker-runtime.env.example"
 fi
 cat >"$next_env" <<EOF
 COINSPHERE_VERSION=$VERSION
 COINSPHERE_BACKEND_IMAGE=$BACKEND_IMAGE
 COINSPHERE_WEB_IMAGE=$WEB_IMAGE
+COINSPHERE_WORKER_IMAGE=$WORKER_IMAGE
 COINSPHERE_WEB_BIND=$WEB_BIND
 COINSPHERE_WEB_PORT=$WEB_PORT
 EOF

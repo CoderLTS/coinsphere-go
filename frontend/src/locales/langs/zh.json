@@ -56,20 +56,11 @@
   "setting": {
     "menuType": {
       "title": "菜单布局",
-      "list": [
-        "垂直",
-        "水平",
-        "混合",
-        "双列"
-      ]
+      "list": ["垂直", "水平", "混合", "双列"]
     },
     "theme": {
       "title": "主题风格",
-      "list": [
-        "浅色",
-        "深色",
-        "系统"
-      ]
+      "list": ["浅色", "深色", "系统"]
     },
     "menu": {
       "title": "菜单风格"
@@ -79,17 +70,11 @@
     },
     "box": {
       "title": "盒子样式",
-      "list": [
-        "边框",
-        "阴影"
-      ]
+      "list": ["边框", "阴影"]
     },
     "container": {
       "title": "容器宽度",
-      "list": [
-        "铺满",
-        "定宽"
-      ]
+      "list": ["铺满", "定宽"]
     },
     "basics": {
       "title": "基础配置",
@@ -136,15 +121,20 @@
     "title": "通知",
     "btnTest": "测试",
     "btnRead": "标为已读",
-    "bar": [
-      "通知",
-      "消息",
-      "代办"
-    ],
-    "text": [
-      "暂无"
-    ],
-    "viewAll": "查看全部"
+    "bar": ["通知", "消息", "待办"],
+    "text": ["暂无"],
+    "viewAll": "查看全部",
+    "decision": {
+      "approve": "批准",
+      "reject": "拒绝",
+      "reauthTitle": "批准策略信号",
+      "reauthMessage": "请输入当前密码完成五分钟复验",
+      "passwordPlaceholder": "当前密码",
+      "passwordRequired": "请输入当前密码",
+      "rejectTitle": "拒绝策略信号",
+      "rejectMessage": "确认拒绝这条策略信号吗？",
+      "failed": "信号处理失败"
+    }
   },
   "worktab": {
     "btn": {
@@ -559,6 +549,12 @@
       "webhookBaseUrl": "Webhook 地址",
       "accessToken": "访问令牌",
       "secret": "签名密钥",
+      "qqAppId": "QQ Bot AppID",
+      "qqClientSecret": "Client Secret",
+      "qqTargetType": "目标类型",
+      "qqTargetId": "目标 ID",
+      "qqGroup": "QQ群",
+      "qqChannel": "QQ频道",
       "host": "SMTP 服务器",
       "port": "端口",
       "username": "SMTP 用户名",
@@ -581,6 +577,9 @@
       "displayName": "请输入渠道名称",
       "webhookBaseUrl": "请输入 Webhook 地址",
       "accessToken": "请输入访问令牌",
+      "qqAppId": "请输入 QQ Bot AppID",
+      "qqClientSecret": "请输入 QQ Bot Client Secret",
+      "qqTargetId": "请输入 QQ 群 OpenID 或频道 ID",
       "host": "请输入 SMTP 服务器",
       "username": "请输入 SMTP 用户名",
       "password": "请输入 SMTP 密码",
@@ -769,7 +768,7 @@
       }
     },
     "task": {
-    "title": "任务列表",
+      "title": "任务列表",
       "description": "统一查看调度状态、执行次数、最近一次执行和异常信息，支持直接启停任务。",
       "columns": {
         "name": "任务名称",

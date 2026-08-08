@@ -2,13 +2,20 @@ package service
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"coinsphere/backend/internal/db"
+	"coinsphere/backend/internal/security"
 	"github.com/google/uuid"
 )
 
@@ -124,8 +131,49 @@ INSERT INTO strategy_signals (
 		t.Fatalf("create strategy signal: %v", err)
 	}
 
+	const dingTalkToken = "test-dingtalk-token"
+	const dingTalkSecret = "test-dingtalk-secret"
+	var dingTalkCalls atomic.Int32
+	dingTalkServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call := dingTalkCalls.Add(1)
+		query := r.URL.Query()
+		if query.Get("access_token") != dingTalkToken {
+			t.Errorf("DingTalk access token = %q", query.Get("access_token"))
+		}
+		timestamp := query.Get("timestamp")
+		mac := hmac.New(sha256.New, []byte(dingTalkSecret))
+		_, _ = mac.Write([]byte(timestamp + "\n" + dingTalkSecret))
+		expectedSign := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+		if timestamp == "" || !hmac.Equal([]byte(query.Get("sign")), []byte(expectedSign)) {
+			t.Errorf("DingTalk signature is invalid")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if call == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"errcode":130101,"errmsg":"rate limited"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"errcode":0,"errmsg":"ok"}`))
+	}))
+	defer dingTalkServer.Close()
+	cipher, err := security.NewSecretCipher("m2-signal-notification-test-key")
+	if err != nil {
+		t.Fatalf("create signal notification cipher: %v", err)
+	}
+	ownerID := owner.ID
+	dingTalkChannel := db.SystemNotifyChannel{
+		ChannelType: "dingtalk_webhook", OwnerID: &ownerID, DisplayName: "M2 retry",
+		IsEnabled: true, SettingsJSON: dumpJSON(M{"webhookBaseUrl": dingTalkServer.URL}),
+		EncryptedSecretsJSON: cipher.Encrypt(dumpJSON(M{"accessToken": dingTalkToken, "secret": dingTalkSecret})),
+		CreatedAt:            time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}
+	if err := database.Create(&dingTalkChannel).Error; err != nil {
+		t.Fatalf("create signal DingTalk channel: %v", err)
+	}
+
 	app := &App{
 		DB: database, database: database, Hub: NewHub(),
+		Cipher:       cipher,
 		reauthTokens: map[string]reauthTokenRecord{}, revokedAccessTokens: map[string]time.Time{},
 	}
 	principal := &Principal{User: &owner, AccessTokenID: "m2-signal-session"}
@@ -219,20 +267,35 @@ INSERT INTO strategy_signals (
 		OutboxID: outboxID, EventType: "strategy.signal.created",
 		AggregateType: "strategy_signal", AggregateID: signalID,
 	}
-	if err := app.handleEventTriggeredEntries(context.Background(), event); err != nil {
-		t.Fatalf("deliver strategy signal notification: %v", err)
+	if err := app.handleEventTriggeredEntries(context.Background(), event); !errors.Is(err, errCriticalNotificationDelivery) {
+		t.Fatalf("first rate-limited strategy signal delivery = %v", err)
 	}
 	if err := app.handleEventTriggeredEntries(context.Background(), event); err != nil {
 		t.Fatalf("redeliver strategy signal notification: %v", err)
+	}
+	if err := app.handleEventTriggeredEntries(context.Background(), event); err != nil {
+		t.Fatalf("replay completed strategy signal notification: %v", err)
 	}
 	var deliveries []db.SystemNotifyDelivery
 	if err := database.Where("strategy_signal_id = ?", signalID).Find(&deliveries).Error; err != nil {
 		t.Fatalf("list strategy signal notifications: %v", err)
 	}
-	if len(deliveries) != 1 || deliveries[0].Status != "success" || deliveries[0].Title != "策略信号已批准" {
+	if len(deliveries) != 2 {
 		t.Fatalf("strategy signal notifications = %#v", deliveries)
 	}
-	if got := app.serializeDelivery(&deliveries[0])["strategySignalId"]; got != signalID {
-		t.Fatalf("serialized strategy signal id = %#v", got)
+	for i := range deliveries {
+		if deliveries[i].Status != "success" || deliveries[i].Title != "策略信号已批准" {
+			t.Fatalf("strategy signal notification = %#v", deliveries[i])
+		}
+		if got := app.serializeDelivery(&deliveries[i])["strategySignalId"]; got != signalID {
+			t.Fatalf("serialized strategy signal id = %#v", got)
+		}
+		if strings.Contains(deliveries[i].ProviderResponseText, dingTalkToken) ||
+			strings.Contains(deliveries[i].ProviderResponseText, dingTalkSecret) {
+			t.Fatal("strategy signal delivery stored a notification secret")
+		}
+	}
+	if dingTalkCalls.Load() != 2 {
+		t.Fatalf("DingTalk retry calls = %d, want 2", dingTalkCalls.Load())
 	}
 }

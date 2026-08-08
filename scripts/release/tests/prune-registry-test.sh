@@ -106,11 +106,11 @@ if [[ -e $DELETE_LOG ]]; then
 fi
 
 bash "$ROOT_DIR/scripts/release/prune-registry.sh" --apply >"$TEST_DIR/apply.log"
-if [[ $(wc -l <"$DELETE_LOG") -ne 2 ]]; then
-  echo "应分别删除 backend/web 的一个过期 Manifest" >&2
+if [[ $(wc -l <"$DELETE_LOG") -ne 3 ]]; then
+  echo "应分别删除 backend/web/worker 的一个过期 Manifest" >&2
   exit 1
 fi
-if [[ $(grep -c 'sha256:0*2$' "$DELETE_LOG") -ne 2 ]]; then
+if [[ $(grep -c 'sha256:0*2$' "$DELETE_LOG") -ne 3 ]]; then
   echo "应删除 v1.0.2，并保留当前部署的 v1.0.1" >&2
   exit 1
 fi

@@ -86,12 +86,49 @@
 
         <ul v-show="barActiveIndex === 2 && pendingList.length">
           <li
-            v-for="(item, index) in pendingList"
-            :key="index"
-            class="box-border px-5 py-3.5 last:border-b-0"
+            v-for="item in pendingList"
+            :key="item.id"
+            class="box-border px-3.5 py-3.5 last:border-b-0"
           >
-            <h4 class="text-sm text-g-900">{{ item.title }}</h4>
-            <p class="mt-1.5 text-xs text-g-500">{{ item.time }}</p>
+            <div class="flex items-start gap-3">
+              <div
+                class="size-9 shrink-0 leading-9 text-center rounded-lg flex-cc bg-warning/12 text-warning"
+              >
+                <ArtSvgIcon class="text-lg !bg-transparent" icon="ri:exchange-dollar-line" />
+              </div>
+              <div class="min-w-0 flex-1">
+                <h4 class="text-sm font-normal leading-5.5 text-g-900 line-clamp-2">{{
+                  item.messageTitle
+                }}</h4>
+                <p class="mt-1 text-xs text-g-500 line-clamp-2">{{ item.messageContent }}</p>
+                <p class="mt-1 text-xs text-g-400">
+                  {{ item.strategySignalExpiresAt || item.createdAt }}
+                </p>
+              </div>
+            </div>
+            <div class="mt-3 grid grid-cols-2 gap-2">
+              <ElButton
+                size="small"
+                type="primary"
+                :icon="Check"
+                :loading="decisionLoading === `${item.strategySignalId}:approved`"
+                :disabled="Boolean(decisionLoading)"
+                @click.stop="handleSignalDecision(item, 'approved')"
+              >
+                {{ t('notice.decision.approve') }}
+              </ElButton>
+              <ElButton
+                size="small"
+                type="danger"
+                plain
+                :icon="Close"
+                :loading="decisionLoading === `${item.strategySignalId}:rejected`"
+                :disabled="Boolean(decisionLoading)"
+                @click.stop="handleSignalDecision(item, 'rejected')"
+              >
+                {{ t('notice.decision.reject') }}
+              </ElButton>
+            </div>
           </li>
         </ul>
 
@@ -125,6 +162,10 @@
 <script setup lang="ts">
   import { useI18n } from 'vue-i18n'
   import { useRouter } from 'vue-router'
+  import { Check, Close } from '@element-plus/icons-vue'
+  import { ElMessage, ElMessageBox } from 'element-plus'
+  import { fetchReauth } from '@/api/auth'
+  import { fetchApproveStrategySignal, fetchRejectStrategySignal } from '@/api/signals'
   import { useNotificationStore } from '@/store/modules/notification'
 
   defineOptions({ name: 'ArtNotification' })
@@ -145,10 +186,16 @@
   const show = ref(false)
   const visible = ref(false)
   const barActiveIndex = ref(0)
+  const decisionLoading = ref<string | null>(null)
 
-  const noticeList = computed(() => records.value)
+  const isPendingSignal = (item: Api.Notifications.InAppNoticeItem) =>
+    Boolean(item.strategySignalId) &&
+    item.strategySignalMode === 'manual' &&
+    item.strategySignalStatus === 'active'
+
+  const noticeList = computed(() => records.value.filter((item) => !isPendingSignal(item)))
   const msgList = computed(() => [] as Array<{ title: string; time: string }>)
-  const pendingList = computed(() => [] as Array<{ title: string; time: string }>)
+  const pendingList = computed(() => records.value.filter(isPendingSignal))
 
   const barList = computed(() => [
     { name: t('notice.bar[0]'), num: noticeList.value.length },
@@ -203,6 +250,69 @@
       return
     }
     await notificationStore.markAllRead()
+  }
+
+  const handleSignalDecision = async (
+    item: Api.Notifications.InAppNoticeItem,
+    decision: 'approved' | 'rejected'
+  ) => {
+    const signalId = item.strategySignalId
+    if (!signalId || decisionLoading.value) {
+      return
+    }
+    const actionKey = `${signalId}:${decision}`
+    decisionLoading.value = actionKey
+    try {
+      let result: Api.Notifications.StrategySignalDecision
+      const idempotencyKey = `coinsphere-signal:${signalId}:${decision}`
+      if (decision === 'approved') {
+        const prompt = await ElMessageBox.prompt(
+          t('notice.decision.reauthMessage'),
+          t('notice.decision.reauthTitle'),
+          {
+            inputType: 'password',
+            inputPlaceholder: t('notice.decision.passwordPlaceholder'),
+            inputValidator: (value) => Boolean(String(value || '').trim()),
+            inputErrorMessage: t('notice.decision.passwordRequired'),
+            confirmButtonText: t('notice.decision.approve'),
+            cancelButtonText: t('common.cancel')
+          }
+        )
+        const reauth = await fetchReauth(prompt.value)
+        result = await fetchApproveStrategySignal(signalId, idempotencyKey, reauth.reauthToken)
+      } else {
+        await ElMessageBox.confirm(
+          t('notice.decision.rejectMessage'),
+          t('notice.decision.rejectTitle'),
+          {
+            type: 'warning',
+            confirmButtonText: t('notice.decision.reject'),
+            cancelButtonText: t('common.cancel')
+          }
+        )
+        result = await fetchRejectStrategySignal(signalId, idempotencyKey)
+      }
+      notificationStore.applySignalDecision(signalId, result.status)
+      if (!item.isRead) {
+        try {
+          await notificationStore.markRead(item.id)
+        } catch {
+          // The decision is already committed; the request layer reports the independent read-state failure.
+        }
+      }
+    } catch (error: any) {
+      if (
+        error === 'cancel' ||
+        error === 'close' ||
+        error?.action === 'cancel' ||
+        error?.action === 'close'
+      ) {
+        return
+      }
+      ElMessage.error(error?.message || t('notice.decision.failed'))
+    } finally {
+      decisionLoading.value = null
+    }
   }
 
   const handleFooterAction = async () => {

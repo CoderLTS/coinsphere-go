@@ -46,4 +46,4 @@ docker compose exec -T worker-backtest python -m coinsphere_worker health
 
 ## 回滚
 
-先停止 realtime/backtest 消费者，确认不再产生心跳或认领，再回退本纵向 PR。`00008` 只允许在信号决策和信号通知均为空时回退；`00007` 只允许在策略实例、信号和 realtime 任务均为空时回退；`00006` 只允许在策略草稿、版本、回测及其量化任务均为空时回退。否则保留 schema 和任务，等待兼容版本恢复消费，不得删除任务或手工修改 migration 版本。生产 Release 当前不部署 Worker，不修改生产、真实交易或凭据配置。
+先停止 realtime/backtest 消费者，确认不再产生心跳或认领，再回退本纵向 PR。`00008` 只允许在信号决策和信号通知均为空时回退；`00007` 只允许在策略实例、信号和 realtime 任务均为空时回退；`00006` 只允许在策略草稿、版本、回测及其量化任务均为空时回退。否则保留 schema、任务和回测产物，等待兼容版本恢复消费，不得删除任务或手工修改 migration 版本。生产 Release 会与 Backend/Web 一起回滚两个 Worker 服务，但仍不部署 Executor、不修改交易权限或接触真实交易凭据。

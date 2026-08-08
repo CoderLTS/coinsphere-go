@@ -11,6 +11,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"coinsphere/backend/internal/db"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -30,6 +32,7 @@ import (
 var channelTypeLabels = map[string]string{
 	"in_app":           "站内通知",
 	"dingtalk_webhook": "钉钉机器人",
+	"qq_bot":           "QQ Bot",
 	"smtp_email":       "邮件通知",
 }
 
@@ -114,8 +117,8 @@ func (a *App) ListNotifyChannels(principal *Principal) []M {
 func (a *App) CreateNotifyChannel(payload NotifyChannelUpsertPayload, principal *Principal) (M, error) {
 	// strings.TrimSpace 去掉首尾空白;bizErr 造一个业务错误返回给前端。
 	channelType := strings.TrimSpace(payload.ChannelType)
-	if channelType != "dingtalk_webhook" && channelType != "smtp_email" {
-		return nil, bizErr("当前仅支持创建钉钉和邮件渠道")
+	if channelType != "dingtalk_webhook" && channelType != "qq_bot" && channelType != "smtp_email" {
+		return nil, bizErr("当前仅支持创建钉钉、QQ Bot 和邮件渠道")
 	}
 	displayName := strings.TrimSpace(payload.DisplayName)
 	if displayName == "" {
@@ -182,15 +185,26 @@ func (a *App) UpdateNotifyChannel(channelID int64, payload NotifyChannelUpsertPa
 		"settings_json": settingsJSON, "remark": remark, "updated_at": time.Now(),
 	}
 	if payload.SecretJSON != nil {
-		secretText := *payload.SecretJSON
-		if strings.TrimSpace(secretText) == "" {
-			secretText = "{}"
-		}
-		encrypted, err := a.encryptSecretJSON(secretText)
+		secretText, err := normalizeJSONText(*payload.SecretJSON, "密钥 JSON")
 		if err != nil {
 			return nil, err
 		}
-		fields["encrypted_secrets_json"] = encrypted
+		secretPatch := loadJSONObject(secretText)
+		if len(secretPatch) > 0 {
+			existingText, err := a.Cipher.Decrypt(channel.EncryptedSecretsJSON)
+			if err != nil {
+				return nil, err
+			}
+			existing := loadJSONObject(existingText)
+			for key, value := range secretPatch {
+				existing[key] = value
+			}
+			encrypted, err := a.encryptSecretJSON(dumpJSON(existing))
+			if err != nil {
+				return nil, err
+			}
+			fields["encrypted_secrets_json"] = encrypted
+		}
 	}
 	if err := a.DB.Model(channel).Updates(fields).Error; err != nil {
 		return nil, err
@@ -241,7 +255,7 @@ func (a *App) TestNotifyChannel(ctx context.Context, channelID int64, principal 
 	if err != nil {
 		return nil, err
 	}
-	ok, message, _ := validateNotifyChannel(ctx, runtimeChannel)
+	ok, message, _ := a.validateNotifyChannel(ctx, runtimeChannel)
 	status := "failed"
 	if ok {
 		status = "success"
@@ -257,9 +271,10 @@ func (a *App) TestNotifyChannel(ctx context.Context, channelID int64, principal 
 func (a *App) GetNotifyChannelMeta() M {
 	return M{
 		"channelTypes": []M{
-			{"value": "in_app", "label": channelTypeLabels["in_app"]},
-			{"value": "dingtalk_webhook", "label": channelTypeLabels["dingtalk_webhook"]},
-			{"value": "smtp_email", "label": channelTypeLabels["smtp_email"]},
+			{"value": "in_app", "label": channelTypeLabels["in_app"], "description": "应用内持久通知", "builtinReadonly": true},
+			{"value": "dingtalk_webhook", "label": channelTypeLabels["dingtalk_webhook"], "description": "钉钉自定义机器人 Webhook"},
+			{"value": "qq_bot", "label": channelTypeLabels["qq_bot"], "description": "腾讯官方 QQ Bot 群或频道消息"},
+			{"value": "smtp_email", "label": channelTypeLabels["smtp_email"], "description": "通过 SMTP 投递邮件"},
 		},
 	}
 }
@@ -320,7 +335,7 @@ func (a *App) ListDeliveryHistory(principal *Principal, query DeliveryHistoryQue
 		q = q.Where("notification_deliveries.id < ?", afterID)
 	}
 	var deliveries []db.SystemNotifyDelivery
-	if err := q.Preload("Channel").Preload("RecipientUser").
+	if err := q.Preload("Channel").Preload("RecipientUser").Preload("StrategySignal").
 		Preload("WorkflowExecution").Preload("WorkflowExecution.WorkflowDefinition").
 		Order("notification_deliveries.id DESC").Limit(query.Page.Limit + 1).
 		Find(&deliveries).Error; err != nil {
@@ -358,7 +373,7 @@ func (a *App) ListInAppNotifications(userID int64, page CursorPage) (M, error) {
 		q = q.Where("id < ?", afterID)
 	}
 	var deliveries []db.SystemNotifyDelivery
-	if err := q.Preload("WorkflowExecution").Preload("WorkflowExecution.WorkflowDefinition").
+	if err := q.Preload("StrategySignal").Preload("WorkflowExecution").Preload("WorkflowExecution.WorkflowDefinition").
 		Order("id DESC").Limit(page.Limit + 1).
 		Find(&deliveries).Error; err != nil {
 		return nil, err
@@ -454,7 +469,9 @@ func (a *App) SendTestInAppNotification(userID int64) M {
 	return M{"record": record, "unreadCount": unreadCount}
 }
 
-// deliverStrategySignalNotification 将持久信号事件幂等转换为一条持久站内通知。
+var errCriticalNotificationDelivery = errors.New("critical notification delivery failed")
+
+// deliverStrategySignalNotification 将持久信号事件幂等投递到站内和用户启用的固定外部渠道。
 func (a *App) deliverStrategySignalNotification(ctx context.Context, event *domainEvent) error {
 	if event.EventType != "strategy.signal.created" {
 		return nil
@@ -475,12 +492,6 @@ func (a *App) deliverStrategySignalNotification(ctx context.Context, event *doma
 	var version db.StrategyVersion
 	if err := database.Where("id = ?", signal.StrategyVersionID).Take(&version).Error; err != nil {
 		return fmt.Errorf("load strategy version notification: %w", err)
-	}
-
-	var channelID *int64
-	var builtin db.SystemNotifyChannel
-	if err := database.Where("channel_type = ? AND is_builtin = ?", "in_app", true).First(&builtin).Error; err == nil {
-		channelID = &builtin.ID
 	}
 	now := time.Now().UTC()
 	title := "策略信号已生成"
@@ -503,9 +514,46 @@ func (a *App) deliverStrategySignalNotification(ctx context.Context, event *doma
 	if signal.ExpiresAt != nil {
 		content += "，有效期至 " + formatUTC(*signal.ExpiresAt)
 	}
-	outboxID := event.OutboxID
+
+	var deliveryErrors []error
+	if err := a.deliverStrategySignalInApp(ctx, event.OutboxID, &signal, title, content, now); err != nil {
+		deliveryErrors = append(deliveryErrors, err)
+	}
+
+	var channels []db.SystemNotifyChannel
+	if err := database.Where(
+		"owner_id = ? AND is_enabled = ? AND is_builtin = ? AND channel_type IN ?",
+		signal.OwnerUserID, true, false, []string{"dingtalk_webhook", "qq_bot", "smtp_email"},
+	).Order("id ASC").Find(&channels).Error; err != nil {
+		return err
+	}
+	externalContent := content
+	if a.Cfg != nil && strings.TrimSpace(a.Cfg.Server.PublicBaseURL) != "" {
+		externalContent += "\n\n打开 CoinSphere: " + strings.TrimRight(a.Cfg.Server.PublicBaseURL, "/")
+	}
+	for i := range channels {
+		if err := a.deliverStrategySignalExternal(ctx, event.OutboxID, &signal, &channels[i], title, externalContent); err != nil {
+			deliveryErrors = append(deliveryErrors, err)
+		}
+	}
+	return errors.Join(deliveryErrors...)
+}
+
+func (a *App) deliverStrategySignalInApp(
+	ctx context.Context,
+	outboxID int64,
+	signal *db.StrategySignal,
+	title, content string,
+	now time.Time,
+) error {
+	database := a.dbWithContext(ctx)
+	var channelID *int64
+	var builtin db.SystemNotifyChannel
+	if err := database.Where("channel_type = ? AND is_builtin = ?", "in_app", true).First(&builtin).Error; err == nil {
+		channelID = &builtin.ID
+	}
 	delivery := db.SystemNotifyDelivery{
-		OutboxEventID: &outboxID, StrategySignalID: &signal.ID,
+		OutboxEventID: &outboxID, StrategySignalID: &signal.ID, StrategySignal: signal,
 		TargetType: "strategy_signal", RecipientUserID: &signal.OwnerUserID,
 		ChannelID: channelID, ChannelType: "in_app", Status: "success",
 		Title: title, Content: content, SentAt: &now, CreatedAt: now,
@@ -531,6 +579,72 @@ func (a *App) deliverStrategySignalNotification(ctx context.Context, event *doma
 	return nil
 }
 
+func (a *App) deliverStrategySignalExternal(
+	ctx context.Context,
+	outboxID int64,
+	signal *db.StrategySignal,
+	channel *db.SystemNotifyChannel,
+	title, content string,
+) error {
+	database := a.dbWithContext(ctx)
+	var delivery db.SystemNotifyDelivery
+	err := database.Where("strategy_signal_id = ? AND channel_id = ?", signal.ID, channel.ID).Take(&delivery).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		now := time.Now().UTC()
+		delivery = db.SystemNotifyDelivery{
+			OutboxEventID: &outboxID, StrategySignalID: &signal.ID,
+			TargetType: "strategy_signal", RecipientUserID: &signal.OwnerUserID,
+			ChannelID: &channel.ID, ChannelType: channel.ChannelType, Status: "pending",
+			Title: title, Content: content, CreatedAt: now,
+		}
+		result := database.Clauses(clause.OnConflict{DoNothing: true}).Create(&delivery)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			err = database.Where("strategy_signal_id = ? AND channel_id = ?", signal.ID, channel.ID).Take(&delivery).Error
+			if err != nil {
+				return err
+			}
+		}
+	} else if err != nil {
+		return err
+	}
+	if delivery.Status == "success" {
+		return nil
+	}
+
+	runtimeChannel, err := a.buildRuntimeChannel(channel)
+	if err != nil {
+		if updateErr := database.Model(&delivery).Updates(map[string]any{
+			"status": "failed", "error_message": "channel configuration unavailable",
+			"provider_response_text": "channel configuration unavailable",
+		}).Error; updateErr != nil {
+			return updateErr
+		}
+		return errCriticalNotificationDelivery
+	}
+	ok, message, providerResponse := a.sendNotifyChannel(ctx, runtimeChannel, title, content, "text")
+	updates := map[string]any{
+		"title": title, "content": content,
+		"status": statusText(ok), "provider_response_text": providerResponse, "error_message": "",
+	}
+	if ok {
+		updates["sent_at"] = time.Now().UTC()
+	} else {
+		updates["error_message"] = message
+	}
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cleanupCancel()
+	if err := a.dbWithContext(cleanupCtx).Model(&delivery).Updates(updates).Error; err != nil {
+		return err
+	}
+	if !ok {
+		return errCriticalNotificationDelivery
+	}
+	return nil
+}
+
 // GetTargetMeta 通知目标元数据(工作流通知节点用)。
 func (a *App) GetTargetMeta() M {
 	var users []db.SystemUser
@@ -550,7 +664,7 @@ func (a *App) GetTargetMeta() M {
 		roleItems = append(roleItems, M{"id": role.ID, "label": role.DisplayName})
 	}
 	channelTypes := make([]M, 0, len(channelTypeLabels))
-	for _, key := range []string{"in_app", "dingtalk_webhook", "smtp_email"} {
+	for _, key := range []string{"in_app", "dingtalk_webhook", "qq_bot", "smtp_email"} {
 		channelTypes = append(channelTypes, M{"value": key, "label": channelTypeLabels[key]})
 	}
 	return M{
@@ -688,7 +802,7 @@ func (a *App) dispatchExternalChannel(
 	if err := a.DB.WithContext(ctx).Create(&delivery).Error; err != nil {
 		return false
 	}
-	ok, message, providerResponse := sendNotifyChannel(ctx, runtimeChannel, title, content, messageFormat)
+	ok, message, providerResponse := a.sendNotifyChannel(ctx, runtimeChannel, title, content, messageFormat)
 	updates := map[string]any{
 		"status":                 statusText(ok),
 		"provider_response_text": providerResponse,
@@ -769,7 +883,7 @@ func (a *App) dispatchInAppChannel(
 	return "failed"
 }
 
-// ---------- 渠道适配(钉钉 / SMTP) ----------
+// ---------- 渠道适配(钉钉 / QQ Bot / SMTP) ----------
 
 type notifyRuntimeChannel struct {
 	ChannelID   int64
@@ -832,10 +946,17 @@ func (a *App) listEnabledUserIDsByRoleIDs(roleIDs []int64) map[int64][]int64 {
 	return result
 }
 
-func validateNotifyChannel(ctx context.Context, channel *notifyRuntimeChannel) (bool, string, string) {
+func (a *App) validateNotifyChannel(ctx context.Context, channel *notifyRuntimeChannel) (bool, string, string) {
 	switch channel.ChannelType {
 	case "dingtalk_webhook":
 		ok, response := sendDingTalk(ctx, channel, "text", "", "【coinsphere】通知渠道连通性测试")
+		message := "连接失败"
+		if ok {
+			message = "连接成功"
+		}
+		return ok, message, response
+	case "qq_bot":
+		ok, response := a.sendQQBot(ctx, channel, "CoinSphere", "通知渠道连通性测试")
 		message := "连接失败"
 		if ok {
 			message = "连接成功"
@@ -851,7 +972,7 @@ func validateNotifyChannel(ctx context.Context, channel *notifyRuntimeChannel) (
 	}
 }
 
-func sendNotifyChannel(ctx context.Context, channel *notifyRuntimeChannel, title, content, format string) (bool, string, string) {
+func (a *App) sendNotifyChannel(ctx context.Context, channel *notifyRuntimeChannel, title, content, format string) (bool, string, string) {
 	switch channel.ChannelType {
 	case "dingtalk_webhook":
 		msgType := "text"
@@ -862,6 +983,13 @@ func sendNotifyChannel(ctx context.Context, channel *notifyRuntimeChannel, title
 			body = stripSimpleHTML(content)
 		}
 		ok, response := sendDingTalk(ctx, channel, msgType, title, body)
+		message := "发送失败"
+		if ok {
+			message = "发送成功"
+		}
+		return ok, message, response
+	case "qq_bot":
+		ok, response := a.sendQQBot(ctx, channel, title, content)
 		message := "发送失败"
 		if ok {
 			message = "发送成功"
@@ -1174,6 +1302,14 @@ func (a *App) serializeDelivery(delivery *db.SystemNotifyDelivery) M {
 	if delivery.StrategySignalID != nil {
 		strategySignalID = delivery.StrategySignalID.String()
 	}
+	strategySignalMode, strategySignalStatus, strategySignalExpiresAt := "", "", ""
+	if delivery.StrategySignal != nil {
+		strategySignalMode = delivery.StrategySignal.Mode
+		strategySignalStatus = delivery.StrategySignal.Status
+		if delivery.StrategySignal.ExpiresAt != nil {
+			strategySignalExpiresAt = formatUTC(*delivery.StrategySignal.ExpiresAt)
+		}
+	}
 	definitionCode, definitionName := "", ""
 	if definition != nil {
 		workflowDefinitionID = definition.ID
@@ -1204,6 +1340,9 @@ func (a *App) serializeDelivery(delivery *db.SystemNotifyDelivery) M {
 		"workflowDefinitionCode":  definitionCode,
 		"workflowDefinitionName":  definitionName,
 		"strategySignalId":        strategySignalID,
+		"strategySignalMode":      strategySignalMode,
+		"strategySignalStatus":    strategySignalStatus,
+		"strategySignalExpiresAt": strategySignalExpiresAt,
 		"targetType":              delivery.TargetType, "targetId": targetID, "targetLabel": targetLabel,
 		"recipientId": recipientID, "recipientLabel": recipientLabel,
 		"channelType":         delivery.ChannelType,
@@ -1281,7 +1420,7 @@ func normalizeChannelTypes(rawValue any) []string {
 			}
 		}
 	}
-	allowed := map[string]bool{"in_app": true, "dingtalk_webhook": true, "smtp_email": true}
+	allowed := map[string]bool{"in_app": true, "dingtalk_webhook": true, "qq_bot": true, "smtp_email": true}
 	result := []string{}
 	seen := map[string]bool{}
 	for _, item := range items {

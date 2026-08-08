@@ -605,6 +605,7 @@ type SystemNotifyDelivery struct {
 	OutboxEventID           *int64                 `gorm:"column:outbox_event_id"`
 	OutboxEvent             *DomainEventOutbox     `gorm:"foreignKey:OutboxEventID;constraint:OnDelete:SET NULL"`
 	StrategySignalID        *uuid.UUID             `gorm:"column:strategy_signal_id;type:uuid"`
+	StrategySignal          *StrategySignal        `gorm:"foreignKey:StrategySignalID;constraint:OnDelete:RESTRICT"`
 	TargetType              string                 `gorm:"size:20"`
 	TargetID                *int64                 `gorm:"column:target_id"`
 	RecipientUserID         *int64                 `gorm:"column:recipient_user_id;index"`

@@ -164,4 +164,31 @@ describe('notification websocket', () => {
     })
     expect(store.unreadCount).toBe(5)
   })
+
+  it('人工决策后同步更新本地信号状态', () => {
+    const store = useNotificationStore()
+    store.connect()
+    const socket = FakeWebSocket.instances[0]
+    socket.open()
+    socket.emit({
+      type: 'notice.created',
+      version: 1,
+      sequence: 1,
+      occurredAt,
+      data: {
+        record: {
+          id: 42,
+          messageTitle: 'manual signal',
+          strategySignalId: 'signal-42',
+          strategySignalMode: 'manual',
+          strategySignalStatus: 'active'
+        },
+        unreadCount: 1
+      }
+    })
+
+    store.applySignalDecision('signal-42', 'approved')
+
+    expect(store.records[0]?.strategySignalStatus).toBe('approved')
+  })
 })

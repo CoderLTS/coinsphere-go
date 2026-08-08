@@ -2,8 +2,9 @@
 <template>
   <ElDialog
     v-model="dialogVisible"
+    class="notify-channel-dialog"
     :title="dialogTitle"
-    width="760px"
+    width="min(760px, calc(100vw - 32px))"
     align-center
     destroy-on-close
   >
@@ -82,7 +83,45 @@
         </ElRow>
       </template>
 
-      <template v-else>
+      <template v-else-if="formData.channelType === 'qq_bot'">
+        <ElRow :gutter="16">
+          <ElCol :span="12">
+            <ElFormItem :label="t('notifyChannel.form.qqAppId')" prop="qqAppId">
+              <ElInput v-model.trim="formData.qqAppId" />
+            </ElFormItem>
+          </ElCol>
+          <ElCol :span="12">
+            <ElFormItem :label="t('notifyChannel.form.qqClientSecret')" prop="qqClientSecret">
+              <ElInput
+                v-model.trim="formData.qqClientSecret"
+                type="password"
+                show-password
+                :placeholder="secretPlaceholder"
+              />
+            </ElFormItem>
+          </ElCol>
+        </ElRow>
+        <ElRow :gutter="16">
+          <ElCol :span="12">
+            <ElFormItem :label="t('notifyChannel.form.qqTargetType')" prop="qqTargetType">
+              <ElSegmented
+                v-model="formData.qqTargetType"
+                :options="[
+                  { label: t('notifyChannel.form.qqGroup'), value: 'group' },
+                  { label: t('notifyChannel.form.qqChannel'), value: 'channel' }
+                ]"
+              />
+            </ElFormItem>
+          </ElCol>
+          <ElCol :span="12">
+            <ElFormItem :label="t('notifyChannel.form.qqTargetId')" prop="qqTargetId">
+              <ElInput v-model.trim="formData.qqTargetId" />
+            </ElFormItem>
+          </ElCol>
+        </ElRow>
+      </template>
+
+      <template v-else-if="formData.channelType === 'smtp_email'">
         <ElRow :gutter="16">
           <ElCol :span="12">
             <ElFormItem :label="t('notifyChannel.form.host')" prop="host">
@@ -197,13 +236,17 @@
   }
 
   interface ChannelFormState {
-    channelType: 'dingtalk_webhook' | 'smtp_email'
+    channelType: 'dingtalk_webhook' | 'qq_bot' | 'smtp_email'
     displayName: string
     isEnabled: boolean
     ownerId: number | null
     webhookBaseUrl: string
     accessToken: string
     secret: string
+    qqAppId: string
+    qqClientSecret: string
+    qqTargetType: 'group' | 'channel'
+    qqTargetId: string
     host: string
     port: number
     username: string
@@ -263,6 +306,10 @@
     webhookBaseUrl: 'https://oapi.dingtalk.com/robot/send',
     accessToken: '',
     secret: '',
+    qqAppId: '',
+    qqClientSecret: '',
+    qqTargetType: 'group',
+    qqTargetId: '',
     host: '',
     port: 465,
     username: '',
@@ -283,6 +330,10 @@
       webhookBaseUrl: 'https://oapi.dingtalk.com/robot/send',
       accessToken: '',
       secret: '',
+      qqAppId: '',
+      qqClientSecret: '',
+      qqTargetType: 'group',
+      qqTargetId: '',
       host: '',
       port: 465,
       username: '',
@@ -301,13 +352,26 @@
       return
     }
 
-    const config = props.channelData.settings || {}
+    let config: Record<string, any> = {}
+    try {
+      config = JSON.parse(props.channelData.settingsJson || '{}')
+    } catch {
+      config = {}
+    }
+    const channelType = ['dingtalk_webhook', 'qq_bot', 'smtp_email'].includes(
+      props.channelData.channelType
+    )
+      ? (props.channelData.channelType as ChannelFormState['channelType'])
+      : 'dingtalk_webhook'
     Object.assign(formData, {
-      channelType: props.channelData.channelType,
+      channelType,
       displayName: props.channelData.displayName,
       isEnabled: props.channelData.isEnabled,
       ownerId: props.channelData.ownerId ?? ownerOptions.value[0]?.id ?? null,
       webhookBaseUrl: config.webhookBaseUrl || 'https://oapi.dingtalk.com/robot/send',
+      qqAppId: config.appId || '',
+      qqTargetType: config.targetType === 'channel' ? 'channel' : 'group',
+      qqTargetId: config.targetId || '',
       host: config.host || '',
       port: Number(config.port || 465),
       username: config.username || '',
@@ -318,6 +382,7 @@
       remark: props.channelData.remark || '',
       accessToken: '',
       secret: '',
+      qqClientSecret: '',
       password: ''
     })
   }
@@ -353,6 +418,42 @@
             return
           }
           callback(new Error(t('notifyChannel.validation.accessToken')))
+        },
+        trigger: 'blur'
+      }
+    ],
+    qqAppId: [
+      {
+        validator: (_rule, value, callback) => {
+          if (formData.channelType !== 'qq_bot' || String(value || '').trim()) {
+            callback()
+            return
+          }
+          callback(new Error(t('notifyChannel.validation.qqAppId')))
+        },
+        trigger: 'blur'
+      }
+    ],
+    qqClientSecret: [
+      {
+        validator: (_rule, value, callback) => {
+          if (formData.channelType !== 'qq_bot' || String(value || '').trim() || isEdit.value) {
+            callback()
+            return
+          }
+          callback(new Error(t('notifyChannel.validation.qqClientSecret')))
+        },
+        trigger: 'blur'
+      }
+    ],
+    qqTargetId: [
+      {
+        validator: (_rule, value, callback) => {
+          if (formData.channelType !== 'qq_bot' || String(value || '').trim()) {
+            callback()
+            return
+          }
+          callback(new Error(t('notifyChannel.validation.qqTargetId')))
         },
         trigger: 'blur'
       }
@@ -435,7 +536,9 @@
   const handleChannelTypeChange = () => {
     if (formData.channelType === 'dingtalk_webhook') {
       formData.webhookBaseUrl ||= 'https://oapi.dingtalk.com/robot/send'
-    } else {
+    } else if (formData.channelType === 'qq_bot') {
+      formData.qqTargetType ||= 'group'
+    } else if (formData.channelType === 'smtp_email') {
       formData.port ||= 465
       formData.useTls = true
     }
@@ -461,34 +564,39 @@
     }
 
     await formRef.value.validate()
-    const config =
-      formData.channelType === 'dingtalk_webhook'
-        ? {
-            webhookBaseUrl: formData.webhookBaseUrl.trim()
-          }
-        : {
-            host: formData.host.trim(),
-            port: formData.port,
-            username: formData.username.trim(),
-            fromEmail: formData.fromEmail.trim(),
-            fromName: formData.fromName.trim(),
-            recipients: formData.recipientsText
-              .replace(/\r?\n/g, ',')
-              .split(',')
-              .map((item) => item.trim())
-              .filter(Boolean),
-            useTls: formData.useTls
-          }
-
-    const secrets =
-      formData.channelType === 'dingtalk_webhook'
-        ? {
-            ...(formData.accessToken.trim() ? { accessToken: formData.accessToken.trim() } : {}),
-            ...(formData.secret.trim() ? { secret: formData.secret.trim() } : {})
-          }
-        : {
-            ...(formData.password.trim() ? { password: formData.password.trim() } : {})
-          }
+    let config: Record<string, any>
+    let secrets: Record<string, string>
+    if (formData.channelType === 'dingtalk_webhook') {
+      config = { webhookBaseUrl: formData.webhookBaseUrl.trim() }
+      secrets = {
+        ...(formData.accessToken.trim() ? { accessToken: formData.accessToken.trim() } : {}),
+        ...(formData.secret.trim() ? { secret: formData.secret.trim() } : {})
+      }
+    } else if (formData.channelType === 'qq_bot') {
+      config = {
+        appId: formData.qqAppId.trim(),
+        targetType: formData.qqTargetType,
+        targetId: formData.qqTargetId.trim()
+      }
+      secrets = formData.qqClientSecret.trim()
+        ? { clientSecret: formData.qqClientSecret.trim() }
+        : {}
+    } else {
+      config = {
+        host: formData.host.trim(),
+        port: formData.port,
+        username: formData.username.trim(),
+        fromEmail: formData.fromEmail.trim(),
+        fromName: formData.fromName.trim(),
+        recipients: formData.recipientsText
+          .replace(/\r?\n/g, ',')
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean),
+        useTls: formData.useTls
+      }
+      secrets = formData.password.trim() ? { password: formData.password.trim() } : {}
+    }
 
     emit('submit', {
       channelType: formData.channelType,
@@ -496,7 +604,9 @@
       isEnabled: formData.isEnabled,
       ownerId: formData.ownerId,
       settingsJson: JSON.stringify(config),
-      secretJson: JSON.stringify(secrets),
+      ...(!isEdit.value || Object.keys(secrets).length
+        ? { secretJson: JSON.stringify(secrets) }
+        : {}),
       remark: formData.remark.trim()
     })
   }
@@ -517,6 +627,50 @@
       margin: 6px 0 0;
       line-height: 1.7;
       color: var(--el-text-color-secondary);
+    }
+  }
+
+  @media (max-width: 640px) {
+    :global(.notify-channel-dialog) {
+      display: flex;
+      flex-direction: column;
+      width: calc(100vw - 24px) !important;
+      max-height: calc(100dvh - 24px);
+      margin: 12px auto;
+    }
+
+    :global(.notify-channel-dialog .el-dialog__body) {
+      min-height: 0;
+      padding-right: 16px;
+      padding-left: 16px;
+      overflow-y: auto;
+    }
+
+    :global(.notify-channel-dialog .el-dialog__header),
+    :global(.notify-channel-dialog .el-dialog__footer) {
+      flex: 0 0 auto;
+    }
+
+    :global(.notify-channel-dialog .el-col-12) {
+      flex: 0 0 100%;
+      max-width: 100%;
+    }
+
+    :global(.notify-channel-dialog .el-form-item) {
+      display: block;
+    }
+
+    :global(.notify-channel-dialog .el-form-item__label) {
+      width: auto !important;
+      height: auto;
+      margin-bottom: 8px;
+      line-height: 20px;
+    }
+
+    :global(.notify-channel-dialog .el-input-number),
+    :global(.notify-channel-dialog .el-segmented),
+    :global(.notify-channel-dialog .el-select) {
+      width: 100%;
     }
   }
 </style>

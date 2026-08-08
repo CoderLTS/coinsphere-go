@@ -56,20 +56,11 @@
   "setting": {
     "menuType": {
       "title": "Menu Layout",
-      "list": [
-        "Vertical",
-        "Horizontal",
-        "Mixed",
-        "Dual"
-      ]
+      "list": ["Vertical", "Horizontal", "Mixed", "Dual"]
     },
     "theme": {
       "title": "Theme Style",
-      "list": [
-        "Light",
-        "Dark",
-        "System"
-      ]
+      "list": ["Light", "Dark", "System"]
     },
     "menu": {
       "title": "Menu Style"
@@ -79,17 +70,11 @@
     },
     "box": {
       "title": "Box Style",
-      "list": [
-        "Border",
-        "Shadow"
-      ]
+      "list": ["Border", "Shadow"]
     },
     "container": {
       "title": "Container Width",
-      "list": [
-        "Full",
-        "Boxed"
-      ]
+      "list": ["Full", "Boxed"]
     },
     "basics": {
       "title": "Basic Config",
@@ -136,15 +121,20 @@
     "title": "Notice",
     "btnTest": "Test",
     "btnRead": "Mark as read",
-    "bar": [
-      "Notice",
-      "Message",
-      "Todo"
-    ],
-    "text": [
-      "No"
-    ],
-    "viewAll": "View all"
+    "bar": ["Notice", "Message", "Todo"],
+    "text": ["No"],
+    "viewAll": "View all",
+    "decision": {
+      "approve": "Approve",
+      "reject": "Reject",
+      "reauthTitle": "Approve strategy signal",
+      "reauthMessage": "Enter your current password for five-minute reauthentication",
+      "passwordPlaceholder": "Current password",
+      "passwordRequired": "Current password is required",
+      "rejectTitle": "Reject strategy signal",
+      "rejectMessage": "Reject this strategy signal?",
+      "failed": "Failed to process the signal"
+    }
   },
   "worktab": {
     "btn": {
@@ -559,6 +549,12 @@
       "webhookBaseUrl": "Webhook URL",
       "accessToken": "Access Token",
       "secret": "Secret",
+      "qqAppId": "QQ Bot AppID",
+      "qqClientSecret": "Client Secret",
+      "qqTargetType": "Target Type",
+      "qqTargetId": "Target ID",
+      "qqGroup": "QQ Group",
+      "qqChannel": "QQ Channel",
       "host": "SMTP Host",
       "port": "Port",
       "username": "Username",
@@ -581,6 +577,9 @@
       "displayName": "Please enter the channel name",
       "webhookBaseUrl": "Please enter the webhook base URL",
       "accessToken": "Please enter the access token",
+      "qqAppId": "Please enter the QQ Bot AppID",
+      "qqClientSecret": "Please enter the QQ Bot Client Secret",
+      "qqTargetId": "Please enter the QQ group OpenID or channel ID",
       "host": "Please enter the SMTP host",
       "username": "Please enter the SMTP username",
       "password": "Please enter the SMTP password",

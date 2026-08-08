@@ -148,12 +148,12 @@ else:
     raise AssertionError("额外 TAR 零记录必须被拒绝")
 PY
 
-if [[ $(wc -l <"$BUILD_DOCKER_BUILD_LOG") -ne 5 ]]; then
-  echo "应执行五次 Buildx 构建" >&2
+if [[ $(wc -l <"$BUILD_DOCKER_BUILD_LOG") -ne 6 ]]; then
+  echo "应执行六次 Buildx 构建" >&2
   exit 1
 fi
 for proxy_name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy; do
-  if [[ $(grep -o -- "--build-arg $proxy_name" "$BUILD_DOCKER_BUILD_LOG" | wc -l) -ne 5 ]]; then
+  if [[ $(grep -o -- "--build-arg $proxy_name" "$BUILD_DOCKER_BUILD_LOG" | wc -l) -ne 6 ]]; then
     echo "每次构建都应传入代理变量名: $proxy_name" >&2
     exit 1
   fi

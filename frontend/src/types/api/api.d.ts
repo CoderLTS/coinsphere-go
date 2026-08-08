@@ -110,7 +110,7 @@ declare namespace Api {
 
     type AiProviderType = 'openai_compatible' | 'anthropic' | 'gemini'
     type AssistantAgentDataSourceType = 'none' | 'system_context' | 'news_context'
-    type NotifyChannelType = 'in_app' | 'dingtalk_webhook' | 'smtp_email'
+    type NotifyChannelType = 'in_app' | 'dingtalk_webhook' | 'qq_bot' | 'smtp_email'
     type NotifyContentFormat = 'text' | 'markdown' | 'html'
     type NotifyTargetType = 'user' | 'role'
 
@@ -319,8 +319,8 @@ declare namespace Api {
       isBuiltin: boolean
       isSystem: boolean
       targetSummary: string
-      settings: Record<string, any>
-      secretMasked: Record<string, string>
+      settingsJson: string
+      secretJsonMasked: string
       remark: string
       lastTestStatus: 'success' | 'failed' | 'unknown' | string
       lastTestMessage: string
@@ -330,7 +330,7 @@ declare namespace Api {
     }
 
     interface NotifyChannelUpsertPayload {
-      channelType: Extract<NotifyChannelType, 'dingtalk_webhook' | 'smtp_email'>
+      channelType: Extract<NotifyChannelType, 'dingtalk_webhook' | 'qq_bot' | 'smtp_email'>
       displayName: string
       isEnabled: boolean
       ownerId?: number | null
@@ -488,6 +488,10 @@ declare namespace Api {
       workflowDefinitionId?: number | null
       workflowDefinitionCode: string
       workflowDefinitionName: string
+      strategySignalId?: string | null
+      strategySignalMode: string
+      strategySignalStatus: string
+      strategySignalExpiresAt: string
       targetType: string
       targetId?: number | null
       targetLabel: string
@@ -544,6 +548,15 @@ declare namespace Api {
     type NotifyDeliveryList = Api.Config.NotifyDeliveryList
     type InAppNoticeItem = Api.Config.InAppNoticeItem
     type InAppNoticePage = Api.Config.InAppNoticePage
+
+    interface StrategySignalDecision {
+      id: string
+      mode: string
+      environment: string
+      status: string
+      expiresAt?: string
+      decidedAt?: string
+    }
   }
 
   namespace Assistant {
