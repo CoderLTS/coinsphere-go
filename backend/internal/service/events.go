@@ -188,7 +188,7 @@ func (a *App) deliverClaimedOutboxEvent(ctx context.Context, claim db.DomainEven
 	}
 
 	category := outboxFailureSubscriber
-	if errors.Is(deliveryErr, errBacklogExceeded) {
+	if errors.Is(deliveryErr, ErrBacklogExceeded) {
 		category = outboxFailureBacklog
 	} else if errors.Is(deliveryErr, errLoadEventSubscribers) {
 		category = outboxFailureQuery
@@ -214,6 +214,9 @@ func (a *App) outboxLeaseDuration() time.Duration {
 // handleEventTriggeredEntries 把事件匹配到 start.event 入口并入队执行。
 // outbox 的"消费方":查出所有"事件触发型(start_type=event)、已启用、且有生效版本"的工作流入口,逐个看这条事件是否命中,命中就跑。
 func (a *App) handleEventTriggeredEntries(ctx context.Context, event *domainEvent) error {
+	if err := a.deliverStrategySignalNotification(ctx, event); err != nil {
+		return err
+	}
 	// Preload 预加载关联对象(定义、运行时状态);Joins 关联运行时状态表以便在 Where 里过滤。见 GO入门笔记『框架:GORM』
 	var entries []db.WorkflowRuntimeEntry
 	result := a.DB.WithContext(ctx).Preload("WorkflowDefinition").Preload("WorkflowRuntimeState").
@@ -268,7 +271,7 @@ func (a *App) handleEventTriggeredEntries(ctx context.Context, event *domainEven
 		})
 		// 任一入口未能入队都让整条事件重排；已成功入口由稳定幂等键去重，积压入口则在退避后继续尝试。
 		if err != nil {
-			if isBacklogExceeded(err) {
+			if errors.Is(err, ErrBacklogExceeded) {
 				slog.WarnContext(ctx, "event enqueue deferred", "outbox_id", event.OutboxID, "entry_key", entry.EntryKey, "error_category", outboxFailureBacklog)
 			}
 			return err

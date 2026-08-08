@@ -27,7 +27,7 @@ func TestRunAppliesPostgresBaselineWithoutAutoMigrate(t *testing.T) {
 	if err := run(context.Background(), []string{"-config", configPath, "-direction", "up"}, &output, &output); err != nil {
 		t.Fatalf("run migration up: %v", err)
 	}
-	if !strings.Contains(output.String(), "current=6 latest=6 applied=6") {
+	if !strings.Contains(output.String(), "current=8 latest=8 applied=8") {
 		t.Fatalf("migration output = %q", output.String())
 	}
 	var count int

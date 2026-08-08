@@ -15,7 +15,10 @@ import (
 // ---------- 认证 ----------
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	payload, err := decodeBody[LoginRequest](r)
+	payload, err := decodeBody[struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}](r)
 	if err != nil {
 		writeProblem(w, r, http.StatusBadRequest, "invalid login request")
 		return
@@ -39,7 +42,9 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request, principal 
 }
 
 func (s *Server) handleReauth(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	payload, err := decodeBody[ReauthRequest](r)
+	payload, err := decodeBody[struct {
+		Password string `json:"password"`
+	}](r)
 	if err != nil || strings.TrimSpace(payload.Password) == "" {
 		writeProblem(w, r, http.StatusBadRequest, "password is required")
 		return

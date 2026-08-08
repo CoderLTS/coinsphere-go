@@ -159,6 +159,102 @@ VALUES ('019c2f6d-7c00-7000-8000-000000000020', $1, $2, '1m')
 	}
 }
 
+func TestManagerSubscribesEnabledPublishedStrategyInstances(t *testing.T) {
+	database := openStoreTestDatabase(t)
+	store := marketdata.NewPostgresStore(database)
+	metadata := managerTestMetadata()
+	instrument, err := store.UpsertInstrument(t.Context(), metadata)
+	if err != nil {
+		t.Fatalf("insert instrument: %v", err)
+	}
+	var ownerID, recordID int64
+	if err := database.QueryRow(`INSERT INTO users (username) VALUES ('manager-strategy-owner') RETURNING id`).Scan(&ownerID); err != nil {
+		t.Fatalf("insert strategy owner: %v", err)
+	}
+	if err := database.QueryRow(`
+INSERT INTO idempotency_records (user_id, scope, key_hash, request_hash, expires_at, created_at)
+VALUES ($1, 'strategy:publish:manager', repeat('m', 64), repeat('n', 64),
+        CURRENT_TIMESTAMP + INTERVAL '1 day', CURRENT_TIMESTAMP)
+RETURNING id
+`, ownerID).Scan(&recordID); err != nil {
+		t.Fatalf("insert strategy idempotency record: %v", err)
+	}
+	const strategyID = "019d5000-0000-7000-8000-000000000001"
+	const versionID = "019d5000-0000-7000-8000-000000000002"
+	const publishTaskID = "019d5000-0000-7000-8000-000000000003"
+	const instanceID = "019d5000-0000-7000-8000-000000000004"
+	const sourceCode = "def on_bar(candles, params): return Decimal('0')"
+	if _, err := database.Exec(`
+INSERT INTO strategies (
+    id, name, source_code, market_type, instrument_id, interval_code, lookback_bars,
+    parameter_schema_json, created_by_user_id, updated_by_user_id
+) VALUES ($1, 'manager strategy', $2, 'spot', $3, '1m', 1, '{}', $4, $4)
+`, strategyID, sourceCode, instrument.ID, ownerID); err != nil {
+		t.Fatalf("insert strategy draft: %v", err)
+	}
+	if _, err := database.Exec(`
+INSERT INTO worker_tasks (id, task_type, payload_json, status, attempt_count, lane, finished_at)
+VALUES ($1, 'strategy.publish', $2, 'succeeded', 1, 'backtest', CURRENT_TIMESTAMP)
+`, publishTaskID, `{"strategyId":"`+strategyID+`","strategyVersionId":"`+versionID+`"}`); err != nil {
+		t.Fatalf("insert publish task: %v", err)
+	}
+	if _, err := database.Exec(`
+INSERT INTO strategy_versions (
+    id, strategy_id, version_number, status, worker_task_id, idempotency_record_id,
+    name, source_code, code_sha256, runtime_version, market_type, instrument_id, symbol,
+    interval_code, lookback_bars, parameter_schema_json, published_by_user_id, published_at
+) VALUES ($1, $2, 1, 'published', $3, $4, 'manager strategy', $5, repeat('a', 64),
+          'python3.12', 'spot', $6, 'BTCUSDT', '1m', 1, '{}', $7, CURRENT_TIMESTAMP)
+`, versionID, strategyID, publishTaskID, recordID, sourceCode, instrument.ID, ownerID); err != nil {
+		t.Fatalf("insert strategy version: %v", err)
+	}
+	if _, err := database.Exec(`
+INSERT INTO strategy_instances (
+    id, owner_user_id, strategy_version_id, name, mode, environment, is_enabled
+) VALUES ($1, $2, $3, 'enabled manager strategy', 'signal_only', 'paper', TRUE)
+`, instanceID, ownerID, versionID); err != nil {
+		t.Fatalf("insert enabled strategy instance: %v", err)
+	}
+
+	subscribed := make(chan struct{}, 1)
+	source := fakeMarketSource{
+		snapshot: func(_ context.Context, marketType marketdata.MarketType) ([]marketdata.InstrumentMetadata, error) {
+			if marketType == marketdata.MarketTypeSpot {
+				return []marketdata.InstrumentMetadata{metadata}, nil
+			}
+			return nil, nil
+		},
+		fetch: func(context.Context, marketdata.CandlePageRequest) (marketdata.CandlePage, error) {
+			return marketdata.CandlePage{}, nil
+		},
+		subscribe: func(ctx context.Context, _ marketdata.Instrument, _ marketdata.CandleInterval, _ marketdata.CandleHandler) error {
+			subscribed <- struct{}{}
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	}
+	manager, err := marketdata.NewManager(database, source, marketdata.ManagerConfig{
+		ReconcileInterval: 20 * time.Millisecond,
+		BackfillPageSize:  10,
+	})
+	if err != nil {
+		t.Fatalf("create manager: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- manager.Run(ctx) }()
+	select {
+	case <-subscribed:
+	case <-time.After(2 * time.Second):
+		cancel()
+		t.Fatal("enabled strategy instance did not create a candle subscription")
+	}
+	cancel()
+	if runErr := <-done; !errors.Is(runErr, context.Canceled) {
+		t.Fatalf("manager shutdown error = %v", runErr)
+	}
+}
+
 func managerTestMetadata() marketdata.InstrumentMetadata {
 	return marketdata.InstrumentMetadata{
 		Venue: marketdata.VenueBinance, MarketType: marketdata.MarketTypeSpot,

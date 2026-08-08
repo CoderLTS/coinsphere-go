@@ -45,6 +45,13 @@ func TestRoutesUseV1AndRemoveLegacyEntrypoints(t *testing.T) {
 		{http.MethodGet, "/api/v1/strategies"},
 		{http.MethodPost, "/api/v1/backtests"},
 		{http.MethodPost, "/api/v1/backtests/019c2f6d-7c00-7000-8000-000000000001/cancel"},
+		{http.MethodGet, "/api/v1/strategy-instances"},
+		{http.MethodPost, "/api/v1/strategy-instances"},
+		{http.MethodPost, "/api/v1/strategy-instances/019c2f6d-7c00-7000-8000-000000000001/enable"},
+		{http.MethodPost, "/api/v1/strategy-instances/019c2f6d-7c00-7000-8000-000000000001/disable"},
+		{http.MethodGet, "/api/v1/signals"},
+		{http.MethodPost, "/api/v1/signals/019c2f6d-7c00-7000-8000-000000000001/approve"},
+		{http.MethodPost, "/api/v1/signals/019c2f6d-7c00-7000-8000-000000000001/reject"},
 	} {
 		request := httptest.NewRequest(route.method, route.path, nil)
 		if _, pattern := mux.Handler(request); pattern == "" {

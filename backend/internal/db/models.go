@@ -146,6 +146,45 @@ type Backtest struct {
 
 func (Backtest) TableName() string { return "backtests" }
 
+// StrategyInstance 是用户启用的实时策略配置；下单能力不属于本阶段。
+type StrategyInstance struct {
+	ID                uuid.UUID `gorm:"type:uuid;primaryKey"`
+	OwnerUserID       int64
+	StrategyVersionID uuid.UUID
+	Name              string
+	Mode              string
+	Environment       string
+	ParametersJSON    string `gorm:"column:parameters_json;type:jsonb"`
+	IsEnabled         bool   `gorm:"column:is_enabled"`
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+func (StrategyInstance) TableName() string { return "strategy_instances" }
+
+// StrategySignal 是闭合 K 线上的持久化策略目标，不代表订单或成交。
+type StrategySignal struct {
+	ID                          uuid.UUID `gorm:"type:uuid;primaryKey"`
+	OwnerUserID                 int64
+	StrategyInstanceID          uuid.UUID
+	StrategyVersionID           uuid.UUID
+	InstrumentID                uuid.UUID
+	Interval                    string `gorm:"column:interval_code"`
+	CandleOpenTime              time.Time
+	CandleCloseTime             time.Time
+	Target                      decimal.Decimal `gorm:"type:numeric(38,18)"`
+	Mode                        string
+	Environment                 string
+	Status                      string
+	ExpiresAt                   *time.Time
+	DecisionIdempotencyRecordID *int64
+	DecidedByUserID             *int64
+	DecidedAt                   *time.Time
+	CreatedAt                   time.Time
+}
+
+func (StrategySignal) TableName() string { return "strategy_signals" }
+
 // WorkflowDefinition 不可变的工作流定义版本。
 type WorkflowDefinition struct {
 	// 多个字段共用同一个 uniqueIndex 名(ux_workflow_def_code_version)并带 priority = 联合唯一索引:
@@ -565,6 +604,7 @@ type SystemNotifyDelivery struct {
 	WorkflowExecutionNode   *WorkflowExecutionNode `gorm:"foreignKey:WorkflowExecutionNodeID;constraint:OnDelete:SET NULL"`
 	OutboxEventID           *int64                 `gorm:"column:outbox_event_id"`
 	OutboxEvent             *DomainEventOutbox     `gorm:"foreignKey:OutboxEventID;constraint:OnDelete:SET NULL"`
+	StrategySignalID        *uuid.UUID             `gorm:"column:strategy_signal_id;type:uuid"`
 	TargetType              string                 `gorm:"size:20"`
 	TargetID                *int64                 `gorm:"column:target_id"`
 	RecipientUserID         *int64                 `gorm:"column:recipient_user_id;index"`

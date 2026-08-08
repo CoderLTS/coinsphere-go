@@ -172,7 +172,6 @@ def validate_candles(
     for candle in result:
         if not isinstance(candle, Candle):
             raise StrategyValidationError("candles must contain Candle values")
-        validate_candle(candle)
         current = candle.open_time.astimezone(UTC)
         if previous is not None and current <= previous:
             raise StrategyValidationError("candles must be strictly time ordered")

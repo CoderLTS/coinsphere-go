@@ -3,15 +3,7 @@ import json
 import pytest
 
 from coinsphere_worker import __main__ as worker_main
-from coinsphere_worker import runtime_info
 from coinsphere_worker.__main__ import health_document, main
-
-
-def test_runtime_info_is_stable() -> None:
-    info = runtime_info()
-
-    assert info.role == "quant-worker"
-    assert info.protocol_version == 1
 
 
 def test_health_document_declares_a1_consumer_boundary() -> None:

@@ -9,7 +9,6 @@ import AutoImport from 'unplugin-auto-import/vite'
 import ElementPlus from 'unplugin-element-plus/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 import tailwindcss from '@tailwindcss/vite'
-// import { visualizer } from 'rollup-plugin-visualizer'
 
 export default ({ mode }: { mode: string }) => {
   const root = process.cwd()
@@ -100,13 +99,6 @@ export default ({ mode }: { mode: string }) => {
         deleteOriginFile: false // 压缩后是否删除原文件
       }),
       !isE2E && vueDevTools()
-      // 打包分析
-      // visualizer({
-      //   open: true,
-      //   gzipSize: true,
-      //   brotliSize: true,
-      //   filename: 'dist/stats.html' // 分析图生成的文件名及路径
-      // }),
     ],
     // 依赖预构建：避免运行时重复请求与转换，提升首次加载速度
     optimizeDeps: {

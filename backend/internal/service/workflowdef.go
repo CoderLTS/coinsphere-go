@@ -827,7 +827,7 @@ func workflowCodeCandidate(base string, index int) string {
 	if index <= 1 {
 		return base
 	}
-	suffix := "-" + itoa(index)
+	suffix := "-" + strconv.Itoa(index)
 	available := workflowCodeMaxLength - len(suffix)
 	truncated := strings.TrimRight(truncateBytes(base, available), "-._")
 	if truncated == "" {
@@ -883,8 +883,6 @@ func truncateBytes(value string, max int) string {
 	}
 	return string(runes)
 }
-
-func itoa(value int) string { return strconv.Itoa(value) }
 
 // nilOrValue 把 *int64 指针转成可直接放进 JSON 的值:空指针→nil,否则用 *value 解引用取出整数。
 func nilOrValue(value *int64) any {

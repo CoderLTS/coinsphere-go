@@ -1,95 +1,24 @@
 # CoinSphere 质量门禁
 
-门禁按变更风险和交付层级执行。PR 获取快速反馈，里程碑集成分支验证跨模块闭环，`main`、定时任务和发布承担完整供应链检查；同一波次不在子步骤间重复运行完整门禁。
+门禁按变更范围选择已有 CI 检查；不要为同一交付或同一模块重复运行完整矩阵。领域验收和晋级证据放在对应测试与 GitHub Issue，不在本文件复制。
 
-## PR 快速层
+## Pull Request
 
-- Ready PR 必须以 `main` 为 base；依赖未合并代码的 stacked PR 只能保持 Draft 并指向父分支。
-- Secret scan 始终运行。只执行受影响模块的格式、lint、类型、构建和核心测试；依赖或锁文件变化时增加对应依赖扫描。
-- 涉及 migration、并发状态、金融计算、凭据、风控、订单状态或外部协议时，增加对应 PostgreSQL/TimescaleDB、黄金案例和契约检查。
-- 前端关键交互增加 Chromium 冒烟；认证、批准、风险和急停必须覆盖移动视口。
-- 纯文档与治理 PR 只运行 Markdown 链接、格式、术语一致性、ADR 状态、GitHub 引用和仓库差异检查，不运行无关业务测试。
+- Ready PR 的 base 必须是 `main`；依赖未合并代码的 stacked PR 保持 Draft。
+- `changes` 按路径选择 Backend、Frontend、Worker 和发布脚本检查，并拒绝 Ready PR 指向非 `main`。
+- Backend 变更运行 `go mod tidy -diff`、`gofmt`、`go vet`、Staticcheck、全量测试和构建；Frontend 变更运行锁定依赖安装、ESLint、Stylelint、单元测试、类型检查/构建和 Chromium 冒烟；Worker 变更运行 Ruff、Mypy 和 Pytest；发布脚本变更运行 Bash 语法、ShellCheck 和脚本测试。
+- `.github/workflows/ci.yml` 变更会选择全部模块。依赖或锁文件变化时，Security workflow 选择对应漏洞/文件系统扫描。
+- Secret scan 每个 PR 都运行。金融、凭据、迁移、并发、恢复或外部协议变更必须在本切片补充覆盖边界行为的测试，并在 PR 记录命令和结果。
+- 纯文档/治理变更只做相对链接、YAML 解析、`git diff --check` 和只读引用复审；这些检查目前由本地或审查执行，不宣称由 CI 自动完成。
 
-## 里程碑完整层
+## `main` 与容器
 
-同一里程碑的独立纵向 PR 在临时集成分支组合后只运行一次：
+推送到 `main` 时 CI 选择全部模块：Backend 使用 Race 测试，Frontend 运行 Chromium/Firefox/WebKit 冒烟，Worker 运行全量测试，容器 Job 构建 Compose 镜像、检查代理隔离、运行健康/`/health` 冒烟，并扫描 Backend、Web、Worker 镜像的 CRITICAL 漏洞。
 
-- Go 全量测试、必要 Race、进程生命周期和 Executor 状态机检查。
-- Python Worker 全量测试、实时/回测通道隔离、子进程取消和确定性回测黄金案例。
-- PostgreSQL/TimescaleDB migration、空库重放、约束、并发事务、投影重建和跨模块集成。
-- Chromium、Firefox、WebKit 的登录、工作流、策略、回测、批准、订单、风险和急停关键路径。
-- Web、App、Worker、Executor 和数据库的 Compose 健康及端到端冒烟；本机无法运行的容器层由 GitHub Actions 承担。
-- 安全、权限、凭据、通知、风控和交易所协议的专项契约。
+Security workflow 在 `main` 和每周计划任务运行 Secret、Go、Python 依赖及文件系统扫描；按变更范围的 PR 只运行适用扫描。
 
-完整层结束后由根 Agent 执行一次最终只读复审。集成分支不直接交付，也不替代用户对各 PR 的审查和手工合并。
+## 发布
 
-## `main` 与发布层
+Release 只能由用户从最新 `main` 手工触发。发布 workflow 构建固定版本和 digest，生成 Backend/Web SBOM，扫描镜像和归档，校验 Manifest/SHA-256，通过后才上传 Artifact、部署或创建 Release。生产流程不得接触真实交易所密钥、自动下单、启用真实策略或解除急停。
 
-- `main`、定时任务或发布运行完整依赖、源代码、文件系统、镜像、归档、SBOM 和校验和扫描，以及跨模块回归。
-- 发布产物必须匹配固定清单、Manifest、镜像 digest 和 SHA-256；扫描失败不得上传产物、部署或创建 Release。
-- 生产只允许用户从最新 `main` 手工触发。任何自动流程都不得接触真实交易密钥、启用真实策略、执行真实订单或解除急停。
-
-## 稳定契约门禁
-
-### 身份、API 与归属
-
-- OpenAPI、生成 Go/TypeScript 类型、后端路由和前端调用必须无漂移；`oasdiff` 阻止未声明的破坏性变化。
-- 原子迁移完成后，运行时代码、前端、测试和配置不得出现旧 `/api` 或旧 WebSocket 路径；公开注册路由和 UI 必须不存在。
-- 除登录页、登录接口、健康检查和静态资源外，所有业务页面、HTTP API 和 WebSocket 均验证登录；跨用户读取、写入、关联、批准和凭据操作全部拒绝。
-- 五分钟复验 Token 必须绑定用户和会话，服务端只保存哈希；过期、重放和跨会话使用均失败。
-
-### Binance 行情
-
-- Spot/USD-M 官方脱敏样本覆盖元数据、历史 K 线和实时 Kline；未知枚举、非法 Decimal、错位时间和不合法 OHLC 必须失败。
-- 同一 `instrument + interval + openTime` 重复写入不产生重复行；未闭合可更新，闭合后普通写入不得覆盖。
-- 只有 `k.x=true` 且成功落库的闭合事件可以触发实时策略任务；补数旧数据和重复闭合事件不产生重复信号。
-- 按需回填可重复执行且结果一致；本地断线确认到首条恢复事件落库目标不超过 30 秒。
-- Timescale 验证 7 天 chunk、30 天压缩和默认两年 retention。压缩或 retention 失败不得停止行情写入，并产生固定分类告警。
-
-### 策略、Worker 与回测
-
-- 非管理员不能编辑或发布策略；已发布代码、元数据和哈希不可修改。
-- 实时和回测调用相同 `on_bar`。异常、超时、非 Decimal、非有限值和越界目标均失败；实时失败暂停实例且不创建交易意图。
-- 并发测试用长回测占满 backtest 槽，证明 realtime 任务仍由保留槽执行。正常基准负载下，闭合事件到信号持久化 p99 不超过两秒。
-- 回测黄金案例覆盖无未来数据、下一根开盘成交、最后信号不成交、Decimal、费用、滑点、资金费、跳空止损、同 Bar 不利路径和保守强平。
-- 相同策略、参数、运行时和规范化数据必须产生相同结果及 SHA-256；冻结 `JSONL.gz` 解压、重算和 Manifest 引用全部一致。
-
-### 信号、风险与 Executor
-
-- 重复闭合事件不生成第二个信号；manual 只能由所有者在下一根闭合前批准，过期、拒绝和终态信号不可恢复。
-- `auto` 缺少管理员授权、用户开关或任一适用风险上限时保持阻断。策略限制不能放宽账户限制。
-- 数据库保证同一 `account + market + symbol` 只有一个活动仓位所有者；归零、在途订单和保护单未完成对账前不得转移。
-- 重试不得创建重复订单。响应未知时必须按确定性 `clientOrderId` 对账，明确不存在后才能继续。
-- Spot 保护单随仓位重建；USD-M 保护单固定 `STOP_MARKET + closePosition=true + MARK_PRICE`。保护单无法确认时必须尝试立即平仓、暂停实例并禁止增仓。
-- 风控或全局急停触发后不得新增敞口，只允许减仓、平仓和撤单；解除急停不能自动恢复策略。
-
-### 交易事件与投影
-
-- 重复交易所回报由外部唯一标识幂等；历史订单、成交、手续费和资金费事件不可更新或删除，修正只能追加事件。
-- 在线投影与从空状态重放全部事件得到的订单、仓位、余额和盈亏逐字段一致。
-- Paper、Testnet 或 Live 进入下一阶段前必须没有未解释的订单状态、仓位、余额、费用或资金费差异。
-
-### 通知与工作流
-
-- 通知使用本地假服务验证钉钉签名和 20 条/分钟限制、QQ 鉴权、重试去重、SMTP、站内未读恢复和日志脱敏。
-- 一次性操作 Token 至少 128 位随机量且只保存哈希；GET、Bot 回调、过期 Token 和未复验会话均不能批准信号。
-- 待批准信号、订单未知或失败、保护单失败、风控暂停和急停不依赖工作流即可持久化关键通知。
-- 工作流 HTTP 节点继续通过 SSRF 契约，并且不能读取交易凭据、调用交易所私有接口或创建交易意图。
-
-## 晋级证据
-
-晋级顺序为 `Paper -> Testnet -> Live manual -> Live auto`，Spot Live 先于 USD-M Live。每个 GitHub 验收 Issue 必须链接适用的：
-
-- CI run、OpenAPI/生成代码检查和测试报告。
-- 数据与结果 Manifest、SHA-256、行情质量或延迟报告。
-- 重启恢复、订单未知、重复回报、投影重建、保护单失败和急停演练。
-- 未解释差异为零的对账结论。
-- 用户手工放行记录。
-
-不再把固定运行天数或订单数当作晋级条件。自动化证据只能证明候选具备人工审查资格，不能替代用户放行。
-
-## Migration 冻结
-
-- 正式 Paper 观察前可以在重置未投产开发/CI 数据的前提下整理历史 migration；不得编写旧数据库兼容层。
-- 开始记录 Paper 晋级证据前执行最后一次空库 Up/Down/重放，记录基线版本并永久冻结历史。
-- 冻结后只能追加 migration，不得修改、重排或复用已有版本。生产回滚不自动执行 Down。
+Migration 的冻结点、Up/Down 安全和备份恢复见[数据库迁移手册](../runbooks/database-migrations.md)；发布故障处理见[发布手册](../runbooks/release.md)。

@@ -212,7 +212,7 @@ func (a *App) spawn(ctx context.Context, loop func(context.Context)) {
 ```go
 func decodeBody[T any](r *http.Request) (*T, error)   // T 是"类型参数",调用时替换成具体类型
 ```
-意思是"对任意类型 T,把请求体 JSON 解析成一个 *T"。调用处写 `decodeBody[LoginRequest](r)`,T 就成了 `LoginRequest`。泛型让一份代码适配多种类型,不用为每种类型重写。
+意思是“对任意类型 T，把请求体 JSON 解析成一个 *T”。调用时 T 替换成 handler 声明的请求结构体，因此不用为每种请求重写解析函数。
 
 ---
 

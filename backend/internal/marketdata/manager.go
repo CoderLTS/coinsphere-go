@@ -240,11 +240,19 @@ SELECT DISTINCT
     instrument.id, instrument.venue, instrument.market_type, instrument.native_symbol,
     instrument.base_asset, instrument.quote_asset, instrument.status, instrument.price_tick,
     instrument.quantity_step, instrument.min_quantity, instrument.min_notional,
-    instrument.updated_at, item.interval_code
-FROM watchlist_items AS item
-JOIN market_instruments AS instrument ON instrument.id = item.instrument_id
+    instrument.updated_at, desired.interval_code
+FROM (
+    SELECT instrument_id, interval_code
+    FROM watchlist_items
+    UNION
+    SELECT version.instrument_id, version.interval_code
+    FROM strategy_instances AS instance
+    JOIN strategy_versions AS version ON version.id = instance.strategy_version_id
+    WHERE instance.is_enabled AND version.status = 'published'
+) AS desired
+JOIN market_instruments AS instrument ON instrument.id = desired.instrument_id
 WHERE instrument.venue = 'binance' AND instrument.status = 'trading'
-ORDER BY instrument.id, item.interval_code
+ORDER BY instrument.id, desired.interval_code
 `)
 	if err != nil {
 		return nil, err

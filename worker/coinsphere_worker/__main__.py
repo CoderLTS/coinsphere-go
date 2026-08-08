@@ -14,9 +14,7 @@ from types import FrameType
 
 import psycopg
 
-from .lanes import WorkerLane
-from .queue_runtime import WorkerRuntime
-from .runtime import runtime_info
+from .queue_runtime import WorkerLane, WorkerRuntime
 
 DATABASE_DSN_ENV = "COINSPHERE_WORKER_DATABASE_DSN"
 
@@ -24,11 +22,10 @@ DATABASE_DSN_ENV = "COINSPHERE_WORKER_DATABASE_DSN"
 def health_document(status: str = "healthy", error_category: str | None = None) -> str:
     """返回稳定、可供容器门禁解析且不包含数据库配置的健康文档。"""
 
-    info = runtime_info()
     payload: dict[str, bool | int | str] = {
         "mode": "a1-postgres",
-        "protocolVersion": info.protocol_version,
-        "role": info.role,
+        "protocolVersion": 1,
+        "role": "quant-worker",
         "status": status,
         "taskConsumer": True,
     }
