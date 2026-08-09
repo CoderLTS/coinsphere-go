@@ -71,6 +71,13 @@ func TestTestnetCredentialEncryptionIdempotencyAndRevocation(t *testing.T) {
 	if account.Environment != "testnet" || account.CredentialsConfigured {
 		t.Fatalf("new testnet account = %#v", account)
 	}
+	controlReleaseAt := time.Now().UTC()
+	if err := database.Model(&db.TradingControl{}).Where("id = 1").Updates(map[string]any{
+		"emergency_stopped": false, "stop_reason": "", "released_at": controlReleaseAt,
+		"released_by_user_id": owner.ID, "updated_at": controlReleaseAt,
+	}).Error; err != nil {
+		t.Fatalf("release default trading emergency stop: %v", err)
+	}
 
 	payload := TradingCredentialPayload{
 		APIKey: strings.Repeat("k", 32), APISecret: strings.Repeat("s", 32),
