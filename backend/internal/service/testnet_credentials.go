@@ -80,6 +80,9 @@ func (a *App) SaveTradingCredentials(
 		if keyCiphertext == "" || secretCiphertext == "" {
 			return errors.New("credential encryption failed")
 		}
+		if err := clearTestnetReconciliation(tx, accountID); err != nil {
+			return err
+		}
 		now := time.Now().UTC()
 		if err := tx.Where("account_id = ?", accountID).Take(&row).Error; errors.Is(err, gorm.ErrRecordNotFound) {
 			id, err := uuid.NewV7()
@@ -163,6 +166,9 @@ func (a *App) RevokeTradingCredentials(
 		if !a.ConsumeReauthToken(reauthToken, principal) {
 			return ErrTradingReauthentication
 		}
+		if err := clearTestnetReconciliation(tx, accountID); err != nil {
+			return err
+		}
 		if err := tx.Where("account_id = ?", accountID).Take(&row).Error; errors.Is(err, gorm.ErrRecordNotFound) {
 			id, createErr := uuid.NewV7()
 			if createErr != nil {
@@ -239,6 +245,27 @@ func testnetCredentialReadinessError(database *gorm.DB, accountID uuid.UUID) err
 		return ErrTradingCredentialsMissing
 	}
 	return ErrTradingCredentialsUnverified
+}
+
+func testnetAccountReadinessError(database *gorm.DB, accountID uuid.UUID) error {
+	verified, err := testnetCredentialsVerified(database, accountID)
+	if err != nil {
+		return err
+	}
+	if !verified {
+		return testnetCredentialReadinessError(database, accountID)
+	}
+	var count int64
+	if err := database.Model(&db.TestnetReconciliation{}).
+		Joins("JOIN trading_account_credentials ON trading_account_credentials.account_id = testnet_reconciliations.account_id AND trading_account_credentials.updated_at = testnet_reconciliations.credential_updated_at").
+		Where("testnet_reconciliations.account_id = ? AND testnet_reconciliations.status = 'matched'", accountID).
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count != 1 {
+		return ErrTradingReconciliationRequired
+	}
+	return nil
 }
 
 func loadTradingCredential(database *gorm.DB, accountID uuid.UUID) (db.TradingAccountCredential, error) {

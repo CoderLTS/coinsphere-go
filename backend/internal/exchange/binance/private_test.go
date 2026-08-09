@@ -85,6 +85,124 @@ func TestPrivateClientSignsAndRoutesAccountRequests(t *testing.T) {
 	}
 }
 
+func TestPrivateClientSnapshotsSpotAndUSDMAccounts(t *testing.T) {
+	fixedNow := time.Date(2026, time.August, 9, 7, 8, 9, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("X-MBX-APIKEY") == "" || request.URL.Query().Get("signature") == "" {
+			t.Error("snapshot request was not signed")
+		}
+		response.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v3/account":
+			_, _ = response.Write([]byte(`{"canTrade":true,"balances":[{"asset":"BTC","free":"0.25","locked":"0.05"},{"asset":"USDT","free":"1000","locked":"0"},{"asset":"ZERO","free":"0","locked":"0"}]}`))
+		case "/api/v3/openOrders":
+			_, _ = response.Write([]byte(`[{"symbol":"BTCUSDT","orderId":41,"clientOrderId":"external-spot","side":"BUY","type":"LIMIT","status":"NEW","price":"50000","origQty":"0.01","executedQty":"0","stopPrice":"0"}]`))
+		case "/fapi/v3/account":
+			_, _ = response.Write([]byte(`{"canTrade":true,"assets":[{"asset":"USDT","walletBalance":"1200","availableBalance":"1100"},{"asset":"ZERO","walletBalance":"0","availableBalance":"0"}],"positions":[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"-0.02","entryPrice":"51000","unrealizedProfit":"-4.5"},{"symbol":"ETHUSDT","positionSide":"BOTH","positionAmt":"0","entryPrice":"0","unrealizedProfit":"0"}]}`))
+		case "/fapi/v1/openOrders":
+			_, _ = response.Write([]byte(`[{"symbol":"BTCUSDT","orderId":42,"clientOrderId":"external-usdm","side":"SELL","type":"STOP_MARKET","status":"NEW","price":"0","origQty":"0.02","executedQty":"0","stopPrice":"52000"}]`))
+		default:
+			t.Errorf("unexpected snapshot path %q", request.URL.Path)
+			response.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	client, err := NewPrivateClient(PrivateClientConfig{
+		SpotBaseURL: server.URL, USDMBaseURL: server.URL, Now: func() time.Time { return fixedNow },
+	})
+	if err != nil {
+		t.Fatalf("create snapshot client: %v", err)
+	}
+
+	spot, err := client.SnapshotAccount(context.Background(), marketdata.MarketTypeSpot, "key", "secret")
+	if err != nil {
+		t.Fatalf("snapshot Spot account: %v", err)
+	}
+	if !spot.CanTrade || len(spot.Balances) != 2 || spot.Balances[0].Asset != "BTC" ||
+		spot.Balances[0].Total.String() != "0.3" || spot.Balances[0].Available.String() != "0.25" ||
+		len(spot.Positions) != 0 || len(spot.OpenOrders) != 1 || spot.OpenOrders[0].ExchangeOrderID != 41 ||
+		!spot.ObservedAt.Equal(fixedNow) {
+		t.Fatalf("Spot snapshot = %#v", spot)
+	}
+
+	usdm, err := client.SnapshotAccount(context.Background(), marketdata.MarketTypeUSDM, "key", "secret")
+	if err != nil {
+		t.Fatalf("snapshot USD-M account: %v", err)
+	}
+	if !usdm.CanTrade || len(usdm.Balances) != 1 || usdm.Balances[0].Total.String() != "1200" ||
+		len(usdm.Positions) != 1 || usdm.Positions[0].PositionSide != "both" ||
+		usdm.Positions[0].Quantity.String() != "-0.02" || usdm.Positions[0].UnrealizedPnL.String() != "-4.5" ||
+		len(usdm.OpenOrders) != 1 || usdm.OpenOrders[0].OrderType != "stop_market" ||
+		usdm.OpenOrders[0].StopPrice.String() != "52000" {
+		t.Fatalf("USD-M snapshot = %#v", usdm)
+	}
+}
+
+func TestPrivateClientRejectsMalformedSnapshotWithoutLeakage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if strings.HasSuffix(request.URL.Path, "/account") {
+			_, _ = response.Write([]byte(`{"canTrade":true,"balances":[{"asset":"BTC","free":"sensitive-response-marker","locked":"0"}]}`))
+			return
+		}
+		_, _ = response.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+	client, err := NewPrivateClient(PrivateClientConfig{SpotBaseURL: server.URL, USDMBaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("create malformed snapshot client: %v", err)
+	}
+	_, err = client.SnapshotAccount(context.Background(), marketdata.MarketTypeSpot, "key", "secret")
+	var privateErr *PrivateError
+	if !errors.As(err, &privateErr) || privateErr.Kind != PrivateErrorProtocol {
+		t.Fatalf("malformed snapshot error = %#v", err)
+	}
+	if strings.Contains(err.Error(), "sensitive-response-marker") {
+		t.Fatal("snapshot protocol error exposed response data")
+	}
+}
+
+func TestPrivateDecimalEnforcesStorageBoundary(t *testing.T) {
+	tests := []struct {
+		name          string
+		value         string
+		allowNegative bool
+		want          string
+		wantError     bool
+	}{
+		{name: "positive boundary", value: "99999999999999999999.999999999999999999", want: "99999999999999999999.999999999999999999"},
+		{name: "negative boundary", value: "-99999999999999999999.999999999999999999", allowNegative: true, want: "-99999999999999999999.999999999999999999"},
+		{name: "negative rejected", value: "-1", wantError: true},
+		{name: "integer overflow", value: "100000000000000000000", wantError: true},
+		{name: "fraction overflow", value: "0.0000000000000000001", wantError: true},
+		{name: "exponent rejected", value: "1e2", wantError: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			value, err := privateDecimal(test.value, test.allowNegative)
+			if test.wantError {
+				if err == nil {
+					t.Fatalf("privateDecimal(%q) unexpectedly returned %s", test.value, value)
+				}
+				return
+			}
+			if err != nil || value.String() != test.want {
+				t.Fatalf("privateDecimal(%q) = %s, %v; want %s", test.value, value, err, test.want)
+			}
+		})
+	}
+}
+
+func TestPrivateSnapshotRejectsBalanceTotalOutsideStorageBoundary(t *testing.T) {
+	_, err := parseAccountSnapshot(
+		marketdata.MarketTypeSpot,
+		[]byte(`{"canTrade":true,"balances":[{"asset":"USDT","free":"99999999999999999999","locked":"1"}]}`),
+		[]byte(`[]`),
+	)
+	if err == nil {
+		t.Fatal("Spot snapshot accepted a balance total outside numeric(38,18)")
+	}
+}
+
 func TestPrivateClientClassifiesErrorsWithoutResponseLeakage(t *testing.T) {
 	tests := []struct {
 		name      string

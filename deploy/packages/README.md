@@ -6,4 +6,4 @@
 
 Windows 包的后端目标架构为 `GOOS=windows GOARCH=386`；Linux 包为 `GOOS=linux GOARCH=amd64`。
 
-`coinsphere-executor` 默认只消费 PostgreSQL 中的 Paper 意图。Testnet 私有验证代码默认关闭，只有显式启用并提供与 Backend 相同的安全加密主密钥时才会解密数据库中的 Testnet 凭据；凭据不得写入环境文件，Live 私有接口始终不可用。启动前必须先执行 migration，并为 Executor 配置专用的 PostgreSQL 身份。
+`coinsphere-executor` 默认只消费 PostgreSQL 中的 Paper 意图。Testnet 私有验证与首次只读对账代码默认关闭，只有显式启用并提供与 Backend 相同的安全加密主密钥时才会解密数据库中的 Testnet 凭据；凭据不得写入环境文件，对账不会自动恢复账户或创建订单，Live 私有接口始终不可用。启动前必须先执行 migration，并为 Executor 配置专用的 PostgreSQL 身份。

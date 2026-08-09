@@ -21,6 +21,16 @@ export interface TradingRisk {
   complete: boolean
 }
 
+export interface TestnetReconciliation {
+  status: 'not_applicable' | 'pending' | 'matched' | 'mismatch' | 'unknown'
+  errorCode?: string
+  balanceCount: number
+  positionCount: number
+  openOrderCount: number
+  lastAttemptedAt?: string
+  lastObservedAt?: string
+}
+
 export interface TradingAccount {
   id: string
   name: string
@@ -35,6 +45,7 @@ export interface TradingAccount {
   credentialStatus: string
   credentialVerificationStatus: string
   credentialsUpdatedAt: string | null
+  reconciliation: TestnetReconciliation
   initialBalance: string
   paperFeeRate: string
   risk: TradingRisk
@@ -112,6 +123,39 @@ export interface PaperBalance {
   updatedAt: string
 }
 
+export interface TestnetBalance {
+  accountId: string
+  asset: string
+  totalBalance: string
+  availableBalance: string
+  observedAt: string
+}
+
+export interface TestnetPosition {
+  accountId: string
+  symbol: string
+  positionSide: string
+  quantity: string
+  entryPrice: string
+  unrealizedPnl: string
+  observedAt: string
+}
+
+export interface TestnetOpenOrder {
+  accountId: string
+  symbol: string
+  exchangeOrderId: number
+  clientOrderId: string
+  side: string
+  orderType: string
+  status: string
+  price: string
+  originalQuantity: string
+  executedQuantity: string
+  stopPrice: string
+  observedAt: string
+}
+
 export interface TradingOverview {
   control: TradingControl
   accounts: TradingAccount[]
@@ -119,6 +163,9 @@ export interface TradingOverview {
   orders: PaperOrder[]
   positions: PaperPosition[]
   balances: PaperBalance[]
+  testnetBalances: TestnetBalance[]
+  testnetPositions: TestnetPosition[]
+  testnetOpenOrders: TestnetOpenOrder[]
 }
 
 export interface TradingRiskPayload {

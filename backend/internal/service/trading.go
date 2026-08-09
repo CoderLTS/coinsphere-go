@@ -16,13 +16,14 @@ import (
 )
 
 var (
-	ErrInvalidTradingRequest        = errors.New("invalid trading request")
-	ErrTradingAccountMissing        = errors.New("trading account was not found")
-	ErrTradingAccountConflict       = errors.New("trading account state does not allow this operation")
-	ErrTradingReauthentication      = errors.New("valid reauthentication token is required")
-	ErrTradingExecutionUnavailable  = errors.New("trading execution is not available for this strategy signal")
-	ErrTradingCredentialsMissing    = errors.New("testnet trading credentials are not configured")
-	ErrTradingCredentialsUnverified = errors.New("testnet trading credentials have not been verified")
+	ErrInvalidTradingRequest         = errors.New("invalid trading request")
+	ErrTradingAccountMissing         = errors.New("trading account was not found")
+	ErrTradingAccountConflict        = errors.New("trading account state does not allow this operation")
+	ErrTradingReauthentication       = errors.New("valid reauthentication token is required")
+	ErrTradingExecutionUnavailable   = errors.New("trading execution is not available for this strategy signal")
+	ErrTradingCredentialsMissing     = errors.New("testnet trading credentials are not configured")
+	ErrTradingCredentialsUnverified  = errors.New("testnet trading credentials have not been verified")
+	ErrTradingReconciliationRequired = errors.New("testnet account initial reconciliation has not matched")
 )
 
 type TradingRiskPayload struct {
@@ -58,24 +59,68 @@ type TradingRiskView struct {
 }
 
 type TradingAccountView struct {
-	ID                     string          `json:"id"`
-	Name                   string          `json:"name"`
-	Market                 string          `json:"market"`
-	Environment            string          `json:"environment"`
-	Status                 string          `json:"status"`
-	PauseReason            string          `json:"pauseReason"`
-	AutomationEnabled      bool            `json:"automationEnabled"`
-	AutomationAuthorized   bool            `json:"automationAuthorized"`
-	AutomationAuthorizedAt *string         `json:"automationAuthorizedAt"`
-	CredentialsConfigured  bool            `json:"credentialsConfigured"`
-	CredentialStatus       string          `json:"credentialStatus"`
-	CredentialVerification string          `json:"credentialVerificationStatus"`
-	CredentialsUpdatedAt   *string         `json:"credentialsUpdatedAt"`
-	InitialBalance         string          `json:"initialBalance"`
-	PaperFeeRate           string          `json:"paperFeeRate"`
-	Risk                   TradingRiskView `json:"risk"`
-	CreatedAt              string          `json:"createdAt"`
-	UpdatedAt              string          `json:"updatedAt"`
+	ID                     string                    `json:"id"`
+	Name                   string                    `json:"name"`
+	Market                 string                    `json:"market"`
+	Environment            string                    `json:"environment"`
+	Status                 string                    `json:"status"`
+	PauseReason            string                    `json:"pauseReason"`
+	AutomationEnabled      bool                      `json:"automationEnabled"`
+	AutomationAuthorized   bool                      `json:"automationAuthorized"`
+	AutomationAuthorizedAt *string                   `json:"automationAuthorizedAt"`
+	CredentialsConfigured  bool                      `json:"credentialsConfigured"`
+	CredentialStatus       string                    `json:"credentialStatus"`
+	CredentialVerification string                    `json:"credentialVerificationStatus"`
+	CredentialsUpdatedAt   *string                   `json:"credentialsUpdatedAt"`
+	Reconciliation         TestnetReconciliationView `json:"reconciliation"`
+	InitialBalance         string                    `json:"initialBalance"`
+	PaperFeeRate           string                    `json:"paperFeeRate"`
+	Risk                   TradingRiskView           `json:"risk"`
+	CreatedAt              string                    `json:"createdAt"`
+	UpdatedAt              string                    `json:"updatedAt"`
+}
+
+type TestnetReconciliationView struct {
+	Status          string  `json:"status"`
+	ErrorCode       string  `json:"errorCode,omitempty"`
+	BalanceCount    int     `json:"balanceCount"`
+	PositionCount   int     `json:"positionCount"`
+	OpenOrderCount  int     `json:"openOrderCount"`
+	LastAttemptedAt *string `json:"lastAttemptedAt,omitempty"`
+	LastObservedAt  *string `json:"lastObservedAt,omitempty"`
+}
+
+type TestnetBalanceView struct {
+	AccountID        string `json:"accountId"`
+	Asset            string `json:"asset"`
+	TotalBalance     string `json:"totalBalance"`
+	AvailableBalance string `json:"availableBalance"`
+	ObservedAt       string `json:"observedAt"`
+}
+
+type TestnetPositionView struct {
+	AccountID     string `json:"accountId"`
+	NativeSymbol  string `json:"symbol"`
+	PositionSide  string `json:"positionSide"`
+	Quantity      string `json:"quantity"`
+	EntryPrice    string `json:"entryPrice"`
+	UnrealizedPnl string `json:"unrealizedPnl"`
+	ObservedAt    string `json:"observedAt"`
+}
+
+type TestnetOpenOrderView struct {
+	AccountID        string `json:"accountId"`
+	NativeSymbol     string `json:"symbol"`
+	ExchangeOrderID  int64  `json:"exchangeOrderId"`
+	ClientOrderID    string `json:"clientOrderId"`
+	Side             string `json:"side"`
+	OrderType        string `json:"orderType"`
+	Status           string `json:"status"`
+	Price            string `json:"price"`
+	OriginalQuantity string `json:"originalQuantity"`
+	ExecutedQuantity string `json:"executedQuantity"`
+	StopPrice        string `json:"stopPrice"`
+	ObservedAt       string `json:"observedAt"`
 }
 
 // TradingCredentialPayload 只在写入边界接收明文；响应永远不包含这两个字段。
@@ -168,12 +213,15 @@ type PaperBalanceView struct {
 }
 
 type TradingOverviewView struct {
-	Control   TradingControlView   `json:"control"`
-	Accounts  []TradingAccountView `json:"accounts"`
-	Intents   []TradingIntentView  `json:"intents"`
-	Orders    []PaperOrderView     `json:"orders"`
-	Positions []PaperPositionView  `json:"positions"`
-	Balances  []PaperBalanceView   `json:"balances"`
+	Control           TradingControlView     `json:"control"`
+	Accounts          []TradingAccountView   `json:"accounts"`
+	Intents           []TradingIntentView    `json:"intents"`
+	Orders            []PaperOrderView       `json:"orders"`
+	Positions         []PaperPositionView    `json:"positions"`
+	Balances          []PaperBalanceView     `json:"balances"`
+	TestnetBalances   []TestnetBalanceView   `json:"testnetBalances"`
+	TestnetPositions  []TestnetPositionView  `json:"testnetPositions"`
+	TestnetOpenOrders []TestnetOpenOrderView `json:"testnetOpenOrders"`
 }
 
 type validatedTradingRisk struct {
@@ -330,6 +378,11 @@ func (a *App) UpdateTradingRisk(
 		if err := replaceTradingInstrumentWhitelist(tx, row.ID, risk.InstrumentIDs, now); err != nil {
 			return err
 		}
+		if row.Environment == "testnet" {
+			if err := clearTestnetReconciliation(tx, row.ID); err != nil {
+				return err
+			}
+		}
 		if err := disableAutoInstances(tx, &row.ID, now); err != nil {
 			return err
 		}
@@ -371,12 +424,8 @@ func (a *App) SetTradingAutomation(
 				return ErrTradingReauthentication
 			}
 			if row.Environment == "testnet" {
-				verified, err := testnetCredentialsVerified(tx, row.ID)
-				if err != nil {
+				if err := testnetAccountReadinessError(tx, row.ID); err != nil {
 					return err
-				}
-				if !verified {
-					return testnetCredentialReadinessError(tx, row.ID)
 				}
 			}
 			complete, err := tradingRiskComplete(tx, row)
@@ -450,12 +499,8 @@ func (a *App) ResumeTradingAccount(
 				return ErrTradingAccountConflict
 			}
 		} else {
-			verified, err := testnetCredentialsVerified(tx, row.ID)
-			if err != nil {
+			if err := testnetAccountReadinessError(tx, row.ID); err != nil {
 				return err
-			}
-			if !verified {
-				return testnetCredentialReadinessError(tx, row.ID)
 			}
 		}
 		now := time.Now().UTC()
@@ -630,6 +675,8 @@ func (a *App) GetTradingOverview(ctx context.Context, userID int64) (TradingOver
 	result := TradingOverviewView{
 		Control: serializeTradingControl(control), Accounts: []TradingAccountView{}, Intents: []TradingIntentView{},
 		Orders: []PaperOrderView{}, Positions: []PaperPositionView{}, Balances: []PaperBalanceView{},
+		TestnetBalances: []TestnetBalanceView{}, TestnetPositions: []TestnetPositionView{},
+		TestnetOpenOrders: []TestnetOpenOrderView{},
 	}
 	var accounts []db.TradingAccount
 	if err := database.Where("owner_user_id = ?", userID).Order("id DESC").Find(&accounts).Error; err != nil {
@@ -661,6 +708,24 @@ func (a *App) GetTradingOverview(ctx context.Context, userID int64) (TradingOver
 		Where("trading_accounts.owner_user_id = ?", userID).Order("paper_balances.account_id").Find(&balances).Error; err != nil {
 		return TradingOverviewView{}, err
 	}
+	var testnetBalances []db.TestnetBalance
+	if err := database.Joins("JOIN trading_accounts ON trading_accounts.id = testnet_balances.account_id").
+		Where("trading_accounts.owner_user_id = ?", userID).
+		Order("testnet_balances.account_id, testnet_balances.asset").Find(&testnetBalances).Error; err != nil {
+		return TradingOverviewView{}, err
+	}
+	var testnetPositions []db.TestnetPosition
+	if err := database.Joins("JOIN trading_accounts ON trading_accounts.id = testnet_positions.account_id").
+		Where("trading_accounts.owner_user_id = ?", userID).
+		Order("testnet_positions.account_id, testnet_positions.native_symbol, testnet_positions.position_side").Find(&testnetPositions).Error; err != nil {
+		return TradingOverviewView{}, err
+	}
+	var testnetOrders []db.TestnetOpenOrder
+	if err := database.Joins("JOIN trading_accounts ON trading_accounts.id = testnet_open_orders.account_id").
+		Where("trading_accounts.owner_user_id = ?", userID).
+		Order("testnet_open_orders.account_id, testnet_open_orders.native_symbol, testnet_open_orders.exchange_order_id").Find(&testnetOrders).Error; err != nil {
+		return TradingOverviewView{}, err
+	}
 	symbols, err := loadTradingSymbols(database, intents, orders, positions)
 	if err != nil {
 		return TradingOverviewView{}, err
@@ -676,6 +741,15 @@ func (a *App) GetTradingOverview(ctx context.Context, userID int64) (TradingOver
 	}
 	for _, row := range balances {
 		result.Balances = append(result.Balances, serializePaperBalance(row))
+	}
+	for _, row := range testnetBalances {
+		result.TestnetBalances = append(result.TestnetBalances, serializeTestnetBalance(row))
+	}
+	for _, row := range testnetPositions {
+		result.TestnetPositions = append(result.TestnetPositions, serializeTestnetPosition(row))
+	}
+	for _, row := range testnetOrders {
+		result.TestnetOpenOrders = append(result.TestnetOpenOrders, serializeTestnetOpenOrder(row))
 	}
 	return result, nil
 }
@@ -901,12 +975,8 @@ func (a *App) validateStrategyInstanceExecutionReady(database *gorm.DB, instance
 		return ErrTradingAccountConflict
 	}
 	if instance.Environment == "testnet" {
-		verified, err := testnetCredentialsVerified(database, account.ID)
-		if err != nil {
+		if err := testnetAccountReadinessError(database, account.ID); err != nil {
 			return err
-		}
-		if !verified {
-			return testnetCredentialReadinessError(database, account.ID)
 		}
 	}
 	if instance.Mode == "auto" && (!account.AutomationEnabled || account.AutomationAuthorizedAt == nil) {
@@ -960,6 +1030,7 @@ func (a *App) loadTradingAccountView(database *gorm.DB, row db.TradingAccount) (
 		Status: row.Status, PauseReason: row.PauseReason, AutomationEnabled: row.AutomationEnabled,
 		AutomationAuthorized: row.AutomationAuthorizedAt != nil, InitialBalance: row.InitialBalance.String(),
 		PaperFeeRate: row.PaperFeeRate.String(), CreatedAt: formatUTC(row.CreatedAt), UpdatedAt: formatUTC(row.UpdatedAt),
+		Reconciliation: TestnetReconciliationView{Status: "not_applicable"},
 		Risk: TradingRiskView{
 			InstrumentIDs: ids, MaxTotalNotional: decimalText(row.MaxTotalNotional),
 			MaxSymbolNotional: decimalText(row.MaxSymbolNotional), MaxOrderNotional: decimalText(row.MaxOrderNotional),
@@ -972,6 +1043,7 @@ func (a *App) loadTradingAccountView(database *gorm.DB, row db.TradingAccount) (
 		view.AutomationAuthorizedAt = &value
 	}
 	if row.Environment == "testnet" {
+		view.Reconciliation.Status = "pending"
 		credential, err := loadTradingCredential(database, row.ID)
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return TradingAccountView{}, err
@@ -983,6 +1055,12 @@ func (a *App) loadTradingAccountView(database *gorm.DB, row db.TradingAccount) (
 			view.CredentialVerification = credential.VerificationStatus
 			value := formatUTC(credential.UpdatedAt)
 			view.CredentialsUpdatedAt = &value
+		}
+		var reconciliation db.TestnetReconciliation
+		if err := database.Where("account_id = ?", row.ID).Take(&reconciliation).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return TradingAccountView{}, err
+		} else if err == nil {
+			view.Reconciliation = serializeTestnetReconciliation(reconciliation)
 		}
 	}
 	return view, nil
@@ -1046,6 +1124,47 @@ func serializePaperBalance(row db.PaperBalance) PaperBalanceView {
 		DayStartEquity: row.DayStartEquity.String(), RealizedPnl: row.RealizedPnl.String(),
 		UnrealizedPnl: row.UnrealizedPnl.String(), Fees: row.Fees.String(), Funding: row.Funding.String(),
 		UpdatedAt: formatUTC(row.UpdatedAt),
+	}
+}
+
+func serializeTestnetReconciliation(row db.TestnetReconciliation) TestnetReconciliationView {
+	view := TestnetReconciliationView{
+		Status: row.Status, ErrorCode: row.ErrorCode,
+		BalanceCount: row.BalanceCount, PositionCount: row.PositionCount, OpenOrderCount: row.OpenOrderCount,
+	}
+	lastAttemptedAt := formatUTC(row.LastAttemptedAt)
+	view.LastAttemptedAt = &lastAttemptedAt
+	if row.LastObservedAt != nil {
+		lastObservedAt := formatUTC(*row.LastObservedAt)
+		view.LastObservedAt = &lastObservedAt
+	}
+	return view
+}
+
+func serializeTestnetBalance(row db.TestnetBalance) TestnetBalanceView {
+	return TestnetBalanceView{
+		AccountID: row.AccountID.String(), Asset: row.Asset,
+		TotalBalance: row.TotalBalance.String(), AvailableBalance: row.AvailableBalance.String(),
+		ObservedAt: formatUTC(row.ObservedAt),
+	}
+}
+
+func serializeTestnetPosition(row db.TestnetPosition) TestnetPositionView {
+	return TestnetPositionView{
+		AccountID: row.AccountID.String(), NativeSymbol: row.NativeSymbol, PositionSide: row.PositionSide,
+		Quantity: row.Quantity.String(), EntryPrice: row.EntryPrice.String(),
+		UnrealizedPnl: row.UnrealizedPnL.String(), ObservedAt: formatUTC(row.ObservedAt),
+	}
+}
+
+func serializeTestnetOpenOrder(row db.TestnetOpenOrder) TestnetOpenOrderView {
+	return TestnetOpenOrderView{
+		AccountID: row.AccountID.String(), NativeSymbol: row.NativeSymbol,
+		ExchangeOrderID: row.ExchangeOrderID, ClientOrderID: row.ClientOrderID,
+		Side: row.Side, OrderType: row.OrderType, Status: row.Status,
+		Price: row.Price.String(), OriginalQuantity: row.OriginalQuantity.String(),
+		ExecutedQuantity: row.ExecutedQuantity.String(), StopPrice: row.StopPrice.String(),
+		ObservedAt: formatUTC(row.ObservedAt),
 	}
 }
 

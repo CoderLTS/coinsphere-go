@@ -97,6 +97,8 @@ Go Paper Executor 按账户串行消费持久意图，每次执行前重新检�
 
 Paper 只追加 `order/fill/fee/funding` 事件，订单、仓位、余额和盈亏均可从事件重建。Paper Executor 启动只恢复 Paper 意图、只重建 Paper 账户投影，绝不领取 Testnet 意图；部署回滚不得执行 migration Down、删除交易事件或清空投影。
 
-Testnet 私有访问默认关闭。显式启用后，只有 Go Executor 会解密凭据，并分别向 Spot `/api/v3/account` 与 USD-M `/fapi/v3/account` 发送带 UTC `timestamp`、`recvWindow` 和 HMAC-SHA256 签名的请求。API Key 只进入 `X-MBX-APIKEY` 请求头；认证、权限、限流、时钟偏差、协议和网络失败只保存固定脱敏错误码。验证成功只把凭据标记为 `verified`，不会恢复账户或启用自动化。
+Testnet 私有访问默认关闭。显式启用后，只有 Go Executor 会解密凭据，并向 Spot `/api/v3/account`、`/api/v3/openOrders` 与 USD-M `/fapi/v3/account`、`/fapi/v1/openOrders` 发送带 UTC `timestamp`、`recvWindow` 和 HMAC-SHA256 签名的请求。API Key 只进入 `X-MBX-APIKEY` 请求头；认证、权限、限流、时钟偏差、协议和网络失败只保存固定脱敏错误码。
 
-首次对账、独立 Testnet 订单/仓位/余额投影、保护单和未知外部订单恢复仍未交付。Testnet 账户在首次对账完成前保持暂停；后续晋级继续遵守 [ADR-0010](../architecture/decisions/0010-execution-risk-events.md) 并由用户手工放行。
+凭据验证成功后，Executor 把余额、USD-M 仓位和开放订单写入绑定当前凭据版本的独立 Testnet 投影。不可交易权限、开放订单、非白名单资产、Spot 既有持仓、USD-M 既有仓位或双向持仓模式都会形成固定 `mismatch`；外部协议或网络失败形成 `unknown`。只有 `matched` 允许用户手工恢复账户，后台对账不会自动恢复账户、启用自动化、修改外部订单或创建交易意图；凭据或风险白名单变化会清空旧投影并重新暂停账户。
+
+Testnet 下单、确定性 `clientOrderId` 恢复、保护单、未知外部订单归属恢复和持续成交对账仍未交付。后续晋级继续遵守 [ADR-0010](../architecture/decisions/0010-execution-risk-events.md) 并由用户手工放行。

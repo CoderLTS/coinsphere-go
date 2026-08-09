@@ -138,7 +138,7 @@ func writeTradingResult(w http.ResponseWriter, r *http.Request, data any, err er
 		status, detail = http.StatusForbidden, err.Error()
 	case service.IsIdempotencyConflict(err), errors.Is(err, service.ErrTradingAccountConflict),
 		errors.Is(err, service.ErrTradingExecutionUnavailable), errors.Is(err, service.ErrTradingCredentialsMissing),
-		errors.Is(err, service.ErrTradingCredentialsUnverified):
+		errors.Is(err, service.ErrTradingCredentialsUnverified), errors.Is(err, service.ErrTradingReconciliationRequired):
 		status, detail = http.StatusConflict, err.Error()
 	}
 	writeProblem(w, r, status, detail)

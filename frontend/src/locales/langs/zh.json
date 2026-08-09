@@ -761,6 +761,7 @@
     "balance": {
       "equity": "权益",
       "cash": "现金余额",
+      "available": "可用",
       "realizedPnl": "已实现盈亏",
       "unrealizedPnl": "未实现盈亏"
     },
@@ -807,6 +808,17 @@
         "verified": "已验证",
         "invalid": "验证失败",
         "unknown": "验证状态未知"
+      }
+    },
+    "reconciliation": {
+      "label": "首次账户对账",
+      "summary": "余额 {balances} · 仓位 {positions} · 开放订单 {orders} · {time}",
+      "status": {
+        "not_applicable": "不适用",
+        "pending": "等待对账",
+        "matched": "对账一致",
+        "mismatch": "存在差异",
+        "unknown": "对账状态未知"
       }
     },
     "status": {
