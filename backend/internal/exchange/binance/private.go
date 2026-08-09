@@ -119,6 +119,37 @@ type OrderResult struct {
 	ObservedAt              time.Time
 }
 
+// AccountTrade is one exchange-authoritative fill. The client normalizes Spot
+// and USD-M responses to the same Decimal/UTC shape before they cross the
+// private-protocol boundary.
+type AccountTrade struct {
+	Symbol          string
+	ExchangeTradeID int64
+	ExchangeOrderID int64
+	Side            string
+	PositionSide    string
+	Quantity        decimal.Decimal
+	Price           decimal.Decimal
+	QuoteQuantity   decimal.Decimal
+	Commission      decimal.Decimal
+	CommissionAsset string
+	RealizedPnL     decimal.Decimal
+	Buyer           bool
+	Maker           bool
+	OccurredAt      time.Time
+}
+
+// FundingIncome is a USD-M funding fee fact. Other income types are rejected
+// by QueryFundingIncome and never enter the reconciliation layer.
+type FundingIncome struct {
+	TransactionID string
+	Symbol        string
+	IncomeType    string
+	Asset         string
+	Amount        decimal.Decimal
+	OccurredAt    time.Time
+}
+
 type AccountSnapshot struct {
 	CanTrade   bool
 	Balances   []AccountBalance
@@ -223,6 +254,80 @@ func (client *PrivateClient) QueryOrder(
 		return OrderResult{}, err
 	}
 	return client.parseOrderResult(body)
+}
+
+// QueryOrderTrades reads every known fill for one deterministic exchange order.
+// A full response page is treated as protocol uncertainty because silently
+// truncating fills would make the local position and fee projection unsafe.
+func (client *PrivateClient) QueryOrderTrades(
+	ctx context.Context,
+	marketType marketdata.MarketType,
+	apiKey, apiSecret, symbol string,
+	orderID int64,
+) ([]AccountTrade, error) {
+	if marketType != marketdata.MarketTypeSpot && marketType != marketdata.MarketTypeUSDM {
+		return nil, &PrivateError{Kind: PrivateErrorRejected}
+	}
+	if _, err := privateToken(symbol, 64); err != nil || orderID <= 0 {
+		return nil, &PrivateError{Kind: PrivateErrorRejected}
+	}
+	parameters := url.Values{
+		"symbol":  {symbol},
+		"orderId": {strconv.FormatInt(orderID, 10)},
+		"limit":   {"1000"},
+	}
+	body, err := client.signedRequest(ctx, marketType, http.MethodGet, tradesPath(marketType), parameters, apiKey, apiSecret)
+	if err != nil {
+		return nil, err
+	}
+	trades, err := parseAccountTrades(marketType, body)
+	if err != nil {
+		return nil, &PrivateError{Kind: PrivateErrorProtocol}
+	}
+	if len(trades) >= 1000 {
+		return nil, &PrivateError{Kind: PrivateErrorProtocol}
+	}
+	return trades, nil
+}
+
+// QueryFundingIncome reads the bounded USD-M funding fee window. Binance does
+// not expose a stable cursor for this endpoint; callers overlap windows and
+// deduplicate by transaction ID. A full page is therefore unsafe to accept.
+func (client *PrivateClient) QueryFundingIncome(
+	ctx context.Context,
+	apiKey, apiSecret, symbol string,
+	startTime, endTime time.Time,
+) ([]FundingIncome, error) {
+	startTime = startTime.UTC()
+	endTime = endTime.UTC()
+	if startTime.IsZero() || endTime.IsZero() || !endTime.After(startTime) ||
+		endTime.Sub(startTime) > 7*24*time.Hour {
+		return nil, &PrivateError{Kind: PrivateErrorRejected}
+	}
+	parameters := url.Values{
+		"incomeType": {"FUNDING_FEE"},
+		"startTime":  {strconv.FormatInt(startTime.UnixMilli(), 10)},
+		"endTime":    {strconv.FormatInt(endTime.UnixMilli(), 10)},
+		"limit":      {"1000"},
+	}
+	if symbol != "" {
+		if _, err := privateToken(symbol, 64); err != nil {
+			return nil, &PrivateError{Kind: PrivateErrorRejected}
+		}
+		parameters.Set("symbol", symbol)
+	}
+	body, err := client.signedRequest(ctx, marketdata.MarketTypeUSDM, http.MethodGet, incomePath(), parameters, apiKey, apiSecret)
+	if err != nil {
+		return nil, err
+	}
+	income, err := parseFundingIncome(body)
+	if err != nil {
+		return nil, &PrivateError{Kind: PrivateErrorProtocol}
+	}
+	if len(income) >= 1000 {
+		return nil, &PrivateError{Kind: PrivateErrorProtocol}
+	}
+	return income, nil
 }
 
 // PlaceMarketOrder uses a caller-provided deterministic client order ID.
@@ -436,6 +541,15 @@ func orderPath(marketType marketdata.MarketType) string {
 	return "/fapi/v1/order"
 }
 
+func tradesPath(marketType marketdata.MarketType) string {
+	if marketType == marketdata.MarketTypeSpot {
+		return "/api/v3/myTrades"
+	}
+	return "/fapi/v1/userTrades"
+}
+
+func incomePath() string { return "/fapi/v1/income" }
+
 func privateOrderIdentity(symbol, clientOrderID string) (string, string, error) {
 	symbol, err := privateToken(symbol, 64)
 	if err != nil {
@@ -446,6 +560,326 @@ func privateOrderIdentity(symbol, clientOrderID string) (string, string, error) 
 		return "", "", err
 	}
 	return symbol, clientOrderID, nil
+}
+
+type spotTradePayload struct {
+	Symbol          string          `json:"symbol"`
+	TradeID         json.RawMessage `json:"id"`
+	OrderID         json.RawMessage `json:"orderId"`
+	Price           string          `json:"price"`
+	Quantity        string          `json:"qty"`
+	QuoteQuantity   string          `json:"quoteQty"`
+	Commission      string          `json:"commission"`
+	CommissionAsset string          `json:"commissionAsset"`
+	OccurredAt      json.RawMessage `json:"time"`
+	IsBuyer         *bool           `json:"isBuyer"`
+	IsMaker         *bool           `json:"isMaker"`
+}
+
+type usdmTradePayload struct {
+	Symbol          string          `json:"symbol"`
+	TradeID         json.RawMessage `json:"id"`
+	OrderID         json.RawMessage `json:"orderId"`
+	Side            string          `json:"side"`
+	PositionSide    string          `json:"positionSide"`
+	Price           string          `json:"price"`
+	Quantity        string          `json:"qty"`
+	QuoteQuantity   string          `json:"quoteQty"`
+	Commission      string          `json:"commission"`
+	CommissionAsset string          `json:"commissionAsset"`
+	RealizedPnL     string          `json:"realizedPnl"`
+	Buyer           *bool           `json:"buyer"`
+	Maker           *bool           `json:"maker"`
+	OccurredAt      json.RawMessage `json:"time"`
+}
+
+type fundingIncomePayload struct {
+	Symbol        string          `json:"symbol"`
+	IncomeType    string          `json:"incomeType"`
+	Asset         string          `json:"asset"`
+	Amount        string          `json:"income"`
+	TransactionID json.RawMessage `json:"tranId"`
+	OccurredAt    json.RawMessage `json:"time"`
+}
+
+// parseAccountTrades converts the two Binance fill shapes to one strict
+// internal representation. A malformed row invalidates the complete response;
+// accepting a partial page would make local position and fee totals unsafe.
+func parseAccountTrades(marketType marketdata.MarketType, body []byte) ([]AccountTrade, error) {
+	switch marketType {
+	case marketdata.MarketTypeSpot:
+		var payload []spotTradePayload
+		if err := json.Unmarshal(body, &payload); err != nil || payload == nil {
+			return nil, errors.New("invalid Spot trade response")
+		}
+		trades := make([]AccountTrade, 0, len(payload))
+		seen := make(map[int64]struct{}, len(payload))
+		for _, row := range payload {
+			trade, err := normalizeSpotTrade(row)
+			if err != nil {
+				return nil, err
+			}
+			if _, exists := seen[trade.ExchangeTradeID]; exists {
+				return nil, errors.New("duplicate Spot trade ID")
+			}
+			seen[trade.ExchangeTradeID] = struct{}{}
+			trades = append(trades, trade)
+		}
+		sortAccountTrades(trades)
+		return trades, nil
+	case marketdata.MarketTypeUSDM:
+		var payload []usdmTradePayload
+		if err := json.Unmarshal(body, &payload); err != nil || payload == nil {
+			return nil, errors.New("invalid USD-M trade response")
+		}
+		trades := make([]AccountTrade, 0, len(payload))
+		seen := make(map[int64]struct{}, len(payload))
+		for _, row := range payload {
+			trade, err := normalizeUSDMTrade(row)
+			if err != nil {
+				return nil, err
+			}
+			if _, exists := seen[trade.ExchangeTradeID]; exists {
+				return nil, errors.New("duplicate USD-M trade ID")
+			}
+			seen[trade.ExchangeTradeID] = struct{}{}
+			trades = append(trades, trade)
+		}
+		sortAccountTrades(trades)
+		return trades, nil
+	default:
+		return nil, errors.New("unsupported trade market")
+	}
+}
+
+func normalizeSpotTrade(row spotTradePayload) (AccountTrade, error) {
+	symbol, err := privateToken(row.Symbol, 64)
+	if err != nil {
+		return AccountTrade{}, errors.New("invalid Spot trade symbol")
+	}
+	tradeID, err := privatePositiveInt(row.TradeID)
+	if err != nil {
+		return AccountTrade{}, errors.New("invalid Spot trade ID")
+	}
+	orderID, err := privatePositiveInt(row.OrderID)
+	if err != nil {
+		return AccountTrade{}, errors.New("invalid Spot order ID")
+	}
+	if row.IsBuyer == nil || row.IsMaker == nil {
+		return AccountTrade{}, errors.New("invalid Spot trade flags")
+	}
+	price, err := privateDecimal(row.Price, false)
+	if err != nil || !price.IsPositive() {
+		return AccountTrade{}, errors.New("invalid Spot trade price")
+	}
+	quantity, err := privateDecimal(row.Quantity, false)
+	if err != nil || !quantity.IsPositive() {
+		return AccountTrade{}, errors.New("invalid Spot trade quantity")
+	}
+	quoteQuantity, err := privateDecimal(row.QuoteQuantity, false)
+	if err != nil || !quoteQuantity.IsPositive() {
+		return AccountTrade{}, errors.New("invalid Spot trade quote quantity")
+	}
+	commission, err := privateDecimal(row.Commission, false)
+	if err != nil || commission.IsNegative() {
+		return AccountTrade{}, errors.New("invalid Spot trade commission")
+	}
+	commissionAsset, err := privateToken(row.CommissionAsset, 32)
+	if err != nil {
+		return AccountTrade{}, errors.New("invalid Spot trade commission asset")
+	}
+	occurredAt, err := privateUnixMillis(row.OccurredAt)
+	if err != nil {
+		return AccountTrade{}, errors.New("invalid Spot trade time")
+	}
+	side := "sell"
+	if *row.IsBuyer {
+		side = "buy"
+	}
+	return AccountTrade{
+		Symbol: symbol, ExchangeTradeID: tradeID, ExchangeOrderID: orderID,
+		Side: side, PositionSide: "both", Quantity: quantity, Price: price,
+		QuoteQuantity: quoteQuantity, Commission: commission, CommissionAsset: commissionAsset,
+		Buyer: *row.IsBuyer, Maker: *row.IsMaker, OccurredAt: occurredAt,
+	}, nil
+}
+
+func normalizeUSDMTrade(row usdmTradePayload) (AccountTrade, error) {
+	symbol, err := privateToken(row.Symbol, 64)
+	if err != nil {
+		return AccountTrade{}, errors.New("invalid USD-M trade symbol")
+	}
+	tradeID, err := privatePositiveInt(row.TradeID)
+	if err != nil {
+		return AccountTrade{}, errors.New("invalid USD-M trade ID")
+	}
+	orderID, err := privatePositiveInt(row.OrderID)
+	if err != nil {
+		return AccountTrade{}, errors.New("invalid USD-M order ID")
+	}
+	side, err := privateEnum(row.Side, 8)
+	if err != nil || (side != "buy" && side != "sell") {
+		return AccountTrade{}, errors.New("invalid USD-M trade side")
+	}
+	positionSide, err := privateEnum(row.PositionSide, 8)
+	if err != nil || (positionSide != "both" && positionSide != "long" && positionSide != "short") {
+		return AccountTrade{}, errors.New("invalid USD-M position side")
+	}
+	if row.Buyer == nil || row.Maker == nil {
+		return AccountTrade{}, errors.New("invalid USD-M trade flags")
+	}
+	price, err := privateDecimal(row.Price, false)
+	if err != nil || !price.IsPositive() {
+		return AccountTrade{}, errors.New("invalid USD-M trade price")
+	}
+	quantity, err := privateDecimal(row.Quantity, false)
+	if err != nil || !quantity.IsPositive() {
+		return AccountTrade{}, errors.New("invalid USD-M trade quantity")
+	}
+	quoteQuantity, err := privateDecimal(row.QuoteQuantity, false)
+	if err != nil || !quoteQuantity.IsPositive() {
+		return AccountTrade{}, errors.New("invalid USD-M trade quote quantity")
+	}
+	commission, err := privateDecimal(row.Commission, false)
+	if err != nil || commission.IsNegative() {
+		return AccountTrade{}, errors.New("invalid USD-M trade commission")
+	}
+	commissionAsset, err := privateToken(row.CommissionAsset, 32)
+	if err != nil {
+		return AccountTrade{}, errors.New("invalid USD-M trade commission asset")
+	}
+	realizedPnL, err := privateDecimal(row.RealizedPnL, true)
+	if err != nil {
+		return AccountTrade{}, errors.New("invalid USD-M realized PnL")
+	}
+	occurredAt, err := privateUnixMillis(row.OccurredAt)
+	if err != nil {
+		return AccountTrade{}, errors.New("invalid USD-M trade time")
+	}
+	return AccountTrade{
+		Symbol: symbol, ExchangeTradeID: tradeID, ExchangeOrderID: orderID,
+		Side: side, PositionSide: positionSide, Quantity: quantity, Price: price,
+		QuoteQuantity: quoteQuantity, Commission: commission, CommissionAsset: commissionAsset,
+		RealizedPnL: realizedPnL, Buyer: *row.Buyer, Maker: *row.Maker, OccurredAt: occurredAt,
+	}, nil
+}
+
+func parseFundingIncome(body []byte) ([]FundingIncome, error) {
+	var payload []fundingIncomePayload
+	if err := json.Unmarshal(body, &payload); err != nil || payload == nil {
+		return nil, errors.New("invalid funding income response")
+	}
+	income := make([]FundingIncome, 0, len(payload))
+	seen := make(map[string]struct{}, len(payload))
+	for _, row := range payload {
+		incomeType, err := privateEnum(row.IncomeType, 32)
+		if err != nil || incomeType != "funding_fee" {
+			return nil, errors.New("invalid funding income type")
+		}
+		transactionID, err := privateExternalID(row.TransactionID)
+		if err != nil {
+			return nil, errors.New("invalid funding transaction ID")
+		}
+		if _, exists := seen[transactionID]; exists {
+			return nil, errors.New("duplicate funding transaction ID")
+		}
+		seen[transactionID] = struct{}{}
+		symbol := ""
+		if row.Symbol != "" {
+			symbol, err = privateToken(row.Symbol, 64)
+			if err != nil {
+				return nil, errors.New("invalid funding symbol")
+			}
+		}
+		asset, err := privateToken(row.Asset, 32)
+		if err != nil {
+			return nil, errors.New("invalid funding asset")
+		}
+		amount, err := privateDecimal(row.Amount, true)
+		if err != nil {
+			return nil, errors.New("invalid funding amount")
+		}
+		occurredAt, err := privateUnixMillis(row.OccurredAt)
+		if err != nil {
+			return nil, errors.New("invalid funding time")
+		}
+		income = append(income, FundingIncome{
+			TransactionID: transactionID, Symbol: symbol, IncomeType: "FUNDING_FEE",
+			Asset: asset, Amount: amount, OccurredAt: occurredAt,
+		})
+	}
+	sort.Slice(income, func(i, j int) bool {
+		if income[i].OccurredAt.Equal(income[j].OccurredAt) {
+			return income[i].TransactionID < income[j].TransactionID
+		}
+		return income[i].OccurredAt.Before(income[j].OccurredAt)
+	})
+	return income, nil
+}
+
+func sortAccountTrades(trades []AccountTrade) {
+	sort.Slice(trades, func(i, j int) bool {
+		if trades[i].OccurredAt.Equal(trades[j].OccurredAt) {
+			return trades[i].ExchangeTradeID < trades[j].ExchangeTradeID
+		}
+		return trades[i].OccurredAt.Before(trades[j].OccurredAt)
+	})
+}
+
+func privatePositiveInt(raw json.RawMessage) (int64, error) {
+	value, err := privateExternalID(raw)
+	if err != nil {
+		return 0, err
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed <= 0 {
+		return 0, errors.New("invalid positive integer")
+	}
+	return parsed, nil
+}
+
+func privateExternalID(raw json.RawMessage) (string, error) {
+	value := strings.TrimSpace(string(raw))
+	if value == "" || value == "null" {
+		return "", errors.New("missing external ID")
+	}
+	quoted := false
+	if strings.HasPrefix(value, "\"") {
+		quoted = true
+		var decoded string
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			return "", err
+		}
+		value = decoded
+	} else if value[0] < '0' || value[0] > '9' {
+		return "", errors.New("invalid external ID type")
+	}
+	if value == "" || value != strings.TrimSpace(value) || len(value) > 64 {
+		return "", errors.New("invalid external ID")
+	}
+	for _, char := range value {
+		if !((char >= '0' && char <= '9') || quoted && ((char >= 'A' && char <= 'Z') ||
+			(char >= 'a' && char <= 'z') || char == '_' || char == '-')) {
+			return "", errors.New("invalid external ID")
+		}
+	}
+	return value, nil
+}
+
+func privateUnixMillis(raw json.RawMessage) (time.Time, error) {
+	value, err := privateExternalID(raw)
+	if err != nil {
+		return time.Time{}, err
+	}
+	millis, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || millis <= 0 {
+		return time.Time{}, errors.New("invalid Unix milliseconds")
+	}
+	result := time.UnixMilli(millis).UTC()
+	if result.IsZero() {
+		return time.Time{}, errors.New("invalid Unix milliseconds")
+	}
+	return result, nil
 }
 
 func (client *PrivateClient) parseOrderResult(body []byte) (OrderResult, error) {
