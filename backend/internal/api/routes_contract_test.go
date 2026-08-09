@@ -72,6 +72,43 @@ func TestRoutesUseV1AndRemoveLegacyEntrypoints(t *testing.T) {
 	}
 }
 
+func TestSignalDecisionRoutesRequireAuthenticatedPost(t *testing.T) {
+	mux := http.NewServeMux()
+	server := &Server{StaticDir: t.TempDir(), UploadsDir: t.TempDir()}
+	server.registerRoutes(mux)
+
+	const signalID = "019c2f6d-7c00-7000-8000-000000000001"
+	for _, path := range []string{
+		"/api/v1/signals/" + signalID + "/approve",
+		"/api/v1/signals/" + signalID + "/reject",
+	} {
+		readResponse := httptest.NewRecorder()
+		mux.ServeHTTP(readResponse, httptest.NewRequest(http.MethodGet, path, nil))
+		if readResponse.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("GET %s status = %d, want %d", path, readResponse.Code, http.StatusMethodNotAllowed)
+		}
+
+		anonymousResponse := httptest.NewRecorder()
+		mux.ServeHTTP(anonymousResponse, httptest.NewRequest(http.MethodPost, path, nil))
+		if anonymousResponse.Code != http.StatusUnauthorized {
+			t.Fatalf("anonymous POST %s status = %d, want %d", path, anonymousResponse.Code, http.StatusUnauthorized)
+		}
+	}
+
+	for _, path := range []string{
+		"/api/v1/signals/" + signalID + "/approve/callback",
+		"/api/v1/signals/" + signalID + "/reject/callback",
+		"/api/v1/bots/signals/" + signalID + "/approve",
+		"/api/v1/bots/signals/" + signalID + "/reject",
+	} {
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(http.MethodPost, path, nil))
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("callback POST %s status = %d, want %d", path, response.Code, http.StatusNotFound)
+		}
+	}
+}
+
 func TestCursorPageDefaultsAndRejectsInvalidInput(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/data/news?keyword=btc", nil)
 	request.Pattern = "GET /api/v1/data/news"
