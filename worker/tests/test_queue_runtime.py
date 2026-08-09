@@ -1002,7 +1002,7 @@ def test_realtime_signal_is_idempotent_and_expires_manual(postgres_dsn: str) -> 
         latency_rows = connection.execute(
             "SELECT EXTRACT(EPOCH FROM (signal.created_at - task.queued_at)) "
             "FROM strategy_signals AS signal "
-            "JOIN worker_tasks AS task ON task.id = signal.id "
+            "JOIN worker_tasks AS task ON task.id = signal.id::text "
             "WHERE signal.strategy_instance_id = %s "
             "AND signal.candle_open_time >= %s "
             "ORDER BY task.queued_at, task.id",
