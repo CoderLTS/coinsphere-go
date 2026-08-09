@@ -5,12 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import threading
 import time
 import uuid
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from gzip import decompress
 from pathlib import Path
@@ -832,7 +834,10 @@ def test_realtime_signal_is_idempotent_and_expires_manual(postgres_dsn: str) -> 
             """,
             (out_of_order_instance_id, owner[0], version_id),
         )
-        for index in range(2):
+        base_candle_open = datetime(2099, 8, 8, tzinfo=UTC)
+        for index in range(102):
+            open_time = base_candle_open + timedelta(minutes=index)
+            close_time = open_time + timedelta(minutes=1)
             connection.execute(
                 """
                 INSERT INTO market_candles (
@@ -842,8 +847,8 @@ def test_realtime_signal_is_idempotent_and_expires_manual(postgres_dsn: str) -> 
                 """,
                 (
                     instrument_id,
-                    f"2099-08-08 00:0{index}:00+00",
-                    f"2099-08-08 00:0{index + 1}:00+00",
+                    open_time,
+                    close_time,
                 ),
             )
 
@@ -938,3 +943,77 @@ def test_realtime_signal_is_idempotent_and_expires_manual(postgres_dsn: str) -> 
         ("2099-08-08T00:00:00+00:00", "expired"),
         ("2099-08-08T00:01:00+00:00", "active"),
     ]
+
+    # Keep a steady 20-event/second input so the sample represents normal queue
+    # load while measuring the DB-backed path end to end.
+    latency_tasks = [
+        (
+            f"019d3000-0000-7000-8000-{100 + index:012x}",
+            (base_candle_open + timedelta(minutes=2 + index)).isoformat().replace("+00:00", "Z"),
+        )
+        for index in range(100)
+    ]
+    latency_runtime = WorkerRuntime(
+        postgres_dsn,
+        "worker-realtime-p99",
+        lease_seconds=30,
+        heartbeat_seconds=0.1,
+        poll_seconds=0.01,
+    )
+    stop_event = threading.Event()
+    worker_errors: list[BaseException] = []
+
+    def run_latency_worker() -> None:
+        try:
+            latency_runtime.run(stop_event)
+        except BaseException as exc:
+            worker_errors.append(exc)
+
+    worker_thread = threading.Thread(target=run_latency_worker, name="realtime-p99-worker")
+    worker_thread.start()
+    try:
+        for task_id, candle_open_time in latency_tasks:
+            insert_realtime_task(task_id, candle_open_time)
+            time.sleep(0.05)
+
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            with psycopg.connect(postgres_dsn) as connection:
+                row = connection.execute(
+                    "SELECT count(*) FROM strategy_signals "
+                    "WHERE strategy_instance_id = %s AND candle_open_time >= %s",
+                    (instance_id, base_candle_open + timedelta(minutes=2)),
+                ).fetchone()
+            if row is not None and row[0] == len(latency_tasks):
+                break
+            time.sleep(0.02)
+        else:
+            pytest.fail("实时信号 p99 样本未在 30 秒内全部持久化")
+    finally:
+        stop_event.set()
+        worker_thread.join(timeout=5)
+
+    if worker_thread.is_alive():
+        pytest.fail("实时信号 p99 Worker 未能在停止请求后退出")
+    if worker_errors:
+        pytest.fail(f"实时信号 p99 Worker failed: {type(worker_errors[0]).__name__}")
+
+    with psycopg.connect(postgres_dsn) as connection:
+        latency_rows = connection.execute(
+            "SELECT EXTRACT(EPOCH FROM (signal.created_at - task.queued_at)) "
+            "FROM strategy_signals AS signal "
+            "JOIN worker_tasks AS task ON task.id = signal.id "
+            "WHERE signal.strategy_instance_id = %s "
+            "AND signal.candle_open_time >= %s "
+            "ORDER BY task.queued_at, task.id",
+            (instance_id, base_candle_open + timedelta(minutes=2)),
+        ).fetchall()
+    latencies = [float(row[0]) for row in latency_rows if row[0] is not None]
+    assert len(latencies) == len(latency_tasks)
+    ordered_latencies = sorted(latencies)
+    p99_index = max(0, math.ceil(len(ordered_latencies) * 0.99) - 1)
+    p99_seconds = ordered_latencies[p99_index]
+    assert p99_seconds <= 2.0, (
+        f"实时信号持久化 p99={p99_seconds:.3f}s, "
+        f"max={max(ordered_latencies):.3f}s, samples={len(ordered_latencies)}"
+    )
