@@ -89,6 +89,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/trading/accounts/{accountId}/automation/enable", s.requireAuth(s.handleEnableTradingAutomation))
 	mux.HandleFunc("POST /api/v1/trading/accounts/{accountId}/automation/disable", s.requireAuth(s.handleDisableTradingAutomation))
 	mux.HandleFunc("POST /api/v1/trading/accounts/{accountId}/resume", s.requireAuth(s.handleResumeTradingAccount))
+	mux.HandleFunc("PUT /api/v1/trading/accounts/{accountId}/credentials", s.requireAuth(s.handleSaveTradingCredentials))
+	mux.HandleFunc("POST /api/v1/trading/accounts/{accountId}/credentials/revoke", s.requireAuth(s.handleRevokeTradingCredentials))
 	mux.HandleFunc("POST /api/v1/trading/emergency-stop", s.requireAuth(s.handleActivateTradingEmergencyStop))
 	mux.HandleFunc("POST /api/v1/admin/trading/accounts/{accountId}/authorize", s.requireAuth(s.handleAuthorizeTradingAutomation))
 	mux.HandleFunc("POST /api/v1/admin/trading/accounts/{accountId}/revoke", s.requireAuth(s.handleRevokeTradingAutomation))

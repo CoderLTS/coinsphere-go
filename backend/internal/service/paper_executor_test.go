@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -36,7 +35,7 @@ func TestPaperExecutorRecoveryEmergencyRiskAndProjectionReplay(t *testing.T) {
 	}
 	assertTradingIntentState(t, fixture.database, intent.ID, "executed", "")
 
-	if err := fixture.app.createPaperIntentForSignalWithDB(fixture.database, openSignal, true); err != nil {
+	if err := fixture.app.createTradingIntentForSignalWithDB(fixture.database, openSignal, true); err != nil {
 		t.Fatalf("replay paper intent command: %v", err)
 	}
 	if processed, err := fixture.executor.ProcessNext(context.Background()); err != nil || processed {
@@ -139,28 +138,37 @@ func TestPaperExecutorKeepsIncompleteAutomationDisabled(t *testing.T) {
 	}
 }
 
-func TestPaperExecutorRejectsNonPaperIntents(t *testing.T) {
+func TestPaperExecutorLeavesTestnetIntentsForDedicatedExecutor(t *testing.T) {
 	fixture := newPaperExecutorFixture(t, "manual", true, true, true)
-	for _, environment := range []string{"testnet", "live"} {
-		t.Run(environment, func(t *testing.T) {
-			signal := fixture.insertSignal(t, "0.5", environment)
-			if err := fixture.app.createPaperIntentForSignalWithDB(fixture.database, signal, true); !errors.Is(err, ErrPaperExecutionUnavailable) {
-				t.Fatalf("%s signal enqueue returned %v", environment, err)
-			}
-			intentID := mustUUIDv7(t)
-			intent := db.TradingIntent{
-				ID: intentID, AccountID: fixture.accountID, StrategySignalID: signal.ID,
-				StrategyInstanceID: fixture.instanceID, OwnerUserID: fixture.owner.ID,
-				InstrumentID: fixture.instrumentID, Market: "spot", Mode: "manual",
-				Environment: environment, Target: signal.Target, Status: "pending",
-				ClientOrderID: paperClientOrderID(intentID), CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
-			}
-			if err := fixture.database.Create(&intent).Error; err == nil {
-				t.Fatalf("database accepted a %s trading intent", environment)
-			}
-		})
+	signal := fixture.insertSignal(t, "0.5", "testnet")
+	intentID := mustUUIDv7(t)
+	intent := db.TradingIntent{
+		ID: intentID, AccountID: fixture.accountID, StrategySignalID: signal.ID,
+		StrategyInstanceID: fixture.instanceID, OwnerUserID: fixture.owner.ID,
+		InstrumentID: fixture.instrumentID, Market: "spot", Mode: "manual",
+		Environment: "testnet", Target: signal.Target, Status: "processing", AttemptCount: 1,
+		ClientOrderID: tradingClientOrderID(intentID), CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 	}
-	assertRowCountGORM(t, fixture.database, &db.TradingIntent{}, "account_id = ?", fixture.accountID, 0)
+	claimedAt := time.Now().UTC()
+	workerID := "testnet-worker"
+	intent.ClaimedAt = &claimedAt
+	intent.WorkerID = &workerID
+	if err := fixture.database.Create(&intent).Error; err != nil {
+		t.Fatalf("create Testnet intent: %v", err)
+	}
+	if err := fixture.executor.Recover(context.Background()); err != nil {
+		t.Fatalf("recover Paper intents: %v", err)
+	}
+	assertTradingIntentState(t, fixture.database, intent.ID, "processing", "")
+	if err := fixture.database.Model(&intent).Updates(map[string]any{
+		"status": "pending", "claimed_at": nil, "worker_id": nil,
+	}).Error; err != nil {
+		t.Fatalf("make Testnet intent pending: %v", err)
+	}
+	if processed, err := fixture.executor.ProcessNext(context.Background()); err != nil || processed {
+		t.Fatalf("Paper executor claimed Testnet intent: processed=%t err=%v", processed, err)
+	}
+	assertTradingIntentState(t, fixture.database, intent.ID, "pending", "")
 	assertRowCountGORM(t, fixture.database, &db.PaperOrder{}, "account_id = ?", fixture.accountID, 0)
 }
 
@@ -370,7 +378,7 @@ func (fixture *paperExecutorFixture) insertSignal(t *testing.T, target, environm
 
 func (fixture *paperExecutorFixture) enqueueSignal(t *testing.T, signal db.StrategySignal) db.TradingIntent {
 	t.Helper()
-	if err := fixture.app.createPaperIntentForSignalWithDB(fixture.database, signal, true); err != nil {
+	if err := fixture.app.createTradingIntentForSignalWithDB(fixture.database, signal, true); err != nil {
 		t.Fatalf("enqueue paper signal: %v", err)
 	}
 	var intent db.TradingIntent

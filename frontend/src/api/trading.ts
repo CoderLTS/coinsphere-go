@@ -25,12 +25,16 @@ export interface TradingAccount {
   id: string
   name: string
   market: 'spot' | 'usd_m'
-  environment: 'paper'
+  environment: 'paper' | 'testnet'
   status: 'active' | 'paused'
   pauseReason: string
   automationEnabled: boolean
   automationAuthorized: boolean
   automationAuthorizedAt: string | null
+  credentialsConfigured: boolean
+  credentialStatus: string
+  credentialVerificationStatus: string
+  credentialsUpdatedAt: string | null
   initialBalance: string
   paperFeeRate: string
   risk: TradingRisk
@@ -131,9 +135,27 @@ export interface TradingRiskPayload {
 export interface TradingAccountCreatePayload {
   name: string
   market: 'spot' | 'usd_m'
+  environment: 'paper' | 'testnet'
   initialBalance: string
   paperFeeRate: string
   risk: TradingRiskPayload
+}
+
+export interface TradingCredentialPayload {
+  apiKey: string
+  apiSecret: string
+  withdrawalDisabled: boolean
+  ipWhitelistConfigured: boolean
+}
+
+export interface TradingCredentialStatus {
+  accountId: string
+  configured: boolean
+  status: string
+  verificationStatus: string
+  verificationErrorCode?: string
+  updatedAt: string
+  lastVerifiedAt?: string
 }
 
 const commandHeaders = (idempotencyKey: string, reauthToken?: string) => ({
@@ -198,6 +220,32 @@ export function fetchResumeTradingAccount(
 ) {
   return request.post<TradingAccount>({
     url: `/api/v1/trading/accounts/${encodeURIComponent(accountId)}/resume`,
+    headers: commandHeaders(idempotencyKey, reauthToken),
+    showSuccessMessage: true
+  })
+}
+
+export function fetchSaveTradingCredentials(
+  accountId: string,
+  payload: TradingCredentialPayload,
+  idempotencyKey: string,
+  reauthToken: string
+) {
+  return request.put<TradingCredentialStatus>({
+    url: `/api/v1/trading/accounts/${encodeURIComponent(accountId)}/credentials`,
+    params: payload,
+    headers: commandHeaders(idempotencyKey, reauthToken),
+    showSuccessMessage: true
+  })
+}
+
+export function fetchRevokeTradingCredentials(
+  accountId: string,
+  idempotencyKey: string,
+  reauthToken: string
+) {
+  return request.post<TradingCredentialStatus>({
+    url: `/api/v1/trading/accounts/${encodeURIComponent(accountId)}/credentials/revoke`,
     headers: commandHeaders(idempotencyKey, reauthToken),
     showSuccessMessage: true
   })

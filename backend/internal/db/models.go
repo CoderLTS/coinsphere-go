@@ -201,7 +201,7 @@ type TradingControl struct {
 
 func (TradingControl) TableName() string { return "trading_controls" }
 
-// TradingAccount 是仅用于 Paper 的用户交易账户与硬风控配置。
+// TradingAccount 是用户交易账户与硬风控配置。Live 账户仍由数据库约束禁止。
 type TradingAccount struct {
 	ID                          uuid.UUID        `gorm:"type:uuid;primaryKey"`
 	OwnerUserID                 int64            `gorm:"column:owner_user_id"`
@@ -228,6 +228,25 @@ type TradingAccount struct {
 }
 
 func (TradingAccount) TableName() string { return "trading_accounts" }
+
+// TradingAccountCredential 保存 Testnet 凭据的密文和验证状态；明文只在写入和 Executor 解密边界短暂存在。
+type TradingAccountCredential struct {
+	ID                    uuid.UUID  `gorm:"type:uuid;primaryKey"`
+	AccountID             uuid.UUID  `gorm:"column:account_id;type:uuid;uniqueIndex"`
+	OwnerUserID           int64      `gorm:"column:owner_user_id"`
+	APIKeyCiphertext      string     `gorm:"column:api_key_ciphertext;type:text"`
+	APISecretCiphertext   string     `gorm:"column:api_secret_ciphertext;type:text"`
+	WithdrawalDisabled    bool       `gorm:"column:withdrawal_disabled"`
+	IPWhitelistConfigured bool       `gorm:"column:ip_whitelist_configured"`
+	Status                string     `gorm:"size:16"`
+	VerificationStatus    string     `gorm:"column:verification_status;size:16"`
+	VerificationErrorCode string     `gorm:"column:verification_error_code;size:64"`
+	LastVerifiedAt        *time.Time `gorm:"column:last_verified_at"`
+	CreatedAt             time.Time  `gorm:"column:created_at"`
+	UpdatedAt             time.Time  `gorm:"column:updated_at"`
+}
+
+func (TradingAccountCredential) TableName() string { return "trading_account_credentials" }
 
 // TradingAccountInstrument 是账户品种白名单。
 type TradingAccountInstrument struct {

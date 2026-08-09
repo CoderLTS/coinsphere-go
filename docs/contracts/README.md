@@ -33,10 +33,12 @@
 | 策略 | `/api/v1/admin/strategies`、`/api/v1/strategies`、`/api/v1/strategy-instances` |
 | 回测 | `/api/v1/backtests` |
 | 信号 | `/api/v1/signals`、`/api/v1/signals/{signalId}/approve`、`/api/v1/signals/{signalId}/reject` |
-| Paper 交易 | `/api/v1/trading/*`、`/api/v1/admin/trading/*` |
+| 交易 | `/api/v1/trading/*`、`/api/v1/admin/trading/*` |
 | 通知 | `/api/v1/notification-deliveries`、`/api/v1/ws/notifications` |
 
-交易路由当前只管理 Paper 账户、风险限额、自动化开关/授权、全局急停及其只读投影，不接收 Testnet、Live 或交易所凭据。账户创建、风险修改、恢复、自动化切换、授权和急停命令都要求 `Idempotency-Key`；风险修改、账户恢复、启用自动化、管理员授权和解除急停还要求有效的 `X-Reauth-Token`。
+交易路由管理 Paper/Testnet 账户、风险限额、自动化开关/授权、全局急停及其只读投影；Live 账户仍被数据库禁止。账户创建、风险修改、恢复、自动化切换、授权和急停命令都要求 `Idempotency-Key`；风险修改、账户恢复、启用自动化、管理员授权和解除急停还要求有效的 `X-Reauth-Token`。
+
+Testnet 凭据通过 `PUT /api/v1/trading/accounts/{accountId}/credentials` 保存，通过 `POST /api/v1/trading/accounts/{accountId}/credentials/revoke` 撤销。两条命令同时要求 `Idempotency-Key` 和 `X-Reauth-Token`；保存还要求调用方明确确认已关闭提现并配置 IP 白名单。凭据使用应用主密钥加密，API 只返回配置与验证状态，永不返回 API Key、Secret 或密文。保存后的状态固定为 `unverified`，账户保持暂停且自动实例被关闭；后续 Testnet Executor 验证凭据并完成首次对账前，账户不能恢复或启用执行。
 
 WebSocket 使用 `GET /api/v1/ws/notifications`，通过固定子协议携带 Access Token，禁止查询串 Token。事件信封固定包含 `type`、`version`、`sequence`、`occurredAt` 和 `data`；每条连接只有一个 writer，持久通知记录才是事实源，重连后通过未读快照恢复。
 
@@ -69,7 +71,7 @@ def on_bar(candles: Sequence[Candle], params: Mapping[str, JSONScalar]) -> Decim
 
 用户从已发布策略版本创建 `signal_only | manual | auto`、`paper | testnet | live` 两个维度的策略实例；新实例默认关闭。启用实例订阅对应 Binance 闭合 K 线，每个实例和 K 线只生成一条持久信号。实时 Worker 复用策略 `on_bar` 契约，并把信号与 `strategy.signal.created` Outbox 事件放在同一事务提交。
 
-`manual` 信号在下一根 K 线闭合时过期，每个策略实例最多保留一条 `active` 手动信号；延迟完成的旧 K 线信号直接记为 `expired`。批准和拒绝只允许信号 Owner 对仍处于 `active` 且未过期的手动信号执行；重复决策、越权和过期决策均拒绝。两类命令都要求 `Idempotency-Key`，同键同请求返回原结果，同键不同决策返回冲突；批准还要求当前登录会话签发、五分钟有效的 `X-Reauth-Token`。批准 Paper 手动信号时在同一事务创建唯一交易意图；自动 Paper 信号由 Outbox 消费路径幂等创建意图。两条路径都不直接创建订单或调用交易所。
+`manual` 信号在下一根 K 线闭合时过期，每个策略实例最多保留一条 `active` 手动信号；延迟完成的旧 K 线信号直接记为 `expired`。批准和拒绝只允许信号 Owner 对仍处于 `active` 且未过期的手动信号执行；重复决策、越权和过期决策均拒绝。两类命令都要求 `Idempotency-Key`，同键同请求返回原结果，同键不同决策返回冲突；批准还要求当前登录会话签发、五分钟有效的 `X-Reauth-Token`。批准 Paper/Testnet 手动信号时在同一事务创建唯一交易意图；自动信号由 Outbox 消费路径幂等创建同环境意图。两条路径都不直接创建订单或调用交易所，Live 执行意图仍不可用。
 
 信号事件由 Go App 按固定规则幂等投递到站内通知，以及 Owner 已启用的钉钉机器人、QQ Bot 和 SMTP 渠道。每个信号和渠道最多一条投递记录：成功后重放跳过，失败由同一 Outbox 退避重试；某个通知渠道失败不得阻止已匹配工作流入队。站内通知列表返回信号模式、状态和过期时间，通知 WebSocket 只作实时提示，持久记录仍是离线与重连后的事实源。普通领域事件继续由工作流通知节点编排。
 
@@ -87,10 +89,12 @@ def on_bar(candles: Sequence[Candle], params: Mapping[str, JSONScalar]) -> Decim
 
 Worker 和策略子进程只接收规范化输入、策略文件、参数和独立产物目录；环境变量按白名单重建，不读取交易凭据，不调用交易所私有接口，不运行时安装依赖或启动逐任务 Docker。墙钟、CPU、内存和产物大小上限必须由部署配置提供。
 
-## Paper 交易与 Executor
+## 交易账户与 Paper Executor
 
 Paper 账户默认暂停，全局急停默认开启。账户只有在品种白名单、总名义金额、单品种、单笔、日亏损、最大回撤、行情最大年龄以及适用杠杆全部配置后才能恢复；自动模式还必须同时具备管理员授权、账户开关和已启用策略实例。缺少任一条件时保持禁用并暂停，不做静默降级。
 
 Go Paper Executor 按账户串行消费持久意图，每次执行前重新检查所有者绑定、策略/信号状态、白名单、急停、账户状态、授权、风险上限、行情新鲜度和仓位归属。急停或风控状态下只允许减少同方向既有仓位；解除急停不会自动恢复账户、自动化或策略实例。
 
-Paper 只追加 `order/fill/fee/funding` 事件，订单、仓位、余额和盈亏均可从事件重建。Executor 启动会先恢复中断意图并重建投影；部署回滚不得执行 migration Down、删除交易事件或清空投影。Testnet、Live、交易所凭据、私有协议、保护单和未知外部订单对账仍未交付，后续晋级继续遵守 [ADR-0010](../architecture/decisions/0010-execution-risk-events.md) 并由用户手工放行。
+Paper 只追加 `order/fill/fee/funding` 事件，订单、仓位、余额和盈亏均可从事件重建。Paper Executor 启动只恢复 Paper 意图、只重建 Paper 账户投影，绝不领取 Testnet 意图；部署回滚不得执行 migration Down、删除交易事件或清空投影。
+
+Testnet 账户和加密凭据边界已建立，但 Binance 私有协议、凭据验证、首次对账、独立订单/仓位/余额投影、保护单和未知外部订单恢复仍未交付。Testnet 账户在这些能力完成前保持暂停；后续晋级继续遵守 [ADR-0010](../architecture/decisions/0010-execution-risk-events.md) 并由用户手工放行。

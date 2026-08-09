@@ -150,7 +150,13 @@
               v-if="selectedAccount.status === 'paused'"
               :icon="VideoPlay"
               :loading="commandLoading === 'resume'"
-              :disabled="overview.control.emergencyStopped || !selectedAccount.risk.complete"
+              :disabled="
+                overview.control.emergencyStopped ||
+                !selectedAccount.risk.complete ||
+                (selectedAccount.environment === 'testnet' &&
+                  (!selectedAccount.credentialsConfigured ||
+                    selectedAccount.credentialVerificationStatus !== 'verified'))
+              "
               @click="resumeAccount"
             >
               {{ t('trading.accounts.resume') }}
@@ -179,7 +185,46 @@
           </label>
         </section>
 
-        <section class="balance-strip">
+        <section v-if="selectedAccount.environment === 'testnet'" class="credential-strip">
+          <div class="credential-state">
+            <ElIcon :size="20"><Key /></ElIcon>
+            <div>
+              <span>{{ t('trading.credentials.label') }}</span>
+              <strong>{{ credentialStatusLabel }}</strong>
+              <small>{{ formatTime(selectedAccount.credentialsUpdatedAt) }}</small>
+            </div>
+          </div>
+          <div class="credential-actions">
+            <ElTag
+              size="small"
+              effect="plain"
+              :type="
+                selectedAccount.credentialVerificationStatus === 'verified' ? 'success' : 'warning'
+              "
+            >
+              {{ credentialVerificationLabel }}
+            </ElTag>
+            <ElButton :icon="Key" @click="openCredentialDialog">
+              {{
+                selectedAccount.credentialsConfigured
+                  ? t('trading.credentials.replace')
+                  : t('trading.credentials.configure')
+              }}
+            </ElButton>
+            <ElButton
+              v-if="selectedAccount.credentialsConfigured"
+              type="danger"
+              plain
+              :icon="Delete"
+              :loading="commandLoading === 'credential-revoke'"
+              @click="revokeCredentials"
+            >
+              {{ t('trading.credentials.revoke') }}
+            </ElButton>
+          </div>
+        </section>
+
+        <section v-if="selectedAccount.environment === 'paper'" class="balance-strip">
           <div>
             <span>{{ t('trading.balance.equity') }}</span>
             <strong class="decimal-value">{{ balanceValue('equity') }} USDT</strong>
@@ -372,6 +417,9 @@
           <ElFormItem :label="t('trading.form.name')" prop="name">
             <ElInput v-model="accountForm.name" maxlength="120" />
           </ElFormItem>
+          <ElFormItem :label="t('trading.form.environment')" prop="environment">
+            <ElSegmented v-model="accountForm.environment" :options="environmentOptions" />
+          </ElFormItem>
           <ElFormItem :label="t('trading.form.market')" prop="market">
             <ElSegmented
               v-model="accountForm.market"
@@ -463,13 +511,68 @@
         </ElButton>
       </template>
     </ElDialog>
+
+    <ElDialog
+      v-model="credentialDialogVisible"
+      :title="t('trading.credentials.dialogTitle')"
+      width="min(520px, calc(100vw - 28px))"
+      destroy-on-close
+      @closed="resetCredentialForm"
+    >
+      <ElForm
+        ref="credentialFormRef"
+        :model="credentialForm"
+        :rules="credentialFormRules"
+        label-position="top"
+      >
+        <ElFormItem :label="t('trading.credentials.apiKey')" prop="apiKey">
+          <ElInput
+            v-model="credentialForm.apiKey"
+            type="password"
+            show-password
+            autocomplete="off"
+          />
+        </ElFormItem>
+        <ElFormItem :label="t('trading.credentials.apiSecret')" prop="apiSecret">
+          <ElInput
+            v-model="credentialForm.apiSecret"
+            type="password"
+            show-password
+            autocomplete="off"
+          />
+        </ElFormItem>
+        <ElFormItem prop="withdrawalDisabled">
+          <ElCheckbox v-model="credentialForm.withdrawalDisabled">
+            {{ t('trading.credentials.withdrawalDisabled') }}
+          </ElCheckbox>
+        </ElFormItem>
+        <ElFormItem prop="ipWhitelistConfigured">
+          <ElCheckbox v-model="credentialForm.ipWhitelistConfigured">
+            {{ t('trading.credentials.ipWhitelistConfigured') }}
+          </ElCheckbox>
+        </ElFormItem>
+      </ElForm>
+      <template #footer>
+        <ElButton @click="credentialDialogVisible = false">{{ t('common.cancel') }}</ElButton>
+        <ElButton
+          type="primary"
+          :icon="Key"
+          :loading="credentialSubmitting"
+          @click="saveCredentials"
+        >
+          {{ t('trading.credentials.save') }}
+        </ElButton>
+      </template>
+    </ElDialog>
   </div>
 </template>
 
 <script setup lang="ts">
   import {
     CircleCheckFilled,
+    Delete,
     EditPen,
+    Key,
     Plus,
     Refresh,
     SwitchButton,
@@ -486,7 +589,9 @@
     fetchCreateTradingAccount,
     fetchMarketSymbols,
     fetchReleaseTradingEmergencyStop,
+    fetchRevokeTradingCredentials,
     fetchResumeTradingAccount,
+    fetchSaveTradingCredentials,
     fetchSetTradingAuthorization,
     fetchSetTradingAutomation,
     fetchTradingOverview,
@@ -497,11 +602,12 @@
     type TradingRiskPayload
   } from '@/api/trading'
 
-  defineOptions({ name: 'PaperTradingOverviewPage' })
+  defineOptions({ name: 'TradingOverviewPage' })
 
   type AccountFormModel = {
     name: string
     market: 'spot' | 'usd_m'
+    environment: 'paper' | 'testnet'
     initialBalance: string
     paperFeeRate: string
     instrumentIds: string[]
@@ -512,6 +618,13 @@
     maxDrawdown: string
     maxQuoteAgeSeconds: number
     leverage: number
+  }
+
+  type CredentialFormModel = {
+    apiKey: string
+    apiSecret: string
+    withdrawalDisabled: boolean
+    ipWhitelistConfigured: boolean
   }
 
   const emptyControl = (): TradingOverview['control'] => ({
@@ -536,6 +649,7 @@
   const createAccountForm = (): AccountFormModel => ({
     name: '',
     market: 'spot',
+    environment: 'paper',
     initialBalance: '10000',
     paperFeeRate: '0.001',
     instrumentIds: [],
@@ -548,19 +662,30 @@
     leverage: 2
   })
 
+  const createCredentialForm = (): CredentialFormModel => ({
+    apiKey: '',
+    apiSecret: '',
+    withdrawalDisabled: false,
+    ipWhitelistConfigured: false
+  })
+
   const { t, locale } = useI18n()
   const userStore = useUserStore()
   const loading = ref(false)
   const commandLoading = ref('')
   const dialogSubmitting = ref(false)
+  const credentialSubmitting = ref(false)
   const symbolsLoading = ref(false)
   const overview = reactive<TradingOverview>(createEmptyOverview())
   const selectedAccountId = ref('')
   const activeTab = ref('positions')
   const accountDialogVisible = ref(false)
+  const credentialDialogVisible = ref(false)
   const dialogMode = ref<'create' | 'risk'>('create')
   const accountFormRef = ref<FormInstance>()
+  const credentialFormRef = ref<FormInstance>()
   const accountForm = reactive<AccountFormModel>(createAccountForm())
+  const credentialForm = reactive<CredentialFormModel>(createCredentialForm())
   const availableSymbols = ref<MarketSymbol[]>([])
 
   const isSuper = computed(() => userStore.info.roleCodes.includes('R_SUPER'))
@@ -587,8 +712,22 @@
       overview.control.emergencyStopped ||
       account.status !== 'active' ||
       !account.automationAuthorized ||
-      !account.risk.complete
+      !account.risk.complete ||
+      (account.environment === 'testnet' &&
+        (!account.credentialsConfigured || account.credentialVerificationStatus !== 'verified'))
     )
+  })
+  const credentialStatusLabel = computed(() => {
+    const account = selectedAccount.value
+    if (account?.credentialStatus === 'revoked') return t('trading.credentials.revoked')
+    if (!account?.credentialsConfigured) return t('trading.credentials.notConfigured')
+    return t('trading.credentials.configured')
+  })
+  const credentialVerificationLabel = computed(() => {
+    const account = selectedAccount.value
+    if (!account?.credentialsConfigured) return t('trading.credentials.verification.unverified')
+    const status = account.credentialVerificationStatus || 'unverified'
+    return t(`trading.credentials.verification.${status}`)
   })
   const whitelistSummary = computed(() => {
     const account = selectedAccount.value
@@ -621,6 +760,10 @@
     { label: t('trading.market.spot'), value: 'spot' },
     { label: t('trading.market.usdM'), value: 'usd_m' }
   ])
+  const environmentOptions = computed(() => [
+    { label: t('trading.environment.paper'), value: 'paper' },
+    { label: t('trading.environment.testnet'), value: 'testnet' }
+  ])
 
   const positiveDecimalRule = (
     _rule: unknown,
@@ -636,6 +779,17 @@
   const feeRateRule = (_rule: unknown, value: string, callback: (error?: Error) => void) => {
     if (!/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value) || Number(value) < 0 || Number(value) > 0.01) {
       callback(new Error(t('trading.validation.feeRate')))
+      return
+    }
+    callback()
+  }
+  const requiredConfirmationRule = (
+    _rule: unknown,
+    value: boolean,
+    callback: (error?: Error) => void
+  ) => {
+    if (!value) {
+      callback(new Error(t('trading.validation.confirmSafety')))
       return
     }
     callback()
@@ -664,6 +818,12 @@
     maxOrderNotional: [{ validator: positiveDecimalRule, trigger: 'blur' }],
     maxDailyLoss: [{ validator: positiveDecimalRule, trigger: 'blur' }],
     maxDrawdown: [{ validator: positiveDecimalRule, trigger: 'blur' }]
+  }))
+  const credentialFormRules = computed<FormRules<CredentialFormModel>>(() => ({
+    apiKey: [{ required: true, message: t('trading.validation.apiKey'), trigger: 'blur' }],
+    apiSecret: [{ required: true, message: t('trading.validation.apiSecret'), trigger: 'blur' }],
+    withdrawalDisabled: [{ validator: requiredConfirmationRule, trigger: 'change' }],
+    ipWhitelistConfigured: [{ validator: requiredConfirmationRule, trigger: 'change' }]
   }))
 
   const loadOverview = async () => {
@@ -703,6 +863,7 @@
     Object.assign(accountForm, {
       name: account.name,
       market: account.market,
+      environment: account.environment,
       initialBalance: account.initialBalance,
       paperFeeRate: account.paperFeeRate,
       instrumentIds: [...account.risk.instrumentIds],
@@ -745,6 +906,7 @@
           {
             name: accountForm.name,
             market: accountForm.market,
+            environment: accountForm.environment,
             initialBalance: accountForm.initialBalance,
             paperFeeRate: accountForm.paperFeeRate,
             risk: buildRiskPayload()
@@ -767,6 +929,67 @@
     } finally {
       dialogSubmitting.value = false
     }
+  }
+
+  const resetCredentialForm = () => {
+    Object.assign(credentialForm, createCredentialForm())
+    credentialFormRef.value?.clearValidate()
+  }
+
+  const openCredentialDialog = () => {
+    resetCredentialForm()
+    credentialDialogVisible.value = true
+  }
+
+  const saveCredentials = async () => {
+    const account = selectedAccount.value
+    if (!account || account.environment !== 'testnet' || !credentialFormRef.value) return
+    const valid = await credentialFormRef.value.validate().catch(() => false)
+    if (!valid || credentialSubmitting.value) return
+    const reauthToken = await requestReauth(t('trading.reauth.credentialsTitle'))
+    if (!reauthToken) return
+    credentialSubmitting.value = true
+    try {
+      await fetchSaveTradingCredentials(
+        account.id,
+        {
+          apiKey: credentialForm.apiKey,
+          apiSecret: credentialForm.apiSecret,
+          withdrawalDisabled: credentialForm.withdrawalDisabled,
+          ipWhitelistConfigured: credentialForm.ipWhitelistConfigured
+        },
+        commandKey(),
+        reauthToken
+      )
+      credentialDialogVisible.value = false
+      await loadOverview()
+    } finally {
+      credentialSubmitting.value = false
+    }
+  }
+
+  const revokeCredentials = async () => {
+    const account = selectedAccount.value
+    if (!account || account.environment !== 'testnet') return
+    try {
+      await ElMessageBox.confirm(
+        t('trading.credentials.revokeConfirm'),
+        t('trading.credentials.revokeTitle'),
+        {
+          confirmButtonText: t('common.confirm'),
+          cancelButtonText: t('common.cancel'),
+          type: 'warning'
+        }
+      )
+    } catch (error) {
+      if (error === 'cancel' || error === 'close') return
+      throw error
+    }
+    const reauthToken = await requestReauth(t('trading.reauth.credentialsTitle'))
+    if (!reauthToken) return
+    await runCommand('credential-revoke', async () => {
+      await fetchRevokeTradingCredentials(account.id, commandKey(), reauthToken)
+    })
   }
 
   const activateEmergencyStop = async () => {
@@ -932,6 +1155,9 @@
   .account-title-row,
   .account-actions,
   .account-switches,
+  .credential-strip,
+  .credential-state,
+  .credential-actions,
   .risk-ledger > header {
     display: flex;
     align-items: center;
@@ -1222,6 +1448,52 @@
     }
   }
 
+  .credential-strip {
+    gap: 16px;
+    justify-content: space-between;
+    min-height: 64px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--trading-line);
+  }
+
+  .credential-state {
+    gap: 10px;
+    min-width: 0;
+    color: var(--trading-focus);
+
+    div {
+      min-width: 0;
+    }
+
+    span,
+    strong,
+    small {
+      display: block;
+    }
+
+    span,
+    small {
+      font-size: 11px;
+      color: var(--trading-muted);
+    }
+
+    strong {
+      margin: 2px 0;
+      font-size: 13px;
+      color: var(--el-text-color-primary);
+    }
+  }
+
+  .credential-actions {
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+
+    :deep(.el-button + .el-button) {
+      margin-left: 0;
+    }
+  }
+
   .balance-strip {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1452,6 +1724,19 @@
 
       label {
         justify-content: space-between;
+      }
+    }
+
+    .credential-strip {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .credential-actions {
+      justify-content: flex-start;
+
+      .el-button {
+        flex: 1 1 auto;
       }
     }
 

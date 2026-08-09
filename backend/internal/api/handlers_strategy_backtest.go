@@ -154,7 +154,7 @@ func writeStrategyBacktestResult(w http.ResponseWriter, r *http.Request, data an
 		status, detail = http.StatusUnauthorized, err.Error()
 	case service.IsIdempotencyConflict(err), errors.Is(err, service.ErrBacktestConflict),
 		errors.Is(err, service.ErrStrategySignalConflict), errors.Is(err, service.ErrTradingAccountConflict),
-		errors.Is(err, service.ErrPaperExecutionUnavailable):
+		errors.Is(err, service.ErrTradingExecutionUnavailable):
 		status, detail = http.StatusConflict, err.Error()
 	}
 	writeProblem(w, r, status, detail)

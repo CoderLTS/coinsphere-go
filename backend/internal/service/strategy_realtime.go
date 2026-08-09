@@ -101,7 +101,7 @@ func validateStrategyInstancePayload(
 	}
 	var tradingAccountID *uuid.UUID
 	var allocationUSDT *decimal.Decimal
-	if mode != "signal_only" && environment == "paper" {
+	if mode != "signal_only" && (environment == "paper" || environment == "testnet") {
 		accountID, err := requiredStrategyUUID(payload.TradingAccountID, "tradingAccountId")
 		if err != nil {
 			return validatedStrategyInstance{}, err
@@ -113,7 +113,7 @@ func validateStrategyInstancePayload(
 		tradingAccountID = &accountID
 		allocationUSDT = &allocation
 	} else if strings.TrimSpace(payload.TradingAccountID) != "" || strings.TrimSpace(payload.AllocationUSDT) != "" {
-		return validatedStrategyInstance{}, invalidStrategy("trading account binding is only available for manual or auto paper instances")
+		return validatedStrategyInstance{}, invalidStrategy("trading account binding is only available for manual or auto paper or testnet instances")
 	}
 	return validatedStrategyInstance{
 		Name: name, Mode: mode, Environment: environment, ParametersJSON: string(validatedParameters),
@@ -143,8 +143,8 @@ func (a *App) CreateStrategyInstance(ctx context.Context, userID int64, payload 
 	if validated.TradingAccountID != nil {
 		var account db.TradingAccount
 		if err := a.dbWithContext(ctx).Where(
-			"id = ? AND owner_user_id = ? AND market_type = ? AND environment = 'paper'",
-			*validated.TradingAccountID, userID, version.Market,
+			"id = ? AND owner_user_id = ? AND market_type = ? AND environment = ?",
+			*validated.TradingAccountID, userID, version.Market, validated.Environment,
 		).Take(&account).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return StrategyInstanceView{}, ErrTradingAccountMissing
@@ -376,7 +376,7 @@ func (a *App) DecideStrategySignal(
 			return err
 		}
 		if decision == "approved" {
-			return a.createPaperIntentForSignalWithDB(tx, row, true)
+			return a.createTradingIntentForSignalWithDB(tx, row, true)
 		}
 		return nil
 	})

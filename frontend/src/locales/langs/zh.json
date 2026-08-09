@@ -228,7 +228,7 @@
     },
     "trading": {
       "title": "交易管理",
-      "overview": "Paper 账户"
+      "overview": "交易账户"
     },
     "scheduler": {
       "title": "定时任务",
@@ -735,8 +735,8 @@
     }
   },
   "trading": {
-    "context": "PAPER / UTC",
-    "title": "Paper 交易工作台",
+    "context": "PAPER / TESTNET / UTC",
+    "title": "交易执行工作台",
     "control": {
       "label": "全局交易控制",
       "running": "已放行",
@@ -748,8 +748,8 @@
       "reasonPlaceholder": "请输入急停原因"
     },
     "accounts": {
-      "title": "Paper 账户",
-      "empty": "还没有 Paper 账户",
+      "title": "交易账户",
+      "empty": "还没有交易账户",
       "create": "创建账户",
       "select": "选择账户",
       "resume": "恢复账户"
@@ -781,6 +781,33 @@
     "market": {
       "spot": "现货",
       "usdM": "U 本位合约"
+    },
+    "environment": {
+      "paper": "Paper",
+      "testnet": "Testnet"
+    },
+    "credentials": {
+      "label": "Binance Testnet 凭据",
+      "notConfigured": "未配置",
+      "configured": "已配置",
+      "revoked": "已撤销",
+      "configure": "配置凭据",
+      "replace": "替换凭据",
+      "revoke": "撤销",
+      "dialogTitle": "配置 Testnet 凭据",
+      "apiKey": "API Key",
+      "apiSecret": "API Secret",
+      "withdrawalDisabled": "已关闭该 Key 的提现权限",
+      "ipWhitelistConfigured": "已配置 IP 白名单",
+      "save": "保存凭据",
+      "revokeTitle": "撤销 Testnet 凭据",
+      "revokeConfirm": "撤销后账户会暂停，现有密文将被清除。",
+      "verification": {
+        "unverified": "未验证",
+        "verified": "已验证",
+        "invalid": "验证失败",
+        "unknown": "验证状态未知"
+      }
     },
     "status": {
       "active": "运行中",
@@ -825,13 +852,14 @@
       "reason": "原因"
     },
     "dialog": {
-      "createTitle": "创建 Paper 账户",
+      "createTitle": "创建交易账户",
       "riskTitle": "编辑风险限额",
       "create": "创建账户",
       "saveRisk": "保存风险限额"
     },
     "form": {
       "name": "账户名称",
+      "environment": "环境",
       "market": "市场",
       "initialBalance": "初始余额",
       "feeRate": "手续费率",
@@ -842,7 +870,10 @@
       "instruments": "至少选择一个交易标的",
       "positiveDecimal": "请输入大于零的十进制数",
       "feeRate": "请输入 0 至 0.01 之间的手续费率",
-      "reason": "请输入原因"
+      "reason": "请输入原因",
+      "apiKey": "请输入 API Key",
+      "apiSecret": "请输入 API Secret",
+      "confirmSafety": "请确认该安全设置"
     },
     "reauth": {
       "message": "请输入当前密码完成五分钟复验",
@@ -850,9 +881,10 @@
       "required": "请输入当前密码",
       "riskTitle": "修改风险限额",
       "releaseTitle": "解除全局急停",
-      "resumeTitle": "恢复 Paper 账户",
+      "resumeTitle": "恢复交易账户",
       "automationTitle": "启用账户自动化",
-      "authorizationTitle": "修改自动化授权"
+      "authorizationTitle": "修改自动化授权",
+      "credentialsTitle": "修改 Testnet 凭据"
     }
   },
   "scheduler": {

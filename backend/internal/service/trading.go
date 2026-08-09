@@ -16,11 +16,13 @@ import (
 )
 
 var (
-	ErrInvalidTradingRequest     = errors.New("invalid trading request")
-	ErrTradingAccountMissing     = errors.New("trading account was not found")
-	ErrTradingAccountConflict    = errors.New("trading account state does not allow this operation")
-	ErrTradingReauthentication   = errors.New("valid reauthentication token is required")
-	ErrPaperExecutionUnavailable = errors.New("paper execution is not available for this strategy signal")
+	ErrInvalidTradingRequest        = errors.New("invalid trading request")
+	ErrTradingAccountMissing        = errors.New("trading account was not found")
+	ErrTradingAccountConflict       = errors.New("trading account state does not allow this operation")
+	ErrTradingReauthentication      = errors.New("valid reauthentication token is required")
+	ErrTradingExecutionUnavailable  = errors.New("trading execution is not available for this strategy signal")
+	ErrTradingCredentialsMissing    = errors.New("testnet trading credentials are not configured")
+	ErrTradingCredentialsUnverified = errors.New("testnet trading credentials have not been verified")
 )
 
 type TradingRiskPayload struct {
@@ -37,6 +39,7 @@ type TradingRiskPayload struct {
 type TradingAccountCreatePayload struct {
 	Name           string             `json:"name"`
 	Market         string             `json:"market"`
+	Environment    string             `json:"environment"`
 	InitialBalance string             `json:"initialBalance"`
 	PaperFeeRate   string             `json:"paperFeeRate"`
 	Risk           TradingRiskPayload `json:"risk"`
@@ -64,11 +67,34 @@ type TradingAccountView struct {
 	AutomationEnabled      bool            `json:"automationEnabled"`
 	AutomationAuthorized   bool            `json:"automationAuthorized"`
 	AutomationAuthorizedAt *string         `json:"automationAuthorizedAt"`
+	CredentialsConfigured  bool            `json:"credentialsConfigured"`
+	CredentialStatus       string          `json:"credentialStatus"`
+	CredentialVerification string          `json:"credentialVerificationStatus"`
+	CredentialsUpdatedAt   *string         `json:"credentialsUpdatedAt"`
 	InitialBalance         string          `json:"initialBalance"`
 	PaperFeeRate           string          `json:"paperFeeRate"`
 	Risk                   TradingRiskView `json:"risk"`
 	CreatedAt              string          `json:"createdAt"`
 	UpdatedAt              string          `json:"updatedAt"`
+}
+
+// TradingCredentialPayload 只在写入边界接收明文；响应永远不包含这两个字段。
+type TradingCredentialPayload struct {
+	APIKey                string `json:"apiKey"`
+	APISecret             string `json:"apiSecret"`
+	WithdrawalDisabled    bool   `json:"withdrawalDisabled"`
+	IPWhitelistConfigured bool   `json:"ipWhitelistConfigured"`
+}
+
+// TradingCredentialView 是凭据的非敏感状态投影。
+type TradingCredentialView struct {
+	AccountID          string  `json:"accountId"`
+	Configured         bool    `json:"configured"`
+	Status             string  `json:"status"`
+	VerificationStatus string  `json:"verificationStatus"`
+	VerificationError  string  `json:"verificationErrorCode,omitempty"`
+	UpdatedAt          string  `json:"updatedAt"`
+	LastVerifiedAt     *string `json:"lastVerifiedAt,omitempty"`
 }
 
 type TradingControlView struct {
@@ -175,6 +201,13 @@ func (a *App) CreateTradingAccount(
 	if market != string(marketdata.MarketTypeSpot) && market != string(marketdata.MarketTypeUSDM) {
 		return TradingAccountView{}, invalidTrading("market must be spot or usd_m")
 	}
+	environment := strings.TrimSpace(payload.Environment)
+	if environment == "" {
+		environment = "paper"
+	}
+	if environment != "paper" && environment != "testnet" {
+		return TradingAccountView{}, invalidTrading("environment must be paper or testnet")
+	}
 	initial, err := parseTradingDecimal(payload.InitialBalance, "initialBalance", false)
 	if err != nil || !initial.IsPositive() {
 		return TradingAccountView{}, invalidTrading("initialBalance must be a positive decimal string")
@@ -212,9 +245,13 @@ func (a *App) CreateTradingAccount(
 			return err
 		}
 		now := time.Now().UTC()
+		pauseReason := "configuration_required"
+		if environment == "testnet" {
+			pauseReason = "credentials_required"
+		}
 		row = db.TradingAccount{
-			ID: id, OwnerUserID: userID, Name: name, Market: market, Environment: "paper",
-			Status: "paused", PauseReason: "configuration_required", InitialBalance: &initial,
+			ID: id, OwnerUserID: userID, Name: name, Market: market, Environment: environment,
+			Status: "paused", PauseReason: pauseReason, InitialBalance: &initial,
 			PaperFeeRate: &feeRate, MaxTotalNotional: risk.MaxTotalNotional,
 			MaxSymbolNotional: risk.MaxSymbolNotional, MaxOrderNotional: risk.MaxOrderNotional,
 			MaxDailyLoss: risk.MaxDailyLoss, MaxDrawdown: risk.MaxDrawdown,
@@ -227,11 +264,14 @@ func (a *App) CreateTradingAccount(
 		if err := replaceTradingInstrumentWhitelist(tx, row.ID, risk.InstrumentIDs, now); err != nil {
 			return err
 		}
-		balance := db.PaperBalance{
-			AccountID: row.ID, CashBalance: initial, Equity: initial, PeakEquity: initial,
-			DayStartDate: utcDay(now), DayStartEquity: initial, UpdatedAt: now,
+		if environment == "paper" {
+			balance := db.PaperBalance{
+				AccountID: row.ID, CashBalance: initial, Equity: initial, PeakEquity: initial,
+				DayStartDate: utcDay(now), DayStartEquity: initial, UpdatedAt: now,
+			}
+			return tx.Create(&balance).Error
 		}
-		return tx.Create(&balance).Error
+		return nil
 	})
 	if err != nil {
 		return TradingAccountView{}, err
@@ -330,6 +370,15 @@ func (a *App) SetTradingAutomation(
 			if !a.ConsumeReauthToken(reauthToken, principal) {
 				return ErrTradingReauthentication
 			}
+			if row.Environment == "testnet" {
+				verified, err := testnetCredentialsVerified(tx, row.ID)
+				if err != nil {
+					return err
+				}
+				if !verified {
+					return testnetCredentialReadinessError(tx, row.ID)
+				}
+			}
 			complete, err := tradingRiskComplete(tx, row)
 			if err != nil {
 				return err
@@ -392,12 +441,22 @@ func (a *App) ResumeTradingAccount(
 		if !complete || control.EmergencyStopped {
 			return ErrTradingAccountConflict
 		}
-		var balance db.PaperBalance
-		if err := tx.Where("account_id = ?", row.ID).Take(&balance).Error; err != nil {
-			return err
-		}
-		if currentRiskBreached(row, balance) {
-			return ErrTradingAccountConflict
+		if row.Environment == "paper" {
+			var balance db.PaperBalance
+			if err := tx.Where("account_id = ?", row.ID).Take(&balance).Error; err != nil {
+				return err
+			}
+			if currentRiskBreached(row, balance) {
+				return ErrTradingAccountConflict
+			}
+		} else {
+			verified, err := testnetCredentialsVerified(tx, row.ID)
+			if err != nil {
+				return err
+			}
+			if !verified {
+				return testnetCredentialReadinessError(tx, row.ID)
+			}
 		}
 		now := time.Now().UTC()
 		if err := tx.Model(&row).Updates(map[string]any{
@@ -621,13 +680,13 @@ func (a *App) GetTradingOverview(ctx context.Context, userID int64) (TradingOver
 	return result, nil
 }
 
-func (a *App) createPaperIntentForSignalWithDB(database *gorm.DB, signal db.StrategySignal, strict bool) error {
+func (a *App) createTradingIntentForSignalWithDB(database *gorm.DB, signal db.StrategySignal, strict bool) error {
 	if signal.Mode != "manual" && signal.Mode != "auto" {
 		return nil
 	}
-	if signal.Environment != "paper" {
+	if signal.Environment != "paper" && signal.Environment != "testnet" {
 		if strict {
-			return ErrPaperExecutionUnavailable
+			return ErrTradingExecutionUnavailable
 		}
 		return nil
 	}
@@ -637,7 +696,7 @@ func (a *App) createPaperIntentForSignalWithDB(database *gorm.DB, signal db.Stra
 	}
 	if instance.OwnerUserID != signal.OwnerUserID || instance.TradingAccountID == nil || instance.AllocationUSDT == nil {
 		if strict {
-			return ErrPaperExecutionUnavailable
+			return ErrTradingExecutionUnavailable
 		}
 		return nil
 	}
@@ -648,7 +707,7 @@ func (a *App) createPaperIntentForSignalWithDB(database *gorm.DB, signal db.Stra
 		return nil
 	}
 	var account db.TradingAccount
-	if err := database.Where("id = ? AND owner_user_id = ? AND environment = 'paper'", *instance.TradingAccountID, signal.OwnerUserID).
+	if err := database.Where("id = ? AND owner_user_id = ? AND environment = ?", *instance.TradingAccountID, signal.OwnerUserID, signal.Environment).
 		Take(&account).Error; err != nil {
 		if strict || !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
@@ -661,7 +720,7 @@ func (a *App) createPaperIntentForSignalWithDB(database *gorm.DB, signal db.Stra
 	}
 	if instrument.Market != account.Market {
 		if strict {
-			return ErrPaperExecutionUnavailable
+			return ErrTradingExecutionUnavailable
 		}
 		return nil
 	}
@@ -669,13 +728,13 @@ func (a *App) createPaperIntentForSignalWithDB(database *gorm.DB, signal db.Stra
 	if err != nil {
 		return err
 	}
-	clientOrderID := paperClientOrderID(intentID)
+	clientOrderID := tradingClientOrderID(intentID)
 	now := time.Now().UTC()
 	intent := db.TradingIntent{
 		ID: intentID, AccountID: account.ID, StrategySignalID: signal.ID,
 		StrategyInstanceID: signal.StrategyInstanceID, OwnerUserID: signal.OwnerUserID,
 		InstrumentID: signal.InstrumentID, Market: account.Market, Mode: signal.Mode,
-		Environment: "paper", Target: signal.Target, Status: "pending",
+		Environment: signal.Environment, Target: signal.Target, Status: "pending",
 		ClientOrderID: clientOrderID, CreatedAt: now, UpdatedAt: now,
 	}
 	return database.Clauses(clause.OnConflict{
@@ -683,7 +742,7 @@ func (a *App) createPaperIntentForSignalWithDB(database *gorm.DB, signal db.Stra
 	}).Create(&intent).Error
 }
 
-func (a *App) prepareAutoPaperIntent(ctx context.Context, event *domainEvent) error {
+func (a *App) prepareAutoTradingIntent(ctx context.Context, event *domainEvent) error {
 	if event == nil || event.EventType != "strategy.signal.created" {
 		return nil
 	}
@@ -699,7 +758,7 @@ func (a *App) prepareAutoPaperIntent(ctx context.Context, event *domainEvent) er
 		if signal.Mode != "auto" {
 			return nil
 		}
-		return a.createPaperIntentForSignalWithDB(tx, signal, false)
+		return a.createTradingIntentForSignalWithDB(tx, signal, false)
 	})
 }
 
@@ -806,8 +865,9 @@ func (a *App) validateStrategyInstanceExecutionReady(database *gorm.DB, instance
 	if instance.Mode == "signal_only" {
 		return nil
 	}
-	if instance.Environment != "paper" || instance.TradingAccountID == nil || instance.AllocationUSDT == nil {
-		return ErrPaperExecutionUnavailable
+	if (instance.Environment != "paper" && instance.Environment != "testnet") ||
+		instance.TradingAccountID == nil || instance.AllocationUSDT == nil {
+		return ErrTradingExecutionUnavailable
 	}
 	var version db.StrategyVersion
 	if err := database.Select("id", "market_type", "instrument_id").Where("id = ?", instance.StrategyVersionID).Take(&version).Error; err != nil {
@@ -815,8 +875,8 @@ func (a *App) validateStrategyInstanceExecutionReady(database *gorm.DB, instance
 	}
 	var account db.TradingAccount
 	if err := database.Where(
-		"id = ? AND owner_user_id = ? AND market_type = ? AND environment = 'paper'",
-		*instance.TradingAccountID, instance.OwnerUserID, version.Market,
+		"id = ? AND owner_user_id = ? AND market_type = ? AND environment = ?",
+		*instance.TradingAccountID, instance.OwnerUserID, version.Market, instance.Environment,
 	).Take(&account).Error; err != nil {
 		return tradingAccountLookupError(err)
 	}
@@ -839,6 +899,15 @@ func (a *App) validateStrategyInstanceExecutionReady(database *gorm.DB, instance
 		instance.AllocationUSDT.GreaterThan(*account.MaxSymbolNotional) ||
 		instance.AllocationUSDT.GreaterThan(*account.MaxTotalNotional) {
 		return ErrTradingAccountConflict
+	}
+	if instance.Environment == "testnet" {
+		verified, err := testnetCredentialsVerified(database, account.ID)
+		if err != nil {
+			return err
+		}
+		if !verified {
+			return testnetCredentialReadinessError(database, account.ID)
+		}
 	}
 	if instance.Mode == "auto" && (!account.AutomationEnabled || account.AutomationAuthorizedAt == nil) {
 		return ErrTradingAccountConflict
@@ -901,6 +970,20 @@ func (a *App) loadTradingAccountView(database *gorm.DB, row db.TradingAccount) (
 	if row.AutomationAuthorizedAt != nil {
 		value := formatUTC(*row.AutomationAuthorizedAt)
 		view.AutomationAuthorizedAt = &value
+	}
+	if row.Environment == "testnet" {
+		credential, err := loadTradingCredential(database, row.ID)
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return TradingAccountView{}, err
+		}
+		if err == nil {
+			view.CredentialsConfigured = credential.Status == "configured" &&
+				credential.APIKeyCiphertext != "" && credential.APISecretCiphertext != ""
+			view.CredentialStatus = credential.Status
+			view.CredentialVerification = credential.VerificationStatus
+			value := formatUTC(credential.UpdatedAt)
+			view.CredentialsUpdatedAt = &value
+		}
 	}
 	return view, nil
 }
@@ -1059,6 +1142,6 @@ func utcDay(value time.Time) time.Time {
 	return time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, time.UTC)
 }
 
-func paperClientOrderID(id uuid.UUID) string {
+func tradingClientOrderID(id uuid.UUID) string {
 	return "cs" + strings.ReplaceAll(id.String(), "-", "")[:30]
 }
