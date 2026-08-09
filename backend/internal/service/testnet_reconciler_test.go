@@ -399,6 +399,275 @@ func TestTestnetReconcilerIgnoresOlderSnapshotProjection(t *testing.T) {
 	}
 }
 
+func TestTestnetReconcilerPersistsAndDeduplicatesTradeFacts(t *testing.T) {
+	var mutate atomic.Bool
+	tradeBody := func() string {
+		commission := "0.20"
+		if mutate.Load() {
+			commission = "0.21"
+		}
+		return `[{"symbol":"BTCUSDT","id":7001,"orderId":8080,"side":"BUY","positionSide":"BOTH","price":"50000","qty":"0.01","quoteQty":"500","commission":"` + commission + `","commissionAsset":"USDT","realizedPnl":"0","buyer":true,"maker":false,"time":1786310700000}]`
+	}
+	fundingBody := `[{"symbol":"BTCUSDT","incomeType":"FUNDING_FEE","asset":"USDT","income":"-0.25","tranId":9001,"time":1786310760000}]`
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		writeTestnetLedgerUSDMResponse(response, request, tradeBody(), fundingBody)
+	}))
+	defer server.Close()
+	fixture := newTestnetTradeFactFixture(t, server.URL)
+
+	processed, retryAfter, err := fixture.reconciler.ProcessNext(context.Background())
+	if err != nil || !processed || retryAfter != 0 {
+		t.Fatalf("persist Testnet trade facts: processed=%t retry=%v err=%v", processed, retryAfter, err)
+	}
+	var facts []db.TestnetTradeFact
+	if err := fixture.database.Where("account_id = ?", fixture.account.ID).Order("event_type").Find(&facts).Error; err != nil {
+		t.Fatalf("load Testnet trade facts: %v", err)
+	}
+	if len(facts) != 3 {
+		t.Fatalf("Testnet trade fact count = %d, want 3", len(facts))
+	}
+	var fill, fee, funding db.TestnetTradeFact
+	for _, fact := range facts {
+		switch fact.EventType {
+		case "fill":
+			fill = fact
+		case "fee":
+			fee = fact
+		case "funding":
+			funding = fact
+		}
+	}
+	if fill.OrderID == nil || *fill.OrderID != fixture.order.ID || fill.IntentID == nil || *fill.IntentID != fixture.intent.ID ||
+		fill.ExternalTradeID == nil || *fill.ExternalTradeID != 7001 || !fill.Quantity.Equal(decimal.RequireFromString("0.01")) ||
+		!fill.QuoteQuantity.Equal(decimal.NewFromInt(500)) || fill.Asset != "BTC" {
+		t.Fatalf("stored fill fact = %#v", fill)
+	}
+	if fee.ExternalTradeID == nil || *fee.ExternalTradeID != 7001 || !fee.Amount.Equal(decimal.RequireFromString("0.20")) || fee.Asset != "USDT" {
+		t.Fatalf("stored fee fact = %#v", fee)
+	}
+	if funding.ExternalTransactionID != "9001" || funding.InstrumentID == nil || *funding.InstrumentID != fixture.order.InstrumentID ||
+		!funding.Amount.Equal(decimal.RequireFromString("-0.25")) || funding.Asset != "USDT" {
+		t.Fatalf("stored funding fact = %#v", funding)
+	}
+
+	ageTestnetReconciliation(t, fixture.database, fixture.account.ID)
+	processed, retryAfter, err = fixture.reconciler.ProcessNext(context.Background())
+	if err != nil || !processed || retryAfter != 0 {
+		t.Fatalf("repeat Testnet trade facts: processed=%t retry=%v err=%v", processed, retryAfter, err)
+	}
+	var factCount int64
+	if err := fixture.database.Model(&db.TestnetTradeFact{}).Where("account_id = ?", fixture.account.ID).Count(&factCount).Error; err != nil || factCount != 3 {
+		t.Fatalf("idempotent Testnet trade fact count = %d, err=%v", factCount, err)
+	}
+
+	mutate.Store(true)
+	ageTestnetReconciliation(t, fixture.database, fixture.account.ID)
+	processed, retryAfter, err = fixture.reconciler.ProcessNext(context.Background())
+	if err != nil || !processed || retryAfter != fixture.reconciler.pollInterval {
+		t.Fatalf("mutated Testnet trade fact: processed=%t retry=%v err=%v", processed, retryAfter, err)
+	}
+	var reconciliation db.TestnetReconciliation
+	if err := fixture.database.Where("account_id = ?", fixture.account.ID).Take(&reconciliation).Error; err != nil {
+		t.Fatalf("load mutated trade reconciliation: %v", err)
+	}
+	if reconciliation.Status != "mismatch" || reconciliation.ErrorCode != "trade_fact_mutated" {
+		t.Fatalf("mutated trade reconciliation = %#v", reconciliation)
+	}
+	var account db.TradingAccount
+	if err := fixture.database.Where("id = ?", fixture.account.ID).Take(&account).Error; err != nil {
+		t.Fatalf("load paused mutated-trade account: %v", err)
+	}
+	if account.Status != "paused" || account.PauseReason != "testnet_reconciliation_mismatch" || account.AutomationEnabled {
+		t.Fatalf("mutated trade did not pause account: %#v", account)
+	}
+	if err := fixture.database.Model(&db.TestnetTradeFact{}).Where("account_id = ? AND event_type = 'fee'", fixture.account.ID).Take(&fee).Error; err != nil {
+		t.Fatalf("reload preserved fee fact: %v", err)
+	}
+	if !fee.Amount.Equal(decimal.RequireFromString("0.20")) {
+		t.Fatalf("mutated fee replaced authoritative fact = %s", fee.Amount)
+	}
+}
+
+func TestTestnetReconcilerPausesOnTradeTotalsMismatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		tradeBody := `[{"symbol":"BTCUSDT","id":7001,"orderId":8080,"side":"BUY","positionSide":"BOTH","price":"50000","qty":"0.01","quoteQty":"499","commission":"0.20","commissionAsset":"USDT","realizedPnl":"0","buyer":true,"maker":false,"time":1786310700000}]`
+		writeTestnetLedgerUSDMResponse(response, request, tradeBody, "[]")
+	}))
+	defer server.Close()
+	fixture := newTestnetTradeFactFixture(t, server.URL)
+
+	processed, retryAfter, err := fixture.reconciler.ProcessNext(context.Background())
+	if err != nil || !processed || retryAfter != fixture.reconciler.pollInterval {
+		t.Fatalf("trade totals mismatch: processed=%t retry=%v err=%v", processed, retryAfter, err)
+	}
+	var reconciliation db.TestnetReconciliation
+	if err := fixture.database.Where("account_id = ?", fixture.account.ID).Take(&reconciliation).Error; err != nil {
+		t.Fatalf("load trade totals mismatch: %v", err)
+	}
+	if reconciliation.Status != "mismatch" || reconciliation.ErrorCode != "trade_totals_mismatch" {
+		t.Fatalf("trade totals reconciliation = %#v", reconciliation)
+	}
+	assertRowCountGORM(t, fixture.database, &db.TestnetTradeFact{}, "account_id = ?", fixture.account.ID, 0)
+	var account db.TradingAccount
+	if err := fixture.database.Where("id = ?", fixture.account.ID).Take(&account).Error; err != nil {
+		t.Fatalf("load paused totals account: %v", err)
+	}
+	if account.Status != "paused" || account.PauseReason != "testnet_reconciliation_mismatch" {
+		t.Fatalf("trade totals mismatch did not pause account: %#v", account)
+	}
+}
+
+func TestTestnetReconcilerPausesOnUnknownFundingInstrument(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		tradeBody := `[{"symbol":"BTCUSDT","id":7001,"orderId":8080,"side":"BUY","positionSide":"BOTH","price":"50000","qty":"0.01","quoteQty":"500","commission":"0.20","commissionAsset":"USDT","realizedPnl":"0","buyer":true,"maker":false,"time":1786310700000}]`
+		fundingBody := `[{"symbol":"ETHUSDT","incomeType":"FUNDING_FEE","asset":"USDT","income":"-0.10","tranId":9002,"time":1786310760000}]`
+		writeTestnetLedgerUSDMResponse(response, request, tradeBody, fundingBody)
+	}))
+	defer server.Close()
+	fixture := newTestnetTradeFactFixture(t, server.URL)
+
+	processed, retryAfter, err := fixture.reconciler.ProcessNext(context.Background())
+	if err != nil || !processed || retryAfter != fixture.reconciler.pollInterval {
+		t.Fatalf("unknown funding instrument: processed=%t retry=%v err=%v", processed, retryAfter, err)
+	}
+	var reconciliation db.TestnetReconciliation
+	if err := fixture.database.Where("account_id = ?", fixture.account.ID).Take(&reconciliation).Error; err != nil {
+		t.Fatalf("load unknown funding reconciliation: %v", err)
+	}
+	if reconciliation.Status != "mismatch" || reconciliation.ErrorCode != "funding_unknown_instrument" {
+		t.Fatalf("unknown funding reconciliation = %#v", reconciliation)
+	}
+	assertRowCountGORM(t, fixture.database, &db.TestnetTradeFact{}, "account_id = ?", fixture.account.ID, 0)
+}
+
+func TestTestnetReconcilerRejectsStaleOrderVersionBeforeAppendingFacts(t *testing.T) {
+	tradesStarted := make(chan struct{}, 1)
+	releaseTrades := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		tradeBody := `[{"symbol":"BTCUSDT","id":7001,"orderId":8080,"side":"BUY","positionSide":"BOTH","price":"50000","qty":"0.01","quoteQty":"500","commission":"0.20","commissionAsset":"USDT","realizedPnl":"0","buyer":true,"maker":false,"time":1786310700000}]`
+		if request.URL.Path == "/fapi/v1/userTrades" {
+			tradesStarted <- struct{}{}
+			<-releaseTrades
+		}
+		writeTestnetLedgerUSDMResponse(response, request, tradeBody, "[]")
+	}))
+	defer server.Close()
+	fixture := newTestnetTradeFactFixture(t, server.URL)
+	result := make(chan error, 1)
+	go func() {
+		_, _, processErr := fixture.reconciler.ProcessNext(context.Background())
+		result <- processErr
+	}()
+	select {
+	case <-tradesStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("trade query did not start")
+	}
+	staleUpdatedAt := time.Now().UTC().Add(time.Minute)
+	if err := fixture.database.Model(&db.TestnetOrder{}).Where("id = ?", fixture.order.ID).Updates(map[string]any{
+		"updated_at": staleUpdatedAt,
+	}).Error; err != nil {
+		t.Fatalf("change Testnet order version during trade query: %v", err)
+	}
+	close(releaseTrades)
+	if err := <-result; err != nil {
+		t.Fatalf("finish stale trade query: %v", err)
+	}
+	assertRowCountGORM(t, fixture.database, &db.TestnetTradeFact{}, "account_id = ?", fixture.account.ID, 0)
+	var reconciliation db.TestnetReconciliation
+	if err := fixture.database.Where("account_id = ?", fixture.account.ID).Take(&reconciliation).Error; err != nil {
+		t.Fatalf("load stale trade reconciliation: %v", err)
+	}
+	if reconciliation.Status != "matched" {
+		t.Fatalf("stale trade changed reconciliation = %#v", reconciliation)
+	}
+}
+
+type testnetTradeFactFixture struct {
+	database   *gorm.DB
+	account    db.TradingAccount
+	credential db.TradingAccountCredential
+	intent     db.TradingIntent
+	order      db.TestnetOrder
+	reconciler *TestnetAccountReconciler
+}
+
+func newTestnetTradeFactFixture(t *testing.T, serverURL string) testnetTradeFactFixture {
+	t.Helper()
+	executorFixture := newTestnetExecutorFixture(t, marketdata.MarketTypeUSDM, &scriptedTestnetOrderClient{})
+	intent := executorFixture.enqueue(t, "0.01")
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	var account db.TradingAccount
+	if err := executorFixture.database.Where("id = ?", executorFixture.account.ID).Take(&account).Error; err != nil {
+		t.Fatalf("reload Testnet ledger account: %v", err)
+	}
+	if err := executorFixture.database.Model(&db.TradingIntent{}).Where("id = ?", intent.ID).Updates(map[string]any{
+		"status": "executed", "completed_at": now, "updated_at": now,
+	}).Error; err != nil {
+		t.Fatalf("complete Testnet ledger intent: %v", err)
+	}
+	exchangeOrderID := int64(8080)
+	observedAt := now.Add(-time.Second)
+	order := db.TestnetOrder{
+		ID: intent.ID, AccountID: account.ID, IntentID: intent.ID,
+		StrategyInstanceID: intent.StrategyInstanceID, InstrumentID: intent.InstrumentID,
+		CredentialUpdatedAt: executorFixture.credential.UpdatedAt, SubmittedAccountUpdatedAt: account.UpdatedAt,
+		ClientOrderID: intent.ClientOrderID, ExchangeOrderID: &exchangeOrderID,
+		Side: "buy", Quantity: decimal.RequireFromString("0.01"), FilledQuantity: decimal.RequireFromString("0.01"),
+		CumulativeQuoteQuantity: decimal.NewFromInt(500), AveragePrice: decimal.NewFromInt(50_000),
+		Status: "filled", SubmitAttemptCount: 1, SubmittedAt: observedAt, ObservedAt: &observedAt,
+		CreatedAt: observedAt, UpdatedAt: now,
+		Purpose: "rebalance", OrderType: "market",
+	}
+	if err := executorFixture.database.Create(&order).Error; err != nil {
+		t.Fatalf("create Testnet ledger order: %v", err)
+	}
+	ageTestnetReconciliation(t, executorFixture.database, account.ID)
+	cipher, err := security.NewSecretCipher("testnet-executor-test-key")
+	if err != nil {
+		t.Fatalf("create Testnet ledger cipher: %v", err)
+	}
+	client, err := exchangebinance.NewPrivateClient(exchangebinance.PrivateClientConfig{
+		SpotBaseURL: serverURL, USDMBaseURL: serverURL,
+	})
+	if err != nil {
+		t.Fatalf("create Testnet ledger private client: %v", err)
+	}
+	reconciler, err := NewTestnetAccountReconciler(executorFixture.database, cipher, client, 10*time.Millisecond)
+	if err != nil {
+		t.Fatalf("create Testnet ledger reconciler: %v", err)
+	}
+	return testnetTradeFactFixture{
+		database: executorFixture.database, account: account, credential: executorFixture.credential,
+		intent: intent, order: order, reconciler: reconciler,
+	}
+}
+
+func ageTestnetReconciliation(t *testing.T, database *gorm.DB, accountID uuid.UUID) {
+	t.Helper()
+	if err := database.Model(&db.TestnetReconciliation{}).Where("account_id = ?", accountID).Updates(map[string]any{
+		"last_attempted_at": time.Now().UTC().Add(-time.Hour),
+	}).Error; err != nil {
+		t.Fatalf("age Testnet reconciliation: %v", err)
+	}
+}
+
+func writeTestnetLedgerUSDMResponse(response http.ResponseWriter, request *http.Request, tradeBody, fundingBody string) {
+	response.Header().Set("Content-Type", "application/json")
+	switch request.URL.Path {
+	case "/fapi/v3/account":
+		_, _ = response.Write([]byte(`{"canTrade":true,"assets":[{"asset":"USDT","walletBalance":"1000","availableBalance":"1000"}],"positions":[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"0.01","entryPrice":"50000","unrealizedProfit":"0"}]}`))
+	case "/fapi/v1/openOrders":
+		_, _ = response.Write([]byte(`[]`))
+	case "/fapi/v1/userTrades":
+		_, _ = response.Write([]byte(tradeBody))
+	case "/fapi/v1/income":
+		_, _ = response.Write([]byte(fundingBody))
+	default:
+		response.WriteHeader(http.StatusNotFound)
+	}
+}
+
 type testnetReconcilerFixture struct {
 	database   *gorm.DB
 	app        *App

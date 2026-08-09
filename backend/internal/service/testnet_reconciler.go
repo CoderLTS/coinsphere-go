@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"coinsphere/backend/internal/db"
@@ -34,6 +35,37 @@ type testnetOrderQueryError struct {
 func (err *testnetOrderQueryError) Error() string { return "testnet order query failed" }
 
 func (err *testnetOrderQueryError) Unwrap() error { return err.Err }
+
+// testnetTradeQueryError keeps the managed order identity while preserving the
+// same redacted exchange error classification used by snapshot reconciliation.
+type testnetTradeQueryError struct {
+	OrderID uuid.UUID
+	Err     error
+}
+
+func (err *testnetTradeQueryError) Error() string { return "testnet trade query failed" }
+
+func (err *testnetTradeQueryError) Unwrap() error { return err.Err }
+
+type testnetLedgerMismatchError struct{ Code string }
+
+func (err *testnetLedgerMismatchError) Error() string { return "testnet trade ledger mismatch" }
+
+type testnetLedgerStaleError struct{}
+
+func (err *testnetLedgerStaleError) Error() string { return "testnet trade ledger state changed" }
+
+type testnetManagedTrade struct {
+	Order                db.TestnetOrder
+	Instrument           db.MarketInstrument
+	Trade                exchangebinance.AccountTrade
+	ExpectedOrderUpdated time.Time
+}
+
+type testnetTradeFactBatch struct {
+	Trades  []testnetManagedTrade
+	Funding []exchangebinance.FundingIncome
+}
 
 // TestnetAccountReconciler bootstraps a read-only Testnet projection before manual account release.
 type TestnetAccountReconciler struct {
@@ -175,9 +207,59 @@ func (reconciler *TestnetAccountReconciler) ProcessNext(ctx context.Context) (bo
 		}
 		return true, 0, err
 	}
-	persisted, err := reconciler.persistSnapshotForMode(ctx, credential, account, snapshot, status, errorCode, continuous, observations)
+	ledgerBatch := testnetTradeFactBatch{}
+	if continuous && status == "matched" {
+		ledgerBatch, err = reconciler.collectTestnetTradeFacts(ctx, credential, account, apiKey, apiSecret, observations)
+		if err != nil {
+			var tradeQueryErr *testnetTradeQueryError
+			if errors.As(err, &tradeQueryErr) {
+				if ctx.Err() != nil {
+					return true, 0, ctx.Err()
+				}
+				failureCode, retryAfter, _ := testnetReconciliationFailure(tradeQueryErr.Err)
+				_, _, invalidCredential := testnetReconciliationFailure(tradeQueryErr.Err)
+				if invalidCredential {
+					return true, 0, reconciler.invalidateCredential(ctx, credential, account, failureCode)
+				}
+				if persistErr := reconciler.persistUnknownOrder(ctx, credential, account, failureCode, tradeQueryErr.OrderID); persistErr != nil {
+					return true, retryAfter, persistErr
+				}
+				return true, maxDuration(reconciler.pollInterval, retryAfter), nil
+			}
+			var ledgerMismatch *testnetLedgerMismatchError
+			if errors.As(err, &ledgerMismatch) {
+				persisted, persistErr := reconciler.persistSnapshotForModeWithLedger(
+					ctx, credential, account, snapshot, "mismatch", ledgerMismatch.Code,
+					continuous, observations, testnetTradeFactBatch{},
+				)
+				if persistErr != nil {
+					return true, 0, persistErr
+				}
+				if !persisted {
+					return true, reconciler.pollInterval, nil
+				}
+				return true, reconciler.pollInterval, nil
+			}
+			return true, 0, err
+		}
+	}
+	persisted, err := reconciler.persistSnapshotForModeWithLedger(ctx, credential, account, snapshot, status, errorCode, continuous, observations, ledgerBatch)
 	if err != nil {
-		return true, 0, err
+		var ledgerMismatch *testnetLedgerMismatchError
+		if !errors.As(err, &ledgerMismatch) {
+			return true, 0, err
+		}
+		persisted, err = reconciler.persistSnapshotForModeWithLedger(
+			ctx, credential, account, snapshot, "mismatch", ledgerMismatch.Code,
+			continuous, observations, testnetTradeFactBatch{},
+		)
+		if err != nil {
+			return true, 0, err
+		}
+		if !persisted {
+			return true, reconciler.pollInterval, nil
+		}
+		return true, reconciler.pollInterval, nil
 	}
 	if !persisted {
 		return true, reconciler.pollInterval, nil
@@ -337,6 +419,126 @@ func (reconciler *TestnetAccountReconciler) inspectContinuousSnapshot(
 		return "mismatch", errorCode, nil, nil
 	}
 	return "matched", "", observations, nil
+}
+
+// collectTestnetTradeFacts fetches only fills belonging to locally managed
+// exchange orders. A response that cannot explain the local cumulative fill is
+// a reconciliation mismatch; it is never silently folded into the projection.
+func (reconciler *TestnetAccountReconciler) collectTestnetTradeFacts(
+	ctx context.Context,
+	credential db.TradingAccountCredential,
+	account db.TradingAccount,
+	apiKey, apiSecret string,
+	observations []testnetOrderObservation,
+) (testnetTradeFactBatch, error) {
+	var instruments []db.MarketInstrument
+	if err := reconciler.database.WithContext(ctx).Model(&db.MarketInstrument{}).
+		Joins("JOIN trading_account_instruments ON trading_account_instruments.instrument_id = market_instruments.id").
+		Where("trading_account_instruments.account_id = ?", account.ID).
+		Find(&instruments).Error; err != nil {
+		return testnetTradeFactBatch{}, err
+	}
+	instrumentsByID := make(map[uuid.UUID]db.MarketInstrument, len(instruments))
+	instrumentsBySymbol := make(map[string]db.MarketInstrument, len(instruments))
+	for _, instrument := range instruments {
+		instrumentsByID[instrument.ID] = instrument
+		instrumentsBySymbol[instrument.NativeSymbol] = instrument
+	}
+	var orders []db.TestnetOrder
+	if err := reconciler.database.WithContext(ctx).Where(
+		"account_id = ? AND credential_updated_at = ?",
+		account.ID, credential.UpdatedAt,
+	).Order("created_at, id").Find(&orders).Error; err != nil {
+		return testnetTradeFactBatch{}, err
+	}
+	orders = overlayTestnetOrderObservations(orders, observations)
+	batch := testnetTradeFactBatch{Trades: make([]testnetManagedTrade, 0), Funding: make([]exchangebinance.FundingIncome, 0)}
+	for _, order := range orders {
+		if order.ExchangeOrderID == nil || !order.FilledQuantity.IsPositive() {
+			continue
+		}
+		instrument, exists := instrumentsByID[order.InstrumentID]
+		if !exists || instrument.NativeSymbol == "" {
+			return testnetTradeFactBatch{}, &testnetLedgerMismatchError{Code: "managed_order_instrument_mismatch"}
+		}
+		trades, err := reconciler.client.QueryOrderTrades(
+			ctx, marketdata.MarketType(account.Market), apiKey, apiSecret,
+			instrument.NativeSymbol, *order.ExchangeOrderID,
+		)
+		if err != nil {
+			return testnetTradeFactBatch{}, &testnetTradeQueryError{OrderID: order.ID, Err: err}
+		}
+		if err := validateTestnetTradeSet(account, order, instrument, trades); err != nil {
+			return testnetTradeFactBatch{}, err
+		}
+		for _, trade := range trades {
+			batch.Trades = append(batch.Trades, testnetManagedTrade{
+				Order: order, Instrument: instrument, Trade: trade,
+				ExpectedOrderUpdated: order.UpdatedAt,
+			})
+		}
+	}
+	if account.Market != string(marketdata.MarketTypeUSDM) {
+		return batch, nil
+	}
+	now := time.Now().UTC()
+	funding, err := reconciler.client.QueryFundingIncome(
+		ctx, apiKey, apiSecret, "", now.Add(-7*24*time.Hour), now,
+	)
+	if err != nil {
+		return testnetTradeFactBatch{}, &testnetTradeQueryError{Err: err}
+	}
+	for _, item := range funding {
+		if item.Symbol != "" {
+			if _, exists := instrumentsBySymbol[item.Symbol]; !exists {
+				return testnetTradeFactBatch{}, &testnetLedgerMismatchError{Code: "funding_unknown_instrument"}
+			}
+		}
+		batch.Funding = append(batch.Funding, item)
+	}
+	return batch, nil
+}
+
+func validateTestnetTradeSet(
+	account db.TradingAccount,
+	order db.TestnetOrder,
+	instrument db.MarketInstrument,
+	trades []exchangebinance.AccountTrade,
+) error {
+	if len(trades) == 0 {
+		return &testnetLedgerMismatchError{Code: "filled_order_without_trades"}
+	}
+	quantity := decimal.Zero
+	quoteQuantity := decimal.Zero
+	seen := make(map[int64]struct{}, len(trades))
+	for _, trade := range trades {
+		if _, exists := seen[trade.ExchangeTradeID]; exists {
+			return &testnetLedgerMismatchError{Code: "duplicate_trade_fact"}
+		}
+		seen[trade.ExchangeTradeID] = struct{}{}
+		if trade.Symbol != instrument.NativeSymbol || trade.ExchangeOrderID != valueOrZeroInt64(order.ExchangeOrderID) ||
+			trade.Side != order.Side || trade.Quantity.IsNegative() || !trade.Quantity.IsPositive() ||
+			!trade.Price.IsPositive() || !trade.QuoteQuantity.IsPositive() || trade.Commission.IsNegative() ||
+			trade.OccurredAt.IsZero() {
+			return &testnetLedgerMismatchError{Code: "trade_fact_shape_mismatch"}
+		}
+		if account.Market == string(marketdata.MarketTypeUSDM) && trade.PositionSide != "both" {
+			return &testnetLedgerMismatchError{Code: "hedge_mode_trade_fact"}
+		}
+		quantity = quantity.Add(trade.Quantity)
+		quoteQuantity = quoteQuantity.Add(trade.QuoteQuantity)
+	}
+	if !quantity.Equal(order.FilledQuantity) || !quoteQuantity.Equal(order.CumulativeQuoteQuantity) {
+		return &testnetLedgerMismatchError{Code: "trade_totals_mismatch"}
+	}
+	return nil
+}
+
+func valueOrZeroInt64(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
 
 func activeTestnetOrderStatus(status string) bool {
@@ -554,6 +756,21 @@ func (reconciler *TestnetAccountReconciler) persistSnapshotForMode(
 	continuous bool,
 	observations []testnetOrderObservation,
 ) (bool, error) {
+	return reconciler.persistSnapshotForModeWithLedger(
+		ctx, credential, account, snapshot, status, errorCode, continuous, observations, testnetTradeFactBatch{},
+	)
+}
+
+func (reconciler *TestnetAccountReconciler) persistSnapshotForModeWithLedger(
+	ctx context.Context,
+	credential db.TradingAccountCredential,
+	account db.TradingAccount,
+	snapshot exchangebinance.AccountSnapshot,
+	status, errorCode string,
+	continuous bool,
+	observations []testnetOrderObservation,
+	ledgerBatch testnetTradeFactBatch,
+) (bool, error) {
 	persisted := true
 	err := reconciler.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := lockTestnetAccountExecution(tx, account.ID); err != nil {
@@ -590,6 +807,14 @@ func (reconciler *TestnetAccountReconciler) persistSnapshotForMode(
 			}
 			persisted = false
 			return nil
+		}
+		if err := persistTestnetTradeFacts(tx, credential, ledgerBatch); err != nil {
+			var staleLedger *testnetLedgerStaleError
+			if errors.As(err, &staleLedger) {
+				persisted = false
+				return nil
+			}
+			return err
 		}
 		staleOrders, err := applyTestnetOrderObservations(tx, credential, observations)
 		if err != nil {
@@ -678,6 +903,144 @@ func (reconciler *TestnetAccountReconciler) persistSnapshotForMode(
 		return pauseTestnetAccount(tx, account.ID, "testnet_reconciliation_mismatch", now)
 	})
 	return persisted, err
+}
+
+func persistTestnetTradeFacts(
+	tx *gorm.DB,
+	credential db.TradingAccountCredential,
+	batch testnetTradeFactBatch,
+) error {
+	seen := make(map[string]struct{}, len(batch.Trades)*2+len(batch.Funding))
+	for _, managed := range batch.Trades {
+		var order db.TestnetOrder
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
+			"id = ? AND account_id = ? AND credential_updated_at = ?",
+			managed.Order.ID, credential.AccountID, credential.UpdatedAt,
+		).Take(&order).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return &testnetLedgerStaleError{}
+			}
+			return err
+		}
+		if !order.UpdatedAt.Equal(managed.ExpectedOrderUpdated) {
+			return &testnetLedgerStaleError{}
+		}
+		instrumentID := order.InstrumentID
+		orderID := order.ID
+		intentID := order.IntentID
+		tradeID := managed.Trade.ExchangeTradeID
+		tradeKey := "trade:" + managed.Instrument.NativeSymbol + ":" + strconv.FormatInt(tradeID, 10)
+		fillKey := tradeKey + ":fill"
+		feeKey := tradeKey + ":fee"
+		if _, exists := seen[fillKey]; exists {
+			return &testnetLedgerMismatchError{Code: "duplicate_trade_fact"}
+		}
+		seen[fillKey], seen[feeKey] = struct{}{}, struct{}{}
+		createdAt := time.Now().UTC()
+		fill := db.TestnetTradeFact{
+			AccountID: credential.AccountID, CredentialUpdatedAt: credential.UpdatedAt,
+			InstrumentID: &instrumentID, OrderID: &orderID, IntentID: &intentID,
+			EventType: "fill", Symbol: managed.Instrument.NativeSymbol, ExternalTradeID: &tradeID,
+			Side: managed.Trade.Side, PositionSide: managed.Trade.PositionSide,
+			Quantity: managed.Trade.Quantity, Price: managed.Trade.Price,
+			QuoteQuantity: managed.Trade.QuoteQuantity, Asset: managed.Instrument.BaseAsset,
+			RealizedPnL: managed.Trade.RealizedPnL, Buyer: managed.Trade.Buyer,
+			Maker: managed.Trade.Maker, OccurredAt: managed.Trade.OccurredAt,
+			DedupeKey: fillKey, CreatedAt: createdAt,
+		}
+		if err := appendTestnetTradeFact(tx, fill); err != nil {
+			return err
+		}
+		fee := db.TestnetTradeFact{
+			AccountID: credential.AccountID, CredentialUpdatedAt: credential.UpdatedAt,
+			InstrumentID: &instrumentID, OrderID: &orderID, IntentID: &intentID,
+			EventType: "fee", Symbol: managed.Instrument.NativeSymbol, ExternalTradeID: &tradeID,
+			Amount: managed.Trade.Commission, Asset: managed.Trade.CommissionAsset,
+			OccurredAt: managed.Trade.OccurredAt, DedupeKey: feeKey, CreatedAt: createdAt,
+		}
+		if err := appendTestnetTradeFact(tx, fee); err != nil {
+			return err
+		}
+	}
+	for _, item := range batch.Funding {
+		key := "funding:" + item.TransactionID
+		if _, exists := seen[key]; exists {
+			return &testnetLedgerMismatchError{Code: "duplicate_funding_fact"}
+		}
+		seen[key] = struct{}{}
+		var instrumentID *uuid.UUID
+		if item.Symbol != "" {
+			var instrument db.MarketInstrument
+			if err := tx.Where("native_symbol = ? AND market_type = ? AND venue = ?", item.Symbol,
+				string(marketdata.MarketTypeUSDM), string(marketdata.VenueBinance)).Take(&instrument).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return &testnetLedgerMismatchError{Code: "funding_unknown_instrument"}
+				}
+				return err
+			}
+			instrumentID = &instrument.ID
+		}
+		fact := db.TestnetTradeFact{
+			AccountID: credential.AccountID, CredentialUpdatedAt: credential.UpdatedAt,
+			InstrumentID: instrumentID, EventType: "funding", Symbol: item.Symbol,
+			ExternalTransactionID: item.TransactionID, Amount: item.Amount, Asset: item.Asset,
+			OccurredAt: item.OccurredAt, DedupeKey: key, CreatedAt: time.Now().UTC(),
+		}
+		if err := appendTestnetTradeFact(tx, fact); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func appendTestnetTradeFact(tx *gorm.DB, fact db.TestnetTradeFact) error {
+	result := tx.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "account_id"}, {Name: "credential_updated_at"}, {Name: "dedupe_key"}},
+		DoNothing: true,
+	}).Create(&fact)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 1 {
+		return nil
+	}
+	var existing db.TestnetTradeFact
+	if err := tx.Where(
+		"account_id = ? AND credential_updated_at = ? AND dedupe_key = ?",
+		fact.AccountID, fact.CredentialUpdatedAt, fact.DedupeKey,
+	).Take(&existing).Error; err != nil {
+		return err
+	}
+	if !sameTestnetTradeFact(existing, fact) {
+		return &testnetLedgerMismatchError{Code: "trade_fact_mutated"}
+	}
+	return nil
+}
+
+func sameTestnetTradeFact(left, right db.TestnetTradeFact) bool {
+	return left.AccountID == right.AccountID && left.CredentialUpdatedAt.Equal(right.CredentialUpdatedAt) &&
+		equalUUIDPointer(left.InstrumentID, right.InstrumentID) && equalUUIDPointer(left.OrderID, right.OrderID) &&
+		equalUUIDPointer(left.IntentID, right.IntentID) && left.EventType == right.EventType &&
+		left.Symbol == right.Symbol && equalInt64Pointer(left.ExternalTradeID, right.ExternalTradeID) &&
+		left.ExternalTransactionID == right.ExternalTransactionID && left.Side == right.Side &&
+		left.PositionSide == right.PositionSide && left.Quantity.Equal(right.Quantity) && left.Price.Equal(right.Price) &&
+		left.QuoteQuantity.Equal(right.QuoteQuantity) && left.Amount.Equal(right.Amount) && left.Asset == right.Asset &&
+		left.RealizedPnL.Equal(right.RealizedPnL) && left.Buyer == right.Buyer && left.Maker == right.Maker &&
+		left.OccurredAt.Equal(right.OccurredAt) && left.DedupeKey == right.DedupeKey
+}
+
+func equalUUIDPointer(left, right *uuid.UUID) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func equalInt64Pointer(left, right *int64) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func applyTestnetOrderObservations(

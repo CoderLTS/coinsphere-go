@@ -310,6 +310,36 @@ type TestnetOpenOrder struct {
 
 func (TestnetOpenOrder) TableName() string { return "testnet_open_orders" }
 
+// TestnetTradeFact 是 Testnet 账户的交易所权威追加事实。它只记录已验证
+// 凭据版本看到的成交、手续费和资金费，不承担 Paper 投影重建职责。
+type TestnetTradeFact struct {
+	ID                    int64           `gorm:"primaryKey;autoIncrement"`
+	AccountID             uuid.UUID       `gorm:"column:account_id;type:uuid"`
+	CredentialUpdatedAt   time.Time       `gorm:"column:credential_updated_at"`
+	InstrumentID          *uuid.UUID      `gorm:"column:instrument_id;type:uuid"`
+	OrderID               *uuid.UUID      `gorm:"column:order_id;type:uuid"`
+	IntentID              *uuid.UUID      `gorm:"column:intent_id;type:uuid"`
+	EventType             string          `gorm:"column:event_type;size:8"`
+	Symbol                string          `gorm:"size:64"`
+	ExternalTradeID       *int64          `gorm:"column:external_trade_id"`
+	ExternalTransactionID string          `gorm:"column:external_transaction_id;size:64"`
+	Side                  string          `gorm:"size:4"`
+	PositionSide          string          `gorm:"column:position_side;size:8"`
+	Quantity              decimal.Decimal `gorm:"type:numeric(38,18)"`
+	Price                 decimal.Decimal `gorm:"type:numeric(38,18)"`
+	QuoteQuantity         decimal.Decimal `gorm:"column:quote_quantity;type:numeric(38,18)"`
+	Amount                decimal.Decimal `gorm:"type:numeric(38,18)"`
+	Asset                 string          `gorm:"size:32"`
+	RealizedPnL           decimal.Decimal `gorm:"column:realized_pnl;type:numeric(38,18)"`
+	Buyer                 bool            `gorm:"column:buyer"`
+	Maker                 bool            `gorm:"column:maker"`
+	OccurredAt            time.Time       `gorm:"column:occurred_at"`
+	DedupeKey             string          `gorm:"column:dedupe_key;size:192"`
+	CreatedAt             time.Time       `gorm:"column:created_at"`
+}
+
+func (TestnetTradeFact) TableName() string { return "testnet_trade_facts" }
+
 // TestnetRiskState keeps the UTC loss and drawdown baseline for one reconciled credential version.
 type TestnetRiskState struct {
 	AccountID           uuid.UUID       `gorm:"column:account_id;type:uuid;primaryKey"`
