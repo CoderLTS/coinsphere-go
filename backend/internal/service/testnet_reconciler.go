@@ -24,6 +24,7 @@ type testnetOrderObservation struct {
 	ExpectedOrderUpdated time.Time
 	Result               exchangebinance.OrderResult
 	Queried              bool
+	Recovered            bool
 }
 
 // testnetOrderQueryError 保留本地订单身份，同时让上层只持久化脱敏错误分类。
@@ -208,8 +209,10 @@ func (reconciler *TestnetAccountReconciler) ProcessNext(ctx context.Context) (bo
 		return true, 0, err
 	}
 	ledgerBatch := testnetTradeFactBatch{}
-	if continuous && status == "matched" {
-		ledgerBatch, err = reconciler.collectTestnetTradeFacts(ctx, credential, account, apiKey, apiSecret, observations)
+	if continuous && status == "matched" && !hasRecoveredTestnetOrderObservation(observations) {
+		ledgerBatch, err = reconciler.collectTestnetTradeFacts(
+			ctx, credential, account, apiKey, apiSecret, observations,
+		)
 		if err != nil {
 			var tradeQueryErr *testnetTradeQueryError
 			if errors.As(err, &tradeQueryErr) {
@@ -230,7 +233,7 @@ func (reconciler *TestnetAccountReconciler) ProcessNext(ctx context.Context) (bo
 			if errors.As(err, &ledgerMismatch) {
 				persisted, persistErr := reconciler.persistSnapshotForModeWithLedger(
 					ctx, credential, account, snapshot, "mismatch", ledgerMismatch.Code,
-					continuous, observations, testnetTradeFactBatch{},
+					continuous, managedTestnetOrderObservations(observations), testnetTradeFactBatch{},
 				)
 				if persistErr != nil {
 					return true, 0, persistErr
@@ -251,7 +254,7 @@ func (reconciler *TestnetAccountReconciler) ProcessNext(ctx context.Context) (bo
 		}
 		persisted, err = reconciler.persistSnapshotForModeWithLedger(
 			ctx, credential, account, snapshot, "mismatch", ledgerMismatch.Code,
-			continuous, observations, testnetTradeFactBatch{},
+			continuous, managedTestnetOrderObservations(observations), testnetTradeFactBatch{},
 		)
 		if err != nil {
 			return true, 0, err
@@ -346,6 +349,7 @@ func (reconciler *TestnetAccountReconciler) inspectContinuousSnapshot(
 	).Order("created_at, id").Find(&orders).Error; err != nil {
 		return "", "", nil, err
 	}
+	projectedOrders := append([]db.TestnetOrder(nil), orders...)
 	ordersByClientID := make(map[string]db.TestnetOrder, len(orders))
 	activeOrders := make(map[string]db.TestnetOrder)
 	for _, order := range orders {
@@ -357,10 +361,35 @@ func (reconciler *TestnetAccountReconciler) inspectContinuousSnapshot(
 
 	observations := make([]testnetOrderObservation, 0, len(activeOrders))
 	seenOpenOrders := make(map[string]struct{}, len(snapshot.OpenOrders))
+	recoveredClientIDs := make(map[string]struct{})
 	for _, openOrder := range snapshot.OpenOrders {
+		if _, duplicate := seenOpenOrders[openOrder.ClientOrderID]; duplicate {
+			return "mismatch", "unknown_external_order", nil, nil
+		}
 		order, exists := ordersByClientID[openOrder.ClientOrderID]
 		if !exists {
-			return "mismatch", "unknown_external_order", nil, nil
+			if _, duplicate := recoveredClientIDs[openOrder.ClientOrderID]; duplicate {
+				return "mismatch", "unknown_external_order", nil, nil
+			}
+			intent, instrument, recoverable, err := reconciler.findExternalOrderRecovery(
+				ctx, credential, account, instrumentsBySymbol, snapshot.ObservedAt, openOrder,
+			)
+			if err != nil {
+				return "", "", nil, err
+			}
+			if !recoverable {
+				return "mismatch", "unknown_external_order", nil, nil
+			}
+			result := testnetOpenOrderResult(snapshot.ObservedAt, openOrder)
+			projectedOrders = append(projectedOrders, recoveredTestnetOrderProjection(
+				intent, instrument, credential, account, result,
+			))
+			observations = append(observations, testnetOrderObservation{
+				OrderID: intent.ID, Result: result, Recovered: true,
+			})
+			recoveredClientIDs[openOrder.ClientOrderID] = struct{}{}
+			seenOpenOrders[openOrder.ClientOrderID] = struct{}{}
+			continue
 		}
 		if !activeTestnetOrderStatus(order.Status) {
 			return "mismatch", "managed_order_state_mismatch", nil, nil
@@ -410,7 +439,7 @@ func (reconciler *TestnetAccountReconciler) inspectContinuousSnapshot(
 		})
 	}
 
-	observedOrders := overlayTestnetOrderObservations(orders, observations)
+	observedOrders := overlayTestnetOrderObservations(projectedOrders, observations)
 	expectedPositions, err := expectedTestnetPositions(observedOrders)
 	if err != nil {
 		return "mismatch", "managed_position_projection_invalid", nil, nil
@@ -419,6 +448,91 @@ func (reconciler *TestnetAccountReconciler) inspectContinuousSnapshot(
 		return "mismatch", errorCode, nil, nil
 	}
 	return "matched", "", observations, nil
+}
+
+func (reconciler *TestnetAccountReconciler) findExternalOrderRecovery(
+	ctx context.Context,
+	credential db.TradingAccountCredential,
+	account db.TradingAccount,
+	instrumentsBySymbol map[string]db.MarketInstrument,
+	observedAt time.Time,
+	openOrder exchangebinance.OpenOrder,
+) (db.TradingIntent, db.MarketInstrument, bool, error) {
+	var intents []db.TradingIntent
+	if err := reconciler.database.WithContext(ctx).Where(
+		"account_id = ? AND environment = 'testnet' AND client_order_id = ?",
+		account.ID, openOrder.ClientOrderID,
+	).Limit(2).Find(&intents).Error; err != nil {
+		return db.TradingIntent{}, db.MarketInstrument{}, false, err
+	}
+	if len(intents) != 1 {
+		return db.TradingIntent{}, db.MarketInstrument{}, false, nil
+	}
+	intent := intents[0]
+	instrument, exists := instrumentsBySymbol[openOrder.Symbol]
+	if !exists || intent.InstrumentID != instrument.ID ||
+		intent.OwnerUserID != credential.OwnerUserID || intent.Market != account.Market ||
+		intent.ClientOrderID != tradingClientOrderID(intent.ID) ||
+		(intent.Status != "pending" && intent.Status != "reconciling") || intent.CompletedAt != nil ||
+		instrument.Venue != string(marketdata.VenueBinance) ||
+		instrument.Market != account.Market || instrument.Status != "trading" ||
+		instrument.QuoteAsset != "USDT" {
+		return db.TradingIntent{}, db.MarketInstrument{}, false, nil
+	}
+	var existing int64
+	if err := reconciler.database.WithContext(ctx).Model(&db.TestnetOrder{}).Where(
+		"account_id = ? AND client_order_id = ?", account.ID, intent.ClientOrderID,
+	).Count(&existing).Error; err != nil {
+		return db.TradingIntent{}, db.MarketInstrument{}, false, err
+	}
+	if existing != 0 {
+		return db.TradingIntent{}, db.MarketInstrument{}, false, nil
+	}
+	result := testnetOpenOrderResult(observedAt, openOrder)
+	status, err := normalizeTestnetOrderStatus(result.Status)
+	if err != nil || (status != "new" && status != "partially_filled") ||
+		!validRecoveredExternalOrder(account, instrument, result) {
+		return db.TradingIntent{}, db.MarketInstrument{}, false, nil
+	}
+	return intent, instrument, true, nil
+}
+
+func validRecoveredExternalOrder(
+	account db.TradingAccount,
+	instrument db.MarketInstrument,
+	result exchangebinance.OrderResult,
+) bool {
+	status, err := normalizeTestnetOrderStatus(result.Status)
+	return err == nil && result.OrderType == "market" &&
+		(result.Side == "buy" || result.Side == "sell") &&
+		result.StopPrice.IsZero() && !result.ClosePosition && result.WorkingType == "" &&
+		(account.Market != string(marketdata.MarketTypeSpot) || !result.ReduceOnly) &&
+		result.ExchangeOrderID > 0 && !result.ObservedAt.IsZero() &&
+		validTestnetOrderResult(status, result) &&
+		instrument.NativeSymbol == result.Symbol
+}
+
+func recoveredTestnetOrderProjection(
+	intent db.TradingIntent,
+	instrument db.MarketInstrument,
+	credential db.TradingAccountCredential,
+	account db.TradingAccount,
+	result exchangebinance.OrderResult,
+) db.TestnetOrder {
+	status, _ := normalizeTestnetOrderStatus(result.Status)
+	exchangeOrderID := result.ExchangeOrderID
+	observedAt := result.ObservedAt.UTC()
+	return db.TestnetOrder{
+		ID: intent.ID, AccountID: account.ID, IntentID: intent.ID,
+		StrategyInstanceID: intent.StrategyInstanceID, InstrumentID: instrument.ID,
+		CredentialUpdatedAt: credential.UpdatedAt, SubmittedAccountUpdatedAt: account.UpdatedAt,
+		ClientOrderID: intent.ClientOrderID, ExchangeOrderID: &exchangeOrderID,
+		Side: result.Side, Quantity: result.OriginalQuantity, FilledQuantity: result.ExecutedQuantity,
+		CumulativeQuoteQuantity: result.CumulativeQuoteQuantity, AveragePrice: result.AveragePrice,
+		Purpose: "rebalance", OrderType: "market", Status: status,
+		SubmittedAt: intent.CreatedAt, ObservedAt: &observedAt,
+		CreatedAt: intent.CreatedAt, UpdatedAt: intent.UpdatedAt,
+	}
 }
 
 // collectTestnetTradeFacts fetches only fills belonging to locally managed
@@ -808,6 +922,7 @@ func (reconciler *TestnetAccountReconciler) persistSnapshotForModeWithLedger(
 			persisted = false
 			return nil
 		}
+		managedObservations := managedTestnetOrderObservations(observations)
 		if err := persistTestnetTradeFacts(tx, credential, ledgerBatch); err != nil {
 			var staleLedger *testnetLedgerStaleError
 			if errors.As(err, &staleLedger) {
@@ -816,13 +931,17 @@ func (reconciler *TestnetAccountReconciler) persistSnapshotForModeWithLedger(
 			}
 			return err
 		}
-		staleOrders, err := applyTestnetOrderObservations(tx, credential, observations)
+		staleOrders, err := applyTestnetOrderObservations(tx, credential, managedObservations)
 		if err != nil {
 			return err
 		}
 		if staleOrders {
 			persisted = false
 			return nil
+		}
+		recovered, err := recoverTestnetExternalOrders(tx, credential, account, observations)
+		if err != nil {
+			return err
 		}
 		if err := clearTestnetProjection(tx, account.ID); err != nil {
 			return err
@@ -895,6 +1014,9 @@ func (reconciler *TestnetAccountReconciler) persistSnapshotForModeWithLedger(
 			}
 		}
 		if status == "matched" {
+			if recovered {
+				return pauseTestnetAccount(tx, account.ID, "testnet_external_order_recovered", now)
+			}
 			if !continuous || account.Status != "active" {
 				return pauseTestnetAccount(tx, account.ID, "testnet_reconciled_manual_release_required", now)
 			}
@@ -903,6 +1025,150 @@ func (reconciler *TestnetAccountReconciler) persistSnapshotForModeWithLedger(
 		return pauseTestnetAccount(tx, account.ID, "testnet_reconciliation_mismatch", now)
 	})
 	return persisted, err
+}
+
+func managedTestnetOrderObservations(observations []testnetOrderObservation) []testnetOrderObservation {
+	if len(observations) == 0 {
+		return nil
+	}
+	managed := make([]testnetOrderObservation, 0, len(observations))
+	for _, observation := range observations {
+		if !observation.Recovered {
+			managed = append(managed, observation)
+		}
+	}
+	return managed
+}
+
+func hasRecoveredTestnetOrderObservation(observations []testnetOrderObservation) bool {
+	for _, observation := range observations {
+		if observation.Recovered {
+			return true
+		}
+	}
+	return false
+}
+
+func recoverTestnetExternalOrders(
+	tx *gorm.DB,
+	credential db.TradingAccountCredential,
+	account db.TradingAccount,
+	observations []testnetOrderObservation,
+) (bool, error) {
+	candidates := make([]testnetOrderObservation, 0)
+	seen := make(map[uuid.UUID]struct{})
+	for _, observation := range observations {
+		if !observation.Recovered {
+			continue
+		}
+		if _, exists := seen[observation.OrderID]; exists {
+			return false, &testnetLedgerMismatchError{Code: "unknown_external_order"}
+		}
+		seen[observation.OrderID] = struct{}{}
+		candidates = append(candidates, observation)
+	}
+	if len(candidates) == 0 {
+		return false, nil
+	}
+	if len(candidates) > 1 {
+		return false, &testnetLedgerMismatchError{Code: "unknown_external_order"}
+	}
+	intentIDs := make([]uuid.UUID, 0, len(candidates))
+	for _, candidate := range candidates {
+		intentIDs = append(intentIDs, candidate.OrderID)
+	}
+	var activeCount int64
+	if err := tx.Model(&db.TradingIntent{}).Where(
+		"account_id = ? AND environment = 'testnet' AND status IN ('processing', 'reconciling') AND id NOT IN ?",
+		account.ID, intentIDs,
+	).Count(&activeCount).Error; err != nil {
+		return false, err
+	}
+	if activeCount != 0 {
+		return false, &testnetLedgerMismatchError{Code: "unknown_external_order"}
+	}
+	for _, candidate := range candidates {
+		var intent db.TradingIntent
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
+			"id = ? AND account_id = ? AND owner_user_id = ? AND environment = 'testnet'",
+			candidate.OrderID, account.ID, credential.OwnerUserID,
+		).Take(&intent).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return false, &testnetLedgerMismatchError{Code: "unknown_external_order"}
+			}
+			return false, err
+		}
+		if intent.ClientOrderID != candidate.Result.ClientOrderID ||
+			intent.ClientOrderID != tradingClientOrderID(intent.ID) ||
+			(intent.Status != "pending" && intent.Status != "reconciling") || intent.CompletedAt != nil {
+			return false, &testnetLedgerMismatchError{Code: "unknown_external_order"}
+		}
+		var instrument db.MarketInstrument
+		if err := tx.Where(
+			"id = ? AND market_type = ? AND venue = ? AND status = 'trading'",
+			intent.InstrumentID, account.Market, string(marketdata.VenueBinance),
+		).Take(&instrument).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return false, &testnetLedgerMismatchError{Code: "unknown_external_order"}
+			}
+			return false, err
+		}
+		if !validRecoveredExternalOrder(account, instrument, candidate.Result) {
+			return false, &testnetLedgerMismatchError{Code: "unknown_external_order"}
+		}
+		var existing db.TestnetOrder
+		existingErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
+			"account_id = ? AND client_order_id = ?", account.ID, intent.ClientOrderID,
+		).Take(&existing).Error
+		if existingErr == nil {
+			return false, &testnetLedgerMismatchError{Code: "unknown_external_order"}
+		}
+		if !errors.Is(existingErr, gorm.ErrRecordNotFound) {
+			return false, existingErr
+		}
+		var exchangeOrderCount int64
+		if err := tx.Model(&db.TestnetOrder{}).Where(
+			"account_id = ? AND exchange_order_id = ?", account.ID, candidate.Result.ExchangeOrderID,
+		).Count(&exchangeOrderCount).Error; err != nil {
+			return false, err
+		}
+		if exchangeOrderCount != 0 {
+			return false, &testnetLedgerMismatchError{Code: "unknown_external_order"}
+		}
+		status, _ := normalizeTestnetOrderStatus(candidate.Result.Status)
+		exchangeOrderID := candidate.Result.ExchangeOrderID
+		observedAt := candidate.Result.ObservedAt.UTC()
+		recoveredAt := time.Now().UTC()
+		order := db.TestnetOrder{
+			ID: intent.ID, AccountID: account.ID, IntentID: intent.ID,
+			StrategyInstanceID: intent.StrategyInstanceID, InstrumentID: intent.InstrumentID,
+			CredentialUpdatedAt: credential.UpdatedAt, SubmittedAccountUpdatedAt: account.UpdatedAt,
+			ClientOrderID: intent.ClientOrderID, ExchangeOrderID: &exchangeOrderID,
+			Side: candidate.Result.Side, Quantity: candidate.Result.OriginalQuantity,
+			FilledQuantity:          candidate.Result.ExecutedQuantity,
+			CumulativeQuoteQuantity: candidate.Result.CumulativeQuoteQuantity,
+			AveragePrice:            candidate.Result.AveragePrice, Purpose: "rebalance", OrderType: "market",
+			ReduceOnly: candidate.Result.ReduceOnly, Status: status, SubmitAttemptCount: 1,
+			SubmittedAt: recoveredAt, RecoveredAt: &recoveredAt, ObservedAt: &observedAt,
+			CreatedAt: recoveredAt, UpdatedAt: recoveredAt,
+		}
+		if err := tx.Create(&order).Error; err != nil {
+			return false, err
+		}
+		result := tx.Model(&db.TradingIntent{}).Where(
+			"id = ? AND status IN ('pending', 'reconciling') AND completed_at IS NULL", intent.ID,
+		).Updates(map[string]any{
+			"status": "reconciling", "block_reason": "testnet_external_order_recovered",
+			"claimed_at": nil, "worker_id": nil, "updated_at": recoveredAt,
+		})
+		if result.Error != nil {
+			return false, result.Error
+		}
+		if result.RowsAffected != 1 {
+			return false, &testnetLedgerMismatchError{Code: "unknown_external_order"}
+		}
+	}
+	return true, nil
 }
 
 func persistTestnetTradeFacts(

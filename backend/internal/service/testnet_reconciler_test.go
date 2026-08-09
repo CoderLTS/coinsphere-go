@@ -369,6 +369,94 @@ func TestContinuousSnapshotDifferenceRejectsUnownedOrderState(t *testing.T) {
 	}
 }
 
+func TestTestnetReconcilerRecoversDeterministicExternalOrder(t *testing.T) {
+	fixture, intent, reconciler, server := newTestnetExternalRecoveryFixture(t, "MARKET")
+	defer server.Close()
+
+	processed, retryAfter, err := reconciler.ProcessNext(context.Background())
+	if err != nil || !processed || retryAfter != 0 {
+		t.Fatalf("recover external order: processed=%t retry=%v err=%v", processed, retryAfter, err)
+	}
+	var order db.TestnetOrder
+	if err := fixture.database.Where("intent_id = ?", intent.ID).Take(&order).Error; err != nil {
+		t.Fatalf("load recovered Testnet order: %v", err)
+	}
+	if order.Status != "new" || order.Purpose != "rebalance" || order.OrderType != "market" ||
+		order.ExchangeOrderID == nil || *order.ExchangeOrderID != 9101 || order.RecoveredAt == nil ||
+		order.SubmitAttemptCount != 1 || !order.FilledQuantity.IsZero() {
+		t.Fatalf("recovered Testnet order = %#v", order)
+	}
+	var storedIntent db.TradingIntent
+	if err := fixture.database.Where("id = ?", intent.ID).Take(&storedIntent).Error; err != nil {
+		t.Fatalf("load recovered intent: %v", err)
+	}
+	if storedIntent.Status != "reconciling" || storedIntent.BlockReason != "testnet_external_order_recovered" ||
+		storedIntent.ClaimedAt != nil || storedIntent.WorkerID != nil {
+		t.Fatalf("recovered intent = %#v", storedIntent)
+	}
+	var account db.TradingAccount
+	if err := fixture.database.Where("id = ?", fixture.account.ID).Take(&account).Error; err != nil {
+		t.Fatalf("load paused recovery account: %v", err)
+	}
+	if account.Status != "paused" || account.PauseReason != "testnet_external_order_recovered" || account.AutomationEnabled {
+		t.Fatalf("recovered account = %#v", account)
+	}
+	var reconciliation db.TestnetReconciliation
+	if err := fixture.database.Where("account_id = ?", account.ID).Take(&reconciliation).Error; err != nil {
+		t.Fatalf("load recovered reconciliation: %v", err)
+	}
+	if reconciliation.Status != "matched" || reconciliation.ErrorCode != "" || reconciliation.OpenOrderCount != 1 {
+		t.Fatalf("recovered reconciliation = %#v", reconciliation)
+	}
+}
+
+func TestTestnetReconcilerRejectsDeterministicExternalOrderShape(t *testing.T) {
+	fixture, intent, reconciler, server := newTestnetExternalRecoveryFixture(t, "LIMIT")
+	defer server.Close()
+
+	processed, retryAfter, err := reconciler.ProcessNext(context.Background())
+	if err != nil || !processed || retryAfter != reconciler.pollInterval {
+		t.Fatalf("reject external order shape: processed=%t retry=%v err=%v", processed, retryAfter, err)
+	}
+	var reconciliation db.TestnetReconciliation
+	if err := fixture.database.Where("account_id = ?", fixture.account.ID).Take(&reconciliation).Error; err != nil {
+		t.Fatalf("load shape mismatch reconciliation: %v", err)
+	}
+	if reconciliation.Status != "mismatch" || reconciliation.ErrorCode != "unknown_external_order" {
+		t.Fatalf("shape mismatch reconciliation = %#v", reconciliation)
+	}
+	var orderCount int64
+	if err := fixture.database.Model(&db.TestnetOrder{}).Where("intent_id = ?", intent.ID).Count(&orderCount).Error; err != nil {
+		t.Fatalf("count shape mismatch orders: %v", err)
+	}
+	if orderCount != 0 {
+		t.Fatalf("shape mismatch created %d managed orders", orderCount)
+	}
+}
+
+func TestTestnetReconcilerRejectsExternalOrderIntentConflict(t *testing.T) {
+	fixture, intent, reconciler, server := newTestnetExternalRecoveryFixture(t, "MARKET")
+	defer server.Close()
+	completedAt := time.Now().UTC()
+	if err := fixture.database.Model(&db.TradingIntent{}).Where("id = ?", intent.ID).Updates(map[string]any{
+		"status": "executed", "completed_at": completedAt, "updated_at": completedAt,
+	}).Error; err != nil {
+		t.Fatalf("complete conflicting intent: %v", err)
+	}
+
+	processed, _, err := reconciler.ProcessNext(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("reject conflicting external order: processed=%t err=%v", processed, err)
+	}
+	var reconciliation db.TestnetReconciliation
+	if err := fixture.database.Where("account_id = ?", fixture.account.ID).Take(&reconciliation).Error; err != nil {
+		t.Fatalf("load conflict reconciliation: %v", err)
+	}
+	if reconciliation.Status != "mismatch" || reconciliation.ErrorCode != "unknown_external_order" {
+		t.Fatalf("conflict reconciliation = %#v", reconciliation)
+	}
+}
+
 func TestTestnetReconcilerIgnoresOlderSnapshotProjection(t *testing.T) {
 	fixture := newTestnetReconcilerFixture(t)
 	reconciler := fixture.reconciler(t, "http://127.0.0.1")
@@ -773,4 +861,44 @@ func (fixture testnetReconcilerFixture) reconciler(t *testing.T, serverURL strin
 		t.Fatalf("create Testnet reconciler: %v", err)
 	}
 	return reconciler
+}
+
+func newTestnetExternalRecoveryFixture(
+	t *testing.T,
+	orderType string,
+) (testnetExecutorFixture, db.TradingIntent, *TestnetAccountReconciler, *httptest.Server) {
+	t.Helper()
+	executorFixture := newTestnetExecutorFixture(t, marketdata.MarketTypeSpot, &scriptedTestnetOrderClient{})
+	intent := executorFixture.enqueue(t, "0.5")
+	ageTestnetReconciliation(t, executorFixture.database, executorFixture.account.ID)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v3/account":
+			_, _ = response.Write([]byte(`{"canTrade":true,"balances":[{"asset":"USDT","free":"10000","locked":"0"}]}`))
+		case "/api/v3/openOrders":
+			body := `[{"symbol":"BTCUSDT","orderId":9101,"clientOrderId":"` + intent.ClientOrderID + `","side":"BUY","type":"` + orderType + `","status":"NEW","price":"0","origQty":"0.01","executedQty":"0","cummulativeQuoteQty":"0","stopPrice":"0"}]`
+			_, _ = response.Write([]byte(body))
+		default:
+			response.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	cipher, err := security.NewSecretCipher("testnet-executor-test-key")
+	if err != nil {
+		server.Close()
+		t.Fatalf("create recovery cipher: %v", err)
+	}
+	client, err := exchangebinance.NewPrivateClient(exchangebinance.PrivateClientConfig{
+		SpotBaseURL: server.URL, USDMBaseURL: server.URL,
+	})
+	if err != nil {
+		server.Close()
+		t.Fatalf("create recovery private client: %v", err)
+	}
+	reconciler, err := NewTestnetAccountReconciler(executorFixture.database, cipher, client, 10*time.Millisecond)
+	if err != nil {
+		server.Close()
+		t.Fatalf("create recovery reconciler: %v", err)
+	}
+	return executorFixture, intent, reconciler, server
 }
