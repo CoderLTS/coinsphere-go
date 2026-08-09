@@ -146,7 +146,10 @@ WHERE intent.id = ? AND intent.environment = 'testnet'
 func (executor *TestnetExecutor) claimNextIntent(ctx context.Context) (*db.TradingIntent, error) {
 	var intent db.TradingIntent
 	err := executor.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
+		// Select without a row lock first so every execution path acquires the account
+		// advisory lock before locking an intent row.
+		var candidate db.TradingIntent
+		if err := tx.
 			Where(`environment = 'testnet' AND (
                 status = 'reconciling'
                 OR (
@@ -160,11 +163,19 @@ func (executor *TestnetExecutor) claimNextIntent(ctx context.Context) (*db.Tradi
                 )
             )`).
 			Order("CASE status WHEN 'reconciling' THEN 0 ELSE 1 END, created_at, id").
+			Take(&candidate).Error; err != nil {
+			return err
+		}
+		if err := lockTestnetAccountExecution(tx, candidate.AccountID); err != nil {
+			return err
+		}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND environment = 'testnet'", candidate.ID).
 			Take(&intent).Error; err != nil {
 			return err
 		}
-		if err := lockTestnetAccountExecution(tx, intent.AccountID); err != nil {
-			return err
+		if intent.Status != "pending" && intent.Status != "reconciling" {
+			return gorm.ErrRecordNotFound
 		}
 		var activeCount int64
 		if err := tx.Model(&db.TradingIntent{}).
@@ -1369,11 +1380,8 @@ func validTestnetStoredOrderResult(
 	result exchangebinance.OrderResult,
 ) bool {
 	if result.OrderType != order.OrderType || !result.OriginalQuantity.Equal(order.Quantity) ||
+		!result.StopPrice.Equal(order.StopPrice) || result.WorkingType != order.WorkingType ||
 		result.ClosePosition != order.ClosePosition || result.ReduceOnly != order.ReduceOnly {
-		return false
-	}
-	if order.Purpose == "protection" &&
-		(!result.StopPrice.Equal(order.StopPrice) || result.WorkingType != order.WorkingType) {
 		return false
 	}
 	if !order.ClosePosition {

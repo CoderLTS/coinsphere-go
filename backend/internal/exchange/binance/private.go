@@ -84,19 +84,21 @@ type AccountPosition struct {
 }
 
 type OpenOrder struct {
-	Symbol           string
-	ExchangeOrderID  int64
-	ClientOrderID    string
-	Side             string
-	OrderType        string
-	Status           string
-	Price            decimal.Decimal
-	OriginalQuantity decimal.Decimal
-	ExecutedQuantity decimal.Decimal
-	StopPrice        decimal.Decimal
-	ClosePosition    bool
-	ReduceOnly       bool
-	WorkingType      string
+	Symbol                  string
+	ExchangeOrderID         int64
+	ClientOrderID           string
+	Side                    string
+	OrderType               string
+	Status                  string
+	Price                   decimal.Decimal
+	OriginalQuantity        decimal.Decimal
+	ExecutedQuantity        decimal.Decimal
+	CumulativeQuoteQuantity decimal.Decimal
+	AveragePrice            decimal.Decimal
+	StopPrice               decimal.Decimal
+	ClosePosition           bool
+	ReduceOnly              bool
+	WorkingType             string
 }
 
 type OrderResult struct {
@@ -653,19 +655,22 @@ func parseAccountSnapshot(marketType marketdata.MarketType, accountBody, openOrd
 	}
 
 	var orders []struct {
-		Symbol           string `json:"symbol"`
-		OrderID          int64  `json:"orderId"`
-		ClientOrderID    string `json:"clientOrderId"`
-		Side             string `json:"side"`
-		OrderType        string `json:"type"`
-		Status           string `json:"status"`
-		Price            string `json:"price"`
-		OriginalQuantity string `json:"origQty"`
-		ExecutedQuantity string `json:"executedQty"`
-		StopPrice        string `json:"stopPrice"`
-		ClosePosition    bool   `json:"closePosition"`
-		ReduceOnly       bool   `json:"reduceOnly"`
-		WorkingType      string `json:"workingType"`
+		Symbol                  string `json:"symbol"`
+		OrderID                 int64  `json:"orderId"`
+		ClientOrderID           string `json:"clientOrderId"`
+		Side                    string `json:"side"`
+		OrderType               string `json:"type"`
+		Status                  string `json:"status"`
+		Price                   string `json:"price"`
+		OriginalQuantity        string `json:"origQty"`
+		ExecutedQuantity        string `json:"executedQty"`
+		CumulativeQuoteQuantity string `json:"cummulativeQuoteQty"`
+		CumQuote                string `json:"cumQuote"`
+		AveragePrice            string `json:"avgPrice"`
+		StopPrice               string `json:"stopPrice"`
+		ClosePosition           bool   `json:"closePosition"`
+		ReduceOnly              bool   `json:"reduceOnly"`
+		WorkingType             string `json:"workingType"`
 	}
 	if err := json.Unmarshal(openOrdersBody, &orders); err != nil || orders == nil {
 		return AccountSnapshot{}, errors.New("invalid open orders response")
@@ -704,6 +709,36 @@ func parseAccountSnapshot(marketType marketdata.MarketType, accountBody, openOrd
 		if err != nil || executedQuantity.GreaterThan(originalQuantity) {
 			return AccountSnapshot{}, errors.New("invalid open order executed quantity")
 		}
+		cumulativeQuoteRaw := order.CumulativeQuoteQuantity
+		if cumulativeQuoteRaw == "" {
+			cumulativeQuoteRaw = order.CumQuote
+		}
+		if cumulativeQuoteRaw == "" {
+			cumulativeQuoteRaw = "0"
+		}
+		cumulativeQuote, err := privateDecimal(cumulativeQuoteRaw, false)
+		if err != nil {
+			return AccountSnapshot{}, err
+		}
+		averagePrice := decimal.Zero
+		if order.AveragePrice != "" {
+			averagePrice, err = privateDecimal(order.AveragePrice, false)
+			if err != nil {
+				return AccountSnapshot{}, err
+			}
+		} else if executedQuantity.IsPositive() {
+			if !cumulativeQuote.IsPositive() {
+				return AccountSnapshot{}, errors.New("invalid open order average price")
+			}
+			averagePrice = cumulativeQuote.Div(executedQuantity)
+			if _, err := marketdata.ParseDecimal(averagePrice.String()); err != nil {
+				return AccountSnapshot{}, err
+			}
+		}
+		if (executedQuantity.IsZero() && (!cumulativeQuote.IsZero() || !averagePrice.IsZero())) ||
+			(executedQuantity.IsPositive() && (!cumulativeQuote.IsPositive() || !averagePrice.IsPositive())) {
+			return AccountSnapshot{}, errors.New("invalid open order fill values")
+		}
 		stopPrice, err := privateDecimal(order.StopPrice, false)
 		if err != nil {
 			return AccountSnapshot{}, err
@@ -718,7 +753,8 @@ func parseAccountSnapshot(marketType marketdata.MarketType, accountBody, openOrd
 		snapshot.OpenOrders = append(snapshot.OpenOrders, OpenOrder{
 			Symbol: symbol, ExchangeOrderID: order.OrderID, ClientOrderID: clientOrderID,
 			Side: side, OrderType: orderType, Status: status, Price: price,
-			OriginalQuantity: originalQuantity, ExecutedQuantity: executedQuantity, StopPrice: stopPrice,
+			OriginalQuantity: originalQuantity, ExecutedQuantity: executedQuantity,
+			CumulativeQuoteQuantity: cumulativeQuote, AveragePrice: averagePrice, StopPrice: stopPrice,
 			ClosePosition: order.ClosePosition, ReduceOnly: order.ReduceOnly, WorkingType: workingType,
 		})
 	}
