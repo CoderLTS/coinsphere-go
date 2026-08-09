@@ -1191,6 +1191,23 @@ type testnetOrderAuditCounts struct {
 	RecoveredOrderCount        int64 `gorm:"column:recovered_order_count"`
 }
 
+func countUnknownTestnetOpenOrders(database *gorm.DB, accountID uuid.UUID, credentialUpdatedAt time.Time) (int64, error) {
+	var count int64
+	err := database.Table("testnet_open_orders AS open_order").
+		Where("open_order.account_id = ? AND open_order.credential_updated_at = ?", accountID, credentialUpdatedAt).
+		Where(`NOT EXISTS (
+			SELECT 1
+			FROM testnet_orders AS managed_order
+			WHERE managed_order.account_id = open_order.account_id
+			  AND managed_order.credential_updated_at = open_order.credential_updated_at
+			  AND (
+				(managed_order.client_order_id <> '' AND managed_order.client_order_id = open_order.client_order_id)
+				OR (managed_order.exchange_order_id IS NOT NULL AND managed_order.exchange_order_id = open_order.exchange_order_id)
+			  )
+		)`).Count(&count).Error
+	return count, err
+}
+
 type testnetFactAuditCounts struct {
 	TradeFactCount   int64      `gorm:"column:trade_fact_count"`
 	FillFactCount    int64      `gorm:"column:fill_fact_count"`
@@ -1246,7 +1263,11 @@ func (a *App) loadTestnetAuditSummary(database *gorm.DB, account db.TradingAccou
 		Scan(&orderCounts).Error; err != nil {
 		return TestnetAuditSummaryView{}, err
 	}
-	summary.UnknownOrderCount = int(orderCounts.UnknownOrderCount)
+	unknownOpenOrderCount, err := countUnknownTestnetOpenOrders(database, account.ID, credential.UpdatedAt)
+	if err != nil {
+		return TestnetAuditSummaryView{}, err
+	}
+	summary.UnknownOrderCount = int(orderCounts.UnknownOrderCount + unknownOpenOrderCount)
 	summary.ProtectionOrderCount = int(orderCounts.ProtectionOrderCount)
 	summary.ActiveProtectionOrderCount = int(orderCounts.ActiveProtectionOrderCount)
 	summary.RecoveredOrderCount = int(orderCounts.RecoveredOrderCount)
