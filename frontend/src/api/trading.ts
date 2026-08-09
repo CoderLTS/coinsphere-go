@@ -214,6 +214,31 @@ export interface TestnetTradeFact {
   createdAt: string
 }
 
+export interface TestnetRiskState {
+  baselineEquity: string
+  equity: string
+  peakEquity: string
+  dayStartDate: string
+  dayStartEquity: string
+  updatedAt: string
+}
+
+export interface TestnetAuditSummary {
+  accountId: string
+  credentialUpdatedAt?: string
+  reconciliation: TestnetReconciliation
+  riskState?: TestnetRiskState
+  unknownOrderCount: number
+  protectionOrderCount: number
+  activeProtectionOrderCount: number
+  recoveredOrderCount: number
+  tradeFactCount: number
+  fillFactCount: number
+  feeFactCount: number
+  fundingFactCount: number
+  lastFactAt?: string
+}
+
 export interface TradingOverview {
   control: TradingControl
   accounts: TradingAccount[]
@@ -226,6 +251,7 @@ export interface TradingOverview {
   testnetOpenOrders: TestnetOpenOrder[]
   testnetOrders: TestnetOrder[]
   testnetTradeFacts: TestnetTradeFact[]
+  testnetAuditSummaries: TestnetAuditSummary[]
 }
 
 export interface TradingRiskPayload {

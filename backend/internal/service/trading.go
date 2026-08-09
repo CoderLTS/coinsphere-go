@@ -182,6 +182,31 @@ type TestnetTradeFactView struct {
 	CreatedAt             string  `json:"createdAt"`
 }
 
+type TestnetRiskStateView struct {
+	BaselineEquity string `json:"baselineEquity"`
+	Equity         string `json:"equity"`
+	PeakEquity     string `json:"peakEquity"`
+	DayStartDate   string `json:"dayStartDate"`
+	DayStartEquity string `json:"dayStartEquity"`
+	UpdatedAt      string `json:"updatedAt"`
+}
+
+type TestnetAuditSummaryView struct {
+	AccountID                  string                    `json:"accountId"`
+	CredentialUpdatedAt        *string                   `json:"credentialUpdatedAt,omitempty"`
+	Reconciliation             TestnetReconciliationView `json:"reconciliation"`
+	RiskState                  *TestnetRiskStateView     `json:"riskState,omitempty"`
+	UnknownOrderCount          int                       `json:"unknownOrderCount"`
+	ProtectionOrderCount       int                       `json:"protectionOrderCount"`
+	ActiveProtectionOrderCount int                       `json:"activeProtectionOrderCount"`
+	RecoveredOrderCount        int                       `json:"recoveredOrderCount"`
+	TradeFactCount             int                       `json:"tradeFactCount"`
+	FillFactCount              int                       `json:"fillFactCount"`
+	FeeFactCount               int                       `json:"feeFactCount"`
+	FundingFactCount           int                       `json:"fundingFactCount"`
+	LastFactAt                 *string                   `json:"lastFactAt,omitempty"`
+}
+
 // TradingCredentialPayload 只在写入边界接收明文；响应永远不包含这两个字段。
 type TradingCredentialPayload struct {
 	APIKey                string `json:"apiKey"`
@@ -272,17 +297,18 @@ type PaperBalanceView struct {
 }
 
 type TradingOverviewView struct {
-	Control           TradingControlView     `json:"control"`
-	Accounts          []TradingAccountView   `json:"accounts"`
-	Intents           []TradingIntentView    `json:"intents"`
-	Orders            []PaperOrderView       `json:"orders"`
-	Positions         []PaperPositionView    `json:"positions"`
-	Balances          []PaperBalanceView     `json:"balances"`
-	TestnetBalances   []TestnetBalanceView   `json:"testnetBalances"`
-	TestnetPositions  []TestnetPositionView  `json:"testnetPositions"`
-	TestnetOpenOrders []TestnetOpenOrderView `json:"testnetOpenOrders"`
-	TestnetOrders     []TestnetOrderView     `json:"testnetOrders"`
-	TestnetTradeFacts []TestnetTradeFactView `json:"testnetTradeFacts"`
+	Control               TradingControlView        `json:"control"`
+	Accounts              []TradingAccountView      `json:"accounts"`
+	Intents               []TradingIntentView       `json:"intents"`
+	Orders                []PaperOrderView          `json:"orders"`
+	Positions             []PaperPositionView       `json:"positions"`
+	Balances              []PaperBalanceView        `json:"balances"`
+	TestnetBalances       []TestnetBalanceView      `json:"testnetBalances"`
+	TestnetPositions      []TestnetPositionView     `json:"testnetPositions"`
+	TestnetOpenOrders     []TestnetOpenOrderView    `json:"testnetOpenOrders"`
+	TestnetOrders         []TestnetOrderView        `json:"testnetOrders"`
+	TestnetTradeFacts     []TestnetTradeFactView    `json:"testnetTradeFacts"`
+	TestnetAuditSummaries []TestnetAuditSummaryView `json:"testnetAuditSummaries"`
 }
 
 type validatedTradingRisk struct {
@@ -738,7 +764,7 @@ func (a *App) GetTradingOverview(ctx context.Context, userID int64) (TradingOver
 		Orders: []PaperOrderView{}, Positions: []PaperPositionView{}, Balances: []PaperBalanceView{},
 		TestnetBalances: []TestnetBalanceView{}, TestnetPositions: []TestnetPositionView{},
 		TestnetOpenOrders: []TestnetOpenOrderView{}, TestnetOrders: []TestnetOrderView{},
-		TestnetTradeFacts: []TestnetTradeFactView{},
+		TestnetTradeFacts: []TestnetTradeFactView{}, TestnetAuditSummaries: []TestnetAuditSummaryView{},
 	}
 	var accounts []db.TradingAccount
 	if err := database.Where("owner_user_id = ?", userID).Order("id DESC").Find(&accounts).Error; err != nil {
@@ -750,6 +776,13 @@ func (a *App) GetTradingOverview(ctx context.Context, userID int64) (TradingOver
 			return TradingOverviewView{}, err
 		}
 		result.Accounts = append(result.Accounts, view)
+		if account.Environment == "testnet" {
+			summary, err := a.loadTestnetAuditSummary(database, account)
+			if err != nil {
+				return TradingOverviewView{}, err
+			}
+			result.TestnetAuditSummaries = append(result.TestnetAuditSummaries, summary)
+		}
 	}
 	var intents []db.TradingIntent
 	if err := database.Where("owner_user_id = ?", userID).Order("id DESC").Limit(50).Find(&intents).Error; err != nil {
@@ -1149,6 +1182,95 @@ func (a *App) loadTradingAccountView(database *gorm.DB, row db.TradingAccount) (
 		}
 	}
 	return view, nil
+}
+
+type testnetOrderAuditCounts struct {
+	UnknownOrderCount          int64 `gorm:"column:unknown_order_count"`
+	ProtectionOrderCount       int64 `gorm:"column:protection_order_count"`
+	ActiveProtectionOrderCount int64 `gorm:"column:active_protection_order_count"`
+	RecoveredOrderCount        int64 `gorm:"column:recovered_order_count"`
+}
+
+type testnetFactAuditCounts struct {
+	TradeFactCount   int64      `gorm:"column:trade_fact_count"`
+	FillFactCount    int64      `gorm:"column:fill_fact_count"`
+	FeeFactCount     int64      `gorm:"column:fee_fact_count"`
+	FundingFactCount int64      `gorm:"column:funding_fact_count"`
+	LastFactAt       *time.Time `gorm:"column:last_fact_at"`
+}
+
+func (a *App) loadTestnetAuditSummary(database *gorm.DB, account db.TradingAccount) (TestnetAuditSummaryView, error) {
+	summary := TestnetAuditSummaryView{
+		AccountID:      account.ID.String(),
+		Reconciliation: TestnetReconciliationView{Status: "pending"},
+	}
+	var credential db.TradingAccountCredential
+	if err := database.Where("account_id = ?", account.ID).Take(&credential).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return summary, nil
+		}
+		return TestnetAuditSummaryView{}, err
+	}
+	credentialUpdatedAt := formatUTC(credential.UpdatedAt)
+	summary.CredentialUpdatedAt = &credentialUpdatedAt
+
+	var reconciliation db.TestnetReconciliation
+	err := database.Where("account_id = ? AND credential_updated_at = ?", account.ID, credential.UpdatedAt).
+		Take(&reconciliation).Error
+	if err == nil {
+		summary.Reconciliation = serializeTestnetReconciliation(reconciliation)
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return TestnetAuditSummaryView{}, err
+	}
+
+	var risk db.TestnetRiskState
+	err = database.Where("account_id = ? AND credential_updated_at = ?", account.ID, credential.UpdatedAt).
+		Take(&risk).Error
+	if err == nil {
+		summary.RiskState = &TestnetRiskStateView{
+			BaselineEquity: risk.BaselineEquity.String(), Equity: risk.Equity.String(),
+			PeakEquity: risk.PeakEquity.String(), DayStartDate: risk.DayStartDate.UTC().Format("2006-01-02"),
+			DayStartEquity: risk.DayStartEquity.String(), UpdatedAt: formatUTC(risk.UpdatedAt),
+		}
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return TestnetAuditSummaryView{}, err
+	}
+
+	var orderCounts testnetOrderAuditCounts
+	if err := database.Model(&db.TestnetOrder{}).Select(`
+		COUNT(*) FILTER (WHERE status = 'unknown') AS unknown_order_count,
+		COUNT(*) FILTER (WHERE purpose = 'protection') AS protection_order_count,
+		COUNT(*) FILTER (WHERE purpose = 'protection' AND status IN ('prepared', 'unknown', 'new', 'partially_filled')) AS active_protection_order_count,
+		COUNT(*) FILTER (WHERE recovered_at IS NOT NULL) AS recovered_order_count
+	`).Where("account_id = ? AND credential_updated_at = ?", account.ID, credential.UpdatedAt).
+		Scan(&orderCounts).Error; err != nil {
+		return TestnetAuditSummaryView{}, err
+	}
+	summary.UnknownOrderCount = int(orderCounts.UnknownOrderCount)
+	summary.ProtectionOrderCount = int(orderCounts.ProtectionOrderCount)
+	summary.ActiveProtectionOrderCount = int(orderCounts.ActiveProtectionOrderCount)
+	summary.RecoveredOrderCount = int(orderCounts.RecoveredOrderCount)
+
+	var factCounts testnetFactAuditCounts
+	if err := database.Model(&db.TestnetTradeFact{}).Select(`
+		COUNT(*) AS trade_fact_count,
+		COUNT(*) FILTER (WHERE event_type = 'fill') AS fill_fact_count,
+		COUNT(*) FILTER (WHERE event_type = 'fee') AS fee_fact_count,
+		COUNT(*) FILTER (WHERE event_type = 'funding') AS funding_fact_count,
+		MAX(occurred_at) AS last_fact_at
+	`).Where("account_id = ? AND credential_updated_at = ?", account.ID, credential.UpdatedAt).
+		Scan(&factCounts).Error; err != nil {
+		return TestnetAuditSummaryView{}, err
+	}
+	summary.TradeFactCount = int(factCounts.TradeFactCount)
+	summary.FillFactCount = int(factCounts.FillFactCount)
+	summary.FeeFactCount = int(factCounts.FeeFactCount)
+	summary.FundingFactCount = int(factCounts.FundingFactCount)
+	if factCounts.LastFactAt != nil {
+		lastFactAt := formatUTC(*factCounts.LastFactAt)
+		summary.LastFactAt = &lastFactAt
+	}
+	return summary, nil
 }
 
 func serializeTradingControl(row db.TradingControl) TradingControlView {

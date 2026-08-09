@@ -821,6 +821,27 @@
         "unknown": "对账状态未知"
       }
     },
+    "audit": {
+      "title": "Testnet 证据摘要",
+      "rawState": "原始状态与计数",
+      "errorCode": "错误码",
+      "unknownOrders": "未知订单",
+      "protectionOrders": "保护单",
+      "activeProtectionOrders": "活动保护单",
+      "recoveredOrders": "恢复订单",
+      "tradeFacts": "账本事实",
+      "fills": "成交事实",
+      "fees": "手续费事实",
+      "funding": "资金费事实",
+      "baselineEquity": "基线权益",
+      "equity": "当前权益",
+      "peakEquity": "权益峰值",
+      "dayStartEquity": "日初权益",
+      "dayStartDate": "日初日期",
+      "riskUpdatedAt": "风控更新时间",
+      "observedAt": "最近观察",
+      "lastFactAt": "最近事实"
+    },
     "status": {
       "active": "运行中",
       "paused": "已暂停"

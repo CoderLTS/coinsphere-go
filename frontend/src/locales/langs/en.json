@@ -821,6 +821,27 @@
         "unknown": "Unknown"
       }
     },
+    "audit": {
+      "title": "Testnet evidence summary",
+      "rawState": "Raw state and counts",
+      "errorCode": "Error code",
+      "unknownOrders": "Unknown orders",
+      "protectionOrders": "Protection orders",
+      "activeProtectionOrders": "Active protection orders",
+      "recoveredOrders": "Recovered orders",
+      "tradeFacts": "Ledger facts",
+      "fills": "Fill facts",
+      "fees": "Fee facts",
+      "funding": "Funding facts",
+      "baselineEquity": "Baseline equity",
+      "equity": "Current equity",
+      "peakEquity": "Peak equity",
+      "dayStartEquity": "Day-start equity",
+      "dayStartDate": "Day-start date",
+      "riskUpdatedAt": "Risk state updated",
+      "observedAt": "Last observed",
+      "lastFactAt": "Last fact"
+    },
     "status": {
       "active": "Active",
       "paused": "Paused"
