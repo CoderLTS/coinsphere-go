@@ -88,6 +88,131 @@ func TestTestnetExecutorExecutesDeterministicSpotAndUSDMOrders(t *testing.T) {
 	}
 }
 
+func TestTestnetExecutorHonorsGlobalEmergencyStopLifecycle(t *testing.T) {
+	for _, market := range []marketdata.MarketType{marketdata.MarketTypeSpot, marketdata.MarketTypeUSDM} {
+		t.Run(string(market), func(t *testing.T) {
+			client := &scriptedTestnetOrderClient{}
+			fixture := newTestnetExecutorFixture(t, market, client)
+			fixture.base.app.reauthTokens = map[string]reauthTokenRecord{}
+			fixture.base.app.revokedAccessTokens = map[string]time.Time{}
+			principal := &Principal{
+				User: &fixture.base.owner, RoleCodes: []string{"R_SUPER"},
+				AccessTokenID: "testnet-emergency-session",
+			}
+			var orderID int64 = 600
+			client.place = func(call testnetOrderCall) (exchangebinance.OrderResult, error) {
+				orderID++
+				return filledTestnetResult(call, orderID), nil
+			}
+
+			openIntent := fixture.enqueue(t, "0.5")
+			processTestnetSteps(t, fixture.executor, 2, "open "+string(market)+" Testnet position")
+			assertTradingIntentState(t, fixture.database, openIntent.ID, "executed", "")
+
+			var automated db.StrategyInstance
+			if err := fixture.database.Where("id = ?", fixture.base.instanceID).Take(&automated).Error; err != nil {
+				t.Fatalf("load Testnet strategy automation: %v", err)
+			}
+			now := time.Now().UTC().Truncate(time.Microsecond)
+			automated.ID = mustUUIDv7(t)
+			automated.Name = "testnet emergency automation"
+			automated.Mode = "auto"
+			automated.CreatedAt = now
+			automated.UpdatedAt = now
+			if err := fixture.database.Create(&automated).Error; err != nil {
+				t.Fatalf("create Testnet strategy automation: %v", err)
+			}
+
+			stopKey := "testnet-emergency-stop-" + string(market)
+			activated, err := fixture.base.app.ActivateTradingEmergencyStop(
+				context.Background(), principal, "M3 Testnet emergency drill", stopKey,
+			)
+			if err != nil || !activated.EmergencyStopped || activated.StopReason != "M3 Testnet emergency drill" {
+				t.Fatalf("activate %s Testnet emergency stop: control=%#v err=%v", market, activated, err)
+			}
+			replayed, err := fixture.base.app.ActivateTradingEmergencyStop(
+				context.Background(), principal, "M3 Testnet emergency drill", stopKey,
+			)
+			if err != nil || replayed.UpdatedAt != activated.UpdatedAt || replayed.StoppedAt != activated.StoppedAt {
+				t.Fatalf("replay %s Testnet emergency stop: control=%#v err=%v", market, replayed, err)
+			}
+			var account db.TradingAccount
+			if err := fixture.database.Where("id = ?", fixture.account.ID).Take(&account).Error; err != nil {
+				t.Fatalf("load emergency-stopped Testnet account: %v", err)
+			}
+			if account.Status != "paused" || account.PauseReason != "global_emergency_stop" || account.AutomationEnabled {
+				t.Fatalf("emergency-stopped %s Testnet account = %#v", market, account)
+			}
+			if err := fixture.database.Where("id = ?", automated.ID).Take(&automated).Error; err != nil {
+				t.Fatalf("reload Testnet strategy automation: %v", err)
+			}
+			if automated.IsEnabled {
+				t.Fatal("global emergency stop left Testnet automation enabled")
+			}
+
+			reduceIntent := fixture.enqueue(t, "0.25")
+			processTestnetSteps(t, fixture.executor, 3, "reduce "+string(market)+" during emergency stop")
+			assertTradingIntentState(t, fixture.database, reduceIntent.ID, "executed", "")
+			calls := client.snapshotCalls()
+			reductionIndex, cancellationIndex := 3, 2
+			if market == marketdata.MarketTypeUSDM {
+				reductionIndex, cancellationIndex = 2, 3
+			}
+			if len(calls) != 5 || calls[cancellationIndex].operation != "cancel" ||
+				calls[reductionIndex].operation != "place" || calls[reductionIndex].side != "sell" ||
+				!calls[reductionIndex].quantity.Equal(decimal.RequireFromString("2.5")) ||
+				calls[reductionIndex].reduceOnly != (market == marketdata.MarketTypeUSDM) ||
+				calls[4].operation != "protect" {
+				t.Fatalf("%s emergency reduction calls = %#v", market, calls)
+			}
+			if market == marketdata.MarketTypeSpot &&
+				(!calls[4].quantity.Equal(decimal.RequireFromString("2.5")) || calls[4].closePosition) {
+				t.Fatalf("Spot emergency replacement protection = %#v", calls[4])
+			}
+			if market == marketdata.MarketTypeUSDM && (!calls[4].quantity.IsZero() || !calls[4].closePosition) {
+				t.Fatalf("USD-M emergency replacement protection = %#v", calls[4])
+			}
+
+			increaseIntent := fixture.enqueue(t, "0.75")
+			processTestnetSteps(t, fixture.executor, 1, "block "+string(market)+" emergency increase")
+			assertTradingIntentState(t, fixture.database, increaseIntent.ID, "blocked", "global_emergency_stop")
+			if got := len(client.snapshotCalls()); got != len(calls) {
+				t.Fatalf("%s emergency increase made exchange calls: before=%d after=%d", market, len(calls), got)
+			}
+
+			reauthToken := fixture.base.app.issueReauthToken(principal, time.Now())
+			released, err := fixture.base.app.ReleaseTradingEmergencyStop(
+				context.Background(), principal, "testnet-emergency-release-"+string(market), reauthToken,
+			)
+			if err != nil || released.EmergencyStopped || released.StopReason != "" {
+				t.Fatalf("release %s Testnet emergency stop: control=%#v err=%v", market, released, err)
+			}
+			if fixture.base.app.ConsumeReauthToken(reauthToken, principal) {
+				t.Fatal("emergency stop release reauthentication token was reusable")
+			}
+			if err := fixture.database.Where("id = ?", fixture.account.ID).Take(&account).Error; err != nil {
+				t.Fatalf("load released Testnet account: %v", err)
+			}
+			if account.Status != "paused" || account.PauseReason != "global_emergency_stop" || account.AutomationEnabled {
+				t.Fatalf("released %s Testnet account resumed automatically: %#v", market, account)
+			}
+			if err := fixture.database.Where("id = ?", automated.ID).Take(&automated).Error; err != nil {
+				t.Fatalf("reload released Testnet strategy automation: %v", err)
+			}
+			if automated.IsEnabled {
+				t.Fatal("emergency stop release resumed Testnet automation")
+			}
+
+			pausedIntent := fixture.enqueue(t, "0.75")
+			processTestnetSteps(t, fixture.executor, 1, "block "+string(market)+" paused-account increase")
+			assertTradingIntentState(t, fixture.database, pausedIntent.ID, "blocked", "account_paused")
+			if got := len(client.snapshotCalls()); got != len(calls) {
+				t.Fatalf("%s paused-account increase made exchange calls: before=%d after=%d", market, len(calls), got)
+			}
+		})
+	}
+}
+
 func TestTestnetExecutorMarksUSDMReductionsReduceOnly(t *testing.T) {
 	client := &scriptedTestnetOrderClient{}
 	fixture := newTestnetExecutorFixture(t, marketdata.MarketTypeUSDM, client)
