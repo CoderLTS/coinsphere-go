@@ -449,56 +449,60 @@ func TestTestnetExecutorQueriesUnknownFlattenBeforeRecovery(t *testing.T) {
 }
 
 func TestTestnetExecutorQueriesBeforeRetryingUnknownSubmission(t *testing.T) {
-	client := &scriptedTestnetOrderClient{}
-	fixture := newTestnetExecutorFixture(t, marketdata.MarketTypeSpot, client)
-	intent := fixture.enqueue(t, "0.5")
-	placeCount := 0
-	client.query = func(testnetOrderCall) (exchangebinance.OrderResult, error) {
-		return exchangebinance.OrderResult{}, &exchangebinance.PrivateError{Kind: exchangebinance.PrivateErrorNotFound}
-	}
-	client.place = func(call testnetOrderCall) (exchangebinance.OrderResult, error) {
-		placeCount++
-		if placeCount == 1 {
-			return exchangebinance.OrderResult{}, &exchangebinance.PrivateError{Kind: exchangebinance.PrivateErrorUnavailable}
-		}
-		return filledTestnetResult(call, 42), nil
-	}
+	for _, market := range []marketdata.MarketType{marketdata.MarketTypeSpot, marketdata.MarketTypeUSDM} {
+		t.Run(string(market), func(t *testing.T) {
+			client := &scriptedTestnetOrderClient{}
+			fixture := newTestnetExecutorFixture(t, market, client)
+			intent := fixture.enqueue(t, "0.5")
+			placeCount := 0
+			client.query = func(testnetOrderCall) (exchangebinance.OrderResult, error) {
+				return exchangebinance.OrderResult{}, &exchangebinance.PrivateError{Kind: exchangebinance.PrivateErrorNotFound}
+			}
+			client.place = func(call testnetOrderCall) (exchangebinance.OrderResult, error) {
+				placeCount++
+				if placeCount == 1 {
+					return exchangebinance.OrderResult{}, &exchangebinance.PrivateError{Kind: exchangebinance.PrivateErrorUnavailable}
+				}
+				return filledTestnetResult(call, 42), nil
+			}
 
-	if processed, err := fixture.executor.ProcessNext(context.Background()); err != nil || !processed {
-		t.Fatalf("process uncertain Testnet submission: processed=%t err=%v", processed, err)
-	}
-	assertTradingIntentState(t, fixture.database, intent.ID, "reconciling", "exchange_unavailable")
-	var account db.TradingAccount
-	if err := fixture.database.Where("id = ?", fixture.account.ID).Take(&account).Error; err != nil {
-		t.Fatalf("load account after uncertain submission: %v", err)
-	}
-	if account.Status != "active" {
-		t.Fatalf("transient uncertainty paused serialized account: %#v", account)
-	}
+			if processed, err := fixture.executor.ProcessNext(context.Background()); err != nil || !processed {
+				t.Fatalf("process uncertain Testnet submission: processed=%t err=%v", processed, err)
+			}
+			assertTradingIntentState(t, fixture.database, intent.ID, "reconciling", "exchange_unavailable")
+			var account db.TradingAccount
+			if err := fixture.database.Where("id = ?", fixture.account.ID).Take(&account).Error; err != nil {
+				t.Fatalf("load account after uncertain submission: %v", err)
+			}
+			if account.Status != "active" {
+				t.Fatalf("transient uncertainty paused serialized account: %#v", account)
+			}
 
-	if processed, err := fixture.executor.ProcessNext(context.Background()); err != nil || !processed {
-		t.Fatalf("recover uncertain Testnet submission: processed=%t err=%v", processed, err)
-	}
-	assertTradingIntentState(t, fixture.database, intent.ID, "reconciling", "protection_required")
-	if processed, err := fixture.executor.ProcessNext(context.Background()); err != nil || !processed {
-		t.Fatalf("protect recovered Testnet submission: processed=%t err=%v", processed, err)
-	}
-	assertTradingIntentState(t, fixture.database, intent.ID, "executed", "")
-	calls := client.snapshotCalls()
-	if len(calls) != 4 || calls[0].operation != "place" || calls[1].operation != "query" ||
-		calls[2].operation != "place" || calls[0].clientOrderID != calls[1].clientOrderID ||
-		calls[1].clientOrderID != calls[2].clientOrderID || calls[3].operation != "protect" {
-		t.Fatalf("unknown submission recovery calls = %#v", calls)
-	}
-	var order db.TestnetOrder
-	if err := fixture.database.Where("intent_id = ? AND purpose = 'rebalance'", intent.ID).Take(&order).Error; err != nil {
-		t.Fatalf("load recovered Testnet order: %v", err)
-	}
-	if order.Status != "filled" || order.SubmitAttemptCount != 2 || order.QueryAttemptCount != 1 {
-		t.Fatalf("recovered Testnet order = %#v", order)
-	}
-	if processed, err := fixture.executor.ProcessNext(context.Background()); err != nil || processed {
-		t.Fatalf("completed Testnet intent was replayed: processed=%t err=%v", processed, err)
+			if processed, err := fixture.executor.ProcessNext(context.Background()); err != nil || !processed {
+				t.Fatalf("recover uncertain Testnet submission: processed=%t err=%v", processed, err)
+			}
+			assertTradingIntentState(t, fixture.database, intent.ID, "reconciling", "protection_required")
+			if processed, err := fixture.executor.ProcessNext(context.Background()); err != nil || !processed {
+				t.Fatalf("protect recovered Testnet submission: processed=%t err=%v", processed, err)
+			}
+			assertTradingIntentState(t, fixture.database, intent.ID, "executed", "")
+			calls := client.snapshotCalls()
+			if len(calls) != 4 || calls[0].operation != "place" || calls[1].operation != "query" ||
+				calls[2].operation != "place" || calls[0].clientOrderID != calls[1].clientOrderID ||
+				calls[1].clientOrderID != calls[2].clientOrderID || calls[3].operation != "protect" {
+				t.Fatalf("unknown submission recovery calls = %#v", calls)
+			}
+			var order db.TestnetOrder
+			if err := fixture.database.Where("intent_id = ? AND purpose = 'rebalance'", intent.ID).Take(&order).Error; err != nil {
+				t.Fatalf("load recovered Testnet order: %v", err)
+			}
+			if order.Status != "filled" || order.SubmitAttemptCount != 2 || order.QueryAttemptCount != 1 {
+				t.Fatalf("recovered Testnet order = %#v", order)
+			}
+			if processed, err := fixture.executor.ProcessNext(context.Background()); err != nil || processed {
+				t.Fatalf("completed Testnet intent was replayed: processed=%t err=%v", processed, err)
+			}
+		})
 	}
 }
 
@@ -541,52 +545,56 @@ func TestTestnetExecutorQueriesAfterRejectedSubmission(t *testing.T) {
 }
 
 func TestTestnetExecutorRecoversPreparedOrderByQueryOnly(t *testing.T) {
-	client := &scriptedTestnetOrderClient{}
-	fixture := newTestnetExecutorFixture(t, marketdata.MarketTypeSpot, client)
-	intent := fixture.enqueue(t, "0.5")
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	stoppedWorker := "stopped-testnet-worker"
-	if err := fixture.database.Model(&db.TradingIntent{}).Where("id = ?", intent.ID).Updates(map[string]any{
-		"status": "processing", "attempt_count": 1, "claimed_at": now,
-		"worker_id": stoppedWorker, "updated_at": now,
-	}).Error; err != nil {
-		t.Fatalf("mark interrupted Testnet intent: %v", err)
-	}
-	order := db.TestnetOrder{
-		ID: intent.ID, AccountID: intent.AccountID, IntentID: intent.ID,
-		StrategyInstanceID: intent.StrategyInstanceID, InstrumentID: intent.InstrumentID,
-		CredentialUpdatedAt:       fixture.credential.UpdatedAt,
-		SubmittedAccountUpdatedAt: fixture.account.UpdatedAt,
-		ClientOrderID:             intent.ClientOrderID, Side: "buy", Quantity: decimal.NewFromInt(5),
-		Purpose: "rebalance", OrderType: "market", Status: "prepared", SubmitAttemptCount: 1,
-		SubmittedAt: now, CreatedAt: now, UpdatedAt: now,
-	}
-	if err := fixture.database.Create(&order).Error; err != nil {
-		t.Fatalf("create interrupted prepared Testnet order: %v", err)
-	}
-	client.query = func(call testnetOrderCall) (exchangebinance.OrderResult, error) {
-		call.side = "buy"
-		call.quantity = decimal.NewFromInt(5)
-		return filledTestnetResult(call, 43), nil
-	}
-	client.place = func(testnetOrderCall) (exchangebinance.OrderResult, error) {
-		return exchangebinance.OrderResult{}, errors.New("place must not run during prepared-order recovery")
-	}
+	for _, market := range []marketdata.MarketType{marketdata.MarketTypeSpot, marketdata.MarketTypeUSDM} {
+		t.Run(string(market), func(t *testing.T) {
+			client := &scriptedTestnetOrderClient{}
+			fixture := newTestnetExecutorFixture(t, market, client)
+			intent := fixture.enqueue(t, "0.5")
+			now := time.Now().UTC().Truncate(time.Microsecond)
+			stoppedWorker := "stopped-testnet-worker"
+			if err := fixture.database.Model(&db.TradingIntent{}).Where("id = ?", intent.ID).Updates(map[string]any{
+				"status": "processing", "attempt_count": 1, "claimed_at": now,
+				"worker_id": stoppedWorker, "updated_at": now,
+			}).Error; err != nil {
+				t.Fatalf("mark interrupted Testnet intent: %v", err)
+			}
+			order := db.TestnetOrder{
+				ID: intent.ID, AccountID: intent.AccountID, IntentID: intent.ID,
+				StrategyInstanceID: intent.StrategyInstanceID, InstrumentID: intent.InstrumentID,
+				CredentialUpdatedAt:       fixture.credential.UpdatedAt,
+				SubmittedAccountUpdatedAt: fixture.account.UpdatedAt,
+				ClientOrderID:             intent.ClientOrderID, Side: "buy", Quantity: decimal.NewFromInt(5),
+				Purpose: "rebalance", OrderType: "market", Status: "prepared", SubmitAttemptCount: 1,
+				SubmittedAt: now, CreatedAt: now, UpdatedAt: now,
+			}
+			if err := fixture.database.Create(&order).Error; err != nil {
+				t.Fatalf("create interrupted prepared Testnet order: %v", err)
+			}
+			client.query = func(call testnetOrderCall) (exchangebinance.OrderResult, error) {
+				call.side = "buy"
+				call.quantity = decimal.NewFromInt(5)
+				return filledTestnetResult(call, 43), nil
+			}
+			client.place = func(testnetOrderCall) (exchangebinance.OrderResult, error) {
+				return exchangebinance.OrderResult{}, errors.New("place must not run during prepared-order recovery")
+			}
 
-	if err := fixture.executor.Recover(context.Background()); err != nil {
-		t.Fatalf("recover interrupted Testnet executor: %v", err)
-	}
-	assertTradingIntentState(t, fixture.database, intent.ID, "reconciling", "")
-	if processed, err := fixture.executor.ProcessNext(context.Background()); err != nil || !processed {
-		t.Fatalf("query interrupted Testnet order: processed=%t err=%v", processed, err)
-	}
-	if processed, err := fixture.executor.ProcessNext(context.Background()); err != nil || !processed {
-		t.Fatalf("protect recovered interrupted Testnet order: processed=%t err=%v", processed, err)
-	}
-	assertTradingIntentState(t, fixture.database, intent.ID, "executed", "")
-	calls := client.snapshotCalls()
-	if len(calls) != 2 || calls[0].operation != "query" || calls[1].operation != "protect" {
-		t.Fatalf("prepared-order recovery calls = %#v", calls)
+			if err := fixture.executor.Recover(context.Background()); err != nil {
+				t.Fatalf("recover interrupted Testnet executor: %v", err)
+			}
+			assertTradingIntentState(t, fixture.database, intent.ID, "reconciling", "")
+			if processed, err := fixture.executor.ProcessNext(context.Background()); err != nil || !processed {
+				t.Fatalf("query interrupted Testnet order: processed=%t err=%v", processed, err)
+			}
+			if processed, err := fixture.executor.ProcessNext(context.Background()); err != nil || !processed {
+				t.Fatalf("protect recovered interrupted Testnet order: processed=%t err=%v", processed, err)
+			}
+			assertTradingIntentState(t, fixture.database, intent.ID, "executed", "")
+			calls := client.snapshotCalls()
+			if len(calls) != 2 || calls[0].operation != "query" || calls[1].operation != "protect" {
+				t.Fatalf("prepared-order recovery calls = %#v", calls)
+			}
+		})
 	}
 }
 

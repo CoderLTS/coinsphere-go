@@ -501,6 +501,71 @@ func TestTestnetReconcilerIgnoresOlderSnapshotProjection(t *testing.T) {
 	}
 }
 
+func TestTestnetReconcilerDeduplicatesSpotAndUSDMTradeReports(t *testing.T) {
+	for _, market := range []marketdata.MarketType{marketdata.MarketTypeSpot, marketdata.MarketTypeUSDM} {
+		t.Run(string(market), func(t *testing.T) {
+			spotTrades := `[{
+                "symbol":"BTCUSDT","id":7001,"orderId":8080,"price":"50000","qty":"0.01",
+                "quoteQty":"500","commission":"0.20","commissionAsset":"USDT",
+                "time":1786310700000,"isBuyer":true,"isMaker":false
+            }]`
+			usdmTrades := `[{
+                "symbol":"BTCUSDT","id":7001,"orderId":8080,"side":"BUY","positionSide":"BOTH",
+                "price":"50000","qty":"0.01","quoteQty":"500","commission":"0.20",
+                "commissionAsset":"USDT","realizedPnl":"0","buyer":true,"maker":false,"time":1786310700000
+            }]`
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				if market == marketdata.MarketTypeUSDM {
+					writeTestnetLedgerUSDMResponse(response, request, usdmTrades, "[]")
+					return
+				}
+				response.Header().Set("Content-Type", "application/json")
+				switch request.URL.Path {
+				case "/api/v3/account":
+					_, _ = response.Write([]byte(`{
+                        "canTrade":true,
+                        "balances":[
+                            {"asset":"USDT","free":"1000","locked":"0"},
+                            {"asset":"BTC","free":"0.01","locked":"0"}
+                        ]
+                    }`))
+				case "/api/v3/openOrders":
+					_, _ = response.Write([]byte(`[]`))
+				case "/api/v3/myTrades":
+					_, _ = response.Write([]byte(spotTrades))
+				default:
+					response.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+			fixture := newTestnetTradeFactFixtureForMarket(t, market, server.URL)
+
+			for attempt := 1; attempt <= 2; attempt++ {
+				if attempt > 1 {
+					ageTestnetReconciliation(t, fixture.database, fixture.account.ID)
+				}
+				processed, retryAfter, err := fixture.reconciler.ProcessNext(context.Background())
+				if err != nil || !processed || retryAfter != 0 {
+					t.Fatalf("reconcile %s duplicate trade report %d: processed=%t retry=%v err=%v", market, attempt, processed, retryAfter, err)
+				}
+			}
+
+			var factCount int64
+			if err := fixture.database.Model(&db.TestnetTradeFact{}).
+				Where("account_id = ?", fixture.account.ID).Count(&factCount).Error; err != nil || factCount != 2 {
+				t.Fatalf("%s duplicate trade fact count = %d, err=%v", market, factCount, err)
+			}
+			var reconciliation db.TestnetReconciliation
+			if err := fixture.database.Where("account_id = ?", fixture.account.ID).Take(&reconciliation).Error; err != nil {
+				t.Fatalf("load %s duplicate-report reconciliation: %v", market, err)
+			}
+			if reconciliation.Status != "matched" || reconciliation.ErrorCode != "" {
+				t.Fatalf("%s duplicate-report reconciliation = %#v", market, reconciliation)
+			}
+		})
+	}
+}
+
 func TestTestnetReconcilerPersistsAndDeduplicatesTradeFacts(t *testing.T) {
 	var mutate atomic.Bool
 	tradeBody := func() string {
@@ -727,8 +792,16 @@ type testnetTradeFactFixture struct {
 }
 
 func newTestnetTradeFactFixture(t *testing.T, serverURL string) testnetTradeFactFixture {
+	return newTestnetTradeFactFixtureForMarket(t, marketdata.MarketTypeUSDM, serverURL)
+}
+
+func newTestnetTradeFactFixtureForMarket(
+	t *testing.T,
+	market marketdata.MarketType,
+	serverURL string,
+) testnetTradeFactFixture {
 	t.Helper()
-	executorFixture := newTestnetExecutorFixture(t, marketdata.MarketTypeUSDM, &scriptedTestnetOrderClient{})
+	executorFixture := newTestnetExecutorFixture(t, market, &scriptedTestnetOrderClient{})
 	intent := executorFixture.enqueue(t, "0.01")
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	var account db.TradingAccount
