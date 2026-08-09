@@ -2,16 +2,152 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"coinsphere/backend/internal/db"
 	"coinsphere/backend/internal/security"
 )
+
+func TestQQBotAuthenticationAndTokenCache(t *testing.T) {
+	var tokenCalls atomic.Int32
+	var messageCalls atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app/getAppAccessToken":
+			tokenCalls.Add(1)
+			if r.Host != "bots.qq.com" {
+				t.Errorf("token host = %q", r.Host)
+			}
+			var payload map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Errorf("decode token request: %v", err)
+			}
+			if payload["appId"] != "test-app" || payload["clientSecret"] != "test-client-secret" {
+				t.Errorf("unexpected token request: %#v", payload)
+			}
+			_, _ = io.WriteString(w, `{"access_token":"test-access-token","expires_in":"120"}`)
+		case "/v2/groups/test-group/messages":
+			messageCalls.Add(1)
+			if r.Host != "api.sgroup.qq.com" {
+				t.Errorf("message host = %q", r.Host)
+			}
+			if got := r.Header.Get("Authorization"); got != "QQBot test-access-token" {
+				t.Errorf("authorization header = %q", got)
+			}
+			if got := r.Header.Get("X-Union-Appid"); got != "test-app" {
+				t.Errorf("union app id = %q", got)
+			}
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Errorf("decode message request: %v", err)
+			}
+			if payload["content"] != "Signal\nReview required" {
+				t.Errorf("message content = %#v", payload["content"])
+			}
+			if payload["msg_type"] != float64(0) {
+				t.Errorf("message type = %#v", payload["msg_type"])
+			}
+			w.Header().Set("X-Tps-trace-ID", "trace-test")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = io.WriteString(w, `{"id":"message-id"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := server.Client()
+	transport := client.Transport.(*http.Transport).Clone()
+	transport.TLSClientConfig = transport.TLSClientConfig.Clone()
+	transport.TLSClientConfig.ServerName = server.Certificate().DNSNames[0]
+	transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
+	}
+	client.Transport = transport
+	client.Timeout = 8 * time.Second
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	app := &App{qqTokens: map[int64]qqAccessToken{}, qqHTTPClient: client}
+	channel := &notifyRuntimeChannel{
+		ChannelID: 17, ChannelType: "qq_bot",
+		Config: M{
+			"appId": "test-app", "targetType": "group", "targetId": "test-group",
+			"tokenBaseUrl": "https://untrusted.invalid", "apiBaseUrl": "https://untrusted.invalid",
+		},
+		Secrets: M{"clientSecret": "test-client-secret"},
+	}
+	for range 2 {
+		ok, response := app.sendQQBot(context.Background(), channel, "Signal", "Review required")
+		if !ok || !strings.Contains(response, `"status":201`) || !strings.Contains(response, `"traceId":"trace-test"`) {
+			t.Fatalf("QQ Bot response = ok:%v response:%s", ok, response)
+		}
+		for _, secret := range []string{"test-access-token", "test-client-secret"} {
+			if strings.Contains(response, secret) {
+				t.Fatalf("QQ Bot response exposed secret %q", secret)
+			}
+		}
+	}
+	if tokenCalls.Load() != 1 || messageCalls.Load() != 2 {
+		t.Fatalf("QQ Bot calls = token:%d message:%d", tokenCalls.Load(), messageCalls.Load())
+	}
+}
+
+func TestUpdateNotifyChannelMergesNonEmptySecrets(t *testing.T) {
+	gdb := openMigratedServiceDatabase(t)
+	cipher, err := security.NewSecretCipher("notify-secret-merge-test-key")
+	if err != nil {
+		t.Fatalf("create test cipher: %v", err)
+	}
+	owner := db.SystemUser{Username: "notify-secret-owner", PasswordHash: "test-only", IsActive: true}
+	if err := gdb.Create(&owner).Error; err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	ownerID := owner.ID
+	channel := db.SystemNotifyChannel{
+		ChannelType: "dingtalk_webhook", OwnerID: &ownerID, DisplayName: "secret merge",
+		IsEnabled: true, SettingsJSON: "{}",
+		EncryptedSecretsJSON: cipher.Encrypt(dumpJSON(M{
+			"accessToken": "old-token", "secret": "keep-signing-secret",
+		})),
+	}
+	if err := gdb.Create(&channel).Error; err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	app := &App{DB: gdb, Cipher: cipher}
+	principal := &Principal{User: &owner}
+
+	blank := ""
+	if _, err := app.UpdateNotifyChannel(channel.ID, NotifyChannelUpsertPayload{
+		DisplayName: channel.DisplayName, SecretJSON: &blank,
+	}, principal); err != nil {
+		t.Fatalf("update channel with blank secret: %v", err)
+	}
+	patch := `{"accessToken":"new-token"}`
+	if _, err := app.UpdateNotifyChannel(channel.ID, NotifyChannelUpsertPayload{
+		DisplayName: channel.DisplayName, SecretJSON: &patch,
+	}, principal); err != nil {
+		t.Fatalf("merge channel secret: %v", err)
+	}
+	if err := gdb.First(&channel, channel.ID).Error; err != nil {
+		t.Fatalf("reload channel: %v", err)
+	}
+	decrypted, err := cipher.Decrypt(channel.EncryptedSecretsJSON)
+	if err != nil {
+		t.Fatalf("decrypt merged secret: %v", err)
+	}
+	secrets := loadJSONObject(decrypted)
+	if secrets["accessToken"] != "new-token" || secrets["secret"] != "keep-signing-secret" {
+		t.Fatalf("merged secrets = %#v", secrets)
+	}
+}
 
 func TestSMTPDialCancellation(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

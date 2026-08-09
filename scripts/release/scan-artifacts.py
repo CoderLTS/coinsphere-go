@@ -178,12 +178,12 @@ def scan_sensitive_content(data, label):
 def sensitive_path(path, kind, version):
     parts = [part.casefold() for part in path.split("/")]
     basename = parts[-1]
-    if (
-        parts == [f"coinsphere-{version}-docker".casefold(), "runtime.env.example"]
-        and kind == "docker"
+    if kind == "docker" and parts in (
+        [f"coinsphere-{version}-docker".casefold(), "runtime.env.example"],
+        [f"coinsphere-{version}-docker".casefold(), "worker-runtime.env.example"],
     ):
         return None
-    if basename == "runtime.env.example":
+    if basename in {"runtime.env.example", "worker-runtime.env.example"}:
         return "运行时 env"
     if (
         basename.startswith(".env")
@@ -250,6 +250,7 @@ def check_archive_inventory(kind, files, directories, version):
             f"{root}/compose.yaml",
             f"{root}/deploy.sh",
             f"{root}/runtime.env.example",
+            f"{root}/worker-runtime.env.example",
         }
         if files != expected or any(directory != root for directory in directories):
             raise ScanError("Docker 归档内部文件清单不匹配")
@@ -768,6 +769,8 @@ def verify_manifest(path, version, commit, registry):
         "backendDigest",
         "webImage",
         "webDigest",
+        "workerImage",
+        "workerDigest",
     }
     if not isinstance(manifest, dict) or set(manifest) != expected_keys:
         raise ScanError("release-manifest.json 字段清单不匹配")
@@ -775,7 +778,7 @@ def verify_manifest(path, version, commit, registry):
         raise ScanError("release-manifest.json 字段必须是非空字符串")
     if manifest["version"] != version or manifest["commit"] != commit:
         raise ScanError("release-manifest.json 版本或 Commit 不匹配")
-    for component in ("backend", "web"):
+    for component in ("backend", "web", "worker"):
         image_key = f"{component}Image"
         digest_key = f"{component}Digest"
         expected_image = f"{registry}/coinsphere/{component}:{version}"
@@ -895,6 +898,7 @@ def main():
         "release-manifest.json",
         f"coinsphere-{version}-backend.spdx.json",
         f"coinsphere-{version}-web.spdx.json",
+        f"coinsphere-{version}-worker.spdx.json",
     ]
     expected_names = [*payload_names, "SHA256SUMS"]
     verify_inventory(output_dir, expected_names)
@@ -906,6 +910,9 @@ def main():
         output_dir / f"coinsphere-{version}-backend.spdx.json", "backend", manifest
     )
     verify_sbom(output_dir / f"coinsphere-{version}-web.spdx.json", "web", manifest)
+    verify_sbom(
+        output_dir / f"coinsphere-{version}-worker.spdx.json", "worker", manifest
+    )
     scan_zip(
         output_dir / f"coinsphere-{version}-windows-x86.zip", "windows-x86", version
     )

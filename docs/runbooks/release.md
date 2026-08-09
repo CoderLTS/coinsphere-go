@@ -2,7 +2,7 @@
 
 ## 当前边界
 
-生产发布目前只构建和部署 Backend/Web。Python Worker 和 Go Executor 尚未进入生产拓扑，因此当前发布不代表 Paper、Testnet 或 Live 交易能力已交付，也不能据此启用真实策略。
+生产发布构建和部署 Backend/Web 以及 realtime/backtest 两个 Python Worker。Worker 只消费 PostgreSQL 任务、产生信号和回测产物，不调用交易所私有接口、不持有交易凭据。这不代表 Paper、Testnet 或 Live 交易能力已交付，也不能据此启用真实策略。
 
 生产 Backend 通过主机 Secret 连接外部 PostgreSQL/TimescaleDB；应用启动只读校验 migration 版本。部署脚本停止 CoinSphere 服务、执行目标镜像内的 Up、启动固定 digest 镜像并检查健康状态，不自动执行 Down 或覆盖数据库。
 
@@ -14,7 +14,8 @@
 - 本机 Registry：`127.0.0.1:5000`。
 - DPanel 根目录：`/srv/dpanel-stack`；共享 Compose 项目为 `apps`，文件为 `compose/apps/docker-compose.yaml`，网络为 `dpanel_stack`。
 - 插值配置：`/srv/dpanel-stack/secrets/apps.env`；运行配置：`/srv/dpanel-stack/secrets/coinsphere-runtime.env`；数据目录：`/srv/dpanel-stack/data/coinsphere-go`。
-- CoinSphere 只能操作 `coinsphere-backend` 和 `coinsphere-web`，不得执行共享项目级 `down` 或操作其他服务。
+- Worker 运行配置单独保存在 `/srv/dpanel-stack/secrets/coinsphere-worker-runtime.env`；该文件只包含 Worker 专用 PostgreSQL DSN。
+- CoinSphere 只能操作 `coinsphere-backend`、`coinsphere-web`、`coinsphere-worker` 和 `coinsphere-worker-backtest`，不得执行共享项目级 `down` 或操作其他服务。
 
 以上路径和凭据只存在于服务器，不进入仓库、日志、Issue、PR 或 Release。生产数据库备份、恢复和保留策略由基础设施负责。
 
@@ -23,7 +24,7 @@
 1. 确认目标 PR 已合并到最新 `main`，CI、安全检查和迁移说明已通过；涉及数据库时先创建并验证 PostgreSQL 备份。
 2. 在 GitHub Actions 手工运行 `Release and deploy`，选择 `main` 和新版本号 `vX.Y.Z`。
 3. 工作流确认 Commit 等于最新 `origin/main`，且版本标签不存在。
-4. 构建固定版本的 Windows/Linux/Compose 包和 Backend/Web 镜像，记录 Manifest、RepoDigest、SBOM 和 SHA-256。
+4. 构建固定版本的 Windows/Linux/Compose 包和 Backend/Web/Worker 镜像，记录 Manifest、RepoDigest、三份 SBOM 和 SHA-256。
 5. 镜像、归档和 Manifest 扫描通过后才上传 Artifact、部署或创建 GitHub Release；扫描失败不得继续。
 6. 用已扫描的 Manifest 执行部署脚本：
 
@@ -31,7 +32,17 @@
    bash scripts/release/deploy-dpanel-stack.sh vX.Y.Z /path/to/release-manifest.json
    ```
 
-7. 检查 `coinsphere-backend`、`coinsphere-web` 状态以及 `http://127.0.0.1:8080/health`；健康检查通过后才认为发布完成。
+7. 检查 `coinsphere-backend`、`coinsphere-web`、`coinsphere-worker` 和 `coinsphere-worker-backtest` 状态，并运行两个 Worker 的 `health`；再检查 `http://127.0.0.1:8080/health`，全部通过后才认为发布完成。
+
+### 首次加入 Worker
+
+在第一次把 Worker 交给共享 DPanel Stack 前，由用户手工完成一次配置准备：
+
+- 将 `deploy/production/compose.yaml` 中 Worker 的只读文件系统、capability drop、`no-new-privileges`、专用产物卷和 backtest 资源上限同步到共享 Compose，并使用服务名 `coinsphere-worker`、`coinsphere-worker-backtest`。
+- 在 `coinsphere-worker-runtime.env` 中只设置 `COINSPHERE_WORKER_DATABASE_DSN` 和 `TZ=UTC`；该 DSN 使用只授予 Worker 所需表权限的数据库身份。
+- 确认共享 Compose 使用 `COINSPHERE_WORKER_IMAGE`，并让 Worker 服务加入已有基础设施网络且不发布端口。首次发布时 `apps.env` 可以暂时没有该键，部署脚本会在临时环境中补齐；成功后才写入已扫描的 Worker digest。
+
+首次发布失败时脚本只恢复原有 Backend/Web；Worker 容器和回测产物卷保持停止或保留，不删除任务、产物或数据库 schema。后续版本若已有 Worker digest，则四个 CoinSphere 服务按同一 Manifest 一起回滚。
 
 Windows/Linux 包内的 Web 目录需要 Nginx 或等价 Web Server 托管，并反向代理到 Backend；它们不是桌面应用。
 
@@ -50,7 +61,7 @@ Migration、启动或健康检查失败时，部署脚本会停止新版本、�
 ```bash
 cd /srv/dpanel-stack/compose/apps
 docker compose --project-name apps --env-file /srv/dpanel-stack/secrets/apps.env \
-  -f docker-compose.yaml ps coinsphere-backend coinsphere-web
+  -f docker-compose.yaml ps coinsphere-backend coinsphere-web coinsphere-worker coinsphere-worker-backtest
 coinsphere_backend_image=$(sed -n 's/^COINSPHERE_BACKEND_IMAGE=//p' \
   /srv/dpanel-stack/secrets/apps.env)
 docker run --rm --network dpanel_stack \

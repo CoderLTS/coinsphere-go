@@ -214,9 +214,7 @@ func (a *App) outboxLeaseDuration() time.Duration {
 // handleEventTriggeredEntries 把事件匹配到 start.event 入口并入队执行。
 // outbox 的"消费方":查出所有"事件触发型(start_type=event)、已启用、且有生效版本"的工作流入口,逐个看这条事件是否命中,命中就跑。
 func (a *App) handleEventTriggeredEntries(ctx context.Context, event *domainEvent) error {
-	if err := a.deliverStrategySignalNotification(ctx, event); err != nil {
-		return err
-	}
+	notificationErr := a.deliverStrategySignalNotification(ctx, event)
 	// Preload 预加载关联对象(定义、运行时状态);Joins 关联运行时状态表以便在 Where 里过滤。见 GO入门笔记『框架:GORM』
 	var entries []db.WorkflowRuntimeEntry
 	result := a.DB.WithContext(ctx).Preload("WorkflowDefinition").Preload("WorkflowRuntimeState").
@@ -277,7 +275,7 @@ func (a *App) handleEventTriggeredEntries(ctx context.Context, event *domainEven
 			return err
 		}
 	}
-	return nil
+	return notificationErr
 }
 
 // eventTriggerMatches 事件类型与过滤条件匹配。

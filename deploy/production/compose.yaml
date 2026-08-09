@@ -20,6 +20,42 @@ services:
       retries: 6
       start_period: 15s
 
+  worker:
+    image: ${COINSPHERE_WORKER_IMAGE:?请设置 COINSPHERE_WORKER_IMAGE}
+    restart: unless-stopped
+    command: ["python", "-m", "coinsphere_worker", "run", "--lane", "realtime"]
+    env_file:
+      - worker-runtime.env
+    networks:
+      - infrastructure
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+
+  worker-backtest:
+    image: ${COINSPHERE_WORKER_IMAGE:?请设置 COINSPHERE_WORKER_IMAGE}
+    restart: unless-stopped
+    command: ["python", "-m", "coinsphere_worker", "run", "--lane", "backtest"]
+    env_file:
+      - worker-runtime.env
+    environment:
+      COINSPHERE_WORKER_ARTIFACT_DIR: /app/artifacts
+      COINSPHERE_WORKER_BACKTEST_WALL_SECONDS: "300"
+      COINSPHERE_WORKER_BACKTEST_CPU_SECONDS: "300"
+      COINSPHERE_WORKER_BACKTEST_MEMORY_BYTES: "536870912"
+      COINSPHERE_WORKER_BACKTEST_ARTIFACT_BYTES: "134217728"
+    volumes:
+      - worker-artifacts:/app/artifacts
+    networks:
+      - infrastructure
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+
   web:
     image: ${COINSPHERE_WEB_IMAGE:?请设置 COINSPHERE_WEB_IMAGE}
     restart: unless-stopped
@@ -37,6 +73,8 @@ volumes:
     name: coinsphere-backend-uploads
   backend-static:
     name: coinsphere-backend-static
+  worker-artifacts:
+    name: coinsphere-worker-artifacts
 
 networks:
   infrastructure:

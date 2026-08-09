@@ -9,6 +9,7 @@ COMMIT=0123456789abcdef0123456789abcdef01234567
 REGISTRY=127.0.0.1:5000
 BACKEND_DIGEST=$(printf 'a%.0s' {1..64})
 WEB_DIGEST=$(printf 'b%.0s' {1..64})
+WORKER_DIGEST=$(printf 'c%.0s' {1..64})
 
 cleanup() {
   rm -rf -- "$TEST_DIR"
@@ -52,6 +53,11 @@ case "$repository" in
     component=web
     image_id=$(printf 'd%.0s' {1..64})
     ;;
+  */worker)
+    digest=$TEST_WORKER_DIGEST
+    component=worker
+    image_id=$(printf 'e%.0s' {1..64})
+    ;;
   *)
     echo "测试 Docker 收到未预期镜像: $reference" >&2
     exit 1
@@ -78,12 +84,13 @@ export TEST_VERSION=$VERSION
 export TEST_COMMIT=$COMMIT
 export TEST_BACKEND_DIGEST=$BACKEND_DIGEST
 export TEST_WEB_DIGEST=$WEB_DIGEST
+export TEST_WORKER_DIGEST=$WORKER_DIGEST
 
 create_fixture() {
   local output_dir=$1
   local mode=${2:-valid}
   "$PYTHON" - "$output_dir" "$mode" "$VERSION" "$COMMIT" "$REGISTRY" \
-    "$BACKEND_DIGEST" "$WEB_DIGEST" <<'PY'
+    "$BACKEND_DIGEST" "$WEB_DIGEST" "$WORKER_DIGEST" <<'PY'
 import gzip
 import io
 import json
@@ -95,7 +102,7 @@ from pathlib import Path
 
 
 output_dir = Path(sys.argv[1])
-mode, version, commit, registry, backend_digest, web_digest = sys.argv[2:]
+mode, version, commit, registry, backend_digest, web_digest, worker_digest = sys.argv[2:]
 packages_dir = output_dir.parent / f"{output_dir.name}-packages"
 shutil.rmtree(output_dir, ignore_errors=True)
 shutil.rmtree(packages_dir, ignore_errors=True)
@@ -129,6 +136,11 @@ write(
     "COINSPHERE_AUTH__ENCRYPTION_KEY=replace-with-an-independent-random-value\n"
     "COINSPHERE_AUTH__WEBHOOK_PEPPER=replace-with-an-independent-random-value\n"
     "COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD=replace-with-a-strong-random-password\n",
+)
+write(
+    docker_root / "worker-runtime.env.example",
+    "COINSPHERE_WORKER_DATABASE_DSN="
+    "postgresql://coinsphere_worker:replace-with-database-password@database/coinsphere\n",
 )
 
 if mode == "credential":
@@ -329,6 +341,8 @@ manifest = {
     "backendDigest": f"{registry}/coinsphere/backend@sha256:{backend_digest}",
     "webImage": f"{registry}/coinsphere/web:{version}",
     "webDigest": f"{registry}/coinsphere/web@sha256:{web_digest}",
+    "workerImage": f"{registry}/coinsphere/worker:{version}",
+    "workerDigest": f"{registry}/coinsphere/worker@sha256:{worker_digest}",
 }
 if mode == "manifest-extra":
     manifest["unexpected"] = "blocked"
@@ -342,7 +356,11 @@ else:
 
 
 def sbom(component):
-    digest = backend_digest if component == "backend" else web_digest
+    digest = {
+        "backend": backend_digest,
+        "web": web_digest,
+        "worker": worker_digest,
+    }[component]
     checksum_digest = "e" * 64 if mode == "sbom-digest" and component == "backend" else digest
     repository = f"{registry}/coinsphere/{component}"
     if mode == "sbom-unbound" and component == "backend":
@@ -376,7 +394,7 @@ def sbom(component):
     }
 
 
-for component in ("backend", "web"):
+for component in ("backend", "web", "worker"):
     path = output_dir / f"coinsphere-{version}-{component}.spdx.json"
     path.write_text(json.dumps(sbom(component)), encoding="utf-8")
 PY
@@ -389,7 +407,8 @@ PY
       "./coinsphere-$VERSION-docker.tar.gz" \
       ./release-manifest.json \
       "./coinsphere-$VERSION-backend.spdx.json" \
-      "./coinsphere-$VERSION-web.spdx.json" >SHA256SUMS
+      "./coinsphere-$VERSION-web.spdx.json" \
+      "./coinsphere-$VERSION-worker.spdx.json" >SHA256SUMS
   )
 }
 

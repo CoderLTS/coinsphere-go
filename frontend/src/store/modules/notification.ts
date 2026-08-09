@@ -126,6 +126,12 @@ export const useNotificationStore = defineStore('notificationStore', () => {
     unreadCount.value = 0
   }
 
+  const applySignalDecision = (signalId: string, status: string) => {
+    records.value = records.value.map((item) =>
+      item.strategySignalId === signalId ? { ...item, strategySignalStatus: status } : item
+    )
+  }
+
   const handleWsMessage = (envelope: NotificationWsEnvelope) => {
     if (envelope.type === 'notice.unread') {
       const nextUnreadCount = envelope.data.unreadCount
@@ -261,6 +267,7 @@ export const useNotificationStore = defineStore('notificationStore', () => {
     loadNotices,
     markRead,
     markAllRead,
+    applySignalDecision,
     connect,
     disconnect,
     resetState
@@ -278,6 +285,10 @@ function normalizeNoticeRecord(
     workflowDefinitionId: record.workflowDefinitionId ?? null,
     workflowDefinitionCode: String(record.workflowDefinitionCode || ''),
     workflowDefinitionName: String(record.workflowDefinitionName || ''),
+    strategySignalId: record.strategySignalId ? String(record.strategySignalId) : null,
+    strategySignalMode: String(record.strategySignalMode || ''),
+    strategySignalStatus: String(record.strategySignalStatus || ''),
+    strategySignalExpiresAt: String(record.strategySignalExpiresAt || ''),
     targetType: String(record.targetType || ''),
     targetId: record.targetId ?? null,
     targetLabel: String(record.targetLabel || ''),

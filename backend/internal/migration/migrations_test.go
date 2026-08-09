@@ -44,8 +44,8 @@ WHERE table_schema = current_schema() AND table_name = 'schema_migrations'
 	if err != nil {
 		t.Fatalf("apply baseline: %v", err)
 	}
-	if len(results) != 8 || results[0].Version != 1 || results[1].Version != 2 || results[2].Version != 3 || results[3].Version != 4 || results[4].Version != 5 || results[5].Version != 6 || results[6].Version != 7 || results[7].Version != 8 ||
-		results[0].Direction != "up" || results[1].Direction != "up" || results[2].Direction != "up" || results[3].Direction != "up" || results[4].Direction != "up" || results[5].Direction != "up" || results[6].Direction != "up" || results[7].Direction != "up" {
+	if len(results) != 9 || results[0].Version != 1 || results[1].Version != 2 || results[2].Version != 3 || results[3].Version != 4 || results[4].Version != 5 || results[5].Version != 6 || results[6].Version != 7 || results[7].Version != 8 || results[8].Version != 9 ||
+		results[0].Direction != "up" || results[1].Direction != "up" || results[2].Direction != "up" || results[3].Direction != "up" || results[4].Direction != "up" || results[5].Direction != "up" || results[6].Direction != "up" || results[7].Direction != "up" || results[8].Direction != "up" {
 		t.Fatalf("migration results = %#v", results)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err != nil {
@@ -61,12 +61,12 @@ WHERE table_schema = current_schema() AND table_name = 'schema_migrations'
 		t.Fatalf("repeat baseline applied %#v", results)
 	}
 
-	results, err = runner.Down(context.Background(), 8)
+	results, err = runner.Down(context.Background(), 9)
 	if err != nil {
 		t.Fatalf("roll back empty migrations: %v", err)
 	}
-	if len(results) != 8 || results[0].Version != 8 || results[1].Version != 7 || results[2].Version != 6 || results[3].Version != 5 || results[4].Version != 4 || results[5].Version != 3 || results[6].Version != 2 || results[7].Version != 1 ||
-		results[0].Direction != "down" || results[1].Direction != "down" || results[2].Direction != "down" || results[3].Direction != "down" || results[4].Direction != "down" || results[5].Direction != "down" || results[6].Direction != "down" || results[7].Direction != "down" {
+	if len(results) != 9 || results[0].Version != 9 || results[1].Version != 8 || results[2].Version != 7 || results[3].Version != 6 || results[4].Version != 5 || results[5].Version != 4 || results[6].Version != 3 || results[7].Version != 2 || results[8].Version != 1 ||
+		results[0].Direction != "down" || results[1].Direction != "down" || results[2].Direction != "down" || results[3].Direction != "down" || results[4].Direction != "down" || results[5].Direction != "down" || results[6].Direction != "down" || results[7].Direction != "down" || results[8].Direction != "down" {
 		t.Fatalf("migration rollback results = %#v", results)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err == nil {
@@ -87,7 +87,7 @@ func TestPostgresBaselineDownRejectsData(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 6); err != nil {
+	if _, err := runner.Down(context.Background(), 7); err != nil {
 		t.Fatalf("roll back empty market migrations: %v", err)
 	}
 	if _, err := runner.Down(context.Background(), 1); err != nil {
@@ -101,7 +101,7 @@ func TestPostgresBaselineDownRejectsData(t *testing.T) {
 		t.Fatal("baseline rollback removed a non-empty schema")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 1 || latest != 8 {
+	if versionErr != nil || current != 1 || latest != 9 {
 		t.Fatalf("failed baseline rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	var count int
@@ -221,7 +221,7 @@ func TestObservabilityDownRejectsAuditData(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 6); err != nil {
+	if _, err := runner.Down(context.Background(), 7); err != nil {
 		t.Fatalf("roll back empty market migrations: %v", err)
 	}
 	if _, err := database.Exec(`INSERT INTO audit_records (request_id, action, resource_path, outcome, status_code) VALUES ('rollback-guard', 'POST /api/v1/test', '/api/v1/test', 'success', 200)`); err != nil {
@@ -232,7 +232,7 @@ func TestObservabilityDownRejectsAuditData(t *testing.T) {
 		t.Fatal("observability rollback removed persistent audit data")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 2 || latest != 8 {
+	if versionErr != nil || current != 2 || latest != 9 {
 		t.Fatalf("failed observability rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	var count int
@@ -253,7 +253,7 @@ func TestPostgresBaselineDownSeesConcurrentCommit(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply baseline: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 7); err != nil {
+	if _, err := runner.Down(context.Background(), 8); err != nil {
 		t.Fatalf("roll back empty market and observability migrations: %v", err)
 	}
 
@@ -285,7 +285,7 @@ func TestPostgresBaselineDownSeesConcurrentCommit(t *testing.T) {
 		t.Fatal("baseline rollback did not finish after concurrent commit")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 1 || latest != 8 {
+	if versionErr != nil || current != 1 || latest != 9 {
 		t.Fatalf("failed concurrent rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	var count int
@@ -306,7 +306,7 @@ func TestValidateCurrentRejectsDatabaseAhead(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply baseline: %v", err)
 	}
-	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES (9, TRUE)`); err != nil {
+	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES (10, TRUE)`); err != nil {
 		t.Fatalf("record newer migration: %v", err)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err == nil {
@@ -511,11 +511,11 @@ func TestA2MarketContractDownRejectsData(t *testing.T) {
 				}
 			}
 
-			if _, err := runner.Down(context.Background(), 6); err == nil {
+			if _, err := runner.Down(context.Background(), 7); err == nil {
 				t.Fatalf("A2 rollback removed non-empty %s", test.table)
 			}
 			current, latest, versionErr := runner.Versions(context.Background())
-			if versionErr != nil || current != 3 || latest != 8 {
+			if versionErr != nil || current != 3 || latest != 9 {
 				t.Fatalf("A2 rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 			}
 			assertA2Tables(t, database)
@@ -564,11 +564,11 @@ VALUES ('019c2f6d-7c00-7000-8000-000000000010', $1, $2, '1m')
 	}
 	assertPostgresIndexes(t, database, []string{"ix_watchlist_items_instrument_interval"})
 
-	if _, err := runner.Down(context.Background(), 5); err == nil {
+	if _, err := runner.Down(context.Background(), 6); err == nil {
 		t.Fatal("watchlist rollback removed persistent user data")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 4 || latest != 8 {
+	if versionErr != nil || current != 4 || latest != 9 {
 		t.Fatalf("watchlist rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	assertRowCount(t, database, "SELECT COUNT(*) FROM watchlist_items", 1)
@@ -610,11 +610,11 @@ VALUES ('worker-realtime-default-lane', 'contract.noop', '{}')
 		}
 	}
 
-	if _, err := runner.Down(context.Background(), 4); err == nil {
+	if _, err := runner.Down(context.Background(), 5); err == nil {
 		t.Fatal("worker lane rollback removed persistent tasks")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 5 || latest != 8 {
+	if versionErr != nil || current != 5 || latest != 9 {
 		t.Fatalf("worker lane rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	assertRowCount(t, database, "SELECT COUNT(*) FROM worker_tasks", 2)
@@ -741,11 +741,11 @@ WHERE id = $1
 	}
 	assertPostgresIndexes(t, database, []string{"ix_backtests_owner_created", "ix_strategy_versions_published"})
 
-	if _, err := runner.Down(context.Background(), 3); err == nil {
+	if _, err := runner.Down(context.Background(), 4); err == nil {
 		t.Fatal("strategy runtime rollback removed persistent data")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 6 || latest != 8 {
+	if versionErr != nil || current != 6 || latest != 9 {
 		t.Fatalf("strategy runtime rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	assertRowCount(t, database, "SELECT COUNT(*) FROM strategies", 1)
@@ -905,17 +905,47 @@ INSERT INTO notification_deliveries (
 `, signalID, ownerID); err == nil {
 		t.Fatal("signal accepted a duplicate in-app notification")
 	}
+	var externalChannelID int64
+	if err := database.QueryRow(`
+INSERT INTO notification_channels (
+    channel_type, owner_id, display_name, is_enabled, settings_json, encrypted_secrets_json, created_at, updated_at
+) VALUES ('dingtalk_webhook', $1, 'M2 migration channel', TRUE, '{}', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+RETURNING id
+`, ownerID).Scan(&externalChannelID); err != nil {
+		t.Fatalf("insert M2 external notification channel: %v", err)
+	}
+	if _, err := database.Exec(`
+INSERT INTO notification_deliveries (
+    strategy_signal_id, target_type, recipient_user_id, channel_id, channel_type, status, title, content, created_at
+) VALUES ($1, 'strategy_signal', $2, $3, 'dingtalk_webhook', 'failed', 'signal', 'retry', CURRENT_TIMESTAMP)
+`, signalID, ownerID, externalChannelID); err != nil {
+		t.Fatalf("insert M2 external signal notification: %v", err)
+	}
+	if _, err := database.Exec(`
+INSERT INTO notification_deliveries (
+    strategy_signal_id, target_type, recipient_user_id, channel_id, channel_type, status, title, content, created_at
+) VALUES ($1, 'strategy_signal', $2, $3, 'dingtalk_webhook', 'pending', 'duplicate', 'duplicate', CURRENT_TIMESTAMP)
+`, signalID, ownerID, externalChannelID); err == nil {
+		t.Fatal("signal accepted a duplicate external channel notification")
+	}
 	assertPostgresIndexes(t, database, []string{
 		"ix_strategy_instances_owner_enabled", "ix_strategy_signals_owner_created",
 		"ux_worker_tasks_type_dedupe", "ux_notification_deliveries_in_app_signal",
-		"ux_strategy_signals_manual_active_instance",
+		"ux_strategy_signals_manual_active_instance", "ux_notification_deliveries_signal_channel",
 	})
 
+	if _, err := runner.Down(context.Background(), 1); err != nil {
+		t.Fatalf("roll back signal channel delivery migration: %v", err)
+	}
+	current, latest, versionErr := runner.Versions(context.Background())
+	if versionErr != nil || current != 8 || latest != 9 {
+		t.Fatalf("signal channel delivery rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
+	}
 	if _, err := runner.Down(context.Background(), 1); err == nil {
 		t.Fatal("M2 decision rollback removed persistent decision data")
 	}
-	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 8 || latest != 8 {
+	current, latest, versionErr = runner.Versions(context.Background())
+	if versionErr != nil || current != 8 || latest != 9 {
 		t.Fatalf("M2 decision rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	if _, err := database.Exec(`DELETE FROM notification_deliveries WHERE strategy_signal_id = $1`, signalID); err != nil {
@@ -936,7 +966,7 @@ WHERE id = $1
 		t.Fatal("M2 realtime rollback removed persistent signal data")
 	}
 	current, latest, versionErr = runner.Versions(context.Background())
-	if versionErr != nil || current != 7 || latest != 8 {
+	if versionErr != nil || current != 7 || latest != 9 {
 		t.Fatalf("M2 realtime rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	assertRowCount(t, database, "SELECT COUNT(*) FROM strategy_signals", 1)

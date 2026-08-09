@@ -8,7 +8,9 @@ COMMIT=0123456789abcdef0123456789abcdef01234567
 REGISTRY=127.0.0.1:5000
 BACKEND_DIGEST=$(printf 'a%.0s' {1..64})
 WEB_DIGEST=$(printf 'b%.0s' {1..64})
+WORKER_DIGEST=$(printf 'c%.0s' {1..64})
 POSTGRES_DSN='postgresql://coinsphere:test-only-password@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic'
+WORKER_POSTGRES_DSN='postgresql://coinsphere_worker:test-only-password@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic'
 
 cleanup() {
   rm -rf -- "$TEST_DIR"
@@ -19,6 +21,8 @@ command -v jq >/dev/null || { echo "缺少命令: jq" >&2; exit 3; }
 mkdir -p "$TEST_DIR/bin" "$TEST_DIR/deploy"
 printf 'COINSPHERE_DATABASE__DSN=%s\nCOINSPHERE_AUTH__SECRET_KEY=replace-with-random-value\n' \
   "$POSTGRES_DSN" >"$TEST_DIR/deploy/runtime.env"
+printf 'COINSPHERE_WORKER_DATABASE_DSN=%s\n' \
+  "$WORKER_POSTGRES_DSN" >"$TEST_DIR/deploy/worker-runtime.env"
 cat >"$TEST_DIR/release-manifest.json" <<EOF
 {
   "version": "$VERSION",
@@ -26,7 +30,9 @@ cat >"$TEST_DIR/release-manifest.json" <<EOF
   "backendImage": "$REGISTRY/coinsphere/backend:$VERSION",
   "backendDigest": "$REGISTRY/coinsphere/backend@sha256:$BACKEND_DIGEST",
   "webImage": "$REGISTRY/coinsphere/web:$VERSION",
-  "webDigest": "$REGISTRY/coinsphere/web@sha256:$WEB_DIGEST"
+  "webDigest": "$REGISTRY/coinsphere/web@sha256:$WEB_DIGEST",
+  "workerImage": "$REGISTRY/coinsphere/worker:$VERSION",
+  "workerDigest": "$REGISTRY/coinsphere/worker@sha256:$WORKER_DIGEST"
 }
 EOF
 
@@ -55,12 +61,17 @@ bash "$ROOT_DIR/deploy/production/deploy.sh" "$VERSION" "$TEST_DIR/release-manif
   >"$TEST_DIR/deploy.log" 2>&1
 
 if ! grep -Fxq "COINSPHERE_BACKEND_IMAGE=$REGISTRY/coinsphere/backend@sha256:$BACKEND_DIGEST" "$TEST_DIR/deploy/.env" \
-  || ! grep -Fxq "COINSPHERE_WEB_IMAGE=$REGISTRY/coinsphere/web@sha256:$WEB_DIGEST" "$TEST_DIR/deploy/.env"; then
+  || ! grep -Fxq "COINSPHERE_WEB_IMAGE=$REGISTRY/coinsphere/web@sha256:$WEB_DIGEST" "$TEST_DIR/deploy/.env" \
+  || ! grep -Fxq "COINSPHERE_WORKER_IMAGE=$REGISTRY/coinsphere/worker@sha256:$WORKER_DIGEST" "$TEST_DIR/deploy/.env"; then
   echo "自动部署必须使用 Manifest 中的不可变镜像 digest" >&2
   exit 1
 fi
 if ! grep -Fxq "COINSPHERE_DATABASE__DSN=$POSTGRES_DSN" "$TEST_DIR/deploy/runtime.env"; then
   echo "生产部署必须保留 PostgreSQL DSN" >&2
+  exit 1
+fi
+if ! grep -Fxq "COINSPHERE_WORKER_DATABASE_DSN=$WORKER_POSTGRES_DSN" "$TEST_DIR/deploy/worker-runtime.env"; then
+  echo "生产部署必须保留 Worker 独立 PostgreSQL DSN" >&2
   exit 1
 fi
 if ! grep -Fq "run --rm backend /app/coinsphere-migrate -config /app/config.yml -direction up" "$DEPLOY_DOCKER_LOG"; then

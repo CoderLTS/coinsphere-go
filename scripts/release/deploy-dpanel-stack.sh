@@ -14,8 +14,10 @@ COMPOSE_DIR=$STACK_ROOT/compose/apps
 COMPOSE_FILE=$COMPOSE_DIR/docker-compose.yaml
 ENV_FILE=$STACK_ROOT/secrets/apps.env
 RUNTIME_ENV_FILE=$STACK_ROOT/secrets/coinsphere-runtime.env
+WORKER_RUNTIME_ENV_FILE=$STACK_ROOT/secrets/coinsphere-worker-runtime.env
 DOCKER_CONFIG_FILE="${DOCKER_CONFIG:-${HOME:?HOME 未设置}/.docker}/config.json"
-SERVICES=(coinsphere-backend coinsphere-web)
+SERVICES=(coinsphere-backend coinsphere-web coinsphere-worker coinsphere-worker-backtest)
+PREVIOUS_SERVICES=(coinsphere-backend coinsphere-web)
 
 if [[ ! $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
   echo "版本号必须符合 vX.Y.Z 格式: $VERSION" >&2
@@ -28,7 +30,7 @@ fi
 for command_name in curl docker jq; do
   command -v "$command_name" >/dev/null || { echo "缺少命令: $command_name" >&2; exit 3; }
 done
-for regular_file in "$MANIFEST_FILE" "$COMPOSE_FILE" "$ENV_FILE" "$RUNTIME_ENV_FILE"; do
+for regular_file in "$MANIFEST_FILE" "$COMPOSE_FILE" "$ENV_FILE" "$RUNTIME_ENV_FILE" "$WORKER_RUNTIME_ENV_FILE"; do
   if [[ ! -f $regular_file || -L $regular_file ]]; then
     echo "发布输入不是普通文件: $regular_file" >&2
     exit 3
@@ -36,20 +38,23 @@ for regular_file in "$MANIFEST_FILE" "$COMPOSE_FILE" "$ENV_FILE" "$RUNTIME_ENV_F
 done
 
 if ! manifest_images=$(jq -er --arg version "$VERSION" \
-  --arg backend "$REGISTRY/coinsphere/backend" --arg web "$REGISTRY/coinsphere/web" '
+  --arg backend "$REGISTRY/coinsphere/backend" --arg web "$REGISTRY/coinsphere/web" \
+  --arg worker "$REGISTRY/coinsphere/worker" '
   def digest($repository):
     type == "string"
     and startswith($repository + "@sha256:")
     and (ltrimstr($repository + "@sha256:") | test("^[0-9a-f]{64}$"));
   if type == "object"
-    and (keys == ["backendDigest", "backendImage", "commit", "version", "webDigest", "webImage"])
+    and (keys == ["backendDigest", "backendImage", "commit", "version", "webDigest", "webImage", "workerDigest", "workerImage"])
     and .version == $version
     and (.commit | type == "string" and test("^[0-9a-f]{40}$"))
     and .backendImage == ($backend + ":" + $version)
     and .webImage == ($web + ":" + $version)
+    and .workerImage == ($worker + ":" + $version)
     and (.backendDigest | digest($backend))
     and (.webDigest | digest($web))
-  then .backendDigest, .webDigest
+    and (.workerDigest | digest($worker))
+  then .backendDigest, .webDigest, .workerDigest
   else error("invalid release manifest")
   end
 ' "$MANIFEST_FILE" 2>/dev/null); then
@@ -57,12 +62,13 @@ if ! manifest_images=$(jq -er --arg version "$VERSION" \
   exit 2
 fi
 mapfile -t release_images <<<"$manifest_images"
-if [[ ${#release_images[@]} -ne 2 ]]; then
+if [[ ${#release_images[@]} -ne 3 ]]; then
   echo "发布 Manifest 镜像字段无效" >&2
   exit 2
 fi
 BACKEND_IMAGE=${release_images[0]}
 WEB_IMAGE=${release_images[1]}
+WORKER_IMAGE=${release_images[2]}
 
 if [[ -f $DOCKER_CONFIG_FILE ]]; then
   if ! docker_config_state=$(jq -r -s '
@@ -93,6 +99,16 @@ for key in COINSPHERE_VERSION COINSPHERE_BACKEND_IMAGE COINSPHERE_WEB_IMAGE; do
     exit 3
   fi
 done
+worker_image_count=$(grep -c '^COINSPHERE_WORKER_IMAGE=' "$ENV_FILE" || true)
+if [[ $worker_image_count -gt 1 ]]; then
+  echo "$ENV_FILE 最多包含一个 COINSPHERE_WORKER_IMAGE" >&2
+  exit 3
+fi
+worker_was_deployed=false
+if [[ $worker_image_count -eq 1 ]]; then
+  worker_was_deployed=true
+  PREVIOUS_SERVICES+=(coinsphere-worker coinsphere-worker-backtest)
+fi
 WEB_PORT=$(sed -n 's/^COINSPHERE_WEB_PORT=//p' "$ENV_FILE" | tail -n 1)
 WEB_PORT=${WEB_PORT:-8080}
 if [[ ! $WEB_PORT =~ ^[0-9]+$ ]] || ((WEB_PORT < 1 || WEB_PORT > 65535)); then
@@ -109,10 +125,15 @@ cleanup() {
 trap cleanup EXIT
 cp -p "$ENV_FILE" "$next_env"
 cp -p "$ENV_FILE" "$previous_env"
+if ! $worker_was_deployed; then
+  printf 'COINSPHERE_WORKER_IMAGE=%s\n' "$WORKER_IMAGE" >>"$next_env"
+  printf 'COINSPHERE_WORKER_IMAGE=%s\n' "$WORKER_IMAGE" >>"$previous_env"
+fi
 sed -i \
   -e "s|^COINSPHERE_VERSION=.*$|COINSPHERE_VERSION=$VERSION|" \
   -e "s|^COINSPHERE_BACKEND_IMAGE=.*$|COINSPHERE_BACKEND_IMAGE=$BACKEND_IMAGE|" \
   -e "s|^COINSPHERE_WEB_IMAGE=.*$|COINSPHERE_WEB_IMAGE=$WEB_IMAGE|" \
+  -e "s|^COINSPHERE_WORKER_IMAGE=.*$|COINSPHERE_WORKER_IMAGE=$WORKER_IMAGE|" \
   "$next_env"
 
 compose_with() {
@@ -129,8 +150,8 @@ rollback() {
   echo "发布失败，开始恢复 CoinSphere 上一版本" >&2
   if $services_stopped; then
     compose_with "$next_env" stop "${SERVICES[@]}" >/dev/null 2>&1 || true
-    compose_with "$previous_env" pull "${SERVICES[@]}" || echo "上一版本镜像拉取失败，将尝试使用本地镜像" >&2
-    compose_with "$previous_env" up -d --no-deps --wait --wait-timeout 180 "${SERVICES[@]}" \
+    compose_with "$previous_env" pull "${PREVIOUS_SERVICES[@]}" || echo "上一版本镜像拉取失败，将尝试使用本地镜像" >&2
+    compose_with "$previous_env" up -d --no-deps --wait --wait-timeout 180 "${PREVIOUS_SERVICES[@]}" \
       || echo "自动恢复失败，请按发布 Runbook 手工处理" >&2
   fi
   exit "$status"
@@ -141,7 +162,7 @@ trap 'rollback 143' TERM
 
 compose_with "$next_env" pull "${SERVICES[@]}"
 services_stopped=true
-compose_with "$previous_env" stop "${SERVICES[@]}"
+compose_with "$previous_env" stop "${PREVIOUS_SERVICES[@]}"
 docker run --rm --network dpanel_stack --env-file "$RUNTIME_ENV_FILE" "$BACKEND_IMAGE" \
   /app/coinsphere-migrate -config /app/config.yml -direction up
 compose_with "$next_env" up -d --no-deps --wait --wait-timeout 180 "${SERVICES[@]}"

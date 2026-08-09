@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -56,6 +57,9 @@ type App struct {
 	authStateMu         sync.Mutex
 	reauthTokens        map[string]reauthTokenRecord
 	revokedAccessTokens map[string]time.Time
+	qqTokenMu           sync.Mutex
+	qqTokens            map[int64]qqAccessToken
+	qqHTTPClient        *http.Client
 
 	// dummyHash 预先算好的“假密码哈希”:登录时若用户不存在/停用,也拿它跑一次校验,
 	// 让各分支耗时一致,消除通过响应快慢枚举用户名的可能(见评审 #7)。
@@ -116,6 +120,7 @@ func NewApp(parentCtx context.Context, gdb *gorm.DB, cfg *config.AppConfig, work
 		dummyHash:           hasher.HashPassword(security.RandomToken()),
 		reauthTokens:        map[string]reauthTokenRecord{},
 		revokedAccessTokens: map[string]time.Time{},
+		qqTokens:            map[int64]qqAccessToken{},
 		runningKeys:         map[string]int{},
 		dispatcherWake:      make(chan struct{}, 1),
 		runtimeCtx:          runtimeCtx,
