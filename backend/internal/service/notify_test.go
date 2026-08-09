@@ -1,9 +1,12 @@
 package service
 
 import (
+	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -195,6 +198,163 @@ func TestSMTPDialCancellation(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("SMTP greeting wait did not stop after cancellation")
 	}
+}
+
+func TestSMTPDeliveryProtocolAndSecretRedaction(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+
+	type serverResult struct {
+		message string
+		err     error
+	}
+	serverDone := make(chan serverResult, 1)
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			serverDone <- serverResult{err: acceptErr}
+			return
+		}
+		defer conn.Close()
+		message, serveErr := serveSMTPTestConnection(conn)
+		serverDone <- serverResult{message: message, err: serveErr}
+	}()
+
+	address := listener.Addr().(*net.TCPAddr)
+	const testPassword = "test-only-smtp-password"
+	channel := &notifyRuntimeChannel{
+		ChannelType: "smtp_email",
+		Config: M{
+			"host": address.IP.String(), "port": float64(address.Port), "useTls": false,
+			"username": "smtp-user", "fromEmail": "sender@example.com",
+			"fromName": "CoinSphere", "recipients": "first@example.com, second@example.com",
+		},
+		Secrets: M{"password": testPassword},
+	}
+	ok, message, providerResponse := (&App{}).sendNotifyChannel(
+		context.Background(), channel, "Strategy signal", "Review required", "text",
+	)
+	if !ok || message != "发送成功" || providerResponse != "{}" {
+		t.Fatalf("SMTP response = ok:%v message:%q provider:%q", ok, message, providerResponse)
+	}
+	for _, output := range []string{message, providerResponse} {
+		if strings.Contains(output, testPassword) {
+			t.Fatal("SMTP delivery result exposed the password")
+		}
+	}
+
+	select {
+	case result := <-serverDone:
+		if result.err != nil {
+			t.Fatalf("serve SMTP connection: %v", result.err)
+		}
+		for _, want := range []string{
+			"From: CoinSphere <sender@example.com>",
+			"To: first@example.com, second@example.com",
+			"Subject: Strategy signal",
+			"Content-Type: text/plain; charset=UTF-8",
+			"Review required",
+		} {
+			if !strings.Contains(result.message, want) {
+				t.Fatalf("SMTP message missing %q:\n%s", want, result.message)
+			}
+		}
+		if strings.Contains(result.message, testPassword) {
+			t.Fatal("SMTP message body exposed the password")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("SMTP server did not complete")
+	}
+}
+
+func serveSMTPTestConnection(conn net.Conn) (string, error) {
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
+	reply := func(response string) error {
+		if _, err := writer.WriteString(response + "\r\n"); err != nil {
+			return err
+		}
+		return writer.Flush()
+	}
+	readCommand := func(prefix string) (string, error) {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return "", err
+		}
+		line = strings.TrimRight(line, "\r\n")
+		if !strings.HasPrefix(strings.ToUpper(line), prefix) {
+			return "", fmt.Errorf("SMTP command %q does not start with %q", line, prefix)
+		}
+		return line, nil
+	}
+
+	if err := reply("220 localhost ESMTP"); err != nil {
+		return "", err
+	}
+	if _, err := readCommand("EHLO "); err != nil {
+		return "", err
+	}
+	if err := reply("250-localhost\r\n250-AUTH PLAIN\r\n250 OK"); err != nil {
+		return "", err
+	}
+	auth, err := readCommand("AUTH PLAIN ")
+	if err != nil {
+		return "", err
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(auth, "AUTH PLAIN "))
+	if err != nil || string(decoded) != "\x00smtp-user\x00test-only-smtp-password" {
+		return "", fmt.Errorf("unexpected SMTP authentication payload")
+	}
+	if err := reply("235 authentication successful"); err != nil {
+		return "", err
+	}
+	for _, command := range []string{
+		"MAIL FROM:<sender@example.com>",
+		"RCPT TO:<first@example.com>",
+		"RCPT TO:<second@example.com>",
+	} {
+		line, err := readCommand(strings.SplitN(command, ":", 2)[0] + ":")
+		if err != nil {
+			return "", err
+		}
+		if !strings.EqualFold(line, command) {
+			return "", fmt.Errorf("SMTP command = %q, want %q", line, command)
+		}
+		if err := reply("250 OK"); err != nil {
+			return "", err
+		}
+	}
+	if _, err := readCommand("DATA"); err != nil {
+		return "", err
+	}
+	if err := reply("354 end data with <CR><LF>.<CR><LF>"); err != nil {
+		return "", err
+	}
+	var lines []string
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return "", err
+		}
+		line = strings.TrimRight(line, "\r\n")
+		if line == "." {
+			break
+		}
+		lines = append(lines, strings.TrimPrefix(line, "."))
+	}
+	if err := reply("250 queued"); err != nil {
+		return "", err
+	}
+	if _, err := readCommand("QUIT"); err != nil {
+		return "", err
+	}
+	if err := reply("221 bye"); err != nil {
+		return "", err
+	}
+	return strings.Join(lines, "\r\n"), nil
 }
 
 func TestExternalDeliveryFinalizesAfterCancellation(t *testing.T) {
