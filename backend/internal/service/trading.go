@@ -137,6 +137,13 @@ type TestnetOrderView struct {
 	FilledQuantity          string  `json:"filledQuantity"`
 	CumulativeQuoteQuantity string  `json:"cumulativeQuoteQuantity"`
 	AveragePrice            string  `json:"averagePrice"`
+	Purpose                 string  `json:"purpose"`
+	OrderType               string  `json:"orderType"`
+	StopPrice               string  `json:"stopPrice"`
+	ClosePosition           bool    `json:"closePosition"`
+	ReduceOnly              bool    `json:"reduceOnly"`
+	WorkingType             string  `json:"workingType"`
+	ReplacesOrderID         *string `json:"replacesOrderId"`
 	Status                  string  `json:"status"`
 	LastErrorCode           string  `json:"lastErrorCode"`
 	SubmitAttemptCount      int     `json:"submitAttemptCount"`
@@ -1011,6 +1018,9 @@ func (a *App) validateStrategyInstanceExecutionReady(database *gorm.DB, instance
 		return ErrTradingAccountConflict
 	}
 	if instance.Environment == "testnet" {
+		if !validTestnetStopLossRatio(instance.StopLossRatio) {
+			return ErrTradingExecutionUnavailable
+		}
 		if err := testnetAccountReadinessError(database, account.ID); err != nil {
 			return err
 		}
@@ -1211,13 +1221,19 @@ func serializeTestnetOrder(row db.TestnetOrder, symbol string) TestnetOrderView 
 		Side: row.Side, Quantity: row.Quantity.String(),
 		FilledQuantity:          row.FilledQuantity.String(),
 		CumulativeQuoteQuantity: row.CumulativeQuoteQuantity.String(),
-		AveragePrice:            row.AveragePrice.String(), Status: row.Status, LastErrorCode: row.LastErrorCode,
+		AveragePrice:            row.AveragePrice.String(), Purpose: row.Purpose, OrderType: row.OrderType,
+		StopPrice: row.StopPrice.String(), ClosePosition: row.ClosePosition, ReduceOnly: row.ReduceOnly,
+		WorkingType: row.WorkingType, Status: row.Status, LastErrorCode: row.LastErrorCode,
 		SubmitAttemptCount: row.SubmitAttemptCount, QueryAttemptCount: row.QueryAttemptCount,
 		SubmittedAt: formatUTC(row.SubmittedAt), CreatedAt: formatUTC(row.CreatedAt), UpdatedAt: formatUTC(row.UpdatedAt),
 	}
 	if row.ExchangeOrderID != nil {
 		exchangeOrderID := strconv.FormatInt(*row.ExchangeOrderID, 10)
 		view.ExchangeOrderID = &exchangeOrderID
+	}
+	if row.ReplacesOrderID != nil {
+		replacesOrderID := row.ReplacesOrderID.String()
+		view.ReplacesOrderID = &replacesOrderID
 	}
 	if row.LastQueriedAt != nil {
 		lastQueriedAt := formatUTC(*row.LastQueriedAt)

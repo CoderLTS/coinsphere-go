@@ -843,6 +843,22 @@
       "rejected": "Rejected",
       "expired": "Expired"
     },
+    "orderPurpose": {
+      "rebalance": "Rebalance",
+      "protection": "Stop protection",
+      "flatten": "Emergency flatten",
+      "external": "External order"
+    },
+    "orderType": {
+      "market": "Market",
+      "limit": "Limit",
+      "stop_loss": "Stop loss",
+      "stop_market": "Stop market"
+    },
+    "orderFlag": {
+      "closePosition": "Close position",
+      "reduceOnly": "Reduce only"
+    },
     "intent": {
       "pending": "Pending",
       "processing": "Processing",
@@ -862,6 +878,9 @@
       "entryPrice": "Entry price",
       "lastPrice": "Last price",
       "averagePrice": "Average price",
+      "purpose": "Purpose",
+      "orderType": "Order type",
+      "stopPrice": "Stop price",
       "side": "Side",
       "status": "Status",
       "clientOrderId": "Client order ID",

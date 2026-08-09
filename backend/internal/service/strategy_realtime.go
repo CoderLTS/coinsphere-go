@@ -26,6 +26,7 @@ type StrategyInstanceCreatePayload struct {
 	StrategyVersionID string                     `json:"strategyVersionId"`
 	TradingAccountID  string                     `json:"tradingAccountId"`
 	AllocationUSDT    string                     `json:"allocationUsdt"`
+	StopLossRatio     string                     `json:"stopLossRatio"`
 	Name              string                     `json:"name"`
 	Mode              string                     `json:"mode"`
 	Environment       string                     `json:"environment"`
@@ -38,6 +39,7 @@ type StrategyInstanceView struct {
 	StrategyVersionID string          `json:"strategyVersionId"`
 	TradingAccountID  *string         `json:"tradingAccountId"`
 	AllocationUSDT    *string         `json:"allocationUsdt"`
+	StopLossRatio     *string         `json:"stopLossRatio"`
 	Name              string          `json:"name"`
 	Mode              string          `json:"mode"`
 	Environment       string          `json:"environment"`
@@ -68,6 +70,7 @@ type validatedStrategyInstance struct {
 	Name, Mode, Environment, ParametersJSON string
 	TradingAccountID                        *uuid.UUID
 	AllocationUSDT                          *decimal.Decimal
+	StopLossRatio                           *decimal.Decimal
 }
 
 func validateStrategyInstancePayload(
@@ -101,6 +104,7 @@ func validateStrategyInstancePayload(
 	}
 	var tradingAccountID *uuid.UUID
 	var allocationUSDT *decimal.Decimal
+	var stopLossRatio *decimal.Decimal
 	if mode != "signal_only" && (environment == "paper" || environment == "testnet") {
 		accountID, err := requiredStrategyUUID(payload.TradingAccountID, "tradingAccountId")
 		if err != nil {
@@ -112,12 +116,26 @@ func validateStrategyInstancePayload(
 		}
 		tradingAccountID = &accountID
 		allocationUSDT = &allocation
+		stopLossValue := strings.TrimSpace(payload.StopLossRatio)
+		if environment == "testnet" && stopLossValue != "" {
+			ratio, err := parseDecimalField(stopLossValue, "stopLossRatio", false)
+			if err != nil || !ratio.IsPositive() || !ratio.LessThan(decimal.NewFromInt(1)) {
+				return validatedStrategyInstance{}, invalidStrategy("stopLossRatio must be a decimal string greater than 0 and less than 1")
+			}
+			stopLossRatio = &ratio
+		} else if environment == "testnet" {
+			return validatedStrategyInstance{}, invalidStrategy("stopLossRatio is required for executable testnet instances")
+		} else if stopLossValue != "" {
+			return validatedStrategyInstance{}, invalidStrategy("stopLossRatio is only available for executable testnet instances")
+		}
 	} else if strings.TrimSpace(payload.TradingAccountID) != "" || strings.TrimSpace(payload.AllocationUSDT) != "" {
 		return validatedStrategyInstance{}, invalidStrategy("trading account binding is only available for manual or auto paper or testnet instances")
+	} else if strings.TrimSpace(payload.StopLossRatio) != "" {
+		return validatedStrategyInstance{}, invalidStrategy("stopLossRatio is only available for executable strategy instances")
 	}
 	return validatedStrategyInstance{
 		Name: name, Mode: mode, Environment: environment, ParametersJSON: string(validatedParameters),
-		TradingAccountID: tradingAccountID, AllocationUSDT: allocationUSDT,
+		TradingAccountID: tradingAccountID, AllocationUSDT: allocationUSDT, StopLossRatio: stopLossRatio,
 	}, nil
 }
 
@@ -160,7 +178,8 @@ func (a *App) CreateStrategyInstance(ctx context.Context, userID int64, payload 
 	row := db.StrategyInstance{
 		ID: id, OwnerUserID: userID, StrategyVersionID: versionID, Name: validated.Name,
 		TradingAccountID: validated.TradingAccountID, AllocationUSDT: validated.AllocationUSDT,
-		Mode: validated.Mode, Environment: validated.Environment,
+		StopLossRatio: validated.StopLossRatio,
+		Mode:          validated.Mode, Environment: validated.Environment,
 		ParametersJSON: validated.ParametersJSON,
 		IsEnabled:      false, CreatedAt: now, UpdatedAt: now,
 	}
@@ -441,6 +460,10 @@ func serializeStrategyInstance(row db.StrategyInstance) StrategyInstanceView {
 	if row.AllocationUSDT != nil {
 		value := row.AllocationUSDT.String()
 		view.AllocationUSDT = &value
+	}
+	if row.StopLossRatio != nil {
+		value := row.StopLossRatio.String()
+		view.StopLossRatio = &value
 	}
 	return view
 }

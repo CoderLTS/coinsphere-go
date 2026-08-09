@@ -44,7 +44,7 @@ WHERE table_schema = current_schema() AND table_name = 'schema_migrations'
 	if err != nil {
 		t.Fatalf("apply baseline: %v", err)
 	}
-	if len(results) != 13 {
+	if len(results) != 14 {
 		t.Fatalf("migration results = %#v", results)
 	}
 	for index, result := range results {
@@ -65,15 +65,15 @@ WHERE table_schema = current_schema() AND table_name = 'schema_migrations'
 		t.Fatalf("repeat baseline applied %#v", results)
 	}
 
-	results, err = runner.Down(context.Background(), 13)
+	results, err = runner.Down(context.Background(), 14)
 	if err != nil {
 		t.Fatalf("roll back empty migrations: %v", err)
 	}
-	if len(results) != 13 {
+	if len(results) != 14 {
 		t.Fatalf("migration rollback results = %#v", results)
 	}
 	for index, result := range results {
-		if result.Version != int64(13-index) || result.Direction != "down" {
+		if result.Version != int64(14-index) || result.Direction != "down" {
 			t.Fatalf("migration rollback results = %#v", results)
 		}
 	}
@@ -95,7 +95,7 @@ func TestPostgresBaselineDownRejectsData(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 11); err != nil {
+	if _, err := runner.Down(context.Background(), 12); err != nil {
 		t.Fatalf("roll back empty market migrations: %v", err)
 	}
 	if _, err := runner.Down(context.Background(), 1); err != nil {
@@ -109,7 +109,7 @@ func TestPostgresBaselineDownRejectsData(t *testing.T) {
 		t.Fatal("baseline rollback removed a non-empty schema")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 1 || latest != 13 {
+	if versionErr != nil || current != 1 || latest != 14 {
 		t.Fatalf("failed baseline rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	var count int
@@ -229,7 +229,7 @@ func TestObservabilityDownRejectsAuditData(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 11); err != nil {
+	if _, err := runner.Down(context.Background(), 12); err != nil {
 		t.Fatalf("roll back empty market migrations: %v", err)
 	}
 	if _, err := database.Exec(`INSERT INTO audit_records (request_id, action, resource_path, outcome, status_code) VALUES ('rollback-guard', 'POST /api/v1/test', '/api/v1/test', 'success', 200)`); err != nil {
@@ -240,7 +240,7 @@ func TestObservabilityDownRejectsAuditData(t *testing.T) {
 		t.Fatal("observability rollback removed persistent audit data")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 2 || latest != 13 {
+	if versionErr != nil || current != 2 || latest != 14 {
 		t.Fatalf("failed observability rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	var count int
@@ -261,7 +261,7 @@ func TestPostgresBaselineDownSeesConcurrentCommit(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply baseline: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 12); err != nil {
+	if _, err := runner.Down(context.Background(), 13); err != nil {
 		t.Fatalf("roll back empty market and observability migrations: %v", err)
 	}
 
@@ -293,7 +293,7 @@ func TestPostgresBaselineDownSeesConcurrentCommit(t *testing.T) {
 		t.Fatal("baseline rollback did not finish after concurrent commit")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 1 || latest != 13 {
+	if versionErr != nil || current != 1 || latest != 14 {
 		t.Fatalf("failed concurrent rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	var count int
@@ -519,11 +519,11 @@ func TestA2MarketContractDownRejectsData(t *testing.T) {
 				}
 			}
 
-			if _, err := runner.Down(context.Background(), 11); err == nil {
+			if _, err := runner.Down(context.Background(), 12); err == nil {
 				t.Fatalf("A2 rollback removed non-empty %s", test.table)
 			}
 			current, latest, versionErr := runner.Versions(context.Background())
-			if versionErr != nil || current != 3 || latest != 13 {
+			if versionErr != nil || current != 3 || latest != 14 {
 				t.Fatalf("A2 rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 			}
 			assertA2Tables(t, database)
@@ -572,11 +572,11 @@ VALUES ('019c2f6d-7c00-7000-8000-000000000010', $1, $2, '1m')
 	}
 	assertPostgresIndexes(t, database, []string{"ix_watchlist_items_instrument_interval"})
 
-	if _, err := runner.Down(context.Background(), 10); err == nil {
+	if _, err := runner.Down(context.Background(), 11); err == nil {
 		t.Fatal("watchlist rollback removed persistent user data")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 4 || latest != 13 {
+	if versionErr != nil || current != 4 || latest != 14 {
 		t.Fatalf("watchlist rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	assertRowCount(t, database, "SELECT COUNT(*) FROM watchlist_items", 1)
@@ -618,11 +618,11 @@ VALUES ('worker-realtime-default-lane', 'contract.noop', '{}')
 		}
 	}
 
-	if _, err := runner.Down(context.Background(), 9); err == nil {
+	if _, err := runner.Down(context.Background(), 10); err == nil {
 		t.Fatal("worker lane rollback removed persistent tasks")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 5 || latest != 13 {
+	if versionErr != nil || current != 5 || latest != 14 {
 		t.Fatalf("worker lane rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	assertRowCount(t, database, "SELECT COUNT(*) FROM worker_tasks", 2)
@@ -749,11 +749,11 @@ WHERE id = $1
 	}
 	assertPostgresIndexes(t, database, []string{"ix_backtests_owner_created", "ix_strategy_versions_published"})
 
-	if _, err := runner.Down(context.Background(), 8); err == nil {
+	if _, err := runner.Down(context.Background(), 9); err == nil {
 		t.Fatal("strategy runtime rollback removed persistent data")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 6 || latest != 13 {
+	if versionErr != nil || current != 6 || latest != 14 {
 		t.Fatalf("strategy runtime rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	assertRowCount(t, database, "SELECT COUNT(*) FROM strategies", 1)
@@ -942,18 +942,18 @@ INSERT INTO notification_deliveries (
 		"ux_strategy_signals_manual_active_instance", "ux_notification_deliveries_signal_channel",
 	})
 
-	if _, err := runner.Down(context.Background(), 5); err != nil {
+	if _, err := runner.Down(context.Background(), 6); err != nil {
 		t.Fatalf("roll back signal channel delivery migration: %v", err)
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 8 || latest != 13 {
+	if versionErr != nil || current != 8 || latest != 14 {
 		t.Fatalf("signal channel delivery rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	if _, err := runner.Down(context.Background(), 1); err == nil {
 		t.Fatal("M2 decision rollback removed persistent decision data")
 	}
 	current, latest, versionErr = runner.Versions(context.Background())
-	if versionErr != nil || current != 8 || latest != 13 {
+	if versionErr != nil || current != 8 || latest != 14 {
 		t.Fatalf("M2 decision rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	if _, err := database.Exec(`DELETE FROM notification_deliveries WHERE strategy_signal_id = $1`, signalID); err != nil {
@@ -974,7 +974,7 @@ WHERE id = $1
 		t.Fatal("M2 realtime rollback removed persistent signal data")
 	}
 	current, latest, versionErr = runner.Versions(context.Background())
-	if versionErr != nil || current != 7 || latest != 13 {
+	if versionErr != nil || current != 7 || latest != 14 {
 		t.Fatalf("M2 realtime rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	assertRowCount(t, database, "SELECT COUNT(*) FROM strategy_signals", 1)
@@ -1074,11 +1074,11 @@ INSERT INTO trading_events (
 		"ix_paper_orders_account", "ix_trading_events_account",
 	})
 
-	if _, err := runner.Down(context.Background(), 4); err == nil {
+	if _, err := runner.Down(context.Background(), 5); err == nil {
 		t.Fatal("paper executor rollback removed persistent trading data")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 10 || latest != 13 {
+	if versionErr != nil || current != 10 || latest != 14 {
 		t.Fatalf("paper executor rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	assertRowCount(t, database, "SELECT COUNT(*) FROM trading_accounts", 1)
@@ -1159,14 +1159,14 @@ UPDATE trading_accounts SET environment = 'paper' WHERE id = $1
 	}
 	assertPostgresIndexes(t, database, []string{"ix_trading_account_credentials_owner"})
 
-	if _, err := runner.Down(context.Background(), 2); err != nil {
+	if _, err := runner.Down(context.Background(), 3); err != nil {
 		t.Fatalf("roll back empty Testnet order and reconciliation migrations: %v", err)
 	}
 	if _, err := runner.Down(context.Background(), 1); err == nil {
 		t.Fatal("Testnet credential rollback removed persistent data")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 11 || latest != 13 {
+	if versionErr != nil || current != 11 || latest != 14 {
 		t.Fatalf("Testnet credential rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	assertRowCount(t, database, "SELECT COUNT(*) FROM trading_account_credentials", 1)
@@ -1273,14 +1273,14 @@ WHERE account_id = $1
 		"ix_testnet_positions_account", "ix_testnet_open_orders_account",
 	})
 
-	if _, err := runner.Down(context.Background(), 1); err != nil {
+	if _, err := runner.Down(context.Background(), 2); err != nil {
 		t.Fatalf("roll back empty Testnet order migration: %v", err)
 	}
 	if _, err := runner.Down(context.Background(), 1); err == nil {
 		t.Fatal("Testnet reconciliation rollback removed persistent projection data")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 12 || latest != 13 {
+	if versionErr != nil || current != 12 || latest != 14 {
 		t.Fatalf("Testnet reconciliation rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	assertRowCount(t, database, "SELECT COUNT(*) FROM testnet_reconciliations", 1)
@@ -1365,11 +1365,14 @@ INSERT INTO testnet_risk_states (
 		"ix_testnet_orders_account", "ix_testnet_orders_recovery",
 	})
 
+	if _, err := runner.Down(context.Background(), 1); err != nil {
+		t.Fatalf("roll back empty Testnet protective order migration: %v", err)
+	}
 	if _, err := runner.Down(context.Background(), 1); err == nil {
 		t.Fatal("Testnet order rollback removed persistent risk state")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
-	if versionErr != nil || current != 13 || latest != 13 {
+	if versionErr != nil || current != 13 || latest != 14 {
 		t.Fatalf("Testnet order rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
 	}
 	assertRowCount(t, database, "SELECT COUNT(*) FROM testnet_risk_states", 1)
@@ -1380,8 +1383,110 @@ INSERT INTO testnet_risk_states (
 		t.Fatalf("roll back empty Testnet order migration: %v", err)
 	}
 	current, latest, versionErr = runner.Versions(context.Background())
-	if versionErr != nil || current != 12 || latest != 13 {
+	if versionErr != nil || current != 12 || latest != 14 {
 		t.Fatalf("empty Testnet order rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
+	}
+}
+
+func TestM3TestnetProtectiveOrderConstraintsAndDownGuard(t *testing.T) {
+	database := openPostgresSchema(t)
+	runner, err := New(database)
+	if err != nil {
+		t.Fatalf("create migration runner: %v", err)
+	}
+	if _, err := runner.Up(context.Background(), 0); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+
+	const instrumentID = "019dc000-0000-7000-8000-000000000001"
+	const strategyID = "019dc000-0000-7000-8000-000000000010"
+	const versionID = "019dc000-0000-7000-8000-000000000011"
+	const instanceID = "019dc000-0000-7000-8000-000000000012"
+	insertA2Instrument(t, database, instrumentID)
+	var ownerID, recordID int64
+	if err := database.QueryRow(`INSERT INTO users (username) VALUES ('protective-order-owner') RETURNING id`).Scan(&ownerID); err != nil {
+		t.Fatalf("insert protective order owner: %v", err)
+	}
+	if err := database.QueryRow(`
+INSERT INTO idempotency_records (user_id, scope, key_hash, request_hash, expires_at, created_at)
+VALUES ($1, 'strategy:publish:protective-order', repeat('e', 64), repeat('f', 64),
+        CURRENT_TIMESTAMP + INTERVAL '1 day', CURRENT_TIMESTAMP)
+RETURNING id
+`, ownerID).Scan(&recordID); err != nil {
+		t.Fatalf("insert protective order idempotency record: %v", err)
+	}
+	if _, err := database.Exec(`
+INSERT INTO worker_tasks (id, task_type, payload_json)
+VALUES ('protective-order-publish-task', 'contract.noop', '{}')
+`); err != nil {
+		t.Fatalf("insert protective order worker task: %v", err)
+	}
+	if _, err := database.Exec(`
+INSERT INTO strategies (
+    id, name, source_code, market_type, instrument_id, interval_code, lookback_bars,
+    parameter_schema_json, created_by_user_id, updated_by_user_id
+) VALUES ($1, 'protective order', 'def on_bar(candles, params): return Decimal(''0'')',
+          'spot', $2, '1m', 2, '{}', $3, $3)
+`, strategyID, instrumentID, ownerID); err != nil {
+		t.Fatalf("insert protective order strategy: %v", err)
+	}
+	if _, err := database.Exec(`
+INSERT INTO strategy_versions (
+    id, strategy_id, version_number, status, worker_task_id, idempotency_record_id,
+    name, source_code, code_sha256, runtime_version, market_type, instrument_id,
+    symbol, interval_code, lookback_bars, parameter_schema_json, published_by_user_id
+) VALUES ($1, $2, 1, 'pending', 'protective-order-publish-task', $3,
+          'protective order', 'def on_bar(candles, params): return Decimal(''0'')',
+          repeat('a', 64), 'python3.12', 'spot', $4, 'BTCUSDT', '1m', 2, '{}', $5)
+`, versionID, strategyID, recordID, instrumentID, ownerID); err != nil {
+		t.Fatalf("insert protective order strategy version: %v", err)
+	}
+	if _, err := database.Exec(`
+INSERT INTO strategy_instances (
+    id, owner_user_id, strategy_version_id, name, mode, environment
+) VALUES ($1, $2, $3, 'protective order instance', 'signal_only', 'paper')
+`, instanceID, ownerID, versionID); err != nil {
+		t.Fatalf("insert protective order strategy instance: %v", err)
+	}
+
+	for _, value := range []string{"0", "1", "-0.01"} {
+		if _, err := database.Exec(`UPDATE strategy_instances SET stop_loss_ratio = $1 WHERE id = $2`, value, instanceID); err == nil {
+			t.Fatalf("strategy instance accepted invalid stop loss ratio %s", value)
+		}
+	}
+	if _, err := database.Exec(`UPDATE strategy_instances SET stop_loss_ratio = 0.05 WHERE id = $1`, instanceID); err != nil {
+		t.Fatalf("set valid stop loss ratio: %v", err)
+	}
+	assertPostgresIndexes(t, database, []string{"uq_testnet_orders_active_protection"})
+
+	if _, err := runner.Down(context.Background(), 1); err == nil {
+		t.Fatal("protective order rollback removed configured stop loss data")
+	}
+	current, latest, versionErr := runner.Versions(context.Background())
+	if versionErr != nil || current != 14 || latest != 14 {
+		t.Fatalf("protective order rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
+	}
+	if _, err := database.Exec(`UPDATE strategy_instances SET stop_loss_ratio = NULL WHERE id = $1`, instanceID); err != nil {
+		t.Fatalf("clear stop loss ratio: %v", err)
+	}
+	if _, err := runner.Down(context.Background(), 1); err != nil {
+		t.Fatalf("roll back empty protective order migration: %v", err)
+	}
+	current, latest, versionErr = runner.Versions(context.Background())
+	if versionErr != nil || current != 13 || latest != 14 {
+		t.Fatalf("empty protective order rollback versions = current:%d latest:%d err:%v", current, latest, versionErr)
+	}
+	var stopLossColumns int
+	if err := database.QueryRow(`
+SELECT COUNT(*) FROM information_schema.columns
+WHERE table_schema = current_schema()
+  AND table_name = 'strategy_instances'
+  AND column_name = 'stop_loss_ratio'
+`).Scan(&stopLossColumns); err != nil {
+		t.Fatalf("inspect rolled-back stop loss column: %v", err)
+	}
+	if stopLossColumns != 0 {
+		t.Fatal("protective order rollback retained stop_loss_ratio")
 	}
 }
 

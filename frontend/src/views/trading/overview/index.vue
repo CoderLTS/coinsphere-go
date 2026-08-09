@@ -350,6 +350,18 @@
           <ElTabPane :label="`${t('trading.tabs.orders')} ${selectedOrders.length}`" name="orders">
             <ElTable :data="selectedOrders" :empty-text="t('common.noData')" stripe>
               <ElTableColumn prop="symbol" :label="t('trading.table.symbol')" min-width="120" />
+              <ElTableColumn
+                v-if="selectedAccount.environment === 'testnet'"
+                :label="t('trading.table.purpose')"
+                width="120"
+                align="center"
+              >
+                <template #default="{ row }">
+                  <ElTag :type="orderPurposeType(row.purpose)" effect="plain" size="small">
+                    {{ orderPurposeLabel(row.purpose) }}
+                  </ElTag>
+                </template>
+              </ElTableColumn>
               <ElTableColumn :label="t('trading.table.side')" width="100" align="center">
                 <template #default="{ row }">
                   <ElTag
@@ -361,9 +373,40 @@
                   </ElTag>
                 </template>
               </ElTableColumn>
+              <ElTableColumn
+                v-if="selectedAccount.environment === 'testnet'"
+                :label="t('trading.table.orderType')"
+                min-width="170"
+              >
+                <template #default="{ row }">
+                  <div class="order-shape">
+                    <span>{{ orderTypeLabel(row.orderType) }}</span>
+                    <small v-if="row.closePosition">{{
+                      t('trading.orderFlag.closePosition')
+                    }}</small>
+                    <small v-else-if="row.reduceOnly">{{
+                      t('trading.orderFlag.reduceOnly')
+                    }}</small>
+                  </div>
+                </template>
+              </ElTableColumn>
+              <ElTableColumn
+                v-if="selectedAccount.environment === 'testnet'"
+                :label="t('trading.table.stopPrice')"
+                min-width="150"
+                align="right"
+              >
+                <template #default="{ row }">
+                  <span class="decimal-value">{{
+                    row.stopPrice === '0' ? '--' : row.stopPrice
+                  }}</span>
+                </template>
+              </ElTableColumn>
               <ElTableColumn :label="t('trading.table.quantity')" min-width="150" align="right">
                 <template #default="{ row }"
-                  ><span class="decimal-value">{{ row.filledQuantity }}</span></template
+                  ><span class="decimal-value">{{
+                    row.closePosition ? '--' : row.quantity
+                  }}</span></template
                 >
               </ElTableColumn>
               <ElTableColumn :label="t('trading.table.averagePrice')" min-width="150" align="right">
@@ -655,6 +698,24 @@
     ipWhitelistConfigured: boolean
   }
 
+  type OrderRow = {
+    symbol: string
+    side: string
+    quantity: string
+    filledQuantity: string
+    averagePrice: string
+    purpose: string
+    orderType: string
+    stopPrice: string
+    closePosition: boolean
+    reduceOnly: boolean
+    workingType: string
+    replacesOrderId: string | null
+    status: string
+    clientOrderId: string
+    createdAt: string
+  }
+
   const emptyControl = (): TradingOverview['control'] => ({
     emergencyStopped: true,
     stopReason: '',
@@ -701,7 +762,7 @@
     ipWhitelistConfigured: false
   })
 
-  const { t, locale } = useI18n()
+  const { t, locale, te } = useI18n()
   const userStore = useUserStore()
   const loading = ref(false)
   const commandLoading = ref('')
@@ -746,15 +807,23 @@
     }
     return overview.positions.filter((position) => position.accountId === selectedAccountId.value)
   })
-  const selectedOrders = computed(() => {
+  const selectedOrders = computed<OrderRow[]>(() => {
     if (selectedAccount.value?.environment === 'testnet') {
       const managed = overview.testnetOrders
         .filter((order) => order.accountId === selectedAccountId.value)
         .map((order) => ({
           symbol: order.symbol,
           side: order.side,
+          quantity: order.quantity,
           filledQuantity: order.filledQuantity,
           averagePrice: order.averagePrice,
+          purpose: order.purpose,
+          orderType: order.orderType,
+          stopPrice: order.stopPrice,
+          closePosition: order.closePosition,
+          reduceOnly: order.reduceOnly,
+          workingType: order.workingType,
+          replacesOrderId: order.replacesOrderId,
           status: order.status,
           clientOrderId: order.clientOrderId,
           createdAt: order.submittedAt
@@ -769,15 +838,41 @@
         .map((order) => ({
           symbol: order.symbol,
           side: order.side,
+          quantity: order.originalQuantity,
           filledQuantity: order.executedQuantity,
           averagePrice: order.price,
+          purpose: 'external',
+          orderType: order.orderType,
+          stopPrice: order.stopPrice,
+          closePosition: false,
+          reduceOnly: false,
+          workingType: '',
+          replacesOrderId: null,
           status: order.status,
           clientOrderId: order.clientOrderId,
           createdAt: order.observedAt
         }))
       return [...managed, ...external]
     }
-    return overview.orders.filter((order) => order.accountId === selectedAccountId.value)
+    return overview.orders
+      .filter((order) => order.accountId === selectedAccountId.value)
+      .map((order) => ({
+        symbol: order.symbol,
+        side: order.side,
+        quantity: order.quantity,
+        filledQuantity: order.filledQuantity,
+        averagePrice: order.averagePrice,
+        purpose: '',
+        orderType: '',
+        stopPrice: '0',
+        closePosition: false,
+        reduceOnly: false,
+        workingType: '',
+        replacesOrderId: null,
+        status: order.status,
+        clientOrderId: order.clientOrderId,
+        createdAt: order.createdAt
+      }))
   })
   const selectedIntents = computed(() =>
     overview.intents.filter((intent) => intent.accountId === selectedAccountId.value)
@@ -1207,6 +1302,18 @@
     if (status === 'rejected' || status === 'canceled' || status === 'expired') return 'danger'
     if (status === 'unknown' || status === 'partially_filled') return 'warning'
     return 'info'
+  }
+  const orderPurposeLabel = (purpose: string) =>
+    t(`trading.orderPurpose.${purpose}` as 'trading.orderPurpose.rebalance')
+  const orderPurposeType = (purpose: string): TagProps['type'] => {
+    if (purpose === 'protection') return 'warning'
+    if (purpose === 'flatten') return 'danger'
+    if (purpose === 'rebalance') return 'success'
+    return 'info'
+  }
+  const orderTypeLabel = (orderType: string) => {
+    const key = `trading.orderType.${orderType}`
+    return te(key) ? t(key) : orderType || '--'
   }
   const intentStatusLabel = (status: string) =>
     t(`trading.intent.${status}` as 'trading.intent.pending')
@@ -1663,6 +1770,16 @@
   .decimal-value {
     font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
     font-variant-numeric: tabular-nums;
+  }
+
+  .order-shape {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+
+    small {
+      color: var(--trading-muted);
+    }
   }
 
   .is-positive {

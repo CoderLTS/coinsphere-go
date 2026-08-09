@@ -27,6 +27,12 @@ type testnetOrderClient interface {
 	PlaceMarketOrder(
 		context.Context, marketdata.MarketType, string, string, string, string, string, decimal.Decimal, bool,
 	) (exchangebinance.OrderResult, error)
+	PlaceProtectiveOrder(
+		context.Context, marketdata.MarketType, string, string, string, string, string, decimal.Decimal, decimal.Decimal,
+	) (exchangebinance.OrderResult, error)
+	CancelOrder(
+		context.Context, marketdata.MarketType, string, string, string, string,
+	) (exchangebinance.OrderResult, error)
 }
 
 // TestnetExecutor serializes deterministic Binance Testnet orders per account.
@@ -210,7 +216,7 @@ type testnetExecutionAction struct {
 	Credential          db.TradingAccountCredential
 	ExpectedAccountTime time.Time
 	Query               bool
-	ReduceOnly          bool
+	Cancel              bool
 	PreflightErrorCode  string
 }
 
@@ -250,12 +256,30 @@ func (executor *TestnetExecutor) processIntent(ctx context.Context, claimed db.T
 	if err != nil || action == nil {
 		return err
 	}
+	return executor.executeAction(ctx, *action)
+}
+
+func (executor *TestnetExecutor) executeAction(ctx context.Context, action testnetExecutionAction) error {
 	if action.PreflightErrorCode != "" {
-		return executor.persistUnknown(ctx, *action, action.PreflightErrorCode, true)
+		if action.Order.Purpose == "protection" {
+			flatten, err := executor.prepareEmergencyFlatten(ctx, action, action.PreflightErrorCode)
+			if err != nil || flatten == nil {
+				return err
+			}
+			return executor.executeAction(ctx, *flatten)
+		}
+		return executor.persistUnknown(ctx, action, action.PreflightErrorCode, true)
 	}
 	apiKey, apiSecret, err := decryptTestnetCredential(executor.cipher, action.Credential)
 	if err != nil {
-		return executor.persistUnknown(ctx, *action, "credential_decryption_failed", true)
+		if action.Order.Purpose == "protection" {
+			flatten, flattenErr := executor.prepareEmergencyFlatten(ctx, action, "credential_decryption_failed")
+			if flattenErr != nil || flatten == nil {
+				return flattenErr
+			}
+			return executor.executeAction(ctx, *flatten)
+		}
+		return executor.persistUnknown(ctx, action, "credential_decryption_failed", true)
 	}
 	if action.Query {
 		result, queryErr := executor.client.QueryOrder(
@@ -263,34 +287,69 @@ func (executor *TestnetExecutor) processIntent(ctx context.Context, claimed db.T
 			action.Instrument.NativeSymbol, action.Order.ClientOrderID,
 		)
 		if queryErr == nil {
-			return executor.persistResult(ctx, *action, result)
+			return executor.persistResult(ctx, action, result)
+		}
+		if action.Order.Purpose == "protection" {
+			code := testnetProtectionQueryFailure(queryErr)
+			flatten, err := executor.prepareEmergencyFlatten(ctx, action, code)
+			if err != nil || flatten == nil {
+				return err
+			}
+			return executor.executeAction(ctx, *flatten)
 		}
 		var privateErr *exchangebinance.PrivateError
 		if errors.As(queryErr, &privateErr) && privateErr.Kind == exchangebinance.PrivateErrorNotFound {
-			action, err = executor.prepareMissingOrder(ctx, *action)
-			if err != nil || action == nil {
+			prepared, err := executor.prepareMissingOrder(ctx, action)
+			if err != nil || prepared == nil {
 				return err
 			}
+			action = *prepared
 			apiKey, apiSecret, err = decryptTestnetCredential(executor.cipher, action.Credential)
 			if err != nil {
-				return executor.persistUnknown(ctx, *action, "credential_decryption_failed", true)
+				return executor.persistUnknown(ctx, action, "credential_decryption_failed", true)
 			}
 		} else {
 			code, pause := testnetOrderFailure(queryErr)
-			return executor.persistUnknown(ctx, *action, code, pause)
+			return executor.persistUnknown(ctx, action, code, pause)
 		}
+	}
+	if action.Cancel {
+		result, cancelErr := executor.client.CancelOrder(
+			ctx, marketdata.MarketType(action.Account.Market), apiKey, apiSecret,
+			action.Instrument.NativeSymbol, action.Order.ClientOrderID,
+		)
+		if cancelErr == nil {
+			return executor.persistResult(ctx, action, result)
+		}
+		code, _ := testnetOrderFailure(cancelErr)
+		return executor.persistUnknown(ctx, action, code, false)
+	}
+	if action.Order.Purpose == "protection" {
+		result, placeErr := executor.client.PlaceProtectiveOrder(
+			ctx, marketdata.MarketType(action.Account.Market), apiKey, apiSecret,
+			action.Instrument.NativeSymbol, action.Order.ClientOrderID, action.Order.Side,
+			action.Order.Quantity, action.Order.StopPrice,
+		)
+		if placeErr == nil {
+			return executor.persistResult(ctx, action, result)
+		}
+		code, _ := testnetOrderFailure(placeErr)
+		return executor.persistUnknown(ctx, action, code, false)
 	}
 
 	result, placeErr := executor.client.PlaceMarketOrder(
 		ctx, marketdata.MarketType(action.Account.Market), apiKey, apiSecret,
 		action.Instrument.NativeSymbol, action.Order.ClientOrderID, action.Order.Side, action.Order.Quantity,
-		action.ReduceOnly,
+		action.Order.ReduceOnly,
 	)
 	if placeErr == nil {
-		return executor.persistResult(ctx, *action, result)
+		return executor.persistResult(ctx, action, result)
 	}
 	code, pause := testnetOrderFailure(placeErr)
-	return executor.persistUnknown(ctx, *action, code, pause)
+	if action.Order.Purpose == "flatten" {
+		pause = true
+	}
+	return executor.persistUnknown(ctx, action, code, pause)
 }
 
 func (executor *TestnetExecutor) prepareAction(
@@ -306,32 +365,31 @@ func (executor *TestnetExecutor) prepareAction(
 		if err != nil {
 			return err
 		}
-		var order db.TestnetOrder
-		err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("intent_id = ?", intent.ID).Take(&order).Error
-		if err == nil {
-			prepared, errorCode, err := loadTestnetQueryAction(tx, intent, order)
+		for _, purpose := range []string{"flatten", "protection", "rebalance"} {
+			var order db.TestnetOrder
+			err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
+				"intent_id = ? AND purpose = ?", intent.ID, purpose,
+			).Take(&order).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				continue
+			}
 			if err != nil {
 				return err
 			}
-			if errorCode == "" {
-				now := time.Now().UTC()
-				if err := tx.Model(&order).Updates(map[string]any{
-					"query_attempt_count": gorm.Expr("query_attempt_count + 1"),
-					"last_queried_at":     now, "updated_at": now,
-				}).Error; err != nil {
+			if purpose == "rebalance" && order.Status == "filled" {
+				prepared, err := executor.prepareProtectionAction(tx, intent, &order, nil)
+				if err != nil {
 					return err
 				}
-				order.QueryAttemptCount++
-				order.LastQueriedAt = &now
+				action = prepared
+				return nil
 			}
-			prepared.PreflightErrorCode = errorCode
-			prepared.Query = true
-			prepared.Order = order
-			action = &prepared
+			prepared, err := prepareExistingTestnetOrderAction(tx, intent, order, true, false)
+			if err != nil {
+				return err
+			}
+			action = prepared
 			return nil
-		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
 		}
 
 		state, blockReason, pause, err := loadAndValidateTestnetExecution(tx, intent)
@@ -342,19 +400,25 @@ func (executor *TestnetExecutor) prepareAction(
 			return blockTestnetIntent(tx, intent, blockReason, pause)
 		}
 		if state.DeltaQty.IsZero() {
-			return finishTestnetIntent(tx, intent, "executed", "target_already_reached")
+			prepared, err := executor.prepareProtectionAction(tx, intent, nil, &state)
+			if err != nil {
+				return err
+			}
+			action = prepared
+			return nil
 		}
 		now := time.Now().UTC()
 		side := "buy"
 		if state.DeltaQty.IsNegative() {
 			side = "sell"
 		}
-		order = db.TestnetOrder{
+		order := db.TestnetOrder{
 			ID: intent.ID, AccountID: intent.AccountID, IntentID: intent.ID,
 			StrategyInstanceID: intent.StrategyInstanceID, InstrumentID: intent.InstrumentID,
 			CredentialUpdatedAt:       state.Credential.UpdatedAt,
 			SubmittedAccountUpdatedAt: state.Account.UpdatedAt,
 			ClientOrderID:             intent.ClientOrderID, Side: side, Quantity: state.DeltaQty.Abs(),
+			Purpose: "rebalance", OrderType: "market", ReduceOnly: state.ReduceOnly,
 			Status: "prepared", SubmitAttemptCount: 1, SubmittedAt: now,
 			CreatedAt: now, UpdatedAt: now,
 		}
@@ -364,11 +428,38 @@ func (executor *TestnetExecutor) prepareAction(
 		action = &testnetExecutionAction{
 			Intent: intent, Order: order, Account: state.Account, Instrument: state.Instrument,
 			Credential: state.Credential, ExpectedAccountTime: state.Account.UpdatedAt,
-			ReduceOnly: state.ReduceOnly,
 		}
 		return nil
 	})
 	return action, err
+}
+
+func prepareExistingTestnetOrderAction(
+	tx *gorm.DB,
+	intent db.TradingIntent,
+	order db.TestnetOrder,
+	query, cancel bool,
+) (*testnetExecutionAction, error) {
+	prepared, errorCode, err := loadTestnetQueryAction(tx, intent, order)
+	if err != nil {
+		return nil, err
+	}
+	if query && errorCode == "" {
+		now := time.Now().UTC()
+		if err := tx.Model(&order).Updates(map[string]any{
+			"query_attempt_count": gorm.Expr("query_attempt_count + 1"),
+			"last_queried_at":     now, "updated_at": now,
+		}).Error; err != nil {
+			return nil, err
+		}
+		order.QueryAttemptCount++
+		order.LastQueriedAt = &now
+	}
+	prepared.PreflightErrorCode = errorCode
+	prepared.Query = query
+	prepared.Cancel = cancel
+	prepared.Order = order
+	return &prepared, nil
 }
 
 func (executor *TestnetExecutor) lockClaimedIntent(tx *gorm.DB, intentID uuid.UUID) (db.TradingIntent, error) {
@@ -403,8 +494,7 @@ func loadTestnetQueryAction(
 		}
 		return action, "", err
 	}
-	if order.AccountID != intent.AccountID || order.StrategyInstanceID != intent.StrategyInstanceID ||
-		order.InstrumentID != intent.InstrumentID || order.ClientOrderID != intent.ClientOrderID {
+	if !validTestnetOrderIntentBinding(intent, order) {
 		return action, "execution_binding_mismatch", nil
 	}
 	if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).Where(
@@ -438,6 +528,17 @@ func (executor *TestnetExecutor) prepareMissingOrder(
 			Take(&order).Error; err != nil {
 			return err
 		}
+		if order.Purpose == "flatten" {
+			prepared, err := executor.prepareMissingFlattenOrder(tx, intent, order)
+			if err != nil {
+				return err
+			}
+			action = prepared
+			return nil
+		}
+		if order.Purpose != "rebalance" {
+			return errors.New("unsupported missing testnet order purpose")
+		}
 		if order.ExchangeOrderID != nil || order.FilledQuantity.IsPositive() {
 			return reconcileTestnetIntent(tx, intent, &order, "missing_observed_order", true)
 		}
@@ -466,6 +567,7 @@ func (executor *TestnetExecutor) prepareMissingOrder(
 			"credential_updated_at":        state.Credential.UpdatedAt,
 			"submitted_account_updated_at": state.Account.UpdatedAt,
 			"side":                         side, "quantity": state.DeltaQty.Abs(),
+			"reduce_only":     state.ReduceOnly,
 			"filled_quantity": decimal.Zero, "cumulative_quote_quantity": decimal.Zero,
 			"average_price": decimal.Zero, "status": "prepared", "last_error_code": "",
 			"submit_attempt_count": gorm.Expr("submit_attempt_count + 1"),
@@ -478,6 +580,7 @@ func (executor *TestnetExecutor) prepareMissingOrder(
 		order.SubmittedAccountUpdatedAt = state.Account.UpdatedAt
 		order.Side = side
 		order.Quantity = state.DeltaQty.Abs()
+		order.ReduceOnly = state.ReduceOnly
 		order.Status = "prepared"
 		order.LastErrorCode = ""
 		order.SubmitAttemptCount++
@@ -486,7 +589,6 @@ func (executor *TestnetExecutor) prepareMissingOrder(
 		action = &testnetExecutionAction{
 			Intent: intent, Order: order, Account: state.Account, Instrument: state.Instrument,
 			Credential: state.Credential, ExpectedAccountTime: state.Account.UpdatedAt,
-			ReduceOnly: state.ReduceOnly,
 		}
 		return nil
 	})
@@ -562,6 +664,9 @@ func loadAndValidateTestnetExecution(
 		*state.Instance.TradingAccountID != intent.AccountID || state.Instance.AllocationUSDT == nil ||
 		state.Instance.Environment != "testnet" {
 		return state, "execution_binding_mismatch", true, nil
+	}
+	if !validTestnetStopLossRatio(state.Instance.StopLossRatio) {
+		return state, "protection_configuration_invalid", true, nil
 	}
 	if state.Signal.StrategyInstanceID != intent.StrategyInstanceID || state.Signal.InstrumentID != intent.InstrumentID ||
 		state.Signal.Target.Cmp(intent.Target) != 0 || state.Signal.Mode != intent.Mode || !state.Instance.IsEnabled {
@@ -864,7 +969,8 @@ func (executor *TestnetExecutor) persistResult(
 ) error {
 	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	return executor.database.WithContext(persistCtx).Transaction(func(tx *gorm.DB) error {
+	var nextAction *testnetExecutionAction
+	err := executor.database.WithContext(persistCtx).Transaction(func(tx *gorm.DB) error {
 		intent, order, account, current, err := executor.lockCurrentOrderState(tx, action)
 		if err != nil {
 			return err
@@ -873,11 +979,23 @@ func (executor *TestnetExecutor) persistResult(
 			return reconcileTestnetIntent(tx, intent, &order, "execution_state_changed", true)
 		}
 		status, err := normalizeTestnetOrderStatus(result.Status)
-		if err != nil || result.Symbol != action.Instrument.NativeSymbol ||
+		invalidResult := err != nil || result.Symbol != action.Instrument.NativeSymbol ||
 			result.ClientOrderID != order.ClientOrderID || result.Side != order.Side ||
-			result.OrderType != "market" || !result.OriginalQuantity.Equal(order.Quantity) ||
 			result.ExchangeOrderID <= 0 || result.ObservedAt.IsZero() ||
-			!validTestnetOrderResult(status, result) {
+			(order.ExchangeOrderID != nil && result.ExchangeOrderID != *order.ExchangeOrderID) ||
+			!validTestnetStoredOrderResult(order, status, result) ||
+			(action.Cancel && status != "canceled" && status != "filled" && status != "expired" && status != "rejected")
+		if invalidResult {
+			if order.Purpose == "protection" {
+				failureCode := protectionFailureCode("order_protocol_error")
+				if err := tx.Model(&order).Updates(map[string]any{
+					"status": "unknown", "last_error_code": failureCode, "updated_at": time.Now().UTC(),
+				}).Error; err != nil {
+					return err
+				}
+				nextAction, err = executor.scheduleProtectionFailure(tx, intent, failureCode)
+				return err
+			}
 			return reconcileTestnetIntent(tx, intent, &order, "order_protocol_error", true)
 		}
 		errorCode := ""
@@ -908,24 +1026,86 @@ func (executor *TestnetExecutor) persistResult(
 			return err
 		}
 
-		switch status {
-		case "new", "partially_filled":
-			return setTestnetIntentReconciling(tx, intent, "order_"+status, false)
-		case "filled":
-			if err := finishTestnetIntent(tx, intent, "executed", ""); err != nil {
-				return err
-			}
-			return nil
+		switch order.Purpose {
+		case "protection":
+			var err error
+			nextAction, err = executor.persistProtectionResult(tx, intent, order, status)
+			return err
+		case "flatten":
+			return persistFlattenResult(tx, intent, status)
 		default:
-			if err := finishTestnetIntent(tx, intent, "failed", "exchange_"+status); err != nil {
-				return err
+			switch status {
+			case "new", "partially_filled":
+				return setTestnetIntentReconciling(tx, intent, "order_"+status, false)
+			case "filled":
+				return setTestnetIntentReconciling(tx, intent, "protection_required", false)
+			default:
+				if (status == "canceled" || status == "expired") && order.FilledQuantity.IsPositive() {
+					if order.FilledQuantity.Equal(order.Quantity) {
+						return setTestnetIntentReconciling(tx, intent, "protection_required", false)
+					}
+					nextAction, err = executor.scheduleProtectionFailure(
+						tx, intent, "rebalance_"+status+"_partial_fill",
+					)
+					return err
+				}
+				if err := finishTestnetIntent(tx, intent, "failed", "exchange_"+status); err != nil {
+					return err
+				}
+				if riskPaused {
+					return nil
+				}
+				return pauseTestnetAccount(tx, account.ID, "testnet_order_"+status, time.Now().UTC())
 			}
-			if riskPaused {
-				return nil
-			}
-			return pauseTestnetAccount(tx, account.ID, "testnet_order_"+status, time.Now().UTC())
 		}
 	})
+	if err != nil || nextAction == nil {
+		return err
+	}
+	return executor.executeAction(ctx, *nextAction)
+}
+
+func (executor *TestnetExecutor) persistProtectionResult(
+	tx *gorm.DB,
+	intent db.TradingIntent,
+	order db.TestnetOrder,
+	status string,
+) (*testnetExecutionAction, error) {
+	replacing := order.IntentID != intent.ID
+	if replacing && order.FilledQuantity.IsPositive() {
+		return executor.scheduleProtectionFailure(tx, intent, "protection_replacement_race")
+	}
+	switch status {
+	case "new":
+		if replacing {
+			return nil, setTestnetIntentReconciling(tx, intent, "protection_cancel_required", false)
+		}
+		return nil, finishTestnetIntent(tx, intent, "executed", "")
+	case "partially_filled":
+		return nil, setTestnetIntentReconciling(tx, intent, "protective_order_partially_filled", false)
+	case "filled":
+		return nil, finishTestnetIntent(tx, intent, "executed", "protective_order_filled")
+	case "canceled", "expired", "rejected":
+		if replacing {
+			return nil, setTestnetIntentReconciling(tx, intent, "protection_required", false)
+		}
+		return executor.scheduleProtectionFailure(tx, intent, "protection_"+status)
+	default:
+		return nil, errors.New("unsupported protection result status")
+	}
+}
+
+func persistFlattenResult(tx *gorm.DB, intent db.TradingIntent, status string) error {
+	switch status {
+	case "new", "partially_filled":
+		return setTestnetIntentReconciling(tx, intent, "emergency_flatten_pending", false)
+	case "filled":
+		return finishTestnetIntent(tx, intent, "failed", "protection_failed_flattened")
+	case "canceled", "expired", "rejected":
+		return finishTestnetIntent(tx, intent, "failed", "emergency_flatten_"+status)
+	default:
+		return errors.New("unsupported flatten result status")
+	}
 }
 
 func refreshTestnetRiskAfterFill(tx *gorm.DB, account db.TradingAccount, order db.TestnetOrder) (bool, error) {
@@ -973,9 +1153,12 @@ func (executor *TestnetExecutor) persistUnknown(
 		}
 		var order db.TestnetOrder
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
-			"id = ? AND intent_id = ?", action.Order.ID, intent.ID,
+			"id = ?", action.Order.ID,
 		).Take(&order).Error; err != nil {
 			return err
+		}
+		if !validTestnetOrderIntentBinding(intent, order) || !sameTestnetOrderAction(order, action.Order) {
+			return setTestnetIntentReconciling(tx, intent, "execution_state_changed", true)
 		}
 		return reconcileTestnetIntent(tx, intent, &order, errorCode, pause)
 	})
@@ -994,7 +1177,7 @@ func (executor *TestnetExecutor) lockCurrentOrderState(
 	}
 	var order db.TestnetOrder
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
-		"id = ? AND intent_id = ?", action.Order.ID, intent.ID,
+		"id = ?", action.Order.ID,
 	).Take(&order).Error; err != nil {
 		return intent, order, db.TradingAccount{}, false, err
 	}
@@ -1017,9 +1200,48 @@ func (executor *TestnetExecutor) lockCurrentOrderState(
 		}
 		return intent, order, account, false, err
 	}
-	current := account.UpdatedAt.Equal(action.ExpectedAccountTime) &&
-		credential.UpdatedAt.Equal(action.Credential.UpdatedAt)
+	current := validTestnetOrderIntentBinding(intent, order) && sameTestnetOrderAction(order, action.Order) &&
+		account.UpdatedAt.Equal(action.ExpectedAccountTime) && credential.UpdatedAt.Equal(action.Credential.UpdatedAt)
 	return intent, order, account, current, nil
+}
+
+func validTestnetOrderIntentBinding(intent db.TradingIntent, order db.TestnetOrder) bool {
+	if order.AccountID != intent.AccountID || order.StrategyInstanceID != intent.StrategyInstanceID ||
+		order.InstrumentID != intent.InstrumentID {
+		return false
+	}
+	switch order.Purpose {
+	case "rebalance":
+		return order.ID == intent.ID && order.IntentID == intent.ID && order.ClientOrderID == intent.ClientOrderID
+	case "flatten":
+		return order.IntentID == intent.ID && order.ClientOrderID != intent.ClientOrderID
+	case "protection":
+		return order.ClientOrderID != intent.ClientOrderID
+	default:
+		return false
+	}
+}
+
+func sameTestnetOrderAction(current, submitted db.TestnetOrder) bool {
+	return current.ID == submitted.ID && current.AccountID == submitted.AccountID &&
+		current.IntentID == submitted.IntentID && current.StrategyInstanceID == submitted.StrategyInstanceID &&
+		current.InstrumentID == submitted.InstrumentID &&
+		current.CredentialUpdatedAt.Equal(submitted.CredentialUpdatedAt) &&
+		current.SubmittedAccountUpdatedAt.Equal(submitted.SubmittedAccountUpdatedAt) &&
+		current.ClientOrderID == submitted.ClientOrderID && current.Side == submitted.Side &&
+		current.Quantity.Equal(submitted.Quantity) && current.Purpose == submitted.Purpose &&
+		current.OrderType == submitted.OrderType && current.StopPrice.Equal(submitted.StopPrice) &&
+		current.ClosePosition == submitted.ClosePosition && current.ReduceOnly == submitted.ReduceOnly &&
+		current.WorkingType == submitted.WorkingType && equalOptionalUUID(current.ReplacesOrderID, submitted.ReplacesOrderID) &&
+		current.Status == submitted.Status && current.SubmitAttemptCount == submitted.SubmitAttemptCount &&
+		current.QueryAttemptCount == submitted.QueryAttemptCount
+}
+
+func equalOptionalUUID(left, right *uuid.UUID) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func reconcileTestnetIntent(
@@ -1127,6 +1349,53 @@ func validTestnetOrderResult(status string, result exchangebinance.OrderResult) 
 	default:
 		return false
 	}
+}
+
+func validTestnetStoredOrderResult(
+	order db.TestnetOrder,
+	status string,
+	result exchangebinance.OrderResult,
+) bool {
+	if result.OrderType != order.OrderType || !result.OriginalQuantity.Equal(order.Quantity) ||
+		result.ClosePosition != order.ClosePosition || result.ReduceOnly != order.ReduceOnly {
+		return false
+	}
+	if order.Purpose == "protection" &&
+		(!result.StopPrice.Equal(order.StopPrice) || result.WorkingType != order.WorkingType) {
+		return false
+	}
+	if !order.ClosePosition {
+		return validTestnetOrderResult(status, result)
+	}
+	if !result.OriginalQuantity.IsZero() || result.ExecutedQuantity.IsNegative() ||
+		result.CumulativeQuoteQuantity.IsNegative() || result.AveragePrice.IsNegative() {
+		return false
+	}
+	if (result.ExecutedQuantity.IsZero() &&
+		(!result.CumulativeQuoteQuantity.IsZero() || !result.AveragePrice.IsZero())) ||
+		(result.ExecutedQuantity.IsPositive() &&
+			(!result.CumulativeQuoteQuantity.IsPositive() || !result.AveragePrice.IsPositive())) {
+		return false
+	}
+	switch status {
+	case "new", "rejected":
+		return result.ExecutedQuantity.IsZero()
+	case "partially_filled", "filled":
+		return result.ExecutedQuantity.IsPositive()
+	case "canceled", "expired":
+		return true
+	default:
+		return false
+	}
+}
+
+func testnetProtectionQueryFailure(err error) string {
+	var privateErr *exchangebinance.PrivateError
+	if errors.As(err, &privateErr) && privateErr.Kind == exchangebinance.PrivateErrorNotFound {
+		return "not_found"
+	}
+	code, _ := testnetOrderFailure(err)
+	return code
 }
 
 func testnetOrderFailure(err error) (string, bool) {

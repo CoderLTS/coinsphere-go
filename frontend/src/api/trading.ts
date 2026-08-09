@@ -169,6 +169,13 @@ export interface TestnetOrder {
   filledQuantity: string
   cumulativeQuoteQuantity: string
   averagePrice: string
+  purpose: string
+  orderType: string
+  stopPrice: string
+  closePosition: boolean
+  reduceOnly: boolean
+  workingType: string
+  replacesOrderId: string | null
   status: string
   lastErrorCode: string
   submitAttemptCount: number

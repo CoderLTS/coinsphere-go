@@ -153,6 +153,7 @@ type StrategyInstance struct {
 	StrategyVersionID uuid.UUID
 	TradingAccountID  *uuid.UUID       `gorm:"column:trading_account_id;type:uuid"`
 	AllocationUSDT    *decimal.Decimal `gorm:"column:allocation_usdt;type:numeric(38,18)"`
+	StopLossRatio     *decimal.Decimal `gorm:"column:stop_loss_ratio;type:numeric(38,18)"`
 	Name              string
 	Mode              string
 	Environment       string
@@ -320,11 +321,11 @@ type TestnetRiskState struct {
 
 func (TestnetRiskState) TableName() string { return "testnet_risk_states" }
 
-// TestnetOrder is the durable local projection of one deterministic external market order.
+// TestnetOrder is the durable local projection of one deterministic external order.
 type TestnetOrder struct {
 	ID                        uuid.UUID       `gorm:"type:uuid;primaryKey"`
 	AccountID                 uuid.UUID       `gorm:"column:account_id;type:uuid"`
-	IntentID                  uuid.UUID       `gorm:"column:intent_id;type:uuid;uniqueIndex"`
+	IntentID                  uuid.UUID       `gorm:"column:intent_id;type:uuid"`
 	StrategyInstanceID        uuid.UUID       `gorm:"column:strategy_instance_id;type:uuid"`
 	InstrumentID              uuid.UUID       `gorm:"column:instrument_id;type:uuid"`
 	CredentialUpdatedAt       time.Time       `gorm:"column:credential_updated_at"`
@@ -336,6 +337,13 @@ type TestnetOrder struct {
 	FilledQuantity            decimal.Decimal `gorm:"column:filled_quantity;type:numeric(38,18)"`
 	CumulativeQuoteQuantity   decimal.Decimal `gorm:"column:cumulative_quote_quantity;type:numeric(38,18)"`
 	AveragePrice              decimal.Decimal `gorm:"column:average_price;type:numeric(38,18)"`
+	Purpose                   string          `gorm:"size:16;default:rebalance"`
+	OrderType                 string          `gorm:"column:order_type;size:24;default:market"`
+	StopPrice                 decimal.Decimal `gorm:"column:stop_price;type:numeric(38,18)"`
+	ClosePosition             bool            `gorm:"column:close_position"`
+	ReduceOnly                bool            `gorm:"column:reduce_only"`
+	WorkingType               string          `gorm:"column:working_type;size:24"`
+	ReplacesOrderID           *uuid.UUID      `gorm:"column:replaces_order_id;type:uuid"`
 	Status                    string          `gorm:"size:24"`
 	LastErrorCode             string          `gorm:"column:last_error_code;size:64"`
 	SubmitAttemptCount        int             `gorm:"column:submit_attempt_count"`
