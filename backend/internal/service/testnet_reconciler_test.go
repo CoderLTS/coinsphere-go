@@ -412,7 +412,7 @@ func TestTestnetReconcilerRecoversDeterministicExternalOrder(t *testing.T) {
 	if err != nil || len(overview.TestnetAuditSummaries) != 1 {
 		t.Fatalf("load recovered audit summary: summaries=%#v err=%v", overview.TestnetAuditSummaries, err)
 	}
-	if overview.TestnetAuditSummaries[0].RecoveredOrderCount != 1 {
+	if overview.TestnetAuditSummaries[0].RecoveredOrderCount != 1 || overview.TestnetAuditSummaries[0].UnknownOrderCount != 0 {
 		t.Fatalf("recovered audit summary = %#v", overview.TestnetAuditSummaries[0])
 	}
 }
@@ -438,6 +438,13 @@ func TestTestnetReconcilerRejectsDeterministicExternalOrderShape(t *testing.T) {
 	}
 	if orderCount != 0 {
 		t.Fatalf("shape mismatch created %d managed orders", orderCount)
+	}
+	overview, err := fixture.base.app.GetTradingOverview(context.Background(), fixture.base.owner.ID)
+	if err != nil || len(overview.TestnetAuditSummaries) != 1 {
+		t.Fatalf("load unknown-order audit summary: summaries=%#v err=%v", overview.TestnetAuditSummaries, err)
+	}
+	if overview.TestnetAuditSummaries[0].UnknownOrderCount != 1 {
+		t.Fatalf("unknown-order audit summary = %#v", overview.TestnetAuditSummaries[0])
 	}
 }
 
