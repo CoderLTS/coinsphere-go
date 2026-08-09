@@ -158,6 +158,30 @@ type TestnetOrderView struct {
 	UpdatedAt               string  `json:"updatedAt"`
 }
 
+type TestnetTradeFactView struct {
+	ID                    string  `json:"id"`
+	AccountID             string  `json:"accountId"`
+	CredentialUpdatedAt   string  `json:"credentialUpdatedAt"`
+	OrderID               *string `json:"orderId"`
+	IntentID              *string `json:"intentId"`
+	EventType             string  `json:"eventType"`
+	Symbol                string  `json:"symbol"`
+	ExternalTradeID       *string `json:"externalTradeId"`
+	ExternalTransactionID string  `json:"externalTransactionId"`
+	Side                  string  `json:"side"`
+	PositionSide          string  `json:"positionSide"`
+	Quantity              string  `json:"quantity"`
+	Price                 string  `json:"price"`
+	QuoteQuantity         string  `json:"quoteQuantity"`
+	Amount                string  `json:"amount"`
+	Asset                 string  `json:"asset"`
+	RealizedPnl           string  `json:"realizedPnl"`
+	Buyer                 bool    `json:"buyer"`
+	Maker                 bool    `json:"maker"`
+	OccurredAt            string  `json:"occurredAt"`
+	CreatedAt             string  `json:"createdAt"`
+}
+
 // TradingCredentialPayload 只在写入边界接收明文；响应永远不包含这两个字段。
 type TradingCredentialPayload struct {
 	APIKey                string `json:"apiKey"`
@@ -258,6 +282,7 @@ type TradingOverviewView struct {
 	TestnetPositions  []TestnetPositionView  `json:"testnetPositions"`
 	TestnetOpenOrders []TestnetOpenOrderView `json:"testnetOpenOrders"`
 	TestnetOrders     []TestnetOrderView     `json:"testnetOrders"`
+	TestnetTradeFacts []TestnetTradeFactView `json:"testnetTradeFacts"`
 }
 
 type validatedTradingRisk struct {
@@ -713,6 +738,7 @@ func (a *App) GetTradingOverview(ctx context.Context, userID int64) (TradingOver
 		Orders: []PaperOrderView{}, Positions: []PaperPositionView{}, Balances: []PaperBalanceView{},
 		TestnetBalances: []TestnetBalanceView{}, TestnetPositions: []TestnetPositionView{},
 		TestnetOpenOrders: []TestnetOpenOrderView{}, TestnetOrders: []TestnetOrderView{},
+		TestnetTradeFacts: []TestnetTradeFactView{},
 	}
 	var accounts []db.TradingAccount
 	if err := database.Where("owner_user_id = ?", userID).Order("id DESC").Find(&accounts).Error; err != nil {
@@ -769,6 +795,13 @@ func (a *App) GetTradingOverview(ctx context.Context, userID int64) (TradingOver
 		Find(&managedTestnetOrders).Error; err != nil {
 		return TradingOverviewView{}, err
 	}
+	var testnetTradeFacts []db.TestnetTradeFact
+	if err := database.Joins("JOIN trading_accounts ON trading_accounts.id = testnet_trade_facts.account_id").
+		Where("trading_accounts.owner_user_id = ? AND trading_accounts.environment = 'testnet'", userID).
+		Order("testnet_trade_facts.occurred_at DESC, testnet_trade_facts.id DESC").Limit(100).
+		Find(&testnetTradeFacts).Error; err != nil {
+		return TradingOverviewView{}, err
+	}
 	symbols, err := loadTradingSymbols(database, intents, orders, positions, managedTestnetOrders)
 	if err != nil {
 		return TradingOverviewView{}, err
@@ -796,6 +829,9 @@ func (a *App) GetTradingOverview(ctx context.Context, userID int64) (TradingOver
 	}
 	for _, row := range managedTestnetOrders {
 		result.TestnetOrders = append(result.TestnetOrders, serializeTestnetOrder(row, symbols[row.InstrumentID]))
+	}
+	for _, row := range testnetTradeFacts {
+		result.TestnetTradeFacts = append(result.TestnetTradeFacts, serializeTestnetTradeFact(row))
 	}
 	return result, nil
 }
@@ -1246,6 +1282,30 @@ func serializeTestnetOrder(row db.TestnetOrder, symbol string) TestnetOrderView 
 	if row.ObservedAt != nil {
 		observedAt := formatUTC(*row.ObservedAt)
 		view.ObservedAt = &observedAt
+	}
+	return view
+}
+
+func serializeTestnetTradeFact(row db.TestnetTradeFact) TestnetTradeFactView {
+	view := TestnetTradeFactView{
+		ID: strconv.FormatInt(row.ID, 10), AccountID: row.AccountID.String(), CredentialUpdatedAt: formatUTC(row.CredentialUpdatedAt),
+		EventType: row.EventType, Symbol: row.Symbol, ExternalTransactionID: row.ExternalTransactionID,
+		Side: row.Side, PositionSide: row.PositionSide, Quantity: row.Quantity.String(), Price: row.Price.String(),
+		QuoteQuantity: row.QuoteQuantity.String(), Amount: row.Amount.String(), Asset: row.Asset,
+		RealizedPnl: row.RealizedPnL.String(), Buyer: row.Buyer, Maker: row.Maker,
+		OccurredAt: formatUTC(row.OccurredAt), CreatedAt: formatUTC(row.CreatedAt),
+	}
+	if row.OrderID != nil {
+		value := row.OrderID.String()
+		view.OrderID = &value
+	}
+	if row.IntentID != nil {
+		value := row.IntentID.String()
+		view.IntentID = &value
+	}
+	if row.ExternalTradeID != nil {
+		value := strconv.FormatInt(*row.ExternalTradeID, 10)
+		view.ExternalTradeID = &value
 	}
 	return view
 }
