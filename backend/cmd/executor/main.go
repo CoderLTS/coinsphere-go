@@ -1,4 +1,4 @@
-// coinsphere-executor 只运行 Paper 意图消费、硬风控与事件投影。
+// coinsphere-executor 运行 Paper 执行；显式启用后同时验证 Testnet 凭据。
 package main
 
 import (
@@ -15,7 +15,9 @@ import (
 
 	"coinsphere/backend/internal/config"
 	"coinsphere/backend/internal/db"
+	exchangebinance "coinsphere/backend/internal/exchange/binance"
 	"coinsphere/backend/internal/migration"
+	"coinsphere/backend/internal/security"
 	"coinsphere/backend/internal/service"
 )
 
@@ -28,7 +30,7 @@ func main() {
 	hostname, _ := os.Hostname()
 	workerID := fmt.Sprintf("paper:%s:%d", hostname, os.Getpid())
 	if err := run(ctx, *configPath, workerID); err != nil {
-		slog.Error("paper executor stopped", "error_category", "runtime")
+		slog.Error("executor stopped", "error_category", "runtime")
 		os.Exit(1)
 	}
 }
@@ -57,9 +59,43 @@ func run(ctx context.Context, configPath, workerID string) (runErr error) {
 	if err := runner.ValidateCurrent(ctx); err != nil {
 		return fmt.Errorf("validate database schema: %w", err)
 	}
-	executor, err := service.NewPaperExecutor(gdb, workerID, time.Second)
+	paperExecutor, err := service.NewPaperExecutor(gdb, workerID, time.Second)
 	if err != nil {
 		return err
 	}
-	return executor.Run(ctx)
+	if !cfg.Trading.TestnetPrivateAPIEnabled {
+		return paperExecutor.Run(ctx)
+	}
+	if cfg.Auth.EncryptionKey == "" || cfg.Auth.EncryptionKey == config.DefaultInsecureSecret ||
+		cfg.Auth.EncryptionKey != strings.TrimSpace(cfg.Auth.EncryptionKey) {
+		return errors.New("a secure auth.encryption_key is required when the Testnet private API is enabled")
+	}
+	cipher, err := security.NewSecretCipher(cfg.Auth.EncryptionKey)
+	if err != nil {
+		return errors.New("build Testnet credential cipher")
+	}
+	privateClient, err := exchangebinance.NewPrivateClient(exchangebinance.PrivateClientConfig{})
+	if err != nil {
+		return errors.New("build Binance Testnet private client")
+	}
+	verifier, err := service.NewTestnetCredentialVerifier(gdb, cipher, privateClient, 30*time.Second)
+	if err != nil {
+		return err
+	}
+	return runPaperAndTestnetVerifier(ctx, paperExecutor, verifier)
+}
+
+func runPaperAndTestnetVerifier(
+	ctx context.Context,
+	paperExecutor *service.PaperExecutor,
+	verifier *service.TestnetCredentialVerifier,
+) error {
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	results := make(chan error, 2)
+	go func() { results <- paperExecutor.Run(runCtx) }()
+	go func() { results <- verifier.Run(runCtx) }()
+	first := <-results
+	cancel()
+	return errors.Join(first, <-results)
 }

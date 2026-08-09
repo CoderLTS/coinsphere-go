@@ -89,7 +89,7 @@ def on_bar(candles: Sequence[Candle], params: Mapping[str, JSONScalar]) -> Decim
 
 Worker 和策略子进程只接收规范化输入、策略文件、参数和独立产物目录；环境变量按白名单重建，不读取交易凭据，不调用交易所私有接口，不运行时安装依赖或启动逐任务 Docker。墙钟、CPU、内存和产物大小上限必须由部署配置提供。
 
-## 交易账户与 Paper Executor
+## 交易账户与 Executor
 
 Paper 账户默认暂停，全局急停默认开启。账户只有在品种白名单、总名义金额、单品种、单笔、日亏损、最大回撤、行情最大年龄以及适用杠杆全部配置后才能恢复；自动模式还必须同时具备管理员授权、账户开关和已启用策略实例。缺少任一条件时保持禁用并暂停，不做静默降级。
 
@@ -97,4 +97,6 @@ Go Paper Executor 按账户串行消费持久意图，每次执行前重新检�
 
 Paper 只追加 `order/fill/fee/funding` 事件，订单、仓位、余额和盈亏均可从事件重建。Paper Executor 启动只恢复 Paper 意图、只重建 Paper 账户投影，绝不领取 Testnet 意图；部署回滚不得执行 migration Down、删除交易事件或清空投影。
 
-Testnet 账户和加密凭据边界已建立，但 Binance 私有协议、凭据验证、首次对账、独立订单/仓位/余额投影、保护单和未知外部订单恢复仍未交付。Testnet 账户在这些能力完成前保持暂停；后续晋级继续遵守 [ADR-0010](../architecture/decisions/0010-execution-risk-events.md) 并由用户手工放行。
+Testnet 私有访问默认关闭。显式启用后，只有 Go Executor 会解密凭据，并分别向 Spot `/api/v3/account` 与 USD-M `/fapi/v3/account` 发送带 UTC `timestamp`、`recvWindow` 和 HMAC-SHA256 签名的请求。API Key 只进入 `X-MBX-APIKEY` 请求头；认证、权限、限流、时钟偏差、协议和网络失败只保存固定脱敏错误码。验证成功只把凭据标记为 `verified`，不会恢复账户或启用自动化。
+
+首次对账、独立 Testnet 订单/仓位/余额投影、保护单和未知外部订单恢复仍未交付。Testnet 账户在首次对账完成前保持暂停；后续晋级继续遵守 [ADR-0010](../architecture/decisions/0010-execution-risk-events.md) 并由用户手工放行。

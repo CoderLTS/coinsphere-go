@@ -45,3 +45,9 @@ func TestMarketDataConfigBounds(t *testing.T) {
 		t.Fatal("Validate() accepted a Binance page size above 300")
 	}
 }
+
+func TestTestnetPrivateAPIDefaultsDisabled(t *testing.T) {
+	if defaultConfig().Trading.TestnetPrivateAPIEnabled {
+		t.Fatal("Testnet private API must require explicit enablement")
+	}
+}
