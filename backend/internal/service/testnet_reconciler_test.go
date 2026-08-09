@@ -414,7 +414,7 @@ type testnetReconcilerFixture struct {
 func newTestnetReconcilerFixture(t *testing.T) testnetReconcilerFixture {
 	t.Helper()
 	database := openPostgresWorkflowContractDatabase(t).primary
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Microsecond)
 	owner := db.SystemUser{Username: "testnet-reconciler-owner", IsActive: true, CreatedAt: now, UpdatedAt: now}
 	if err := database.Create(&owner).Error; err != nil {
 		t.Fatalf("create reconciler owner: %v", err)
