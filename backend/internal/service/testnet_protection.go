@@ -254,7 +254,7 @@ func (executor *TestnetExecutor) prepareEmergencyFlattenWithState(
 		return nil, err
 	}
 
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Microsecond)
 	if err := pauseTestnetAccount(tx, state.Account.ID, failureCode, now); err != nil {
 		return nil, err
 	}
