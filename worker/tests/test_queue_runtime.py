@@ -126,7 +126,7 @@ def empty_queue(request: pytest.FixtureRequest) -> Iterator[None]:
     with psycopg.connect(postgres_dsn, autocommit=True) as connection:
         connection.execute(
             "TRUNCATE notification_deliveries, domain_event_outbox, strategy_signals, "
-            "strategy_instances, backtests, strategy_versions, strategies, worker_tasks"
+            "strategy_instances, backtests, strategy_versions, strategies, worker_tasks CASCADE"
         )
     yield
 
