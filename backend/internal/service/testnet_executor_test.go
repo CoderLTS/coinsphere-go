@@ -137,8 +137,10 @@ func TestTestnetExecutorFlattensAndPausesWhenProtectionCannotBeConfirmed(t *test
 	client := &scriptedTestnetOrderClient{}
 	fixture := newTestnetExecutorFixture(t, marketdata.MarketTypeSpot, client)
 	intent := fixture.enqueue(t, "0.5")
+	orderID := int64(200)
 	client.place = func(call testnetOrderCall) (exchangebinance.OrderResult, error) {
-		return filledTestnetResult(call, 201), nil
+		orderID++
+		return filledTestnetResult(call, orderID), nil
 	}
 	client.protect = func(testnetOrderCall) (exchangebinance.OrderResult, error) {
 		return exchangebinance.OrderResult{}, &exchangebinance.PrivateError{Kind: exchangebinance.PrivateErrorUnavailable}
