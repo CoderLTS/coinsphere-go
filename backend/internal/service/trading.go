@@ -121,6 +121,9 @@ type TestnetOpenOrderView struct {
 	OriginalQuantity string `json:"originalQuantity"`
 	ExecutedQuantity string `json:"executedQuantity"`
 	StopPrice        string `json:"stopPrice"`
+	ClosePosition    bool   `json:"closePosition"`
+	ReduceOnly       bool   `json:"reduceOnly"`
+	WorkingType      string `json:"workingType"`
 	ObservedAt       string `json:"observedAt"`
 }
 
@@ -1210,6 +1213,7 @@ func serializeTestnetOpenOrder(row db.TestnetOpenOrder) TestnetOpenOrderView {
 		Side: row.Side, OrderType: row.OrderType, Status: row.Status,
 		Price: row.Price.String(), OriginalQuantity: row.OriginalQuantity.String(),
 		ExecutedQuantity: row.ExecutedQuantity.String(), StopPrice: row.StopPrice.String(),
+		ClosePosition: row.ClosePosition, ReduceOnly: row.ReduceOnly, WorkingType: row.WorkingType,
 		ObservedAt: formatUTC(row.ObservedAt),
 	}
 }

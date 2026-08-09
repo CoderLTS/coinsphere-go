@@ -153,6 +153,9 @@ export interface TestnetOpenOrder {
   originalQuantity: string
   executedQuantity: string
   stopPrice: string
+  closePosition: boolean
+  reduceOnly: boolean
+  workingType: string
   observedAt: string
 }
 

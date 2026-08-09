@@ -94,6 +94,9 @@ type OpenOrder struct {
 	OriginalQuantity decimal.Decimal
 	ExecutedQuantity decimal.Decimal
 	StopPrice        decimal.Decimal
+	ClosePosition    bool
+	ReduceOnly       bool
+	WorkingType      string
 }
 
 type OrderResult struct {
@@ -660,6 +663,9 @@ func parseAccountSnapshot(marketType marketdata.MarketType, accountBody, openOrd
 		OriginalQuantity string `json:"origQty"`
 		ExecutedQuantity string `json:"executedQty"`
 		StopPrice        string `json:"stopPrice"`
+		ClosePosition    bool   `json:"closePosition"`
+		ReduceOnly       bool   `json:"reduceOnly"`
+		WorkingType      string `json:"workingType"`
 	}
 	if err := json.Unmarshal(openOrdersBody, &orders); err != nil || orders == nil {
 		return AccountSnapshot{}, errors.New("invalid open orders response")
@@ -690,7 +696,8 @@ func parseAccountSnapshot(marketType marketdata.MarketType, accountBody, openOrd
 			return AccountSnapshot{}, err
 		}
 		originalQuantity, err := privateDecimal(order.OriginalQuantity, false)
-		if err != nil || !originalQuantity.IsPositive() {
+		if err != nil || (order.ClosePosition && !originalQuantity.IsZero()) ||
+			(!order.ClosePosition && !originalQuantity.IsPositive()) {
 			return AccountSnapshot{}, errors.New("invalid open order quantity")
 		}
 		executedQuantity, err := privateDecimal(order.ExecutedQuantity, false)
@@ -701,10 +708,18 @@ func parseAccountSnapshot(marketType marketdata.MarketType, accountBody, openOrd
 		if err != nil {
 			return AccountSnapshot{}, err
 		}
+		workingType := ""
+		if order.WorkingType != "" {
+			workingType, err = privateEnum(order.WorkingType, 24)
+			if err != nil {
+				return AccountSnapshot{}, err
+			}
+		}
 		snapshot.OpenOrders = append(snapshot.OpenOrders, OpenOrder{
 			Symbol: symbol, ExchangeOrderID: order.OrderID, ClientOrderID: clientOrderID,
 			Side: side, OrderType: orderType, Status: status, Price: price,
 			OriginalQuantity: originalQuantity, ExecutedQuantity: executedQuantity, StopPrice: stopPrice,
+			ClosePosition: order.ClosePosition, ReduceOnly: order.ReduceOnly, WorkingType: workingType,
 		})
 	}
 	sort.Slice(snapshot.Balances, func(i, j int) bool { return snapshot.Balances[i].Asset < snapshot.Balances[j].Asset })

@@ -271,7 +271,9 @@ func (reconciler *TestnetAccountReconciler) persistSnapshot(
 				NativeSymbol: order.Symbol, ExchangeOrderID: order.ExchangeOrderID, ClientOrderID: order.ClientOrderID,
 				Side: order.Side, OrderType: order.OrderType, Status: order.Status,
 				Price: order.Price, OriginalQuantity: order.OriginalQuantity,
-				ExecutedQuantity: order.ExecutedQuantity, StopPrice: order.StopPrice, ObservedAt: observedAt,
+				ExecutedQuantity: order.ExecutedQuantity, StopPrice: order.StopPrice,
+				ClosePosition: order.ClosePosition, ReduceOnly: order.ReduceOnly, WorkingType: order.WorkingType,
+				ObservedAt: observedAt,
 			})
 		}
 		if len(orders) > 0 {

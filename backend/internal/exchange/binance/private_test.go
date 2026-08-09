@@ -102,7 +102,7 @@ func TestPrivateClientSnapshotsSpotAndUSDMAccounts(t *testing.T) {
 		case "/fapi/v3/account":
 			_, _ = response.Write([]byte(`{"canTrade":true,"assets":[{"asset":"USDT","walletBalance":"1200","availableBalance":"1100"},{"asset":"ZERO","walletBalance":"0","availableBalance":"0"}],"positions":[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"-0.02","entryPrice":"51000","unrealizedProfit":"-4.5"},{"symbol":"ETHUSDT","positionSide":"BOTH","positionAmt":"0","entryPrice":"0","unrealizedProfit":"0"}]}`))
 		case "/fapi/v1/openOrders":
-			_, _ = response.Write([]byte(`[{"symbol":"BTCUSDT","orderId":42,"clientOrderId":"external-usdm","side":"SELL","type":"STOP_MARKET","status":"NEW","price":"0","origQty":"0.02","executedQty":"0","stopPrice":"52000"}]`))
+			_, _ = response.Write([]byte(`[{"symbol":"BTCUSDT","orderId":42,"clientOrderId":"external-usdm","side":"SELL","type":"STOP_MARKET","status":"NEW","price":"0","origQty":"0","executedQty":"0","stopPrice":"52000","closePosition":true,"reduceOnly":false,"workingType":"MARK_PRICE"}]`))
 		default:
 			t.Errorf("unexpected snapshot path %q", request.URL.Path)
 			response.WriteHeader(http.StatusNotFound)
@@ -135,7 +135,8 @@ func TestPrivateClientSnapshotsSpotAndUSDMAccounts(t *testing.T) {
 		len(usdm.Positions) != 1 || usdm.Positions[0].PositionSide != "both" ||
 		usdm.Positions[0].Quantity.String() != "-0.02" || usdm.Positions[0].UnrealizedPnL.String() != "-4.5" ||
 		len(usdm.OpenOrders) != 1 || usdm.OpenOrders[0].OrderType != "stop_market" ||
-		usdm.OpenOrders[0].StopPrice.String() != "52000" {
+		usdm.OpenOrders[0].StopPrice.String() != "52000" || !usdm.OpenOrders[0].OriginalQuantity.IsZero() ||
+		!usdm.OpenOrders[0].ClosePosition || usdm.OpenOrders[0].ReduceOnly || usdm.OpenOrders[0].WorkingType != "mark_price" {
 		t.Fatalf("USD-M snapshot = %#v", usdm)
 	}
 }

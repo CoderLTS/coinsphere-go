@@ -302,6 +302,9 @@ type TestnetOpenOrder struct {
 	OriginalQuantity    decimal.Decimal `gorm:"column:original_quantity;type:numeric(38,18)"`
 	ExecutedQuantity    decimal.Decimal `gorm:"column:executed_quantity;type:numeric(38,18)"`
 	StopPrice           decimal.Decimal `gorm:"column:stop_price;type:numeric(38,18)"`
+	ClosePosition       bool            `gorm:"column:close_position"`
+	ReduceOnly          bool            `gorm:"column:reduce_only"`
+	WorkingType         string          `gorm:"column:working_type;size:24"`
 	ObservedAt          time.Time       `gorm:"column:observed_at"`
 }
 

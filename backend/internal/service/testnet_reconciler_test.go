@@ -97,6 +97,44 @@ func TestTestnetAccountReconcilerMatchesCleanSnapshotAndGatesResume(t *testing.T
 	}
 }
 
+func TestTestnetAccountReconcilerPersistsClosePositionOrderShape(t *testing.T) {
+	fixture := newTestnetReconcilerFixture(t)
+	reconciler := fixture.reconciler(t, "http://127.0.0.1")
+	observedAt := time.Date(2026, time.August, 9, 10, 11, 12, 0, time.UTC)
+	snapshot := exchangebinance.AccountSnapshot{
+		CanTrade: true,
+		OpenOrders: []exchangebinance.OpenOrder{{
+			Symbol: "BTCUSDT", ExchangeOrderID: 42, ClientOrderID: "external-close-position",
+			Side: "sell", OrderType: "stop_market", Status: "new",
+			Price: decimal.Zero, OriginalQuantity: decimal.Zero, ExecutedQuantity: decimal.Zero,
+			StopPrice: decimal.NewFromInt(52_000), ClosePosition: true, WorkingType: "mark_price",
+		}},
+		ObservedAt: observedAt,
+	}
+
+	persisted, err := reconciler.persistSnapshot(
+		context.Background(), fixture.credential, fixture.account, snapshot, "mismatch", "open_orders_present",
+	)
+	if err != nil || !persisted {
+		t.Fatalf("persist close-position snapshot: persisted=%t err=%v", persisted, err)
+	}
+	var stored db.TestnetOpenOrder
+	if err := fixture.database.Where("account_id = ?", fixture.account.ID).Take(&stored).Error; err != nil {
+		t.Fatalf("load close-position order: %v", err)
+	}
+	if !stored.OriginalQuantity.IsZero() || !stored.ClosePosition || stored.ReduceOnly || stored.WorkingType != "mark_price" {
+		t.Fatalf("stored close-position order = %#v", stored)
+	}
+	overview, err := fixture.app.GetTradingOverview(context.Background(), fixture.owner.ID)
+	if err != nil || len(overview.TestnetOpenOrders) != 1 {
+		t.Fatalf("load close-position overview: orders=%#v err=%v", overview.TestnetOpenOrders, err)
+	}
+	order := overview.TestnetOpenOrders[0]
+	if order.OriginalQuantity != "0" || !order.ClosePosition || order.ReduceOnly || order.WorkingType != "mark_price" {
+		t.Fatalf("close-position overview order = %#v", order)
+	}
+}
+
 func TestTestnetAccountReconcilerPersistsMismatchAndIgnoresStaleResult(t *testing.T) {
 	fixture := newTestnetReconcilerFixture(t)
 	var mode atomic.Int32
