@@ -281,12 +281,14 @@ CREATE TABLE trading_events (
     CONSTRAINT ck_trading_events_times CHECK (isfinite(occurred_at) AND isfinite(created_at))
 );
 
+-- +goose StatementBegin
 CREATE FUNCTION reject_trading_event_mutation() RETURNS TRIGGER
 LANGUAGE plpgsql AS $$
 BEGIN
     RAISE EXCEPTION 'trading_events is append-only';
 END;
 $$;
+-- +goose StatementEnd
 
 CREATE TRIGGER trading_events_append_only
 BEFORE UPDATE OR DELETE ON trading_events
