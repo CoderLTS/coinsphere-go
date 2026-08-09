@@ -121,8 +121,10 @@ mkdir -p "$work_dir/packages/$windows_name/web" "$work_dir/packages/$linux_name/
 
 install -m 0755 "$work_dir/windows/coinsphere-server" "$work_dir/packages/$windows_name/coinsphere-server.exe"
 install -m 0755 "$work_dir/windows/coinsphere-migrate" "$work_dir/packages/$windows_name/coinsphere-migrate.exe"
+install -m 0755 "$work_dir/windows/coinsphere-executor" "$work_dir/packages/$windows_name/coinsphere-executor.exe"
 install -m 0755 "$work_dir/linux/coinsphere-server" "$work_dir/packages/$linux_name/coinsphere-server"
 install -m 0755 "$work_dir/linux/coinsphere-migrate" "$work_dir/packages/$linux_name/coinsphere-migrate"
+install -m 0755 "$work_dir/linux/coinsphere-executor" "$work_dir/packages/$linux_name/coinsphere-executor"
 for package_name in "$windows_name" "$linux_name"; do
   install -m 0644 "$ROOT_DIR/backend/config.yml" "$work_dir/packages/$package_name/config.yml"
   install -m 0644 "$ROOT_DIR/frontend/nginx.conf" "$work_dir/packages/$package_name/nginx.conf"
@@ -133,6 +135,7 @@ install -m 0644 "$ROOT_DIR/deploy/production/compose.yaml" "$work_dir/packages/$
 install -m 0755 "$ROOT_DIR/deploy/production/deploy.sh" "$work_dir/packages/$docker_name/deploy.sh"
 install -m 0644 "$ROOT_DIR/deploy/production/runtime.env.example" "$work_dir/packages/$docker_name/runtime.env.example"
 install -m 0644 "$ROOT_DIR/deploy/production/worker-runtime.env.example" "$work_dir/packages/$docker_name/worker-runtime.env.example"
+install -m 0644 "$ROOT_DIR/deploy/production/executor-runtime.env.example" "$work_dir/packages/$docker_name/executor-runtime.env.example"
 install -m 0644 "$ROOT_DIR/deploy/production/README.md" "$work_dir/packages/$docker_name/README.md"
 
 (cd "$work_dir/packages" && zip -X -qr "$OUTPUT_DIR/$windows_name.zip" "$windows_name")

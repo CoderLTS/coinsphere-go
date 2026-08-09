@@ -2,13 +2,13 @@
 
 > 🔰 **Go 新手请先读 [`GO入门笔记.md`](./GO入门笔记.md)**:从零讲清本项目用到的 Go 语法和框架,代码里的中文注释会引用它的小节名。
 
-原 Python(FastAPI + Peewee + Redis + APScheduler)后端的 Go 重写版。**单二进制、单进程**,同一进程内运行 HTTP API、工作流调度器、执行器与事件分发,不再依赖 Redis 与独立的 orchestrator / worker 进程。
+原 Python(FastAPI + Peewee + Redis + APScheduler)后端的 Go 重写版。Go App 在单进程内运行 HTTP API、工作流调度器与事件分发；数据库 migration 和 Paper Executor 使用同一镜像中的独立二进制。量化策略由独立 Python Worker 执行，不再依赖 Redis 或旧 orchestrator。
 
 ## 架构变化
 
 | 原 Python 版 | Go 版 |
 |---|---|
-| api / orchestrator / worker / init 四种进程角色 | 一个 Go 服务二进制，启动写入种子数据并以 goroutine 承载后台循环；独立 migration 二进制拥有 DDL |
+| api / orchestrator / worker / init 四种进程角色 | 一个 Go App 承载 API 与后台循环；独立 migration 二进制拥有 DDL；Paper Executor 和 Python Worker 使用受限独立进程 |
 | Redis Stream + 消费组做执行派发 | 数据库即队列:`workflow_executions.status` + 乐观锁 `UPDATE ... WHERE status='queued'` 认领 |
 | Redis ZSet 做重试到期索引 | 直接查 `status='retry_waiting' AND next_retry_at <= now` |
 | Redis 分布式锁选 leader | 单实例,无需选主 |
@@ -39,7 +39,7 @@ go run ./cmd/migrate -config ./config.yml -direction down -steps 1
 go run ./cmd/migrate -config ./config.yml -direction version
 ```
 
-容器镜像同时提供 `/app/coinsphere-migrate`。`00001_a1_postgres_baseline.sql` 在空 PostgreSQL schema 中一次建立当前 Go 业务表、`worker_tasks`、外键、索引和 Outbox/Worker 状态约束。项目尚未投产，旧开发数据直接重置，不提供 SQLite、MySQL 或旧 PostgreSQL schema 的升级路径。迁移编写、验证和回滚约束见 [`docs/runbooks/database-migrations.md`](../docs/runbooks/database-migrations.md)。
+容器镜像同时提供 `/app/coinsphere-migrate` 和 `/app/coinsphere-executor`。版本化 SQL 在空 PostgreSQL schema 中建立当前业务表、`worker_tasks`、Paper 交易事件/投影、外键、索引和状态约束。项目尚未投产，旧开发数据直接重置，不提供 SQLite、MySQL 或旧 PostgreSQL schema 的升级路径。迁移编写、验证和回滚约束见 [`docs/runbooks/database-migrations.md`](../docs/runbooks/database-migrations.md)。
 
 ## 数据库配置
 
@@ -73,9 +73,10 @@ DSN 必须指向已经存在的数据库和全新 CoinSphere schema；连接入�
 - **重试**:可重试失败(timeout/connection/429/5xx)按 `retry_backoff_seconds` 退避,`retry_waiting → queued` 自动提升。
 - **恢复**:心跳超时(含进程崩溃重启后的孤儿执行)标记 `worker_lost` 并按剩余次数重试或失败。
 - **事件**:工作流终态与标准领域事件在同一短事务写入 `domain_event_outbox`；PostgreSQL 存储层使用 `FOR UPDATE SKIP LOCKED` 原子批量认领，并用数据库时间续租和 fencing 投递。匹配 `start.event` 入口后以稳定幂等键触发工作流；订阅失败按 `retry_backoff_seconds` 重排，尝试耗尽进入死信，未告警死信由 `alerted_at` 原子去重后输出脱敏日志。
+- **Paper Executor**:独立进程按账户串行处理持久交易意图，执行前重新校验急停、账户、授权、风险、行情和仓位归属；只写追加式 Paper 事件并重建订单、仓位和余额投影，不包含 Testnet/Live 私有协议或凭据。
 - **清理**:每天 03:00 后按批删除超过保留期的终态执行。
 
-Python Worker 已通过独立 PostgreSQL 连接消费 `worker_tasks`，使用唯一租约完成认领、心跳、崩溃回收和 5 秒内取消。该运行时仅接入开发 Compose 与 CI，生产 Release 仍不构建或部署 Worker，也不改变 Go 工作流执行器。
+Python Worker 通过独立 PostgreSQL 连接消费 `worker_tasks`，使用唯一租约完成认领、心跳、崩溃回收和 5 秒内取消。生产 Release 构建并部署 realtime/backtest Worker 与 Paper Executor；二者均使用专用数据库身份且不持有真实交易凭据。
 
 工作流版本、激活、Outbox 和 Worker 契约都在随机隔离的 PostgreSQL schema 上验证。设置测试 DSN 后运行：
 
@@ -95,6 +96,7 @@ go test -count=1 ./internal/service ./internal/api
 ```
 main.go                 入口:根 Context → 配置 → 版本校验/种子 → Runtime/HTTP → 有界关机
 cmd/migrate             独立版本化 SQL migration 命令
+cmd/executor            独立 Paper 意图、硬风控与事件投影进程
 internal/config         YAML + 环境变量覆盖
 internal/db             GORM 模型 / PostgreSQL 连接 / 种子数据
 internal/migration      嵌入式 SQL、Goose Runner 与迁移契约
@@ -104,5 +106,7 @@ internal/service        全部业务逻辑(App 结构,按领域分文件)
   loops.go              调度/派发/事件/恢复/清理 goroutine
   engine.go nodes.go    图执行引擎与节点注册表
   runtime.go            激活/入口/入队/查询
+  trading.go            Paper 账户、风险、急停与意图契约
+  paper_executor.go     Paper 执行、追加事件与投影重建
 internal/api            路由、中间件、handlers
 ```

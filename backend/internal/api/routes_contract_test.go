@@ -52,6 +52,16 @@ func TestRoutesUseV1AndRemoveLegacyEntrypoints(t *testing.T) {
 		{http.MethodGet, "/api/v1/signals"},
 		{http.MethodPost, "/api/v1/signals/019c2f6d-7c00-7000-8000-000000000001/approve"},
 		{http.MethodPost, "/api/v1/signals/019c2f6d-7c00-7000-8000-000000000001/reject"},
+		{http.MethodGet, "/api/v1/trading/overview"},
+		{http.MethodPost, "/api/v1/trading/accounts"},
+		{http.MethodPut, "/api/v1/trading/accounts/019c2f6d-7c00-7000-8000-000000000001/risk"},
+		{http.MethodPost, "/api/v1/trading/accounts/019c2f6d-7c00-7000-8000-000000000001/automation/enable"},
+		{http.MethodPost, "/api/v1/trading/accounts/019c2f6d-7c00-7000-8000-000000000001/automation/disable"},
+		{http.MethodPost, "/api/v1/trading/accounts/019c2f6d-7c00-7000-8000-000000000001/resume"},
+		{http.MethodPost, "/api/v1/trading/emergency-stop"},
+		{http.MethodPost, "/api/v1/admin/trading/accounts/019c2f6d-7c00-7000-8000-000000000001/authorize"},
+		{http.MethodPost, "/api/v1/admin/trading/accounts/019c2f6d-7c00-7000-8000-000000000001/revoke"},
+		{http.MethodPost, "/api/v1/admin/trading/emergency-stop/release"},
 	} {
 		request := httptest.NewRequest(route.method, route.path, nil)
 		if _, pattern := mux.Handler(request); pattern == "" {

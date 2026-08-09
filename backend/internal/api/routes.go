@@ -83,6 +83,16 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/signals", s.requireAuth(s.handleListStrategySignals))
 	mux.HandleFunc("POST /api/v1/signals/{signalId}/approve", s.requireAuth(s.handleApproveStrategySignal))
 	mux.HandleFunc("POST /api/v1/signals/{signalId}/reject", s.requireAuth(s.handleRejectStrategySignal))
+	mux.HandleFunc("GET /api/v1/trading/overview", s.requireAuth(s.handleTradingOverview))
+	mux.HandleFunc("POST /api/v1/trading/accounts", s.requireAuth(s.handleCreateTradingAccount))
+	mux.HandleFunc("PUT /api/v1/trading/accounts/{accountId}/risk", s.requireAuth(s.handleUpdateTradingRisk))
+	mux.HandleFunc("POST /api/v1/trading/accounts/{accountId}/automation/enable", s.requireAuth(s.handleEnableTradingAutomation))
+	mux.HandleFunc("POST /api/v1/trading/accounts/{accountId}/automation/disable", s.requireAuth(s.handleDisableTradingAutomation))
+	mux.HandleFunc("POST /api/v1/trading/accounts/{accountId}/resume", s.requireAuth(s.handleResumeTradingAccount))
+	mux.HandleFunc("POST /api/v1/trading/emergency-stop", s.requireAuth(s.handleActivateTradingEmergencyStop))
+	mux.HandleFunc("POST /api/v1/admin/trading/accounts/{accountId}/authorize", s.requireAuth(s.handleAuthorizeTradingAutomation))
+	mux.HandleFunc("POST /api/v1/admin/trading/accounts/{accountId}/revoke", s.requireAuth(s.handleRevokeTradingAutomation))
+	mux.HandleFunc("POST /api/v1/admin/trading/emergency-stop/release", s.requireAuth(s.handleReleaseTradingEmergencyStop))
 
 	// 数据管理。
 	// 第二个参数 perm.DataNewsView 是 perm 包里定义的权限码常量;requirePermission 会检查当前用户是否持有它。

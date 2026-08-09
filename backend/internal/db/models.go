@@ -151,6 +151,8 @@ type StrategyInstance struct {
 	ID                uuid.UUID `gorm:"type:uuid;primaryKey"`
 	OwnerUserID       int64
 	StrategyVersionID uuid.UUID
+	TradingAccountID  *uuid.UUID       `gorm:"column:trading_account_id;type:uuid"`
+	AllocationUSDT    *decimal.Decimal `gorm:"column:allocation_usdt;type:numeric(38,18)"`
 	Name              string
 	Mode              string
 	Environment       string
@@ -184,6 +186,153 @@ type StrategySignal struct {
 }
 
 func (StrategySignal) TableName() string { return "strategy_signals" }
+
+// TradingControl 持有唯一的全局 Paper 交易急停状态。
+type TradingControl struct {
+	ID               int16      `gorm:"primaryKey"`
+	EmergencyStopped bool       `gorm:"column:emergency_stopped"`
+	StopReason       string     `gorm:"column:stop_reason;size:255"`
+	StoppedAt        time.Time  `gorm:"column:stopped_at"`
+	StoppedByUserID  *int64     `gorm:"column:stopped_by_user_id"`
+	ReleasedAt       *time.Time `gorm:"column:released_at"`
+	ReleasedByUserID *int64     `gorm:"column:released_by_user_id"`
+	UpdatedAt        time.Time  `gorm:"column:updated_at"`
+}
+
+func (TradingControl) TableName() string { return "trading_controls" }
+
+// TradingAccount 是仅用于 Paper 的用户交易账户与硬风控配置。
+type TradingAccount struct {
+	ID                          uuid.UUID        `gorm:"type:uuid;primaryKey"`
+	OwnerUserID                 int64            `gorm:"column:owner_user_id"`
+	Name                        string           `gorm:"size:120"`
+	Market                      string           `gorm:"column:market_type;size:16"`
+	Environment                 string           `gorm:"size:16"`
+	Status                      string           `gorm:"size:16"`
+	PauseReason                 string           `gorm:"column:pause_reason;size:255"`
+	AutomationEnabled           bool             `gorm:"column:automation_enabled"`
+	AutomationAuthorizedAt      *time.Time       `gorm:"column:automation_authorized_at"`
+	AutomationAuthorizedByID    *int64           `gorm:"column:automation_authorized_by_user_id"`
+	InitialBalance              *decimal.Decimal `gorm:"column:initial_balance;type:numeric(38,18)"`
+	PaperFeeRate                *decimal.Decimal `gorm:"column:paper_fee_rate;type:numeric(38,18)"`
+	MaxTotalNotional            *decimal.Decimal `gorm:"column:max_total_notional;type:numeric(38,18)"`
+	MaxSymbolNotional           *decimal.Decimal `gorm:"column:max_symbol_notional;type:numeric(38,18)"`
+	MaxOrderNotional            *decimal.Decimal `gorm:"column:max_order_notional;type:numeric(38,18)"`
+	MaxDailyLoss                *decimal.Decimal `gorm:"column:max_daily_loss;type:numeric(38,18)"`
+	MaxDrawdown                 *decimal.Decimal `gorm:"column:max_drawdown;type:numeric(38,18)"`
+	MaxQuoteAgeSeconds          *int             `gorm:"column:max_quote_age_seconds"`
+	Leverage                    *int
+	CreationIdempotencyRecordID *int64    `gorm:"column:creation_idempotency_record_id"`
+	CreatedAt                   time.Time `gorm:"column:created_at"`
+	UpdatedAt                   time.Time `gorm:"column:updated_at"`
+}
+
+func (TradingAccount) TableName() string { return "trading_accounts" }
+
+// TradingAccountInstrument 是账户品种白名单。
+type TradingAccountInstrument struct {
+	AccountID    uuid.UUID `gorm:"column:account_id;type:uuid;primaryKey"`
+	InstrumentID uuid.UUID `gorm:"column:instrument_id;type:uuid;primaryKey"`
+	CreatedAt    time.Time `gorm:"column:created_at"`
+}
+
+func (TradingAccountInstrument) TableName() string { return "trading_account_instruments" }
+
+// TradingIntent 是策略目标到 Executor 的持久化幂等命令。
+type TradingIntent struct {
+	ID                 uuid.UUID       `gorm:"type:uuid;primaryKey"`
+	AccountID          uuid.UUID       `gorm:"column:account_id;type:uuid"`
+	StrategySignalID   uuid.UUID       `gorm:"column:strategy_signal_id;type:uuid;uniqueIndex"`
+	StrategyInstanceID uuid.UUID       `gorm:"column:strategy_instance_id;type:uuid"`
+	OwnerUserID        int64           `gorm:"column:owner_user_id"`
+	InstrumentID       uuid.UUID       `gorm:"column:instrument_id;type:uuid"`
+	Market             string          `gorm:"column:market_type;size:16"`
+	Mode               string          `gorm:"size:16"`
+	Environment        string          `gorm:"size:16"`
+	Target             decimal.Decimal `gorm:"type:numeric(38,18)"`
+	Status             string          `gorm:"size:16"`
+	BlockReason        string          `gorm:"column:block_reason;size:255"`
+	ClientOrderID      string          `gorm:"column:client_order_id;size:64;uniqueIndex:ux_trading_intents_account_client_order"`
+	AttemptCount       int             `gorm:"column:attempt_count"`
+	ClaimedAt          *time.Time      `gorm:"column:claimed_at"`
+	WorkerID           *string         `gorm:"column:worker_id;size:120"`
+	CompletedAt        *time.Time      `gorm:"column:completed_at"`
+	CreatedAt          time.Time       `gorm:"column:created_at"`
+	UpdatedAt          time.Time       `gorm:"column:updated_at"`
+}
+
+func (TradingIntent) TableName() string { return "trading_intents" }
+
+// PaperOrder 是 Paper 内部订单投影。
+type PaperOrder struct {
+	ID             uuid.UUID       `gorm:"type:uuid;primaryKey"`
+	AccountID      uuid.UUID       `gorm:"column:account_id;type:uuid"`
+	IntentID       uuid.UUID       `gorm:"column:intent_id;type:uuid;uniqueIndex"`
+	InstrumentID   uuid.UUID       `gorm:"column:instrument_id;type:uuid"`
+	ClientOrderID  string          `gorm:"column:client_order_id;size:64;uniqueIndex:ux_paper_orders_account_client_order"`
+	Side           string          `gorm:"size:4"`
+	Quantity       decimal.Decimal `gorm:"type:numeric(38,18)"`
+	FilledQuantity decimal.Decimal `gorm:"column:filled_quantity;type:numeric(38,18)"`
+	AveragePrice   decimal.Decimal `gorm:"column:average_price;type:numeric(38,18)"`
+	Status         string          `gorm:"size:16"`
+	CreatedAt      time.Time       `gorm:"column:created_at"`
+	UpdatedAt      time.Time       `gorm:"column:updated_at"`
+}
+
+func (PaperOrder) TableName() string { return "paper_orders" }
+
+// TradingEvent 是受限的追加式 order/fill/fee/funding 事实。
+type TradingEvent struct {
+	ID           int64            `gorm:"primaryKey;autoIncrement"`
+	EventID      uuid.UUID        `gorm:"column:event_id;type:uuid;uniqueIndex"`
+	AccountID    uuid.UUID        `gorm:"column:account_id;type:uuid"`
+	IntentID     *uuid.UUID       `gorm:"column:intent_id;type:uuid"`
+	OrderID      *uuid.UUID       `gorm:"column:order_id;type:uuid"`
+	InstrumentID uuid.UUID        `gorm:"column:instrument_id;type:uuid"`
+	EventType    string           `gorm:"column:event_type;size:16"`
+	Side         *string          `gorm:"size:4"`
+	Quantity     *decimal.Decimal `gorm:"type:numeric(38,18)"`
+	Price        *decimal.Decimal `gorm:"type:numeric(38,18)"`
+	Amount       *decimal.Decimal `gorm:"type:numeric(38,18)"`
+	OccurredAt   time.Time        `gorm:"column:occurred_at"`
+	DedupeKey    string           `gorm:"column:dedupe_key;size:160"`
+	CorrectionOf *int64           `gorm:"column:correction_of"`
+	CreatedAt    time.Time        `gorm:"column:created_at"`
+}
+
+func (TradingEvent) TableName() string { return "trading_events" }
+
+// PaperPosition 是由交易事件重建的账户品种仓位。
+type PaperPosition struct {
+	AccountID               uuid.UUID       `gorm:"column:account_id;type:uuid;primaryKey"`
+	InstrumentID            uuid.UUID       `gorm:"column:instrument_id;type:uuid;primaryKey"`
+	OwnerStrategyInstanceID *uuid.UUID      `gorm:"column:owner_strategy_instance_id;type:uuid"`
+	Quantity                decimal.Decimal `gorm:"type:numeric(38,18)"`
+	AverageEntryPrice       decimal.Decimal `gorm:"column:average_entry_price;type:numeric(38,18)"`
+	LastPrice               decimal.Decimal `gorm:"column:last_price;type:numeric(38,18)"`
+	RealizedPnl             decimal.Decimal `gorm:"column:realized_pnl;type:numeric(38,18)"`
+	UnrealizedPnl           decimal.Decimal `gorm:"column:unrealized_pnl;type:numeric(38,18)"`
+	UpdatedAt               time.Time       `gorm:"column:updated_at"`
+}
+
+func (PaperPosition) TableName() string { return "paper_positions" }
+
+// PaperBalance 是由事件重建的账户余额与盈亏汇总。
+type PaperBalance struct {
+	AccountID      uuid.UUID       `gorm:"column:account_id;type:uuid;primaryKey"`
+	CashBalance    decimal.Decimal `gorm:"column:cash_balance;type:numeric(38,18)"`
+	Equity         decimal.Decimal `gorm:"type:numeric(38,18)"`
+	PeakEquity     decimal.Decimal `gorm:"column:peak_equity;type:numeric(38,18)"`
+	DayStartDate   time.Time       `gorm:"column:day_start_date;type:date"`
+	DayStartEquity decimal.Decimal `gorm:"column:day_start_equity;type:numeric(38,18)"`
+	RealizedPnl    decimal.Decimal `gorm:"column:realized_pnl;type:numeric(38,18)"`
+	UnrealizedPnl  decimal.Decimal `gorm:"column:unrealized_pnl;type:numeric(38,18)"`
+	Fees           decimal.Decimal `gorm:"type:numeric(38,18)"`
+	Funding        decimal.Decimal `gorm:"type:numeric(38,18)"`
+	UpdatedAt      time.Time       `gorm:"column:updated_at"`
+}
+
+func (PaperBalance) TableName() string { return "paper_balances" }
 
 // WorkflowDefinition 不可变的工作流定义版本。
 type WorkflowDefinition struct {

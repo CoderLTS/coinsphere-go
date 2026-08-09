@@ -70,6 +70,7 @@ func TestStrategySignalDecisionAndNotificationContract(t *testing.T) {
 	const publishTaskID = "019d6000-0000-7000-8000-000000000012"
 	const instanceID = "019d6000-0000-7000-8000-000000000013"
 	const signalID = "019d6000-0000-7000-8000-000000000014"
+	const accountID = "019d6000-0000-7000-8000-000000000016"
 	if err := database.Exec(`
 INSERT INTO market_instruments (
     id, venue, market_type, native_symbol, base_asset, quote_asset, status,
@@ -85,6 +86,21 @@ INSERT INTO market_instruments (
 	}
 	if err := database.Create(&publishRecord).Error; err != nil {
 		t.Fatalf("create publish idempotency record: %v", err)
+	}
+	accountRecord := db.IdempotencyRecord{
+		UserID: owner.ID, Scope: "trading-account:create:m2-service", KeyHash: strings.Repeat("d", 64),
+		RequestHash: strings.Repeat("e", 64), ExpiresAt: time.Now().UTC().Add(time.Hour), CreatedAt: time.Now().UTC(),
+	}
+	if err := database.Create(&accountRecord).Error; err != nil {
+		t.Fatalf("create paper account idempotency record: %v", err)
+	}
+	if err := database.Exec(`
+INSERT INTO trading_accounts (
+    id, owner_user_id, name, market_type, environment, initial_balance,
+    paper_fee_rate, creation_idempotency_record_id
+) VALUES (?, ?, 'm2 paper', 'spot', 'paper', 10000, 0.001, ?)
+`, accountID, owner.ID, accountRecord.ID).Error; err != nil {
+		t.Fatalf("create paper account: %v", err)
 	}
 	if err := database.Exec(`
 INSERT INTO strategies (
@@ -114,9 +130,10 @@ INSERT INTO strategy_versions (
 	}
 	if err := database.Exec(`
 INSERT INTO strategy_instances (
-    id, owner_user_id, strategy_version_id, name, mode, environment, is_enabled
-) VALUES (?, ?, ?, 'm2 manual', 'manual', 'paper', TRUE)
-`, instanceID, owner.ID, versionID).Error; err != nil {
+    id, owner_user_id, strategy_version_id, trading_account_id, allocation_usdt,
+    name, mode, environment, is_enabled
+) VALUES (?, ?, ?, ?, 1000, 'm2 manual', 'manual', 'paper', TRUE)
+`, instanceID, owner.ID, versionID, accountID).Error; err != nil {
 		t.Fatalf("create strategy instance: %v", err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)
@@ -192,6 +209,13 @@ INSERT INTO strategy_signals (
 	replayed, err := app.DecideStrategySignal(context.Background(), principal, signalID, "approved", decisionKey, "")
 	if err != nil || replayed.Status != "approved" {
 		t.Fatalf("replay approved signal = %#v, err = %v", replayed, err)
+	}
+	var intentCount int64
+	if err := database.Model(&db.TradingIntent{}).Where("strategy_signal_id = ?", signalID).Count(&intentCount).Error; err != nil {
+		t.Fatalf("count approved signal intents: %v", err)
+	}
+	if intentCount != 1 {
+		t.Fatalf("approved signal intent count = %d, want 1", intentCount)
 	}
 	var approvedRow db.StrategySignal
 	if err := database.Where("id = ?", signalID).Take(&approvedRow).Error; err != nil || approvedRow.DecisionIdempotencyRecordID == nil {

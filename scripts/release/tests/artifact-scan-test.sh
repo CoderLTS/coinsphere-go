@@ -122,6 +122,7 @@ docker_root = packages_dir / f"coinsphere-{version}-docker"
 for root, suffix in ((windows_root, ".exe"), (linux_root, "")):
     write(root / f"coinsphere-server{suffix}", b"binary", executable=root == linux_root)
     write(root / f"coinsphere-migrate{suffix}", b"binary", executable=root == linux_root)
+    write(root / f"coinsphere-executor{suffix}", b"binary", executable=root == linux_root)
     write(root / "config.yml", 'auth:\n  secret_key: "coinsphere-dev-secret"\n')
     write(root / "nginx.conf", "server { listen 80; }\n")
     write(root / "README.md", "CoinSphere package\n")
@@ -141,6 +142,11 @@ write(
     docker_root / "worker-runtime.env.example",
     "COINSPHERE_WORKER_DATABASE_DSN="
     "postgresql://coinsphere_worker:replace-with-database-password@database/coinsphere\n",
+)
+write(
+    docker_root / "executor-runtime.env.example",
+    "COINSPHERE_DATABASE__DSN="
+    "postgresql://coinsphere_executor:replace-with-database-password@database/coinsphere\n",
 )
 
 if mode == "credential":
@@ -262,7 +268,9 @@ def create_tar(root, destination, add_link=False):
         info.uid = info.gid = 0
         info.uname = info.gname = ""
         info.mtime = 0
-        if root == linux_root and info.name.endswith(("/coinsphere-server", "/coinsphere-migrate")):
+        if root == linux_root and info.name.endswith(
+            ("/coinsphere-server", "/coinsphere-migrate", "/coinsphere-executor")
+        ):
             info.mode = 0o755
         if root == docker_root and info.name.endswith("/deploy.sh"):
             info.mode = 0o755

@@ -226,6 +226,10 @@
       "userCenter": "个人中心",
       "menu": "菜单管理"
     },
+    "trading": {
+      "title": "交易管理",
+      "overview": "Paper 账户"
+    },
     "scheduler": {
       "title": "定时任务",
       "overview": "任务概览",
@@ -728,6 +732,127 @@
     "guest": {
       "title": "游客模式",
       "description": "当前以游客身份访问，仅开放首页浏览。登录后可查看定时任务、数据管理和系统管理页面。"
+    }
+  },
+  "trading": {
+    "context": "PAPER / UTC",
+    "title": "Paper 交易工作台",
+    "control": {
+      "label": "全局交易控制",
+      "running": "已放行",
+      "stopped": "急停已启用",
+      "updatedAt": "最后更新",
+      "stop": "启用急停",
+      "release": "解除急停",
+      "stopTitle": "启用全局急停",
+      "reasonPlaceholder": "请输入急停原因"
+    },
+    "accounts": {
+      "title": "Paper 账户",
+      "empty": "还没有 Paper 账户",
+      "create": "创建账户",
+      "select": "选择账户",
+      "resume": "恢复账户"
+    },
+    "automation": {
+      "authorization": "自动化授权",
+      "accountSwitch": "账户自动化"
+    },
+    "balance": {
+      "equity": "权益",
+      "cash": "现金余额",
+      "realizedPnl": "已实现盈亏",
+      "unrealizedPnl": "未实现盈亏"
+    },
+    "risk": {
+      "title": "风险限额",
+      "complete": "限额完整",
+      "incomplete": "限额不完整",
+      "edit": "编辑风险限额",
+      "noInstruments": "未配置交易标的",
+      "maxTotal": "总名义上限",
+      "maxSymbol": "单标的名义上限",
+      "maxOrder": "单笔名义上限",
+      "maxDailyLoss": "日亏损上限",
+      "maxDrawdown": "最大回撤上限",
+      "maxQuoteAge": "行情最大延迟",
+      "leverage": "杠杆"
+    },
+    "market": {
+      "spot": "现货",
+      "usdM": "U 本位合约"
+    },
+    "status": {
+      "active": "运行中",
+      "paused": "已暂停"
+    },
+    "side": {
+      "buy": "买入",
+      "sell": "卖出"
+    },
+    "mode": {
+      "auto": "自动",
+      "manual": "人工"
+    },
+    "order": {
+      "filled": "已成交"
+    },
+    "intent": {
+      "pending": "待处理",
+      "processing": "处理中",
+      "executed": "已执行",
+      "blocked": "已拦截",
+      "failed": "失败"
+    },
+    "tabs": {
+      "positions": "持仓",
+      "orders": "订单",
+      "intents": "交易意图"
+    },
+    "table": {
+      "symbol": "标的",
+      "quantity": "数量",
+      "entryPrice": "入场价",
+      "lastPrice": "最新价",
+      "averagePrice": "成交均价",
+      "side": "方向",
+      "status": "状态",
+      "clientOrderId": "客户端订单号",
+      "createdAt": "创建时间",
+      "updatedAt": "更新时间",
+      "mode": "模式",
+      "target": "目标",
+      "reason": "原因"
+    },
+    "dialog": {
+      "createTitle": "创建 Paper 账户",
+      "riskTitle": "编辑风险限额",
+      "create": "创建账户",
+      "saveRisk": "保存风险限额"
+    },
+    "form": {
+      "name": "账户名称",
+      "market": "市场",
+      "initialBalance": "初始余额",
+      "feeRate": "手续费率",
+      "instruments": "白名单标的"
+    },
+    "validation": {
+      "name": "请输入账户名称",
+      "instruments": "至少选择一个交易标的",
+      "positiveDecimal": "请输入大于零的十进制数",
+      "feeRate": "请输入 0 至 0.01 之间的手续费率",
+      "reason": "请输入原因"
+    },
+    "reauth": {
+      "message": "请输入当前密码完成五分钟复验",
+      "password": "当前密码",
+      "required": "请输入当前密码",
+      "riskTitle": "修改风险限额",
+      "releaseTitle": "解除全局急停",
+      "resumeTitle": "恢复 Paper 账户",
+      "automationTitle": "启用账户自动化",
+      "authorizationTitle": "修改自动化授权"
     }
   },
   "scheduler": {

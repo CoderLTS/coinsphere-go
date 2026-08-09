@@ -63,6 +63,25 @@ services:
       retries: 3
       start_period: 10s
 
+  executor:
+    image: coinsphere-go-backend
+    container_name: coinsphere-go-executor
+    restart: unless-stopped
+    command: ["/app/coinsphere-executor", "-config", "/app/config.yml"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      TZ: UTC
+      COINSPHERE_DATABASE__DSN: postgresql://coinsphere:coinsphere-dev-only@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic
+    networks:
+      - database
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+
   worker:
     build:
       context: ./worker

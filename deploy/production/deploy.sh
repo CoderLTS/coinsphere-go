@@ -97,6 +97,10 @@ if [[ ! -f $DEPLOY_DIR/worker-runtime.env ]]; then
   echo "缺少 $DEPLOY_DIR/worker-runtime.env，请先按 worker-runtime.env.example 创建 Worker 配置" >&2
   exit 3
 fi
+if [[ ! -f $DEPLOY_DIR/executor-runtime.env ]]; then
+  echo "缺少 $DEPLOY_DIR/executor-runtime.env，请先按 executor-runtime.env.example 创建 Paper Executor 配置" >&2
+  exit 3
+fi
 if ! docker network inspect infrastructure >/dev/null 2>&1; then
   echo "缺少 Docker external network: infrastructure" >&2
   exit 4
@@ -123,6 +127,7 @@ if [[ $SOURCE_DIR != "$DEPLOY_DIR" ]]; then
   install -m 0755 "$SOURCE_DIR/deploy.sh" "$DEPLOY_DIR/deploy.sh"
   install -m 0644 "$SOURCE_DIR/runtime.env.example" "$DEPLOY_DIR/runtime.env.example"
   install -m 0644 "$SOURCE_DIR/worker-runtime.env.example" "$DEPLOY_DIR/worker-runtime.env.example"
+  install -m 0644 "$SOURCE_DIR/executor-runtime.env.example" "$DEPLOY_DIR/executor-runtime.env.example"
 fi
 cat >"$next_env" <<EOF
 COINSPHERE_VERSION=$VERSION

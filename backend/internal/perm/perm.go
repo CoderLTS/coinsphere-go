@@ -5,7 +5,8 @@ package perm
 // 一组常量用 const ( ... ) 打包声明。这里是显式的字符串常量(不是用 iota 自增的整数枚举),
 // 值本身就是权限码字符串;前后端都靠比对这个字符串来判断"能不能进某菜单 / 点某按钮"。
 const (
-	HomeView = "home.view"
+	HomeView            = "home.view"
+	TradingOverviewView = "trading.overview.view"
 
 	SchedulerWorkflowDefinitionsView   = "scheduler.workflow_definitions.view"
 	SchedulerWorkflowDefinitionsCreate = "scheduler.workflow_definitions.create"
@@ -64,6 +65,8 @@ const (
 // map[string]string 是"字符串→字符串"的字典(见 GO入门笔记『map』):键是前端菜单名,值是进入它所需的权限码。
 var MenuPermissionCodes = map[string]string{
 	"Home":                 HomeView,
+	"TradingCenter":        "",
+	"PaperTrading":         TradingOverviewView,
 	"SchedulerCenter":      "",
 	"WorkflowDefinitions":  SchedulerWorkflowDefinitionsView,
 	"WorkflowExecutions":   SchedulerWorkflowExecutionsView,

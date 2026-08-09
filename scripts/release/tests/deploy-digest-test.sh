@@ -11,6 +11,7 @@ WEB_DIGEST=$(printf 'b%.0s' {1..64})
 WORKER_DIGEST=$(printf 'c%.0s' {1..64})
 POSTGRES_DSN='postgresql://coinsphere:test-only-password@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic'
 WORKER_POSTGRES_DSN='postgresql://coinsphere_worker:test-only-password@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic'
+EXECUTOR_POSTGRES_DSN='postgresql://coinsphere_executor:test-only-password@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic'
 
 cleanup() {
   rm -rf -- "$TEST_DIR"
@@ -23,6 +24,8 @@ printf 'COINSPHERE_DATABASE__DSN=%s\nCOINSPHERE_AUTH__SECRET_KEY=replace-with-ra
   "$POSTGRES_DSN" >"$TEST_DIR/deploy/runtime.env"
 printf 'COINSPHERE_WORKER_DATABASE_DSN=%s\n' \
   "$WORKER_POSTGRES_DSN" >"$TEST_DIR/deploy/worker-runtime.env"
+printf 'COINSPHERE_DATABASE__DSN=%s\n' \
+  "$EXECUTOR_POSTGRES_DSN" >"$TEST_DIR/deploy/executor-runtime.env"
 cat >"$TEST_DIR/release-manifest.json" <<EOF
 {
   "version": "$VERSION",
@@ -72,6 +75,10 @@ if ! grep -Fxq "COINSPHERE_DATABASE__DSN=$POSTGRES_DSN" "$TEST_DIR/deploy/runtim
 fi
 if ! grep -Fxq "COINSPHERE_WORKER_DATABASE_DSN=$WORKER_POSTGRES_DSN" "$TEST_DIR/deploy/worker-runtime.env"; then
   echo "生产部署必须保留 Worker 独立 PostgreSQL DSN" >&2
+  exit 1
+fi
+if ! grep -Fxq "COINSPHERE_DATABASE__DSN=$EXECUTOR_POSTGRES_DSN" "$TEST_DIR/deploy/executor-runtime.env"; then
+  echo "生产部署必须保留 Executor 独立 PostgreSQL DSN" >&2
   exit 1
 fi
 if ! grep -Fq "run --rm backend /app/coinsphere-migrate -config /app/config.yml -direction up" "$DEPLOY_DOCKER_LOG"; then

@@ -14,7 +14,8 @@ COPY . .
 RUN --mount=type=cache,id=coinsphere-go-mod,target=/go/pkg/mod \
     --mount=type=cache,id=coinsphere-go-build,target=/root/.cache/go-build \
     GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/coinsphere-server . \
-    && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/coinsphere-migrate ./cmd/migrate
+    && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/coinsphere-migrate ./cmd/migrate \
+    && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/coinsphere-executor ./cmd/executor
 
 FROM scratch AS binaries
 COPY --from=build /out/ /
@@ -25,6 +26,7 @@ RUN apk add --no-cache ca-certificates tzdata \
 WORKDIR /app
 COPY --from=build /out/coinsphere-server /app/coinsphere-server
 COPY --from=build /out/coinsphere-migrate /app/coinsphere-migrate
+COPY --from=build /out/coinsphere-executor /app/coinsphere-executor
 COPY config.yml /app/config.yml
 RUN mkdir -p /app/volumes/static /app/volumes/uploads \
     && chown -R app /app
