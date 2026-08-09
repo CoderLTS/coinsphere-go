@@ -141,6 +141,22 @@ func TestPrivateClientSnapshotsSpotAndUSDMAccounts(t *testing.T) {
 	}
 }
 
+func TestPrivateSnapshotParsesOpenOrderFillValues(t *testing.T) {
+	snapshot, err := parseAccountSnapshot(
+		marketdata.MarketTypeSpot,
+		[]byte(`{"canTrade":true,"balances":[{"asset":"USDT","free":"1000","locked":"0"}]}`),
+		[]byte(`[{"symbol":"BTCUSDT","orderId":41,"clientOrderId":"cs019d-order","side":"BUY","type":"LIMIT","status":"PARTIALLY_FILLED","price":"50000","origQty":"0.01","executedQty":"0.005","cummulativeQuoteQty":"250","avgPrice":"50000","stopPrice":"0"}]`),
+	)
+	if err != nil {
+		t.Fatalf("parse open order fill values: %v", err)
+	}
+	if len(snapshot.OpenOrders) != 1 ||
+		!snapshot.OpenOrders[0].CumulativeQuoteQuantity.Equal(decimal.NewFromInt(250)) ||
+		!snapshot.OpenOrders[0].AveragePrice.Equal(decimal.NewFromInt(50_000)) {
+		t.Fatalf("open order fill values = %#v", snapshot.OpenOrders)
+	}
+}
+
 func TestPrivateClientPlacesAndQueriesDeterministicMarketOrders(t *testing.T) {
 	fixedNow := time.Date(2026, time.August, 9, 8, 9, 10, 0, time.UTC)
 	apiKey := strings.Repeat("k", 32)

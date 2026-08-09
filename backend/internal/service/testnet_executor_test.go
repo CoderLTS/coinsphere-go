@@ -605,6 +605,41 @@ func TestValidTestnetOrderResultShapes(t *testing.T) {
 	}
 }
 
+func TestValidTestnetStoredOrderResultRejectsShapeDrift(t *testing.T) {
+	order := db.TestnetOrder{
+		Quantity:      decimal.NewFromInt(5),
+		OrderType:     "market",
+		StopPrice:     decimal.Zero,
+		WorkingType:   "",
+		Purpose:       "rebalance",
+		ClosePosition: false,
+		ReduceOnly:    false,
+	}
+	result := exchangebinance.OrderResult{
+		OrderType:               "market",
+		OriginalQuantity:        decimal.NewFromInt(5),
+		ExecutedQuantity:        decimal.Zero,
+		CumulativeQuoteQuantity: decimal.Zero,
+		AveragePrice:            decimal.Zero,
+		StopPrice:               decimal.Zero,
+		WorkingType:             "mark_price",
+	}
+	if validTestnetStoredOrderResult(order, "new", result) {
+		t.Fatal("accepted a rebalance order with drifted working type")
+	}
+	order.Purpose = "protection"
+	order.OrderType = "stop_loss"
+	order.Quantity = decimal.NewFromInt(1)
+	order.StopPrice = decimal.NewFromInt(90)
+	result.OrderType = "stop_loss"
+	result.OriginalQuantity = decimal.NewFromInt(1)
+	result.WorkingType = ""
+	result.StopPrice = decimal.NewFromInt(91)
+	if validTestnetStoredOrderResult(order, "new", result) {
+		t.Fatal("accepted a protection order with drifted stop price")
+	}
+}
+
 type testnetExecutorFixture struct {
 	database   *gorm.DB
 	base       *paperExecutorFixture

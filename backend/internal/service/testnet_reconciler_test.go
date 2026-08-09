@@ -14,6 +14,7 @@ import (
 	exchangebinance "coinsphere/backend/internal/exchange/binance"
 	"coinsphere/backend/internal/marketdata"
 	"coinsphere/backend/internal/security"
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
@@ -289,6 +290,112 @@ func TestTestnetReconciliationFailureClassification(t *testing.T) {
 	code, retryAfter, invalid = testnetReconciliationFailure(&exchangebinance.PrivateError{Kind: exchangebinance.PrivateErrorAuthentication})
 	if code != "authentication_failed" || retryAfter != 0 || !invalid {
 		t.Fatalf("authentication classification = %q, %v, %t", code, retryAfter, invalid)
+	}
+}
+
+func TestContinuousSnapshotDifferenceAcceptsManagedUSDMPosition(t *testing.T) {
+	instrumentID := mustVerifierUUIDv7(t)
+	instrument := db.MarketInstrument{
+		ID: instrumentID, NativeSymbol: "BTCUSDT", BaseAsset: "BTC", QuoteAsset: "USDT",
+	}
+	position := &testnetManagedPosition{InstrumentID: instrumentID, Quantity: decimal.RequireFromString("0.02")}
+	code := continuousSnapshotDifference(
+		db.TradingAccount{Market: string(marketdata.MarketTypeUSDM)},
+		map[uuid.UUID]db.MarketInstrument{instrumentID: instrument},
+		map[string]db.MarketInstrument{instrument.NativeSymbol: instrument},
+		map[uuid.UUID]*testnetManagedPosition{instrumentID: position},
+		exchangebinance.AccountSnapshot{
+			CanTrade: true,
+			Positions: []exchangebinance.AccountPosition{{
+				Symbol: "BTCUSDT", PositionSide: "both", Quantity: decimal.RequireFromString("0.02"),
+			}},
+			Balances: []exchangebinance.AccountBalance{{Asset: "USDT", Total: decimal.NewFromInt(1000)}},
+		},
+	)
+	if code != "" {
+		t.Fatalf("managed USD-M position difference = %q", code)
+	}
+}
+
+func TestContinuousSnapshotDifferenceRejectsUnownedOrderState(t *testing.T) {
+	fixture := newTestnetReconcilerFixture(t)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/v3/account":
+			_, _ = response.Write([]byte(`{"canTrade":true,"balances":[{"asset":"USDT","free":"1000","locked":"0"}]}`))
+		case "/api/v3/openOrders":
+			_, _ = response.Write([]byte(`[{"symbol":"BTCUSDT","orderId":99,"clientOrderId":"external-order","side":"SELL","type":"LIMIT","status":"NEW","price":"50000","origQty":"0.01","executedQty":"0","stopPrice":"0"}]`))
+		default:
+			response.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	reconciler := fixture.reconciler(t, server.URL)
+	observedAt := time.Now().UTC().Add(-time.Minute)
+	if _, err := reconciler.persistSnapshot(context.Background(), fixture.credential, fixture.account, exchangebinance.AccountSnapshot{
+		CanTrade: true, Balances: []exchangebinance.AccountBalance{{Asset: "USDT", Total: decimal.NewFromInt(1000)}}, ObservedAt: observedAt,
+	}, "matched", ""); err != nil {
+		t.Fatalf("seed continuous reconciliation: %v", err)
+	}
+	var account db.TradingAccount
+	if err := fixture.database.Where("id = ?", fixture.account.ID).Take(&account).Error; err != nil {
+		t.Fatalf("load continuous account: %v", err)
+	}
+	if err := fixture.database.Model(&account).Updates(map[string]any{
+		"status": "active", "pause_reason": "", "updated_at": time.Now().UTC(),
+	}).Error; err != nil {
+		t.Fatalf("activate continuous account: %v", err)
+	}
+	if err := fixture.database.Model(&db.TestnetReconciliation{}).Where("account_id = ?", account.ID).
+		Updates(map[string]any{"last_attempted_at": time.Now().UTC().Add(-time.Hour)}).Error; err != nil {
+		t.Fatalf("age reconciliation: %v", err)
+	}
+	processed, _, err := reconciler.ProcessNext(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("process unknown external order: processed=%t err=%v", processed, err)
+	}
+	var reconciliation db.TestnetReconciliation
+	if err := fixture.database.Where("account_id = ?", account.ID).Take(&reconciliation).Error; err != nil {
+		t.Fatalf("load external-order reconciliation: %v", err)
+	}
+	if reconciliation.Status != "mismatch" || reconciliation.ErrorCode != "unknown_external_order" {
+		t.Fatalf("external-order reconciliation = %#v", reconciliation)
+	}
+	if err := fixture.database.Where("id = ?", account.ID).Take(&account).Error; err != nil {
+		t.Fatalf("reload paused account: %v", err)
+	}
+	if account.Status != "paused" || account.PauseReason != "testnet_reconciliation_mismatch" || account.AutomationEnabled {
+		t.Fatalf("unknown external order did not pause account: %#v", account)
+	}
+}
+
+func TestTestnetReconcilerIgnoresOlderSnapshotProjection(t *testing.T) {
+	fixture := newTestnetReconcilerFixture(t)
+	reconciler := fixture.reconciler(t, "http://127.0.0.1")
+	newer := time.Now().UTC().Add(-time.Minute)
+	older := newer.Add(-time.Minute)
+	first := exchangebinance.AccountSnapshot{
+		CanTrade: true, Balances: []exchangebinance.AccountBalance{{Asset: "USDT", Total: decimal.NewFromInt(1000)}}, ObservedAt: newer,
+	}
+	if _, err := reconciler.persistSnapshot(context.Background(), fixture.credential, fixture.account, first, "matched", ""); err != nil {
+		t.Fatalf("persist newer snapshot: %v", err)
+	}
+	var account db.TradingAccount
+	if err := fixture.database.Where("id = ?", fixture.account.ID).Take(&account).Error; err != nil {
+		t.Fatalf("load account after newer snapshot: %v", err)
+	}
+	persisted, err := reconciler.persistSnapshot(context.Background(), fixture.credential, account, exchangebinance.AccountSnapshot{
+		CanTrade: true, Balances: []exchangebinance.AccountBalance{{Asset: "USDT", Total: decimal.NewFromInt(1)}}, ObservedAt: older,
+	}, "matched", "")
+	if err != nil || persisted {
+		t.Fatalf("older snapshot persisted=%t err=%v", persisted, err)
+	}
+	var balance db.TestnetBalance
+	if err := fixture.database.Where("account_id = ? AND asset = ?", account.ID, "USDT").Take(&balance).Error; err != nil {
+		t.Fatalf("load fenced balance: %v", err)
+	}
+	if !balance.TotalBalance.Equal(decimal.NewFromInt(1000)) {
+		t.Fatalf("older snapshot changed balance = %s", balance.TotalBalance)
 	}
 }
 

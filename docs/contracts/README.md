@@ -105,4 +105,6 @@ Testnet 私有访问默认关闭。显式启用后，只有 Go Executor 会解�
 
 主订单成交后，Executor 必须先建立或替换保护单，才能完成 Testnet 意图。Spot 使用带数量的 `STOP_LOSS`，USD-M 使用 `STOP_MARKET + closePosition + MARK_PRICE`；子订单同样先持久化并按确定性 `clientOrderId` 查询恢复。保护单无法确认时，账户暂停、策略实例关闭、站内通知写入，并尝试只减仓紧急平仓。
 
-未知外部订单归属恢复以及成交、费用和资金费的持续权威对账仍未交付。生产继续保持 Testnet 私有能力关闭；后续晋级遵守 [ADR-0010](../architecture/decisions/0010-execution-risk-events.md) 并由用户手工放行。
+账户手工恢复后，Reconciler 持续读取余额、仓位和开放订单权威快照，并只接受本地确定性订单能够解释的订单与持仓。快照缺少本地活动订单时先按原 `clientOrderId` 查询；权威订单状态只在账户、凭据版本、本地订单版本和观察时间均未变化时回写。未知外部订单、未归属仓位、订单形状漂移或查询未知都会暂停账户且关闭自动化；较旧快照不能覆盖较新投影，对账成功也不会自动恢复账户或创建外部订单。
+
+持续账户、订单和仓位快照对账已交付；未知外部订单归属恢复以及逐笔成交、真实手续费和资金费的权威对账仍未交付。生产继续保持 Testnet 私有能力关闭；后续晋级遵守 [ADR-0010](../architecture/decisions/0010-execution-risk-events.md) 并由用户手工放行。
