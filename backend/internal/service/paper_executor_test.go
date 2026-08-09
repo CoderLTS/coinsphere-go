@@ -184,7 +184,7 @@ func TestTradingRiskIdempotentReplayDoesNotRevalidateInstrumentState(t *testing.
 		t.Fatalf("update Paper risk: %v", err)
 	}
 	if err := fixture.database.Model(&db.MarketInstrument{}).Where("id = ?", fixture.instrumentID).
-		Update("status", "break").Error; err != nil {
+		Update("status", "suspended").Error; err != nil {
 		t.Fatalf("suspend Paper instrument: %v", err)
 	}
 	if _, err := fixture.app.UpdateTradingRisk(

@@ -276,7 +276,7 @@ type PaperOrder struct {
 	AveragePrice   decimal.Decimal `gorm:"column:average_price;type:numeric(38,18)"`
 	Status         string          `gorm:"size:16"`
 	CreatedAt      time.Time       `gorm:"column:created_at"`
-	UpdatedAt      time.Time       `gorm:"column:updated_at"`
+	UpdatedAt      time.Time       `gorm:"column:updated_at;autoUpdateTime:false"`
 }
 
 func (PaperOrder) TableName() string { return "paper_orders" }
@@ -312,7 +312,7 @@ type PaperPosition struct {
 	LastPrice               decimal.Decimal `gorm:"column:last_price;type:numeric(38,18)"`
 	RealizedPnl             decimal.Decimal `gorm:"column:realized_pnl;type:numeric(38,18)"`
 	UnrealizedPnl           decimal.Decimal `gorm:"column:unrealized_pnl;type:numeric(38,18)"`
-	UpdatedAt               time.Time       `gorm:"column:updated_at"`
+	UpdatedAt               time.Time       `gorm:"column:updated_at;autoUpdateTime:false"`
 }
 
 func (PaperPosition) TableName() string { return "paper_positions" }
@@ -329,7 +329,7 @@ type PaperBalance struct {
 	UnrealizedPnl  decimal.Decimal `gorm:"column:unrealized_pnl;type:numeric(38,18)"`
 	Fees           decimal.Decimal `gorm:"type:numeric(38,18)"`
 	Funding        decimal.Decimal `gorm:"type:numeric(38,18)"`
-	UpdatedAt      time.Time       `gorm:"column:updated_at"`
+	UpdatedAt      time.Time       `gorm:"column:updated_at;autoUpdateTime:false"`
 }
 
 func (PaperBalance) TableName() string { return "paper_balances" }
