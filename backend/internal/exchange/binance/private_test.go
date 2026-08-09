@@ -157,6 +157,101 @@ func TestPrivateSnapshotParsesOpenOrderFillValues(t *testing.T) {
 	}
 }
 
+func TestPrivateTradeParsersNormalizeSpotAndUSDM(t *testing.T) {
+	spot, err := parseAccountTrades(marketdata.MarketTypeSpot, []byte(`[
+        {"symbol":"BTCUSDT","id":12,"orderId":7,"price":"101.25","qty":"0.2","quoteQty":"20.25","commission":"0.0002","commissionAsset":"BTC","time":1786255629000,"isBuyer":false,"isMaker":true},
+        {"symbol":"BTCUSDT","id":11,"orderId":7,"price":"100","qty":"0.1","quoteQty":"10","commission":"0.01","commissionAsset":"USDT","time":1786255628000,"isBuyer":true,"isMaker":false}
+    ]`))
+	if err != nil || len(spot) != 2 {
+		t.Fatalf("parse Spot trades: %v %#v", err, spot)
+	}
+	if spot[0].ExchangeTradeID != 11 || spot[0].Side != "buy" || spot[0].PositionSide != "both" ||
+		!spot[0].Quantity.Equal(decimal.RequireFromString("0.1")) || !spot[0].OccurredAt.Equal(time.UnixMilli(1786255628000).UTC()) ||
+		spot[1].Side != "sell" || !spot[1].Maker {
+		t.Fatalf("normalized Spot trades = %#v", spot)
+	}
+
+	usdm, err := parseAccountTrades(marketdata.MarketTypeUSDM, []byte(`[
+        {"symbol":"BTCUSDT","id":21,"orderId":8,"side":"SELL","positionSide":"SHORT","price":"99.5","qty":"2","quoteQty":"199","commission":"0.05","commissionAsset":"USDT","realizedPnl":"-1.25","buyer":false,"maker":true,"time":1786255629000}
+    ]`))
+	if err != nil || len(usdm) != 1 {
+		t.Fatalf("parse USD-M trades: %v %#v", err, usdm)
+	}
+	if usdm[0].Side != "sell" || usdm[0].PositionSide != "short" || !usdm[0].RealizedPnL.Equal(decimal.RequireFromString("-1.25")) ||
+		!usdm[0].Commission.Equal(decimal.RequireFromString("0.05")) {
+		t.Fatalf("normalized USD-M trade = %#v", usdm[0])
+	}
+}
+
+func TestPrivateTradeParsersRejectMalformedRows(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		market marketdata.MarketType
+		body   string
+	}{
+		{name: "null Spot response", market: marketdata.MarketTypeSpot, body: "null"},
+		{name: "duplicate Spot trade", market: marketdata.MarketTypeSpot, body: `[
+            {"symbol":"BTCUSDT","id":1,"orderId":2,"price":"1","qty":"1","quoteQty":"1","commission":"0","commissionAsset":"BTC","time":1,"isBuyer":true,"isMaker":false},
+            {"symbol":"BTCUSDT","id":1,"orderId":2,"price":"1","qty":"1","quoteQty":"1","commission":"0","commissionAsset":"BTC","time":2,"isBuyer":true,"isMaker":false}
+        ]`},
+		{name: "boolean external ID", market: marketdata.MarketTypeUSDM, body: `[{"symbol":"BTCUSDT","id":true,"orderId":2,"side":"BUY","positionSide":"BOTH","price":"1","qty":"1","quoteQty":"1","commission":"0","commissionAsset":"USDT","realizedPnl":"0","buyer":true,"maker":false,"time":1}]`},
+		{name: "negative quantity", market: marketdata.MarketTypeUSDM, body: `[{"symbol":"BTCUSDT","id":1,"orderId":2,"side":"BUY","positionSide":"BOTH","price":"1","qty":"-1","quoteQty":"1","commission":"0","commissionAsset":"USDT","realizedPnl":"0","buyer":true,"maker":false,"time":1}]`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := parseAccountTrades(test.market, []byte(test.body)); err == nil {
+				t.Fatal("malformed trade response was accepted")
+			}
+		})
+	}
+	if _, err := parseFundingIncome([]byte(`[{"symbol":"BTCUSDT","incomeType":"COMMISSION","asset":"USDT","income":"1","tranId":1,"time":1}]`)); err == nil {
+		t.Fatal("non-funding income was accepted")
+	}
+}
+
+func TestPrivateClientQueriesTradesAndFundingIncome(t *testing.T) {
+	fixedNow := time.UnixMilli(1786255628000).UTC()
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v3/myTrades":
+			if request.URL.Query().Get("symbol") != "BTCUSDT" || request.URL.Query().Get("orderId") != "7" || request.URL.Query().Get("limit") != "1000" {
+				t.Errorf("Spot trade query = %v", request.URL.Query())
+			}
+			_, _ = response.Write([]byte(`[{"symbol":"BTCUSDT","id":1,"orderId":7,"price":"100","qty":"1","quoteQty":"100","commission":"0.1","commissionAsset":"USDT","time":1786255627000,"isBuyer":true,"isMaker":false}]`))
+		case "/fapi/v1/userTrades":
+			if request.URL.Query().Get("symbol") != "BTCUSDT" || request.URL.Query().Get("orderId") != "8" {
+				t.Errorf("USD-M trade query = %v", request.URL.Query())
+			}
+			_, _ = response.Write([]byte(`[{"symbol":"BTCUSDT","id":2,"orderId":8,"side":"SELL","positionSide":"BOTH","price":"100","qty":"1","quoteQty":"100","commission":"0.1","commissionAsset":"USDT","realizedPnl":"-2","buyer":false,"maker":true,"time":1786255627000}]`))
+		case "/fapi/v1/income":
+			query := request.URL.Query()
+			if query.Get("incomeType") != "FUNDING_FEE" || query.Get("symbol") != "BTCUSDT" || query.Get("startTime") != "1786252028000" || query.Get("endTime") != "1786255628000" {
+				t.Errorf("funding query = %v", query)
+			}
+			_, _ = response.Write([]byte(`[{"symbol":"BTCUSDT","incomeType":"FUNDING_FEE","asset":"USDT","income":"-0.25","tranId":33,"time":1786255627000}]`))
+		default:
+			response.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	client, err := NewPrivateClient(PrivateClientConfig{SpotBaseURL: server.URL, USDMBaseURL: server.URL, Now: func() time.Time { return fixedNow }})
+	if err != nil {
+		t.Fatalf("create private client: %v", err)
+	}
+	if trades, err := client.QueryOrderTrades(context.Background(), marketdata.MarketTypeSpot, "key", "secret", "BTCUSDT", 7); err != nil || len(trades) != 1 {
+		t.Fatalf("query Spot trades: %v %#v", err, trades)
+	}
+	if trades, err := client.QueryOrderTrades(context.Background(), marketdata.MarketTypeUSDM, "key", "secret", "BTCUSDT", 8); err != nil || len(trades) != 1 {
+		t.Fatalf("query USD-M trades: %v %#v", err, trades)
+	}
+	if funding, err := client.QueryFundingIncome(context.Background(), "key", "secret", "BTCUSDT", fixedNow.Add(-time.Hour), fixedNow); err != nil || len(funding) != 1 || !funding[0].Amount.Equal(decimal.RequireFromString("-0.25")) {
+		t.Fatalf("query funding income: %v %#v", err, funding)
+	}
+	if _, err := client.QueryOrderTrades(context.Background(), marketdata.MarketType("unknown"), "key", "secret", "BTCUSDT", 7); err == nil {
+		t.Fatal("unsupported trade market was accepted")
+	}
+}
+
 func TestPrivateClientPlacesAndQueriesDeterministicMarketOrders(t *testing.T) {
 	fixedNow := time.Date(2026, time.August, 9, 8, 9, 10, 0, time.UTC)
 	apiKey := strings.Repeat("k", 32)
