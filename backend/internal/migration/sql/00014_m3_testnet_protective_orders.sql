@@ -169,6 +169,12 @@ BEGIN
         RAISE EXCEPTION 'testnet protection order shape does not match account market';
     END IF;
 
+    IF NEW.purpose = 'rebalance'
+       AND account_market = 'spot'
+       AND NEW.reduce_only THEN
+        RAISE EXCEPTION 'testnet Spot rebalance cannot set reduceOnly';
+    END IF;
+
     IF NEW.purpose = 'flatten'
        AND NEW.reduce_only IS DISTINCT FROM (account_market = 'usd_m') THEN
         RAISE EXCEPTION 'testnet flatten order shape does not match account market';

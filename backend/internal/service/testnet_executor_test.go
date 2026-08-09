@@ -118,7 +118,7 @@ func TestTestnetExecutorReplacesSpotProtectionForChangedPosition(t *testing.T) {
 	if len(calls) != 5 || calls[1].operation != "protect" ||
 		!calls[1].quantity.Equal(decimal.NewFromInt(5)) || calls[2].operation != "cancel" ||
 		calls[2].clientOrderID != calls[1].clientOrderID || calls[3].operation != "place" ||
-		calls[3].side != "sell" || !calls[3].quantity.Equal(decimal.NewFromInt(3)) ||
+		calls[3].side != "sell" || !calls[3].quantity.Equal(decimal.NewFromInt(3)) || calls[3].reduceOnly ||
 		calls[4].operation != "protect" ||
 		!calls[4].quantity.Equal(decimal.NewFromInt(2)) {
 		t.Fatalf("Spot protection replacement calls = %#v", calls)
@@ -844,9 +844,10 @@ func filledTestnetResult(call testnetOrderCall, orderID int64) exchangebinance.O
 	if orderType == "" {
 		orderType = "market"
 	}
+	reduceOnly := call.reduceOnly && call.market == marketdata.MarketTypeUSDM
 	return exchangebinance.OrderResult{
 		Symbol: call.symbol, ExchangeOrderID: orderID, ClientOrderID: call.clientOrderID,
-		Side: call.side, OrderType: orderType, Status: "filled", ReduceOnly: call.reduceOnly,
+		Side: call.side, OrderType: orderType, Status: "filled", ReduceOnly: reduceOnly,
 		OriginalQuantity: call.quantity, ExecutedQuantity: call.quantity,
 		CumulativeQuoteQuantity: call.quantity.Mul(decimal.NewFromInt(100)),
 		AveragePrice:            decimal.NewFromInt(100), ObservedAt: time.Now().UTC(),

@@ -422,13 +422,14 @@ func (executor *TestnetExecutor) prepareAction(
 		if state.DeltaQty.IsNegative() {
 			side = "sell"
 		}
+		reduceOnly := state.ReduceOnly && state.Account.Market == string(marketdata.MarketTypeUSDM)
 		order := db.TestnetOrder{
 			ID: intent.ID, AccountID: intent.AccountID, IntentID: intent.ID,
 			StrategyInstanceID: intent.StrategyInstanceID, InstrumentID: intent.InstrumentID,
 			CredentialUpdatedAt:       state.Credential.UpdatedAt,
 			SubmittedAccountUpdatedAt: state.Account.UpdatedAt,
 			ClientOrderID:             intent.ClientOrderID, Side: side, Quantity: state.DeltaQty.Abs(),
-			Purpose: "rebalance", OrderType: "market", ReduceOnly: state.ReduceOnly,
+			Purpose: "rebalance", OrderType: "market", ReduceOnly: reduceOnly,
 			Status: "prepared", SubmitAttemptCount: 1, SubmittedAt: now,
 			CreatedAt: now, UpdatedAt: now,
 		}
@@ -573,11 +574,12 @@ func (executor *TestnetExecutor) prepareMissingOrder(
 		if state.DeltaQty.IsNegative() {
 			side = "sell"
 		}
+		reduceOnly := state.ReduceOnly && state.Account.Market == string(marketdata.MarketTypeUSDM)
 		updates := map[string]any{
 			"credential_updated_at":        state.Credential.UpdatedAt,
 			"submitted_account_updated_at": state.Account.UpdatedAt,
 			"side":                         side, "quantity": state.DeltaQty.Abs(),
-			"reduce_only":     state.ReduceOnly,
+			"reduce_only":     reduceOnly,
 			"filled_quantity": decimal.Zero, "cumulative_quote_quantity": decimal.Zero,
 			"average_price": decimal.Zero, "status": "prepared", "last_error_code": "",
 			"submit_attempt_count": gorm.Expr("submit_attempt_count + 1"),
@@ -590,7 +592,7 @@ func (executor *TestnetExecutor) prepareMissingOrder(
 		order.SubmittedAccountUpdatedAt = state.Account.UpdatedAt
 		order.Side = side
 		order.Quantity = state.DeltaQty.Abs()
-		order.ReduceOnly = state.ReduceOnly
+		order.ReduceOnly = reduceOnly
 		order.Status = "prepared"
 		order.LastErrorCode = ""
 		order.SubmitAttemptCount++
