@@ -228,7 +228,7 @@
     },
     "trading": {
       "title": "Trading",
-      "overview": "Paper Accounts"
+      "overview": "Trading Accounts"
     },
     "scheduler": {
       "title": "Scheduler",
@@ -735,8 +735,8 @@
     }
   },
   "trading": {
-    "context": "PAPER / UTC",
-    "title": "Paper Trading Workbench",
+    "context": "PAPER / TESTNET / UTC",
+    "title": "Trading Execution Workbench",
     "control": {
       "label": "Global trading control",
       "running": "Released",
@@ -748,8 +748,8 @@
       "reasonPlaceholder": "Enter the emergency-stop reason"
     },
     "accounts": {
-      "title": "Paper accounts",
-      "empty": "No Paper accounts yet",
+      "title": "Trading accounts",
+      "empty": "No trading accounts yet",
       "create": "Create account",
       "select": "Select account",
       "resume": "Resume account"
@@ -781,6 +781,33 @@
     "market": {
       "spot": "Spot",
       "usdM": "USD-M futures"
+    },
+    "environment": {
+      "paper": "Paper",
+      "testnet": "Testnet"
+    },
+    "credentials": {
+      "label": "Binance Testnet credentials",
+      "notConfigured": "Not configured",
+      "configured": "Configured",
+      "revoked": "Revoked",
+      "configure": "Configure credentials",
+      "replace": "Replace credentials",
+      "revoke": "Revoke",
+      "dialogTitle": "Configure Testnet credentials",
+      "apiKey": "API Key",
+      "apiSecret": "API Secret",
+      "withdrawalDisabled": "Withdrawal permission is disabled for this key",
+      "ipWhitelistConfigured": "An IP allowlist is configured",
+      "save": "Save credentials",
+      "revokeTitle": "Revoke Testnet credentials",
+      "revokeConfirm": "Revocation pauses the account and clears the stored ciphertext.",
+      "verification": {
+        "unverified": "Unverified",
+        "verified": "Verified",
+        "invalid": "Verification failed",
+        "unknown": "Verification unknown"
+      }
     },
     "status": {
       "active": "Active",
@@ -825,13 +852,14 @@
       "reason": "Reason"
     },
     "dialog": {
-      "createTitle": "Create Paper account",
+      "createTitle": "Create trading account",
       "riskTitle": "Edit risk limits",
       "create": "Create account",
       "saveRisk": "Save risk limits"
     },
     "form": {
       "name": "Account name",
+      "environment": "Environment",
       "market": "Market",
       "initialBalance": "Initial balance",
       "feeRate": "Fee rate",
@@ -842,7 +870,10 @@
       "instruments": "Select at least one instrument",
       "positiveDecimal": "Enter a positive decimal",
       "feeRate": "Enter a fee rate between 0 and 0.01",
-      "reason": "Enter a reason"
+      "reason": "Enter a reason",
+      "apiKey": "Enter the API Key",
+      "apiSecret": "Enter the API Secret",
+      "confirmSafety": "Confirm this safety setting"
     },
     "reauth": {
       "message": "Enter your current password for five-minute re-authentication",
@@ -850,9 +881,10 @@
       "required": "Enter your current password",
       "riskTitle": "Change risk limits",
       "releaseTitle": "Release global emergency stop",
-      "resumeTitle": "Resume Paper account",
+      "resumeTitle": "Resume trading account",
       "automationTitle": "Enable account automation",
-      "authorizationTitle": "Change automation authorization"
+      "authorizationTitle": "Change automation authorization",
+      "credentialsTitle": "Change Testnet credentials"
     }
   },
   "scheduler": {

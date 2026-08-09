@@ -72,7 +72,7 @@ func (executor *PaperExecutor) Run(ctx context.Context) error {
 // Recover 只回收 Paper 的本地 processing 意图；外部订单未知状态将在 Testnet 阶段单独对账。
 func (executor *PaperExecutor) Recover(ctx context.Context) error {
 	return executor.database.WithContext(ctx).Model(&db.TradingIntent{}).
-		Where("status = 'processing'").Updates(map[string]any{
+		Where("environment = 'paper' AND status = 'processing'").Updates(map[string]any{
 		"status": "pending", "claimed_at": nil, "worker_id": nil, "updated_at": time.Now().UTC(),
 	}).Error
 }
@@ -99,11 +99,11 @@ func (executor *PaperExecutor) claimNextIntent(ctx context.Context) (*db.Trading
 	var intent db.TradingIntent
 	err := executor.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
-			Where("status = 'pending'").Order("created_at, id").Take(&intent).Error; err != nil {
+			Where("environment = 'paper' AND status = 'pending'").Order("created_at, id").Take(&intent).Error; err != nil {
 			return err
 		}
 		now := time.Now().UTC()
-		result := tx.Model(&intent).Where("status = 'pending'").Updates(map[string]any{
+		result := tx.Model(&intent).Where("environment = 'paper' AND status = 'pending'").Updates(map[string]any{
 			"status": "processing", "attempt_count": gorm.Expr("attempt_count + 1"),
 			"claimed_at": now, "worker_id": executor.workerID, "updated_at": now,
 		})
@@ -604,7 +604,8 @@ func finishPaperIntent(tx *gorm.DB, intent db.TradingIntent, status, reason stri
 
 func (executor *PaperExecutor) RebuildAllProjections(ctx context.Context) error {
 	var accountIDs []uuid.UUID
-	if err := executor.database.WithContext(ctx).Model(&db.TradingAccount{}).Order("id").Pluck("id", &accountIDs).Error; err != nil {
+	if err := executor.database.WithContext(ctx).Model(&db.TradingAccount{}).
+		Where("environment = 'paper'").Order("id").Pluck("id", &accountIDs).Error; err != nil {
 		return err
 	}
 	for _, accountID := range accountIDs {
@@ -621,7 +622,8 @@ func (executor *PaperExecutor) RebuildAccountProjections(ctx context.Context, ac
 			return err
 		}
 		var account db.TradingAccount
-		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).Where("id = ?", accountID).Take(&account).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).
+			Where("id = ? AND environment = 'paper'", accountID).Take(&account).Error; err != nil {
 			return err
 		}
 		if err := tx.Where("account_id = ?", accountID).Delete(&db.PaperOrder{}).Error; err != nil {

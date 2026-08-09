@@ -58,6 +58,8 @@ func TestRoutesUseV1AndRemoveLegacyEntrypoints(t *testing.T) {
 		{http.MethodPost, "/api/v1/trading/accounts/019c2f6d-7c00-7000-8000-000000000001/automation/enable"},
 		{http.MethodPost, "/api/v1/trading/accounts/019c2f6d-7c00-7000-8000-000000000001/automation/disable"},
 		{http.MethodPost, "/api/v1/trading/accounts/019c2f6d-7c00-7000-8000-000000000001/resume"},
+		{http.MethodPut, "/api/v1/trading/accounts/019c2f6d-7c00-7000-8000-000000000001/credentials"},
+		{http.MethodPost, "/api/v1/trading/accounts/019c2f6d-7c00-7000-8000-000000000001/credentials/revoke"},
 		{http.MethodPost, "/api/v1/trading/emergency-stop"},
 		{http.MethodPost, "/api/v1/admin/trading/accounts/019c2f6d-7c00-7000-8000-000000000001/authorize"},
 		{http.MethodPost, "/api/v1/admin/trading/accounts/019c2f6d-7c00-7000-8000-000000000001/revoke"},

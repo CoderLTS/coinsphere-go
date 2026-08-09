@@ -65,6 +65,27 @@ func (s *Server) handleResumeTradingAccount(w http.ResponseWriter, r *http.Reque
 	writeTradingResult(w, r, data, err)
 }
 
+func (s *Server) handleSaveTradingCredentials(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	payload, err := decodeStrictBody[service.TradingCredentialPayload](r)
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "invalid testnet credential request")
+		return
+	}
+	data, err := s.App.SaveTradingCredentials(
+		r.Context(), principal, r.PathValue("accountId"), *payload,
+		r.Header.Get("Idempotency-Key"), r.Header.Get("X-Reauth-Token"),
+	)
+	writeTradingResult(w, r, data, err)
+}
+
+func (s *Server) handleRevokeTradingCredentials(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	data, err := s.App.RevokeTradingCredentials(
+		r.Context(), principal, r.PathValue("accountId"),
+		r.Header.Get("Idempotency-Key"), r.Header.Get("X-Reauth-Token"),
+	)
+	writeTradingResult(w, r, data, err)
+}
+
 func (s *Server) handleAuthorizeTradingAutomation(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
 	data, err := s.App.SetTradingAuthorization(
 		r.Context(), principal, r.PathValue("accountId"), true,
@@ -107,7 +128,7 @@ func writeTradingResult(w http.ResponseWriter, r *http.Request, data any, err er
 	}
 	status, detail := http.StatusInternalServerError, "trading operation failed"
 	switch {
-	case errors.Is(err, service.ErrInvalidTradingRequest):
+	case errors.Is(err, service.ErrInvalidTradingRequest), errors.Is(err, service.ErrTradingCredentialInvalid):
 		status, detail = http.StatusBadRequest, err.Error()
 	case errors.Is(err, service.ErrTradingAccountMissing):
 		status, detail = http.StatusNotFound, err.Error()
@@ -116,7 +137,8 @@ func writeTradingResult(w http.ResponseWriter, r *http.Request, data any, err er
 	case errors.Is(err, service.ErrPermission):
 		status, detail = http.StatusForbidden, err.Error()
 	case service.IsIdempotencyConflict(err), errors.Is(err, service.ErrTradingAccountConflict),
-		errors.Is(err, service.ErrPaperExecutionUnavailable):
+		errors.Is(err, service.ErrTradingExecutionUnavailable), errors.Is(err, service.ErrTradingCredentialsMissing),
+		errors.Is(err, service.ErrTradingCredentialsUnverified):
 		status, detail = http.StatusConflict, err.Error()
 	}
 	writeProblem(w, r, status, detail)

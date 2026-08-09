@@ -214,7 +214,7 @@ func (a *App) outboxLeaseDuration() time.Duration {
 // handleEventTriggeredEntries 把事件匹配到 start.event 入口并入队执行。
 // outbox 的"消费方":查出所有"事件触发型(start_type=event)、已启用、且有生效版本"的工作流入口,逐个看这条事件是否命中,命中就跑。
 func (a *App) handleEventTriggeredEntries(ctx context.Context, event *domainEvent) error {
-	if err := a.prepareAutoPaperIntent(ctx, event); err != nil {
+	if err := a.prepareAutoTradingIntent(ctx, event); err != nil {
 		return err
 	}
 	notificationErr := a.deliverStrategySignalNotification(ctx, event)

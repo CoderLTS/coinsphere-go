@@ -10,6 +10,7 @@ vi.mock('@/utils/http', () => ({ default: mocks }))
 
 import {
   fetchCreateTradingAccount,
+  fetchSaveTradingCredentials,
   fetchSetTradingAutomation,
   fetchUpdateTradingRisk,
   type TradingAccountCreatePayload
@@ -60,6 +61,7 @@ describe('trading API', () => {
     const payload: TradingAccountCreatePayload = {
       name: 'Paper Spot',
       market: 'spot',
+      environment: 'paper',
       initialBalance: '10000',
       paperFeeRate: '0.001',
       risk: {
@@ -79,6 +81,27 @@ describe('trading API', () => {
       url: '/api/v1/trading/accounts',
       params: payload,
       headers: { 'Idempotency-Key': 'create-command-1' },
+      showSuccessMessage: true
+    })
+  })
+
+  it('sends Testnet credentials only to the reauthenticated credential endpoint', () => {
+    const payload = {
+      apiKey: 'test-key',
+      apiSecret: 'test-secret',
+      withdrawalDisabled: true,
+      ipWhitelistConfigured: true
+    }
+
+    fetchSaveTradingCredentials('account/1', payload, 'credential-command-1', 'reauth-1')
+
+    expect(mocks.put).toHaveBeenCalledWith({
+      url: '/api/v1/trading/accounts/account%2F1/credentials',
+      params: payload,
+      headers: {
+        'Idempotency-Key': 'credential-command-1',
+        'X-Reauth-Token': 'reauth-1'
+      },
       showSuccessMessage: true
     })
   })
