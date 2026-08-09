@@ -761,6 +761,7 @@
     "balance": {
       "equity": "Equity",
       "cash": "Cash balance",
+      "available": "Available",
       "realizedPnl": "Realized PnL",
       "unrealizedPnl": "Unrealized PnL"
     },
@@ -807,6 +808,17 @@
         "verified": "Verified",
         "invalid": "Verification failed",
         "unknown": "Verification unknown"
+      }
+    },
+    "reconciliation": {
+      "label": "Initial account reconciliation",
+      "summary": "{balances} balances · {positions} positions · {orders} open orders · {time}",
+      "status": {
+        "not_applicable": "Not applicable",
+        "pending": "Pending",
+        "matched": "Matched",
+        "mismatch": "Mismatch",
+        "unknown": "Unknown"
       }
     },
     "status": {

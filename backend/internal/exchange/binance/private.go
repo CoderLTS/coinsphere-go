@@ -11,11 +11,13 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"coinsphere/backend/internal/marketdata"
+	"github.com/shopspring/decimal"
 )
 
 const (
@@ -66,6 +68,41 @@ type PrivateClient struct {
 	responseLimit int64
 }
 
+type AccountBalance struct {
+	Asset     string
+	Total     decimal.Decimal
+	Available decimal.Decimal
+}
+
+type AccountPosition struct {
+	Symbol        string
+	PositionSide  string
+	Quantity      decimal.Decimal
+	EntryPrice    decimal.Decimal
+	UnrealizedPnL decimal.Decimal
+}
+
+type OpenOrder struct {
+	Symbol           string
+	ExchangeOrderID  int64
+	ClientOrderID    string
+	Side             string
+	OrderType        string
+	Status           string
+	Price            decimal.Decimal
+	OriginalQuantity decimal.Decimal
+	ExecutedQuantity decimal.Decimal
+	StopPrice        decimal.Decimal
+}
+
+type AccountSnapshot struct {
+	CanTrade   bool
+	Balances   []AccountBalance
+	Positions  []AccountPosition
+	OpenOrders []OpenOrder
+	ObservedAt time.Time
+}
+
 func NewPrivateClient(config PrivateClientConfig) (*PrivateClient, error) {
 	spotURL := config.SpotBaseURL
 	if spotURL == "" {
@@ -111,15 +148,53 @@ func (client *PrivateClient) VerifyAccount(
 	marketType marketdata.MarketType,
 	apiKey, apiSecret string,
 ) error {
+	body, err := client.signedGET(ctx, marketType, accountPath(marketType), apiKey, apiSecret)
+	if err != nil {
+		return err
+	}
+	var account map[string]json.RawMessage
+	if err := json.Unmarshal(body, &account); err != nil || account == nil {
+		return &PrivateError{Kind: PrivateErrorProtocol}
+	}
+	return nil
+}
+
+// SnapshotAccount reads authoritative Testnet state without creating or changing orders.
+func (client *PrivateClient) SnapshotAccount(
+	ctx context.Context,
+	marketType marketdata.MarketType,
+	apiKey, apiSecret string,
+) (AccountSnapshot, error) {
+	accountBody, err := client.signedGET(ctx, marketType, accountPath(marketType), apiKey, apiSecret)
+	if err != nil {
+		return AccountSnapshot{}, err
+	}
+	openOrdersBody, err := client.signedGET(ctx, marketType, openOrdersPath(marketType), apiKey, apiSecret)
+	if err != nil {
+		return AccountSnapshot{}, err
+	}
+	snapshot, err := parseAccountSnapshot(marketType, accountBody, openOrdersBody)
+	if err != nil {
+		return AccountSnapshot{}, &PrivateError{Kind: PrivateErrorProtocol}
+	}
+	snapshot.ObservedAt = client.now().UTC()
+	return snapshot, nil
+}
+
+func (client *PrivateClient) signedGET(
+	ctx context.Context,
+	marketType marketdata.MarketType,
+	requestPath, apiKey, apiSecret string,
+) ([]byte, error) {
 	if client == nil || ctx == nil {
-		return &PrivateError{Kind: PrivateErrorRejected}
+		return nil, &PrivateError{Kind: PrivateErrorRejected}
 	}
 	baseURL, ok := client.baseURLs[marketType]
 	if !ok || apiKey == "" || apiSecret == "" {
-		return &PrivateError{Kind: PrivateErrorAuthentication}
+		return nil, &PrivateError{Kind: PrivateErrorAuthentication}
 	}
 	endpoint := baseURL
-	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + accountPath(marketType)
+	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + requestPath
 	endpoint.RawPath = ""
 	query := url.Values{
 		"recvWindow": {strconv.FormatInt(client.recvWindow.Milliseconds(), 10)},
@@ -132,36 +207,32 @@ func (client *PrivateClient) VerifyAccount(
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
-		return &PrivateError{Kind: PrivateErrorRejected}
+		return nil, &PrivateError{Kind: PrivateErrorRejected}
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("X-MBX-APIKEY", apiKey)
 	response, err := client.http.Do(request)
 	if err != nil {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return nil, ctx.Err()
 		}
-		return &PrivateError{Kind: PrivateErrorUnavailable}
+		return nil, &PrivateError{Kind: PrivateErrorUnavailable}
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, client.responseLimit+1))
 	if err != nil {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return nil, ctx.Err()
 		}
-		return &PrivateError{Kind: PrivateErrorUnavailable}
+		return nil, &PrivateError{Kind: PrivateErrorUnavailable}
 	}
 	if int64(len(body)) > client.responseLimit {
-		return &PrivateError{Kind: PrivateErrorProtocol}
+		return nil, &PrivateError{Kind: PrivateErrorProtocol}
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return classifyPrivateResponse(response, body)
+		return nil, classifyPrivateResponse(response, body)
 	}
-	var account map[string]json.RawMessage
-	if err := json.Unmarshal(body, &account); err != nil || account == nil {
-		return &PrivateError{Kind: PrivateErrorProtocol}
-	}
-	return nil
+	return body, nil
 }
 
 func privateBaseURL(raw, testnetHost string) (url.URL, error) {
@@ -188,6 +259,246 @@ func accountPath(marketType marketdata.MarketType) string {
 		return "/api/v3/account"
 	}
 	return "/fapi/v3/account"
+}
+
+func openOrdersPath(marketType marketdata.MarketType) string {
+	if marketType == marketdata.MarketTypeSpot {
+		return "/api/v3/openOrders"
+	}
+	return "/fapi/v1/openOrders"
+}
+
+func parseAccountSnapshot(marketType marketdata.MarketType, accountBody, openOrdersBody []byte) (AccountSnapshot, error) {
+	snapshot := AccountSnapshot{Balances: []AccountBalance{}, Positions: []AccountPosition{}, OpenOrders: []OpenOrder{}}
+	if marketType == marketdata.MarketTypeSpot {
+		var payload struct {
+			CanTrade bool `json:"canTrade"`
+			Balances []struct {
+				Asset  string `json:"asset"`
+				Free   string `json:"free"`
+				Locked string `json:"locked"`
+			} `json:"balances"`
+		}
+		if err := json.Unmarshal(accountBody, &payload); err != nil || payload.Balances == nil {
+			return AccountSnapshot{}, errors.New("invalid Spot account response")
+		}
+		snapshot.CanTrade = payload.CanTrade
+		for _, balance := range payload.Balances {
+			asset, err := privateToken(balance.Asset, 32)
+			if err != nil {
+				return AccountSnapshot{}, err
+			}
+			available, err := privateDecimal(balance.Free, false)
+			if err != nil {
+				return AccountSnapshot{}, err
+			}
+			locked, err := privateDecimal(balance.Locked, false)
+			if err != nil {
+				return AccountSnapshot{}, err
+			}
+			total := available.Add(locked)
+			if _, err := marketdata.ParseDecimal(total.String()); err != nil {
+				return AccountSnapshot{}, errors.New("invalid Spot balance total")
+			}
+			if !total.IsZero() {
+				snapshot.Balances = append(snapshot.Balances, AccountBalance{Asset: asset, Total: total, Available: available})
+			}
+		}
+	} else if marketType == marketdata.MarketTypeUSDM {
+		var payload struct {
+			CanTrade bool `json:"canTrade"`
+			Assets   []struct {
+				Asset            string `json:"asset"`
+				WalletBalance    string `json:"walletBalance"`
+				AvailableBalance string `json:"availableBalance"`
+			} `json:"assets"`
+			Positions []struct {
+				Symbol           string `json:"symbol"`
+				PositionSide     string `json:"positionSide"`
+				PositionAmount   string `json:"positionAmt"`
+				EntryPrice       string `json:"entryPrice"`
+				UnrealizedProfit string `json:"unrealizedProfit"`
+			} `json:"positions"`
+		}
+		if err := json.Unmarshal(accountBody, &payload); err != nil || payload.Assets == nil || payload.Positions == nil {
+			return AccountSnapshot{}, errors.New("invalid USD-M account response")
+		}
+		snapshot.CanTrade = payload.CanTrade
+		for _, balance := range payload.Assets {
+			asset, err := privateToken(balance.Asset, 32)
+			if err != nil {
+				return AccountSnapshot{}, err
+			}
+			total, err := privateDecimal(balance.WalletBalance, false)
+			if err != nil {
+				return AccountSnapshot{}, err
+			}
+			available, err := privateDecimal(balance.AvailableBalance, true)
+			if err != nil {
+				return AccountSnapshot{}, err
+			}
+			if !total.IsZero() || !available.IsZero() {
+				snapshot.Balances = append(snapshot.Balances, AccountBalance{Asset: asset, Total: total, Available: available})
+			}
+		}
+		for _, position := range payload.Positions {
+			symbol, err := privateToken(position.Symbol, 64)
+			if err != nil {
+				return AccountSnapshot{}, err
+			}
+			positionSide, err := privateEnum(position.PositionSide, 8)
+			if err != nil {
+				return AccountSnapshot{}, err
+			}
+			quantity, err := privateDecimal(position.PositionAmount, true)
+			if err != nil {
+				return AccountSnapshot{}, err
+			}
+			entryPrice, err := privateDecimal(position.EntryPrice, false)
+			if err != nil {
+				return AccountSnapshot{}, err
+			}
+			unrealizedPnL, err := privateDecimal(position.UnrealizedProfit, true)
+			if err != nil {
+				return AccountSnapshot{}, err
+			}
+			if !quantity.IsZero() || !unrealizedPnL.IsZero() || positionSide != "both" {
+				snapshot.Positions = append(snapshot.Positions, AccountPosition{
+					Symbol: symbol, PositionSide: positionSide, Quantity: quantity,
+					EntryPrice: entryPrice, UnrealizedPnL: unrealizedPnL,
+				})
+			}
+		}
+	} else {
+		return AccountSnapshot{}, errors.New("unsupported market")
+	}
+
+	var orders []struct {
+		Symbol           string `json:"symbol"`
+		OrderID          int64  `json:"orderId"`
+		ClientOrderID    string `json:"clientOrderId"`
+		Side             string `json:"side"`
+		OrderType        string `json:"type"`
+		Status           string `json:"status"`
+		Price            string `json:"price"`
+		OriginalQuantity string `json:"origQty"`
+		ExecutedQuantity string `json:"executedQty"`
+		StopPrice        string `json:"stopPrice"`
+	}
+	if err := json.Unmarshal(openOrdersBody, &orders); err != nil || orders == nil {
+		return AccountSnapshot{}, errors.New("invalid open orders response")
+	}
+	for _, order := range orders {
+		symbol, err := privateToken(order.Symbol, 64)
+		if err != nil || order.OrderID <= 0 {
+			return AccountSnapshot{}, errors.New("invalid open order identity")
+		}
+		clientOrderID, err := privateText(order.ClientOrderID, 64)
+		if err != nil {
+			return AccountSnapshot{}, err
+		}
+		side, err := privateEnum(order.Side, 8)
+		if err != nil {
+			return AccountSnapshot{}, err
+		}
+		orderType, err := privateEnum(order.OrderType, 32)
+		if err != nil {
+			return AccountSnapshot{}, err
+		}
+		status, err := privateEnum(order.Status, 32)
+		if err != nil {
+			return AccountSnapshot{}, err
+		}
+		price, err := privateDecimal(order.Price, false)
+		if err != nil {
+			return AccountSnapshot{}, err
+		}
+		originalQuantity, err := privateDecimal(order.OriginalQuantity, false)
+		if err != nil || !originalQuantity.IsPositive() {
+			return AccountSnapshot{}, errors.New("invalid open order quantity")
+		}
+		executedQuantity, err := privateDecimal(order.ExecutedQuantity, false)
+		if err != nil || executedQuantity.GreaterThan(originalQuantity) {
+			return AccountSnapshot{}, errors.New("invalid open order executed quantity")
+		}
+		stopPrice, err := privateDecimal(order.StopPrice, false)
+		if err != nil {
+			return AccountSnapshot{}, err
+		}
+		snapshot.OpenOrders = append(snapshot.OpenOrders, OpenOrder{
+			Symbol: symbol, ExchangeOrderID: order.OrderID, ClientOrderID: clientOrderID,
+			Side: side, OrderType: orderType, Status: status, Price: price,
+			OriginalQuantity: originalQuantity, ExecutedQuantity: executedQuantity, StopPrice: stopPrice,
+		})
+	}
+	sort.Slice(snapshot.Balances, func(i, j int) bool { return snapshot.Balances[i].Asset < snapshot.Balances[j].Asset })
+	sort.Slice(snapshot.Positions, func(i, j int) bool {
+		if snapshot.Positions[i].Symbol == snapshot.Positions[j].Symbol {
+			return snapshot.Positions[i].PositionSide < snapshot.Positions[j].PositionSide
+		}
+		return snapshot.Positions[i].Symbol < snapshot.Positions[j].Symbol
+	})
+	sort.Slice(snapshot.OpenOrders, func(i, j int) bool {
+		if snapshot.OpenOrders[i].Symbol == snapshot.OpenOrders[j].Symbol {
+			return snapshot.OpenOrders[i].ExchangeOrderID < snapshot.OpenOrders[j].ExchangeOrderID
+		}
+		return snapshot.OpenOrders[i].Symbol < snapshot.OpenOrders[j].Symbol
+	})
+	return snapshot, nil
+}
+
+func privateDecimal(value string, allowNegative bool) (decimal.Decimal, error) {
+	if value == "" || value != strings.TrimSpace(value) {
+		return decimal.Zero, errors.New("invalid private decimal")
+	}
+	negative := strings.HasPrefix(value, "-")
+	if negative {
+		if !allowNegative || len(value) == 1 {
+			return decimal.Zero, errors.New("invalid private decimal")
+		}
+		value = value[1:]
+	}
+	parsed, err := marketdata.ParseDecimal(value)
+	if err != nil {
+		return decimal.Zero, errors.New("invalid private decimal")
+	}
+	if negative {
+		parsed = parsed.Neg()
+	}
+	return parsed, nil
+}
+
+func privateToken(value string, limit int) (string, error) {
+	value, err := privateText(value, limit)
+	if err != nil {
+		return "", err
+	}
+	for _, char := range value {
+		if !((char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '_' || char == '-') {
+			return "", errors.New("invalid private token")
+		}
+	}
+	return value, nil
+}
+
+func privateEnum(value string, limit int) (string, error) {
+	value, err := privateToken(value, limit)
+	if err != nil {
+		return "", err
+	}
+	return strings.ToLower(value), nil
+}
+
+func privateText(value string, limit int) (string, error) {
+	if value == "" || value != strings.TrimSpace(value) || len(value) > limit {
+		return "", errors.New("invalid private text")
+	}
+	for _, char := range value {
+		if char < 0x21 || char > 0x7e {
+			return "", errors.New("invalid private text")
+		}
+	}
+	return value, nil
 }
 
 func classifyPrivateResponse(response *http.Response, body []byte) error {

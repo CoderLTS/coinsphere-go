@@ -155,7 +155,8 @@
                 !selectedAccount.risk.complete ||
                 (selectedAccount.environment === 'testnet' &&
                   (!selectedAccount.credentialsConfigured ||
-                    selectedAccount.credentialVerificationStatus !== 'verified'))
+                    selectedAccount.credentialVerificationStatus !== 'verified' ||
+                    selectedAccount.reconciliation.status !== 'matched'))
               "
               @click="resumeAccount"
             >
@@ -186,12 +187,22 @@
         </section>
 
         <section v-if="selectedAccount.environment === 'testnet'" class="credential-strip">
-          <div class="credential-state">
-            <ElIcon :size="20"><Key /></ElIcon>
-            <div>
-              <span>{{ t('trading.credentials.label') }}</span>
-              <strong>{{ credentialStatusLabel }}</strong>
-              <small>{{ formatTime(selectedAccount.credentialsUpdatedAt) }}</small>
+          <div class="credential-summary">
+            <div class="credential-state">
+              <ElIcon :size="20"><Key /></ElIcon>
+              <div>
+                <span>{{ t('trading.credentials.label') }}</span>
+                <strong>{{ credentialStatusLabel }}</strong>
+                <small>{{ formatTime(selectedAccount.credentialsUpdatedAt) }}</small>
+              </div>
+            </div>
+            <div class="credential-state">
+              <ElIcon :size="20"><Refresh /></ElIcon>
+              <div>
+                <span>{{ t('trading.reconciliation.label') }}</span>
+                <strong>{{ reconciliationStatusLabel }}</strong>
+                <small>{{ reconciliationSummary }}</small>
+              </div>
             </div>
           </div>
           <div class="credential-actions">
@@ -203,6 +214,9 @@
               "
             >
               {{ credentialVerificationLabel }}
+            </ElTag>
+            <ElTag size="small" effect="plain" :type="reconciliationStatusType">
+              {{ reconciliationStatusLabel }}
             </ElTag>
             <ElButton :icon="Key" @click="openCredentialDialog">
               {{
@@ -244,6 +258,20 @@
             <strong class="decimal-value" :class="pnlClass(selectedBalance?.unrealizedPnl)">
               {{ balanceValue('unrealizedPnl') }} USDT
             </strong>
+          </div>
+        </section>
+
+        <section
+          v-else-if="selectedTestnetBalances.length"
+          class="balance-strip testnet-balance-strip"
+        >
+          <div v-for="balance in selectedTestnetBalances" :key="balance.asset">
+            <span>{{ balance.asset }}</span>
+            <strong class="decimal-value">{{ balance.totalBalance }}</strong>
+            <small>
+              {{ t('trading.balance.available') }}
+              <span class="decimal-value">{{ balance.availableBalance }}</span>
+            </small>
           </div>
         </section>
 
@@ -643,7 +671,10 @@
     intents: [],
     orders: [],
     positions: [],
-    balances: []
+    balances: [],
+    testnetBalances: [],
+    testnetPositions: [],
+    testnetOpenOrders: []
   })
 
   const createAccountForm = (): AccountFormModel => ({
@@ -695,12 +726,41 @@
   const selectedBalance = computed(
     () => overview.balances.find((balance) => balance.accountId === selectedAccountId.value) || null
   )
-  const selectedPositions = computed(() =>
-    overview.positions.filter((position) => position.accountId === selectedAccountId.value)
+  const selectedTestnetBalances = computed(() =>
+    overview.testnetBalances.filter((balance) => balance.accountId === selectedAccountId.value)
   )
-  const selectedOrders = computed(() =>
-    overview.orders.filter((order) => order.accountId === selectedAccountId.value)
-  )
+  const selectedPositions = computed(() => {
+    if (selectedAccount.value?.environment === 'testnet') {
+      return overview.testnetPositions
+        .filter((position) => position.accountId === selectedAccountId.value)
+        .map((position) => ({
+          symbol: position.symbol,
+          quantity: position.quantity,
+          averageEntryPrice: position.entryPrice,
+          lastPrice: '--',
+          realizedPnl: '--',
+          unrealizedPnl: position.unrealizedPnl,
+          updatedAt: position.observedAt
+        }))
+    }
+    return overview.positions.filter((position) => position.accountId === selectedAccountId.value)
+  })
+  const selectedOrders = computed(() => {
+    if (selectedAccount.value?.environment === 'testnet') {
+      return overview.testnetOpenOrders
+        .filter((order) => order.accountId === selectedAccountId.value)
+        .map((order) => ({
+          symbol: order.symbol,
+          side: order.side,
+          filledQuantity: order.executedQuantity,
+          averagePrice: order.price,
+          status: order.status,
+          clientOrderId: order.clientOrderId,
+          createdAt: order.observedAt
+        }))
+    }
+    return overview.orders.filter((order) => order.accountId === selectedAccountId.value)
+  })
   const selectedIntents = computed(() =>
     overview.intents.filter((intent) => intent.accountId === selectedAccountId.value)
   )
@@ -714,7 +774,9 @@
       !account.automationAuthorized ||
       !account.risk.complete ||
       (account.environment === 'testnet' &&
-        (!account.credentialsConfigured || account.credentialVerificationStatus !== 'verified'))
+        (!account.credentialsConfigured ||
+          account.credentialVerificationStatus !== 'verified' ||
+          account.reconciliation.status !== 'matched'))
     )
   })
   const credentialStatusLabel = computed(() => {
@@ -728,6 +790,27 @@
     if (!account?.credentialsConfigured) return t('trading.credentials.verification.unverified')
     const status = account.credentialVerificationStatus || 'unverified'
     return t(`trading.credentials.verification.${status}`)
+  })
+  const reconciliationStatusLabel = computed(() => {
+    const status = selectedAccount.value?.reconciliation.status || 'pending'
+    return t(`trading.reconciliation.status.${status}`)
+  })
+  const reconciliationStatusType = computed<TagProps['type']>(() => {
+    const status = selectedAccount.value?.reconciliation.status
+    if (status === 'matched') return 'success'
+    if (status === 'mismatch') return 'danger'
+    if (status === 'unknown') return 'warning'
+    return 'info'
+  })
+  const reconciliationSummary = computed(() => {
+    const reconciliation = selectedAccount.value?.reconciliation
+    if (!reconciliation?.lastObservedAt) return formatTime(reconciliation?.lastAttemptedAt)
+    return t('trading.reconciliation.summary', {
+      balances: reconciliation.balanceCount,
+      positions: reconciliation.positionCount,
+      orders: reconciliation.openOrderCount,
+      time: formatTime(reconciliation.lastObservedAt)
+    })
   })
   const whitelistSummary = computed(() => {
     const account = selectedAccount.value
@@ -1156,6 +1239,7 @@
   .account-actions,
   .account-switches,
   .credential-strip,
+  .credential-summary,
   .credential-state,
   .credential-actions,
   .risk-ledger > header {
@@ -1456,6 +1540,12 @@
     border-bottom: 1px solid var(--trading-line);
   }
 
+  .credential-summary {
+    flex-wrap: wrap;
+    gap: 18px;
+    min-width: 0;
+  }
+
   .credential-state {
     gap: 10px;
     min-width: 0;
@@ -1517,7 +1607,8 @@
     }
 
     span,
-    strong {
+    strong,
+    small {
       display: block;
     }
 
@@ -1532,6 +1623,16 @@
       font-size: 15px;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    small {
+      margin-top: 5px;
+      font-size: 11px;
+      color: var(--trading-muted);
+
+      span {
+        display: inline;
+      }
     }
   }
 
@@ -1730,6 +1831,10 @@
     .credential-strip {
       flex-direction: column;
       align-items: stretch;
+    }
+
+    .credential-summary {
+      align-items: flex-start;
     }
 
     .credential-actions {

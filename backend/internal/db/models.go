@@ -248,6 +248,64 @@ type TradingAccountCredential struct {
 
 func (TradingAccountCredential) TableName() string { return "trading_account_credentials" }
 
+// TestnetReconciliation binds one authoritative snapshot to the exact credential version that produced it.
+type TestnetReconciliation struct {
+	AccountID           uuid.UUID  `gorm:"column:account_id;type:uuid;primaryKey"`
+	CredentialUpdatedAt time.Time  `gorm:"column:credential_updated_at"`
+	Status              string     `gorm:"size:16"`
+	ErrorCode           string     `gorm:"column:error_code;size:64"`
+	BalanceCount        int        `gorm:"column:balance_count"`
+	PositionCount       int        `gorm:"column:position_count"`
+	OpenOrderCount      int        `gorm:"column:open_order_count"`
+	LastAttemptedAt     time.Time  `gorm:"column:last_attempted_at"`
+	LastObservedAt      *time.Time `gorm:"column:last_observed_at"`
+	UpdatedAt           time.Time  `gorm:"column:updated_at;autoUpdateTime:false"`
+}
+
+func (TestnetReconciliation) TableName() string { return "testnet_reconciliations" }
+
+type TestnetBalance struct {
+	AccountID           uuid.UUID       `gorm:"column:account_id;type:uuid;primaryKey"`
+	CredentialUpdatedAt time.Time       `gorm:"column:credential_updated_at"`
+	Asset               string          `gorm:"size:32;primaryKey"`
+	TotalBalance        decimal.Decimal `gorm:"column:total_balance;type:numeric(38,18)"`
+	AvailableBalance    decimal.Decimal `gorm:"column:available_balance;type:numeric(38,18)"`
+	ObservedAt          time.Time       `gorm:"column:observed_at"`
+}
+
+func (TestnetBalance) TableName() string { return "testnet_balances" }
+
+type TestnetPosition struct {
+	AccountID           uuid.UUID       `gorm:"column:account_id;type:uuid;primaryKey"`
+	CredentialUpdatedAt time.Time       `gorm:"column:credential_updated_at"`
+	NativeSymbol        string          `gorm:"column:native_symbol;size:64;primaryKey"`
+	PositionSide        string          `gorm:"column:position_side;size:8;primaryKey"`
+	Quantity            decimal.Decimal `gorm:"type:numeric(38,18)"`
+	EntryPrice          decimal.Decimal `gorm:"column:entry_price;type:numeric(38,18)"`
+	UnrealizedPnL       decimal.Decimal `gorm:"column:unrealized_pnl;type:numeric(38,18)"`
+	ObservedAt          time.Time       `gorm:"column:observed_at"`
+}
+
+func (TestnetPosition) TableName() string { return "testnet_positions" }
+
+type TestnetOpenOrder struct {
+	AccountID           uuid.UUID       `gorm:"column:account_id;type:uuid;primaryKey"`
+	CredentialUpdatedAt time.Time       `gorm:"column:credential_updated_at"`
+	NativeSymbol        string          `gorm:"column:native_symbol;size:64;primaryKey"`
+	ExchangeOrderID     int64           `gorm:"column:exchange_order_id;primaryKey"`
+	ClientOrderID       string          `gorm:"column:client_order_id;size:64"`
+	Side                string          `gorm:"size:8"`
+	OrderType           string          `gorm:"column:order_type;size:32"`
+	Status              string          `gorm:"size:32"`
+	Price               decimal.Decimal `gorm:"type:numeric(38,18)"`
+	OriginalQuantity    decimal.Decimal `gorm:"column:original_quantity;type:numeric(38,18)"`
+	ExecutedQuantity    decimal.Decimal `gorm:"column:executed_quantity;type:numeric(38,18)"`
+	StopPrice           decimal.Decimal `gorm:"column:stop_price;type:numeric(38,18)"`
+	ObservedAt          time.Time       `gorm:"column:observed_at"`
+}
+
+func (TestnetOpenOrder) TableName() string { return "testnet_open_orders" }
+
 // TradingAccountInstrument 是账户品种白名单。
 type TradingAccountInstrument struct {
 	AccountID    uuid.UUID `gorm:"column:account_id;type:uuid;primaryKey"`
