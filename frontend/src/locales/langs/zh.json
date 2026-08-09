@@ -870,7 +870,13 @@
     "tabs": {
       "positions": "持仓",
       "orders": "订单",
-      "intents": "交易意图"
+      "intents": "交易意图",
+      "ledger": "权威账本"
+    },
+    "tradeFact": {
+      "fill": "成交",
+      "fee": "手续费",
+      "funding": "资金费"
     },
     "table": {
       "symbol": "标的",
@@ -888,7 +894,11 @@
       "updatedAt": "更新时间",
       "mode": "模式",
       "target": "目标",
-      "reason": "原因"
+      "reason": "原因",
+      "eventType": "事实类型",
+      "amount": "金额",
+      "externalId": "交易所流水号",
+      "occurredAt": "发生时间"
     },
     "dialog": {
       "createTitle": "创建交易账户",

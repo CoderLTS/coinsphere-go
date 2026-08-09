@@ -466,6 +466,55 @@
               </ElTableColumn>
             </ElTable>
           </ElTabPane>
+
+          <ElTabPane
+            v-if="selectedAccount.environment === 'testnet'"
+            :label="`${t('trading.tabs.ledger')} ${selectedTradeFacts.length}`"
+            name="ledger"
+          >
+            <ElTable :data="selectedTradeFacts" :empty-text="t('common.noData')" stripe>
+              <ElTableColumn :label="t('trading.table.eventType')" width="120" align="center">
+                <template #default="{ row }">
+                  <ElTag :type="tradeFactEventType(row.eventType)" effect="plain" size="small">
+                    {{ tradeFactEventLabel(row.eventType) }}
+                  </ElTag>
+                </template>
+              </ElTableColumn>
+              <ElTableColumn prop="symbol" :label="t('trading.table.symbol')" min-width="120" />
+              <ElTableColumn :label="t('trading.table.side')" width="100" align="center">
+                <template #default="{ row }">{{ row.side ? sideLabel(row.side) : '--' }}</template>
+              </ElTableColumn>
+              <ElTableColumn :label="t('trading.table.quantity')" min-width="150" align="right">
+                <template #default="{ row }"
+                  ><span class="decimal-value">{{ row.quantity }}</span></template
+                >
+              </ElTableColumn>
+              <ElTableColumn :label="t('trading.table.averagePrice')" min-width="150" align="right">
+                <template #default="{ row }"
+                  ><span class="decimal-value">{{ row.price }}</span></template
+                >
+              </ElTableColumn>
+              <ElTableColumn :label="t('trading.table.amount')" min-width="150" align="right">
+                <template #default="{ row }"
+                  ><span class="decimal-value">{{ row.amount }} {{ row.asset }}</span></template
+                >
+              </ElTableColumn>
+              <ElTableColumn
+                :label="t('trading.table.externalId')"
+                prop="externalTradeId"
+                min-width="180"
+              >
+                <template #default="{ row }">
+                  <span class="decimal-value">
+                    {{ row.externalTradeId || row.externalTransactionId || '--' }}
+                  </span>
+                </template>
+              </ElTableColumn>
+              <ElTableColumn :label="t('trading.table.occurredAt')" min-width="180">
+                <template #default="{ row }">{{ formatTime(row.occurredAt) }}</template>
+              </ElTableColumn>
+            </ElTable>
+          </ElTabPane>
         </ElTabs>
       </main>
     </div>
@@ -736,7 +785,8 @@
     testnetBalances: [],
     testnetPositions: [],
     testnetOpenOrders: [],
-    testnetOrders: []
+    testnetOrders: [],
+    testnetTradeFacts: []
   })
 
   const createAccountForm = (): AccountFormModel => ({
@@ -876,6 +926,9 @@
   })
   const selectedIntents = computed(() =>
     overview.intents.filter((intent) => intent.accountId === selectedAccountId.value)
+  )
+  const selectedTradeFacts = computed(() =>
+    overview.testnetTradeFacts.filter((fact) => fact.accountId === selectedAccountId.value)
   )
   const automationSwitchDisabled = computed(() => {
     const account = selectedAccount.value
@@ -1323,6 +1376,13 @@
     if (status === 'processing' || status === 'reconciling') return 'warning'
     return 'info'
   }
+  const tradeFactEventLabel = (eventType: string) =>
+    t(`trading.tradeFact.${eventType}` as 'trading.tradeFact.fill')
+  const tradeFactEventType = (eventType: string): TagProps['type'] => {
+    if (eventType === 'fill') return 'success'
+    if (eventType === 'fee') return 'warning'
+    return 'info'
+  }
   const formatTime = (value?: string | null) => {
     if (!value) return '--'
     const date = new Date(value)
@@ -1341,6 +1401,12 @@
 
   onMounted(() => {
     void loadOverview()
+  })
+
+  watch(selectedAccountId, () => {
+    if (selectedAccount.value?.environment !== 'testnet' && activeTab.value === 'ledger') {
+      activeTab.value = 'positions'
+    }
   })
 </script>
 

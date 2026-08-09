@@ -537,6 +537,24 @@ func TestTestnetReconcilerPersistsAndDeduplicatesTradeFacts(t *testing.T) {
 		!funding.Amount.Equal(decimal.RequireFromString("-0.25")) || funding.Asset != "USDT" {
 		t.Fatalf("stored funding fact = %#v", funding)
 	}
+	overview, err := fixture.base.app.GetTradingOverview(context.Background(), fixture.base.owner.ID)
+	if err != nil || len(overview.TestnetTradeFacts) != 3 {
+		t.Fatalf("load Testnet trade fact overview: facts=%#v err=%v", overview.TestnetTradeFacts, err)
+	}
+	if overview.TestnetTradeFacts[0].EventType != "funding" || overview.TestnetTradeFacts[0].Amount != "-0.25" {
+		t.Fatalf("serialized Testnet funding fact = %#v", overview.TestnetTradeFacts[0])
+	}
+	otherOwner := db.SystemUser{Username: "testnet-ledger-other-owner", IsActive: true}
+	if err := fixture.database.Create(&otherOwner).Error; err != nil {
+		t.Fatalf("create other ledger owner: %v", err)
+	}
+	otherOverview, err := fixture.base.app.GetTradingOverview(context.Background(), otherOwner.ID)
+	if err != nil {
+		t.Fatalf("load other owner trading overview: %v", err)
+	}
+	if len(otherOverview.TestnetTradeFacts) != 0 {
+		t.Fatalf("other owner saw Testnet trade facts: %#v", otherOverview.TestnetTradeFacts)
+	}
 
 	ageTestnetReconciliation(t, fixture.database, fixture.account.ID)
 	processed, retryAfter, err = fixture.reconciler.ProcessNext(context.Background())
@@ -673,6 +691,7 @@ func TestTestnetReconcilerRejectsStaleOrderVersionBeforeAppendingFacts(t *testin
 
 type testnetTradeFactFixture struct {
 	database   *gorm.DB
+	base       *paperExecutorFixture
 	account    db.TradingAccount
 	credential db.TradingAccountCredential
 	intent     db.TradingIntent
@@ -726,7 +745,7 @@ func newTestnetTradeFactFixture(t *testing.T, serverURL string) testnetTradeFact
 		t.Fatalf("create Testnet ledger reconciler: %v", err)
 	}
 	return testnetTradeFactFixture{
-		database: executorFixture.database, account: account, credential: executorFixture.credential,
+		database: executorFixture.database, base: executorFixture.base, account: account, credential: executorFixture.credential,
 		intent: intent, order: order, reconciler: reconciler,
 	}
 }

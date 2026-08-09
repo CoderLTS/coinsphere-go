@@ -870,7 +870,13 @@
     "tabs": {
       "positions": "Positions",
       "orders": "Orders",
-      "intents": "Intents"
+      "intents": "Intents",
+      "ledger": "Authoritative ledger"
+    },
+    "tradeFact": {
+      "fill": "Fill",
+      "fee": "Fee",
+      "funding": "Funding"
     },
     "table": {
       "symbol": "Symbol",
@@ -888,7 +894,11 @@
       "updatedAt": "Updated at",
       "mode": "Mode",
       "target": "Target",
-      "reason": "Reason"
+      "reason": "Reason",
+      "eventType": "Fact type",
+      "amount": "Amount",
+      "externalId": "Exchange ID",
+      "occurredAt": "Occurred at"
     },
     "dialog": {
       "createTitle": "Create trading account",

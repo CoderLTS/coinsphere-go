@@ -190,6 +190,30 @@ export interface TestnetOrder {
   updatedAt: string
 }
 
+export interface TestnetTradeFact {
+  id: string
+  accountId: string
+  credentialUpdatedAt: string
+  orderId: string | null
+  intentId: string | null
+  eventType: 'fill' | 'fee' | 'funding'
+  symbol: string
+  externalTradeId: string | null
+  externalTransactionId: string
+  side: string
+  positionSide: string
+  quantity: string
+  price: string
+  quoteQuantity: string
+  amount: string
+  asset: string
+  realizedPnl: string
+  buyer: boolean
+  maker: boolean
+  occurredAt: string
+  createdAt: string
+}
+
 export interface TradingOverview {
   control: TradingControl
   accounts: TradingAccount[]
@@ -201,6 +225,7 @@ export interface TradingOverview {
   testnetPositions: TestnetPosition[]
   testnetOpenOrders: TestnetOpenOrder[]
   testnetOrders: TestnetOrder[]
+  testnetTradeFacts: TestnetTradeFact[]
 }
 
 export interface TradingRiskPayload {
