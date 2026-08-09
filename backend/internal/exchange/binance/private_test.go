@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -101,7 +102,7 @@ func TestPrivateClientSnapshotsSpotAndUSDMAccounts(t *testing.T) {
 		case "/fapi/v3/account":
 			_, _ = response.Write([]byte(`{"canTrade":true,"assets":[{"asset":"USDT","walletBalance":"1200","availableBalance":"1100"},{"asset":"ZERO","walletBalance":"0","availableBalance":"0"}],"positions":[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"-0.02","entryPrice":"51000","unrealizedProfit":"-4.5"},{"symbol":"ETHUSDT","positionSide":"BOTH","positionAmt":"0","entryPrice":"0","unrealizedProfit":"0"}]}`))
 		case "/fapi/v1/openOrders":
-			_, _ = response.Write([]byte(`[{"symbol":"BTCUSDT","orderId":42,"clientOrderId":"external-usdm","side":"SELL","type":"STOP_MARKET","status":"NEW","price":"0","origQty":"0.02","executedQty":"0","stopPrice":"52000"}]`))
+			_, _ = response.Write([]byte(`[{"symbol":"BTCUSDT","orderId":42,"clientOrderId":"external-usdm","side":"SELL","type":"STOP_MARKET","status":"NEW","price":"0","origQty":"0","executedQty":"0","stopPrice":"52000","closePosition":true,"reduceOnly":false,"workingType":"MARK_PRICE"}]`))
 		default:
 			t.Errorf("unexpected snapshot path %q", request.URL.Path)
 			response.WriteHeader(http.StatusNotFound)
@@ -134,7 +135,8 @@ func TestPrivateClientSnapshotsSpotAndUSDMAccounts(t *testing.T) {
 		len(usdm.Positions) != 1 || usdm.Positions[0].PositionSide != "both" ||
 		usdm.Positions[0].Quantity.String() != "-0.02" || usdm.Positions[0].UnrealizedPnL.String() != "-4.5" ||
 		len(usdm.OpenOrders) != 1 || usdm.OpenOrders[0].OrderType != "stop_market" ||
-		usdm.OpenOrders[0].StopPrice.String() != "52000" {
+		usdm.OpenOrders[0].StopPrice.String() != "52000" || !usdm.OpenOrders[0].OriginalQuantity.IsZero() ||
+		!usdm.OpenOrders[0].ClosePosition || usdm.OpenOrders[0].ReduceOnly || usdm.OpenOrders[0].WorkingType != "mark_price" {
 		t.Fatalf("USD-M snapshot = %#v", usdm)
 	}
 }
@@ -228,6 +230,69 @@ func TestPrivateClientPlacesAndQueriesDeterministicMarketOrders(t *testing.T) {
 	} {
 		if requestCount[key] != 1 {
 			t.Errorf("request count for %s = %d", key, requestCount[key])
+		}
+	}
+}
+
+func TestPrivateClientPlacesAndCancelsSpotAndUSDMProtectiveOrders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		query := request.URL.Query()
+		if query.Get("signature") == "" || request.Header.Get("X-MBX-APIKEY") != "key" {
+			t.Error("protective order request was not signed")
+		}
+		status := "NEW"
+		if request.Method == http.MethodDelete {
+			status = "CANCELED"
+			if query.Get("origClientOrderId") != "csp019d-order" || query.Get("newClientOrderId") != "" {
+				t.Errorf("protective cancellation query = %v", query)
+			}
+		} else if request.URL.Path == "/api/v3/order" {
+			if query.Get("type") != "STOP_LOSS" || query.Get("quantity") != "0.01" ||
+				query.Get("stopPrice") != "49000" || query.Get("closePosition") != "" ||
+				query.Get("workingType") != "" || query.Get("reduceOnly") != "" {
+				t.Errorf("Spot protective order query = %v", query)
+			}
+		} else {
+			if query.Get("type") != "STOP_MARKET" || query.Get("quantity") != "" ||
+				query.Get("stopPrice") != "49000" || query.Get("closePosition") != "true" ||
+				query.Get("workingType") != "MARK_PRICE" || query.Get("reduceOnly") != "" {
+				t.Errorf("USD-M protective order query = %v", query)
+			}
+		}
+		response.Header().Set("Content-Type", "application/json")
+		if request.URL.Path == "/api/v3/order" {
+			_, _ = fmt.Fprintf(response, `{"symbol":"BTCUSDT","orderId":51,"clientOrderId":"csp019d-order","side":"SELL","type":"STOP_LOSS","status":%q,"origQty":"0.01","executedQty":"0","cummulativeQuoteQty":"0","stopPrice":"49000"}`, status)
+			return
+		}
+		_, _ = fmt.Fprintf(response, `{"symbol":"BTCUSDT","orderId":52,"clientOrderId":"csp019d-order","side":"SELL","type":"STOP_MARKET","status":%q,"origQty":"0","executedQty":"0","cumQuote":"0","avgPrice":"0","stopPrice":"49000","closePosition":true,"reduceOnly":false,"workingType":"MARK_PRICE"}`, status)
+	}))
+	defer server.Close()
+	client, err := NewPrivateClient(PrivateClientConfig{SpotBaseURL: server.URL, USDMBaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("create protective order client: %v", err)
+	}
+
+	for _, test := range []struct {
+		market   marketdata.MarketType
+		quantity decimal.Decimal
+		orderID  int64
+	}{
+		{market: marketdata.MarketTypeSpot, quantity: decimal.RequireFromString("0.01"), orderID: 51},
+		{market: marketdata.MarketTypeUSDM, quantity: decimal.Zero, orderID: 52},
+	} {
+		placed, err := client.PlaceProtectiveOrder(
+			context.Background(), test.market, "key", "secret", "BTCUSDT", "csp019d-order", "sell",
+			test.quantity, decimal.NewFromInt(49_000),
+		)
+		if err != nil || placed.ExchangeOrderID != test.orderID || placed.Status != "new" ||
+			!placed.StopPrice.Equal(decimal.NewFromInt(49_000)) {
+			t.Fatalf("place %s protective order = %#v, %v", test.market, placed, err)
+		}
+		canceled, err := client.CancelOrder(
+			context.Background(), test.market, "key", "secret", "BTCUSDT", "csp019d-order",
+		)
+		if err != nil || canceled.ExchangeOrderID != test.orderID || canceled.Status != "canceled" {
+			t.Fatalf("cancel %s protective order = %#v, %v", test.market, canceled, err)
 		}
 	}
 }

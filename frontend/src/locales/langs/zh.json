@@ -843,6 +843,22 @@
       "rejected": "已拒绝",
       "expired": "已过期"
     },
+    "orderPurpose": {
+      "rebalance": "调仓",
+      "protection": "止损保护",
+      "flatten": "紧急平仓",
+      "external": "外部订单"
+    },
+    "orderType": {
+      "market": "市价单",
+      "limit": "限价单",
+      "stop_loss": "止损市价单",
+      "stop_market": "止损市价单"
+    },
+    "orderFlag": {
+      "closePosition": "全仓平仓",
+      "reduceOnly": "只减仓"
+    },
     "intent": {
       "pending": "待处理",
       "processing": "处理中",
@@ -862,6 +878,9 @@
       "entryPrice": "入场价",
       "lastPrice": "最新价",
       "averagePrice": "成交均价",
+      "purpose": "用途",
+      "orderType": "订单类型",
+      "stopPrice": "触发价",
       "side": "方向",
       "status": "状态",
       "clientOrderId": "客户端订单号",

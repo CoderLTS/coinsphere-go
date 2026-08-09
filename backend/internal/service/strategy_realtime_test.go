@@ -43,6 +43,22 @@ func TestStrategyInstanceValidationDefaultsAndBoundaries(t *testing.T) {
 	if validated.ParametersJSON != `{"threshold":"0.2500"}` {
 		t.Fatalf("normalized parameters = %s", validated.ParametersJSON)
 	}
+	testnet, err := validateStrategyInstancePayload(StrategyInstanceCreatePayload{
+		Name: "testnet protected", Mode: "manual", Environment: "testnet",
+		TradingAccountID: "019d4000-0000-7000-8000-000000000002",
+		AllocationUSDT:   "1000", StopLossRatio: "0.0500",
+		Parameters: map[string]json.RawMessage{"threshold": json.RawMessage(`"0.2500"`)},
+	}, version)
+	if err != nil {
+		t.Fatalf("validate protected Testnet instance: %v", err)
+	}
+	if testnet.StopLossRatio == nil || testnet.StopLossRatio.String() != "0.05" {
+		t.Fatalf("normalized Testnet stop loss = %#v", testnet.StopLossRatio)
+	}
+	view := serializeStrategyInstance(db.StrategyInstance{StopLossRatio: testnet.StopLossRatio})
+	if view.StopLossRatio == nil || *view.StopLossRatio != "0.05" {
+		t.Fatalf("serialized Testnet stop loss = %#v", view.StopLossRatio)
+	}
 
 	invalid := []StrategyInstanceCreatePayload{
 		{Name: "", Mode: "signal_only"},
@@ -50,6 +66,10 @@ func TestStrategyInstanceValidationDefaultsAndBoundaries(t *testing.T) {
 		{Name: "ok", Environment: "sandbox"},
 		{Name: "ok", Parameters: map[string]json.RawMessage{"unknown": json.RawMessage(`1`)}},
 		{Name: "ok", Parameters: map[string]json.RawMessage{"threshold": json.RawMessage(`2`)}},
+		{Name: "missing stop", Mode: "manual", Environment: "testnet", TradingAccountID: "019d4000-0000-7000-8000-000000000002", AllocationUSDT: "1000"},
+		{Name: "zero stop", Mode: "manual", Environment: "testnet", TradingAccountID: "019d4000-0000-7000-8000-000000000002", AllocationUSDT: "1000", StopLossRatio: "0"},
+		{Name: "full stop", Mode: "manual", Environment: "testnet", TradingAccountID: "019d4000-0000-7000-8000-000000000002", AllocationUSDT: "1000", StopLossRatio: "1"},
+		{Name: "paper stop", Mode: "manual", Environment: "paper", TradingAccountID: "019d4000-0000-7000-8000-000000000002", AllocationUSDT: "1000", StopLossRatio: "0.05"},
 	}
 	for _, payload := range invalid {
 		if _, err := validateStrategyInstancePayload(payload, version); !errors.Is(err, ErrInvalidStrategyRequest) {

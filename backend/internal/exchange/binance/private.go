@@ -94,6 +94,9 @@ type OpenOrder struct {
 	OriginalQuantity decimal.Decimal
 	ExecutedQuantity decimal.Decimal
 	StopPrice        decimal.Decimal
+	ClosePosition    bool
+	ReduceOnly       bool
+	WorkingType      string
 }
 
 type OrderResult struct {
@@ -107,6 +110,10 @@ type OrderResult struct {
 	ExecutedQuantity        decimal.Decimal
 	CumulativeQuoteQuantity decimal.Decimal
 	AveragePrice            decimal.Decimal
+	StopPrice               decimal.Decimal
+	ClosePosition           bool
+	ReduceOnly              bool
+	WorkingType             string
 	ObservedAt              time.Time
 }
 
@@ -251,6 +258,76 @@ func (client *PrivateClient) PlaceMarketOrder(
 	return client.parseOrderResult(body)
 }
 
+// PlaceProtectiveOrder creates a Spot quantity stop or a USD-M close-position stop.
+func (client *PrivateClient) PlaceProtectiveOrder(
+	ctx context.Context,
+	marketType marketdata.MarketType,
+	apiKey, apiSecret, symbol, clientOrderID, side string,
+	quantity, stopPrice decimal.Decimal,
+) (OrderResult, error) {
+	symbol, clientOrderID, err := privateOrderIdentity(symbol, clientOrderID)
+	if err != nil || (side != "buy" && side != "sell") || !stopPrice.IsPositive() {
+		return OrderResult{}, &PrivateError{Kind: PrivateErrorRejected}
+	}
+	if _, err := marketdata.ParseDecimal(stopPrice.String()); err != nil {
+		return OrderResult{}, &PrivateError{Kind: PrivateErrorRejected}
+	}
+	parameters := url.Values{
+		"symbol":           {symbol},
+		"side":             {strings.ToUpper(side)},
+		"stopPrice":        {stopPrice.String()},
+		"newClientOrderId": {clientOrderID},
+		"newOrderRespType": {"RESULT"},
+	}
+	switch marketType {
+	case marketdata.MarketTypeSpot:
+		if !quantity.IsPositive() {
+			return OrderResult{}, &PrivateError{Kind: PrivateErrorRejected}
+		}
+		if _, err := marketdata.ParseDecimal(quantity.String()); err != nil {
+			return OrderResult{}, &PrivateError{Kind: PrivateErrorRejected}
+		}
+		parameters.Set("type", "STOP_LOSS")
+		parameters.Set("quantity", quantity.String())
+	case marketdata.MarketTypeUSDM:
+		if !quantity.IsZero() {
+			return OrderResult{}, &PrivateError{Kind: PrivateErrorRejected}
+		}
+		parameters.Set("type", "STOP_MARKET")
+		parameters.Set("closePosition", "true")
+		parameters.Set("workingType", "MARK_PRICE")
+	default:
+		return OrderResult{}, &PrivateError{Kind: PrivateErrorRejected}
+	}
+	body, err := client.signedRequest(
+		ctx, marketType, http.MethodPost, orderPath(marketType), parameters, apiKey, apiSecret,
+	)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	return client.parseOrderResult(body)
+}
+
+// CancelOrder cancels one deterministic order by its original client order ID.
+func (client *PrivateClient) CancelOrder(
+	ctx context.Context,
+	marketType marketdata.MarketType,
+	apiKey, apiSecret, symbol, clientOrderID string,
+) (OrderResult, error) {
+	symbol, clientOrderID, err := privateOrderIdentity(symbol, clientOrderID)
+	if err != nil {
+		return OrderResult{}, &PrivateError{Kind: PrivateErrorRejected}
+	}
+	body, err := client.signedRequest(ctx, marketType, http.MethodDelete, orderPath(marketType), url.Values{
+		"symbol":            {symbol},
+		"origClientOrderId": {clientOrderID},
+	}, apiKey, apiSecret)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	return client.parseOrderResult(body)
+}
+
 func (client *PrivateClient) signedGET(
 	ctx context.Context,
 	marketType marketdata.MarketType,
@@ -382,6 +459,10 @@ func (client *PrivateClient) parseOrderResult(body []byte) (OrderResult, error) 
 		CumulativeQuoteQuantity string `json:"cummulativeQuoteQty"`
 		CumQuote                string `json:"cumQuote"`
 		AveragePrice            string `json:"avgPrice"`
+		StopPrice               string `json:"stopPrice"`
+		ClosePosition           bool   `json:"closePosition"`
+		ReduceOnly              bool   `json:"reduceOnly"`
+		WorkingType             string `json:"workingType"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil || payload.OrderID <= 0 {
 		return OrderResult{}, &PrivateError{Kind: PrivateErrorProtocol}
@@ -407,11 +488,13 @@ func (client *PrivateClient) parseOrderResult(body []byte) (OrderResult, error) 
 		return OrderResult{}, &PrivateError{Kind: PrivateErrorProtocol}
 	}
 	originalQuantity, err := privateDecimal(payload.OriginalQuantity, false)
-	if err != nil || !originalQuantity.IsPositive() {
+	closePositionOrder := payload.ClosePosition && orderType == "stop_market"
+	if err != nil || (!closePositionOrder && !originalQuantity.IsPositive()) ||
+		(closePositionOrder && !originalQuantity.IsZero()) {
 		return OrderResult{}, &PrivateError{Kind: PrivateErrorProtocol}
 	}
 	executedQuantity, err := privateDecimal(payload.ExecutedQuantity, false)
-	if err != nil || executedQuantity.GreaterThan(originalQuantity) {
+	if err != nil || (!closePositionOrder && executedQuantity.GreaterThan(originalQuantity)) {
 		return OrderResult{}, &PrivateError{Kind: PrivateErrorProtocol}
 	}
 	cumulativeQuoteRaw := payload.CumulativeQuoteQuantity
@@ -441,11 +524,26 @@ func (client *PrivateClient) parseOrderResult(body []byte) (OrderResult, error) 
 		(executedQuantity.IsPositive() && (!cumulativeQuote.IsPositive() || !averagePrice.IsPositive())) {
 		return OrderResult{}, &PrivateError{Kind: PrivateErrorProtocol}
 	}
+	stopPrice := decimal.Zero
+	if payload.StopPrice != "" {
+		stopPrice, err = privateDecimal(payload.StopPrice, false)
+		if err != nil {
+			return OrderResult{}, &PrivateError{Kind: PrivateErrorProtocol}
+		}
+	}
+	workingType := ""
+	if payload.WorkingType != "" {
+		workingType, err = privateEnum(payload.WorkingType, 24)
+		if err != nil {
+			return OrderResult{}, &PrivateError{Kind: PrivateErrorProtocol}
+		}
+	}
 	return OrderResult{
 		Symbol: symbol, ExchangeOrderID: payload.OrderID, ClientOrderID: clientOrderID,
 		Side: side, OrderType: orderType, Status: status, OriginalQuantity: originalQuantity,
 		ExecutedQuantity: executedQuantity, CumulativeQuoteQuantity: cumulativeQuote,
-		AveragePrice: averagePrice, ObservedAt: client.now().UTC(),
+		AveragePrice: averagePrice, StopPrice: stopPrice, ClosePosition: payload.ClosePosition,
+		ReduceOnly: payload.ReduceOnly, WorkingType: workingType, ObservedAt: client.now().UTC(),
 	}, nil
 }
 
@@ -565,6 +663,9 @@ func parseAccountSnapshot(marketType marketdata.MarketType, accountBody, openOrd
 		OriginalQuantity string `json:"origQty"`
 		ExecutedQuantity string `json:"executedQty"`
 		StopPrice        string `json:"stopPrice"`
+		ClosePosition    bool   `json:"closePosition"`
+		ReduceOnly       bool   `json:"reduceOnly"`
+		WorkingType      string `json:"workingType"`
 	}
 	if err := json.Unmarshal(openOrdersBody, &orders); err != nil || orders == nil {
 		return AccountSnapshot{}, errors.New("invalid open orders response")
@@ -595,7 +696,8 @@ func parseAccountSnapshot(marketType marketdata.MarketType, accountBody, openOrd
 			return AccountSnapshot{}, err
 		}
 		originalQuantity, err := privateDecimal(order.OriginalQuantity, false)
-		if err != nil || !originalQuantity.IsPositive() {
+		if err != nil || (order.ClosePosition && !originalQuantity.IsZero()) ||
+			(!order.ClosePosition && !originalQuantity.IsPositive()) {
 			return AccountSnapshot{}, errors.New("invalid open order quantity")
 		}
 		executedQuantity, err := privateDecimal(order.ExecutedQuantity, false)
@@ -606,10 +708,18 @@ func parseAccountSnapshot(marketType marketdata.MarketType, accountBody, openOrd
 		if err != nil {
 			return AccountSnapshot{}, err
 		}
+		workingType := ""
+		if order.WorkingType != "" {
+			workingType, err = privateEnum(order.WorkingType, 24)
+			if err != nil {
+				return AccountSnapshot{}, err
+			}
+		}
 		snapshot.OpenOrders = append(snapshot.OpenOrders, OpenOrder{
 			Symbol: symbol, ExchangeOrderID: order.OrderID, ClientOrderID: clientOrderID,
 			Side: side, OrderType: orderType, Status: status, Price: price,
 			OriginalQuantity: originalQuantity, ExecutedQuantity: executedQuantity, StopPrice: stopPrice,
+			ClosePosition: order.ClosePosition, ReduceOnly: order.ReduceOnly, WorkingType: workingType,
 		})
 	}
 	sort.Slice(snapshot.Balances, func(i, j int) bool { return snapshot.Balances[i].Asset < snapshot.Balances[j].Asset })

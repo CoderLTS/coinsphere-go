@@ -101,6 +101,8 @@ Testnet 私有访问默认关闭。显式启用后，只有 Go Executor 会解�
 
 凭据验证成功后，Executor 把余额、USD-M 仓位和开放订单写入绑定当前凭据版本的独立 Testnet 投影。不可交易权限、开放订单、非白名单资产、Spot 既有持仓、USD-M 既有仓位或双向持仓模式都会形成固定 `mismatch`；外部协议或网络失败形成 `unknown`。只有 `matched` 允许用户手工恢复账户，后台对账不会自动恢复账户、启用自动化、修改外部订单或创建交易意图；凭据或风险白名单变化会清空旧投影并重新暂停账户。
 
-首次对账 `matched`、账户手工恢复且适用风控与授权均通过后，Executor 才会按账户串行领取 Testnet 意图。每个主市价单使用意图生成的确定性 `clientOrderId`；提交前持久化 `prepared`，进程恢复或响应未知时先用同一 ID 查询，只有交易所明确返回不存在才允许重试。HTTP 拒单也先进入 `unknown` 并查询，避免把重复客户端订单号误判为未成交；外部请求不占用数据库事务，返回结果仅在账户与凭据版本仍有效时写入。USD-M 减仓携带 `reduceOnly=true`，任一协议、状态或风险差异都会保留未知态或暂停账户。
+首次对账 `matched`、账户手工恢复且适用风控与授权均通过后，Executor 才会按账户串行领取 Testnet 意图。可执行 Testnet 策略实例必须提供 `stopLossRatio` 十进制字符串，且满足 `0 < stopLossRatio < 1`。每个主市价单使用意图生成的确定性 `clientOrderId`；提交前持久化 `prepared`，进程恢复或响应未知时先用同一 ID 查询，只有交易所明确返回不存在才允许重试。HTTP 拒单也先进入 `unknown` 并查询，避免把重复客户端订单号误判为未成交；外部请求不占用数据库事务，返回结果仅在账户与凭据版本仍有效时写入。USD-M 减仓携带 `reduceOnly=true`，任一协议、状态或风险差异都会保留未知态或暂停账户。
 
-保护单、未知外部订单归属恢复以及成交、费用和资金费的持续权威对账仍未交付。生产继续保持 Testnet 私有能力关闭；后续晋级遵守 [ADR-0010](../architecture/decisions/0010-execution-risk-events.md) 并由用户手工放行。
+主订单成交后，Executor 必须先建立或替换保护单，才能完成 Testnet 意图。Spot 使用带数量的 `STOP_LOSS`，USD-M 使用 `STOP_MARKET + closePosition + MARK_PRICE`；子订单同样先持久化并按确定性 `clientOrderId` 查询恢复。保护单无法确认时，账户暂停、策略实例关闭、站内通知写入，并尝试只减仓紧急平仓。
+
+未知外部订单归属恢复以及成交、费用和资金费的持续权威对账仍未交付。生产继续保持 Testnet 私有能力关闭；后续晋级遵守 [ADR-0010](../architecture/decisions/0010-execution-risk-events.md) 并由用户手工放行。
