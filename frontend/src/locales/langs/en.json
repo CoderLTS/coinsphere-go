@@ -226,6 +226,10 @@
       "userCenter": "User Center",
       "menu": "Menu Manage"
     },
+    "trading": {
+      "title": "Trading",
+      "overview": "Paper Accounts"
+    },
     "scheduler": {
       "title": "Scheduler",
       "overview": "Task Overview",
@@ -728,6 +732,127 @@
     "guest": {
       "title": "Guest Mode",
       "description": "You are currently browsing as a guest. Sign in to access scheduler, data management, and system pages."
+    }
+  },
+  "trading": {
+    "context": "PAPER / UTC",
+    "title": "Paper Trading Workbench",
+    "control": {
+      "label": "Global trading control",
+      "running": "Released",
+      "stopped": "Emergency stop enabled",
+      "updatedAt": "Last updated",
+      "stop": "Enable stop",
+      "release": "Release stop",
+      "stopTitle": "Enable global emergency stop",
+      "reasonPlaceholder": "Enter the emergency-stop reason"
+    },
+    "accounts": {
+      "title": "Paper accounts",
+      "empty": "No Paper accounts yet",
+      "create": "Create account",
+      "select": "Select account",
+      "resume": "Resume account"
+    },
+    "automation": {
+      "authorization": "Automation authorization",
+      "accountSwitch": "Account automation"
+    },
+    "balance": {
+      "equity": "Equity",
+      "cash": "Cash balance",
+      "realizedPnl": "Realized PnL",
+      "unrealizedPnl": "Unrealized PnL"
+    },
+    "risk": {
+      "title": "Risk limits",
+      "complete": "Complete limits",
+      "incomplete": "Incomplete limits",
+      "edit": "Edit risk limits",
+      "noInstruments": "No instruments configured",
+      "maxTotal": "Total notional",
+      "maxSymbol": "Symbol notional",
+      "maxOrder": "Order notional",
+      "maxDailyLoss": "Daily loss",
+      "maxDrawdown": "Maximum drawdown",
+      "maxQuoteAge": "Maximum quote age",
+      "leverage": "Leverage"
+    },
+    "market": {
+      "spot": "Spot",
+      "usdM": "USD-M futures"
+    },
+    "status": {
+      "active": "Active",
+      "paused": "Paused"
+    },
+    "side": {
+      "buy": "Buy",
+      "sell": "Sell"
+    },
+    "mode": {
+      "auto": "Automatic",
+      "manual": "Manual"
+    },
+    "order": {
+      "filled": "Filled"
+    },
+    "intent": {
+      "pending": "Pending",
+      "processing": "Processing",
+      "executed": "Executed",
+      "blocked": "Blocked",
+      "failed": "Failed"
+    },
+    "tabs": {
+      "positions": "Positions",
+      "orders": "Orders",
+      "intents": "Intents"
+    },
+    "table": {
+      "symbol": "Symbol",
+      "quantity": "Quantity",
+      "entryPrice": "Entry price",
+      "lastPrice": "Last price",
+      "averagePrice": "Average price",
+      "side": "Side",
+      "status": "Status",
+      "clientOrderId": "Client order ID",
+      "createdAt": "Created at",
+      "updatedAt": "Updated at",
+      "mode": "Mode",
+      "target": "Target",
+      "reason": "Reason"
+    },
+    "dialog": {
+      "createTitle": "Create Paper account",
+      "riskTitle": "Edit risk limits",
+      "create": "Create account",
+      "saveRisk": "Save risk limits"
+    },
+    "form": {
+      "name": "Account name",
+      "market": "Market",
+      "initialBalance": "Initial balance",
+      "feeRate": "Fee rate",
+      "instruments": "Instrument allowlist"
+    },
+    "validation": {
+      "name": "Enter an account name",
+      "instruments": "Select at least one instrument",
+      "positiveDecimal": "Enter a positive decimal",
+      "feeRate": "Enter a fee rate between 0 and 0.01",
+      "reason": "Enter a reason"
+    },
+    "reauth": {
+      "message": "Enter your current password for five-minute re-authentication",
+      "password": "Current password",
+      "required": "Enter your current password",
+      "riskTitle": "Change risk limits",
+      "releaseTitle": "Release global emergency stop",
+      "resumeTitle": "Resume Paper account",
+      "automationTitle": "Enable account automation",
+      "authorizationTitle": "Change automation authorization"
     }
   },
   "scheduler": {

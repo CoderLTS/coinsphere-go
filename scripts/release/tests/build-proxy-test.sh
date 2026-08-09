@@ -55,7 +55,10 @@ if [[ ${1:-} == buildx && ${2:-} == build ]]; then
     mkdir -p "$destination"
     case "$target" in
       binaries)
-        touch "$destination/coinsphere-server" "$destination/coinsphere-migrate"
+        touch \
+          "$destination/coinsphere-server" \
+          "$destination/coinsphere-migrate" \
+          "$destination/coinsphere-executor"
         ;;
       assets)
         touch \

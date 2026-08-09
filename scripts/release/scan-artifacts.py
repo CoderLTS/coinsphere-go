@@ -181,9 +181,10 @@ def sensitive_path(path, kind, version):
     if kind == "docker" and parts in (
         [f"coinsphere-{version}-docker".casefold(), "runtime.env.example"],
         [f"coinsphere-{version}-docker".casefold(), "worker-runtime.env.example"],
+        [f"coinsphere-{version}-docker".casefold(), "executor-runtime.env.example"],
     ):
         return None
-    if basename in {"runtime.env.example", "worker-runtime.env.example"}:
+    if basename in {"runtime.env.example", "worker-runtime.env.example", "executor-runtime.env.example"}:
         return "运行时 env"
     if (
         basename.startswith(".env")
@@ -251,6 +252,7 @@ def check_archive_inventory(kind, files, directories, version):
             f"{root}/deploy.sh",
             f"{root}/runtime.env.example",
             f"{root}/worker-runtime.env.example",
+            f"{root}/executor-runtime.env.example",
         }
         if files != expected or any(directory != root for directory in directories):
             raise ScanError("Docker 归档内部文件清单不匹配")
@@ -259,6 +261,7 @@ def check_archive_inventory(kind, files, directories, version):
     executable_suffix = ".exe" if kind == "windows-x86" else ""
     fixed = {
         f"{root}/README.md",
+        f"{root}/coinsphere-executor{executable_suffix}",
         f"{root}/coinsphere-migrate{executable_suffix}",
         f"{root}/coinsphere-server{executable_suffix}",
         f"{root}/config.yml",
@@ -431,7 +434,9 @@ def scan_zip(path, kind, version):
             member_label = f"{label}!{normalized}"
             if (
                 kind == "linux-amd64"
-                and normalized.endswith(("/coinsphere-server", "/coinsphere-migrate"))
+                and normalized.endswith(
+                    ("/coinsphere-server", "/coinsphere-migrate", "/coinsphere-executor")
+                )
                 and not mode & 0o111
             ):
                 raise ScanError(f"{member_label} 缺少执行权限")
@@ -618,7 +623,7 @@ def scan_tar(path, kind, version):
                 if (
                     kind == "linux-amd64"
                     and normalized.endswith(
-                        ("/coinsphere-server", "/coinsphere-migrate")
+                        ("/coinsphere-server", "/coinsphere-migrate", "/coinsphere-executor")
                     )
                     and not member.mode & 0o111
                 ):

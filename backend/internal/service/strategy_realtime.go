@@ -10,6 +10,7 @@ import (
 	"coinsphere/backend/internal/db"
 	"coinsphere/backend/internal/marketdata"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -23,6 +24,8 @@ var (
 
 type StrategyInstanceCreatePayload struct {
 	StrategyVersionID string                     `json:"strategyVersionId"`
+	TradingAccountID  string                     `json:"tradingAccountId"`
+	AllocationUSDT    string                     `json:"allocationUsdt"`
 	Name              string                     `json:"name"`
 	Mode              string                     `json:"mode"`
 	Environment       string                     `json:"environment"`
@@ -33,6 +36,8 @@ type StrategyInstanceView struct {
 	ID                string          `json:"id"`
 	OwnerUserID       int64           `json:"ownerUserId"`
 	StrategyVersionID string          `json:"strategyVersionId"`
+	TradingAccountID  *string         `json:"tradingAccountId"`
+	AllocationUSDT    *string         `json:"allocationUsdt"`
 	Name              string          `json:"name"`
 	Mode              string          `json:"mode"`
 	Environment       string          `json:"environment"`
@@ -61,6 +66,8 @@ type StrategySignalView struct {
 
 type validatedStrategyInstance struct {
 	Name, Mode, Environment, ParametersJSON string
+	TradingAccountID                        *uuid.UUID
+	AllocationUSDT                          *decimal.Decimal
 }
 
 func validateStrategyInstancePayload(
@@ -92,8 +99,25 @@ func validateStrategyInstancePayload(
 	if err != nil {
 		return validatedStrategyInstance{}, err
 	}
+	var tradingAccountID *uuid.UUID
+	var allocationUSDT *decimal.Decimal
+	if mode != "signal_only" && environment == "paper" {
+		accountID, err := requiredStrategyUUID(payload.TradingAccountID, "tradingAccountId")
+		if err != nil {
+			return validatedStrategyInstance{}, err
+		}
+		allocation, err := parseDecimalField(payload.AllocationUSDT, "allocationUsdt", false)
+		if err != nil || !allocation.IsPositive() {
+			return validatedStrategyInstance{}, invalidStrategy("allocationUsdt must be a positive decimal string")
+		}
+		tradingAccountID = &accountID
+		allocationUSDT = &allocation
+	} else if strings.TrimSpace(payload.TradingAccountID) != "" || strings.TrimSpace(payload.AllocationUSDT) != "" {
+		return validatedStrategyInstance{}, invalidStrategy("trading account binding is only available for manual or auto paper instances")
+	}
 	return validatedStrategyInstance{
 		Name: name, Mode: mode, Environment: environment, ParametersJSON: string(validatedParameters),
+		TradingAccountID: tradingAccountID, AllocationUSDT: allocationUSDT,
 	}, nil
 }
 
@@ -116,6 +140,18 @@ func (a *App) CreateStrategyInstance(ctx context.Context, userID int64, payload 
 	if err != nil {
 		return StrategyInstanceView{}, err
 	}
+	if validated.TradingAccountID != nil {
+		var account db.TradingAccount
+		if err := a.dbWithContext(ctx).Where(
+			"id = ? AND owner_user_id = ? AND market_type = ? AND environment = 'paper'",
+			*validated.TradingAccountID, userID, version.Market,
+		).Take(&account).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return StrategyInstanceView{}, ErrTradingAccountMissing
+			}
+			return StrategyInstanceView{}, err
+		}
+	}
 	id, err := uuid.NewV7()
 	if err != nil {
 		return StrategyInstanceView{}, err
@@ -123,6 +159,7 @@ func (a *App) CreateStrategyInstance(ctx context.Context, userID int64, payload 
 	now := time.Now().UTC()
 	row := db.StrategyInstance{
 		ID: id, OwnerUserID: userID, StrategyVersionID: versionID, Name: validated.Name,
+		TradingAccountID: validated.TradingAccountID, AllocationUSDT: validated.AllocationUSDT,
 		Mode: validated.Mode, Environment: validated.Environment,
 		ParametersJSON: validated.ParametersJSON,
 		IsEnabled:      false, CreatedAt: now, UpdatedAt: now,
@@ -186,6 +223,11 @@ func (a *App) SetStrategyInstanceEnabled(ctx context.Context, userID int64, rawI
 	}
 	if err != nil {
 		return StrategyInstanceView{}, err
+	}
+	if enabled {
+		if err := a.validateStrategyInstanceExecutionReady(a.dbWithContext(ctx), row); err != nil {
+			return StrategyInstanceView{}, err
+		}
 	}
 	row.IsEnabled = enabled
 	row.UpdatedAt = time.Now().UTC()
@@ -330,7 +372,13 @@ func (a *App) DecideStrategySignal(
 		if result.RowsAffected != 1 {
 			return ErrStrategySignalConflict
 		}
-		return tx.Where("id = ?", signalID).Take(&row).Error
+		if err := tx.Where("id = ?", signalID).Take(&row).Error; err != nil {
+			return err
+		}
+		if decision == "approved" {
+			return a.createPaperIntentForSignalWithDB(tx, row, true)
+		}
+		return nil
 	})
 	if err != nil {
 		return StrategySignalView{}, err
@@ -380,12 +428,21 @@ ORDER BY instance.id
 }
 
 func serializeStrategyInstance(row db.StrategyInstance) StrategyInstanceView {
-	return StrategyInstanceView{
+	view := StrategyInstanceView{
 		ID: row.ID.String(), OwnerUserID: row.OwnerUserID, StrategyVersionID: row.StrategyVersionID.String(),
 		Name: row.Name, Mode: row.Mode, Environment: row.Environment,
 		Parameters: rawJSON(row.ParametersJSON, `{}`), IsEnabled: row.IsEnabled,
 		CreatedAt: formatUTC(row.CreatedAt), UpdatedAt: formatUTC(row.UpdatedAt),
 	}
+	if row.TradingAccountID != nil {
+		value := row.TradingAccountID.String()
+		view.TradingAccountID = &value
+	}
+	if row.AllocationUSDT != nil {
+		value := row.AllocationUSDT.String()
+		view.AllocationUSDT = &value
+	}
+	return view
 }
 
 func serializeStrategySignal(row db.StrategySignal) StrategySignalView {

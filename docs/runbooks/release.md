@@ -2,7 +2,7 @@
 
 ## 当前边界
 
-生产发布构建和部署 Backend/Web 以及 realtime/backtest 两个 Python Worker。Worker 只消费 PostgreSQL 任务、产生信号和回测产物，不调用交易所私有接口、不持有交易凭据。这不代表 Paper、Testnet 或 Live 交易能力已交付，也不能据此启用真实策略。
+生产发布构建和部署 Backend/Web、realtime/backtest 两个 Python Worker以及 Paper Executor。Worker 只消费 PostgreSQL 任务、产生信号和回测产物；Executor 当前只消费 Paper 意图并生成追加事件与投影。两者都不调用交易所私有接口、不持有交易凭据；这不代表 Testnet 或 Live 交易能力已交付。
 
 生产 Backend 通过主机 Secret 连接外部 PostgreSQL/TimescaleDB；应用启动只读校验 migration 版本。部署脚本停止 CoinSphere 服务、执行目标镜像内的 Up、启动固定 digest 镜像并检查健康状态，不自动执行 Down 或覆盖数据库。
 
@@ -15,7 +15,8 @@
 - DPanel 根目录：`/srv/dpanel-stack`；共享 Compose 项目为 `apps`，文件为 `compose/apps/docker-compose.yaml`，网络为 `dpanel_stack`。
 - 插值配置：`/srv/dpanel-stack/secrets/apps.env`；运行配置：`/srv/dpanel-stack/secrets/coinsphere-runtime.env`；数据目录：`/srv/dpanel-stack/data/coinsphere-go`。
 - Worker 运行配置单独保存在 `/srv/dpanel-stack/secrets/coinsphere-worker-runtime.env`；该文件只包含 Worker 专用 PostgreSQL DSN。
-- CoinSphere 只能操作 `coinsphere-backend`、`coinsphere-web`、`coinsphere-worker` 和 `coinsphere-worker-backtest`，不得执行共享项目级 `down` 或操作其他服务。
+- Paper Executor 运行配置单独保存在 `/srv/dpanel-stack/secrets/coinsphere-executor-runtime.env`；该文件只包含 `TZ=UTC` 和 Executor 专用 PostgreSQL DSN，不得放入交易所凭据。
+- CoinSphere 只能操作 `coinsphere-backend`、`coinsphere-web`、`coinsphere-worker`、`coinsphere-worker-backtest` 和 `coinsphere-executor`，不得执行共享项目级 `down` 或操作其他服务。
 
 以上路径和凭据只存在于服务器，不进入仓库、日志、Issue、PR 或 Release。生产数据库备份、恢复和保留策略由基础设施负责。
 
@@ -32,7 +33,7 @@
    bash scripts/release/deploy-dpanel-stack.sh vX.Y.Z /path/to/release-manifest.json
    ```
 
-7. 检查 `coinsphere-backend`、`coinsphere-web`、`coinsphere-worker` 和 `coinsphere-worker-backtest` 状态，并运行两个 Worker 的 `health`；再检查 `http://127.0.0.1:8080/health`，全部通过后才认为发布完成。
+7. 检查五个 CoinSphere 服务状态，运行两个 Worker 的 `health`，确认 Executor 日志只包含启动/脱敏运行状态且数据库全局急停仍为开启或用户预期状态；再检查 `http://127.0.0.1:8080/health`，全部通过后才认为发布完成。
 
 ### 首次加入 Worker
 
@@ -42,7 +43,17 @@
 - 在 `coinsphere-worker-runtime.env` 中只设置 `COINSPHERE_WORKER_DATABASE_DSN` 和 `TZ=UTC`；该 DSN 使用只授予 Worker 所需表权限的数据库身份。
 - 确认共享 Compose 使用 `COINSPHERE_WORKER_IMAGE`，并让 Worker 服务加入已有基础设施网络且不发布端口。首次发布时 `apps.env` 可以暂时没有该键，部署脚本会在临时环境中补齐；成功后才写入已扫描的 Worker digest。
 
-首次发布失败时脚本只恢复原有 Backend/Web；Worker 容器和回测产物卷保持停止或保留，不删除任务、产物或数据库 schema。后续版本若已有 Worker digest，则四个 CoinSphere 服务按同一 Manifest 一起回滚。
+首次 Worker 发布失败时脚本只恢复原有 Backend/Web；Worker 容器和回测产物卷保持停止或保留，不删除任务、产物或数据库 schema。后续发布会恢复此前已成功接入的全部 CoinSphere 服务；尚未成功接入的 Worker 或 Executor 不得被当作可回滚基线。
+
+### 首次加入 Paper Executor
+
+在第一次把 Paper Executor 交给共享 DPanel Stack 前，由用户手工完成一次配置准备：
+
+- 将 `deploy/production/compose.yaml` 中 Executor 的只读文件系统、capability drop、`no-new-privileges` 和无端口配置同步到共享 Compose，服务名固定为 `coinsphere-executor`，镜像复用 `COINSPHERE_BACKEND_IMAGE`。
+- 创建 `/srv/dpanel-stack/secrets/coinsphere-executor-runtime.env`，只设置 `TZ=UTC` 和 `COINSPHERE_DATABASE__DSN`；数据库身份只授予读取执行输入以及写入 Paper 意图状态、事件和投影所需权限。
+- 在首次启动前确认 migration 已应用、全局急停保持开启、所有 Paper 账户保持暂停。部署完成不等于允许 Paper 自动化，账户恢复、管理员授权和用户开关仍需分别手工执行。
+
+首次接入失败时脚本停止候选 Executor 并恢复此前已部署的服务。数据库 schema、`trading_events` 和现有投影全部保留，不执行 Down；若投影不一致，修复后由 Executor 从追加事件重建，禁止删除事件来回滚。
 
 Windows/Linux 包内的 Web 目录需要 Nginx 或等价 Web Server 托管，并反向代理到 Backend；它们不是桌面应用。
 
@@ -61,7 +72,7 @@ Migration、启动或健康检查失败时，部署脚本会停止新版本、�
 ```bash
 cd /srv/dpanel-stack/compose/apps
 docker compose --project-name apps --env-file /srv/dpanel-stack/secrets/apps.env \
-  -f docker-compose.yaml ps coinsphere-backend coinsphere-web coinsphere-worker coinsphere-worker-backtest
+  -f docker-compose.yaml ps coinsphere-backend coinsphere-web coinsphere-worker coinsphere-worker-backtest coinsphere-executor
 coinsphere_backend_image=$(sed -n 's/^COINSPHERE_BACKEND_IMAGE=//p' \
   /srv/dpanel-stack/secrets/apps.env)
 docker run --rm --network dpanel_stack \

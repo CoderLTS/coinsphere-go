@@ -15,8 +15,9 @@ COMPOSE_FILE=$COMPOSE_DIR/docker-compose.yaml
 ENV_FILE=$STACK_ROOT/secrets/apps.env
 RUNTIME_ENV_FILE=$STACK_ROOT/secrets/coinsphere-runtime.env
 WORKER_RUNTIME_ENV_FILE=$STACK_ROOT/secrets/coinsphere-worker-runtime.env
+EXECUTOR_RUNTIME_ENV_FILE=$STACK_ROOT/secrets/coinsphere-executor-runtime.env
 DOCKER_CONFIG_FILE="${DOCKER_CONFIG:-${HOME:?HOME 未设置}/.docker}/config.json"
-SERVICES=(coinsphere-backend coinsphere-web coinsphere-worker coinsphere-worker-backtest)
+SERVICES=(coinsphere-backend coinsphere-web coinsphere-worker coinsphere-worker-backtest coinsphere-executor)
 PREVIOUS_SERVICES=(coinsphere-backend coinsphere-web)
 
 if [[ ! $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
@@ -30,7 +31,7 @@ fi
 for command_name in curl docker jq; do
   command -v "$command_name" >/dev/null || { echo "缺少命令: $command_name" >&2; exit 3; }
 done
-for regular_file in "$MANIFEST_FILE" "$COMPOSE_FILE" "$ENV_FILE" "$RUNTIME_ENV_FILE" "$WORKER_RUNTIME_ENV_FILE"; do
+for regular_file in "$MANIFEST_FILE" "$COMPOSE_FILE" "$ENV_FILE" "$RUNTIME_ENV_FILE" "$WORKER_RUNTIME_ENV_FILE" "$EXECUTOR_RUNTIME_ENV_FILE"; do
   if [[ ! -f $regular_file || -L $regular_file ]]; then
     echo "发布输入不是普通文件: $regular_file" >&2
     exit 3
@@ -109,6 +110,14 @@ if [[ $worker_image_count -eq 1 ]]; then
   worker_was_deployed=true
   PREVIOUS_SERVICES+=(coinsphere-worker coinsphere-worker-backtest)
 fi
+executor_enabled_count=$(grep -c '^COINSPHERE_PAPER_EXECUTOR_ENABLED=' "$ENV_FILE" || true)
+if [[ $executor_enabled_count -gt 1 ]]; then
+  echo "$ENV_FILE 最多包含一个 COINSPHERE_PAPER_EXECUTOR_ENABLED" >&2
+  exit 3
+fi
+if [[ $executor_enabled_count -eq 1 ]] && grep -Fxq 'COINSPHERE_PAPER_EXECUTOR_ENABLED=1' "$ENV_FILE"; then
+  PREVIOUS_SERVICES+=(coinsphere-executor)
+fi
 WEB_PORT=$(sed -n 's/^COINSPHERE_WEB_PORT=//p' "$ENV_FILE" | tail -n 1)
 WEB_PORT=${WEB_PORT:-8080}
 if [[ ! $WEB_PORT =~ ^[0-9]+$ ]] || ((WEB_PORT < 1 || WEB_PORT > 65535)); then
@@ -128,6 +137,9 @@ cp -p "$ENV_FILE" "$previous_env"
 if ! $worker_was_deployed; then
   printf 'COINSPHERE_WORKER_IMAGE=%s\n' "$WORKER_IMAGE" >>"$next_env"
   printf 'COINSPHERE_WORKER_IMAGE=%s\n' "$WORKER_IMAGE" >>"$previous_env"
+fi
+if [[ $executor_enabled_count -eq 0 ]]; then
+  printf 'COINSPHERE_PAPER_EXECUTOR_ENABLED=1\n' >>"$next_env"
 fi
 sed -i \
   -e "s|^COINSPHERE_VERSION=.*$|COINSPHERE_VERSION=$VERSION|" \

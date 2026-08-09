@@ -42,6 +42,8 @@ type menuItem struct {
 // 的字段顺序完全一致。Parent 为空字符串 "" 表示顶级菜单,否则填父菜单的 Name。
 var menuItems = []menuItem{
 	{"Home", "首页", "/home", "/home/index", "ri:home-5-line", "", true, true, false},
+	{"TradingCenter", "交易管理", "/trading", "/index/index", "ri:exchange-funds-line", "", false, false, false},
+	{"PaperTrading", "Paper 账户", "overview", "/trading/overview", "ri:shield-check-line", "TradingCenter", true, false, false},
 	{"SchedulerCenter", "工作流调度", "/scheduler", "/index/index", "ri:time-line", "", false, false, false},
 	{"WorkflowDefinitions", "工作流定义", "definition", "/scheduler/workflow", "ri:node-tree", "SchedulerCenter", true, false, false},
 	{"WorkflowExecutions", "执行记录", "execution", "/scheduler/execution", "ri:history-line", "SchedulerCenter", true, false, false},
@@ -64,6 +66,8 @@ var menuItems = []menuItem{
 // 值是 [2]string(定长为 2 的数组):第 0 个存中文、第 1 个存英文,即菜单的多语言文案。
 var menuI18n = map[string][2]string{
 	"Home":                 {"首页", "Home"},
+	"TradingCenter":        {"交易管理", "Trading"},
+	"PaperTrading":         {"Paper 账户", "Paper Accounts"},
 	"SchedulerCenter":      {"工作流调度", "Workflow Scheduler"},
 	"WorkflowDefinitions":  {"工作流定义", "Workflow Definitions"},
 	"WorkflowExecutions":   {"执行记录", "Execution Records"},
@@ -383,7 +387,7 @@ func seedRoleBindings(
 	// 普通用户只看几项,游客只看首页。
 	roleMenus := map[string][]string{
 		"R_SUPER": allMenuNames,
-		"R_USER":  {"Home", "ConfigCenter", "AiModelConfig", "NotifyChannels", "UserCenter"},
+		"R_USER":  {"Home", "TradingCenter", "PaperTrading", "ConfigCenter", "AiModelConfig", "NotifyChannels", "UserCenter"},
 		"R_GUEST": {"Home"},
 	}
 	superButtons := make([]string, 0)
