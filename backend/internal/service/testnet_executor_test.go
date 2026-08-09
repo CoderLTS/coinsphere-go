@@ -74,6 +74,16 @@ func TestTestnetExecutorExecutesDeterministicSpotAndUSDMOrders(t *testing.T) {
 			if !risk.Equity.Equal(decimal.RequireFromString("9999.5")) {
 				t.Fatalf("%s Testnet equity = %s, want 9999.5", market, risk.Equity)
 			}
+			overview, err := fixture.base.app.GetTradingOverview(context.Background(), fixture.base.owner.ID)
+			if err != nil || len(overview.TestnetAuditSummaries) != 1 {
+				t.Fatalf("load %s Testnet audit summary: summaries=%#v err=%v", market, overview.TestnetAuditSummaries, err)
+			}
+			audit := overview.TestnetAuditSummaries[0]
+			if audit.UnknownOrderCount != 0 || audit.ProtectionOrderCount != 1 ||
+				audit.ActiveProtectionOrderCount != 1 || audit.TradeFactCount != 0 ||
+				audit.RiskState == nil || audit.RiskState.Equity != "9999.5" {
+				t.Fatalf("%s Testnet audit summary = %#v", market, audit)
+			}
 		})
 	}
 }

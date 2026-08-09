@@ -297,6 +297,47 @@
           </dl>
         </section>
 
+        <section
+          v-if="selectedAccount.environment === 'testnet' && selectedAuditSummary"
+          class="audit-summary"
+        >
+          <header>
+            <div>
+              <span>{{ t('trading.audit.title') }}</span>
+              <strong>{{ t('trading.audit.rawState') }}</strong>
+            </div>
+            <ElTag size="small" effect="plain" :type="reconciliationStatusType">
+              {{ reconciliationStatusLabel }}
+            </ElTag>
+          </header>
+          <div v-if="selectedAuditSummary.reconciliation.errorCode" class="audit-error">
+            <span>{{ t('trading.audit.errorCode') }}</span>
+            <code>{{ selectedAuditSummary.reconciliation.errorCode }}</code>
+          </div>
+          <dl class="audit-grid">
+            <div v-for="item in auditCountItems" :key="item.label">
+              <dt>{{ item.label }}</dt>
+              <dd class="decimal-value">{{ item.value }}</dd>
+            </div>
+          </dl>
+          <dl v-if="selectedAuditSummary.riskState" class="audit-grid audit-risk-grid">
+            <div v-for="item in auditRiskItems" :key="item.label">
+              <dt>{{ item.label }}</dt>
+              <dd class="decimal-value">{{ item.value }}</dd>
+            </div>
+          </dl>
+          <footer class="audit-meta">
+            <span
+              >{{ t('trading.audit.observedAt') }}
+              {{ formatTime(selectedAuditSummary.reconciliation.lastObservedAt) }}</span
+            >
+            <span
+              >{{ t('trading.audit.lastFactAt') }}
+              {{ formatTime(selectedAuditSummary.lastFactAt) }}</span
+            >
+          </footer>
+        </section>
+
         <ElTabs v-model="activeTab" class="trading-tabs">
           <ElTabPane
             :label="`${t('trading.tabs.positions')} ${selectedPositions.length}`"
@@ -786,7 +827,8 @@
     testnetPositions: [],
     testnetOpenOrders: [],
     testnetOrders: [],
-    testnetTradeFacts: []
+    testnetTradeFacts: [],
+    testnetAuditSummaries: []
   })
 
   const createAccountForm = (): AccountFormModel => ({
@@ -930,6 +972,39 @@
   const selectedTradeFacts = computed(() =>
     overview.testnetTradeFacts.filter((fact) => fact.accountId === selectedAccountId.value)
   )
+  const selectedAuditSummary = computed(
+    () =>
+      overview.testnetAuditSummaries.find(
+        (summary) => summary.accountId === selectedAccountId.value
+      ) || null
+  )
+  const auditCountItems = computed(() => {
+    const summary = selectedAuditSummary.value
+    return [
+      { label: t('trading.audit.unknownOrders'), value: summary?.unknownOrderCount ?? 0 },
+      { label: t('trading.audit.protectionOrders'), value: summary?.protectionOrderCount ?? 0 },
+      {
+        label: t('trading.audit.activeProtectionOrders'),
+        value: summary?.activeProtectionOrderCount ?? 0
+      },
+      { label: t('trading.audit.recoveredOrders'), value: summary?.recoveredOrderCount ?? 0 },
+      { label: t('trading.audit.tradeFacts'), value: summary?.tradeFactCount ?? 0 },
+      { label: t('trading.audit.fills'), value: summary?.fillFactCount ?? 0 },
+      { label: t('trading.audit.fees'), value: summary?.feeFactCount ?? 0 },
+      { label: t('trading.audit.funding'), value: summary?.fundingFactCount ?? 0 }
+    ]
+  })
+  const auditRiskItems = computed(() => {
+    const risk = selectedAuditSummary.value?.riskState
+    return [
+      { label: t('trading.audit.baselineEquity'), value: risk?.baselineEquity ?? '--' },
+      { label: t('trading.audit.equity'), value: risk?.equity ?? '--' },
+      { label: t('trading.audit.peakEquity'), value: risk?.peakEquity ?? '--' },
+      { label: t('trading.audit.dayStartEquity'), value: risk?.dayStartEquity ?? '--' },
+      { label: t('trading.audit.dayStartDate'), value: risk?.dayStartDate ?? '--' },
+      { label: t('trading.audit.riskUpdatedAt'), value: formatTime(risk?.updatedAt) }
+    ]
+  })
   const automationSwitchDisabled = computed(() => {
     const account = selectedAccount.value
     if (!account || Boolean(commandLoading.value)) return true
@@ -1439,7 +1514,8 @@
   .credential-summary,
   .credential-state,
   .credential-actions,
-  .risk-ledger > header {
+  .risk-ledger > header,
+  .audit-summary > header {
     display: flex;
     align-items: center;
   }
@@ -1918,6 +1994,89 @@
     }
   }
 
+  .audit-summary {
+    padding: 14px 0 0;
+    margin-top: 20px;
+    border-top: 2px solid var(--trading-ink);
+
+    > header {
+      gap: 16px;
+      justify-content: space-between;
+
+      div {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+      }
+
+      span {
+        font-size: 11px;
+        color: var(--trading-muted);
+      }
+
+      strong {
+        font-size: 13px;
+      }
+    }
+  }
+
+  .audit-error {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    padding: 10px 0 0;
+    font-size: 11px;
+    color: var(--trading-muted);
+
+    code {
+      overflow: hidden;
+      color: var(--trading-stop);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  .audit-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin: 12px 0 0;
+    border-top: 1px solid var(--trading-line);
+    border-left: 1px solid var(--trading-line);
+
+    > div {
+      min-width: 0;
+      padding: 10px;
+      border-right: 1px solid var(--trading-line);
+      border-bottom: 1px solid var(--trading-line);
+    }
+
+    dt {
+      font-size: 10px;
+      color: var(--trading-muted);
+    }
+
+    dd {
+      margin: 5px 0 0;
+      overflow: hidden;
+      font-size: 12px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  .audit-risk-grid {
+    margin-top: 10px;
+  }
+
+  .audit-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 24px;
+    padding-top: 10px;
+    font-size: 11px;
+    color: var(--trading-muted);
+  }
+
   .trading-tabs {
     margin-top: 20px;
   }
@@ -1965,6 +2124,10 @@
     }
 
     .risk-ledger dl {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .audit-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
   }
@@ -2081,6 +2244,16 @@
       dl {
         grid-template-columns: 1fr;
       }
+    }
+
+    .audit-summary {
+      > header {
+        align-items: flex-start;
+      }
+    }
+
+    .audit-grid {
+      grid-template-columns: 1fr;
     }
 
     .form-grid {

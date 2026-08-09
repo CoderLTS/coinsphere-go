@@ -408,6 +408,13 @@ func TestTestnetReconcilerRecoversDeterministicExternalOrder(t *testing.T) {
 	if reconciliation.Status != "matched" || reconciliation.ErrorCode != "" || reconciliation.OpenOrderCount != 1 {
 		t.Fatalf("recovered reconciliation = %#v", reconciliation)
 	}
+	overview, err := fixture.base.app.GetTradingOverview(context.Background(), fixture.base.owner.ID)
+	if err != nil || len(overview.TestnetAuditSummaries) != 1 {
+		t.Fatalf("load recovered audit summary: summaries=%#v err=%v", overview.TestnetAuditSummaries, err)
+	}
+	if overview.TestnetAuditSummaries[0].RecoveredOrderCount != 1 {
+		t.Fatalf("recovered audit summary = %#v", overview.TestnetAuditSummaries[0])
+	}
 }
 
 func TestTestnetReconcilerRejectsDeterministicExternalOrderShape(t *testing.T) {
@@ -544,6 +551,16 @@ func TestTestnetReconcilerPersistsAndDeduplicatesTradeFacts(t *testing.T) {
 	if overview.TestnetTradeFacts[0].EventType != "funding" || overview.TestnetTradeFacts[0].Amount != "-0.25" {
 		t.Fatalf("serialized Testnet funding fact = %#v", overview.TestnetTradeFacts[0])
 	}
+	if len(overview.TestnetAuditSummaries) != 1 {
+		t.Fatalf("Testnet audit summary count = %d, want 1", len(overview.TestnetAuditSummaries))
+	}
+	audit := overview.TestnetAuditSummaries[0]
+	if audit.AccountID != fixture.account.ID.String() || audit.Reconciliation.Status != "matched" ||
+		audit.RiskState == nil || audit.RiskState.Equity != "1000" || audit.TradeFactCount != 3 ||
+		audit.FillFactCount != 1 || audit.FeeFactCount != 1 || audit.FundingFactCount != 1 ||
+		audit.LastFactAt == nil {
+		t.Fatalf("Testnet audit summary = %#v", audit)
+	}
 	otherOwner := db.SystemUser{Username: "testnet-ledger-other-owner", IsActive: true}
 	if err := fixture.database.Create(&otherOwner).Error; err != nil {
 		t.Fatalf("create other ledger owner: %v", err)
@@ -554,6 +571,9 @@ func TestTestnetReconcilerPersistsAndDeduplicatesTradeFacts(t *testing.T) {
 	}
 	if len(otherOverview.TestnetTradeFacts) != 0 {
 		t.Fatalf("other owner saw Testnet trade facts: %#v", otherOverview.TestnetTradeFacts)
+	}
+	if len(otherOverview.TestnetAuditSummaries) != 0 {
+		t.Fatalf("other owner saw Testnet audit summaries: %#v", otherOverview.TestnetAuditSummaries)
 	}
 
 	ageTestnetReconciliation(t, fixture.database, fixture.account.ID)
