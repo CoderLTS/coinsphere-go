@@ -382,6 +382,7 @@ type TestnetOrder struct {
 	SubmitAttemptCount        int             `gorm:"column:submit_attempt_count"`
 	QueryAttemptCount         int             `gorm:"column:query_attempt_count"`
 	SubmittedAt               time.Time       `gorm:"column:submitted_at"`
+	RecoveredAt               *time.Time      `gorm:"column:recovered_at"`
 	LastQueriedAt             *time.Time      `gorm:"column:last_queried_at"`
 	ObservedAt                *time.Time      `gorm:"column:observed_at"`
 	CreatedAt                 time.Time       `gorm:"column:created_at"`
