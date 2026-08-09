@@ -115,9 +115,7 @@ if [[ $executor_enabled_count -gt 1 ]]; then
   echo "$ENV_FILE 最多包含一个 COINSPHERE_PAPER_EXECUTOR_ENABLED" >&2
   exit 3
 fi
-executor_was_deployed=false
 if [[ $executor_enabled_count -eq 1 ]] && grep -Fxq 'COINSPHERE_PAPER_EXECUTOR_ENABLED=1' "$ENV_FILE"; then
-  executor_was_deployed=true
   PREVIOUS_SERVICES+=(coinsphere-executor)
 fi
 WEB_PORT=$(sed -n 's/^COINSPHERE_WEB_PORT=//p' "$ENV_FILE" | tail -n 1)
