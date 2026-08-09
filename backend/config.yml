@@ -13,6 +13,10 @@ market_data:
   reconcile_interval_seconds: 10
   backfill_page_size: 300
 
+trading:
+  # 私有 Testnet 请求默认关闭；启用后 Executor 才会解密凭据并访问 Binance Testnet。
+  testnet_private_api_enabled: false
+
 server:
   host: 0.0.0.0
   port: 6987

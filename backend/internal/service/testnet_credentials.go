@@ -280,21 +280,3 @@ func credentialRequestHash(apiKey, apiSecret string, payload TradingCredentialPa
 		"withdrawalDisabled": payload.WithdrawalDisabled, "ipWhitelistConfigured": payload.IPWhitelistConfigured,
 	})
 }
-
-func (a *App) decryptTradingCredential(row db.TradingAccountCredential) (string, string, error) {
-	if a == nil || a.Cipher == nil || row.Status != "configured" {
-		return "", "", ErrTradingCredentialsMissing
-	}
-	apiKey, err := a.Cipher.Decrypt(row.APIKeyCiphertext)
-	if err != nil {
-		return "", "", err
-	}
-	apiSecret, err := a.Cipher.Decrypt(row.APISecretCiphertext)
-	if err != nil {
-		return "", "", err
-	}
-	if apiKey == "" || apiSecret == "" {
-		return "", "", ErrTradingCredentialsMissing
-	}
-	return apiKey, apiSecret, nil
-}

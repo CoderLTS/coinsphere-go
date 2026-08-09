@@ -35,6 +35,11 @@ type MarketDataConfig struct {
 	BackfillPageSize         int  `yaml:"backfill_page_size"`
 }
 
+// TradingConfig controls private exchange access. It is disabled unless explicitly enabled.
+type TradingConfig struct {
+	TestnetPrivateAPIEnabled bool `yaml:"testnet_private_api_enabled"`
+}
+
 // ServerConfig HTTP 服务配置。
 type ServerConfig struct {
 	Host          string `yaml:"host"`
@@ -101,6 +106,7 @@ type LogConfig struct {
 type AppConfig struct {
 	Database   DatabaseConfig   `yaml:"database"`
 	MarketData MarketDataConfig `yaml:"market_data"`
+	Trading    TradingConfig    `yaml:"trading"`
 	Server     ServerConfig     `yaml:"server"`
 	Auth       AuthConfig       `yaml:"auth"`
 	Workflow   WorkflowConfig   `yaml:"workflow"`

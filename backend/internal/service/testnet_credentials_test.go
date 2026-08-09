@@ -119,7 +119,7 @@ func TestTestnetCredentialEncryptionIdempotencyAndRevocation(t *testing.T) {
 	if stored.APIKeyCiphertext == payload.APIKey || stored.APISecretCiphertext == payload.APISecret {
 		t.Fatal("credential was stored as plaintext")
 	}
-	decryptedKey, decryptedSecret, err := app.decryptTradingCredential(stored)
+	decryptedKey, decryptedSecret, err := decryptTestnetCredential(cipher, stored)
 	if err != nil || decryptedKey != payload.APIKey || decryptedSecret != payload.APISecret {
 		t.Fatalf("decrypt stored credential: keyMatch=%t secretMatch=%t err=%v", decryptedKey == payload.APIKey, decryptedSecret == payload.APISecret, err)
 	}
