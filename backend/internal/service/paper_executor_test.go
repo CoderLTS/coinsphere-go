@@ -219,6 +219,18 @@ func newPaperExecutorFixture(
 	t *testing.T, mode string, automationEnabled, authorized, riskComplete bool,
 ) *paperExecutorFixture {
 	t.Helper()
+	return newPaperExecutorFixtureForMarket(
+		t, mode, automationEnabled, authorized, riskComplete, marketdata.MarketTypeSpot,
+	)
+}
+
+func newPaperExecutorFixtureForMarket(
+	t *testing.T,
+	mode string,
+	automationEnabled, authorized, riskComplete bool,
+	market marketdata.MarketType,
+) *paperExecutorFixture {
+	t.Helper()
 	database := openPostgresWorkflowContractDatabase(t).primary
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	owner := db.SystemUser{Username: "paper-executor-owner", IsActive: true, CreatedAt: now, UpdatedAt: now}
@@ -232,7 +244,7 @@ func newPaperExecutorFixture(
 	accountID := uuid.MustParse("019d8000-0000-7000-8000-000000000013")
 	publishTaskID := "019d8000-0000-7000-8000-000000000014"
 	instrument := db.MarketInstrument{
-		ID: instrumentID, Venue: string(marketdata.VenueBinance), Market: "spot", NativeSymbol: "BTCUSDT",
+		ID: instrumentID, Venue: string(marketdata.VenueBinance), Market: string(market), NativeSymbol: "BTCUSDT",
 		BaseAsset: "BTC", QuoteAsset: "USDT", Status: "trading",
 		PriceTick: decimal.RequireFromString("0.1"), QuantityStep: decimal.RequireFromString("0.001"),
 		MinQuantity: decimal.RequireFromString("0.001"), MinNotional: decimal.RequireFromString("5"), UpdatedAt: now,
@@ -244,7 +256,7 @@ func newPaperExecutorFixture(
 	accountRecord := createPaperTestIdempotency(t, database, owner.ID, "trading-account:create", 2)
 	draft := db.StrategyDraft{
 		ID: strategyID, Name: "paper target", SourceCode: "def on_bar(candles, params): return Decimal('0.5')",
-		Market: "spot", InstrumentID: instrumentID, Interval: "1m", LookbackBars: 2,
+		Market: string(market), InstrumentID: instrumentID, Interval: "1m", LookbackBars: 2,
 		ParameterSchemaJSON: "{}", RuntimeVersion: "python3.12", CreatedByUserID: owner.ID,
 		UpdatedByUserID: owner.ID, CreatedAt: now, UpdatedAt: now,
 	}
@@ -263,7 +275,7 @@ VALUES (?, 'strategy.publish', ?, 'succeeded', 1, 'backtest', ?)
 		ID: versionID, StrategyID: strategyID, VersionNumber: 1, Status: "published",
 		WorkerTaskID: publishTaskID, IdempotencyRecordID: publishRecord.ID, Name: draft.Name,
 		SourceCode: draft.SourceCode, CodeSHA256: strings.Repeat("a", 64), RuntimeVersion: "python3.12",
-		Market: "spot", InstrumentID: instrumentID, Symbol: "BTCUSDT", Interval: "1m", LookbackBars: 2,
+		Market: string(market), InstrumentID: instrumentID, Symbol: "BTCUSDT", Interval: "1m", LookbackBars: 2,
 		ParameterSchemaJSON: "{}", PublishedByUserID: owner.ID, PublishedAt: &publishedAt, CreatedAt: now,
 	}
 	if err := database.Create(&version).Error; err != nil {
@@ -286,13 +298,20 @@ VALUES (?, 'strategy.publish', ?, 'succeeded', 1, 'backtest', ?)
 	if !riskComplete {
 		maxDrawdown = decimal.Zero
 	}
+	accountName := "Paper Spot"
+	var leverage *int
+	if market == marketdata.MarketTypeUSDM {
+		accountName = "Paper USD-M"
+		value := 2
+		leverage = &value
+	}
 	account := db.TradingAccount{
-		ID: accountID, OwnerUserID: owner.ID, Name: "Paper Spot", Market: "spot", Environment: "paper",
+		ID: accountID, OwnerUserID: owner.ID, Name: accountName, Market: string(market), Environment: "paper",
 		Status: "active", PauseReason: "", AutomationEnabled: automationEnabled,
 		AutomationAuthorizedAt: authorizedAt, AutomationAuthorizedByID: authorizedBy,
 		InitialBalance: &initial, PaperFeeRate: &feeRate, MaxTotalNotional: &maxTotal,
 		MaxSymbolNotional: &maxSymbol, MaxOrderNotional: &maxOrder, MaxDailyLoss: &maxDailyLoss,
-		MaxDrawdown: &maxDrawdown, MaxQuoteAgeSeconds: &quoteAge,
+		MaxDrawdown: &maxDrawdown, MaxQuoteAgeSeconds: &quoteAge, Leverage: leverage,
 		CreationIdempotencyRecordID: &accountRecord.ID, CreatedAt: now, UpdatedAt: now,
 	}
 	if !riskComplete {

@@ -189,6 +189,8 @@ func TestTestnetExecutorRecoversPreparedOrderByQueryOnly(t *testing.T) {
 		t.Fatalf("create interrupted prepared Testnet order: %v", err)
 	}
 	client.query = func(call testnetOrderCall) (exchangebinance.OrderResult, error) {
+		call.side = "buy"
+		call.quantity = decimal.NewFromInt(5)
 		return filledTestnetResult(call, 43), nil
 	}
 	client.place = func(testnetOrderCall) (exchangebinance.OrderResult, error) {
@@ -253,6 +255,14 @@ func TestTestnetExecutorDoesNotQueryAfterCredentialVersionChanges(t *testing.T) 
 
 	if processed, err := fixture.executor.ProcessNext(context.Background()); err != nil || !processed {
 		t.Fatalf("persist uncertain Testnet submission: processed=%t err=%v", processed, err)
+	}
+	if err := fixture.database.Where("account_id = ?", fixture.account.ID).
+		Delete(&db.TestnetRiskState{}).Error; err != nil {
+		t.Fatalf("delete Testnet risk state before credential rotation: %v", err)
+	}
+	if err := fixture.database.Where("account_id = ?", fixture.account.ID).
+		Delete(&db.TestnetReconciliation{}).Error; err != nil {
+		t.Fatalf("delete Testnet reconciliation before credential rotation: %v", err)
 	}
 	changedAt := fixture.credential.UpdatedAt.Add(time.Minute)
 	if err := fixture.database.Model(&db.TradingAccountCredential{}).Where("id = ?", fixture.credential.ID).
@@ -341,13 +351,10 @@ func newTestnetExecutorFixture(
 	client testnetOrderClient,
 ) testnetExecutorFixture {
 	t.Helper()
-	base := newPaperExecutorFixture(t, "manual", true, true, true)
+	base := newPaperExecutorFixtureForMarket(t, "manual", true, true, true, market)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	accountUpdates := map[string]any{
-		"environment": "testnet", "market_type": string(market), "updated_at": now,
-	}
-	if market == marketdata.MarketTypeUSDM {
-		accountUpdates["leverage"] = 2
+		"environment": "testnet", "updated_at": now,
 	}
 	if err := base.database.Model(&db.TradingAccount{}).Where("id = ?", base.accountID).
 		Updates(accountUpdates).Error; err != nil {
@@ -356,16 +363,6 @@ func newTestnetExecutorFixture(
 	if err := base.database.Model(&db.StrategyInstance{}).Where("id = ?", base.instanceID).
 		Updates(map[string]any{"environment": "testnet", "updated_at": now}).Error; err != nil {
 		t.Fatalf("convert strategy instance to Testnet: %v", err)
-	}
-	if market == marketdata.MarketTypeUSDM {
-		if err := base.database.Model(&db.MarketInstrument{}).Where("id = ?", base.instrumentID).
-			Update("market_type", string(market)).Error; err != nil {
-			t.Fatalf("convert instrument to USD-M: %v", err)
-		}
-		if err := base.database.Model(&db.StrategyVersion{}).Where("id = ?", base.versionID).
-			Update("market_type", string(market)).Error; err != nil {
-			t.Fatalf("convert strategy version to USD-M: %v", err)
-		}
 	}
 	var account db.TradingAccount
 	if err := base.database.Where("id = ?", base.accountID).Take(&account).Error; err != nil {
