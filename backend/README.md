@@ -73,7 +73,7 @@ DSN 必须指向已经存在的数据库和全新 CoinSphere schema；连接入�
 - **重试**:可重试失败(timeout/connection/429/5xx)按 `retry_backoff_seconds` 退避,`retry_waiting → queued` 自动提升。
 - **恢复**:心跳超时(含进程崩溃重启后的孤儿执行)标记 `worker_lost` 并按剩余次数重试或失败。
 - **事件**:工作流终态与标准领域事件在同一短事务写入 `domain_event_outbox`；PostgreSQL 存储层使用 `FOR UPDATE SKIP LOCKED` 原子批量认领，并用数据库时间续租和 fencing 投递。匹配 `start.event` 入口后以稳定幂等键触发工作流；订阅失败按 `retry_backoff_seconds` 重排，尝试耗尽进入死信，未告警死信由 `alerted_at` 原子去重后输出脱敏日志。
-- **Executor**:默认只按账户串行处理 Paper 意图和可重建投影。显式设置 `COINSPHERE_TRADING__TESTNET_PRIVATE_API_ENABLED=true` 且提供安全的 `auth.encryption_key` 后，才会额外解密 Testnet 凭据，验证 Binance Spot/USD-M 签名账户请求，并读取余额、仓位和开放订单完成首次只读对账。只有无外部订单、无既有风险敞口且抵押资产符合白名单的快照才标记为 `matched`；账户仍需人工恢复，不会自动创建订单，Live 私有访问始终不可用。
+- **Executor**:默认只按账户串行处理 Paper 意图和可重建投影。显式设置 `COINSPHERE_TRADING__TESTNET_PRIVATE_API_ENABLED=true` 且提供安全的 `auth.encryption_key` 后，才会额外解密 Testnet 凭据，验证 Binance Spot/USD-M 签名请求，并读取余额、仓位和开放订单完成首次对账。只有无外部订单、无既有风险敞口且抵押资产符合白名单的快照才标记为 `matched`；账户仍需人工恢复，之后 Executor 才会对已批准意图提交带确定性 `clientOrderId` 的市价差额单，未知结果一律先查询再决定是否重试，USD-M 减仓携带 `reduceOnly`。保护单和持续成交/费用/资金费对账尚未交付，生产配置继续保持 Testnet 私有能力关闭，Live 私有访问始终不可用。
 - **清理**:每天 03:00 后按批删除超过保留期的终态执行。
 
 Python Worker 通过独立 PostgreSQL 连接消费 `worker_tasks`，使用唯一租约完成认领、心跳、崩溃回收和 5 秒内取消。生产 Release 构建并部署 realtime/backtest Worker 与 Paper Executor；二者均使用专用数据库身份且不持有真实交易凭据。
@@ -96,7 +96,7 @@ go test -count=1 ./internal/service ./internal/api
 ```
 main.go                 入口:根 Context → 配置 → 版本校验/种子 → Runtime/HTTP → 有界关机
 cmd/migrate             独立版本化 SQL migration 命令
-cmd/executor            Paper 执行与显式关闭的 Testnet 私有验证/对账进程
+cmd/executor            Paper 执行与显式关闭的 Testnet 私有验证/对账/执行进程
 internal/exchange       Executor 专属的 Binance 私有协议
 internal/config         YAML + 环境变量覆盖
 internal/db             GORM 模型 / PostgreSQL 连接 / 种子数据

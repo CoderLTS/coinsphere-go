@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -111,7 +112,7 @@ type TestnetPositionView struct {
 type TestnetOpenOrderView struct {
 	AccountID        string `json:"accountId"`
 	NativeSymbol     string `json:"symbol"`
-	ExchangeOrderID  int64  `json:"exchangeOrderId"`
+	ExchangeOrderID  string `json:"exchangeOrderId"`
 	ClientOrderID    string `json:"clientOrderId"`
 	Side             string `json:"side"`
 	OrderType        string `json:"orderType"`
@@ -121,6 +122,30 @@ type TestnetOpenOrderView struct {
 	ExecutedQuantity string `json:"executedQuantity"`
 	StopPrice        string `json:"stopPrice"`
 	ObservedAt       string `json:"observedAt"`
+}
+
+type TestnetOrderView struct {
+	ID                      string  `json:"id"`
+	AccountID               string  `json:"accountId"`
+	IntentID                string  `json:"intentId"`
+	InstrumentID            string  `json:"instrumentId"`
+	Symbol                  string  `json:"symbol"`
+	ClientOrderID           string  `json:"clientOrderId"`
+	ExchangeOrderID         *string `json:"exchangeOrderId"`
+	Side                    string  `json:"side"`
+	Quantity                string  `json:"quantity"`
+	FilledQuantity          string  `json:"filledQuantity"`
+	CumulativeQuoteQuantity string  `json:"cumulativeQuoteQuantity"`
+	AveragePrice            string  `json:"averagePrice"`
+	Status                  string  `json:"status"`
+	LastErrorCode           string  `json:"lastErrorCode"`
+	SubmitAttemptCount      int     `json:"submitAttemptCount"`
+	QueryAttemptCount       int     `json:"queryAttemptCount"`
+	SubmittedAt             string  `json:"submittedAt"`
+	LastQueriedAt           *string `json:"lastQueriedAt"`
+	ObservedAt              *string `json:"observedAt"`
+	CreatedAt               string  `json:"createdAt"`
+	UpdatedAt               string  `json:"updatedAt"`
 }
 
 // TradingCredentialPayload 只在写入边界接收明文；响应永远不包含这两个字段。
@@ -222,6 +247,7 @@ type TradingOverviewView struct {
 	TestnetBalances   []TestnetBalanceView   `json:"testnetBalances"`
 	TestnetPositions  []TestnetPositionView  `json:"testnetPositions"`
 	TestnetOpenOrders []TestnetOpenOrderView `json:"testnetOpenOrders"`
+	TestnetOrders     []TestnetOrderView     `json:"testnetOrders"`
 }
 
 type validatedTradingRisk struct {
@@ -676,7 +702,7 @@ func (a *App) GetTradingOverview(ctx context.Context, userID int64) (TradingOver
 		Control: serializeTradingControl(control), Accounts: []TradingAccountView{}, Intents: []TradingIntentView{},
 		Orders: []PaperOrderView{}, Positions: []PaperPositionView{}, Balances: []PaperBalanceView{},
 		TestnetBalances: []TestnetBalanceView{}, TestnetPositions: []TestnetPositionView{},
-		TestnetOpenOrders: []TestnetOpenOrderView{},
+		TestnetOpenOrders: []TestnetOpenOrderView{}, TestnetOrders: []TestnetOrderView{},
 	}
 	var accounts []db.TradingAccount
 	if err := database.Where("owner_user_id = ?", userID).Order("id DESC").Find(&accounts).Error; err != nil {
@@ -726,7 +752,14 @@ func (a *App) GetTradingOverview(ctx context.Context, userID int64) (TradingOver
 		Order("testnet_open_orders.account_id, testnet_open_orders.native_symbol, testnet_open_orders.exchange_order_id").Find(&testnetOrders).Error; err != nil {
 		return TradingOverviewView{}, err
 	}
-	symbols, err := loadTradingSymbols(database, intents, orders, positions)
+	var managedTestnetOrders []db.TestnetOrder
+	if err := database.Joins("JOIN trading_accounts ON trading_accounts.id = testnet_orders.account_id").
+		Where("trading_accounts.owner_user_id = ?", userID).
+		Order("testnet_orders.created_at DESC, testnet_orders.id DESC").Limit(50).
+		Find(&managedTestnetOrders).Error; err != nil {
+		return TradingOverviewView{}, err
+	}
+	symbols, err := loadTradingSymbols(database, intents, orders, positions, managedTestnetOrders)
 	if err != nil {
 		return TradingOverviewView{}, err
 	}
@@ -750,6 +783,9 @@ func (a *App) GetTradingOverview(ctx context.Context, userID int64) (TradingOver
 	}
 	for _, row := range testnetOrders {
 		result.TestnetOpenOrders = append(result.TestnetOpenOrders, serializeTestnetOpenOrder(row))
+	}
+	for _, row := range managedTestnetOrders {
+		result.TestnetOrders = append(result.TestnetOrders, serializeTestnetOrder(row, symbols[row.InstrumentID]))
 	}
 	return result, nil
 }
@@ -1160,7 +1196,7 @@ func serializeTestnetPosition(row db.TestnetPosition) TestnetPositionView {
 func serializeTestnetOpenOrder(row db.TestnetOpenOrder) TestnetOpenOrderView {
 	return TestnetOpenOrderView{
 		AccountID: row.AccountID.String(), NativeSymbol: row.NativeSymbol,
-		ExchangeOrderID: row.ExchangeOrderID, ClientOrderID: row.ClientOrderID,
+		ExchangeOrderID: strconv.FormatInt(row.ExchangeOrderID, 10), ClientOrderID: row.ClientOrderID,
 		Side: row.Side, OrderType: row.OrderType, Status: row.Status,
 		Price: row.Price.String(), OriginalQuantity: row.OriginalQuantity.String(),
 		ExecutedQuantity: row.ExecutedQuantity.String(), StopPrice: row.StopPrice.String(),
@@ -1168,8 +1204,38 @@ func serializeTestnetOpenOrder(row db.TestnetOpenOrder) TestnetOpenOrderView {
 	}
 }
 
+func serializeTestnetOrder(row db.TestnetOrder, symbol string) TestnetOrderView {
+	view := TestnetOrderView{
+		ID: row.ID.String(), AccountID: row.AccountID.String(), IntentID: row.IntentID.String(),
+		InstrumentID: row.InstrumentID.String(), Symbol: symbol, ClientOrderID: row.ClientOrderID,
+		Side: row.Side, Quantity: row.Quantity.String(),
+		FilledQuantity:          row.FilledQuantity.String(),
+		CumulativeQuoteQuantity: row.CumulativeQuoteQuantity.String(),
+		AveragePrice:            row.AveragePrice.String(), Status: row.Status, LastErrorCode: row.LastErrorCode,
+		SubmitAttemptCount: row.SubmitAttemptCount, QueryAttemptCount: row.QueryAttemptCount,
+		SubmittedAt: formatUTC(row.SubmittedAt), CreatedAt: formatUTC(row.CreatedAt), UpdatedAt: formatUTC(row.UpdatedAt),
+	}
+	if row.ExchangeOrderID != nil {
+		exchangeOrderID := strconv.FormatInt(*row.ExchangeOrderID, 10)
+		view.ExchangeOrderID = &exchangeOrderID
+	}
+	if row.LastQueriedAt != nil {
+		lastQueriedAt := formatUTC(*row.LastQueriedAt)
+		view.LastQueriedAt = &lastQueriedAt
+	}
+	if row.ObservedAt != nil {
+		observedAt := formatUTC(*row.ObservedAt)
+		view.ObservedAt = &observedAt
+	}
+	return view
+}
+
 func loadTradingSymbols(
-	database *gorm.DB, intents []db.TradingIntent, orders []db.PaperOrder, positions []db.PaperPosition,
+	database *gorm.DB,
+	intents []db.TradingIntent,
+	orders []db.PaperOrder,
+	positions []db.PaperPosition,
+	testnetOrders []db.TestnetOrder,
 ) (map[uuid.UUID]string, error) {
 	ids := map[uuid.UUID]bool{}
 	for _, row := range intents {
@@ -1179,6 +1245,9 @@ func loadTradingSymbols(
 		ids[row.InstrumentID] = true
 	}
 	for _, row := range positions {
+		ids[row.InstrumentID] = true
+	}
+	for _, row := range testnetOrders {
 		ids[row.InstrumentID] = true
 	}
 	keys := make([]uuid.UUID, 0, len(ids))

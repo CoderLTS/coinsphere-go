@@ -144,7 +144,7 @@ export interface TestnetPosition {
 export interface TestnetOpenOrder {
   accountId: string
   symbol: string
-  exchangeOrderId: number
+  exchangeOrderId: string
   clientOrderId: string
   side: string
   orderType: string
@@ -154,6 +154,30 @@ export interface TestnetOpenOrder {
   executedQuantity: string
   stopPrice: string
   observedAt: string
+}
+
+export interface TestnetOrder {
+  id: string
+  accountId: string
+  intentId: string
+  instrumentId: string
+  symbol: string
+  clientOrderId: string
+  exchangeOrderId: string | null
+  side: string
+  quantity: string
+  filledQuantity: string
+  cumulativeQuoteQuantity: string
+  averagePrice: string
+  status: string
+  lastErrorCode: string
+  submitAttemptCount: number
+  queryAttemptCount: number
+  submittedAt: string
+  lastQueriedAt: string | null
+  observedAt: string | null
+  createdAt: string
+  updatedAt: string
 }
 
 export interface TradingOverview {
@@ -166,6 +190,7 @@ export interface TradingOverview {
   testnetBalances: TestnetBalance[]
   testnetPositions: TestnetPosition[]
   testnetOpenOrders: TestnetOpenOrder[]
+  testnetOrders: TestnetOrder[]
 }
 
 export interface TradingRiskPayload {

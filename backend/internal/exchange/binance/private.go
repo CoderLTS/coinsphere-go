@@ -34,6 +34,7 @@ const (
 	PrivateErrorPermission     PrivateErrorKind = "permission"
 	PrivateErrorRateLimited    PrivateErrorKind = "rate_limited"
 	PrivateErrorClockSkew      PrivateErrorKind = "clock_skew"
+	PrivateErrorNotFound       PrivateErrorKind = "not_found"
 	PrivateErrorRejected       PrivateErrorKind = "rejected"
 	PrivateErrorUnavailable    PrivateErrorKind = "unavailable"
 	PrivateErrorProtocol       PrivateErrorKind = "protocol"
@@ -93,6 +94,20 @@ type OpenOrder struct {
 	OriginalQuantity decimal.Decimal
 	ExecutedQuantity decimal.Decimal
 	StopPrice        decimal.Decimal
+}
+
+type OrderResult struct {
+	Symbol                  string
+	ExchangeOrderID         int64
+	ClientOrderID           string
+	Side                    string
+	OrderType               string
+	Status                  string
+	OriginalQuantity        decimal.Decimal
+	ExecutedQuantity        decimal.Decimal
+	CumulativeQuoteQuantity decimal.Decimal
+	AveragePrice            decimal.Decimal
+	ObservedAt              time.Time
 }
 
 type AccountSnapshot struct {
@@ -181,10 +196,75 @@ func (client *PrivateClient) SnapshotAccount(
 	return snapshot, nil
 }
 
+// QueryOrder resolves a possibly submitted order before any retry decision.
+func (client *PrivateClient) QueryOrder(
+	ctx context.Context,
+	marketType marketdata.MarketType,
+	apiKey, apiSecret, symbol, clientOrderID string,
+) (OrderResult, error) {
+	symbol, clientOrderID, err := privateOrderIdentity(symbol, clientOrderID)
+	if err != nil {
+		return OrderResult{}, &PrivateError{Kind: PrivateErrorRejected}
+	}
+	body, err := client.signedRequest(ctx, marketType, http.MethodGet, orderPath(marketType), url.Values{
+		"symbol":            {symbol},
+		"origClientOrderId": {clientOrderID},
+	}, apiKey, apiSecret)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	return client.parseOrderResult(body)
+}
+
+// PlaceMarketOrder uses a caller-provided deterministic client order ID.
+func (client *PrivateClient) PlaceMarketOrder(
+	ctx context.Context,
+	marketType marketdata.MarketType,
+	apiKey, apiSecret, symbol, clientOrderID, side string,
+	quantity decimal.Decimal,
+	reduceOnly bool,
+) (OrderResult, error) {
+	symbol, clientOrderID, err := privateOrderIdentity(symbol, clientOrderID)
+	if err != nil || (side != "buy" && side != "sell") || !quantity.IsPositive() {
+		return OrderResult{}, &PrivateError{Kind: PrivateErrorRejected}
+	}
+	if _, err := marketdata.ParseDecimal(quantity.String()); err != nil {
+		return OrderResult{}, &PrivateError{Kind: PrivateErrorRejected}
+	}
+	parameters := url.Values{
+		"symbol":           {symbol},
+		"side":             {strings.ToUpper(side)},
+		"type":             {"MARKET"},
+		"quantity":         {quantity.String()},
+		"newClientOrderId": {clientOrderID},
+		"newOrderRespType": {"RESULT"},
+	}
+	if marketType == marketdata.MarketTypeUSDM && reduceOnly {
+		parameters.Set("reduceOnly", "true")
+	}
+	body, err := client.signedRequest(
+		ctx, marketType, http.MethodPost, orderPath(marketType), parameters, apiKey, apiSecret,
+	)
+	if err != nil {
+		return OrderResult{}, err
+	}
+	return client.parseOrderResult(body)
+}
+
 func (client *PrivateClient) signedGET(
 	ctx context.Context,
 	marketType marketdata.MarketType,
 	requestPath, apiKey, apiSecret string,
+) ([]byte, error) {
+	return client.signedRequest(ctx, marketType, http.MethodGet, requestPath, nil, apiKey, apiSecret)
+}
+
+func (client *PrivateClient) signedRequest(
+	ctx context.Context,
+	marketType marketdata.MarketType,
+	method, requestPath string,
+	parameters url.Values,
+	apiKey, apiSecret string,
 ) ([]byte, error) {
 	if client == nil || ctx == nil {
 		return nil, &PrivateError{Kind: PrivateErrorRejected}
@@ -196,16 +276,18 @@ func (client *PrivateClient) signedGET(
 	endpoint := baseURL
 	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + requestPath
 	endpoint.RawPath = ""
-	query := url.Values{
-		"recvWindow": {strconv.FormatInt(client.recvWindow.Milliseconds(), 10)},
-		"timestamp":  {strconv.FormatInt(client.now().UTC().UnixMilli(), 10)},
+	query := make(url.Values, len(parameters)+3)
+	for key, values := range parameters {
+		query[key] = append([]string(nil), values...)
 	}
+	query.Set("recvWindow", strconv.FormatInt(client.recvWindow.Milliseconds(), 10))
+	query.Set("timestamp", strconv.FormatInt(client.now().UTC().UnixMilli(), 10))
 	mac := hmac.New(sha256.New, []byte(apiSecret))
 	_, _ = mac.Write([]byte(query.Encode()))
 	query.Set("signature", hex.EncodeToString(mac.Sum(nil)))
 	endpoint.RawQuery = query.Encode()
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	request, err := http.NewRequestWithContext(ctx, method, endpoint.String(), nil)
 	if err != nil {
 		return nil, &PrivateError{Kind: PrivateErrorRejected}
 	}
@@ -266,6 +348,105 @@ func openOrdersPath(marketType marketdata.MarketType) string {
 		return "/api/v3/openOrders"
 	}
 	return "/fapi/v1/openOrders"
+}
+
+func orderPath(marketType marketdata.MarketType) string {
+	if marketType == marketdata.MarketTypeSpot {
+		return "/api/v3/order"
+	}
+	return "/fapi/v1/order"
+}
+
+func privateOrderIdentity(symbol, clientOrderID string) (string, string, error) {
+	symbol, err := privateToken(symbol, 64)
+	if err != nil {
+		return "", "", err
+	}
+	clientOrderID, err = privateText(clientOrderID, 36)
+	if err != nil {
+		return "", "", err
+	}
+	return symbol, clientOrderID, nil
+}
+
+func (client *PrivateClient) parseOrderResult(body []byte) (OrderResult, error) {
+	var payload struct {
+		Symbol                  string `json:"symbol"`
+		OrderID                 int64  `json:"orderId"`
+		ClientOrderID           string `json:"clientOrderId"`
+		Side                    string `json:"side"`
+		OrderType               string `json:"type"`
+		Status                  string `json:"status"`
+		OriginalQuantity        string `json:"origQty"`
+		ExecutedQuantity        string `json:"executedQty"`
+		CumulativeQuoteQuantity string `json:"cummulativeQuoteQty"`
+		CumQuote                string `json:"cumQuote"`
+		AveragePrice            string `json:"avgPrice"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil || payload.OrderID <= 0 {
+		return OrderResult{}, &PrivateError{Kind: PrivateErrorProtocol}
+	}
+	symbol, err := privateToken(payload.Symbol, 64)
+	if err != nil {
+		return OrderResult{}, &PrivateError{Kind: PrivateErrorProtocol}
+	}
+	clientOrderID, err := privateText(payload.ClientOrderID, 36)
+	if err != nil {
+		return OrderResult{}, &PrivateError{Kind: PrivateErrorProtocol}
+	}
+	side, err := privateEnum(payload.Side, 8)
+	if err != nil || (side != "buy" && side != "sell") {
+		return OrderResult{}, &PrivateError{Kind: PrivateErrorProtocol}
+	}
+	orderType, err := privateEnum(payload.OrderType, 32)
+	if err != nil {
+		return OrderResult{}, &PrivateError{Kind: PrivateErrorProtocol}
+	}
+	status, err := privateEnum(payload.Status, 32)
+	if err != nil {
+		return OrderResult{}, &PrivateError{Kind: PrivateErrorProtocol}
+	}
+	originalQuantity, err := privateDecimal(payload.OriginalQuantity, false)
+	if err != nil || !originalQuantity.IsPositive() {
+		return OrderResult{}, &PrivateError{Kind: PrivateErrorProtocol}
+	}
+	executedQuantity, err := privateDecimal(payload.ExecutedQuantity, false)
+	if err != nil || executedQuantity.GreaterThan(originalQuantity) {
+		return OrderResult{}, &PrivateError{Kind: PrivateErrorProtocol}
+	}
+	cumulativeQuoteRaw := payload.CumulativeQuoteQuantity
+	if cumulativeQuoteRaw == "" {
+		cumulativeQuoteRaw = payload.CumQuote
+	}
+	if cumulativeQuoteRaw == "" {
+		cumulativeQuoteRaw = "0"
+	}
+	cumulativeQuote, err := privateDecimal(cumulativeQuoteRaw, false)
+	if err != nil {
+		return OrderResult{}, &PrivateError{Kind: PrivateErrorProtocol}
+	}
+	averagePrice := decimal.Zero
+	if payload.AveragePrice != "" {
+		averagePrice, err = privateDecimal(payload.AveragePrice, false)
+		if err != nil {
+			return OrderResult{}, &PrivateError{Kind: PrivateErrorProtocol}
+		}
+	} else if executedQuantity.IsPositive() {
+		averagePrice = cumulativeQuote.Div(executedQuantity)
+		if _, err := marketdata.ParseDecimal(averagePrice.String()); err != nil {
+			return OrderResult{}, &PrivateError{Kind: PrivateErrorProtocol}
+		}
+	}
+	if (executedQuantity.IsZero() && (!cumulativeQuote.IsZero() || !averagePrice.IsZero())) ||
+		(executedQuantity.IsPositive() && (!cumulativeQuote.IsPositive() || !averagePrice.IsPositive())) {
+		return OrderResult{}, &PrivateError{Kind: PrivateErrorProtocol}
+	}
+	return OrderResult{
+		Symbol: symbol, ExchangeOrderID: payload.OrderID, ClientOrderID: clientOrderID,
+		Side: side, OrderType: orderType, Status: status, OriginalQuantity: originalQuantity,
+		ExecutedQuantity: executedQuantity, CumulativeQuoteQuantity: cumulativeQuote,
+		AveragePrice: averagePrice, ObservedAt: client.now().UTC(),
+	}, nil
 }
 
 func parseAccountSnapshot(marketType marketdata.MarketType, accountBody, openOrdersBody []byte) (AccountSnapshot, error) {
@@ -523,6 +704,8 @@ func classifyPrivateResponse(response *http.Response, body []byte) error {
 		return &PrivateError{Kind: PrivateErrorPermission}
 	case -1021:
 		return &PrivateError{Kind: PrivateErrorClockSkew}
+	case -2013:
+		return &PrivateError{Kind: PrivateErrorNotFound}
 	}
 	switch response.StatusCode {
 	case http.StatusUnauthorized:

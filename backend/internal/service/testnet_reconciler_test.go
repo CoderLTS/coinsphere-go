@@ -57,6 +57,19 @@ func TestTestnetAccountReconcilerMatchesCleanSnapshotAndGatesResume(t *testing.T
 		reconciliation.LastObservedAt == nil {
 		t.Fatalf("matched reconciliation = %#v", reconciliation)
 	}
+	var risk db.TestnetRiskState
+	if err := fixture.database.Where("account_id = ?", fixture.account.ID).Take(&risk).Error; err != nil {
+		t.Fatalf("load Testnet risk baseline: %v", err)
+	}
+	var credential db.TradingAccountCredential
+	if err := fixture.database.Where("id = ?", fixture.credential.ID).Take(&credential).Error; err != nil {
+		t.Fatalf("reload reconciled Testnet credential: %v", err)
+	}
+	if !risk.BaselineEquity.Equal(decimal.NewFromInt(1000)) || !risk.Equity.Equal(risk.BaselineEquity) ||
+		!risk.PeakEquity.Equal(risk.BaselineEquity) || !risk.DayStartEquity.Equal(risk.BaselineEquity) ||
+		!risk.CredentialUpdatedAt.Equal(credential.UpdatedAt) {
+		t.Fatalf("Testnet risk baseline = %#v", risk)
+	}
 	var storedAccount db.TradingAccount
 	if err := fixture.database.Where("id = ?", fixture.account.ID).Take(&storedAccount).Error; err != nil {
 		t.Fatalf("reload reconciled account: %v", err)

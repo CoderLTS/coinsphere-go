@@ -1,4 +1,4 @@
-// coinsphere-executor 运行 Paper 执行；显式启用后同时验证并对账 Testnet 账户。
+// coinsphere-executor 运行 Paper；显式启用后同时验证、对账并执行 Testnet 意图。
 package main
 
 import (
@@ -86,7 +86,11 @@ func run(ctx context.Context, configPath, workerID string) (runErr error) {
 	if err != nil {
 		return err
 	}
-	return runPaperAndTestnetRuntime(ctx, paperExecutor, verifier, reconciler)
+	testnetExecutor, err := service.NewTestnetExecutor(gdb, cipher, privateClient, workerID, time.Second)
+	if err != nil {
+		return err
+	}
+	return runPaperAndTestnetRuntime(ctx, paperExecutor, verifier, reconciler, testnetExecutor)
 }
 
 func runPaperAndTestnetRuntime(
@@ -94,14 +98,16 @@ func runPaperAndTestnetRuntime(
 	paperExecutor *service.PaperExecutor,
 	verifier *service.TestnetCredentialVerifier,
 	reconciler *service.TestnetAccountReconciler,
+	testnetExecutor *service.TestnetExecutor,
 ) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	results := make(chan error, 3)
+	results := make(chan error, 4)
 	go func() { results <- paperExecutor.Run(runCtx) }()
 	go func() { results <- verifier.Run(runCtx) }()
 	go func() { results <- reconciler.Run(runCtx) }()
+	go func() { results <- testnetExecutor.Run(runCtx) }()
 	first := <-results
 	cancel()
-	return errors.Join(first, <-results, <-results)
+	return errors.Join(first, <-results, <-results, <-results)
 }

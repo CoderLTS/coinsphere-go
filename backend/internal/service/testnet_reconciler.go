@@ -11,6 +11,7 @@ import (
 	"coinsphere/backend/internal/marketdata"
 	"coinsphere/backend/internal/security"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -278,6 +279,22 @@ func (reconciler *TestnetAccountReconciler) persistSnapshot(
 				return err
 			}
 		}
+		if status == "matched" {
+			baseline := decimal.Zero
+			for _, balance := range snapshot.Balances {
+				if balance.Asset == "USDT" {
+					baseline = baseline.Add(balance.Total)
+				}
+			}
+			riskState := db.TestnetRiskState{
+				AccountID: account.ID, CredentialUpdatedAt: credential.UpdatedAt,
+				BaselineEquity: baseline, Equity: baseline, PeakEquity: baseline,
+				DayStartDate: utcDay(observedAt), DayStartEquity: baseline, UpdatedAt: observedAt,
+			}
+			if err := tx.Create(&riskState).Error; err != nil {
+				return err
+			}
+		}
 		reason := "testnet_reconciled_manual_release_required"
 		if status != "matched" {
 			reason = "testnet_reconciliation_mismatch"
@@ -374,7 +391,10 @@ func lockCurrentTestnetState(
 }
 
 func clearTestnetReconciliation(tx *gorm.DB, accountID uuid.UUID) error {
-	for _, model := range []any{&db.TestnetOpenOrder{}, &db.TestnetPosition{}, &db.TestnetBalance{}, &db.TestnetReconciliation{}} {
+	for _, model := range []any{
+		&db.TestnetRiskState{}, &db.TestnetOpenOrder{}, &db.TestnetPosition{},
+		&db.TestnetBalance{}, &db.TestnetReconciliation{},
+	} {
 		if err := tx.Where("account_id = ?", accountID).Delete(model).Error; err != nil {
 			return err
 		}
