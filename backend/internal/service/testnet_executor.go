@@ -399,6 +399,16 @@ func (executor *TestnetExecutor) prepareAction(
 		if blockReason != "" {
 			return blockTestnetIntent(tx, intent, blockReason, pause)
 		}
+		if state.Account.Market == string(marketdata.MarketTypeSpot) && state.ReduceOnly {
+			previous, err := preparePreviousProtectionAction(tx, intent)
+			if err != nil {
+				return err
+			}
+			if previous != nil {
+				action = previous
+				return nil
+			}
+		}
 		if state.DeltaQty.IsZero() {
 			prepared, err := executor.prepareProtectionAction(tx, intent, nil, &state)
 			if err != nil {

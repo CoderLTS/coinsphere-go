@@ -116,8 +116,10 @@ func TestTestnetExecutorReplacesSpotProtectionForChangedPosition(t *testing.T) {
 
 	calls := client.snapshotCalls()
 	if len(calls) != 5 || calls[1].operation != "protect" ||
-		!calls[1].quantity.Equal(decimal.NewFromInt(5)) || calls[3].operation != "cancel" ||
-		calls[3].clientOrderID != calls[1].clientOrderID || calls[4].operation != "protect" ||
+		!calls[1].quantity.Equal(decimal.NewFromInt(5)) || calls[2].operation != "cancel" ||
+		calls[2].clientOrderID != calls[1].clientOrderID || calls[3].operation != "place" ||
+		calls[3].side != "sell" || !calls[3].quantity.Equal(decimal.NewFromInt(3)) ||
+		calls[4].operation != "protect" ||
 		!calls[4].quantity.Equal(decimal.NewFromInt(2)) {
 		t.Fatalf("Spot protection replacement calls = %#v", calls)
 	}
@@ -187,6 +189,9 @@ func TestTestnetExecutorFlattensAndPausesWhenProtectionCannotBeConfirmed(t *test
 	}
 	if flatten.Status != "filled" || !flatten.FilledQuantity.Equal(decimal.NewFromInt(5)) {
 		t.Fatalf("emergency flatten order = %#v", flatten)
+	}
+	if err := fixture.database.Model(&flatten).Update("reduce_only", true).Error; err == nil || !strings.Contains(err.Error(), "testnet flatten order shape does not match account market") {
+		t.Fatalf("Spot emergency flatten reduceOnly constraint error = %v", err)
 	}
 }
 
@@ -294,6 +299,17 @@ func TestTestnetExecutorQueriesUnknownFlattenBeforeRecovery(t *testing.T) {
 	}
 	if flatten.Status != "filled" || flatten.QueryAttemptCount != 1 || flatten.SubmitAttemptCount != 1 {
 		t.Fatalf("recovered USD-M flatten = %#v", flatten)
+	}
+	var account db.TradingAccount
+	if err := fixture.database.Where("id = ?", fixture.account.ID).Take(&account).Error; err != nil {
+		t.Fatalf("load USD-M flatten account: %v", err)
+	}
+	if err := fixture.database.Model(&flatten).
+		Update("submitted_account_updated_at", account.UpdatedAt).Error; err != nil {
+		t.Fatalf("refresh USD-M flatten account binding: %v", err)
+	}
+	if err := fixture.database.Model(&flatten).Update("reduce_only", false).Error; err == nil || !strings.Contains(err.Error(), "testnet flatten order shape does not match account market") {
+		t.Fatalf("USD-M emergency flatten reduceOnly constraint error = %v", err)
 	}
 }
 

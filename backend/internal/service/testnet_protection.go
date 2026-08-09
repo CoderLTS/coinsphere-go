@@ -43,19 +43,9 @@ func (executor *TestnetExecutor) prepareProtectionAction(
 		}
 	}
 
-	var previous db.TestnetOrder
-	err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
-		"account_id = ? AND instrument_id = ? "+
-			"AND purpose = 'protection' AND intent_id <> ? "+
-			"AND status IN ('prepared', 'unknown', 'new', 'partially_filled')",
-		intent.AccountID, intent.InstrumentID, intent.ID,
-	).Order("created_at DESC, id DESC").Take(&previous).Error
-	if err == nil {
-		cancel := previous.Status == "new" || previous.Status == "partially_filled"
-		return prepareExistingTestnetOrderAction(tx, intent, previous, !cancel, cancel)
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
+	previous, err := preparePreviousProtectionAction(tx, intent)
+	if err != nil || previous != nil {
+		return previous, err
 	}
 
 	if state.Position.Quantity.IsZero() {
@@ -130,6 +120,27 @@ func (executor *TestnetExecutor) prepareProtectionAction(
 		Intent: intent, Order: order, Account: state.Account, Instrument: state.Instrument,
 		Credential: state.Credential, ExpectedAccountTime: state.Account.UpdatedAt,
 	}, nil
+}
+
+func preparePreviousProtectionAction(
+	tx *gorm.DB,
+	intent db.TradingIntent,
+) (*testnetExecutionAction, error) {
+	var previous db.TestnetOrder
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
+		"account_id = ? AND instrument_id = ? "+
+			"AND purpose = 'protection' AND intent_id <> ? "+
+			"AND status IN ('prepared', 'unknown', 'new', 'partially_filled')",
+		intent.AccountID, intent.InstrumentID, intent.ID,
+	).Order("created_at DESC, id DESC").Take(&previous).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	cancel := previous.Status == "new" || previous.Status == "partially_filled"
+	return prepareExistingTestnetOrderAction(tx, intent, previous, !cancel, cancel)
 }
 
 func loadTestnetProtectionState(tx *gorm.DB, intent db.TradingIntent) (testnetProtectionState, error) {

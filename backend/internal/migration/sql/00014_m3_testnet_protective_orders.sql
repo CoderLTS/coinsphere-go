@@ -169,6 +169,11 @@ BEGIN
         RAISE EXCEPTION 'testnet protection order shape does not match account market';
     END IF;
 
+    IF NEW.purpose = 'flatten'
+       AND NEW.reduce_only IS DISTINCT FROM (account_market = 'usd_m') THEN
+        RAISE EXCEPTION 'testnet flatten order shape does not match account market';
+    END IF;
+
     IF NEW.replaces_order_id IS NOT NULL THEN
         SELECT account_id, instrument_id, purpose
         INTO replaced_account, replaced_instrument, replaced_purpose
@@ -196,6 +201,7 @@ BEFORE INSERT OR UPDATE OF
     purpose,
     order_type,
     close_position,
+    reduce_only,
     working_type,
     replaces_order_id
 ON testnet_orders
