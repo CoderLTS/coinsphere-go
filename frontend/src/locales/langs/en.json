@@ -834,11 +834,19 @@
       "manual": "Manual"
     },
     "order": {
-      "filled": "Filled"
+      "prepared": "Prepared",
+      "unknown": "Unknown",
+      "new": "Accepted",
+      "partially_filled": "Partially filled",
+      "filled": "Filled",
+      "canceled": "Canceled",
+      "rejected": "Rejected",
+      "expired": "Expired"
     },
     "intent": {
       "pending": "Pending",
       "processing": "Processing",
+      "reconciling": "Reconciling",
       "executed": "Executed",
       "blocked": "Blocked",
       "failed": "Failed"

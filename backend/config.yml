@@ -14,7 +14,7 @@ market_data:
   backfill_page_size: 300
 
 trading:
-  # 私有 Testnet 请求默认关闭；启用后 Executor 才会解密凭据并访问 Binance Testnet。
+  # 私有 Testnet 能力默认关闭；启用后 Executor 才会解密凭据、对账并执行已放行意图。
   testnet_private_api_enabled: false
 
 server:

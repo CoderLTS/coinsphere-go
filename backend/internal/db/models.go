@@ -306,6 +306,49 @@ type TestnetOpenOrder struct {
 
 func (TestnetOpenOrder) TableName() string { return "testnet_open_orders" }
 
+// TestnetRiskState keeps the UTC loss and drawdown baseline for one reconciled credential version.
+type TestnetRiskState struct {
+	AccountID           uuid.UUID       `gorm:"column:account_id;type:uuid;primaryKey"`
+	CredentialUpdatedAt time.Time       `gorm:"column:credential_updated_at"`
+	BaselineEquity      decimal.Decimal `gorm:"column:baseline_equity;type:numeric(38,18)"`
+	Equity              decimal.Decimal `gorm:"type:numeric(38,18)"`
+	PeakEquity          decimal.Decimal `gorm:"column:peak_equity;type:numeric(38,18)"`
+	DayStartDate        time.Time       `gorm:"column:day_start_date;type:date"`
+	DayStartEquity      decimal.Decimal `gorm:"column:day_start_equity;type:numeric(38,18)"`
+	UpdatedAt           time.Time       `gorm:"column:updated_at;autoUpdateTime:false"`
+}
+
+func (TestnetRiskState) TableName() string { return "testnet_risk_states" }
+
+// TestnetOrder is the durable local projection of one deterministic external market order.
+type TestnetOrder struct {
+	ID                        uuid.UUID       `gorm:"type:uuid;primaryKey"`
+	AccountID                 uuid.UUID       `gorm:"column:account_id;type:uuid"`
+	IntentID                  uuid.UUID       `gorm:"column:intent_id;type:uuid;uniqueIndex"`
+	StrategyInstanceID        uuid.UUID       `gorm:"column:strategy_instance_id;type:uuid"`
+	InstrumentID              uuid.UUID       `gorm:"column:instrument_id;type:uuid"`
+	CredentialUpdatedAt       time.Time       `gorm:"column:credential_updated_at"`
+	SubmittedAccountUpdatedAt time.Time       `gorm:"column:submitted_account_updated_at"`
+	ClientOrderID             string          `gorm:"column:client_order_id;size:64"`
+	ExchangeOrderID           *int64          `gorm:"column:exchange_order_id"`
+	Side                      string          `gorm:"size:4"`
+	Quantity                  decimal.Decimal `gorm:"type:numeric(38,18)"`
+	FilledQuantity            decimal.Decimal `gorm:"column:filled_quantity;type:numeric(38,18)"`
+	CumulativeQuoteQuantity   decimal.Decimal `gorm:"column:cumulative_quote_quantity;type:numeric(38,18)"`
+	AveragePrice              decimal.Decimal `gorm:"column:average_price;type:numeric(38,18)"`
+	Status                    string          `gorm:"size:24"`
+	LastErrorCode             string          `gorm:"column:last_error_code;size:64"`
+	SubmitAttemptCount        int             `gorm:"column:submit_attempt_count"`
+	QueryAttemptCount         int             `gorm:"column:query_attempt_count"`
+	SubmittedAt               time.Time       `gorm:"column:submitted_at"`
+	LastQueriedAt             *time.Time      `gorm:"column:last_queried_at"`
+	ObservedAt                *time.Time      `gorm:"column:observed_at"`
+	CreatedAt                 time.Time       `gorm:"column:created_at"`
+	UpdatedAt                 time.Time       `gorm:"column:updated_at;autoUpdateTime:false"`
+}
+
+func (TestnetOrder) TableName() string { return "testnet_orders" }
+
 // TradingAccountInstrument 是账户品种白名单。
 type TradingAccountInstrument struct {
 	AccountID    uuid.UUID `gorm:"column:account_id;type:uuid;primaryKey"`

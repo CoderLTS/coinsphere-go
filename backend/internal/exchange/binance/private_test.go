@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"coinsphere/backend/internal/marketdata"
+	"github.com/shopspring/decimal"
 )
 
 func TestPrivateClientDefaultsToTestnetHosts(t *testing.T) {
@@ -135,6 +136,153 @@ func TestPrivateClientSnapshotsSpotAndUSDMAccounts(t *testing.T) {
 		len(usdm.OpenOrders) != 1 || usdm.OpenOrders[0].OrderType != "stop_market" ||
 		usdm.OpenOrders[0].StopPrice.String() != "52000" {
 		t.Fatalf("USD-M snapshot = %#v", usdm)
+	}
+}
+
+func TestPrivateClientPlacesAndQueriesDeterministicMarketOrders(t *testing.T) {
+	fixedNow := time.Date(2026, time.August, 9, 8, 9, 10, 0, time.UTC)
+	apiKey := strings.Repeat("k", 32)
+	apiSecret := strings.Repeat("s", 32)
+	requestCount := map[string]int{}
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		requestCount[request.Method+" "+request.URL.Path]++
+		if request.Header.Get("X-MBX-APIKEY") != apiKey {
+			t.Error("order request used an unexpected API key")
+		}
+		query := request.URL.Query()
+		signature := query.Get("signature")
+		query.Del("signature")
+		mac := hmac.New(sha256.New, []byte(apiSecret))
+		_, _ = mac.Write([]byte(query.Encode()))
+		if !hmac.Equal([]byte(signature), []byte(hex.EncodeToString(mac.Sum(nil)))) {
+			t.Error("order request signature is invalid")
+		}
+		if query.Get("timestamp") != "1786262950000" || query.Get("recvWindow") != "5000" {
+			t.Errorf("order signed query = %v", query)
+		}
+		if request.Method == http.MethodPost {
+			wantReduceOnly := ""
+			if request.URL.Path == "/fapi/v1/order" {
+				wantReduceOnly = "true"
+			}
+			if query.Get("newClientOrderId") != "cs019d-order" || query.Get("side") != "BUY" ||
+				query.Get("type") != "MARKET" || query.Get("quantity") != "0.01" ||
+				query.Get("newOrderRespType") != "RESULT" || query.Get("origClientOrderId") != "" ||
+				query.Get("reduceOnly") != wantReduceOnly {
+				t.Errorf("market order query = %v", query)
+			}
+		} else if query.Get("origClientOrderId") != "cs019d-order" || query.Get("newClientOrderId") != "" {
+			t.Errorf("order lookup query = %v", query)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v3/order":
+			_, _ = response.Write([]byte(`{"symbol":"BTCUSDT","orderId":41,"clientOrderId":"cs019d-order","side":"BUY","type":"MARKET","status":"FILLED","origQty":"0.01","executedQty":"0.01","cummulativeQuoteQty":"500"}`))
+		case "/fapi/v1/order":
+			_, _ = response.Write([]byte(`{"symbol":"BTCUSDT","orderId":42,"clientOrderId":"cs019d-order","side":"BUY","type":"MARKET","status":"FILLED","origQty":"0.01","executedQty":"0.01","cumQuote":"501","avgPrice":"50100"}`))
+		default:
+			t.Errorf("unexpected order path %q", request.URL.Path)
+			response.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	client, err := NewPrivateClient(PrivateClientConfig{
+		SpotBaseURL: server.URL, USDMBaseURL: server.URL, Now: func() time.Time { return fixedNow },
+	})
+	if err != nil {
+		t.Fatalf("create order client: %v", err)
+	}
+
+	for _, test := range []struct {
+		marketType       marketdata.MarketType
+		wantOrderID      int64
+		wantAveragePrice string
+		reduceOnly       bool
+	}{
+		{marketType: marketdata.MarketTypeSpot, wantOrderID: 41, wantAveragePrice: "50000"},
+		{marketType: marketdata.MarketTypeUSDM, wantOrderID: 42, wantAveragePrice: "50100", reduceOnly: true},
+	} {
+		placed, err := client.PlaceMarketOrder(
+			context.Background(), test.marketType, apiKey, apiSecret,
+			"BTCUSDT", "cs019d-order", "buy", decimal.RequireFromString("0.01"), test.reduceOnly,
+		)
+		if err != nil || placed.ExchangeOrderID != test.wantOrderID || placed.Status != "filled" ||
+			placed.AveragePrice.String() != test.wantAveragePrice || !placed.ObservedAt.Equal(fixedNow) {
+			t.Fatalf("place %s market order = %#v, %v", test.marketType, placed, err)
+		}
+		queried, err := client.QueryOrder(
+			context.Background(), test.marketType, apiKey, apiSecret, "BTCUSDT", "cs019d-order",
+		)
+		if err != nil || queried.Symbol != placed.Symbol || queried.ExchangeOrderID != placed.ExchangeOrderID ||
+			queried.ClientOrderID != placed.ClientOrderID || queried.Side != placed.Side || queried.OrderType != placed.OrderType ||
+			queried.Status != placed.Status || !queried.OriginalQuantity.Equal(placed.OriginalQuantity) ||
+			!queried.ExecutedQuantity.Equal(placed.ExecutedQuantity) ||
+			!queried.CumulativeQuoteQuantity.Equal(placed.CumulativeQuoteQuantity) ||
+			!queried.AveragePrice.Equal(placed.AveragePrice) || !queried.ObservedAt.Equal(placed.ObservedAt) {
+			t.Fatalf("query %s market order = %#v, %v; want %#v", test.marketType, queried, err, placed)
+		}
+	}
+	for _, key := range []string{
+		http.MethodPost + " /api/v3/order", http.MethodGet + " /api/v3/order",
+		http.MethodPost + " /fapi/v1/order", http.MethodGet + " /fapi/v1/order",
+	} {
+		if requestCount[key] != 1 {
+			t.Errorf("request count for %s = %d", key, requestCount[key])
+		}
+	}
+}
+
+func TestPrivateClientClassifiesMissingOrderForQueryFirstRecovery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusBadRequest)
+		_, _ = response.Write([]byte(`{"code":-2013,"msg":"sensitive-response-marker"}`))
+	}))
+	defer server.Close()
+	client, err := NewPrivateClient(PrivateClientConfig{SpotBaseURL: server.URL, USDMBaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("create missing-order client: %v", err)
+	}
+	_, err = client.QueryOrder(context.Background(), marketdata.MarketTypeSpot, "key", "secret", "BTCUSDT", "cs019d-order")
+	var privateErr *PrivateError
+	if !errors.As(err, &privateErr) || privateErr.Kind != PrivateErrorNotFound {
+		t.Fatalf("missing-order error = %#v", err)
+	}
+	if strings.Contains(err.Error(), "sensitive-response-marker") {
+		t.Fatal("missing-order error exposed response data")
+	}
+}
+
+func TestPrivateClientRejectsInconsistentOrderFills(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		body string
+	}{
+		{
+			name: "quote without fill",
+			body: `{"symbol":"BTCUSDT","orderId":41,"clientOrderId":"cs019d-order","side":"BUY","type":"MARKET","status":"NEW","origQty":"0.01","executedQty":"0","cummulativeQuoteQty":"1"}`,
+		},
+		{
+			name: "fill without quote",
+			body: `{"symbol":"BTCUSDT","orderId":41,"clientOrderId":"cs019d-order","side":"BUY","type":"MARKET","status":"FILLED","origQty":"0.01","executedQty":"0.01","cummulativeQuoteQty":"0","avgPrice":"50000"}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+				_, _ = response.Write([]byte(test.body))
+			}))
+			defer server.Close()
+			client, err := NewPrivateClient(PrivateClientConfig{SpotBaseURL: server.URL, USDMBaseURL: server.URL})
+			if err != nil {
+				t.Fatalf("create inconsistent-order client: %v", err)
+			}
+			_, err = client.QueryOrder(
+				context.Background(), marketdata.MarketTypeSpot, "key", "secret", "BTCUSDT", "cs019d-order",
+			)
+			var privateErr *PrivateError
+			if !errors.As(err, &privateErr) || privateErr.Kind != PrivateErrorProtocol {
+				t.Fatalf("inconsistent order error = %#v", err)
+			}
+		})
 	}
 }
 

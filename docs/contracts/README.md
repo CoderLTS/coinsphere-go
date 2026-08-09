@@ -97,8 +97,10 @@ Go Paper Executor 按账户串行消费持久意图，每次执行前重新检�
 
 Paper 只追加 `order/fill/fee/funding` 事件，订单、仓位、余额和盈亏均可从事件重建。Paper Executor 启动只恢复 Paper 意图、只重建 Paper 账户投影，绝不领取 Testnet 意图；部署回滚不得执行 migration Down、删除交易事件或清空投影。
 
-Testnet 私有访问默认关闭。显式启用后，只有 Go Executor 会解密凭据，并向 Spot `/api/v3/account`、`/api/v3/openOrders` 与 USD-M `/fapi/v3/account`、`/fapi/v1/openOrders` 发送带 UTC `timestamp`、`recvWindow` 和 HMAC-SHA256 签名的请求。API Key 只进入 `X-MBX-APIKEY` 请求头；认证、权限、限流、时钟偏差、协议和网络失败只保存固定脱敏错误码。
+Testnet 私有访问默认关闭。显式启用后，只有 Go Executor 会解密凭据，并向 Spot `/api/v3/account`、`/api/v3/openOrders`、`/api/v3/order` 与 USD-M `/fapi/v3/account`、`/fapi/v1/openOrders`、`/fapi/v1/order` 发送带 UTC `timestamp`、`recvWindow` 和 HMAC-SHA256 签名的请求。API Key 只进入 `X-MBX-APIKEY` 请求头；认证、权限、限流、时钟偏差、协议和网络失败只保存固定脱敏错误码。
 
 凭据验证成功后，Executor 把余额、USD-M 仓位和开放订单写入绑定当前凭据版本的独立 Testnet 投影。不可交易权限、开放订单、非白名单资产、Spot 既有持仓、USD-M 既有仓位或双向持仓模式都会形成固定 `mismatch`；外部协议或网络失败形成 `unknown`。只有 `matched` 允许用户手工恢复账户，后台对账不会自动恢复账户、启用自动化、修改外部订单或创建交易意图；凭据或风险白名单变化会清空旧投影并重新暂停账户。
 
-Testnet 下单、确定性 `clientOrderId` 恢复、保护单、未知外部订单归属恢复和持续成交对账仍未交付。后续晋级继续遵守 [ADR-0010](../architecture/decisions/0010-execution-risk-events.md) 并由用户手工放行。
+首次对账 `matched`、账户手工恢复且适用风控与授权均通过后，Executor 才会按账户串行领取 Testnet 意图。每个主市价单使用意图生成的确定性 `clientOrderId`；提交前持久化 `prepared`，进程恢复或响应未知时先用同一 ID 查询，只有交易所明确返回不存在才允许重试。HTTP 拒单也先进入 `unknown` 并查询，避免把重复客户端订单号误判为未成交；外部请求不占用数据库事务，返回结果仅在账户与凭据版本仍有效时写入。USD-M 减仓携带 `reduceOnly=true`，任一协议、状态或风险差异都会保留未知态或暂停账户。
+
+保护单、未知外部订单归属恢复以及成交、费用和资金费的持续权威对账仍未交付。生产继续保持 Testnet 私有能力关闭；后续晋级遵守 [ADR-0010](../architecture/decisions/0010-execution-risk-events.md) 并由用户手工放行。

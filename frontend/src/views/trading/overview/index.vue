@@ -373,7 +373,7 @@
               </ElTableColumn>
               <ElTableColumn :label="t('trading.table.status')" width="120" align="center">
                 <template #default="{ row }">
-                  <ElTag type="success" effect="plain" size="small">{{
+                  <ElTag :type="orderStatusType(row.status)" effect="plain" size="small">{{
                     orderStatusLabel(row.status)
                   }}</ElTag>
                 </template>
@@ -674,7 +674,8 @@
     balances: [],
     testnetBalances: [],
     testnetPositions: [],
-    testnetOpenOrders: []
+    testnetOpenOrders: [],
+    testnetOrders: []
   })
 
   const createAccountForm = (): AccountFormModel => ({
@@ -747,8 +748,24 @@
   })
   const selectedOrders = computed(() => {
     if (selectedAccount.value?.environment === 'testnet') {
-      return overview.testnetOpenOrders
+      const managed = overview.testnetOrders
         .filter((order) => order.accountId === selectedAccountId.value)
+        .map((order) => ({
+          symbol: order.symbol,
+          side: order.side,
+          filledQuantity: order.filledQuantity,
+          averagePrice: order.averagePrice,
+          status: order.status,
+          clientOrderId: order.clientOrderId,
+          createdAt: order.submittedAt
+        }))
+      const managedClientOrderIds = new Set(managed.map((order) => order.clientOrderId))
+      const external = overview.testnetOpenOrders
+        .filter(
+          (order) =>
+            order.accountId === selectedAccountId.value &&
+            !managedClientOrderIds.has(order.clientOrderId)
+        )
         .map((order) => ({
           symbol: order.symbol,
           side: order.side,
@@ -758,6 +775,7 @@
           clientOrderId: order.clientOrderId,
           createdAt: order.observedAt
         }))
+      return [...managed, ...external]
     }
     return overview.orders.filter((order) => order.accountId === selectedAccountId.value)
   })
@@ -1183,13 +1201,19 @@
   const modeLabel = (mode: string) =>
     mode === 'auto' ? t('trading.mode.auto') : t('trading.mode.manual')
   const orderStatusLabel = (status: string) =>
-    status === 'filled' ? t('trading.order.filled') : status
+    t(`trading.order.${status}` as 'trading.order.filled')
+  const orderStatusType = (status: string): TagProps['type'] => {
+    if (status === 'filled') return 'success'
+    if (status === 'rejected' || status === 'canceled' || status === 'expired') return 'danger'
+    if (status === 'unknown' || status === 'partially_filled') return 'warning'
+    return 'info'
+  }
   const intentStatusLabel = (status: string) =>
     t(`trading.intent.${status}` as 'trading.intent.pending')
   const intentStatusType = (status: string): TagProps['type'] => {
     if (status === 'executed') return 'success'
     if (status === 'blocked' || status === 'failed') return 'danger'
-    if (status === 'processing') return 'warning'
+    if (status === 'processing' || status === 'reconciling') return 'warning'
     return 'info'
   }
   const formatTime = (value?: string | null) => {

@@ -834,11 +834,19 @@
       "manual": "人工"
     },
     "order": {
-      "filled": "已成交"
+      "prepared": "待提交",
+      "unknown": "状态未知",
+      "new": "已接受",
+      "partially_filled": "部分成交",
+      "filled": "已成交",
+      "canceled": "已取消",
+      "rejected": "已拒绝",
+      "expired": "已过期"
     },
     "intent": {
       "pending": "待处理",
       "processing": "处理中",
+      "reconciling": "确认订单中",
       "executed": "已执行",
       "blocked": "已拦截",
       "failed": "失败"
