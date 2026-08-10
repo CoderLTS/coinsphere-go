@@ -34,7 +34,9 @@ SAFE_PLACEHOLDERS = {
     b"changeme",
     b"coinsphere",
     b"coinsphere-dev-secret",
+    b"current password",
     b"dummy",
+    b"enter the api key",
     b"example",
     b"api key",
     b"access token",
@@ -42,6 +44,7 @@ SAFE_PLACEHOLDERS = {
     b"secret",
     b"test",
     "密码".encode(),
+    "当前密码".encode(),
     "访问令牌".encode(),
     "签名密钥".encode(),
 }

@@ -134,6 +134,11 @@ for root, suffix in ((windows_root, ".exe"), (linux_root, "")):
     write(root / "nginx.conf", "server { listen 80; }\n")
     write(root / "README.md", "CoinSphere package\n")
     write(root / "web/index.html", "<!doctype html><title>CoinSphere</title>\n")
+write(
+    windows_root / "web/assets/index.js",
+    'const en={apiKey:"Enter the API Key",password:"Current password"};'
+    'const zh={password:"当前密码"};\n',
+)
 
 write(docker_root / "compose.yaml", "services: {}\n")
 write(docker_root / "deploy.sh", "#!/usr/bin/env bash\nset -Eeuo pipefail\n", executable=True)
