@@ -180,7 +180,11 @@ compose_with "$previous_env" stop "${PREVIOUS_SERVICES[@]}"
 compose_with "$previous_env" rm -f "${PREVIOUS_SERVICES[@]}"
 docker run --rm --network dpanel_stack --env-file "$RUNTIME_ENV_FILE" "$BACKEND_IMAGE" \
   /app/coinsphere-migrate -config /app/config.yml -direction up
-compose_with "$next_env" up -d --no-deps --wait --wait-timeout 180 "${SERVICES[@]}"
+# Docker can retain released fixed IP and host port bindings briefly after removal.
+if ! compose_with "$next_env" up -d --no-deps --wait --wait-timeout 180 "${SERVICES[@]}"; then
+  sleep 5
+  compose_with "$next_env" up -d --no-deps --wait --wait-timeout 180 "${SERVICES[@]}"
+fi
 curl --fail --show-error --retry 10 --retry-all-errors --retry-delay 3 \
   "http://127.0.0.1:$WEB_PORT/health" >/dev/null
 

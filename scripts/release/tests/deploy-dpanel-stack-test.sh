@@ -51,13 +51,23 @@ EOF
 cat >"$TEST_DIR/bin/docker" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$DEPLOY_DOCKER_LOG"
+if [[ ${FAIL_FIRST_UP:-false} == true \
+  && " $* " == *' up -d --no-deps --wait --wait-timeout 180 coinsphere-backend coinsphere-web coinsphere-worker coinsphere-worker-backtest coinsphere-executor '* \
+  && ! -e $DEPLOY_DOCKER_RETRY_MARKER ]]; then
+  : >"$DEPLOY_DOCKER_RETRY_MARKER"
+  exit 1
+fi
 exit 0
 EOF
 cat >"$TEST_DIR/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 [[ ${FAIL_HEALTH:-false} != true ]]
 EOF
-chmod +x "$TEST_DIR/bin/docker" "$TEST_DIR/bin/curl"
+cat >"$TEST_DIR/bin/sleep" <<'EOF'
+#!/usr/bin/env bash
+printf 'sleep %s\n' "$*" >>"$DEPLOY_DOCKER_LOG"
+EOF
+chmod +x "$TEST_DIR/bin/docker" "$TEST_DIR/bin/curl" "$TEST_DIR/bin/sleep"
 
 write_old_env() {
   local include_worker=${1:-false}
@@ -81,6 +91,7 @@ EOF
 
 export PATH="$TEST_DIR/bin:$PATH"
 export DEPLOY_DOCKER_LOG="$TEST_DIR/docker.log"
+export DEPLOY_DOCKER_RETRY_MARKER="$TEST_DIR/docker-retry.marker"
 export DOCKER_CONFIG="$TEST_DIR/docker-config"
 export COINSPHERE_STACK_ROOT="$STACK_ROOT"
 
@@ -112,7 +123,7 @@ write_old_env false false
 : >"$DEPLOY_DOCKER_LOG"
 compose_checksum=$(sha256sum "$STACK_ROOT/compose/apps/docker-compose.yaml")
 
-bash "$ROOT_DIR/scripts/release/deploy-dpanel-stack.sh" "$VERSION" "$TEST_DIR/release-manifest.json"
+FAIL_FIRST_UP=true bash "$ROOT_DIR/scripts/release/deploy-dpanel-stack.sh" "$VERSION" "$TEST_DIR/release-manifest.json"
 if ! grep -Fxq "COINSPHERE_BACKEND_IMAGE=$REGISTRY/coinsphere/backend@sha256:$BACKEND_DIGEST" "$STACK_ROOT/secrets/apps.env" \
   || ! grep -Fxq "COINSPHERE_WEB_IMAGE=$REGISTRY/coinsphere/web@sha256:$WEB_DIGEST" "$STACK_ROOT/secrets/apps.env" \
   || ! grep -Fxq "COINSPHERE_WORKER_IMAGE=$REGISTRY/coinsphere/worker@sha256:$WORKER_DIGEST" "$STACK_ROOT/secrets/apps.env" \
@@ -123,6 +134,11 @@ if ! grep -Fxq "COINSPHERE_BACKEND_IMAGE=$REGISTRY/coinsphere/backend@sha256:$BA
 fi
 if [[ $(sha256sum "$STACK_ROOT/compose/apps/docker-compose.yaml") != "$compose_checksum" ]]; then
   echo "发布不得覆盖共享 Compose" >&2
+  exit 1
+fi
+if [[ $(grep -Fc 'up -d --no-deps --wait --wait-timeout 180 coinsphere-backend coinsphere-web coinsphere-worker coinsphere-worker-backtest coinsphere-executor' "$DEPLOY_DOCKER_LOG") -ne 2 ]] \
+  || ! grep -Fxq 'sleep 5' "$DEPLOY_DOCKER_LOG"; then
+  echo "瞬时容器启动失败时必须等待后重试一次" >&2
   exit 1
 fi
 
