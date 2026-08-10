@@ -152,7 +152,7 @@ def scan_sensitive_content(data, label):
     for rule_name, pattern in SENSITIVE_CONTENT_PATTERNS:
         if pattern.search(data):
             raise ScanError(f"{label} 命中敏感内容规则: {rule_name}")
-    binary = b"\0" in data[:8192]
+    binary = b"\0" in data
     for match in AUTHORIZATION_RE.finditer(data):
         token = match.group(1)
         if (
