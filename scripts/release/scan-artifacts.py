@@ -155,9 +155,17 @@ def scan_sensitive_content(data, label):
     binary = b"\0" in data
     for match in AUTHORIZATION_RE.finditer(data):
         token = match.group(1)
+        go_string_table_join = (
+            binary
+            and token.isalpha()
+            and not token.islower()
+            and not token.isupper()
+            and token.endswith(b"HTTP")
+        )
         if (
             not binary
-            or token.isalpha()
+            # Go 二进制字符串表会把 Bearer 前缀与相邻的 HTTP 标识符拼接。
+            or (token.isalpha() and not go_string_table_join)
             or any(character in b"0123456789.+=-" for character in token)
         ):
             raise ScanError(f"{label} 命中敏感内容规则: Authorization 凭据")

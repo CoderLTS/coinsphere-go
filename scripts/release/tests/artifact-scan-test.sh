@@ -123,7 +123,9 @@ for root, suffix in ((windows_root, ".exe"), (linux_root, "")):
     write(root / f"coinsphere-server{suffix}", b"binary", executable=root == linux_root)
     write(root / f"coinsphere-migrate{suffix}", b"binary", executable=root == linux_root)
     executor_content = (
-        b"A" * 8192 + b"\0Authorization: Bearer /modelschoicescontentHTTP\0"
+        b"A" * 8192
+        + b"\0Authorization: Bearer /modelschoicescontentHTTP\0"
+        + b"Bearer choicescontentmessageHTTP\0"
         if suffix == ".exe"
         else b"binary"
     )
@@ -169,6 +171,11 @@ elif mode == "short-webhook-pepper":
     write(linux_root / "web/settings.txt", "COINSPHERE_AUTH__WEBHOOK_PEPPER=Abc1234\n")
 elif mode == "bearer":
     write(linux_root / "web/settings.txt", "Authorization: Bearer ABCDEFGHIJKLMNOPQRSTUVWXYZ\n")
+elif mode == "binary-bearer":
+    write(
+        windows_root / "coinsphere-executor.exe",
+        b"\0Authorization: Bearer AbCdEfGhIjKlMnOpQrStUvWxYz\0",
+    )
 elif mode == "private-key":
     header = "-----BEGIN " + "PRIVATE KEY-----"
     footer = "-----END " + "PRIVATE KEY-----"
@@ -509,6 +516,7 @@ assert_rejected credential-prefixed credential-prefixed "非占位凭据赋值"
 assert_rejected short-encryption-key short-encryption-key "非占位凭据赋值"
 assert_rejected short-webhook-pepper short-webhook-pepper "非占位凭据赋值"
 assert_rejected bearer bearer "Authorization 凭据"
+assert_rejected binary-bearer binary-bearer "Authorization 凭据"
 assert_rejected private-key private-key "敏感内容规则: 私钥"
 assert_rejected encrypted-private-key encrypted-private-key "敏感内容规则: 私钥"
 assert_rejected legacy-encrypted-private-key legacy-encrypted-private-key "敏感内容规则: 私钥"
