@@ -21,7 +21,8 @@ export default ({ mode }: { mode: string }) => {
 
   return defineConfig({
     define: {
-      __APP_VERSION__: JSON.stringify(VITE_VERSION)
+      __APP_VERSION__: JSON.stringify(VITE_VERSION),
+      __INTLIFY_JIT_COMPILATION__: true
     },
     base: VITE_BASE_URL,
     server: {
