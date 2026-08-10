@@ -25,7 +25,7 @@ jobs:
       VERSION: ${{ inputs.version }}
       COINSPHERE_REGISTRY: 127.0.0.1:5000
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
 
@@ -59,7 +59,7 @@ jobs:
           printf 'worker_digest=%s\n' "$worker_digest" >>"$GITHUB_OUTPUT"
 
       - name: Generate backend SBOM
-        uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           image: registry:${{ steps.build.outputs.backend_digest }}
           format: spdx-json
@@ -68,7 +68,7 @@ jobs:
           upload-release-assets: false
 
       - name: Generate web SBOM
-        uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           image: registry:${{ steps.build.outputs.web_digest }}
           format: spdx-json
@@ -77,7 +77,7 @@ jobs:
           upload-release-assets: false
 
       - name: Generate worker SBOM
-        uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           image: registry:${{ steps.build.outputs.worker_digest }}
           format: spdx-json
@@ -135,7 +135,7 @@ jobs:
           python3 scripts/release/scan-artifacts.py "$VERSION" "$GITHUB_SHA" dist
 
       - name: Preserve release candidate
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: coinsphere-${{ inputs.version }}
           path: dist/
@@ -147,7 +147,7 @@ jobs:
         run: bash scripts/release/deploy-dpanel-stack.sh "$VERSION" dist/release-manifest.json
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: ${{ inputs.version }}
           name: CoinSphere ${{ inputs.version }}
