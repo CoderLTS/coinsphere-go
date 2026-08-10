@@ -2,7 +2,7 @@
 import App from './App.vue'
 import { createApp } from 'vue'
 import { initStore } from './store'
-import { initRouter } from './router'
+import { initRouter, router } from './router'
 import language from './locales'
 import '@styles/core/tailwind.css'
 import '@styles/index.scss'
@@ -22,4 +22,4 @@ setupGlobDirectives(app)
 setupErrorHandle(app)
 
 app.use(language)
-app.mount('#app')
+router.isReady().then(() => app.mount('#app'))
