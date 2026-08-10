@@ -17,8 +17,10 @@ RUNTIME_ENV_FILE=$STACK_ROOT/secrets/coinsphere-runtime.env
 WORKER_RUNTIME_ENV_FILE=$STACK_ROOT/secrets/coinsphere-worker-runtime.env
 EXECUTOR_RUNTIME_ENV_FILE=$STACK_ROOT/secrets/coinsphere-executor-runtime.env
 DOCKER_CONFIG_FILE="${DOCKER_CONFIG:-${HOME:?HOME 未设置}/.docker}/config.json"
-SERVICES=(coinsphere-backend coinsphere-web coinsphere-worker coinsphere-worker-backtest coinsphere-executor)
-PREVIOUS_SERVICES=(coinsphere-backend coinsphere-web)
+CORE_SERVICES=(coinsphere-backend coinsphere-web)
+AUXILIARY_SERVICES=(coinsphere-worker coinsphere-worker-backtest coinsphere-executor)
+SERVICES=("${CORE_SERVICES[@]}" "${AUXILIARY_SERVICES[@]}")
+PREVIOUS_SERVICES=("${CORE_SERVICES[@]}")
 
 if [[ ! $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
   echo "版本号必须符合 vX.Y.Z 格式: $VERSION" >&2
@@ -180,11 +182,12 @@ compose_with "$previous_env" stop "${PREVIOUS_SERVICES[@]}"
 compose_with "$previous_env" rm -f "${PREVIOUS_SERVICES[@]}"
 docker run --rm --network dpanel_stack --env-file "$RUNTIME_ENV_FILE" "$BACKEND_IMAGE" \
   /app/coinsphere-migrate -config /app/config.yml -direction up
-# Docker can retain released fixed IP and host port bindings briefly after removal.
-if ! compose_with "$next_env" up -d --no-deps --wait --wait-timeout 180 "${SERVICES[@]}"; then
+# Reserve fixed Backend/Web addresses before dynamic Worker/Executor endpoints.
+if ! compose_with "$next_env" up -d --no-deps --wait --wait-timeout 180 "${CORE_SERVICES[@]}"; then
   sleep 5
-  compose_with "$next_env" up -d --no-deps --wait --wait-timeout 180 "${SERVICES[@]}"
+  compose_with "$next_env" up -d --no-deps --wait --wait-timeout 180 "${CORE_SERVICES[@]}"
 fi
+compose_with "$next_env" up -d --no-deps --wait --wait-timeout 180 "${AUXILIARY_SERVICES[@]}"
 curl --fail --show-error --retry 10 --retry-all-errors --retry-delay 3 \
   "http://127.0.0.1:$WEB_PORT/health" >/dev/null
 

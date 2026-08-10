@@ -52,7 +52,7 @@ cat >"$TEST_DIR/bin/docker" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$DEPLOY_DOCKER_LOG"
 if [[ ${FAIL_FIRST_UP:-false} == true \
-  && " $* " == *' up -d --no-deps --wait --wait-timeout 180 coinsphere-backend coinsphere-web coinsphere-worker coinsphere-worker-backtest coinsphere-executor '* \
+  && " $* " == *' up -d --no-deps --wait --wait-timeout 180 coinsphere-backend coinsphere-web '* \
   && ! -e $DEPLOY_DOCKER_RETRY_MARKER ]]; then
   : >"$DEPLOY_DOCKER_RETRY_MARKER"
   exit 1
@@ -136,9 +136,18 @@ if [[ $(sha256sum "$STACK_ROOT/compose/apps/docker-compose.yaml") != "$compose_c
   echo "发布不得覆盖共享 Compose" >&2
   exit 1
 fi
-if [[ $(grep -Fc 'up -d --no-deps --wait --wait-timeout 180 coinsphere-backend coinsphere-web coinsphere-worker coinsphere-worker-backtest coinsphere-executor' "$DEPLOY_DOCKER_LOG") -ne 2 ]] \
+core_up='up -d --no-deps --wait --wait-timeout 180 coinsphere-backend coinsphere-web'
+auxiliary_up='up -d --no-deps --wait --wait-timeout 180 coinsphere-worker coinsphere-worker-backtest coinsphere-executor'
+if [[ $(grep -Fc "$core_up" "$DEPLOY_DOCKER_LOG") -ne 2 ]] \
+  || [[ $(grep -Fc "$auxiliary_up" "$DEPLOY_DOCKER_LOG") -ne 1 ]] \
   || ! grep -Fxq 'sleep 5' "$DEPLOY_DOCKER_LOG"; then
-  echo "瞬时容器启动失败时必须等待后重试一次" >&2
+  echo "核心服务必须先有界重试，再单独启动动态地址服务" >&2
+  exit 1
+fi
+last_core_up_line=$(grep -nF "$core_up" "$DEPLOY_DOCKER_LOG" | tail -n 1 | cut -d: -f1)
+auxiliary_up_line=$(grep -nF "$auxiliary_up" "$DEPLOY_DOCKER_LOG" | cut -d: -f1)
+if ((last_core_up_line >= auxiliary_up_line)); then
+  echo "动态地址服务不得先于固定地址核心服务启动" >&2
   exit 1
 fi
 
