@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { expect, test, type Page, type Route } from '@playwright/test'
 
 type AccessMode = 'guest' | 'authenticated'
@@ -12,6 +13,14 @@ interface WorkflowPayload {
 }
 
 const createdAt = '2026-08-01T00:00:00Z'
+
+const productionCsp = readFileSync(new URL('../nginx.conf', import.meta.url), 'utf8').match(
+  /add_header Content-Security-Policy "([^"]+)" always;/
+)?.[1]
+
+if (!productionCsp) {
+  throw new Error('frontend/nginx.conf must define Content-Security-Policy')
+}
 
 const homeMenu = {
   id: 1,
@@ -234,6 +243,20 @@ async function loginAsTestUser(page: Page, protectedPath: string) {
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await expect(page).toHaveURL(new RegExp(`${protectedPath}$`))
 }
+
+test('生产 CSP 不会阻断登录页首屏渲染', async ({ page }) => {
+  await page.route('**/*', async (route) => {
+    const response = await route.fetch()
+    await route.fulfill({
+      response,
+      headers: { ...response.headers(), 'content-security-policy': productionCsp }
+    })
+  })
+
+  await page.goto('/auth/login?redirect=/auth')
+
+  await expect(page.getByRole('button', { name: '登录', exact: true })).toBeVisible()
+})
 
 test('匿名访问工作流编辑器时被登录边界拦截', async ({ page }) => {
   const backend = await installBackendMocks(page, 'guest')
