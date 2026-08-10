@@ -162,6 +162,7 @@ rollback() {
   echo "发布失败，开始恢复 CoinSphere 上一版本" >&2
   if $services_stopped; then
     compose_with "$next_env" stop "${SERVICES[@]}" >/dev/null 2>&1 || true
+    compose_with "$next_env" rm -f "${SERVICES[@]}" >/dev/null 2>&1 || true
     compose_with "$previous_env" pull "${PREVIOUS_SERVICES[@]}" || echo "上一版本镜像拉取失败，将尝试使用本地镜像" >&2
     compose_with "$previous_env" up -d --no-deps --wait --wait-timeout 180 "${PREVIOUS_SERVICES[@]}" \
       || echo "自动恢复失败，请按发布 Runbook 手工处理" >&2
@@ -175,6 +176,8 @@ trap 'rollback 143' TERM
 compose_with "$next_env" pull "${SERVICES[@]}"
 services_stopped=true
 compose_with "$previous_env" stop "${PREVIOUS_SERVICES[@]}"
+# Release fixed network addresses before Compose creates replacement containers.
+compose_with "$previous_env" rm -f "${PREVIOUS_SERVICES[@]}"
 docker run --rm --network dpanel_stack --env-file "$RUNTIME_ENV_FILE" "$BACKEND_IMAGE" \
   /app/coinsphere-migrate -config /app/config.yml -direction up
 compose_with "$next_env" up -d --no-deps --wait --wait-timeout 180 "${SERVICES[@]}"

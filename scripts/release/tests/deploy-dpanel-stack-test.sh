@@ -99,6 +99,15 @@ if ! grep -Eq 'up -d --no-deps --wait --wait-timeout 180 coinsphere-backend coin
   exit 1
 fi
 
+if ! grep -Fq 'rm -f coinsphere-backend coinsphere-web' "$DEPLOY_DOCKER_LOG"; then
+  echo "release must remove the stopped Backend/Web containers before replacement" >&2
+  exit 1
+fi
+if ! grep -Fq 'rm -f coinsphere-backend coinsphere-web coinsphere-worker coinsphere-worker-backtest coinsphere-executor' "$DEPLOY_DOCKER_LOG"; then
+  echo "rollback must remove candidate CoinSphere containers before replacement" >&2
+  exit 1
+fi
+
 write_old_env false false
 : >"$DEPLOY_DOCKER_LOG"
 compose_checksum=$(sha256sum "$STACK_ROOT/compose/apps/docker-compose.yaml")
@@ -130,7 +139,12 @@ if grep -Eq '(^| )down( |$)|(^| )new-api( |$)' "$DEPLOY_DOCKER_LOG"; then
   echo "共享 Stack 发布不得执行 down 或操作 new-api" >&2
   exit 1
 fi
+if [[ $(grep -Fc 'rm -f coinsphere-backend coinsphere-web coinsphere-worker coinsphere-worker-backtest coinsphere-executor' "$DEPLOY_DOCKER_LOG") -ne 2 ]]; then
+  echo "release and rollback must each remove stopped CoinSphere containers" >&2
+  exit 1
+fi
 if ! grep -Fq 'stop coinsphere-backend coinsphere-web coinsphere-worker coinsphere-worker-backtest coinsphere-executor' "$DEPLOY_DOCKER_LOG" \
+  || ! grep -Fq 'rm -f coinsphere-backend coinsphere-web coinsphere-worker coinsphere-worker-backtest coinsphere-executor' "$DEPLOY_DOCKER_LOG" \
   || ! grep -Fq 'up -d --no-deps --wait --wait-timeout 180 coinsphere-backend coinsphere-web coinsphere-worker coinsphere-worker-backtest coinsphere-executor' "$DEPLOY_DOCKER_LOG" \
   || ! grep -Fq 'run --rm --network dpanel_stack --env-file' "$DEPLOY_DOCKER_LOG" \
   || ! grep -Fq "$REGISTRY/coinsphere/backend@sha256:$BACKEND_DIGEST" "$DEPLOY_DOCKER_LOG" \
