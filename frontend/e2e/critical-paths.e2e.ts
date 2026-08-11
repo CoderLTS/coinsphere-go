@@ -18,8 +18,20 @@ const productionCsp = readFileSync(new URL('../nginx.conf', import.meta.url), 'u
   /add_header Content-Security-Policy "([^"]+)" always;/
 )?.[1]
 
+const iconifyApiOrigins = [
+  'https://api.iconify.design',
+  'https://api.unisvg.com',
+  'https://api.simplesvg.com'
+]
+
 if (!productionCsp) {
   throw new Error('frontend/nginx.conf must define Content-Security-Policy')
+}
+
+for (const origin of iconifyApiOrigins) {
+  if (!productionCsp.includes(origin)) {
+    throw new Error(`frontend/nginx.conf must allow Iconify API origin: ${origin}`)
+  }
 }
 
 const homeMenu = {
@@ -245,7 +257,34 @@ async function loginAsTestUser(page: Page, protectedPath: string) {
 }
 
 test('生产 CSP 不会阻断登录页首屏渲染', async ({ page }) => {
+  const iconifyRequests: string[] = []
+
   await page.route('**/*', async (route) => {
+    const url = new URL(route.request().url())
+    if (iconifyApiOrigins.includes(url.origin)) {
+      const prefix =
+        url.pathname
+          .split('/')
+          .pop()
+          ?.replace(/\.json$/, '') || 'ri'
+      const names = (url.searchParams.get('icons') || '').split(',').filter(Boolean)
+      iconifyRequests.push(url.href)
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: { 'access-control-allow-origin': '*' },
+        body: JSON.stringify({
+          prefix,
+          width: 24,
+          height: 24,
+          icons: Object.fromEntries(
+            names.map((name) => [name, { body: '<path fill="currentColor" d="M2 2h20v20H2z" />' }])
+          )
+        })
+      })
+      return
+    }
+
     const response = await route.fetch()
     await route.fulfill({
       response,
@@ -256,6 +295,8 @@ test('生产 CSP 不会阻断登录页首屏渲染', async ({ page }) => {
   await page.goto('/auth/login?redirect=/auth')
 
   await expect(page.getByRole('button', { name: '登录', exact: true })).toBeVisible()
+  await expect(page.locator('.palette-btn svg.art-svg-icon')).toBeVisible()
+  expect(iconifyRequests.length).toBeGreaterThan(0)
 })
 
 test('匿名访问工作流编辑器时被登录边界拦截', async ({ page }) => {
