@@ -44,7 +44,7 @@ WHERE table_schema = current_schema() AND table_name = 'schema_migrations'
 	if err != nil {
 		t.Fatalf("apply baseline: %v", err)
 	}
-	if len(results) != 19 {
+	if len(results) != 20 {
 		t.Fatalf("migration results = %#v", results)
 	}
 	for index, result := range results {
@@ -65,15 +65,15 @@ WHERE table_schema = current_schema() AND table_name = 'schema_migrations'
 		t.Fatalf("repeat baseline applied %#v", results)
 	}
 
-	results, err = runner.Down(context.Background(), 19)
+	results, err = runner.Down(context.Background(), 20)
 	if err != nil {
 		t.Fatalf("roll back empty migrations: %v", err)
 	}
-	if len(results) != 19 {
+	if len(results) != 20 {
 		t.Fatalf("migration rollback results = %#v", results)
 	}
 	for index, result := range results {
-		if result.Version != int64(19-index) || result.Direction != "down" {
+		if result.Version != int64(20-index) || result.Direction != "down" {
 			t.Fatalf("migration rollback results = %#v", results)
 		}
 	}
@@ -95,7 +95,7 @@ func TestPostgresBaselineDownRejectsData(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 17); err != nil {
+	if _, err := runner.Down(context.Background(), 18); err != nil {
 		t.Fatalf("roll back empty market migrations: %v", err)
 	}
 	if _, err := runner.Down(context.Background(), 1); err != nil {
@@ -229,7 +229,7 @@ func TestObservabilityDownRejectsAuditData(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 17); err != nil {
+	if _, err := runner.Down(context.Background(), 18); err != nil {
 		t.Fatalf("roll back empty market migrations: %v", err)
 	}
 	if _, err := database.Exec(`INSERT INTO audit_records (request_id, action, resource_path, outcome, status_code) VALUES ('rollback-guard', 'POST /api/v1/test', '/api/v1/test', 'success', 200)`); err != nil {
@@ -261,7 +261,7 @@ func TestPostgresBaselineDownSeesConcurrentCommit(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply baseline: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 18); err != nil {
+	if _, err := runner.Down(context.Background(), 19); err != nil {
 		t.Fatalf("roll back empty market and observability migrations: %v", err)
 	}
 
@@ -523,7 +523,7 @@ func TestA2MarketContractDownRejectsData(t *testing.T) {
 				}
 			}
 
-			if _, err := runner.Down(context.Background(), 17); err == nil {
+			if _, err := runner.Down(context.Background(), 18); err == nil {
 				t.Fatalf("A2 rollback removed non-empty %s", test.table)
 			}
 			current, latest, versionErr := runner.Versions(context.Background())
@@ -576,7 +576,7 @@ VALUES ('019c2f6d-7c00-7000-8000-000000000010', $1, $2, '1m')
 	}
 	assertPostgresIndexes(t, database, []string{"ix_watchlist_items_instrument_interval"})
 
-	if _, err := runner.Down(context.Background(), 16); err == nil {
+	if _, err := runner.Down(context.Background(), 17); err == nil {
 		t.Fatal("watchlist rollback removed persistent user data")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
@@ -622,7 +622,7 @@ VALUES ('worker-realtime-default-lane', 'contract.noop', '{}')
 		}
 	}
 
-	if _, err := runner.Down(context.Background(), 15); err == nil {
+	if _, err := runner.Down(context.Background(), 16); err == nil {
 		t.Fatal("worker lane rollback removed persistent tasks")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
@@ -753,7 +753,7 @@ WHERE id = $1
 	}
 	assertPostgresIndexes(t, database, []string{"ix_backtests_owner_created", "ix_strategy_versions_published"})
 
-	if _, err := runner.Down(context.Background(), 14); err == nil {
+	if _, err := runner.Down(context.Background(), 15); err == nil {
 		t.Fatal("strategy runtime rollback removed persistent data")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
@@ -946,7 +946,7 @@ INSERT INTO notification_deliveries (
 		"ux_strategy_signals_manual_active_instance", "ux_notification_deliveries_signal_channel",
 	})
 
-	if _, err := runner.Down(context.Background(), 11); err != nil {
+	if _, err := runner.Down(context.Background(), 12); err != nil {
 		t.Fatalf("roll back signal channel delivery migration: %v", err)
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
@@ -1078,7 +1078,7 @@ INSERT INTO trading_events (
 		"ix_paper_orders_account", "ix_trading_events_account",
 	})
 
-	if _, err := runner.Down(context.Background(), 10); err == nil {
+	if _, err := runner.Down(context.Background(), 11); err == nil {
 		t.Fatal("paper executor rollback removed persistent trading data")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
@@ -1163,7 +1163,7 @@ UPDATE trading_accounts SET environment = 'paper' WHERE id = $1
 	}
 	assertPostgresIndexes(t, database, []string{"ix_trading_account_credentials_owner"})
 
-	if _, err := runner.Down(context.Background(), 8); err != nil {
+	if _, err := runner.Down(context.Background(), 9); err != nil {
 		t.Fatalf("roll back empty Testnet order and reconciliation migrations: %v", err)
 	}
 	if _, err := runner.Down(context.Background(), 1); err == nil {
@@ -1269,7 +1269,7 @@ WHERE account_id = $1
 `, accountID); err != nil {
 		t.Fatalf("set valid close-position open order: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 5); err == nil {
+	if _, err := runner.Down(context.Background(), 6); err == nil {
 		t.Fatal("open-order shape rollback discarded persistent flags")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
@@ -1303,7 +1303,7 @@ WHERE account_id = $1
 		"ix_testnet_positions_account", "ix_testnet_open_orders_account",
 	})
 
-	if _, err := runner.Down(context.Background(), 3); err != nil {
+	if _, err := runner.Down(context.Background(), 4); err != nil {
 		t.Fatalf("roll back empty Testnet order migration: %v", err)
 	}
 	if _, err := runner.Down(context.Background(), 1); err == nil {
@@ -1395,7 +1395,7 @@ INSERT INTO testnet_risk_states (
 		"ix_testnet_orders_account", "ix_testnet_orders_recovery",
 	})
 
-	if _, err := runner.Down(context.Background(), 6); err != nil {
+	if _, err := runner.Down(context.Background(), 7); err != nil {
 		t.Fatalf("roll back empty Testnet protective order migration: %v", err)
 	}
 	if _, err := runner.Down(context.Background(), 1); err == nil {
@@ -1489,7 +1489,7 @@ INSERT INTO strategy_instances (
 	}
 	assertPostgresIndexes(t, database, []string{"uq_testnet_orders_active_protection"})
 
-	if _, err := runner.Down(context.Background(), 6); err == nil {
+	if _, err := runner.Down(context.Background(), 7); err == nil {
 		t.Fatal("protective order rollback removed configured stop loss data")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
@@ -1660,7 +1660,7 @@ INSERT INTO testnet_trade_facts (
 		"ix_testnet_trade_facts_account", "ix_testnet_trade_facts_order", "uq_testnet_trade_facts_dedupe",
 	})
 
-	if _, err := runner.Down(context.Background(), 4); err == nil {
+	if _, err := runner.Down(context.Background(), 5); err == nil {
 		t.Fatal("Testnet trade fact rollback removed persistent ledger data")
 	}
 	current, latest, versionErr := runner.Versions(context.Background())
