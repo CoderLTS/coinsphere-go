@@ -36,9 +36,9 @@
 | 交易 | `/api/v1/trading/*`、`/api/v1/admin/trading/*` |
 | 通知 | `/api/v1/notification-deliveries`、`/api/v1/ws/notifications` |
 
-交易路由管理 Paper/Testnet 账户、风险限额、自动化开关/授权、全局急停及其只读投影；Live 账户仍被数据库禁止。账户创建、风险修改、恢复、自动化切换、授权和急停命令都要求 `Idempotency-Key`；风险修改、账户恢复、启用自动化、管理员授权和解除急停还要求有效的 `X-Reauth-Token`。
+交易路由管理 Paper/Testnet 账户、风险限额、自动化开关/授权、全局急停及其只读投影。`trading.spot_live_manual_enabled` 默认关闭；只有显式启用后才能创建 Spot Live 账户，USD-M Live 和 Live auto 仍由 API 与数据库共同禁止。账户创建、风险修改、恢复、自动化切换、授权和急停命令都要求 `Idempotency-Key`；风险修改、账户恢复、启用自动化、管理员授权和解除急停还要求有效的 `X-Reauth-Token`。
 
-Testnet 凭据通过 `PUT /api/v1/trading/accounts/{accountId}/credentials` 保存，通过 `POST /api/v1/trading/accounts/{accountId}/credentials/revoke` 撤销。两条命令同时要求 `Idempotency-Key` 和 `X-Reauth-Token`；保存还要求调用方明确确认已关闭提现并配置 IP 白名单。凭据使用应用主密钥加密，API 只返回配置与验证状态，永不返回 API Key、Secret 或密文。保存后的状态固定为 `unverified`，账户保持暂停且自动实例被关闭；后续 Testnet Executor 验证凭据并完成首次对账前，账户不能恢复或启用执行。
+Testnet 或已启用的 Spot Live 凭据通过 `PUT /api/v1/trading/accounts/{accountId}/credentials` 保存，通过 `POST /api/v1/trading/accounts/{accountId}/credentials/revoke` 撤销。两条命令同时要求 `Idempotency-Key` 和 `X-Reauth-Token`；保存还要求调用方明确确认已关闭提现并配置 IP 白名单。凭据使用应用主密钥加密，API 只返回配置与验证状态，永不返回 API Key、Secret 或密文。保存后的状态固定为 `unverified`，账户保持暂停且自动实例被关闭；后续对应环境的 Executor 验证凭据并完成首次对账前，账户不能恢复或启用执行。关闭能力开关后仍允许撤销已有 Live 凭据。
 
 WebSocket 使用 `GET /api/v1/ws/notifications`，通过固定子协议携带 Access Token，禁止查询串 Token。事件信封固定包含 `type`、`version`、`sequence`、`occurredAt` 和 `data`；每条连接只有一个 writer，持久通知记录才是事实源，重连后通过未读快照恢复。
 
@@ -71,7 +71,7 @@ def on_bar(candles: Sequence[Candle], params: Mapping[str, JSONScalar]) -> Decim
 
 用户从已发布策略版本创建 `signal_only | manual | auto`、`paper | testnet | live` 两个维度的策略实例；新实例默认关闭。启用实例订阅对应 Binance 闭合 K 线，每个实例和 K 线只生成一条持久信号。实时 Worker 复用策略 `on_bar` 契约，并把信号与 `strategy.signal.created` Outbox 事件放在同一事务提交。
 
-`manual` 信号在下一根 K 线闭合时过期，每个策略实例最多保留一条 `active` 手动信号；延迟完成的旧 K 线信号直接记为 `expired`。批准和拒绝只允许信号 Owner 对仍处于 `active` 且未过期的手动信号执行；重复决策、越权和过期决策均拒绝。两类命令都要求 `Idempotency-Key`，同键同请求返回原结果，同键不同决策返回冲突；批准还要求当前登录会话签发、五分钟有效的 `X-Reauth-Token`。批准 Paper/Testnet 手动信号时在同一事务创建唯一交易意图；自动信号由 Outbox 消费路径幂等创建同环境意图。两条路径都不直接创建订单或调用交易所，Live 执行意图仍不可用。
+`manual` 信号在下一根 K 线闭合时过期，每个策略实例最多保留一条 `active` 手动信号；延迟完成的旧 K 线信号直接记为 `expired`。批准和拒绝只允许信号 Owner 对仍处于 `active` 且未过期的手动信号执行；重复决策、越权和过期决策均拒绝。两类命令都要求 `Idempotency-Key`，同键同请求返回原结果，同键不同决策返回冲突；批准还要求当前登录会话签发、五分钟有效的 `X-Reauth-Token`。批准 Paper/Testnet 手动信号时在同一事务创建唯一交易意图；显式启用 Spot Live manual 后，只有已验证凭据、对账一致并由 Owner 再认证恢复的 Live 账户可创建 `live + spot + manual` 意图。自动信号由 Outbox 消费路径幂等创建同环境意图，但 Live auto 始终拒绝。两条路径都不直接创建订单或调用交易所。
 
 信号事件由 Go App 按固定规则幂等投递到站内通知，以及 Owner 已启用的钉钉机器人、QQ Bot 和 SMTP 渠道。每个信号和渠道最多一条投递记录：成功后重放跳过，失败由同一 Outbox 退避重试；某个通知渠道失败不得阻止已匹配工作流入队。站内通知列表返回信号模式、状态和过期时间，通知 WebSocket 只作实时提示，持久记录仍是离线与重连后的事实源。普通领域事件继续由工作流通知节点编排。
 
@@ -99,6 +99,8 @@ Paper 只追加 `order/fill/fee/funding` 事件，订单、仓位、余额和盈
 
 Testnet 私有访问默认关闭。显式启用后，只有 Go Executor 会解密凭据，并向 Spot `/api/v3/account`、`/api/v3/openOrders`、`/api/v3/order` 与 USD-M `/fapi/v3/account`、`/fapi/v1/openOrders`、`/fapi/v1/order` 发送带 UTC `timestamp`、`recvWindow` 和 HMAC-SHA256 签名的请求。API Key 只进入 `X-MBX-APIKEY` 请求头；认证、权限、限流、时钟偏差、协议和网络失败只保存固定脱敏错误码。
 
+Spot Live manual 使用独立的 `trading.spot_live_manual_enabled` 开关和独立 Binance Live Spot 客户端。开关默认关闭；启用时也只装配 Spot 路由，USD-M Live 没有可用 base URL。Live 账户每次因凭据、风控、对账差异或全局急停而暂停时都会清除 `manual_authorized_at`；只有 Owner 再认证并手工恢复账户才写入新的 manual 放行记录。CI、Codex、自动部署和工作流不得提供 Live 凭据、启用该开关或发起私有请求。
+
 凭据验证成功后，Executor 把余额、USD-M 仓位和开放订单写入绑定当前凭据版本的独立 Testnet 投影。首次快照中的开放订单、非白名单资产、Spot 既有持仓、USD-M 既有仓位或双向持仓模式仍形成固定 `mismatch`；外部协议或网络失败形成 `unknown`。只有 `matched` 允许用户手工恢复账户，后台对账不会自动启用自动化、修改外部订单或创建交易意图；凭据或风险白名单变化会清空旧投影并重新暂停账户。
 
 首次对账 `matched`、账户手工恢复且适用风控与授权均通过后，Executor 才会按账户串行领取 Testnet 意图。可执行 Testnet 策略实例必须提供 `stopLossRatio` 十进制字符串，且满足 `0 < stopLossRatio < 1`。每个主市价单使用意图生成的确定性 `clientOrderId`；提交前持久化 `prepared`，进程恢复或响应未知时先用同一 ID 查询，只有交易所明确返回不存在才允许重试。HTTP 拒单也先进入 `unknown` 并查询，避免把重复客户端订单号误判为未成交；外部请求不占用数据库事务，返回结果仅在账户与凭据版本仍有效时写入。USD-M 减仓携带 `reduceOnly=true`，任一协议、状态或风险差异都会保留未知态或暂停账户。
@@ -107,4 +109,4 @@ Testnet 私有访问默认关闭。显式启用后，只有 Go Executor 会解�
 
 账户手工恢复后，Reconciler 持续读取余额、仓位和开放订单权威快照，并只接受本地确定性订单能够解释的订单与持仓。连续快照缺少本地活动订单时，只有 `clientOrderId` 精确匹配本地 `pending`/`reconciling` Testnet 意图、账户和凭据版本仍一致、品种在白名单且订单严格符合主 `market` 调仓形状时，才在同一账户锁事务中创建带数据库 `recovered_at` 审计标记的本地投影；意图转为 `reconciling`，账户以 `testnet_external_order_recovered` 暂停，仍需用户手工恢复。其他未知外部订单、未归属仓位、订单形状漂移、累计成交差异或查询未知都会暂停账户且关闭自动化。权威订单状态只在账户、凭据版本、本地订单版本和观察时间均未变化时回写；持续 `matched` 对账还会查询本地已管理成交订单的逐笔成交和真实手续费，并在 USD-M 查询最近七天资金费，事实按交易所成交 ID或资金费流水号幂等追加。较旧快照不能覆盖较新投影，对账成功也不会自动创建外部订单。
 
-持续账户、订单和仓位快照对账、可证明归属的外部主调仓恢复，以及逐笔成交、真实手续费和资金费的权威追加对账已交付。`GET /api/v1/trading/overview` 只向账户 Owner 返回最近 100 条 Testnet 权威事实和按当前凭据版本绑定的 `testnetAuditSummaries`；摘要只包含对账状态/错误码、观察时间、风险状态、未知/保护/恢复订单计数和成交/手续费/资金费事实计数，其中未知订单计数合并当前凭据版本下本地未知订单与未归属开放订单并去重，金额和数量保持十进制字符串，交易所 ID 保持字符串。该只读审计视图不触发对账或外部请求，也不推断晋级结论。生产继续保持 Testnet 私有能力关闭；后续晋级遵守 [ADR-0010](../architecture/decisions/0010-execution-risk-events.md) 并由用户手工放行。
+持续账户、订单和仓位快照对账、可证明归属的外部主调仓恢复，以及逐笔成交、真实手续费和资金费的权威追加对账已交付。`GET /api/v1/trading/overview` 只向账户 Owner 返回最近 100 条私有账户权威事实、按当前凭据版本绑定的 `testnetAuditSummaries` 和只读 `capabilities.spotLiveManualEnabled`；`testnet*` 字段名是冻结 M3 契约保留名，数据仍按 `accountId` 隔离 Testnet 与 Live。摘要只包含对账状态/错误码、观察时间、风险状态、未知/保护/恢复订单计数和成交/手续费/资金费事实计数，其中未知订单计数合并当前凭据版本下本地未知订单与未归属开放订单并去重，金额和数量保持十进制字符串，交易所 ID 保持字符串。该只读审计视图不触发对账或外部请求，也不推断晋级结论。生产继续保持两个私有能力开关关闭；后续晋级遵守 [ADR-0010](../architecture/decisions/0010-execution-risk-events.md) 并由用户手工放行。

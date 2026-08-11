@@ -1,4 +1,4 @@
-// coinsphere-executor 运行 Paper；显式启用后同时验证、对账并执行 Testnet 意图。
+// coinsphere-executor always runs Paper and only starts explicitly enabled private runtimes.
 package main
 
 import (
@@ -63,51 +63,71 @@ func run(ctx context.Context, configPath, workerID string) (runErr error) {
 	if err != nil {
 		return err
 	}
-	if !cfg.Trading.TestnetPrivateAPIEnabled {
+	if !cfg.Trading.TestnetPrivateAPIEnabled && !cfg.Trading.SpotLiveManualEnabled {
 		return paperExecutor.Run(ctx)
 	}
 	if cfg.Auth.EncryptionKey == "" || cfg.Auth.EncryptionKey == config.DefaultInsecureSecret ||
 		cfg.Auth.EncryptionKey != strings.TrimSpace(cfg.Auth.EncryptionKey) {
-		return errors.New("a secure auth.encryption_key is required when the Testnet private API is enabled")
+		return errors.New("a secure auth.encryption_key is required when private trading is enabled")
 	}
 	cipher, err := security.NewSecretCipher(cfg.Auth.EncryptionKey)
 	if err != nil {
-		return errors.New("build Testnet credential cipher")
+		return errors.New("build private credential cipher")
 	}
-	privateClient, err := exchangebinance.NewPrivateClient(exchangebinance.PrivateClientConfig{})
-	if err != nil {
-		return errors.New("build Binance Testnet private client")
+	runtimes := []func(context.Context) error{paperExecutor.Run}
+	if cfg.Trading.TestnetPrivateAPIEnabled {
+		privateClient, err := exchangebinance.NewPrivateClient(exchangebinance.PrivateClientConfig{})
+		if err != nil {
+			return errors.New("build Binance Testnet private client")
+		}
+		verifier, err := service.NewTestnetCredentialVerifier(gdb, cipher, privateClient, 30*time.Second)
+		if err != nil {
+			return err
+		}
+		reconciler, err := service.NewTestnetAccountReconciler(gdb, cipher, privateClient, 30*time.Second)
+		if err != nil {
+			return err
+		}
+		executor, err := service.NewTestnetExecutor(gdb, cipher, privateClient, workerID+":testnet", time.Second)
+		if err != nil {
+			return err
+		}
+		runtimes = append(runtimes, verifier.Run, reconciler.Run, executor.Run)
 	}
-	verifier, err := service.NewTestnetCredentialVerifier(gdb, cipher, privateClient, 30*time.Second)
-	if err != nil {
-		return err
+	if cfg.Trading.SpotLiveManualEnabled {
+		privateClient, err := exchangebinance.NewPrivateClient(exchangebinance.PrivateClientConfig{Environment: "live"})
+		if err != nil {
+			return errors.New("build Binance Spot Live private client")
+		}
+		verifier, err := service.NewPrivateCredentialVerifier(gdb, cipher, privateClient, "live", "spot", 30*time.Second)
+		if err != nil {
+			return err
+		}
+		reconciler, err := service.NewPrivateAccountReconciler(gdb, cipher, privateClient, "live", "spot", 30*time.Second)
+		if err != nil {
+			return err
+		}
+		executor, err := service.NewPrivateExecutor(gdb, cipher, privateClient, workerID+":live", "live", "spot", "manual", time.Second)
+		if err != nil {
+			return err
+		}
+		runtimes = append(runtimes, verifier.Run, reconciler.Run, executor.Run)
 	}
-	reconciler, err := service.NewTestnetAccountReconciler(gdb, cipher, privateClient, 30*time.Second)
-	if err != nil {
-		return err
-	}
-	testnetExecutor, err := service.NewTestnetExecutor(gdb, cipher, privateClient, workerID, time.Second)
-	if err != nil {
-		return err
-	}
-	return runPaperAndTestnetRuntime(ctx, paperExecutor, verifier, reconciler, testnetExecutor)
+	return runTradingRuntime(ctx, runtimes)
 }
 
-func runPaperAndTestnetRuntime(
-	ctx context.Context,
-	paperExecutor *service.PaperExecutor,
-	verifier *service.TestnetCredentialVerifier,
-	reconciler *service.TestnetAccountReconciler,
-	testnetExecutor *service.TestnetExecutor,
-) error {
+func runTradingRuntime(ctx context.Context, runtimes []func(context.Context) error) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	results := make(chan error, 4)
-	go func() { results <- paperExecutor.Run(runCtx) }()
-	go func() { results <- verifier.Run(runCtx) }()
-	go func() { results <- reconciler.Run(runCtx) }()
-	go func() { results <- testnetExecutor.Run(runCtx) }()
+	results := make(chan error, len(runtimes))
+	for _, runtime := range runtimes {
+		go func(run func(context.Context) error) { results <- run(runCtx) }(runtime)
+	}
 	first := <-results
 	cancel()
-	return errors.Join(first, <-results, <-results, <-results)
+	all := []error{first}
+	for range len(runtimes) - 1 {
+		all = append(all, <-results)
+	}
+	return errors.Join(all...)
 }

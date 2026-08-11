@@ -146,14 +146,14 @@ func preparePreviousProtectionAction(
 func loadTestnetProtectionState(tx *gorm.DB, intent db.TradingIntent) (testnetProtectionState, error) {
 	state := testnetProtectionState{}
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
-		"id = ? AND owner_user_id = ? AND environment = 'testnet' AND market_type = ?",
-		intent.AccountID, intent.OwnerUserID, intent.Market,
+		"id = ? AND owner_user_id = ? AND environment = ? AND market_type = ?",
+		intent.AccountID, intent.OwnerUserID, intent.Environment, intent.Market,
 	).Take(&state.Account).Error; err != nil {
 		return state, err
 	}
 	if err := tx.Where(
-		"id = ? AND owner_user_id = ? AND trading_account_id = ? AND environment = 'testnet'",
-		intent.StrategyInstanceID, intent.OwnerUserID, intent.AccountID,
+		"id = ? AND owner_user_id = ? AND trading_account_id = ? AND environment = ?",
+		intent.StrategyInstanceID, intent.OwnerUserID, intent.AccountID, intent.Environment,
 	).Take(&state.Instance).Error; err != nil {
 		return state, err
 	}

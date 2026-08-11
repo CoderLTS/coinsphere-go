@@ -23,6 +23,7 @@ import (
 const (
 	defaultSpotTestnetURL = "https://testnet.binance.vision"
 	defaultUSDMTestnetURL = "https://testnet.binancefuture.com"
+	defaultSpotLiveURL    = "https://api.binance.com"
 	defaultRecvWindow     = 5 * time.Second
 	defaultResponseLimit  = 1 << 20
 )
@@ -54,13 +55,14 @@ func (err *PrivateError) Error() string {
 }
 
 type PrivateClientConfig struct {
+	Environment string
 	SpotBaseURL string
 	USDMBaseURL string
 	HTTPClient  *http.Client
 	Now         func() time.Time
 }
 
-// PrivateClient signs Testnet requests without retaining account credentials.
+// PrivateClient signs requests for one explicitly selected environment without retaining credentials.
 type PrivateClient struct {
 	baseURLs      map[marketdata.MarketType]url.URL
 	http          *http.Client
@@ -159,19 +161,37 @@ type AccountSnapshot struct {
 }
 
 func NewPrivateClient(config PrivateClientConfig) (*PrivateClient, error) {
+	environment := strings.TrimSpace(config.Environment)
+	if environment == "" {
+		environment = "testnet"
+	}
+	if environment != "testnet" && environment != "live" {
+		return nil, errors.New("private client environment must be testnet or live")
+	}
 	spotURL := config.SpotBaseURL
-	if spotURL == "" {
+	if spotURL == "" && environment == "live" {
+		spotURL = defaultSpotLiveURL
+	} else if spotURL == "" {
 		spotURL = defaultSpotTestnetURL
 	}
 	usdmURL := config.USDMBaseURL
-	if usdmURL == "" {
+	if usdmURL == "" && environment == "live" {
+		// USD-M Live is intentionally absent from the M4 manual runtime.
+		usdmURL = "http://127.0.0.1"
+	} else if usdmURL == "" {
 		usdmURL = defaultUSDMTestnetURL
 	}
-	spot, err := privateBaseURL(spotURL, "testnet.binance.vision")
+	spotHost := "testnet.binance.vision"
+	usdmHost := "testnet.binancefuture.com"
+	if environment == "live" {
+		spotHost = "api.binance.com"
+		usdmHost = ""
+	}
+	spot, err := privateBaseURL(spotURL, spotHost)
 	if err != nil {
 		return nil, err
 	}
-	usdm, err := privateBaseURL(usdmURL, "testnet.binancefuture.com")
+	usdm, err := privateBaseURL(usdmURL, usdmHost)
 	if err != nil {
 		return nil, err
 	}
@@ -188,12 +208,13 @@ func NewPrivateClient(config PrivateClientConfig) (*PrivateClient, error) {
 	if now == nil {
 		now = time.Now
 	}
+	baseURLs := map[marketdata.MarketType]url.URL{marketdata.MarketTypeSpot: spot}
+	if environment == "testnet" {
+		baseURLs[marketdata.MarketTypeUSDM] = usdm
+	}
 	return &PrivateClient{
-		baseURLs: map[marketdata.MarketType]url.URL{
-			marketdata.MarketTypeSpot: spot,
-			marketdata.MarketTypeUSDM: usdm,
-		},
-		http: &clientCopy, now: now, recvWindow: defaultRecvWindow, responseLimit: defaultResponseLimit,
+		baseURLs: baseURLs,
+		http:     &clientCopy, now: now, recvWindow: defaultRecvWindow, responseLimit: defaultResponseLimit,
 	}, nil
 }
 
@@ -506,7 +527,7 @@ func privateBaseURL(raw, testnetHost string) (url.URL, error) {
 	loopback := err == nil && privateLoopbackHost(parsed.Hostname())
 	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
 		(parsed.Scheme != "http" && parsed.Scheme != "https") || (parsed.Scheme == "http" && !loopback) ||
-		(!loopback && !strings.EqualFold(parsed.Hostname(), testnetHost)) {
+		(!loopback && (testnetHost == "" || !strings.EqualFold(parsed.Hostname(), testnetHost))) {
 		return url.URL{}, errors.New("invalid Binance private endpoint URL")
 	}
 	return *parsed, nil

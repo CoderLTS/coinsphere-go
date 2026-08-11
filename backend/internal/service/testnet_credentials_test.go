@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"coinsphere/backend/internal/config"
 	"coinsphere/backend/internal/db"
 	"coinsphere/backend/internal/marketdata"
 	"coinsphere/backend/internal/security"
@@ -23,6 +24,108 @@ func TestCredentialValueValidation(t *testing.T) {
 	}
 	if value, err := normalizeCredentialValue("test-key-value", "apiKey"); err != nil || value != "test-key-value" {
 		t.Fatalf("valid credential value = %q, err=%v", value, err)
+	}
+}
+
+func TestSpotLiveManualAccountRequiresFeatureAndRecordsRelease(t *testing.T) {
+	database := openPostgresWorkflowContractDatabase(t).primary
+	owner := db.SystemUser{Username: "spot-live-manual-owner", IsActive: true}
+	if err := database.Create(&owner).Error; err != nil {
+		t.Fatalf("create Live owner: %v", err)
+	}
+	instrumentID := uuid.MustParse("019de100-0000-7000-8000-000000000001")
+	instrument := db.MarketInstrument{
+		ID: instrumentID, Venue: string(marketdata.VenueBinance), Market: string(marketdata.MarketTypeSpot),
+		NativeSymbol: "ETHUSDT", BaseAsset: "ETH", QuoteAsset: "USDT", Status: "trading",
+		PriceTick: decimal.RequireFromString("0.01"), QuantityStep: decimal.RequireFromString("0.001"),
+		MinQuantity: decimal.RequireFromString("0.001"), MinNotional: decimal.RequireFromString("5"),
+		UpdatedAt: time.Now().UTC(),
+	}
+	if err := database.Create(&instrument).Error; err != nil {
+		t.Fatalf("create Live instrument: %v", err)
+	}
+	cipher, err := security.NewSecretCipher(strings.Repeat("l", 32))
+	if err != nil {
+		t.Fatalf("create Live credential cipher: %v", err)
+	}
+	app := &App{
+		DB: database, database: database, Cipher: cipher, Cfg: &config.AppConfig{},
+		reauthTokens: map[string]reauthTokenRecord{}, revokedAccessTokens: map[string]time.Time{},
+	}
+	payload := TradingAccountCreatePayload{
+		Name: "Spot Live manual", Market: "spot", Environment: "live",
+		InitialBalance: "1000", PaperFeeRate: "0.001",
+		Risk: TradingRiskPayload{
+			InstrumentIDs: []string{instrumentID.String()}, MaxTotalNotional: "500",
+			MaxSymbolNotional: "250", MaxOrderNotional: "100", MaxDailyLoss: "50",
+			MaxDrawdown: "100", MaxQuoteAgeSeconds: 30,
+		},
+	}
+	if _, err := app.CreateTradingAccount(context.Background(), owner.ID, payload, "live-account-disabled"); !errors.Is(err, ErrInvalidTradingRequest) {
+		t.Fatalf("disabled Live account creation returned %v", err)
+	}
+	app.Cfg.Trading.SpotLiveManualEnabled = true
+	account, err := app.CreateTradingAccount(context.Background(), owner.ID, payload, "live-account-enabled")
+	if err != nil {
+		t.Fatalf("create enabled Live account: %v", err)
+	}
+	if account.Environment != "live" || account.ManualAuthorized || account.Status != "paused" {
+		t.Fatalf("new Live account = %#v", account)
+	}
+	principal := &Principal{User: &owner, AccessTokenID: "spot-live-session"}
+	credentialPayload := TradingCredentialPayload{
+		APIKey: strings.Repeat("k", 32), APISecret: strings.Repeat("s", 32),
+		WithdrawalDisabled: true, IPWhitelistConfigured: true,
+	}
+	credentialToken := app.issueReauthToken(principal, time.Now())
+	if _, err := app.SaveTradingCredentials(
+		context.Background(), principal, account.ID, credentialPayload, "live-credential-save", credentialToken,
+	); err != nil {
+		t.Fatalf("save Live credential: %v", err)
+	}
+
+	verifiedAt := time.Now().UTC()
+	if err := database.Model(&db.TradingAccountCredential{}).Where("account_id = ?", account.ID).Updates(map[string]any{
+		"verification_status": "verified", "verification_error_code": "",
+		"last_verified_at": verifiedAt, "updated_at": verifiedAt,
+	}).Error; err != nil {
+		t.Fatalf("mark Live credential verified: %v", err)
+	}
+	accountID := uuid.MustParse(account.ID)
+	if err := database.Create(&db.TestnetReconciliation{
+		AccountID: accountID, CredentialUpdatedAt: verifiedAt, Status: "matched",
+		LastAttemptedAt: verifiedAt, LastObservedAt: &verifiedAt, UpdatedAt: verifiedAt,
+	}).Error; err != nil {
+		t.Fatalf("create Live reconciliation: %v", err)
+	}
+	if err := database.Create(&db.TestnetRiskState{
+		AccountID: accountID, CredentialUpdatedAt: verifiedAt,
+		BaselineEquity: decimal.NewFromInt(1000), Equity: decimal.NewFromInt(1000),
+		PeakEquity: decimal.NewFromInt(1000), DayStartDate: utcDay(verifiedAt),
+		DayStartEquity: decimal.NewFromInt(1000), UpdatedAt: verifiedAt,
+	}).Error; err != nil {
+		t.Fatalf("create Live risk state: %v", err)
+	}
+	if err := database.Model(&db.TradingControl{}).Where("id = 1").Updates(map[string]any{
+		"emergency_stopped": false, "stop_reason": "", "released_at": verifiedAt,
+		"released_by_user_id": owner.ID, "updated_at": verifiedAt,
+	}).Error; err != nil {
+		t.Fatalf("release trading emergency stop: %v", err)
+	}
+	resumeToken := app.issueReauthToken(principal, time.Now())
+	resumed, err := app.ResumeTradingAccount(
+		context.Background(), principal, account.ID, "live-account-resume", resumeToken,
+	)
+	if err != nil {
+		t.Fatalf("resume Live account: %v", err)
+	}
+	if !resumed.ManualAuthorized || resumed.ManualAuthorizedAt == nil || resumed.AutomationEnabled {
+		t.Fatalf("resumed Live account = %#v", resumed)
+	}
+	if _, err := app.SetTradingAutomation(
+		context.Background(), principal, account.ID, true, "live-auto-enable", "",
+	); !errors.Is(err, ErrTradingExecutionUnavailable) {
+		t.Fatalf("Live automation enable returned %v", err)
 	}
 }
 

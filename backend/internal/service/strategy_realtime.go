@@ -74,7 +74,7 @@ type validatedStrategyInstance struct {
 }
 
 func validateStrategyInstancePayload(
-	payload StrategyInstanceCreatePayload, version db.StrategyVersion,
+	payload StrategyInstanceCreatePayload, version db.StrategyVersion, spotLiveManualEnabled bool,
 ) (validatedStrategyInstance, error) {
 	name := strings.TrimSpace(payload.Name)
 	if name == "" || len(name) > 120 {
@@ -94,6 +94,13 @@ func validateStrategyInstancePayload(
 	if environment != "paper" && environment != "testnet" && environment != "live" {
 		return validatedStrategyInstance{}, invalidStrategy("environment must be paper, testnet, or live")
 	}
+	if environment == "live" && mode == "auto" {
+		return validatedStrategyInstance{}, invalidStrategy("Live auto trading is not available")
+	}
+	if environment == "live" && mode != "signal_only" &&
+		(!spotLiveManualEnabled || version.Market != string(marketdata.MarketTypeSpot)) {
+		return validatedStrategyInstance{}, invalidStrategy("Spot Live manual trading is not enabled")
+	}
 	parameters := payload.Parameters
 	if parameters == nil {
 		parameters = map[string]json.RawMessage{}
@@ -105,7 +112,8 @@ func validateStrategyInstancePayload(
 	var tradingAccountID *uuid.UUID
 	var allocationUSDT *decimal.Decimal
 	var stopLossRatio *decimal.Decimal
-	if mode != "signal_only" && (environment == "paper" || environment == "testnet") {
+	if mode != "signal_only" && (environment == "paper" || environment == "testnet" ||
+		(environment == "live" && spotLiveManualEnabled && version.Market == string(marketdata.MarketTypeSpot))) {
 		accountID, err := requiredStrategyUUID(payload.TradingAccountID, "tradingAccountId")
 		if err != nil {
 			return validatedStrategyInstance{}, err
@@ -117,19 +125,19 @@ func validateStrategyInstancePayload(
 		tradingAccountID = &accountID
 		allocationUSDT = &allocation
 		stopLossValue := strings.TrimSpace(payload.StopLossRatio)
-		if environment == "testnet" && stopLossValue != "" {
+		if isPrivateTradingEnvironment(environment) && stopLossValue != "" {
 			ratio, err := parseDecimalField(stopLossValue, "stopLossRatio", false)
 			if err != nil || !ratio.IsPositive() || !ratio.LessThan(decimal.NewFromInt(1)) {
 				return validatedStrategyInstance{}, invalidStrategy("stopLossRatio must be a decimal string greater than 0 and less than 1")
 			}
 			stopLossRatio = &ratio
-		} else if environment == "testnet" {
-			return validatedStrategyInstance{}, invalidStrategy("stopLossRatio is required for executable testnet instances")
+		} else if isPrivateTradingEnvironment(environment) {
+			return validatedStrategyInstance{}, invalidStrategy("stopLossRatio is required for executable private instances")
 		} else if stopLossValue != "" {
-			return validatedStrategyInstance{}, invalidStrategy("stopLossRatio is only available for executable testnet instances")
+			return validatedStrategyInstance{}, invalidStrategy("stopLossRatio is only available for executable private instances")
 		}
 	} else if strings.TrimSpace(payload.TradingAccountID) != "" || strings.TrimSpace(payload.AllocationUSDT) != "" {
-		return validatedStrategyInstance{}, invalidStrategy("trading account binding is only available for manual or auto paper or testnet instances")
+		return validatedStrategyInstance{}, invalidStrategy("trading account binding is not available for this strategy environment")
 	} else if strings.TrimSpace(payload.StopLossRatio) != "" {
 		return validatedStrategyInstance{}, invalidStrategy("stopLossRatio is only available for executable strategy instances")
 	}
@@ -154,7 +162,7 @@ func (a *App) CreateStrategyInstance(ctx context.Context, userID int64, payload 
 		}
 		return StrategyInstanceView{}, err
 	}
-	validated, err := validateStrategyInstancePayload(payload, version)
+	validated, err := validateStrategyInstancePayload(payload, version, a.spotLiveManualEnabled())
 	if err != nil {
 		return StrategyInstanceView{}, err
 	}

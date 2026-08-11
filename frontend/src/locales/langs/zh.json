@@ -758,6 +758,11 @@
       "authorization": "自动化授权",
       "accountSwitch": "账户自动化"
     },
+    "manual": {
+      "authorization": "手动交易放行",
+      "authorized": "已放行",
+      "pending": "未放行"
+    },
     "balance": {
       "equity": "权益",
       "cash": "现金余额",
@@ -785,23 +790,24 @@
     },
     "environment": {
       "paper": "Paper",
-      "testnet": "Testnet"
+      "testnet": "Testnet",
+      "live": "Live"
     },
     "credentials": {
-      "label": "Binance Testnet 凭据",
+      "label": "Binance 私有凭据",
       "notConfigured": "未配置",
       "configured": "已配置",
       "revoked": "已撤销",
       "configure": "配置凭据",
       "replace": "替换凭据",
       "revoke": "撤销",
-      "dialogTitle": "配置 Testnet 凭据",
+      "dialogTitle": "配置 Binance 凭据",
       "apiKey": "API Key",
       "apiSecret": "API Secret",
       "withdrawalDisabled": "已关闭该 Key 的提现权限",
       "ipWhitelistConfigured": "已配置 IP 白名单",
       "save": "保存凭据",
-      "revokeTitle": "撤销 Testnet 凭据",
+      "revokeTitle": "撤销 Binance 凭据",
       "revokeConfirm": "撤销后账户会暂停，现有密文将被清除。",
       "verification": {
         "unverified": "未验证",
@@ -822,7 +828,7 @@
       }
     },
     "audit": {
-      "title": "Testnet 证据摘要",
+      "title": "私有账户证据摘要",
       "rawState": "原始状态与计数",
       "errorCode": "错误码",
       "unknownOrders": "未知/未归属订单",

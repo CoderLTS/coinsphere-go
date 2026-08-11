@@ -73,6 +73,8 @@ type TestnetAccountReconciler struct {
 	database     *gorm.DB
 	cipher       *security.SecretCipher
 	client       *exchangebinance.PrivateClient
+	environment  string
+	market       string
 	pollInterval time.Duration
 }
 
@@ -80,6 +82,16 @@ func NewTestnetAccountReconciler(
 	database *gorm.DB,
 	cipher *security.SecretCipher,
 	client *exchangebinance.PrivateClient,
+	pollInterval time.Duration,
+) (*TestnetAccountReconciler, error) {
+	return NewPrivateAccountReconciler(database, cipher, client, "testnet", "", pollInterval)
+}
+
+func NewPrivateAccountReconciler(
+	database *gorm.DB,
+	cipher *security.SecretCipher,
+	client *exchangebinance.PrivateClient,
+	environment, market string,
 	pollInterval time.Duration,
 ) (*TestnetAccountReconciler, error) {
 	if database == nil {
@@ -91,10 +103,16 @@ func NewTestnetAccountReconciler(
 	if client == nil {
 		return nil, errors.New("testnet account reconciler client is required")
 	}
+	if !validPrivateRuntimeScope(environment, market) {
+		return nil, errors.New("private account reconciler scope is invalid")
+	}
 	if pollInterval <= 0 {
 		pollInterval = defaultTestnetReconciliationPollInterval
 	}
-	return &TestnetAccountReconciler{database: database, cipher: cipher, client: client, pollInterval: pollInterval}, nil
+	return &TestnetAccountReconciler{
+		database: database, cipher: cipher, client: client,
+		environment: environment, market: market, pollInterval: pollInterval,
+	}, nil
 }
 
 func (reconciler *TestnetAccountReconciler) Run(ctx context.Context) error {
@@ -125,11 +143,15 @@ func (reconciler *TestnetAccountReconciler) Run(ctx context.Context) error {
 func (reconciler *TestnetAccountReconciler) ProcessNext(ctx context.Context) (bool, time.Duration, error) {
 	cutoff := time.Now().UTC().Add(-reconciler.pollInterval)
 	var credential db.TradingAccountCredential
-	err := reconciler.database.WithContext(ctx).Model(&db.TradingAccountCredential{}).
+	query := reconciler.database.WithContext(ctx).Model(&db.TradingAccountCredential{}).
 		Select("trading_account_credentials.*").
 		Joins("JOIN trading_accounts ON trading_accounts.id = trading_account_credentials.account_id").
 		Joins("LEFT JOIN testnet_reconciliations ON testnet_reconciliations.account_id = trading_account_credentials.account_id").
-		Where("trading_accounts.environment = 'testnet' AND trading_account_credentials.status = 'configured' AND trading_account_credentials.verification_status = 'verified'").
+		Where("trading_accounts.environment = ? AND trading_account_credentials.status = 'configured' AND trading_account_credentials.verification_status = 'verified'", reconciler.scopeEnvironment())
+	if reconciler.market != "" {
+		query = query.Where("trading_accounts.market_type = ?", reconciler.market)
+	}
+	err := query.
 		Where(`testnet_reconciliations.account_id IS NULL
             OR testnet_reconciliations.credential_updated_at <> trading_account_credentials.updated_at
             OR testnet_reconciliations.status <> 'matched'
@@ -145,7 +167,7 @@ func (reconciler *TestnetAccountReconciler) ProcessNext(ctx context.Context) (bo
 	}
 	var account db.TradingAccount
 	if err := reconciler.database.WithContext(ctx).
-		Where("id = ? AND owner_user_id = ? AND environment = 'testnet'", credential.AccountID, credential.OwnerUserID).
+		Where("id = ? AND owner_user_id = ? AND environment = ?", credential.AccountID, credential.OwnerUserID, reconciler.scopeEnvironment()).
 		Take(&account).Error; err != nil {
 		return true, 0, err
 	}
@@ -271,6 +293,13 @@ func (reconciler *TestnetAccountReconciler) ProcessNext(ctx context.Context) (bo
 		return true, 0, nil
 	}
 	return true, reconciler.pollInterval, nil
+}
+
+func (reconciler *TestnetAccountReconciler) scopeEnvironment() string {
+	if reconciler.environment == "" {
+		return "testnet"
+	}
+	return reconciler.environment
 }
 
 func (reconciler *TestnetAccountReconciler) classifySnapshot(
@@ -460,8 +489,8 @@ func (reconciler *TestnetAccountReconciler) findExternalOrderRecovery(
 ) (db.TradingIntent, db.MarketInstrument, bool, error) {
 	var intents []db.TradingIntent
 	if err := reconciler.database.WithContext(ctx).Where(
-		"account_id = ? AND environment = 'testnet' AND client_order_id = ?",
-		account.ID, openOrder.ClientOrderID,
+		"account_id = ? AND environment = ? AND client_order_id = ?",
+		account.ID, account.Environment, openOrder.ClientOrderID,
 	).Limit(2).Find(&intents).Error; err != nil {
 		return db.TradingIntent{}, db.MarketInstrument{}, false, err
 	}
@@ -824,7 +853,7 @@ func (reconciler *TestnetAccountReconciler) preparePendingAccount(
 		if err := lockTestnetAccountExecution(tx, credential.AccountID); err != nil {
 			return err
 		}
-		lockedAccount, err := lockCurrentTestnetState(tx, credential, nil)
+		lockedAccount, err := lockCurrentTestnetState(tx, credential, account.Environment, nil)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				current = false
@@ -890,7 +919,7 @@ func (reconciler *TestnetAccountReconciler) persistSnapshotForModeWithLedger(
 		if err := lockTestnetAccountExecution(tx, account.ID); err != nil {
 			return err
 		}
-		if _, err := lockCurrentTestnetState(tx, credential, &account.UpdatedAt); err != nil {
+		if _, err := lockCurrentTestnetState(tx, credential, account.Environment, &account.UpdatedAt); err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				persisted = false
 				return nil
@@ -1079,8 +1108,8 @@ func recoverTestnetExternalOrders(
 	}
 	var activeCount int64
 	if err := tx.Model(&db.TradingIntent{}).Where(
-		"account_id = ? AND environment = 'testnet' AND status IN ('processing', 'reconciling') AND id NOT IN ?",
-		account.ID, intentIDs,
+		"account_id = ? AND environment = ? AND status IN ('processing', 'reconciling') AND id NOT IN ?",
+		account.ID, account.Environment, intentIDs,
 	).Count(&activeCount).Error; err != nil {
 		return false, err
 	}
@@ -1090,8 +1119,8 @@ func recoverTestnetExternalOrders(
 	for _, candidate := range candidates {
 		var intent db.TradingIntent
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
-			"id = ? AND account_id = ? AND owner_user_id = ? AND environment = 'testnet'",
-			candidate.OrderID, account.ID, credential.OwnerUserID,
+			"id = ? AND account_id = ? AND owner_user_id = ? AND environment = ?",
+			candidate.OrderID, account.ID, credential.OwnerUserID, account.Environment,
 		).Take(&intent).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return false, &testnetLedgerMismatchError{Code: "unknown_external_order"}
@@ -1381,7 +1410,7 @@ func applyTestnetOrderObservations(
 func markTestnetIntentReconciled(tx *gorm.DB, intentID uuid.UUID, reason string) error {
 	now := time.Now().UTC()
 	return tx.Model(&db.TradingIntent{}).Where(
-		"id = ? AND environment = 'testnet' AND status IN ('processing', 'reconciling')", intentID,
+		"id = ? AND environment IN ('testnet', 'live') AND status IN ('processing', 'reconciling')", intentID,
 	).Updates(map[string]any{
 		"status": "reconciling", "block_reason": reason,
 		"claimed_at": nil, "worker_id": nil, "updated_at": now,
@@ -1471,7 +1500,7 @@ func (reconciler *TestnetAccountReconciler) persistUnknownOrder(
 		if err := lockTestnetAccountExecution(tx, account.ID); err != nil {
 			return err
 		}
-		if _, err := lockCurrentTestnetState(tx, credential, &account.UpdatedAt); err != nil {
+		if _, err := lockCurrentTestnetState(tx, credential, account.Environment, &account.UpdatedAt); err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil
 			}
@@ -1519,7 +1548,7 @@ func (reconciler *TestnetAccountReconciler) invalidateCredential(
 		if err := lockTestnetAccountExecution(tx, account.ID); err != nil {
 			return err
 		}
-		if _, err := lockCurrentTestnetState(tx, credential, &account.UpdatedAt); err != nil {
+		if _, err := lockCurrentTestnetState(tx, credential, account.Environment, &account.UpdatedAt); err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil
 			}
@@ -1542,11 +1571,12 @@ func (reconciler *TestnetAccountReconciler) invalidateCredential(
 func lockCurrentTestnetState(
 	tx *gorm.DB,
 	credential db.TradingAccountCredential,
+	environment string,
 	expectedAccountUpdatedAt *time.Time,
 ) (db.TradingAccount, error) {
 	var account db.TradingAccount
 	accountQuery := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("id = ? AND owner_user_id = ? AND environment = 'testnet'", credential.AccountID, credential.OwnerUserID)
+		Where("id = ? AND owner_user_id = ? AND environment = ?", credential.AccountID, credential.OwnerUserID, environment)
 	if expectedAccountUpdatedAt != nil {
 		accountQuery = accountQuery.Where("updated_at = ?", *expectedAccountUpdatedAt)
 	}
@@ -1585,8 +1615,11 @@ func clearTestnetProjection(tx *gorm.DB, accountID uuid.UUID) error {
 }
 
 func pauseTestnetAccount(tx *gorm.DB, accountID uuid.UUID, reason string, now time.Time) error {
-	if err := tx.Model(&db.TradingAccount{}).Where("id = ? AND environment = 'testnet'", accountID).Updates(map[string]any{
-		"status": "paused", "pause_reason": reason, "automation_enabled": false, "updated_at": now,
+	if err := tx.Model(&db.TradingAccount{}).Where("id = ? AND environment IN ('testnet', 'live')", accountID).Updates(map[string]any{
+		"status": "paused", "pause_reason": reason, "automation_enabled": false,
+		"manual_authorized_at":         gorm.Expr("CASE WHEN environment = 'live' THEN NULL ELSE manual_authorized_at END"),
+		"manual_authorized_by_user_id": gorm.Expr("CASE WHEN environment = 'live' THEN NULL ELSE manual_authorized_by_user_id END"),
+		"updated_at":                   now,
 	}).Error; err != nil {
 		return err
 	}

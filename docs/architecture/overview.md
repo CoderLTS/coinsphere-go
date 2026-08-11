@@ -55,6 +55,8 @@ Testnet 私有能力启用后，Executor 先验证凭据并读取账户、余额
 
 活动 Testnet 账户持续轮询权威账户快照。Reconciler 只接受本地确定性订单能解释的开放订单和仓位；连续快照缺失本地活动订单时，仅对精确匹配 `pending`/`reconciling` 意图且严格符合主 `market` 调仓形状的订单创建带数据库 `recovered_at` 的本地投影，并暂停账户等待手工恢复，绝不修改外部订单。其余未知外部订单、未归属仓位、订单形状漂移、累计成交差异或查询未知都会暂停账户。在 `matched` 快照后，已管理成交订单的逐笔成交、手续费和 USD-M 资金费追加到独立的 `testnet_trade_facts` 事实表，并由交易所 ID 幂等去重。账户与凭据版本锁、订单更新时间栅栏和快照观察时间栅栏共同阻止旧结果覆盖新状态；持续对账不自动恢复账户。
 
+Spot Live manual 复用确定性订单、保护单、权威对账和硬风控管线，但运行在独立的 `live` 环境范围。能力默认关闭并只允许 `spot + manual`；每次暂停都会清除 Owner 的手工放行记录。Live auto 和 USD-M Live 在本阶段没有运行时路径。
+
 ### PostgreSQL、TimescaleDB 与产物
 
 PostgreSQL/TimescaleDB 是唯一在线数据库，同时承担轻量任务队列、领域 Outbox 和持久通知记录。不引入 Redis、Kafka、NATS、Consul、PgBouncer 或额外通知服务。

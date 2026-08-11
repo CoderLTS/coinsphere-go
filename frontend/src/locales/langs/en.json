@@ -758,6 +758,11 @@
       "authorization": "Automation authorization",
       "accountSwitch": "Account automation"
     },
+    "manual": {
+      "authorization": "Manual trading release",
+      "authorized": "Released",
+      "pending": "Not released"
+    },
     "balance": {
       "equity": "Equity",
       "cash": "Cash balance",
@@ -785,23 +790,24 @@
     },
     "environment": {
       "paper": "Paper",
-      "testnet": "Testnet"
+      "testnet": "Testnet",
+      "live": "Live"
     },
     "credentials": {
-      "label": "Binance Testnet credentials",
+      "label": "Binance private credentials",
       "notConfigured": "Not configured",
       "configured": "Configured",
       "revoked": "Revoked",
       "configure": "Configure credentials",
       "replace": "Replace credentials",
       "revoke": "Revoke",
-      "dialogTitle": "Configure Testnet credentials",
+      "dialogTitle": "Configure Binance credentials",
       "apiKey": "API Key",
       "apiSecret": "API Secret",
       "withdrawalDisabled": "Withdrawal permission is disabled for this key",
       "ipWhitelistConfigured": "An IP allowlist is configured",
       "save": "Save credentials",
-      "revokeTitle": "Revoke Testnet credentials",
+      "revokeTitle": "Revoke Binance credentials",
       "revokeConfirm": "Revocation pauses the account and clears the stored ciphertext.",
       "verification": {
         "unverified": "Unverified",
@@ -822,7 +828,7 @@
       }
     },
     "audit": {
-      "title": "Testnet evidence summary",
+      "title": "Private account evidence summary",
       "rawState": "Raw state and counts",
       "errorCode": "Error code",
       "unknownOrders": "Unknown / unmatched orders",
