@@ -188,6 +188,45 @@ func TestSpotLiveManualAccountRequiresFeatureAndRecordsRelease(t *testing.T) {
 		paused.AutoAuthorizedAt != nil || paused.AutomationAuthorizedAt == nil {
 		t.Fatalf("paused Live release state = %#v", paused)
 	}
+
+	usdmInstrumentID := uuid.MustParse("019de100-0000-7000-8000-000000000010")
+	usdmInstrument := instrument
+	usdmInstrument.ID, usdmInstrument.Market = usdmInstrumentID, string(marketdata.MarketTypeUSDM)
+	if err := database.Create(&usdmInstrument).Error; err != nil {
+		t.Fatalf("create USD-M Live instrument: %v", err)
+	}
+	usdmLeverage := 2
+	usdmPayload := payload
+	usdmPayload.Name, usdmPayload.Market = "USD-M Live manual", "usd_m"
+	usdmPayload.Risk.InstrumentIDs = []string{usdmInstrumentID.String()}
+	usdmPayload.Risk.Leverage = &usdmLeverage
+	if _, err := app.CreateTradingAccount(
+		context.Background(), owner.ID, usdmPayload, "usdm-live-disabled",
+	); !errors.Is(err, ErrInvalidTradingRequest) {
+		t.Fatalf("disabled USD-M Live account creation returned %v", err)
+	}
+	app.Cfg.Trading.USDMLiveManualEnabled = true
+	usdmAccount, err := app.CreateTradingAccount(
+		context.Background(), owner.ID, usdmPayload, "usdm-live-enabled",
+	)
+	if err != nil || usdmAccount.Market != "usd_m" || usdmAccount.Status != "paused" {
+		t.Fatalf("create USD-M Live account = %#v, err=%v", usdmAccount, err)
+	}
+	credentialToken = app.issueReauthToken(principal, time.Now())
+	if _, err := app.SaveTradingCredentials(
+		context.Background(), principal, usdmAccount.ID, credentialPayload, "usdm-live-credential", credentialToken,
+	); err != nil {
+		t.Fatalf("save USD-M Live credential: %v", err)
+	}
+	if _, err := app.SetTradingAutomation(
+		context.Background(), principal, usdmAccount.ID, true, "usdm-live-auto", "",
+	); !errors.Is(err, ErrTradingExecutionUnavailable) {
+		t.Fatalf("USD-M Live automation enable returned %v", err)
+	}
+	overview, err := app.GetTradingOverview(context.Background(), owner.ID)
+	if err != nil || !overview.Capabilities.USDMLiveManualEnabled {
+		t.Fatalf("USD-M Live capability = %#v, err=%v", overview.Capabilities, err)
+	}
 }
 
 func TestTestnetCredentialEncryptionIdempotencyAndRevocation(t *testing.T) {

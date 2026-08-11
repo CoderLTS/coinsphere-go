@@ -168,7 +168,7 @@
         <section
           v-if="
             selectedAccount.environment !== 'live' ||
-            overview.capabilities.spotLiveAutoEnabled ||
+            (selectedAccount.market === 'spot' && overview.capabilities.spotLiveAutoEnabled) ||
             selectedAccount.automationAuthorized ||
             selectedAccount.automationEnabled ||
             selectedAccount.autoAuthorized
@@ -183,7 +183,8 @@
                 !isSuper ||
                 Boolean(commandLoading) ||
                 (selectedAccount.environment === 'live' &&
-                  !overview.capabilities.spotLiveAutoEnabled &&
+                  (selectedAccount.market !== 'spot' ||
+                    !overview.capabilities.spotLiveAutoEnabled) &&
                   !selectedAccount.automationAuthorized)
               "
               :loading="commandLoading === 'authorization'"
@@ -212,7 +213,12 @@
               }}
             </ElTag>
           </label>
-          <label v-if="overview.capabilities.spotLiveAutoEnabled || selectedAccount.autoAuthorized">
+          <label
+            v-if="
+              (selectedAccount.market === 'spot' && overview.capabilities.spotLiveAutoEnabled) ||
+              selectedAccount.autoAuthorized
+            "
+          >
             <span>{{ t('trading.automation.ownerRelease') }}</span>
             <ElTag :type="selectedAccount.autoAuthorized ? 'success' : 'warning'" effect="plain">
               {{
@@ -396,6 +402,46 @@
               <ElTableColumn :label="t('trading.table.lastPrice')" min-width="150" align="right">
                 <template #default="{ row }"
                   ><span class="decimal-value">{{ row.lastPrice }}</span></template
+                >
+              </ElTableColumn>
+              <ElTableColumn
+                v-if="selectedAccount.market === 'usd_m' && selectedAccount.environment !== 'paper'"
+                :label="t('trading.risk.leverage')"
+                width="100"
+                align="right"
+              >
+                <template #default="{ row }">
+                  {{ row.leverage ? `${row.leverage}x` : '--' }}
+                </template>
+              </ElTableColumn>
+              <ElTableColumn
+                v-if="selectedAccount.market === 'usd_m' && selectedAccount.environment !== 'paper'"
+                :label="t('trading.table.marginMode')"
+                width="110"
+                align="center"
+              >
+                <template #default="{ row }">
+                  {{ row.isolated === true ? t('trading.table.isolated') : '--' }}
+                </template>
+              </ElTableColumn>
+              <ElTableColumn
+                v-if="selectedAccount.market === 'usd_m' && selectedAccount.environment !== 'paper'"
+                :label="t('trading.table.liquidationPrice')"
+                min-width="160"
+                align="right"
+              >
+                <template #default="{ row }"
+                  ><span class="decimal-value">{{ row.liquidationPrice }}</span></template
+                >
+              </ElTableColumn>
+              <ElTableColumn
+                v-if="selectedAccount.market === 'usd_m' && selectedAccount.environment !== 'paper'"
+                :label="t('trading.table.liquidationDistance')"
+                min-width="160"
+                align="right"
+              >
+                <template #default="{ row }"
+                  ><span class="decimal-value">{{ row.liquidationDistanceRatio }}</span></template
                 >
               </ElTableColumn>
               <ElTableColumn
@@ -855,7 +901,11 @@
   })
 
   const createEmptyOverview = (): TradingOverview => ({
-    capabilities: { spotLiveManualEnabled: false, spotLiveAutoEnabled: false },
+    capabilities: {
+      spotLiveManualEnabled: false,
+      spotLiveAutoEnabled: false,
+      usdMLiveManualEnabled: false
+    },
     control: emptyControl(),
     accounts: [],
     intents: [],
@@ -930,7 +980,11 @@
           symbol: position.symbol,
           quantity: position.quantity,
           averageEntryPrice: position.entryPrice,
-          lastPrice: '--',
+          lastPrice: position.markPrice === '0' ? '--' : position.markPrice,
+          leverage: position.leverage,
+          isolated: position.isolated,
+          liquidationPrice: position.liquidationPrice,
+          liquidationDistanceRatio: position.liquidationDistanceRatio,
           realizedPnl: '--',
           unrealizedPnl: position.unrealizedPnl,
           updatedAt: position.observedAt
@@ -1048,7 +1102,11 @@
     const account = selectedAccount.value
     if (!account || Boolean(commandLoading.value)) return true
     if (account.automationEnabled) return false
-    if (account.environment === 'live' && !overview.capabilities.spotLiveAutoEnabled) return true
+    if (
+      account.environment === 'live' &&
+      (account.market !== 'spot' || !overview.capabilities.spotLiveAutoEnabled)
+    )
+      return true
     return (
       overview.control.emergencyStopped ||
       account.status !== 'active' ||
@@ -1122,8 +1180,11 @@
     ]
   })
   const marketOptions = computed(() => {
-    const options = [{ label: t('trading.market.spot'), value: 'spot' }]
-    if (accountForm.environment !== 'live') {
+    const options = [] as Array<{ label: string; value: 'spot' | 'usd_m' }>
+    if (accountForm.environment !== 'live' || overview.capabilities.spotLiveManualEnabled) {
+      options.push({ label: t('trading.market.spot'), value: 'spot' })
+    }
+    if (accountForm.environment !== 'live' || overview.capabilities.usdMLiveManualEnabled) {
       options.push({ label: t('trading.market.usdM'), value: 'usd_m' })
     }
     return options
@@ -1133,7 +1194,10 @@
       { label: t('trading.environment.paper'), value: 'paper' },
       { label: t('trading.environment.testnet'), value: 'testnet' }
     ]
-    if (overview.capabilities.spotLiveManualEnabled) {
+    if (
+      overview.capabilities.spotLiveManualEnabled ||
+      overview.capabilities.usdMLiveManualEnabled
+    ) {
       options.push({ label: t('trading.environment.live'), value: 'live' })
     }
     return options
@@ -1537,7 +1601,12 @@
   watch(
     () => accountForm.environment,
     (environment) => {
-      if (environment === 'live') accountForm.market = 'spot'
+      if (environment !== 'live') return
+      if (accountForm.market === 'spot' && !overview.capabilities.spotLiveManualEnabled) {
+        accountForm.market = 'usd_m'
+      } else if (accountForm.market === 'usd_m' && !overview.capabilities.usdMLiveManualEnabled) {
+        accountForm.market = 'spot'
+      }
     }
   )
 </script>

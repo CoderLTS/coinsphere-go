@@ -75,6 +75,7 @@ func NewPrivateExecutor(
 	}
 	if !validPrivateRuntimeScope(environment, market) ||
 		(environment == "live" && mode != "manual" && mode != "auto") ||
+		(environment == "live" && market == "usd_m" && mode != "manual") ||
 		(environment == "testnet" && mode != "") {
 		return nil, errors.New("private executor scope is invalid")
 	}
@@ -734,7 +735,8 @@ func loadAndValidateTestnetExecution(
 		return state, "signal_state_changed", false, nil
 	}
 	if intent.Environment == "live" && ((intent.Mode != "manual" && intent.Mode != "auto") ||
-		intent.Market != string(marketdata.MarketTypeSpot) || state.Account.ManualAuthorizedAt == nil) {
+		state.Account.ManualAuthorizedAt == nil ||
+		(intent.Mode == "auto" && intent.Market != string(marketdata.MarketTypeSpot))) {
 		return state, "live_manual_not_authorized", true, nil
 	}
 	if state.Instrument.Venue != string(marketdata.VenueBinance) || state.Instrument.Status != "trading" ||

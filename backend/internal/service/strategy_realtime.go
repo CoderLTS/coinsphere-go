@@ -75,9 +75,8 @@ type validatedStrategyInstance struct {
 
 func validateStrategyInstancePayload(
 	payload StrategyInstanceCreatePayload, version db.StrategyVersion,
-	spotLiveManualEnabled bool, spotLiveAutoEnabled ...bool,
+	spotLiveManualEnabled, usdmLiveManualEnabled, spotLiveAutoEnabled bool,
 ) (validatedStrategyInstance, error) {
-	liveAutoEnabled := len(spotLiveAutoEnabled) > 0 && spotLiveAutoEnabled[0]
 	name := strings.TrimSpace(payload.Name)
 	if name == "" || len(name) > 120 {
 		return validatedStrategyInstance{}, invalidStrategy("name must be between 1 and 120 bytes")
@@ -96,12 +95,14 @@ func validateStrategyInstancePayload(
 	if environment != "paper" && environment != "testnet" && environment != "live" {
 		return validatedStrategyInstance{}, invalidStrategy("environment must be paper, testnet, or live")
 	}
-	if environment == "live" && mode == "auto" && !liveAutoEnabled {
+	liveManualEnabled := (version.Market == string(marketdata.MarketTypeSpot) && spotLiveManualEnabled) ||
+		(version.Market == string(marketdata.MarketTypeUSDM) && usdmLiveManualEnabled)
+	if environment == "live" && mode == "auto" &&
+		(!spotLiveAutoEnabled || version.Market != string(marketdata.MarketTypeSpot)) {
 		return validatedStrategyInstance{}, invalidStrategy("Spot Live auto trading is not enabled")
 	}
-	if environment == "live" && mode != "signal_only" &&
-		(!spotLiveManualEnabled || version.Market != string(marketdata.MarketTypeSpot)) {
-		return validatedStrategyInstance{}, invalidStrategy("Spot Live manual trading is not enabled")
+	if environment == "live" && mode != "signal_only" && !liveManualEnabled {
+		return validatedStrategyInstance{}, invalidStrategy("Live manual trading is not enabled for this market")
 	}
 	parameters := payload.Parameters
 	if parameters == nil {
@@ -115,7 +116,7 @@ func validateStrategyInstancePayload(
 	var allocationUSDT *decimal.Decimal
 	var stopLossRatio *decimal.Decimal
 	if mode != "signal_only" && (environment == "paper" || environment == "testnet" ||
-		(environment == "live" && spotLiveManualEnabled && version.Market == string(marketdata.MarketTypeSpot))) {
+		(environment == "live" && liveManualEnabled)) {
 		accountID, err := requiredStrategyUUID(payload.TradingAccountID, "tradingAccountId")
 		if err != nil {
 			return validatedStrategyInstance{}, err
@@ -165,7 +166,7 @@ func (a *App) CreateStrategyInstance(ctx context.Context, userID int64, payload 
 		return StrategyInstanceView{}, err
 	}
 	validated, err := validateStrategyInstancePayload(
-		payload, version, a.spotLiveManualEnabled(), a.spotLiveAutoEnabled(),
+		payload, version, a.spotLiveManualEnabled(), a.usdmLiveManualEnabled(), a.spotLiveAutoEnabled(),
 	)
 	if err != nil {
 		return StrategyInstanceView{}, err

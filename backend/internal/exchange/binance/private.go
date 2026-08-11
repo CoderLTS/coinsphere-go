@@ -24,6 +24,7 @@ const (
 	defaultSpotTestnetURL = "https://testnet.binance.vision"
 	defaultUSDMTestnetURL = "https://testnet.binancefuture.com"
 	defaultSpotLiveURL    = "https://api.binance.com"
+	defaultUSDMLiveURL    = "https://fapi.binance.com"
 	defaultRecvWindow     = 5 * time.Second
 	defaultResponseLimit  = 1 << 20
 )
@@ -56,6 +57,7 @@ func (err *PrivateError) Error() string {
 
 type PrivateClientConfig struct {
 	Environment string
+	Market      marketdata.MarketType
 	SpotBaseURL string
 	USDMBaseURL string
 	HTTPClient  *http.Client
@@ -65,6 +67,7 @@ type PrivateClientConfig struct {
 // PrivateClient signs requests for one explicitly selected environment without retaining credentials.
 type PrivateClient struct {
 	baseURLs      map[marketdata.MarketType]url.URL
+	environment   string
 	http          *http.Client
 	now           func() time.Time
 	recvWindow    time.Duration
@@ -78,11 +81,16 @@ type AccountBalance struct {
 }
 
 type AccountPosition struct {
-	Symbol        string
-	PositionSide  string
-	Quantity      decimal.Decimal
-	EntryPrice    decimal.Decimal
-	UnrealizedPnL decimal.Decimal
+	Symbol                   string
+	PositionSide             string
+	Quantity                 decimal.Decimal
+	EntryPrice               decimal.Decimal
+	MarkPrice                decimal.Decimal
+	LiquidationPrice         decimal.Decimal
+	LiquidationDistanceRatio decimal.Decimal
+	UnrealizedPnL            decimal.Decimal
+	Leverage                 int
+	Isolated                 bool
 }
 
 type OpenOrder struct {
@@ -168,32 +176,43 @@ func NewPrivateClient(config PrivateClientConfig) (*PrivateClient, error) {
 	if environment != "testnet" && environment != "live" {
 		return nil, errors.New("private client environment must be testnet or live")
 	}
-	spotURL := config.SpotBaseURL
-	if spotURL == "" && environment == "live" {
-		spotURL = defaultSpotLiveURL
-	} else if spotURL == "" {
-		spotURL = defaultSpotTestnetURL
+	if environment == "live" && config.Market != marketdata.MarketTypeSpot && config.Market != marketdata.MarketTypeUSDM {
+		return nil, errors.New("live private client market must be spot or usd_m")
 	}
-	usdmURL := config.USDMBaseURL
-	if usdmURL == "" && environment == "live" {
-		// USD-M Live is intentionally absent from the M4 manual runtime.
-		usdmURL = "http://127.0.0.1"
-	} else if usdmURL == "" {
-		usdmURL = defaultUSDMTestnetURL
-	}
-	spotHost := "testnet.binance.vision"
-	usdmHost := "testnet.binancefuture.com"
+	baseURLs := make(map[marketdata.MarketType]url.URL, 2)
+	markets := []marketdata.MarketType{marketdata.MarketTypeSpot, marketdata.MarketTypeUSDM}
 	if environment == "live" {
-		spotHost = "api.binance.com"
-		usdmHost = ""
+		markets = []marketdata.MarketType{config.Market}
 	}
-	spot, err := privateBaseURL(spotURL, spotHost)
-	if err != nil {
-		return nil, err
-	}
-	usdm, err := privateBaseURL(usdmURL, usdmHost)
-	if err != nil {
-		return nil, err
+	for _, marketType := range markets {
+		raw, host := config.SpotBaseURL, "testnet.binance.vision"
+		if marketType == marketdata.MarketTypeUSDM {
+			raw, host = config.USDMBaseURL, "testnet.binancefuture.com"
+		}
+		if environment == "live" {
+			if marketType == marketdata.MarketTypeSpot {
+				host = "api.binance.com"
+			} else {
+				host = "fapi.binance.com"
+			}
+		}
+		if raw == "" {
+			switch {
+			case environment == "live" && marketType == marketdata.MarketTypeSpot:
+				raw = defaultSpotLiveURL
+			case environment == "live":
+				raw = defaultUSDMLiveURL
+			case marketType == marketdata.MarketTypeSpot:
+				raw = defaultSpotTestnetURL
+			default:
+				raw = defaultUSDMTestnetURL
+			}
+		}
+		endpoint, err := privateBaseURL(raw, host)
+		if err != nil {
+			return nil, err
+		}
+		baseURLs[marketType] = endpoint
 	}
 
 	httpClient := config.HTTPClient
@@ -208,13 +227,9 @@ func NewPrivateClient(config PrivateClientConfig) (*PrivateClient, error) {
 	if now == nil {
 		now = time.Now
 	}
-	baseURLs := map[marketdata.MarketType]url.URL{marketdata.MarketTypeSpot: spot}
-	if environment == "testnet" {
-		baseURLs[marketdata.MarketTypeUSDM] = usdm
-	}
 	return &PrivateClient{
-		baseURLs: baseURLs,
-		http:     &clientCopy, now: now, recvWindow: defaultRecvWindow, responseLimit: defaultResponseLimit,
+		baseURLs: baseURLs, environment: environment,
+		http: &clientCopy, now: now, recvWindow: defaultRecvWindow, responseLimit: defaultResponseLimit,
 	}, nil
 }
 
@@ -235,11 +250,12 @@ func (client *PrivateClient) VerifyAccount(
 	return nil
 }
 
-// SnapshotAccount reads authoritative Testnet state without creating or changing orders.
+// SnapshotAccount reads authoritative private state without creating or changing orders.
 func (client *PrivateClient) SnapshotAccount(
 	ctx context.Context,
 	marketType marketdata.MarketType,
 	apiKey, apiSecret string,
+	whitelistedSymbols ...string,
 ) (AccountSnapshot, error) {
 	accountBody, err := client.signedGET(ctx, marketType, accountPath(marketType), apiKey, apiSecret)
 	if err != nil {
@@ -252,6 +268,16 @@ func (client *PrivateClient) SnapshotAccount(
 	snapshot, err := parseAccountSnapshot(marketType, accountBody, openOrdersBody)
 	if err != nil {
 		return AccountSnapshot{}, &PrivateError{Kind: PrivateErrorProtocol}
+	}
+	if client.environment == "live" && marketType == marketdata.MarketTypeUSDM && len(whitelistedSymbols) > 0 {
+		positionRiskBody, err := client.signedGET(ctx, marketType, "/fapi/v3/positionRisk", apiKey, apiSecret)
+		if err != nil {
+			return AccountSnapshot{}, err
+		}
+		snapshot.Positions, err = parseUSDMPositionRisk(positionRiskBody, whitelistedSymbols)
+		if err != nil {
+			return AccountSnapshot{}, &PrivateError{Kind: PrivateErrorProtocol}
+		}
 	}
 	snapshot.ObservedAt = client.now().UTC()
 	return snapshot, nil
@@ -1227,6 +1253,106 @@ func parseAccountSnapshot(marketType marketdata.MarketType, accountBody, openOrd
 		return snapshot.OpenOrders[i].Symbol < snapshot.OpenOrders[j].Symbol
 	})
 	return snapshot, nil
+}
+
+func parseUSDMPositionRisk(body []byte, whitelistedSymbols []string) ([]AccountPosition, error) {
+	wanted := make(map[string]struct{}, len(whitelistedSymbols))
+	for _, raw := range whitelistedSymbols {
+		symbol, err := privateToken(raw, 64)
+		if err != nil {
+			return nil, err
+		}
+		wanted[symbol] = struct{}{}
+	}
+	var payload []struct {
+		Symbol           string `json:"symbol"`
+		PositionSide     string `json:"positionSide"`
+		PositionAmount   string `json:"positionAmt"`
+		EntryPrice       string `json:"entryPrice"`
+		MarkPrice        string `json:"markPrice"`
+		LiquidationPrice string `json:"liquidationPrice"`
+		UnrealizedProfit string `json:"unrealizedProfit"`
+		UnRealizedProfit string `json:"unRealizedProfit"`
+		Leverage         string `json:"leverage"`
+		MarginType       string `json:"marginType"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil || payload == nil {
+		return nil, errors.New("invalid USD-M position risk response")
+	}
+	found := make(map[string]struct{}, len(wanted))
+	positions := make([]AccountPosition, 0, len(wanted))
+	for _, row := range payload {
+		symbol, err := privateToken(row.Symbol, 64)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := wanted[symbol]; !ok {
+			continue
+		}
+		positionSide, err := privateEnum(row.PositionSide, 8)
+		if err != nil || (positionSide != "both" && positionSide != "long" && positionSide != "short") {
+			return nil, errors.New("invalid USD-M position side")
+		}
+		quantity, err := privateDecimal(row.PositionAmount, true)
+		if err != nil {
+			return nil, err
+		}
+		entryPrice, err := privateDecimal(row.EntryPrice, false)
+		if err != nil || (!quantity.IsZero() && !entryPrice.IsPositive()) {
+			return nil, errors.New("invalid USD-M entry price")
+		}
+		markPrice, err := privateDecimal(row.MarkPrice, false)
+		if err != nil || !markPrice.IsPositive() {
+			return nil, errors.New("invalid USD-M mark price")
+		}
+		liquidationPrice, err := privateDecimal(row.LiquidationPrice, false)
+		if err != nil || (!quantity.IsZero() && !liquidationPrice.IsPositive()) {
+			return nil, errors.New("invalid USD-M liquidation price")
+		}
+		unrealizedRaw := row.UnrealizedProfit
+		if unrealizedRaw == "" {
+			unrealizedRaw = row.UnRealizedProfit
+		}
+		unrealizedPnL, err := privateDecimal(unrealizedRaw, true)
+		if err != nil {
+			return nil, err
+		}
+		leverage, err := strconv.Atoi(row.Leverage)
+		if err != nil || leverage < 1 || leverage > 125 || strconv.Itoa(leverage) != row.Leverage {
+			return nil, errors.New("invalid USD-M leverage")
+		}
+		marginType, err := privateText(row.MarginType, 16)
+		if err != nil {
+			return nil, err
+		}
+		marginType = strings.ToLower(marginType)
+		if marginType != "isolated" && marginType != "cross" {
+			return nil, errors.New("invalid USD-M margin type")
+		}
+		liquidationDistance := decimal.Zero
+		if liquidationPrice.IsPositive() {
+			liquidationDistance = markPrice.Sub(liquidationPrice).Abs().DivRound(markPrice, 18)
+		}
+		positions = append(positions, AccountPosition{
+			Symbol: symbol, PositionSide: positionSide, Quantity: quantity, EntryPrice: entryPrice,
+			MarkPrice: markPrice, LiquidationPrice: liquidationPrice,
+			LiquidationDistanceRatio: liquidationDistance, UnrealizedPnL: unrealizedPnL,
+			Leverage: leverage, Isolated: marginType == "isolated",
+		})
+		found[symbol] = struct{}{}
+	}
+	for symbol := range wanted {
+		if _, ok := found[symbol]; !ok {
+			return nil, errors.New("USD-M position risk is missing a whitelisted symbol")
+		}
+	}
+	sort.Slice(positions, func(i, j int) bool {
+		if positions[i].Symbol == positions[j].Symbol {
+			return positions[i].PositionSide < positions[j].PositionSide
+		}
+		return positions[i].Symbol < positions[j].Symbol
+	})
+	return positions, nil
 }
 
 func privateDecimal(value string, allowNegative bool) (decimal.Decimal, error) {

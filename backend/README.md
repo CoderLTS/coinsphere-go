@@ -73,7 +73,7 @@ DSN 必须指向已经存在的数据库和全新 CoinSphere schema；连接入�
 - **重试**:可重试失败(timeout/connection/429/5xx)按 `retry_backoff_seconds` 退避,`retry_waiting → queued` 自动提升。
 - **恢复**:心跳超时(含进程崩溃重启后的孤儿执行)标记 `worker_lost` 并按剩余次数重试或失败。
 - **事件**:工作流终态与标准领域事件在同一短事务写入 `domain_event_outbox`；PostgreSQL 存储层使用 `FOR UPDATE SKIP LOCKED` 原子批量认领，并用数据库时间续租和 fencing 投递。匹配 `start.event` 入口后以稳定幂等键触发工作流；订阅失败按 `retry_backoff_seconds` 重排，尝试耗尽进入死信，未告警死信由 `alerted_at` 原子去重后输出脱敏日志。
-- **Executor**:默认只按账户串行处理 Paper 意图和可重建投影。`COINSPHERE_TRADING__TESTNET_PRIVATE_API_ENABLED=true` 可独立装配 Testnet；Spot Live manual 由 `COINSPHERE_TRADING__SPOT_LIVE_MANUAL_ENABLED=true` 装配，auto 还必须同时设置 `COINSPHERE_TRADING__SPOT_LIVE_AUTO_ENABLED=true`。私有运行时要求安全的 `auth.encryption_key`，默认和生产配置均保持关闭。Live manual 要求 Owner 恢复放行；Live auto 另要求管理员授权和 Owner 独立放行，两个模式按执行器作用域隔离。暂停、凭据/风控变化、对账差异或急停会撤销 Owner 放行，USD-M Live 仍不可用。CI、Codex、自动部署和工作流不得提供 Live 凭据或启用 Live 开关；Binance 环境验证延期到全部开发完成后，当前只验 Paper 和离线契约。
+- **Executor**:默认只按账户串行处理 Paper 意图和可重建投影。`COINSPHERE_TRADING__TESTNET_PRIVATE_API_ENABLED=true` 可独立装配 Testnet；Spot Live manual 由 `COINSPHERE_TRADING__SPOT_LIVE_MANUAL_ENABLED=true` 装配，USD-M Live manual 由 `COINSPHERE_TRADING__USD_M_LIVE_MANUAL_ENABLED=true` 装配，两个市场使用隔离客户端。Spot auto 还必须同时设置 `COINSPHERE_TRADING__SPOT_LIVE_AUTO_ENABLED=true`。私有运行时要求安全的 `auth.encryption_key`，默认和生产配置均保持关闭。Live manual 要求 Owner 恢复放行；Spot Live auto 另要求管理员授权和 Owner 独立放行。USD-M Live 只允许 manual，并持续验证逐仓、单向、低杠杆、标记价与强平距离。暂停、凭据/风控变化、对账差异或急停会撤销 Owner 放行。CI、Codex、自动部署和工作流不得提供 Live 凭据或启用 Live 开关；Binance 环境验证延期到全部开发完成后，当前只验 Paper 和离线契约。
 - **清理**:每天 03:00 后按批删除超过保留期的终态执行。
 
 Python Worker 通过独立 PostgreSQL 连接消费 `worker_tasks`，使用唯一租约完成认领、心跳、崩溃回收和 5 秒内取消。生产 Release 构建并部署 realtime/backtest Worker 与 Paper Executor；二者均使用专用数据库身份且不持有真实交易凭据。
