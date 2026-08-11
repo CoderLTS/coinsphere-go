@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-var ErrTradingCredentialInvalid = errors.New("invalid testnet trading credentials")
+var ErrTradingCredentialInvalid = errors.New("invalid private trading credentials")
 
 func (a *App) SaveTradingCredentials(
 	ctx context.Context,
@@ -57,8 +57,9 @@ func (a *App) SaveTradingCredentials(
 			Where("id = ? AND owner_user_id = ?", accountID, principal.User.ID).Take(&account).Error; err != nil {
 			return tradingAccountLookupError(err)
 		}
-		if account.Environment != "testnet" {
-			return invalidTrading("credentials can only be configured for testnet accounts")
+		if !isPrivateTradingEnvironment(account.Environment) ||
+			account.Environment == "live" && (!a.spotLiveManualEnabled() || account.Market != "spot") {
+			return invalidTrading("credentials can only be configured for enabled private accounts")
 		}
 		_, reused, err := a.reserveIdempotencyRecord(
 			tx, principal.User.ID, "trading-credentials:save:"+accountID.String(), idempotencyKey, requestHash,
@@ -114,10 +115,15 @@ func (a *App) SaveTradingCredentials(
 				return err
 			}
 		}
-		if err := tx.Model(&account).Updates(map[string]any{
-			"status": "paused", "pause_reason": "testnet_credentials_changed",
+		accountUpdates := map[string]any{
+			"status": "paused", "pause_reason": "credentials_changed",
 			"automation_enabled": false, "updated_at": now,
-		}).Error; err != nil {
+		}
+		if account.Environment == "live" {
+			accountUpdates["manual_authorized_at"] = nil
+			accountUpdates["manual_authorized_by_user_id"] = nil
+		}
+		if err := tx.Model(&account).Updates(accountUpdates).Error; err != nil {
 			return err
 		}
 		return disableAutoInstances(tx, &accountID, now)
@@ -151,8 +157,8 @@ func (a *App) RevokeTradingCredentials(
 			Where("id = ? AND owner_user_id = ?", accountID, principal.User.ID).Take(&account).Error; err != nil {
 			return tradingAccountLookupError(err)
 		}
-		if account.Environment != "testnet" {
-			return invalidTrading("credentials can only be revoked for testnet accounts")
+		if !isPrivateTradingEnvironment(account.Environment) {
+			return invalidTrading("credentials can only be revoked for enabled private accounts")
 		}
 		_, reused, err := a.reserveIdempotencyRecord(
 			tx, principal.User.ID, "trading-credentials:revoke:"+accountID.String(), idempotencyKey, requestHash,
@@ -199,10 +205,15 @@ func (a *App) RevokeTradingCredentials(
 			}
 		}
 		now := time.Now().UTC()
-		if err := tx.Model(&account).Updates(map[string]any{
-			"status": "paused", "pause_reason": "testnet_credentials_revoked",
+		accountUpdates := map[string]any{
+			"status": "paused", "pause_reason": "credentials_revoked",
 			"automation_enabled": false, "updated_at": now,
-		}).Error; err != nil {
+		}
+		if account.Environment == "live" {
+			accountUpdates["manual_authorized_at"] = nil
+			accountUpdates["manual_authorized_by_user_id"] = nil
+		}
+		if err := tx.Model(&account).Updates(accountUpdates).Error; err != nil {
 			return err
 		}
 		return disableAutoInstances(tx, &accountID, now)

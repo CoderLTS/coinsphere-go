@@ -38,6 +38,7 @@ type MarketDataConfig struct {
 // TradingConfig controls private exchange access. It is disabled unless explicitly enabled.
 type TradingConfig struct {
 	TestnetPrivateAPIEnabled bool `yaml:"testnet_private_api_enabled"`
+	SpotLiveManualEnabled    bool `yaml:"spot_live_manual_enabled"`
 }
 
 // ServerConfig HTTP 服务配置。

@@ -46,8 +46,9 @@ func TestMarketDataConfigBounds(t *testing.T) {
 	}
 }
 
-func TestTestnetPrivateAPIDefaultsDisabled(t *testing.T) {
-	if defaultConfig().Trading.TestnetPrivateAPIEnabled {
-		t.Fatal("Testnet private API must require explicit enablement")
+func TestPrivateTradingDefaultsDisabled(t *testing.T) {
+	cfg := defaultConfig()
+	if cfg.Trading.TestnetPrivateAPIEnabled || cfg.Trading.SpotLiveManualEnabled {
+		t.Fatal("private trading must require explicit enablement")
 	}
 }

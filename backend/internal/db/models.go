@@ -212,6 +212,8 @@ type TradingAccount struct {
 	Status                      string           `gorm:"size:16"`
 	PauseReason                 string           `gorm:"column:pause_reason;size:255"`
 	AutomationEnabled           bool             `gorm:"column:automation_enabled"`
+	ManualAuthorizedAt          *time.Time       `gorm:"column:manual_authorized_at"`
+	ManualAuthorizedByID        *int64           `gorm:"column:manual_authorized_by_user_id"`
 	AutomationAuthorizedAt      *time.Time       `gorm:"column:automation_authorized_at"`
 	AutomationAuthorizedByID    *int64           `gorm:"column:automation_authorized_by_user_id"`
 	InitialBalance              *decimal.Decimal `gorm:"column:initial_balance;type:numeric(38,18)"`

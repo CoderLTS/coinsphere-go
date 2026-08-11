@@ -87,6 +87,30 @@ func TestPrivateClientSignsAndRoutesAccountRequests(t *testing.T) {
 	}
 }
 
+func TestPrivateClientLiveModeOnlyRoutesSpot(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v3/account" {
+			t.Errorf("unexpected Live path %q", request.URL.Path)
+		}
+		_, _ = response.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	client, err := NewPrivateClient(PrivateClientConfig{
+		Environment: "live", SpotBaseURL: server.URL,
+	})
+	if err != nil {
+		t.Fatalf("create Live private client: %v", err)
+	}
+	if err := client.VerifyAccount(context.Background(), marketdata.MarketTypeSpot, "key", "secret"); err != nil {
+		t.Fatalf("verify Live Spot account: %v", err)
+	}
+	var privateErr *PrivateError
+	if err := client.VerifyAccount(context.Background(), marketdata.MarketTypeUSDM, "key", "secret"); !errors.As(err, &privateErr) || privateErr.Kind != PrivateErrorAuthentication {
+		t.Fatalf("USD-M Live error = %v", err)
+	}
+}
+
 func TestPrivateClientSnapshotsSpotAndUSDMAccounts(t *testing.T) {
 	fixedNow := time.Date(2026, time.August, 9, 7, 8, 9, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {

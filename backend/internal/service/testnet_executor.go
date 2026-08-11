@@ -41,6 +41,9 @@ type TestnetExecutor struct {
 	cipher       *security.SecretCipher
 	client       testnetOrderClient
 	workerID     string
+	environment  string
+	market       string
+	mode         string
 	pollInterval time.Duration
 }
 
@@ -49,6 +52,16 @@ func NewTestnetExecutor(
 	cipher *security.SecretCipher,
 	client testnetOrderClient,
 	workerID string,
+	pollInterval time.Duration,
+) (*TestnetExecutor, error) {
+	return NewPrivateExecutor(database, cipher, client, workerID, "testnet", "", "", pollInterval)
+}
+
+func NewPrivateExecutor(
+	database *gorm.DB,
+	cipher *security.SecretCipher,
+	client testnetOrderClient,
+	workerID, environment, market, mode string,
 	pollInterval time.Duration,
 ) (*TestnetExecutor, error) {
 	if database == nil {
@@ -60,6 +73,11 @@ func NewTestnetExecutor(
 	if client == nil {
 		return nil, errors.New("testnet executor client is required")
 	}
+	if !validPrivateRuntimeScope(environment, market) ||
+		(environment == "live" && mode != "manual") ||
+		(environment == "testnet" && mode != "") {
+		return nil, errors.New("private executor scope is invalid")
+	}
 	workerID = strings.TrimSpace(workerID)
 	if workerID == "" {
 		return nil, errors.New("testnet executor worker ID is required")
@@ -69,8 +87,16 @@ func NewTestnetExecutor(
 	}
 	return &TestnetExecutor{
 		database: database, cipher: cipher, client: client,
-		workerID: workerID, pollInterval: pollInterval,
+		workerID: workerID, environment: environment, market: market, mode: mode,
+		pollInterval: pollInterval,
 	}, nil
+}
+
+func (executor *TestnetExecutor) scopeEnvironment() string {
+	if executor.environment == "" {
+		return "testnet"
+	}
+	return executor.environment
 }
 
 func (executor *TestnetExecutor) Run(ctx context.Context) error {
@@ -109,8 +135,8 @@ SET status = CASE
     claimed_at = NULL,
     worker_id = NULL,
     updated_at = CURRENT_TIMESTAMP
-WHERE intent.environment = 'testnet' AND intent.status = 'processing'
-`).Error
+WHERE intent.environment = ? AND intent.status = 'processing'
+`, executor.scopeEnvironment()).Error
 }
 
 func (executor *TestnetExecutor) ProcessNext(ctx context.Context) (bool, error) {
@@ -138,9 +164,9 @@ SET status = CASE
     claimed_at = NULL,
     worker_id = NULL,
     updated_at = CURRENT_TIMESTAMP
-WHERE intent.id = ? AND intent.environment = 'testnet'
+WHERE intent.id = ? AND intent.environment = ?
   AND intent.status = 'processing' AND intent.worker_id = ?
-`, intentID, executor.workerID).Error
+`, intentID, executor.scopeEnvironment(), executor.workerID).Error
 }
 
 func (executor *TestnetExecutor) claimNextIntent(ctx context.Context) (*db.TradingIntent, error) {
@@ -150,18 +176,22 @@ func (executor *TestnetExecutor) claimNextIntent(ctx context.Context) (*db.Tradi
 		// advisory lock before locking an intent row.
 		var candidate db.TradingIntent
 		if err := tx.
-			Where(`environment = 'testnet' AND (
+			Where(`environment = ?
+				AND (? = '' OR market_type = ?)
+				AND (? = '' OR mode = ?)
+				AND (
                 status = 'reconciling'
                 OR (
                     status = 'pending'
                     AND NOT EXISTS (
                         SELECT 1 FROM trading_intents AS active
                         WHERE active.account_id = trading_intents.account_id
-                          AND active.environment = 'testnet'
+                          AND active.environment = ?
                           AND active.status IN ('processing', 'reconciling')
                     )
                 )
-            )`).
+				)`, executor.scopeEnvironment(), executor.market, executor.market,
+				executor.mode, executor.mode, executor.scopeEnvironment()).
 			Order("CASE status WHEN 'reconciling' THEN 0 ELSE 1 END, created_at, id").
 			Take(&candidate).Error; err != nil {
 			return err
@@ -170,7 +200,7 @@ func (executor *TestnetExecutor) claimNextIntent(ctx context.Context) (*db.Tradi
 			return err
 		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("id = ? AND environment = 'testnet'", candidate.ID).
+			Where("id = ? AND environment = ?", candidate.ID, executor.scopeEnvironment()).
 			Take(&intent).Error; err != nil {
 			return err
 		}
@@ -179,8 +209,8 @@ func (executor *TestnetExecutor) claimNextIntent(ctx context.Context) (*db.Tradi
 		}
 		var activeCount int64
 		if err := tx.Model(&db.TradingIntent{}).
-			Where("account_id = ? AND environment = 'testnet' AND status IN ('processing', 'reconciling') AND id <> ?",
-				intent.AccountID, intent.ID).
+			Where("account_id = ? AND environment = ? AND status IN ('processing', 'reconciling') AND id <> ?",
+				intent.AccountID, executor.scopeEnvironment(), intent.ID).
 			Count(&activeCount).Error; err != nil {
 			return err
 		}
@@ -189,7 +219,7 @@ func (executor *TestnetExecutor) claimNextIntent(ctx context.Context) (*db.Tradi
 		}
 		now := time.Now().UTC()
 		result := tx.Model(&intent).
-			Where("environment = 'testnet' AND status IN ('pending', 'reconciling')").
+			Where("environment = ? AND status IN ('pending', 'reconciling')", executor.scopeEnvironment()).
 			Updates(map[string]any{
 				"status": "processing", "attempt_count": gorm.Expr("attempt_count + 1"),
 				"claimed_at": now, "worker_id": executor.workerID, "updated_at": now,
@@ -403,7 +433,7 @@ func (executor *TestnetExecutor) prepareAction(
 			return nil
 		}
 
-		state, blockReason, pause, err := loadAndValidateTestnetExecution(tx, intent)
+		state, blockReason, pause, err := loadAndValidateTestnetExecution(tx, intent, executor.scopeEnvironment())
 		if err != nil {
 			return err
 		}
@@ -487,8 +517,8 @@ func prepareExistingTestnetOrderAction(
 func (executor *TestnetExecutor) lockClaimedIntent(tx *gorm.DB, intentID uuid.UUID) (db.TradingIntent, error) {
 	var intent db.TradingIntent
 	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
-		"id = ? AND environment = 'testnet' AND status = 'processing' AND worker_id = ?",
-		intentID, executor.workerID,
+		"id = ? AND environment = ? AND status = 'processing' AND worker_id = ?",
+		intentID, executor.scopeEnvironment(), executor.workerID,
 	).Take(&intent).Error
 	return intent, err
 }
@@ -500,8 +530,8 @@ func loadTestnetQueryAction(
 ) (testnetExecutionAction, string, error) {
 	action := testnetExecutionAction{Intent: intent, Order: order, ExpectedAccountTime: time.Time{}}
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
-		"id = ? AND owner_user_id = ? AND environment = 'testnet' AND market_type = ?",
-		intent.AccountID, intent.OwnerUserID, intent.Market,
+		"id = ? AND owner_user_id = ? AND environment = ? AND market_type = ?",
+		intent.AccountID, intent.OwnerUserID, intent.Environment, intent.Market,
 	).Take(&action.Account).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return action, "execution_binding_mismatch", nil
@@ -564,7 +594,7 @@ func (executor *TestnetExecutor) prepareMissingOrder(
 		if order.ExchangeOrderID != nil || order.FilledQuantity.IsPositive() {
 			return reconcileTestnetIntent(tx, intent, &order, "missing_observed_order", true)
 		}
-		state, blockReason, pause, err := loadAndValidateTestnetExecution(tx, intent)
+		state, blockReason, pause, err := loadAndValidateTestnetExecution(tx, intent, executor.scopeEnvironment())
 		if err != nil {
 			return err
 		}
@@ -631,10 +661,11 @@ func markUnsubmittedTestnetOrder(tx *gorm.DB, order *db.TestnetOrder, reason str
 func loadAndValidateTestnetExecution(
 	tx *gorm.DB,
 	intent db.TradingIntent,
+	expectedEnvironment string,
 ) (testnetExecutionState, string, bool, error) {
 	state := testnetExecutionState{Intent: intent}
-	if intent.Environment != "testnet" {
-		return state, "environment_not_testnet", false, nil
+	if intent.Environment != expectedEnvironment {
+		return state, "execution_environment_mismatch", false, nil
 	}
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", intent.AccountID).
 		Take(&state.Account).Error; err != nil {
@@ -685,7 +716,7 @@ func loadAndValidateTestnetExecution(
 		state.Signal.OwnerUserID != intent.OwnerUserID || state.Account.Market != intent.Market ||
 		state.Instrument.Market != intent.Market || state.Instance.TradingAccountID == nil ||
 		*state.Instance.TradingAccountID != intent.AccountID || state.Instance.AllocationUSDT == nil ||
-		state.Instance.Environment != "testnet" {
+		state.Instance.Environment != intent.Environment || state.Account.Environment != intent.Environment {
 		return state, "execution_binding_mismatch", true, nil
 	}
 	if !validTestnetStopLossRatio(state.Instance.StopLossRatio) {
@@ -698,6 +729,10 @@ func loadAndValidateTestnetExecution(
 	if (intent.Mode == "manual" && state.Signal.Status != "approved") ||
 		(intent.Mode == "auto" && state.Signal.Status != "active") {
 		return state, "signal_state_changed", false, nil
+	}
+	if intent.Environment == "live" && (intent.Mode != "manual" || intent.Market != string(marketdata.MarketTypeSpot) ||
+		state.Account.ManualAuthorizedAt == nil) {
+		return state, "live_manual_not_authorized", true, nil
 	}
 	if state.Instrument.Venue != string(marketdata.VenueBinance) || state.Instrument.Status != "trading" ||
 		state.Instrument.QuoteAsset != "USDT" {
@@ -1206,7 +1241,7 @@ func (executor *TestnetExecutor) lockCurrentOrderState(
 	}
 	var account db.TradingAccount
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
-		"id = ? AND owner_user_id = ? AND environment = 'testnet'", intent.AccountID, intent.OwnerUserID,
+		"id = ? AND owner_user_id = ? AND environment = ?", intent.AccountID, intent.OwnerUserID, intent.Environment,
 	).Take(&account).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return intent, order, account, false, nil
@@ -1291,7 +1326,7 @@ func setTestnetIntentReconciling(
 ) error {
 	now := time.Now().UTC()
 	result := tx.Model(&db.TradingIntent{}).Where(
-		"id = ? AND environment = 'testnet' AND status = 'processing'", intent.ID,
+		"id = ? AND environment = ? AND status = 'processing'", intent.ID, intent.Environment,
 	).Updates(map[string]any{
 		"status": "reconciling", "block_reason": reason,
 		"claimed_at": nil, "worker_id": nil, "updated_at": now,
@@ -1321,7 +1356,7 @@ func blockTestnetIntent(tx *gorm.DB, intent db.TradingIntent, reason string, pau
 func finishTestnetIntent(tx *gorm.DB, intent db.TradingIntent, status, reason string) error {
 	now := time.Now().UTC()
 	result := tx.Model(&db.TradingIntent{}).Where(
-		"id = ? AND environment = 'testnet' AND status = 'processing'", intent.ID,
+		"id = ? AND environment = ? AND status = 'processing'", intent.ID, intent.Environment,
 	).Updates(map[string]any{
 		"status": status, "block_reason": reason, "claimed_at": nil, "worker_id": nil,
 		"completed_at": now, "updated_at": now,

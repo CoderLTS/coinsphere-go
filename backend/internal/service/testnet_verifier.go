@@ -20,6 +20,8 @@ type TestnetCredentialVerifier struct {
 	database     *gorm.DB
 	cipher       *security.SecretCipher
 	client       *exchangebinance.PrivateClient
+	environment  string
+	market       string
 	pollInterval time.Duration
 }
 
@@ -27,6 +29,16 @@ func NewTestnetCredentialVerifier(
 	database *gorm.DB,
 	cipher *security.SecretCipher,
 	client *exchangebinance.PrivateClient,
+	pollInterval time.Duration,
+) (*TestnetCredentialVerifier, error) {
+	return NewPrivateCredentialVerifier(database, cipher, client, "testnet", "", pollInterval)
+}
+
+func NewPrivateCredentialVerifier(
+	database *gorm.DB,
+	cipher *security.SecretCipher,
+	client *exchangebinance.PrivateClient,
+	environment, market string,
 	pollInterval time.Duration,
 ) (*TestnetCredentialVerifier, error) {
 	if database == nil {
@@ -38,10 +50,16 @@ func NewTestnetCredentialVerifier(
 	if client == nil {
 		return nil, errors.New("testnet credential verifier client is required")
 	}
+	if !validPrivateRuntimeScope(environment, market) {
+		return nil, errors.New("private credential verifier scope is invalid")
+	}
 	if pollInterval <= 0 {
 		pollInterval = defaultTestnetCredentialPollInterval
 	}
-	return &TestnetCredentialVerifier{database: database, cipher: cipher, client: client, pollInterval: pollInterval}, nil
+	return &TestnetCredentialVerifier{
+		database: database, cipher: cipher, client: client,
+		environment: environment, market: market, pollInterval: pollInterval,
+	}, nil
 }
 
 func (verifier *TestnetCredentialVerifier) Run(ctx context.Context) error {
@@ -74,9 +92,15 @@ func (verifier *TestnetCredentialVerifier) Run(ctx context.Context) error {
 
 func (verifier *TestnetCredentialVerifier) ProcessNext(ctx context.Context) (bool, time.Duration, error) {
 	var credential db.TradingAccountCredential
-	err := verifier.database.WithContext(ctx).
-		Where("status = 'configured' AND verification_status IN ('unverified', 'unknown')").
-		Order("updated_at, id").Take(&credential).Error
+	query := verifier.database.WithContext(ctx).Model(&db.TradingAccountCredential{}).
+		Select("trading_account_credentials.*").
+		Joins("JOIN trading_accounts ON trading_accounts.id = trading_account_credentials.account_id").
+		Where("trading_accounts.environment = ? AND trading_account_credentials.status = 'configured' AND trading_account_credentials.verification_status IN ('unverified', 'unknown')", verifier.scopeEnvironment())
+	if verifier.market != "" {
+		query = query.Where("trading_accounts.market_type = ?", verifier.market)
+	}
+	err := query.
+		Order("trading_account_credentials.updated_at, trading_account_credentials.id").Take(&credential).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return false, 0, nil
 	}
@@ -85,7 +109,7 @@ func (verifier *TestnetCredentialVerifier) ProcessNext(ctx context.Context) (boo
 	}
 	var account db.TradingAccount
 	if err := verifier.database.WithContext(ctx).
-		Where("id = ? AND owner_user_id = ? AND environment = 'testnet'", credential.AccountID, credential.OwnerUserID).
+		Where("id = ? AND owner_user_id = ? AND environment = ?", credential.AccountID, credential.OwnerUserID, verifier.scopeEnvironment()).
 		Take(&account).Error; err != nil {
 		return true, 0, err
 	}
@@ -116,6 +140,13 @@ func (verifier *TestnetCredentialVerifier) ProcessNext(ctx context.Context) (boo
 		return true, retryAfter, result.Error
 	}
 	return true, retryAfter, nil
+}
+
+func (verifier *TestnetCredentialVerifier) scopeEnvironment() string {
+	if verifier.environment == "" {
+		return "testnet"
+	}
+	return verifier.environment
 }
 
 func decryptTestnetCredential(cipher *security.SecretCipher, credential db.TradingAccountCredential) (string, string, error) {

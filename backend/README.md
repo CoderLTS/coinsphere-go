@@ -73,7 +73,7 @@ DSN 必须指向已经存在的数据库和全新 CoinSphere schema；连接入�
 - **重试**:可重试失败(timeout/connection/429/5xx)按 `retry_backoff_seconds` 退避,`retry_waiting → queued` 自动提升。
 - **恢复**:心跳超时(含进程崩溃重启后的孤儿执行)标记 `worker_lost` 并按剩余次数重试或失败。
 - **事件**:工作流终态与标准领域事件在同一短事务写入 `domain_event_outbox`；PostgreSQL 存储层使用 `FOR UPDATE SKIP LOCKED` 原子批量认领，并用数据库时间续租和 fencing 投递。匹配 `start.event` 入口后以稳定幂等键触发工作流；订阅失败按 `retry_backoff_seconds` 重排，尝试耗尽进入死信，未告警死信由 `alerted_at` 原子去重后输出脱敏日志。
-- **Executor**:默认只按账户串行处理 Paper 意图和可重建投影。显式设置 `COINSPHERE_TRADING__TESTNET_PRIVATE_API_ENABLED=true` 且提供安全的 `auth.encryption_key` 后，才会额外解密 Testnet 凭据，验证 Binance Spot/USD-M 签名请求，并读取余额、仓位和开放订单完成首次及持续权威快照对账。只有本地确定性订单能解释全部订单和持仓的快照才保持 `matched`；连续快照中只有精确匹配 `pending`/`reconciling` 意图且符合主 `market` 调仓形状的外部订单会被创建带数据库 `recovered_at` 的本地投影，并暂停账户等待人工恢复；其他未知外部订单、未归属仓位、订单形状漂移和查询未知都会暂停账户且关闭自动化。账户仍需人工恢复，之后 Executor 才会提交带确定性 `clientOrderId` 的主市价单和保护单，未知结果一律先查询再决定是否重试，USD-M 减仓携带 `reduceOnly`。持续 `matched` 对账会把交易所逐笔成交、手续费和 USD-M 资金费追加到绑定当前凭据版本的 `testnet_trade_facts`，重复回报按交易/流水号幂等；累计成交、品种绑定或事实变更会暂停账户。交易工作台只读展示 Owner 最近 100 条权威事实和 Testnet 风控/对账原始状态计数，其中未知订单计数包含当前凭据版本下本地未知订单和未归属开放订单，不触发私有请求。生产配置继续保持 Testnet 私有能力关闭，Live 私有访问始终不可用。
+- **Executor**:默认只按账户串行处理 Paper 意图和可重建投影。`COINSPHERE_TRADING__TESTNET_PRIVATE_API_ENABLED=true` 可独立装配 Testnet；`COINSPHERE_TRADING__SPOT_LIVE_MANUAL_ENABLED=true` 可独立装配 Spot Live manual。两者都要求安全的 `auth.encryption_key`，默认和生产配置均保持关闭。私有运行时按环境隔离凭据验证、首次/持续权威对账、确定性主订单、保护单、未知订单恢复及权威成交事实；Live 额外要求 Owner 再认证恢复形成 manual 放行记录，且数据库与执行器都拒绝 Live auto 和 USD-M Live。CI、Codex、自动部署和工作流不得提供 Live 凭据或启用 Live 开关。
 - **清理**:每天 03:00 后按批删除超过保留期的终态执行。
 
 Python Worker 通过独立 PostgreSQL 连接消费 `worker_tasks`，使用唯一租约完成认领、心跳、崩溃回收和 5 秒内取消。生产 Release 构建并部署 realtime/backtest Worker 与 Paper Executor；二者均使用专用数据库身份且不持有真实交易凭据。
@@ -96,7 +96,7 @@ go test -count=1 ./internal/service ./internal/api
 ```
 main.go                 入口:根 Context → 配置 → 版本校验/种子 → Runtime/HTTP → 有界关机
 cmd/migrate             独立版本化 SQL migration 命令
-cmd/executor            Paper 执行与显式关闭的 Testnet 私有验证/对账/执行进程
+cmd/executor            Paper 执行与默认关闭的 Testnet/Spot Live manual 私有运行时
 internal/exchange       Executor 专属的 Binance 私有协议
 internal/config         YAML + 环境变量覆盖
 internal/db             GORM 模型 / PostgreSQL 连接 / 种子数据

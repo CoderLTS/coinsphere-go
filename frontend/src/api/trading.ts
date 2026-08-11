@@ -35,10 +35,12 @@ export interface TradingAccount {
   id: string
   name: string
   market: 'spot' | 'usd_m'
-  environment: 'paper' | 'testnet'
+  environment: 'paper' | 'testnet' | 'live'
   status: 'active' | 'paused'
   pauseReason: string
   automationEnabled: boolean
+  manualAuthorized: boolean
+  manualAuthorizedAt: string | null
   automationAuthorized: boolean
   automationAuthorizedAt: string | null
   credentialsConfigured: boolean
@@ -240,6 +242,9 @@ export interface TestnetAuditSummary {
 }
 
 export interface TradingOverview {
+  capabilities: {
+    spotLiveManualEnabled: boolean
+  }
   control: TradingControl
   accounts: TradingAccount[]
   intents: TradingIntent[]
@@ -268,7 +273,7 @@ export interface TradingRiskPayload {
 export interface TradingAccountCreatePayload {
   name: string
   market: 'spot' | 'usd_m'
-  environment: 'paper' | 'testnet'
+  environment: 'paper' | 'testnet' | 'live'
   initialBalance: string
   paperFeeRate: string
   risk: TradingRiskPayload

@@ -28,12 +28,13 @@ func TestStrategyInstanceValidationDefaultsAndBoundaries(t *testing.T) {
 	}
 	version := db.StrategyVersion{
 		ID:                  uuid.MustParse("019d4000-0000-7000-8000-000000000001"),
+		Market:              "spot",
 		ParameterSchemaJSON: string(schema),
 	}
 	validated, err := validateStrategyInstancePayload(StrategyInstanceCreatePayload{
 		Name:       "  paper hold  ",
 		Parameters: map[string]json.RawMessage{"threshold": json.RawMessage(`"0.2500"`)},
-	}, version)
+	}, version, false)
 	if err != nil {
 		t.Fatalf("validate default instance: %v", err)
 	}
@@ -48,7 +49,7 @@ func TestStrategyInstanceValidationDefaultsAndBoundaries(t *testing.T) {
 		TradingAccountID: "019d4000-0000-7000-8000-000000000002",
 		AllocationUSDT:   "1000", StopLossRatio: "0.0500",
 		Parameters: map[string]json.RawMessage{"threshold": json.RawMessage(`"0.2500"`)},
-	}, version)
+	}, version, false)
 	if err != nil {
 		t.Fatalf("validate protected Testnet instance: %v", err)
 	}
@@ -58,6 +59,23 @@ func TestStrategyInstanceValidationDefaultsAndBoundaries(t *testing.T) {
 	view := serializeStrategyInstance(db.StrategyInstance{StopLossRatio: testnet.StopLossRatio})
 	if view.StopLossRatio == nil || *view.StopLossRatio != "0.05" {
 		t.Fatalf("serialized Testnet stop loss = %#v", view.StopLossRatio)
+	}
+	livePayload := StrategyInstanceCreatePayload{
+		Name: "Live protected", Mode: "manual", Environment: "live",
+		TradingAccountID: "019d4000-0000-7000-8000-000000000003",
+		AllocationUSDT:   "100", StopLossRatio: "0.02",
+		Parameters: map[string]json.RawMessage{"threshold": json.RawMessage(`"0.2500"`)},
+	}
+	if _, err := validateStrategyInstancePayload(livePayload, version, false); !errors.Is(err, ErrInvalidStrategyRequest) {
+		t.Fatalf("disabled Live instance returned %v", err)
+	}
+	live, err := validateStrategyInstancePayload(livePayload, version, true)
+	if err != nil || live.Mode != "manual" || live.StopLossRatio == nil {
+		t.Fatalf("enabled Live manual instance = %#v, err=%v", live, err)
+	}
+	livePayload.Mode = "auto"
+	if _, err := validateStrategyInstancePayload(livePayload, version, true); !errors.Is(err, ErrInvalidStrategyRequest) {
+		t.Fatalf("Live auto instance returned %v", err)
 	}
 
 	invalid := []StrategyInstanceCreatePayload{
@@ -72,7 +90,7 @@ func TestStrategyInstanceValidationDefaultsAndBoundaries(t *testing.T) {
 		{Name: "paper stop", Mode: "manual", Environment: "paper", TradingAccountID: "019d4000-0000-7000-8000-000000000002", AllocationUSDT: "1000", StopLossRatio: "0.05"},
 	}
 	for _, payload := range invalid {
-		if _, err := validateStrategyInstancePayload(payload, version); !errors.Is(err, ErrInvalidStrategyRequest) {
+		if _, err := validateStrategyInstancePayload(payload, version, false); !errors.Is(err, ErrInvalidStrategyRequest) {
 			t.Fatalf("invalid instance %#v returned %v", payload, err)
 		}
 	}

@@ -153,7 +153,7 @@
               :disabled="
                 overview.control.emergencyStopped ||
                 !selectedAccount.risk.complete ||
-                (selectedAccount.environment === 'testnet' &&
+                (selectedAccount.environment !== 'paper' &&
                   (!selectedAccount.credentialsConfigured ||
                     selectedAccount.credentialVerificationStatus !== 'verified' ||
                     selectedAccount.reconciliation.status !== 'matched'))
@@ -165,7 +165,7 @@
           </div>
         </header>
 
-        <section class="account-switches">
+        <section v-if="selectedAccount.environment !== 'live'" class="account-switches">
           <label>
             <span>{{ t('trading.automation.authorization') }}</span>
             <ElSwitch
@@ -186,7 +186,20 @@
           </label>
         </section>
 
-        <section v-if="selectedAccount.environment === 'testnet'" class="credential-strip">
+        <section v-else class="account-switches">
+          <label>
+            <span>{{ t('trading.manual.authorization') }}</span>
+            <ElTag :type="selectedAccount.manualAuthorized ? 'success' : 'warning'" effect="plain">
+              {{
+                selectedAccount.manualAuthorized
+                  ? t('trading.manual.authorized')
+                  : t('trading.manual.pending')
+              }}
+            </ElTag>
+          </label>
+        </section>
+
+        <section v-if="selectedAccount.environment !== 'paper'" class="credential-strip">
           <div class="credential-summary">
             <div class="credential-state">
               <ElIcon :size="20"><Key /></ElIcon>
@@ -298,7 +311,7 @@
         </section>
 
         <section
-          v-if="selectedAccount.environment === 'testnet' && selectedAuditSummary"
+          v-if="selectedAccount.environment !== 'paper' && selectedAuditSummary"
           class="audit-summary"
         >
           <header>
@@ -392,7 +405,7 @@
             <ElTable :data="selectedOrders" :empty-text="t('common.noData')" stripe>
               <ElTableColumn prop="symbol" :label="t('trading.table.symbol')" min-width="120" />
               <ElTableColumn
-                v-if="selectedAccount.environment === 'testnet'"
+                v-if="selectedAccount.environment !== 'paper'"
                 :label="t('trading.table.purpose')"
                 width="120"
                 align="center"
@@ -415,7 +428,7 @@
                 </template>
               </ElTableColumn>
               <ElTableColumn
-                v-if="selectedAccount.environment === 'testnet'"
+                v-if="selectedAccount.environment !== 'paper'"
                 :label="t('trading.table.orderType')"
                 min-width="170"
               >
@@ -432,7 +445,7 @@
                 </template>
               </ElTableColumn>
               <ElTableColumn
-                v-if="selectedAccount.environment === 'testnet'"
+                v-if="selectedAccount.environment !== 'paper'"
                 :label="t('trading.table.stopPrice')"
                 min-width="150"
                 align="right"
@@ -509,7 +522,7 @@
           </ElTabPane>
 
           <ElTabPane
-            v-if="selectedAccount.environment === 'testnet'"
+            v-if="selectedAccount.environment !== 'paper'"
             :label="`${t('trading.tabs.ledger')} ${selectedTradeFacts.length}`"
             name="ledger"
           >
@@ -768,7 +781,7 @@
   type AccountFormModel = {
     name: string
     market: 'spot' | 'usd_m'
-    environment: 'paper' | 'testnet'
+    environment: 'paper' | 'testnet' | 'live'
     initialBalance: string
     paperFeeRate: string
     instrumentIds: string[]
@@ -817,6 +830,7 @@
   })
 
   const createEmptyOverview = (): TradingOverview => ({
+    capabilities: { spotLiveManualEnabled: false },
     control: emptyControl(),
     accounts: [],
     intents: [],
@@ -884,7 +898,7 @@
     overview.testnetBalances.filter((balance) => balance.accountId === selectedAccountId.value)
   )
   const selectedPositions = computed(() => {
-    if (selectedAccount.value?.environment === 'testnet') {
+    if (selectedAccount.value?.environment !== 'paper') {
       return overview.testnetPositions
         .filter((position) => position.accountId === selectedAccountId.value)
         .map((position) => ({
@@ -900,7 +914,7 @@
     return overview.positions.filter((position) => position.accountId === selectedAccountId.value)
   })
   const selectedOrders = computed<OrderRow[]>(() => {
-    if (selectedAccount.value?.environment === 'testnet') {
+    if (selectedAccount.value?.environment !== 'paper') {
       const managed = overview.testnetOrders
         .filter((order) => order.accountId === selectedAccountId.value)
         .map((order) => ({
@@ -1008,13 +1022,14 @@
   const automationSwitchDisabled = computed(() => {
     const account = selectedAccount.value
     if (!account || Boolean(commandLoading.value)) return true
+    if (account.environment === 'live') return true
     if (account.automationEnabled) return false
     return (
       overview.control.emergencyStopped ||
       account.status !== 'active' ||
       !account.automationAuthorized ||
       !account.risk.complete ||
-      (account.environment === 'testnet' &&
+      (account.environment !== 'paper' &&
         (!account.credentialsConfigured ||
           account.credentialVerificationStatus !== 'verified' ||
           account.reconciliation.status !== 'matched'))
@@ -1080,14 +1095,23 @@
       }
     ]
   })
-  const marketOptions = computed(() => [
-    { label: t('trading.market.spot'), value: 'spot' },
-    { label: t('trading.market.usdM'), value: 'usd_m' }
-  ])
-  const environmentOptions = computed(() => [
-    { label: t('trading.environment.paper'), value: 'paper' },
-    { label: t('trading.environment.testnet'), value: 'testnet' }
-  ])
+  const marketOptions = computed(() => {
+    const options = [{ label: t('trading.market.spot'), value: 'spot' }]
+    if (accountForm.environment !== 'live') {
+      options.push({ label: t('trading.market.usdM'), value: 'usd_m' })
+    }
+    return options
+  })
+  const environmentOptions = computed(() => {
+    const options = [
+      { label: t('trading.environment.paper'), value: 'paper' },
+      { label: t('trading.environment.testnet'), value: 'testnet' }
+    ]
+    if (overview.capabilities.spotLiveManualEnabled) {
+      options.push({ label: t('trading.environment.live'), value: 'live' })
+    }
+    return options
+  })
 
   const positiveDecimalRule = (
     _rule: unknown,
@@ -1267,7 +1291,7 @@
 
   const saveCredentials = async () => {
     const account = selectedAccount.value
-    if (!account || account.environment !== 'testnet' || !credentialFormRef.value) return
+    if (!account || account.environment === 'paper' || !credentialFormRef.value) return
     const valid = await credentialFormRef.value.validate().catch(() => false)
     if (!valid || credentialSubmitting.value) return
     const reauthToken = await requestReauth(t('trading.reauth.credentialsTitle'))
@@ -1294,7 +1318,7 @@
 
   const revokeCredentials = async () => {
     const account = selectedAccount.value
-    if (!account || account.environment !== 'testnet') return
+    if (!account || account.environment === 'paper') return
     try {
       await ElMessageBox.confirm(
         t('trading.credentials.revokeConfirm'),
@@ -1479,10 +1503,17 @@
   })
 
   watch(selectedAccountId, () => {
-    if (selectedAccount.value?.environment !== 'testnet' && activeTab.value === 'ledger') {
+    if (selectedAccount.value?.environment === 'paper' && activeTab.value === 'ledger') {
       activeTab.value = 'positions'
     }
   })
+
+  watch(
+    () => accountForm.environment,
+    (environment) => {
+      if (environment === 'live') accountForm.market = 'spot'
+    }
+  )
 </script>
 
 <style scoped lang="scss">
