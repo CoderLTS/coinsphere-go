@@ -19,6 +19,31 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestUSDMLivePositionConfigurationDifference(t *testing.T) {
+	leverage := 2
+	account := db.TradingAccount{Environment: "live", Market: "usd_m", Leverage: &leverage}
+	position := exchangebinance.AccountPosition{
+		PositionSide: "both", Quantity: decimal.RequireFromString("0.01"),
+		MarkPrice: decimal.NewFromInt(50_000), LiquidationPrice: decimal.NewFromInt(40_000),
+		LiquidationDistanceRatio: decimal.RequireFromString("0.2"), Leverage: 2, Isolated: true,
+	}
+	if difference := usdmLivePositionConfigurationDifference(account, position); difference != "" {
+		t.Fatalf("valid USD-M Live configuration difference = %q", difference)
+	}
+	position.Isolated = false
+	if difference := usdmLivePositionConfigurationDifference(account, position); difference != "cross_margin_enabled" {
+		t.Fatalf("cross margin difference = %q", difference)
+	}
+	position.Isolated, position.Leverage = true, 3
+	if difference := usdmLivePositionConfigurationDifference(account, position); difference != "leverage_mismatch" {
+		t.Fatalf("leverage difference = %q", difference)
+	}
+	position.Leverage, position.LiquidationDistanceRatio = 2, decimal.Zero
+	if difference := usdmLivePositionConfigurationDifference(account, position); difference != "liquidation_distance_missing" {
+		t.Fatalf("liquidation distance difference = %q", difference)
+	}
+}
+
 func TestTestnetAccountReconcilerMatchesCleanSnapshotAndGatesResume(t *testing.T) {
 	fixture := newTestnetReconcilerFixture(t)
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {

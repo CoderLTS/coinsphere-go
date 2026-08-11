@@ -88,6 +88,9 @@ func TestPrivateClientSignsAndRoutesAccountRequests(t *testing.T) {
 }
 
 func TestPrivateClientLiveModeOnlyRoutesSpot(t *testing.T) {
+	if _, err := NewPrivateClient(PrivateClientConfig{Environment: "live"}); err == nil {
+		t.Fatal("Live private client accepted an implicit market scope")
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/api/v3/account" {
 			t.Errorf("unexpected Live path %q", request.URL.Path)
@@ -97,7 +100,7 @@ func TestPrivateClientLiveModeOnlyRoutesSpot(t *testing.T) {
 	defer server.Close()
 
 	client, err := NewPrivateClient(PrivateClientConfig{
-		Environment: "live", SpotBaseURL: server.URL,
+		Environment: "live", Market: marketdata.MarketTypeSpot, SpotBaseURL: server.URL,
 	})
 	if err != nil {
 		t.Fatalf("create Live private client: %v", err)
@@ -108,6 +111,47 @@ func TestPrivateClientLiveModeOnlyRoutesSpot(t *testing.T) {
 	var privateErr *PrivateError
 	if err := client.VerifyAccount(context.Background(), marketdata.MarketTypeUSDM, "key", "secret"); !errors.As(err, &privateErr) || privateErr.Kind != PrivateErrorAuthentication {
 		t.Fatalf("USD-M Live error = %v", err)
+	}
+}
+
+func TestPrivateClientLiveUSDMScopeAndPositionRisk(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/fapi/v3/account":
+			_, _ = response.Write([]byte(`{"canTrade":true,"assets":[{"asset":"USDT","walletBalance":"1000","availableBalance":"900"}],"positions":[]}`))
+		case "/fapi/v1/openOrders":
+			_, _ = response.Write([]byte(`[]`))
+		case "/fapi/v3/positionRisk":
+			_, _ = response.Write([]byte(`[{"symbol":"BTCUSDT","positionSide":"BOTH","positionAmt":"0.01","entryPrice":"49000","markPrice":"50000","liquidationPrice":"40000","unRealizedProfit":"10","leverage":"2","marginType":"isolated"}]`))
+		default:
+			t.Errorf("unexpected USD-M Live path %q", request.URL.Path)
+			response.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewPrivateClient(PrivateClientConfig{
+		Environment: "live", Market: marketdata.MarketTypeUSDM, USDMBaseURL: server.URL,
+	})
+	if err != nil {
+		t.Fatalf("create USD-M Live private client: %v", err)
+	}
+	snapshot, err := client.SnapshotAccount(
+		context.Background(), marketdata.MarketTypeUSDM, "key", "secret", "BTCUSDT",
+	)
+	if err != nil {
+		t.Fatalf("snapshot USD-M Live account: %v", err)
+	}
+	if len(snapshot.Positions) != 1 || snapshot.Positions[0].Leverage != 2 ||
+		!snapshot.Positions[0].Isolated || snapshot.Positions[0].MarkPrice.String() != "50000" ||
+		snapshot.Positions[0].LiquidationPrice.String() != "40000" ||
+		snapshot.Positions[0].LiquidationDistanceRatio.String() != "0.2" {
+		t.Fatalf("USD-M Live position risk = %#v", snapshot.Positions)
+	}
+	var privateErr *PrivateError
+	if err := client.VerifyAccount(context.Background(), marketdata.MarketTypeSpot, "key", "secret"); !errors.As(err, &privateErr) || privateErr.Kind != PrivateErrorAuthentication {
+		t.Fatalf("Spot request through USD-M Live client returned %v", err)
 	}
 }
 

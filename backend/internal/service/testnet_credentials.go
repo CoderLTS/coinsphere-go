@@ -58,7 +58,7 @@ func (a *App) SaveTradingCredentials(
 			return tradingAccountLookupError(err)
 		}
 		if !isPrivateTradingEnvironment(account.Environment) ||
-			account.Environment == "live" && (!a.spotLiveManualEnabled() || account.Market != "spot") {
+			account.Environment == "live" && !a.liveManualEnabled(account.Market) {
 			return invalidTrading("credentials can only be configured for enabled private accounts")
 		}
 		_, reused, err := a.reserveIdempotencyRecord(

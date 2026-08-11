@@ -182,7 +182,19 @@ func (reconciler *TestnetAccountReconciler) ProcessNext(ctx context.Context) (bo
 	apiKey, apiSecret, err := decryptTestnetCredential(reconciler.cipher, credential)
 	var snapshot exchangebinance.AccountSnapshot
 	if err == nil {
-		snapshot, err = reconciler.client.SnapshotAccount(ctx, marketdata.MarketType(account.Market), apiKey, apiSecret)
+		var symbols []string
+		if account.Environment == "live" && account.Market == string(marketdata.MarketTypeUSDM) {
+			err = reconciler.database.WithContext(ctx).Model(&db.MarketInstrument{}).
+				Joins("JOIN trading_account_instruments ON trading_account_instruments.instrument_id = market_instruments.id").
+				Where("trading_account_instruments.account_id = ?", account.ID).
+				Order("market_instruments.native_symbol").
+				Pluck("market_instruments.native_symbol", &symbols).Error
+		}
+		if err == nil {
+			snapshot, err = reconciler.client.SnapshotAccount(
+				ctx, marketdata.MarketType(account.Market), apiKey, apiSecret, symbols...,
+			)
+		}
 	}
 	if ctx.Err() != nil {
 		return true, 0, ctx.Err()
@@ -329,6 +341,9 @@ func (reconciler *TestnetAccountReconciler) classifySnapshot(
 	for _, position := range snapshot.Positions {
 		if position.PositionSide != "both" {
 			return "mismatch", "hedge_mode_enabled", nil
+		}
+		if difference := usdmLivePositionConfigurationDifference(account, position); difference != "" {
+			return "mismatch", difference, nil
 		}
 		if _, ok := knownSymbols[position.Symbol]; !ok {
 			return "mismatch", "unknown_instrument", nil
@@ -772,6 +787,9 @@ func continuousSnapshotDifference(
 		if position.PositionSide != "both" {
 			return "hedge_mode_enabled"
 		}
+		if difference := usdmLivePositionConfigurationDifference(account, position); difference != "" {
+			return difference
+		}
 		instrument, exists := instrumentsBySymbol[position.Symbol]
 		if !exists {
 			return "unknown_instrument"
@@ -1008,11 +1026,19 @@ func (reconciler *TestnetAccountReconciler) persistSnapshotForModeWithLedger(
 		}
 		positions := make([]db.TestnetPosition, 0, len(snapshot.Positions))
 		for _, position := range snapshot.Positions {
+			var leverage *int
+			var isolated *bool
+			if account.Environment == "live" && account.Market == string(marketdata.MarketTypeUSDM) {
+				leverageValue, isolatedValue := position.Leverage, position.Isolated
+				leverage, isolated = &leverageValue, &isolatedValue
+			}
 			positions = append(positions, db.TestnetPosition{
 				AccountID: account.ID, CredentialUpdatedAt: credential.UpdatedAt,
 				NativeSymbol: position.Symbol, PositionSide: position.PositionSide,
-				Quantity: position.Quantity, EntryPrice: position.EntryPrice,
-				UnrealizedPnL: position.UnrealizedPnL, ObservedAt: observedAt,
+				Quantity: position.Quantity, EntryPrice: position.EntryPrice, MarkPrice: position.MarkPrice,
+				LiquidationPrice:         position.LiquidationPrice,
+				LiquidationDistanceRatio: position.LiquidationDistanceRatio,
+				UnrealizedPnL:            position.UnrealizedPnL, Leverage: leverage, Isolated: isolated, ObservedAt: observedAt,
 			})
 		}
 		if len(positions) > 0 {
@@ -1478,6 +1504,28 @@ func testnetSnapshotEquity(account db.TradingAccount, snapshot exchangebinance.A
 		}
 	}
 	return equity, true
+}
+
+func usdmLivePositionConfigurationDifference(
+	account db.TradingAccount,
+	position exchangebinance.AccountPosition,
+) string {
+	if account.Environment != "live" || account.Market != string(marketdata.MarketTypeUSDM) {
+		return ""
+	}
+	if !position.Isolated {
+		return "cross_margin_enabled"
+	}
+	if account.Leverage == nil || position.Leverage != *account.Leverage {
+		return "leverage_mismatch"
+	}
+	if !position.MarkPrice.IsPositive() {
+		return "mark_price_missing"
+	}
+	if !position.Quantity.IsZero() && !position.LiquidationDistanceRatio.IsPositive() {
+		return "liquidation_distance_missing"
+	}
+	return ""
 }
 
 func (reconciler *TestnetAccountReconciler) persistUnknown(

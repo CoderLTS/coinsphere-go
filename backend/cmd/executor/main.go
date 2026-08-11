@@ -66,7 +66,8 @@ func run(ctx context.Context, configPath, workerID string) (runErr error) {
 	if err != nil {
 		return err
 	}
-	if !cfg.Trading.TestnetPrivateAPIEnabled && !cfg.Trading.SpotLiveManualEnabled {
+	if !cfg.Trading.TestnetPrivateAPIEnabled && !cfg.Trading.SpotLiveManualEnabled &&
+		!cfg.Trading.USDMLiveManualEnabled {
 		return paperExecutor.Run(ctx)
 	}
 	if cfg.Auth.EncryptionKey == "" || cfg.Auth.EncryptionKey == config.DefaultInsecureSecret ||
@@ -98,7 +99,9 @@ func run(ctx context.Context, configPath, workerID string) (runErr error) {
 		runtimes = append(runtimes, verifier.Run, reconciler.Run, executor.Run)
 	}
 	if cfg.Trading.SpotLiveManualEnabled {
-		privateClient, err := exchangebinance.NewPrivateClient(exchangebinance.PrivateClientConfig{Environment: "live"})
+		privateClient, err := exchangebinance.NewPrivateClient(exchangebinance.PrivateClientConfig{
+			Environment: "live", Market: "spot",
+		})
 		if err != nil {
 			return errors.New("build Binance Spot Live private client")
 		}
@@ -122,6 +125,27 @@ func run(ctx context.Context, configPath, workerID string) (runErr error) {
 			}
 			runtimes = append(runtimes, autoExecutor.Run)
 		}
+	}
+	if cfg.Trading.USDMLiveManualEnabled {
+		privateClient, err := exchangebinance.NewPrivateClient(exchangebinance.PrivateClientConfig{
+			Environment: "live", Market: "usd_m",
+		})
+		if err != nil {
+			return errors.New("build Binance USD-M Live private client")
+		}
+		verifier, err := service.NewPrivateCredentialVerifier(gdb, cipher, privateClient, "live", "usd_m", 30*time.Second)
+		if err != nil {
+			return err
+		}
+		reconciler, err := service.NewPrivateAccountReconciler(gdb, cipher, privateClient, "live", "usd_m", 30*time.Second)
+		if err != nil {
+			return err
+		}
+		executor, err := service.NewPrivateExecutor(gdb, cipher, privateClient, workerID+":live:usd_m", "live", "usd_m", "manual", time.Second)
+		if err != nil {
+			return err
+		}
+		runtimes = append(runtimes, verifier.Run, reconciler.Run, executor.Run)
 	}
 	return runTradingRuntime(ctx, runtimes)
 }

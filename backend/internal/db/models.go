@@ -281,14 +281,19 @@ type TestnetBalance struct {
 func (TestnetBalance) TableName() string { return "testnet_balances" }
 
 type TestnetPosition struct {
-	AccountID           uuid.UUID       `gorm:"column:account_id;type:uuid;primaryKey"`
-	CredentialUpdatedAt time.Time       `gorm:"column:credential_updated_at"`
-	NativeSymbol        string          `gorm:"column:native_symbol;size:64;primaryKey"`
-	PositionSide        string          `gorm:"column:position_side;size:8;primaryKey"`
-	Quantity            decimal.Decimal `gorm:"type:numeric(38,18)"`
-	EntryPrice          decimal.Decimal `gorm:"column:entry_price;type:numeric(38,18)"`
-	UnrealizedPnL       decimal.Decimal `gorm:"column:unrealized_pnl;type:numeric(38,18)"`
-	ObservedAt          time.Time       `gorm:"column:observed_at"`
+	AccountID                uuid.UUID       `gorm:"column:account_id;type:uuid;primaryKey"`
+	CredentialUpdatedAt      time.Time       `gorm:"column:credential_updated_at"`
+	NativeSymbol             string          `gorm:"column:native_symbol;size:64;primaryKey"`
+	PositionSide             string          `gorm:"column:position_side;size:8;primaryKey"`
+	Quantity                 decimal.Decimal `gorm:"type:numeric(38,18)"`
+	EntryPrice               decimal.Decimal `gorm:"column:entry_price;type:numeric(38,18)"`
+	MarkPrice                decimal.Decimal `gorm:"column:mark_price;type:numeric(38,18)"`
+	LiquidationPrice         decimal.Decimal `gorm:"column:liquidation_price;type:numeric(38,18)"`
+	LiquidationDistanceRatio decimal.Decimal `gorm:"column:liquidation_distance_ratio;type:numeric(38,18)"`
+	UnrealizedPnL            decimal.Decimal `gorm:"column:unrealized_pnl;type:numeric(38,18)"`
+	Leverage                 *int            `gorm:"column:leverage"`
+	Isolated                 *bool           `gorm:"column:isolated"`
+	ObservedAt               time.Time       `gorm:"column:observed_at"`
 }
 
 func (TestnetPosition) TableName() string { return "testnet_positions" }

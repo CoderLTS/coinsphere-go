@@ -141,7 +141,12 @@ export interface TestnetPosition {
   positionSide: string
   quantity: string
   entryPrice: string
+  markPrice: string
+  liquidationPrice: string
+  liquidationDistanceRatio: string
   unrealizedPnl: string
+  leverage: number | null
+  isolated: boolean | null
   observedAt: string
 }
 
@@ -247,6 +252,7 @@ export interface TradingOverview {
   capabilities: {
     spotLiveManualEnabled: boolean
     spotLiveAutoEnabled: boolean
+    usdMLiveManualEnabled: boolean
   }
   control: TradingControl
   accounts: TradingAccount[]

@@ -40,6 +40,7 @@ type TradingConfig struct {
 	TestnetPrivateAPIEnabled bool `yaml:"testnet_private_api_enabled"`
 	SpotLiveManualEnabled    bool `yaml:"spot_live_manual_enabled"`
 	SpotLiveAutoEnabled      bool `yaml:"spot_live_auto_enabled"`
+	USDMLiveManualEnabled    bool `yaml:"usd_m_live_manual_enabled"`
 }
 
 // ServerConfig HTTP 服务配置。

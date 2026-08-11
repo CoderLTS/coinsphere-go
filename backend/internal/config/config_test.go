@@ -48,7 +48,8 @@ func TestMarketDataConfigBounds(t *testing.T) {
 
 func TestPrivateTradingDefaultsDisabled(t *testing.T) {
 	cfg := defaultConfig()
-	if cfg.Trading.TestnetPrivateAPIEnabled || cfg.Trading.SpotLiveManualEnabled || cfg.Trading.SpotLiveAutoEnabled {
+	if cfg.Trading.TestnetPrivateAPIEnabled || cfg.Trading.SpotLiveManualEnabled ||
+		cfg.Trading.SpotLiveAutoEnabled || cfg.Trading.USDMLiveManualEnabled {
 		t.Fatal("private trading must require explicit enablement")
 	}
 	cfg.Auth.SecretKey = "test-only-random-secret"
