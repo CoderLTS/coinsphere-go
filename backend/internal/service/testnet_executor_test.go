@@ -325,7 +325,7 @@ func TestTestnetExecutorFlattensAndPausesWhenProtectionCannotBeConfirmed(t *test
 	if flatten.Status != "filled" || !flatten.FilledQuantity.Equal(decimal.NewFromInt(5)) {
 		t.Fatalf("emergency flatten order = %#v", flatten)
 	}
-	if err := fixture.database.Model(&flatten).Update("reduce_only", true).Error; err == nil || !strings.Contains(err.Error(), "testnet flatten order shape does not match account market") {
+	if err := fixture.database.Model(&flatten).Update("reduce_only", true).Error; err == nil || !strings.Contains(err.Error(), "private flatten order shape does not match account market") {
 		t.Fatalf("Spot emergency flatten reduceOnly constraint error = %v", err)
 	}
 }
@@ -443,7 +443,7 @@ func TestTestnetExecutorQueriesUnknownFlattenBeforeRecovery(t *testing.T) {
 		Update("submitted_account_updated_at", account.UpdatedAt).Error; err != nil {
 		t.Fatalf("refresh USD-M flatten account binding: %v", err)
 	}
-	if err := fixture.database.Model(&flatten).Update("reduce_only", false).Error; err == nil || !strings.Contains(err.Error(), "testnet flatten order shape does not match account market") {
+	if err := fixture.database.Model(&flatten).Update("reduce_only", false).Error; err == nil || !strings.Contains(err.Error(), "private flatten order shape does not match account market") {
 		t.Fatalf("USD-M emergency flatten reduceOnly constraint error = %v", err)
 	}
 }
