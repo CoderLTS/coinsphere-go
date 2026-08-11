@@ -69,6 +69,8 @@ type TradingAccountView struct {
 	AutomationEnabled      bool                      `json:"automationEnabled"`
 	ManualAuthorized       bool                      `json:"manualAuthorized"`
 	ManualAuthorizedAt     *string                   `json:"manualAuthorizedAt"`
+	AutoAuthorized         bool                      `json:"autoAuthorized"`
+	AutoAuthorizedAt       *string                   `json:"autoAuthorizedAt"`
 	AutomationAuthorized   bool                      `json:"automationAuthorized"`
 	AutomationAuthorizedAt *string                   `json:"automationAuthorizedAt"`
 	CredentialsConfigured  bool                      `json:"credentialsConfigured"`
@@ -316,6 +318,7 @@ type TradingOverviewView struct {
 
 type TradingCapabilitiesView struct {
 	SpotLiveManualEnabled bool `json:"spotLiveManualEnabled"`
+	SpotLiveAutoEnabled   bool `json:"spotLiveAutoEnabled"`
 }
 
 type validatedTradingRisk struct {
@@ -472,6 +475,8 @@ func (a *App) UpdateTradingRisk(
 		if row.Environment == "live" {
 			updates["manual_authorized_at"] = nil
 			updates["manual_authorized_by_user_id"] = nil
+			updates["auto_authorized_at"] = nil
+			updates["auto_authorized_by_user_id"] = nil
 		}
 		if err := tx.Model(&row).Updates(updates).Error; err != nil {
 			return err
@@ -513,7 +518,8 @@ func (a *App) SetTradingAutomation(
 			Where("id = ? AND owner_user_id = ?", accountID, principal.User.ID).Take(&row).Error; err != nil {
 			return tradingAccountLookupError(err)
 		}
-		if row.Environment == "live" {
+		if row.Environment == "live" && enabled &&
+			(!a.spotLiveAutoEnabled() || row.Market != string(marketdata.MarketTypeSpot)) {
 			return ErrTradingExecutionUnavailable
 		}
 		_, reused, err := a.reserveIdempotencyRecord(
@@ -527,7 +533,7 @@ func (a *App) SetTradingAutomation(
 			if !a.ConsumeReauthToken(reauthToken, principal) {
 				return ErrTradingReauthentication
 			}
-			if row.Environment == "testnet" {
+			if isPrivateTradingEnvironment(row.Environment) {
 				if err := testnetAccountReadinessError(tx, row.ID); err != nil {
 					return err
 				}
@@ -540,13 +546,24 @@ func (a *App) SetTradingAutomation(
 			if err != nil {
 				return err
 			}
-			if !complete || row.Status != "active" || row.AutomationAuthorizedAt == nil || control.EmergencyStopped {
+			if !complete || row.Status != "active" || row.AutomationAuthorizedAt == nil || control.EmergencyStopped ||
+				(row.Environment == "live" && row.ManualAuthorizedAt == nil) {
 				return ErrTradingAccountConflict
 			}
 		} else if err := disableAutoInstances(tx, &row.ID, now); err != nil {
 			return err
 		}
-		if err := tx.Model(&row).Updates(map[string]any{"automation_enabled": enabled, "updated_at": now}).Error; err != nil {
+		updates := map[string]any{"automation_enabled": enabled, "updated_at": now}
+		if row.Environment == "live" {
+			if enabled {
+				updates["auto_authorized_at"] = now
+				updates["auto_authorized_by_user_id"] = principal.User.ID
+			} else {
+				updates["auto_authorized_at"] = nil
+				updates["auto_authorized_by_user_id"] = nil
+			}
+		}
+		if err := tx.Model(&row).Updates(updates).Error; err != nil {
 			return err
 		}
 		return tx.Where("id = ?", row.ID).Take(&row).Error
@@ -617,6 +634,8 @@ func (a *App) ResumeTradingAccount(
 			}
 			updates["manual_authorized_at"] = now
 			updates["manual_authorized_by_user_id"] = principal.User.ID
+			updates["auto_authorized_at"] = nil
+			updates["auto_authorized_by_user_id"] = nil
 		}
 		if err := tx.Model(&row).Updates(updates).Error; err != nil {
 			return err
@@ -646,7 +665,8 @@ func (a *App) SetTradingAuthorization(
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", accountID).Take(&row).Error; err != nil {
 			return tradingAccountLookupError(err)
 		}
-		if row.Environment == "live" {
+		if row.Environment == "live" && authorized &&
+			(!a.spotLiveAutoEnabled() || row.Market != string(marketdata.MarketTypeSpot)) {
 			return ErrTradingExecutionUnavailable
 		}
 		_, reused, err := a.reserveIdempotencyRecord(
@@ -667,6 +687,10 @@ func (a *App) SetTradingAuthorization(
 			updates["automation_authorized_at"] = nil
 			updates["automation_authorized_by_user_id"] = nil
 			updates["automation_enabled"] = false
+			if row.Environment == "live" {
+				updates["auto_authorized_at"] = nil
+				updates["auto_authorized_by_user_id"] = nil
+			}
 			if err := disableAutoInstances(tx, &row.ID, now); err != nil {
 				return err
 			}
@@ -718,10 +742,11 @@ func (a *App) ActivateTradingEmergencyStop(
 			return err
 		}
 		if err := tx.Model(&db.TradingAccount{}).
-			Where("status <> ? OR automation_enabled OR manual_authorized_at IS NOT NULL", "paused").Updates(map[string]any{
+			Where("status <> ? OR automation_enabled OR manual_authorized_at IS NOT NULL OR auto_authorized_at IS NOT NULL", "paused").Updates(map[string]any{
 			"status": "paused", "pause_reason": "global_emergency_stop",
 			"automation_enabled": false, "manual_authorized_at": nil,
-			"manual_authorized_by_user_id": nil, "updated_at": now,
+			"manual_authorized_by_user_id": nil, "auto_authorized_at": nil,
+			"auto_authorized_by_user_id": nil, "updated_at": now,
 		}).Error; err != nil {
 			return err
 		}
@@ -790,8 +815,10 @@ func (a *App) GetTradingOverview(ctx context.Context, userID int64) (TradingOver
 		return TradingOverviewView{}, err
 	}
 	result := TradingOverviewView{
-		Capabilities: TradingCapabilitiesView{SpotLiveManualEnabled: a.spotLiveManualEnabled()},
-		Control:      serializeTradingControl(control), Accounts: []TradingAccountView{}, Intents: []TradingIntentView{},
+		Capabilities: TradingCapabilitiesView{
+			SpotLiveManualEnabled: a.spotLiveManualEnabled(), SpotLiveAutoEnabled: a.spotLiveAutoEnabled(),
+		},
+		Control: serializeTradingControl(control), Accounts: []TradingAccountView{}, Intents: []TradingIntentView{},
 		Orders: []PaperOrderView{}, Positions: []PaperPositionView{}, Balances: []PaperBalanceView{},
 		TestnetBalances: []TestnetBalanceView{}, TestnetPositions: []TestnetPositionView{},
 		TestnetOpenOrders: []TestnetOpenOrderView{}, TestnetOrders: []TestnetOrderView{},
@@ -905,7 +932,9 @@ func (a *App) createTradingIntentForSignalWithDB(database *gorm.DB, signal db.St
 		return nil
 	}
 	if signal.Environment != "paper" && signal.Environment != "testnet" &&
-		!(signal.Environment == "live" && signal.Mode == "manual" && a.spotLiveManualEnabled()) {
+		!(signal.Environment == "live" &&
+			((signal.Mode == "manual" && a.spotLiveManualEnabled()) ||
+				(signal.Mode == "auto" && a.spotLiveAutoEnabled()))) {
 		if strict {
 			return ErrTradingExecutionUnavailable
 		}
@@ -946,7 +975,9 @@ func (a *App) createTradingIntentForSignalWithDB(database *gorm.DB, signal db.St
 		return nil
 	}
 	if signal.Environment == "live" && (account.Market != string(marketdata.MarketTypeSpot) ||
-		account.ManualAuthorizedAt == nil || account.Status != "active") {
+		account.ManualAuthorizedAt == nil || account.Status != "active" ||
+		(signal.Mode == "auto" && (!account.AutomationEnabled || account.AutomationAuthorizedAt == nil ||
+			account.AutoAuthorizedAt == nil))) {
 		if strict {
 			return ErrTradingExecutionUnavailable
 		}
@@ -1136,11 +1167,14 @@ func (a *App) validateStrategyInstanceExecutionReady(database *gorm.DB, instance
 			return err
 		}
 	}
-	if instance.Environment == "live" && (!a.spotLiveManualEnabled() || instance.Mode != "manual" ||
+	if instance.Environment == "live" && (!a.spotLiveManualEnabled() ||
+		(instance.Mode == "auto" && !a.spotLiveAutoEnabled()) ||
+		(instance.Mode != "manual" && instance.Mode != "auto") ||
 		account.Market != string(marketdata.MarketTypeSpot) || account.ManualAuthorizedAt == nil) {
 		return ErrTradingExecutionUnavailable
 	}
-	if instance.Mode == "auto" && (!account.AutomationEnabled || account.AutomationAuthorizedAt == nil) {
+	if instance.Mode == "auto" && (!account.AutomationEnabled || account.AutomationAuthorizedAt == nil ||
+		(instance.Environment == "live" && account.AutoAuthorizedAt == nil)) {
 		return ErrTradingAccountConflict
 	}
 	return nil
@@ -1190,6 +1224,7 @@ func (a *App) loadTradingAccountView(database *gorm.DB, row db.TradingAccount) (
 		ID: row.ID.String(), Name: row.Name, Market: row.Market, Environment: row.Environment,
 		Status: row.Status, PauseReason: row.PauseReason, AutomationEnabled: row.AutomationEnabled,
 		ManualAuthorized:     row.ManualAuthorizedAt != nil,
+		AutoAuthorized:       row.AutoAuthorizedAt != nil,
 		AutomationAuthorized: row.AutomationAuthorizedAt != nil, InitialBalance: row.InitialBalance.String(),
 		PaperFeeRate: row.PaperFeeRate.String(), CreatedAt: formatUTC(row.CreatedAt), UpdatedAt: formatUTC(row.UpdatedAt),
 		Reconciliation: TestnetReconciliationView{Status: "not_applicable"},
@@ -1207,6 +1242,10 @@ func (a *App) loadTradingAccountView(database *gorm.DB, row db.TradingAccount) (
 	if row.ManualAuthorizedAt != nil {
 		value := formatUTC(*row.ManualAuthorizedAt)
 		view.ManualAuthorizedAt = &value
+	}
+	if row.AutoAuthorizedAt != nil {
+		value := formatUTC(*row.AutoAuthorizedAt)
+		view.AutoAuthorizedAt = &value
 	}
 	if isPrivateTradingEnvironment(row.Environment) {
 		view.Reconciliation.Status = "pending"
@@ -1602,6 +1641,10 @@ func isPrivateTradingEnvironment(environment string) bool {
 
 func (a *App) spotLiveManualEnabled() bool {
 	return a != nil && a.Cfg != nil && a.Cfg.Trading.SpotLiveManualEnabled
+}
+
+func (a *App) spotLiveAutoEnabled() bool {
+	return a.spotLiveManualEnabled() && a.Cfg.Trading.SpotLiveAutoEnabled
 }
 
 func utcDay(value time.Time) time.Time {

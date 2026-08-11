@@ -18,6 +18,8 @@ trading:
   testnet_private_api_enabled: false
   # Spot Live manual remains unavailable until both the API and Executor use this explicit switch.
   spot_live_manual_enabled: false
+  # Spot Live auto also requires the manual switch and all persisted release gates.
+  spot_live_auto_enabled: false
 
 server:
   host: 0.0.0.0

@@ -756,7 +756,8 @@
     },
     "automation": {
       "authorization": "自动化授权",
-      "accountSwitch": "账户自动化"
+      "accountSwitch": "账户自动化",
+      "ownerRelease": "Owner 自动交易放行"
     },
     "manual": {
       "authorization": "手动交易放行",

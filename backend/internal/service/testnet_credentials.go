@@ -122,6 +122,8 @@ func (a *App) SaveTradingCredentials(
 		if account.Environment == "live" {
 			accountUpdates["manual_authorized_at"] = nil
 			accountUpdates["manual_authorized_by_user_id"] = nil
+			accountUpdates["auto_authorized_at"] = nil
+			accountUpdates["auto_authorized_by_user_id"] = nil
 		}
 		if err := tx.Model(&account).Updates(accountUpdates).Error; err != nil {
 			return err
@@ -212,6 +214,8 @@ func (a *App) RevokeTradingCredentials(
 		if account.Environment == "live" {
 			accountUpdates["manual_authorized_at"] = nil
 			accountUpdates["manual_authorized_by_user_id"] = nil
+			accountUpdates["auto_authorized_at"] = nil
+			accountUpdates["auto_authorized_by_user_id"] = nil
 		}
 		if err := tx.Model(&account).Updates(accountUpdates).Error; err != nil {
 			return err

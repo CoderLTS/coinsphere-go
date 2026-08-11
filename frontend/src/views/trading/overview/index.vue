@@ -165,12 +165,27 @@
           </div>
         </header>
 
-        <section v-if="selectedAccount.environment !== 'live'" class="account-switches">
+        <section
+          v-if="
+            selectedAccount.environment !== 'live' ||
+            overview.capabilities.spotLiveAutoEnabled ||
+            selectedAccount.automationAuthorized ||
+            selectedAccount.automationEnabled ||
+            selectedAccount.autoAuthorized
+          "
+          class="account-switches"
+        >
           <label>
             <span>{{ t('trading.automation.authorization') }}</span>
             <ElSwitch
               :model-value="selectedAccount.automationAuthorized"
-              :disabled="!isSuper || Boolean(commandLoading)"
+              :disabled="
+                !isSuper ||
+                Boolean(commandLoading) ||
+                (selectedAccount.environment === 'live' &&
+                  !overview.capabilities.spotLiveAutoEnabled &&
+                  !selectedAccount.automationAuthorized)
+              "
               :loading="commandLoading === 'authorization'"
               @change="setAuthorization"
             />
@@ -186,12 +201,22 @@
           </label>
         </section>
 
-        <section v-else class="account-switches">
+        <section v-if="selectedAccount.environment === 'live'" class="account-switches">
           <label>
             <span>{{ t('trading.manual.authorization') }}</span>
             <ElTag :type="selectedAccount.manualAuthorized ? 'success' : 'warning'" effect="plain">
               {{
                 selectedAccount.manualAuthorized
+                  ? t('trading.manual.authorized')
+                  : t('trading.manual.pending')
+              }}
+            </ElTag>
+          </label>
+          <label v-if="overview.capabilities.spotLiveAutoEnabled || selectedAccount.autoAuthorized">
+            <span>{{ t('trading.automation.ownerRelease') }}</span>
+            <ElTag :type="selectedAccount.autoAuthorized ? 'success' : 'warning'" effect="plain">
+              {{
+                selectedAccount.autoAuthorized
                   ? t('trading.manual.authorized')
                   : t('trading.manual.pending')
               }}
@@ -830,7 +855,7 @@
   })
 
   const createEmptyOverview = (): TradingOverview => ({
-    capabilities: { spotLiveManualEnabled: false },
+    capabilities: { spotLiveManualEnabled: false, spotLiveAutoEnabled: false },
     control: emptyControl(),
     accounts: [],
     intents: [],
@@ -1022,12 +1047,13 @@
   const automationSwitchDisabled = computed(() => {
     const account = selectedAccount.value
     if (!account || Boolean(commandLoading.value)) return true
-    if (account.environment === 'live') return true
     if (account.automationEnabled) return false
+    if (account.environment === 'live' && !overview.capabilities.spotLiveAutoEnabled) return true
     return (
       overview.control.emergencyStopped ||
       account.status !== 'active' ||
       !account.automationAuthorized ||
+      (account.environment === 'live' && !account.manualAuthorized) ||
       !account.risk.complete ||
       (account.environment !== 'paper' &&
         (!account.credentialsConfigured ||

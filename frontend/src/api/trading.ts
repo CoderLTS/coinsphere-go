@@ -41,6 +41,8 @@ export interface TradingAccount {
   automationEnabled: boolean
   manualAuthorized: boolean
   manualAuthorizedAt: string | null
+  autoAuthorized: boolean
+  autoAuthorizedAt: string | null
   automationAuthorized: boolean
   automationAuthorizedAt: string | null
   credentialsConfigured: boolean
@@ -244,6 +246,7 @@ export interface TestnetAuditSummary {
 export interface TradingOverview {
   capabilities: {
     spotLiveManualEnabled: boolean
+    spotLiveAutoEnabled: boolean
   }
   control: TradingControl
   accounts: TradingAccount[]

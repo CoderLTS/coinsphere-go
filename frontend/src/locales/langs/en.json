@@ -756,7 +756,8 @@
     },
     "automation": {
       "authorization": "Automation authorization",
-      "accountSwitch": "Account automation"
+      "accountSwitch": "Account automation",
+      "ownerRelease": "Owner auto-trading release"
     },
     "manual": {
       "authorization": "Manual trading release",

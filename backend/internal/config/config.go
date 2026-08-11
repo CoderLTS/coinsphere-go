@@ -39,6 +39,7 @@ type MarketDataConfig struct {
 type TradingConfig struct {
 	TestnetPrivateAPIEnabled bool `yaml:"testnet_private_api_enabled"`
 	SpotLiveManualEnabled    bool `yaml:"spot_live_manual_enabled"`
+	SpotLiveAutoEnabled      bool `yaml:"spot_live_auto_enabled"`
 }
 
 // ServerConfig HTTP 服务配置。
@@ -273,6 +274,9 @@ func (c *AppConfig) Validate() error {
 	}
 	if c.MarketData.BackfillPageSize > 300 {
 		return fmt.Errorf("market_data.backfill_page_size must not exceed 300")
+	}
+	if c.Trading.SpotLiveAutoEnabled && !c.Trading.SpotLiveManualEnabled {
+		return fmt.Errorf("trading.spot_live_auto_enabled requires trading.spot_live_manual_enabled")
 	}
 	return nil
 }

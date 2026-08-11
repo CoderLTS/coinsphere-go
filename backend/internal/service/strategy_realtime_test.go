@@ -77,6 +77,10 @@ func TestStrategyInstanceValidationDefaultsAndBoundaries(t *testing.T) {
 	if _, err := validateStrategyInstancePayload(livePayload, version, true); !errors.Is(err, ErrInvalidStrategyRequest) {
 		t.Fatalf("Live auto instance returned %v", err)
 	}
+	liveAuto, err := validateStrategyInstancePayload(livePayload, version, true, true)
+	if err != nil || liveAuto.Mode != "auto" || liveAuto.StopLossRatio == nil {
+		t.Fatalf("enabled Live auto instance = %#v, err=%v", liveAuto, err)
+	}
 
 	invalid := []StrategyInstanceCreatePayload{
 		{Name: "", Mode: "signal_only"},

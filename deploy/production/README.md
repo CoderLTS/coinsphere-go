@@ -7,7 +7,7 @@
 - `runtime.env` 只保存在服务器，禁止提交或上传到 GitHub Release。
 - `runtime.env` 必须通过 `COINSPHERE_DATABASE__DSN` 指向外部 PostgreSQL/TimescaleDB；数据库备份与恢复由基础设施负责。
 - `worker-runtime.env` 只包含 UTC 和 Worker 专用的 `COINSPHERE_WORKER_DATABASE_DSN`，不得放入认证、通知或交易所密钥。
-- `executor-runtime.env` 只包含 UTC 和 Paper Executor 专用数据库身份；当前保持 `trading.testnet_private_api_enabled=false`、`trading.spot_live_manual_enabled=false`，不得把 Binance Testnet/Live 凭据写入环境文件。
+- `executor-runtime.env` 只包含 UTC 和 Paper Executor 专用数据库身份；当前保持 `trading.testnet_private_api_enabled=false`、`trading.spot_live_manual_enabled=false`、`trading.spot_live_auto_enabled=false`，不得把 Binance Testnet/Live 凭据写入环境文件。
 - 部署脚本停止旧服务后执行镜像内 migration。失败时恢复上一 Compose 与镜像，但保留当前 schema，不自动执行 Down 或覆盖数据库。
 - realtime/backtest 使用同一 Worker digest，均不暴露端口；只有 backtest 挂载独立产物卷并配置墙钟、CPU、内存和产物上限。
 - 单一 PostgreSQL 基线建立完整业务 schema；应用启动只读校验版本，不执行 `AutoMigrate`。当前生产仍以 Paper 模式部署 Executor，Testnet 私有验证、首次对账和确定性主市价单默认关闭，Worker 不具备任何交易所私有接口能力。
