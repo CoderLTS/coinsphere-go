@@ -1303,7 +1303,7 @@ WHERE account_id = $1
 		"ix_testnet_positions_account", "ix_testnet_open_orders_account",
 	})
 
-	if _, err := runner.Down(context.Background(), 4); err != nil {
+	if _, err := runner.Down(context.Background(), 3); err != nil {
 		t.Fatalf("roll back empty Testnet order migration: %v", err)
 	}
 	if _, err := runner.Down(context.Background(), 1); err == nil {
