@@ -48,7 +48,16 @@ func TestMarketDataConfigBounds(t *testing.T) {
 
 func TestPrivateTradingDefaultsDisabled(t *testing.T) {
 	cfg := defaultConfig()
-	if cfg.Trading.TestnetPrivateAPIEnabled || cfg.Trading.SpotLiveManualEnabled {
+	if cfg.Trading.TestnetPrivateAPIEnabled || cfg.Trading.SpotLiveManualEnabled || cfg.Trading.SpotLiveAutoEnabled {
 		t.Fatal("private trading must require explicit enablement")
+	}
+	cfg.Auth.SecretKey = "test-only-random-secret"
+	cfg.Trading.SpotLiveAutoEnabled = true
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Spot Live auto did not require the manual capability")
+	}
+	cfg.Trading.SpotLiveManualEnabled = true
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid Spot Live capability dependency returned %v", err)
 	}
 }

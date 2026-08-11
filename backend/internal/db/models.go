@@ -202,7 +202,7 @@ type TradingControl struct {
 
 func (TradingControl) TableName() string { return "trading_controls" }
 
-// TradingAccount 是用户交易账户与硬风控配置。Live 账户仍由数据库约束禁止。
+// TradingAccount 是用户交易账户、放行记录与硬风控配置。
 type TradingAccount struct {
 	ID                          uuid.UUID        `gorm:"type:uuid;primaryKey"`
 	OwnerUserID                 int64            `gorm:"column:owner_user_id"`
@@ -214,6 +214,8 @@ type TradingAccount struct {
 	AutomationEnabled           bool             `gorm:"column:automation_enabled"`
 	ManualAuthorizedAt          *time.Time       `gorm:"column:manual_authorized_at"`
 	ManualAuthorizedByID        *int64           `gorm:"column:manual_authorized_by_user_id"`
+	AutoAuthorizedAt            *time.Time       `gorm:"column:auto_authorized_at"`
+	AutoAuthorizedByID          *int64           `gorm:"column:auto_authorized_by_user_id"`
 	AutomationAuthorizedAt      *time.Time       `gorm:"column:automation_authorized_at"`
 	AutomationAuthorizedByID    *int64           `gorm:"column:automation_authorized_by_user_id"`
 	InitialBalance              *decimal.Decimal `gorm:"column:initial_balance;type:numeric(38,18)"`
@@ -232,7 +234,7 @@ type TradingAccount struct {
 
 func (TradingAccount) TableName() string { return "trading_accounts" }
 
-// TradingAccountCredential 保存 Testnet 凭据的密文和验证状态；明文只在写入和 Executor 解密边界短暂存在。
+// TradingAccountCredential 保存私有账户凭据的密文和验证状态；明文只在写入和 Executor 解密边界短暂存在。
 type TradingAccountCredential struct {
 	ID                    uuid.UUID  `gorm:"type:uuid;primaryKey"`
 	AccountID             uuid.UUID  `gorm:"column:account_id;type:uuid;uniqueIndex"`

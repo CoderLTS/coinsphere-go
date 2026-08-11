@@ -36,7 +36,7 @@
 | 交易 | `/api/v1/trading/*`、`/api/v1/admin/trading/*` |
 | 通知 | `/api/v1/notification-deliveries`、`/api/v1/ws/notifications` |
 
-交易路由管理 Paper/Testnet 账户、风险限额、自动化开关/授权、全局急停及其只读投影。`trading.spot_live_manual_enabled` 默认关闭；只有显式启用后才能创建 Spot Live 账户，USD-M Live 和 Live auto 仍由 API 与数据库共同禁止。账户创建、风险修改、恢复、自动化切换、授权和急停命令都要求 `Idempotency-Key`；风险修改、账户恢复、启用自动化、管理员授权和解除急停还要求有效的 `X-Reauth-Token`。
+交易路由管理 Paper/Testnet 账户、风险限额、自动化开关/授权、全局急停及其只读投影。`trading.spot_live_manual_enabled` 和 `trading.spot_live_auto_enabled` 默认关闭；auto 只有在 manual 同时启用时才有效，USD-M Live 仍由 API 与数据库共同禁止。账户创建、风险修改、恢复、自动化切换、授权和急停命令都要求 `Idempotency-Key`；风险修改、账户恢复、启用自动化、管理员授权和解除急停还要求有效的 `X-Reauth-Token`。
 
 Testnet 或已启用的 Spot Live 凭据通过 `PUT /api/v1/trading/accounts/{accountId}/credentials` 保存，通过 `POST /api/v1/trading/accounts/{accountId}/credentials/revoke` 撤销。两条命令同时要求 `Idempotency-Key` 和 `X-Reauth-Token`；保存还要求调用方明确确认已关闭提现并配置 IP 白名单。凭据使用应用主密钥加密，API 只返回配置与验证状态，永不返回 API Key、Secret 或密文。保存后的状态固定为 `unverified`，账户保持暂停且自动实例被关闭；后续对应环境的 Executor 验证凭据并完成首次对账前，账户不能恢复或启用执行。关闭能力开关后仍允许撤销已有 Live 凭据。
 
@@ -99,7 +99,7 @@ Paper 只追加 `order/fill/fee/funding` 事件，订单、仓位、余额和盈
 
 Testnet 私有访问默认关闭。显式启用后，只有 Go Executor 会解密凭据，并向 Spot `/api/v3/account`、`/api/v3/openOrders`、`/api/v3/order` 与 USD-M `/fapi/v3/account`、`/fapi/v1/openOrders`、`/fapi/v1/order` 发送带 UTC `timestamp`、`recvWindow` 和 HMAC-SHA256 签名的请求。API Key 只进入 `X-MBX-APIKEY` 请求头；认证、权限、限流、时钟偏差、协议和网络失败只保存固定脱敏错误码。
 
-Spot Live manual 使用独立的 `trading.spot_live_manual_enabled` 开关和独立 Binance Live Spot 客户端。开关默认关闭；启用时也只装配 Spot 路由，USD-M Live 没有可用 base URL。Live 账户每次因凭据、风控、对账差异或全局急停而暂停时都会清除 `manual_authorized_at`；只有 Owner 再认证并手工恢复账户才写入新的 manual 放行记录。CI、Codex、自动部署和工作流不得提供 Live 凭据、启用该开关或发起私有请求。
+Spot Live 使用独立的默认关闭开关和 Binance Live Spot 客户端。`spot_live_manual_enabled` 装配 manual；`spot_live_auto_enabled` 只有在 manual 同时启用时才额外装配按 `mode=auto` 隔离的 Executor。auto 调仓要求账户处于 active、凭据已验证、对账 matched、风控完整、无急停、管理员 `automation_authorized_at`、Owner `automation_enabled` 和独立的 `auto_authorized_at` 全部有效。凭据/风控变化、对账暂停、急停、Owner 关闭或管理员撤销会清除 Owner auto 放行并关闭自动策略实例；关闭功能开关后仍允许关闭和撤销。保护单与紧急平仓不依赖已被清除的放行记录。USD-M Live 没有可用 base URL。CI、Codex、自动部署和工作流不得提供 Live 凭据、启用开关或发起私有请求；Binance 环境验证延期到全部开发完成后。
 
 凭据验证成功后，Executor 把余额、USD-M 仓位和开放订单写入绑定当前凭据版本的独立 Testnet 投影。首次快照中的开放订单、非白名单资产、Spot 既有持仓、USD-M 既有仓位或双向持仓模式仍形成固定 `mismatch`；外部协议或网络失败形成 `unknown`。只有 `matched` 允许用户手工恢复账户，后台对账不会自动启用自动化、修改外部订单或创建交易意图；凭据或风险白名单变化会清空旧投影并重新暂停账户。
 
@@ -109,4 +109,4 @@ Spot Live manual 使用独立的 `trading.spot_live_manual_enabled` 开关和独
 
 账户手工恢复后，Reconciler 持续读取余额、仓位和开放订单权威快照，并只接受本地确定性订单能够解释的订单与持仓。连续快照缺少本地活动订单时，只有 `clientOrderId` 精确匹配本地 `pending`/`reconciling` Testnet 意图、账户和凭据版本仍一致、品种在白名单且订单严格符合主 `market` 调仓形状时，才在同一账户锁事务中创建带数据库 `recovered_at` 审计标记的本地投影；意图转为 `reconciling`，账户以 `testnet_external_order_recovered` 暂停，仍需用户手工恢复。其他未知外部订单、未归属仓位、订单形状漂移、累计成交差异或查询未知都会暂停账户且关闭自动化。权威订单状态只在账户、凭据版本、本地订单版本和观察时间均未变化时回写；持续 `matched` 对账还会查询本地已管理成交订单的逐笔成交和真实手续费，并在 USD-M 查询最近七天资金费，事实按交易所成交 ID或资金费流水号幂等追加。较旧快照不能覆盖较新投影，对账成功也不会自动创建外部订单。
 
-持续账户、订单和仓位快照对账、可证明归属的外部主调仓恢复，以及逐笔成交、真实手续费和资金费的权威追加对账已交付。`GET /api/v1/trading/overview` 只向账户 Owner 返回最近 100 条私有账户权威事实、按当前凭据版本绑定的 `testnetAuditSummaries` 和只读 `capabilities.spotLiveManualEnabled`；`testnet*` 字段名是冻结 M3 契约保留名，数据仍按 `accountId` 隔离 Testnet 与 Live。摘要只包含对账状态/错误码、观察时间、风险状态、未知/保护/恢复订单计数和成交/手续费/资金费事实计数，其中未知订单计数合并当前凭据版本下本地未知订单与未归属开放订单并去重，金额和数量保持十进制字符串，交易所 ID 保持字符串。该只读审计视图不触发对账或外部请求，也不推断晋级结论。生产继续保持两个私有能力开关关闭；后续晋级遵守 [ADR-0010](../architecture/decisions/0010-execution-risk-events.md) 并由用户手工放行。
+持续账户、订单和仓位快照对账、可证明归属的外部主调仓恢复，以及逐笔成交、真实手续费和资金费的权威追加对账已交付。`GET /api/v1/trading/overview` 只向账户 Owner 返回最近 100 条私有账户权威事实、按当前凭据版本绑定的 `testnetAuditSummaries`、manual/auto 放行状态和只读 `capabilities.spotLiveManualEnabled`、`capabilities.spotLiveAutoEnabled`；`testnet*` 字段名是冻结 M3 契约保留名，数据仍按 `accountId` 隔离 Testnet 与 Live。摘要只包含对账状态/错误码、观察时间、风险状态、未知/保护/恢复订单计数和成交/手续费/资金费事实计数，其中未知订单计数合并当前凭据版本下本地未知订单与未归属开放订单并去重，金额和数量保持十进制字符串，交易所 ID 保持字符串。该只读审计视图不触发对账或外部请求，也不推断晋级结论。生产继续保持全部私有能力开关关闭；后续晋级遵守 [ADR-0010](../architecture/decisions/0010-execution-risk-events.md) 并由用户手工放行。

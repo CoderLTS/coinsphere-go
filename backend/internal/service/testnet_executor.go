@@ -35,7 +35,7 @@ type testnetOrderClient interface {
 	) (exchangebinance.OrderResult, error)
 }
 
-// TestnetExecutor serializes deterministic Binance Testnet orders per account.
+// TestnetExecutor serializes deterministic private orders per account and mode.
 type TestnetExecutor struct {
 	database     *gorm.DB
 	cipher       *security.SecretCipher
@@ -74,7 +74,7 @@ func NewPrivateExecutor(
 		return nil, errors.New("testnet executor client is required")
 	}
 	if !validPrivateRuntimeScope(environment, market) ||
-		(environment == "live" && mode != "manual") ||
+		(environment == "live" && mode != "manual" && mode != "auto") ||
 		(environment == "testnet" && mode != "") {
 		return nil, errors.New("private executor scope is invalid")
 	}
@@ -135,8 +135,11 @@ SET status = CASE
     claimed_at = NULL,
     worker_id = NULL,
     updated_at = CURRENT_TIMESTAMP
-WHERE intent.environment = ? AND intent.status = 'processing'
-`, executor.scopeEnvironment()).Error
+WHERE intent.environment = ?
+  AND (? = '' OR intent.market_type = ?)
+  AND (? = '' OR intent.mode = ?)
+  AND intent.status = 'processing'
+`, executor.scopeEnvironment(), executor.market, executor.market, executor.mode, executor.mode).Error
 }
 
 func (executor *TestnetExecutor) ProcessNext(ctx context.Context) (bool, error) {
@@ -730,8 +733,8 @@ func loadAndValidateTestnetExecution(
 		(intent.Mode == "auto" && state.Signal.Status != "active") {
 		return state, "signal_state_changed", false, nil
 	}
-	if intent.Environment == "live" && (intent.Mode != "manual" || intent.Market != string(marketdata.MarketTypeSpot) ||
-		state.Account.ManualAuthorizedAt == nil) {
+	if intent.Environment == "live" && ((intent.Mode != "manual" && intent.Mode != "auto") ||
+		intent.Market != string(marketdata.MarketTypeSpot) || state.Account.ManualAuthorizedAt == nil) {
 		return state, "live_manual_not_authorized", true, nil
 	}
 	if state.Instrument.Venue != string(marketdata.VenueBinance) || state.Instrument.Status != "trading" ||
@@ -783,7 +786,8 @@ func loadAndValidateTestnetExecution(
 			return state, "risk_configuration_incomplete", true, nil
 		}
 	}
-	if intent.Mode == "auto" && (!state.Account.AutomationEnabled || state.Account.AutomationAuthorizedAt == nil) &&
+	if intent.Mode == "auto" && (!state.Account.AutomationEnabled || state.Account.AutomationAuthorizedAt == nil ||
+		(intent.Environment == "live" && state.Account.AutoAuthorizedAt == nil)) &&
 		!state.ReduceOnly {
 		return state, "automation_not_authorized", true, nil
 	}

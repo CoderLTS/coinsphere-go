@@ -33,6 +33,10 @@ func TestSpotLiveManualAccountRequiresFeatureAndRecordsRelease(t *testing.T) {
 	if err := database.Create(&owner).Error; err != nil {
 		t.Fatalf("create Live owner: %v", err)
 	}
+	admin := db.SystemUser{Username: "spot-live-auto-admin", IsActive: true}
+	if err := database.Create(&admin).Error; err != nil {
+		t.Fatalf("create Live automation administrator: %v", err)
+	}
 	instrumentID := uuid.MustParse("019de100-0000-7000-8000-000000000001")
 	instrument := db.MarketInstrument{
 		ID: instrumentID, Venue: string(marketdata.VenueBinance), Market: string(marketdata.MarketTypeSpot),
@@ -126,6 +130,63 @@ func TestSpotLiveManualAccountRequiresFeatureAndRecordsRelease(t *testing.T) {
 		context.Background(), principal, account.ID, true, "live-auto-enable", "",
 	); !errors.Is(err, ErrTradingExecutionUnavailable) {
 		t.Fatalf("Live automation enable returned %v", err)
+	}
+	app.Cfg.Trading.SpotLiveAutoEnabled = true
+	adminPrincipal := &Principal{
+		User: &admin, RoleCodes: []string{"R_SUPER"}, AccessTokenID: "spot-live-admin-session",
+	}
+	adminToken := app.issueReauthToken(adminPrincipal, time.Now())
+	authorized, err := app.SetTradingAuthorization(
+		context.Background(), adminPrincipal, account.ID, true, "live-auto-authorize", adminToken,
+	)
+	if err != nil || !authorized.AutomationAuthorized || authorized.AutoAuthorized {
+		t.Fatalf("authorize Live automation = %#v, err=%v", authorized, err)
+	}
+	autoToken := app.issueReauthToken(principal, time.Now())
+	automated, err := app.SetTradingAutomation(
+		context.Background(), principal, account.ID, true, "live-auto-enable-ready", autoToken,
+	)
+	if err != nil || !automated.AutomationEnabled || !automated.AutoAuthorized ||
+		automated.AutoAuthorizedAt == nil || !automated.AutomationAuthorized || !automated.ManualAuthorized {
+		t.Fatalf("enable released Live automation = %#v, err=%v", automated, err)
+	}
+	app.Cfg.Trading.SpotLiveAutoEnabled = false
+	disabled, err := app.SetTradingAutomation(
+		context.Background(), principal, account.ID, false, "live-auto-disable", "",
+	)
+	if err != nil || disabled.AutomationEnabled || disabled.AutoAuthorized || !disabled.AutomationAuthorized {
+		t.Fatalf("disable Live automation after feature shutdown = %#v, err=%v", disabled, err)
+	}
+	revokeToken := app.issueReauthToken(adminPrincipal, time.Now())
+	revoked, err := app.SetTradingAuthorization(
+		context.Background(), adminPrincipal, account.ID, false, "live-auto-revoke", revokeToken,
+	)
+	if err != nil || revoked.AutomationAuthorized || revoked.AutomationEnabled || revoked.AutoAuthorized {
+		t.Fatalf("revoke Live automation after feature shutdown = %#v, err=%v", revoked, err)
+	}
+	app.Cfg.Trading.SpotLiveAutoEnabled = true
+	adminToken = app.issueReauthToken(adminPrincipal, time.Now())
+	if _, err := app.SetTradingAuthorization(
+		context.Background(), adminPrincipal, account.ID, true, "live-auto-reauthorize", adminToken,
+	); err != nil {
+		t.Fatalf("reauthorize Live automation: %v", err)
+	}
+	autoToken = app.issueReauthToken(principal, time.Now())
+	if _, err := app.SetTradingAutomation(
+		context.Background(), principal, account.ID, true, "live-auto-reenable", autoToken,
+	); err != nil {
+		t.Fatalf("reenable Live automation: %v", err)
+	}
+	if err := pauseTestnetAccount(database, accountID, "offline_release_reset", time.Now().UTC()); err != nil {
+		t.Fatalf("pause Live account: %v", err)
+	}
+	var paused db.TradingAccount
+	if err := database.Where("id = ?", accountID).Take(&paused).Error; err != nil {
+		t.Fatalf("load paused Live account: %v", err)
+	}
+	if paused.Status != "paused" || paused.AutomationEnabled || paused.ManualAuthorizedAt != nil ||
+		paused.AutoAuthorizedAt != nil || paused.AutomationAuthorizedAt == nil {
+		t.Fatalf("paused Live release state = %#v", paused)
 	}
 }
 

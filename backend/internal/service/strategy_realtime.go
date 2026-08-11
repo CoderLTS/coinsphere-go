@@ -74,8 +74,10 @@ type validatedStrategyInstance struct {
 }
 
 func validateStrategyInstancePayload(
-	payload StrategyInstanceCreatePayload, version db.StrategyVersion, spotLiveManualEnabled bool,
+	payload StrategyInstanceCreatePayload, version db.StrategyVersion,
+	spotLiveManualEnabled bool, spotLiveAutoEnabled ...bool,
 ) (validatedStrategyInstance, error) {
+	liveAutoEnabled := len(spotLiveAutoEnabled) > 0 && spotLiveAutoEnabled[0]
 	name := strings.TrimSpace(payload.Name)
 	if name == "" || len(name) > 120 {
 		return validatedStrategyInstance{}, invalidStrategy("name must be between 1 and 120 bytes")
@@ -94,8 +96,8 @@ func validateStrategyInstancePayload(
 	if environment != "paper" && environment != "testnet" && environment != "live" {
 		return validatedStrategyInstance{}, invalidStrategy("environment must be paper, testnet, or live")
 	}
-	if environment == "live" && mode == "auto" {
-		return validatedStrategyInstance{}, invalidStrategy("Live auto trading is not available")
+	if environment == "live" && mode == "auto" && !liveAutoEnabled {
+		return validatedStrategyInstance{}, invalidStrategy("Spot Live auto trading is not enabled")
 	}
 	if environment == "live" && mode != "signal_only" &&
 		(!spotLiveManualEnabled || version.Market != string(marketdata.MarketTypeSpot)) {
@@ -162,7 +164,9 @@ func (a *App) CreateStrategyInstance(ctx context.Context, userID int64, payload 
 		}
 		return StrategyInstanceView{}, err
 	}
-	validated, err := validateStrategyInstancePayload(payload, version, a.spotLiveManualEnabled())
+	validated, err := validateStrategyInstancePayload(
+		payload, version, a.spotLiveManualEnabled(), a.spotLiveAutoEnabled(),
+	)
 	if err != nil {
 		return StrategyInstanceView{}, err
 	}

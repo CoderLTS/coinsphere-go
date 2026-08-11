@@ -1619,6 +1619,8 @@ func pauseTestnetAccount(tx *gorm.DB, accountID uuid.UUID, reason string, now ti
 		"status": "paused", "pause_reason": reason, "automation_enabled": false,
 		"manual_authorized_at":         gorm.Expr("CASE WHEN environment = 'live' THEN NULL ELSE manual_authorized_at END"),
 		"manual_authorized_by_user_id": gorm.Expr("CASE WHEN environment = 'live' THEN NULL ELSE manual_authorized_by_user_id END"),
+		"auto_authorized_at":           gorm.Expr("CASE WHEN environment = 'live' THEN NULL ELSE auto_authorized_at END"),
+		"auto_authorized_by_user_id":   gorm.Expr("CASE WHEN environment = 'live' THEN NULL ELSE auto_authorized_by_user_id END"),
 		"updated_at":                   now,
 	}).Error; err != nil {
 		return err
