@@ -152,6 +152,72 @@ WHERE venue = 'binance' AND instrument_id = ?
 	}
 }
 
+func TestPaperExecutorResetsDailyLossAtUTCDayBoundary(t *testing.T) {
+	fixture := newPaperExecutorFixtureForMarket(t, "manual", true, true, true, marketdata.MarketTypeUSDM)
+	previousDay := utcDay(time.Now().UTC()).Add(-24 * time.Hour)
+	createdAt := previousDay.Add(time.Hour)
+	if err := fixture.database.Model(&db.TradingAccount{}).Where("id = ?", fixture.accountID).
+		Update("created_at", createdAt).Error; err != nil {
+		t.Fatalf("move Paper account to previous UTC day: %v", err)
+	}
+	if err := fixture.database.Model(&db.PaperBalance{}).Where("account_id = ?", fixture.accountID).Updates(map[string]any{
+		"day_start_date": previousDay, "day_start_equity": decimal.NewFromInt(10000), "updated_at": createdAt,
+	}).Error; err != nil {
+		t.Fatalf("move Paper balance to previous UTC day: %v", err)
+	}
+	loss := decimal.NewFromInt(-600)
+	price := decimal.NewFromInt(100)
+	if err := fixture.database.Transaction(func(tx *gorm.DB) error {
+		return fixture.executor.appendAndProjectEvent(tx, db.TradingEvent{
+			AccountID: fixture.accountID, InstrumentID: fixture.instrumentID, EventType: "funding",
+			Amount: &loss, Price: &price, OccurredAt: previousDay.Add(2 * time.Hour), DedupeKey: "previous-day-loss",
+		})
+	}); err != nil {
+		t.Fatalf("append previous-day Paper loss: %v", err)
+	}
+	if err := fixture.database.Model(&db.TradingAccount{}).Where("id = ?", fixture.accountID).Updates(map[string]any{
+		"status": "paused", "pause_reason": "daily_loss_limit", "updated_at": time.Now().UTC(),
+	}).Error; err != nil {
+		t.Fatalf("pause Paper account for previous-day loss: %v", err)
+	}
+
+	fixture.app.reauthTokens = map[string]reauthTokenRecord{}
+	fixture.app.revokedAccessTokens = map[string]time.Time{}
+	principal := &Principal{
+		User: &fixture.owner, AccessMode: "authenticated", AccessTokenID: "paper-day-rollover-session",
+	}
+	resumeToken := fixture.app.issueReauthToken(principal, time.Now())
+	if _, err := fixture.app.ResumeTradingAccount(
+		context.Background(), principal, fixture.accountID.String(), "paper-day-rollover-resume", resumeToken,
+	); err != nil {
+		t.Fatalf("resume Paper account after UTC day rollover: %v", err)
+	}
+
+	signal := fixture.insertSignal(t, "-0.5", "paper")
+	intent := fixture.enqueueSignal(t, signal)
+	if processed, err := fixture.executor.ProcessNext(context.Background()); err != nil || !processed {
+		t.Fatalf("process first intent after UTC day rollover: processed=%t err=%v", processed, err)
+	}
+	assertTradingIntentState(t, fixture.database, intent.ID, "executed", "")
+
+	var balance db.PaperBalance
+	if err := fixture.database.Where("account_id = ?", fixture.accountID).Take(&balance).Error; err != nil {
+		t.Fatalf("load rolled Paper balance: %v", err)
+	}
+	if !balance.DayStartDate.Equal(utcDay(time.Now().UTC())) || !balance.DayStartEquity.Equal(decimal.NewFromInt(9400)) {
+		t.Fatalf("rolled Paper daily baseline = %s/%s", balance.DayStartDate, balance.DayStartEquity)
+	}
+	beforeOrders, beforePositions, beforeBalances := loadPaperProjections(t, fixture.database, fixture.accountID)
+	if err := fixture.executor.RebuildAccountProjections(context.Background(), fixture.accountID); err != nil {
+		t.Fatalf("rebuild rolled Paper projections: %v", err)
+	}
+	afterOrders, afterPositions, afterBalances := loadPaperProjections(t, fixture.database, fixture.accountID)
+	if !reflect.DeepEqual(beforeOrders, afterOrders) || !reflect.DeepEqual(beforePositions, afterPositions) ||
+		!reflect.DeepEqual(beforeBalances, afterBalances) {
+		t.Fatal("UTC day rollover changed after Paper projection rebuild")
+	}
+}
+
 func TestPaperExecutorKeepsIncompleteAutomationDisabled(t *testing.T) {
 	tests := []struct {
 		name              string

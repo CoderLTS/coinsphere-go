@@ -338,6 +338,7 @@ func loadPaperRiskSnapshot(
 	balance db.PaperBalance,
 	knownPrices map[uuid.UUID]decimal.Decimal,
 ) (db.PaperBalance, decimal.Decimal, string, error) {
+	advancePaperDay(&balance, time.Now().UTC())
 	var positions []db.PaperPosition
 	if err := tx.Where("account_id = ?", account.ID).Find(&positions).Error; err != nil {
 		return balance, decimal.Zero, "", err
