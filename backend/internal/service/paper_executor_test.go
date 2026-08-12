@@ -210,6 +210,38 @@ func TestPaperExecutorPausesAfterRiskReducingFill(t *testing.T) {
 	assertRowCountGORM(t, fixture.database, &db.TradingEvent{}, "account_id = ?", fixture.accountID, 6)
 }
 
+func TestPaperExecutorExecutesQueuedAutoReductionAfterEmergencyStop(t *testing.T) {
+	fixture := newPaperExecutorFixture(t, "auto", true, true, true)
+	openSignal := fixture.insertSignal(t, "0.5", "paper")
+	openIntent := fixture.enqueueSignal(t, openSignal)
+	if processed, err := fixture.executor.ProcessNext(context.Background()); err != nil || !processed {
+		t.Fatalf("open Paper position before emergency stop: processed=%t err=%v", processed, err)
+	}
+	assertTradingIntentState(t, fixture.database, openIntent.ID, "executed", "")
+
+	reduceSignal := fixture.insertSignal(t, "0.25", "paper")
+	reduceIntent := fixture.enqueueSignal(t, reduceSignal)
+	principal := &Principal{User: &fixture.owner, AccessMode: "authenticated"}
+	if _, err := fixture.app.ActivateTradingEmergencyStop(
+		context.Background(), principal, "paper auto reduction test", "paper-auto-emergency-stop",
+	); err != nil {
+		t.Fatalf("activate Paper emergency stop: %v", err)
+	}
+	var instance db.StrategyInstance
+	if err := fixture.database.Where("id = ?", fixture.instanceID).Take(&instance).Error; err != nil {
+		t.Fatalf("load emergency-disabled Paper instance: %v", err)
+	}
+	if instance.IsEnabled {
+		t.Fatal("Paper auto instance remained enabled after emergency stop")
+	}
+
+	if processed, err := fixture.executor.ProcessNext(context.Background()); err != nil || !processed {
+		t.Fatalf("process queued Paper auto reduction: processed=%t err=%v", processed, err)
+	}
+	assertTradingIntentState(t, fixture.database, reduceIntent.ID, "executed", "")
+	assertPaperPositionQuantity(t, fixture.database, fixture.accountID, fixture.instrumentID, "2.5")
+}
+
 func TestPaperExecutorResetsDailyLossAtUTCDayBoundary(t *testing.T) {
 	fixture := newPaperExecutorFixtureForMarket(t, "manual", true, true, true, marketdata.MarketTypeUSDM)
 	previousDay := utcDay(time.Now().UTC()).Add(-24 * time.Hour)
