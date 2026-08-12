@@ -307,12 +307,8 @@ func validatePaperNotionalRisk(tx *gorm.DB, state paperExecutionState) (string, 
 		fee := orderNotional.Mul(*state.Account.PaperFeeRate)
 		projectedRiskBalance := riskBalance
 		projectedRiskBalance.Equity = projectedRiskBalance.Equity.Sub(fee)
-		if currentRiskBreached(state.Account, projectedRiskBalance) {
-			if state.Account.MaxDailyLoss != nil && projectedRiskBalance.DayStartEquity.Sub(projectedRiskBalance.Equity).
-				GreaterThanOrEqual(*state.Account.MaxDailyLoss) {
-				return "daily_loss_limit", nil
-			}
-			return "drawdown_limit", nil
+		if reason := paperRiskLimitReason(state.Account, projectedRiskBalance); reason != "" {
+			return reason, nil
 		}
 		if state.Account.Market == string(marketdata.MarketTypeSpot) && state.DeltaQty.IsPositive() &&
 			state.DeltaQty.Mul(state.Price).Add(fee).GreaterThan(state.Balance.CashBalance) {
@@ -423,7 +419,26 @@ func (executor *PaperExecutor) executePaperFill(tx *gorm.DB, state paperExecutio
 		InstrumentID: state.Intent.InstrumentID, EventType: "fee", Amount: &fee,
 		OccurredAt: now, DedupeKey: state.Intent.ID.String() + ":fee",
 	}
-	return executor.appendAndProjectEvent(tx, feeEvent)
+	if err := executor.appendAndProjectEvent(tx, feeEvent); err != nil || !state.ReduceOnly || state.Account.Status != "active" {
+		return err
+	}
+	var balance db.PaperBalance
+	if err := tx.Where("account_id = ?", state.Account.ID).Take(&balance).Error; err != nil {
+		return err
+	}
+	riskBalance, _, reason, err := loadPaperRiskSnapshot(
+		tx, state.Account, balance, map[uuid.UUID]decimal.Decimal{state.Instrument.ID: state.Price},
+	)
+	if err != nil {
+		return err
+	}
+	if reason == "" {
+		reason = paperRiskLimitReason(state.Account, riskBalance)
+	}
+	if reason != "" {
+		return pausePaperAccount(tx, state.Intent, reason)
+	}
+	return nil
 }
 
 func (executor *PaperExecutor) appendAndProjectEvent(tx *gorm.DB, event db.TradingEvent) error {
@@ -620,26 +635,40 @@ func recomputePaperBalance(tx *gorm.DB, account db.TradingAccount, balance *db.P
 }
 
 func blockPaperIntent(tx *gorm.DB, intent db.TradingIntent, reason string, pause bool) error {
-	now := time.Now().UTC()
 	if pause {
-		if err := tx.Model(&db.TradingAccount{}).Where("id = ?", intent.AccountID).Updates(map[string]any{
-			"status": "paused", "pause_reason": reason, "automation_enabled": false, "updated_at": now,
-		}).Error; err != nil {
-			return err
-		}
-		if err := disableAutoInstances(tx, &intent.AccountID, now); err != nil {
-			return err
-		}
-		outbox := db.DomainEventOutbox{
-			EventType: "trading.risk.paused", AggregateType: "trading_account", AggregateID: intent.AccountID.String(),
-			PayloadJSON:  dumpJSON(M{"accountId": intent.AccountID.String(), "intentId": intent.ID.String(), "reason": reason}),
-			MetadataJSON: "{}", Status: "pending", AvailableAt: now, CreatedAt: now, UpdatedAt: now,
-		}
-		if err := tx.Create(&outbox).Error; err != nil {
+		if err := pausePaperAccount(tx, intent, reason); err != nil {
 			return err
 		}
 	}
 	return finishPaperIntent(tx, intent, "blocked", reason)
+}
+
+func pausePaperAccount(tx *gorm.DB, intent db.TradingIntent, reason string) error {
+	now := time.Now().UTC()
+	if err := tx.Model(&db.TradingAccount{}).Where("id = ?", intent.AccountID).Updates(map[string]any{
+		"status": "paused", "pause_reason": reason, "automation_enabled": false, "updated_at": now,
+	}).Error; err != nil {
+		return err
+	}
+	if err := disableAutoInstances(tx, &intent.AccountID, now); err != nil {
+		return err
+	}
+	outbox := db.DomainEventOutbox{
+		EventType: "trading.risk.paused", AggregateType: "trading_account", AggregateID: intent.AccountID.String(),
+		PayloadJSON:  dumpJSON(M{"accountId": intent.AccountID.String(), "intentId": intent.ID.String(), "reason": reason}),
+		MetadataJSON: "{}", Status: "pending", AvailableAt: now, CreatedAt: now, UpdatedAt: now,
+	}
+	return tx.Create(&outbox).Error
+}
+
+func paperRiskLimitReason(account db.TradingAccount, balance db.PaperBalance) string {
+	if account.MaxDailyLoss == nil || account.MaxDrawdown == nil || !currentRiskBreached(account, balance) {
+		return ""
+	}
+	if balance.DayStartEquity.Sub(balance.Equity).GreaterThanOrEqual(*account.MaxDailyLoss) {
+		return "daily_loss_limit"
+	}
+	return "drawdown_limit"
 }
 
 func finishPaperIntent(tx *gorm.DB, intent db.TradingIntent, status, reason string) error {
