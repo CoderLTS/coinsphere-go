@@ -169,6 +169,7 @@
           v-if="
             selectedAccount.environment !== 'live' ||
             (selectedAccount.market === 'spot' && overview.capabilities.spotLiveAutoEnabled) ||
+            (selectedAccount.market === 'usd_m' && overview.capabilities.usdMLiveAutoEnabled) ||
             selectedAccount.automationAuthorized ||
             selectedAccount.automationEnabled ||
             selectedAccount.autoAuthorized
@@ -183,8 +184,10 @@
                 !isSuper ||
                 Boolean(commandLoading) ||
                 (selectedAccount.environment === 'live' &&
-                  (selectedAccount.market !== 'spot' ||
-                    !overview.capabilities.spotLiveAutoEnabled) &&
+                  ((selectedAccount.market === 'spot' &&
+                    !overview.capabilities.spotLiveAutoEnabled) ||
+                    (selectedAccount.market === 'usd_m' &&
+                      !overview.capabilities.usdMLiveAutoEnabled)) &&
                   !selectedAccount.automationAuthorized)
               "
               :loading="commandLoading === 'authorization'"
@@ -216,6 +219,7 @@
           <label
             v-if="
               (selectedAccount.market === 'spot' && overview.capabilities.spotLiveAutoEnabled) ||
+              (selectedAccount.market === 'usd_m' && overview.capabilities.usdMLiveAutoEnabled) ||
               selectedAccount.autoAuthorized
             "
           >
@@ -904,7 +908,8 @@
     capabilities: {
       spotLiveManualEnabled: false,
       spotLiveAutoEnabled: false,
-      usdMLiveManualEnabled: false
+      usdMLiveManualEnabled: false,
+      usdMLiveAutoEnabled: false
     },
     control: emptyControl(),
     accounts: [],
@@ -1104,7 +1109,8 @@
     if (account.automationEnabled) return false
     if (
       account.environment === 'live' &&
-      (account.market !== 'spot' || !overview.capabilities.spotLiveAutoEnabled)
+      ((account.market === 'spot' && !overview.capabilities.spotLiveAutoEnabled) ||
+        (account.market === 'usd_m' && !overview.capabilities.usdMLiveAutoEnabled))
     )
       return true
     return (

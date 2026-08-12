@@ -41,6 +41,7 @@ type TradingConfig struct {
 	SpotLiveManualEnabled    bool `yaml:"spot_live_manual_enabled"`
 	SpotLiveAutoEnabled      bool `yaml:"spot_live_auto_enabled"`
 	USDMLiveManualEnabled    bool `yaml:"usd_m_live_manual_enabled"`
+	USDMLiveAutoEnabled      bool `yaml:"usd_m_live_auto_enabled"`
 }
 
 // ServerConfig HTTP 服务配置。
@@ -278,6 +279,9 @@ func (c *AppConfig) Validate() error {
 	}
 	if c.Trading.SpotLiveAutoEnabled && !c.Trading.SpotLiveManualEnabled {
 		return fmt.Errorf("trading.spot_live_auto_enabled requires trading.spot_live_manual_enabled")
+	}
+	if c.Trading.USDMLiveAutoEnabled && !c.Trading.USDMLiveManualEnabled {
+		return fmt.Errorf("trading.usd_m_live_auto_enabled requires trading.usd_m_live_manual_enabled")
 	}
 	return nil
 }

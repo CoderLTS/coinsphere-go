@@ -2,7 +2,7 @@
 
 ## 当前边界
 
-生产发布构建和部署 Backend/Web、realtime/backtest 两个 Python Worker以及 Paper Executor。Worker 只消费 PostgreSQL 任务、产生信号和回测产物；当前生产配置保持 `trading.testnet_private_api_enabled=false`、`trading.spot_live_manual_enabled=false`、`trading.spot_live_auto_enabled=false` 和 `trading.usd_m_live_manual_enabled=false`，因此 Executor 只消费 Paper 意图并生成追加事件与投影，不调用交易所私有接口。Testnet、Spot Live 和 USD-M Live 私有运行时代码已交付但未进入生产放行；当前验收只覆盖 Paper 和离线契约，Binance 环境验证延期到全部开发完成后。CI、Codex 和自动部署不得注入凭据或修改这些开关。
+生产发布构建和部署 Backend/Web、realtime/backtest 两个 Python Worker以及 Paper Executor。Worker 只消费 PostgreSQL 任务、产生信号和回测产物；当前生产配置保持 `trading.testnet_private_api_enabled=false`、`trading.spot_live_manual_enabled=false`、`trading.spot_live_auto_enabled=false`、`trading.usd_m_live_manual_enabled=false` 和 `trading.usd_m_live_auto_enabled=false`，因此 Executor 只消费 Paper 意图并生成追加事件与投影，不调用交易所私有接口。Testnet、Spot Live 和 USD-M Live 私有运行时代码已交付但未进入生产放行；当前验收只覆盖 Paper 和离线契约，Binance 环境验证延期到全部开发完成后。CI、Codex 和自动部署不得注入凭据或修改这些开关。
 
 生产 Backend 通过主机 Secret 连接外部 PostgreSQL/TimescaleDB；应用启动只读校验 migration 版本。部署脚本停止 CoinSphere 服务、执行目标镜像内的 Up、启动固定 digest 镜像并检查健康状态，不自动执行 Down 或覆盖数据库。
 

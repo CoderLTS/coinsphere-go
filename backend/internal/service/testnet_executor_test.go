@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"coinsphere/backend/internal/config"
 	"coinsphere/backend/internal/db"
 	exchangebinance "coinsphere/backend/internal/exchange/binance"
 	"coinsphere/backend/internal/marketdata"
@@ -85,6 +86,51 @@ func TestTestnetExecutorExecutesDeterministicSpotAndUSDMOrders(t *testing.T) {
 				t.Fatalf("%s Testnet audit summary = %#v", market, audit)
 			}
 		})
+	}
+}
+
+func TestUSDMLiveAutoExecutorUsesReleaseGatesAndProtectiveOrder(t *testing.T) {
+	client := &scriptedTestnetOrderClient{}
+	fixture := newTestnetExecutorFixture(t, marketdata.MarketTypeUSDM, client)
+	fixture.base.app.Cfg = &config.AppConfig{Trading: config.TradingConfig{
+		USDMLiveManualEnabled: true,
+		USDMLiveAutoEnabled:   true,
+	}}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	if err := fixture.database.Model(&db.TradingAccount{}).Where("id = ?", fixture.account.ID).Updates(map[string]any{
+		"environment": "live", "automation_enabled": true,
+		"manual_authorized_at": now, "manual_authorized_by_user_id": fixture.account.OwnerUserID,
+		"automation_authorized_at": now, "automation_authorized_by_user_id": fixture.account.OwnerUserID,
+		"auto_authorized_at": now, "auto_authorized_by_user_id": fixture.account.OwnerUserID,
+		"updated_at": now,
+	}).Error; err != nil {
+		t.Fatalf("release USD-M Live auto account: %v", err)
+	}
+	if err := fixture.database.Model(&db.StrategyInstance{}).Where("id = ?", fixture.base.instanceID).Updates(map[string]any{
+		"environment": "live", "mode": "auto", "updated_at": now,
+	}).Error; err != nil {
+		t.Fatalf("enable USD-M Live auto instance: %v", err)
+	}
+	fixture.base.mode = "auto"
+	signal := fixture.base.insertSignal(t, "0.5", "live")
+	intent := fixture.base.enqueueSignal(t, signal)
+	client.place = func(call testnetOrderCall) (exchangebinance.OrderResult, error) {
+		return filledTestnetResult(call, 801), nil
+	}
+	executor, err := NewPrivateExecutor(
+		fixture.database, fixture.executor.cipher, client, "usdm-live-auto-test", "live", "usd_m", "auto", time.Millisecond,
+	)
+	if err != nil {
+		t.Fatalf("create USD-M Live auto executor: %v", err)
+	}
+
+	processTestnetSteps(t, executor, 2, "execute USD-M Live auto order")
+	assertTradingIntentState(t, fixture.database, intent.ID, "executed", "")
+	calls := client.snapshotCalls()
+	if len(calls) != 2 || calls[0].operation != "place" || calls[0].market != marketdata.MarketTypeUSDM ||
+		calls[0].side != "buy" || calls[0].reduceOnly || calls[1].operation != "protect" ||
+		calls[1].orderType != "stop_market" || !calls[1].closePosition || calls[1].workingType != "mark_price" {
+		t.Fatalf("USD-M Live auto calls = %#v", calls)
 	}
 }
 
