@@ -101,6 +101,38 @@ func TestPaperExecutorRecoveryEmergencyRiskAndProjectionReplay(t *testing.T) {
 	assertRowCountGORM(t, fixture.database, &db.TradingEvent{}, "account_id = ?", fixture.accountID, 6)
 }
 
+func TestPaperExecutorUSDMMarksOpenShortBeforeIncreasingRisk(t *testing.T) {
+	fixture := newPaperExecutorFixtureForMarket(t, "manual", true, true, true, marketdata.MarketTypeUSDM)
+	openSignal := fixture.insertSignal(t, "-0.5", "paper")
+	openIntent := fixture.enqueueSignal(t, openSignal)
+	if processed, err := fixture.executor.ProcessNext(context.Background()); err != nil || !processed {
+		t.Fatalf("open USD-M paper short: processed=%t err=%v", processed, err)
+	}
+	assertTradingIntentState(t, fixture.database, openIntent.ID, "executed", "")
+	assertPaperPositionQuantity(t, fixture.database, fixture.accountID, fixture.instrumentID, "-5")
+
+	if err := fixture.database.Model(&db.TradingAccount{}).Where("id = ?", fixture.accountID).
+		Update("max_daily_loss", decimal.RequireFromString("100")).Error; err != nil {
+		t.Fatalf("lower USD-M paper daily loss limit: %v", err)
+	}
+	if err := fixture.database.Exec(`
+UPDATE market_ticker_snapshots
+SET occurred_at = ?, last_price = 150, best_bid_price = 149.9, best_ask_price = 150.1
+WHERE venue = 'binance' AND instrument_id = ?
+`, time.Now().UTC(), fixture.instrumentID).Error; err != nil {
+		t.Fatalf("mark USD-M paper short against latest quote: %v", err)
+	}
+
+	increaseSignal := fixture.insertSignal(t, "-1", "paper")
+	increaseIntent := fixture.enqueueSignal(t, increaseSignal)
+	if processed, err := fixture.executor.ProcessNext(context.Background()); err != nil || !processed {
+		t.Fatalf("process USD-M paper risk breach: processed=%t err=%v", processed, err)
+	}
+	assertTradingIntentState(t, fixture.database, increaseIntent.ID, "blocked", "daily_loss_limit")
+	assertPaperPositionQuantity(t, fixture.database, fixture.accountID, fixture.instrumentID, "-5")
+	assertRowCountGORM(t, fixture.database, &db.PaperOrder{}, "account_id = ?", fixture.accountID, 1)
+}
+
 func TestPaperExecutorKeepsIncompleteAutomationDisabled(t *testing.T) {
 	tests := []struct {
 		name              string
