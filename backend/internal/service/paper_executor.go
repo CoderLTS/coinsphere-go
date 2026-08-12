@@ -294,54 +294,13 @@ func validatePaperNotionalRisk(tx *gorm.DB, state paperExecutionState) (string, 
 		if state.Account.MaxSymbolNotional == nil || targetNotional.GreaterThan(*state.Account.MaxSymbolNotional) {
 			return "symbol_notional_limit", nil
 		}
-		var positions []db.PaperPosition
-		if err := tx.Where("account_id = ?", state.Account.ID).Find(&positions).Error; err != nil {
-			return "", err
+		riskBalance, currentNotional, reason, err := loadPaperRiskSnapshot(
+			tx, state.Account, state.Balance, map[uuid.UUID]decimal.Decimal{state.Instrument.ID: state.Price},
+		)
+		if err != nil || reason != "" {
+			return reason, err
 		}
-		prices := map[uuid.UUID]decimal.Decimal{state.Instrument.ID: state.Price}
-		otherInstrumentIDs := make([]uuid.UUID, 0, len(positions))
-		for _, position := range positions {
-			if !position.Quantity.IsZero() && position.InstrumentID != state.Instrument.ID {
-				otherInstrumentIDs = append(otherInstrumentIDs, position.InstrumentID)
-			}
-		}
-		if len(otherInstrumentIDs) > 0 {
-			var quotes []struct {
-				InstrumentID uuid.UUID
-				OccurredAt   time.Time
-				LastPrice    decimal.Decimal
-			}
-			if err := tx.Table("market_ticker_snapshots").Select("instrument_id", "occurred_at", "last_price").Where(
-				"venue = ? AND instrument_id IN ?", marketdata.VenueBinance, otherInstrumentIDs,
-			).Find(&quotes).Error; err != nil {
-				return "", err
-			}
-			if len(quotes) != len(otherInstrumentIDs) {
-				return "quote_missing", nil
-			}
-			now := time.Now().UTC()
-			for _, quote := range quotes {
-				age := now.Sub(quote.OccurredAt.UTC())
-				if age < 0 || age > time.Duration(*state.Account.MaxQuoteAgeSeconds)*time.Second {
-					return "quote_stale", nil
-				}
-				prices[quote.InstrumentID] = quote.LastPrice
-			}
-		}
-		total := decimal.Zero
-		riskBalance := state.Balance
-		for _, position := range positions {
-			if position.Quantity.IsZero() {
-				continue
-			}
-			price := prices[position.InstrumentID]
-			riskBalance.Equity = riskBalance.Equity.Add(position.Quantity.Mul(price.Sub(position.LastPrice)))
-			if position.InstrumentID == state.Instrument.ID {
-				continue
-			}
-			total = total.Add(position.Quantity.Abs().Mul(price))
-		}
-		total = total.Add(targetNotional)
+		total := currentNotional.Sub(state.Position.Quantity.Abs().Mul(state.Price)).Add(targetNotional)
 		if state.Account.MaxTotalNotional == nil || total.GreaterThan(*state.Account.MaxTotalNotional) {
 			return "account_notional_limit", nil
 		}
@@ -371,6 +330,63 @@ func validatePaperNotionalRisk(tx *gorm.DB, state paperExecutionState) (string, 
 		return "order_below_minimum", nil
 	}
 	return "", nil
+}
+
+func loadPaperRiskSnapshot(
+	tx *gorm.DB,
+	account db.TradingAccount,
+	balance db.PaperBalance,
+	knownPrices map[uuid.UUID]decimal.Decimal,
+) (db.PaperBalance, decimal.Decimal, string, error) {
+	var positions []db.PaperPosition
+	if err := tx.Where("account_id = ?", account.ID).Find(&positions).Error; err != nil {
+		return balance, decimal.Zero, "", err
+	}
+	prices := make(map[uuid.UUID]decimal.Decimal, len(positions))
+	for instrumentID, price := range knownPrices {
+		prices[instrumentID] = price
+	}
+	missing := make([]uuid.UUID, 0, len(positions))
+	for _, position := range positions {
+		if !position.Quantity.IsZero() {
+			if _, ok := prices[position.InstrumentID]; !ok {
+				missing = append(missing, position.InstrumentID)
+			}
+		}
+	}
+	if len(missing) > 0 {
+		var quotes []struct {
+			InstrumentID uuid.UUID
+			OccurredAt   time.Time
+			LastPrice    decimal.Decimal
+		}
+		if err := tx.Table("market_ticker_snapshots").Select("instrument_id", "occurred_at", "last_price").Where(
+			"venue = ? AND instrument_id IN ?", marketdata.VenueBinance, missing,
+		).Find(&quotes).Error; err != nil {
+			return balance, decimal.Zero, "", err
+		}
+		if len(quotes) != len(missing) {
+			return balance, decimal.Zero, "quote_missing", nil
+		}
+		now := time.Now().UTC()
+		for _, quote := range quotes {
+			age := now.Sub(quote.OccurredAt.UTC())
+			if age < 0 || age > time.Duration(*account.MaxQuoteAgeSeconds)*time.Second {
+				return balance, decimal.Zero, "quote_stale", nil
+			}
+			prices[quote.InstrumentID] = quote.LastPrice
+		}
+	}
+	total := decimal.Zero
+	for _, position := range positions {
+		if position.Quantity.IsZero() {
+			continue
+		}
+		price := prices[position.InstrumentID]
+		balance.Equity = balance.Equity.Add(position.Quantity.Mul(price.Sub(position.LastPrice)))
+		total = total.Add(position.Quantity.Abs().Mul(price))
+	}
+	return balance, total, "", nil
 }
 
 func (executor *PaperExecutor) executePaperFill(tx *gorm.DB, state paperExecutionState) error {
