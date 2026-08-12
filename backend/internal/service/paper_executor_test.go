@@ -152,6 +152,32 @@ WHERE venue = 'binance' AND instrument_id = ?
 	}
 }
 
+func TestPaperExecutorBlocksFeeThatReachesDailyLossLimit(t *testing.T) {
+	fixture := newPaperExecutorFixtureForMarket(t, "manual", true, true, true, marketdata.MarketTypeUSDM)
+	if err := fixture.database.Model(&db.TradingAccount{}).Where("id = ?", fixture.accountID).
+		Update("max_daily_loss", decimal.RequireFromString("0.5")).Error; err != nil {
+		t.Fatalf("set Paper daily loss limit to order fee: %v", err)
+	}
+
+	signal := fixture.insertSignal(t, "0.5", "paper")
+	intent := fixture.enqueueSignal(t, signal)
+	if processed, err := fixture.executor.ProcessNext(context.Background()); err != nil || !processed {
+		t.Fatalf("process fee-limited Paper intent: processed=%t err=%v", processed, err)
+	}
+	assertTradingIntentState(t, fixture.database, intent.ID, "blocked", "daily_loss_limit")
+
+	var account db.TradingAccount
+	if err := fixture.database.Where("id = ?", fixture.accountID).Take(&account).Error; err != nil {
+		t.Fatalf("load fee-risk-paused Paper account: %v", err)
+	}
+	if account.Status != "paused" || account.PauseReason != "daily_loss_limit" {
+		t.Fatalf("fee-risk-paused Paper account = %#v", account)
+	}
+	assertRowCountGORM(t, fixture.database, &db.PaperOrder{}, "account_id = ?", fixture.accountID, 0)
+	assertRowCountGORM(t, fixture.database, &db.TradingEvent{}, "account_id = ?", fixture.accountID, 0)
+	assertRowCountGORM(t, fixture.database, &db.PaperPosition{}, "account_id = ?", fixture.accountID, 0)
+}
+
 func TestPaperExecutorResetsDailyLossAtUTCDayBoundary(t *testing.T) {
 	fixture := newPaperExecutorFixtureForMarket(t, "manual", true, true, true, marketdata.MarketTypeUSDM)
 	previousDay := utcDay(time.Now().UTC()).Add(-24 * time.Hour)

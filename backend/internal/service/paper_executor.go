@@ -304,14 +304,16 @@ func validatePaperNotionalRisk(tx *gorm.DB, state paperExecutionState) (string, 
 		if state.Account.MaxTotalNotional == nil || total.GreaterThan(*state.Account.MaxTotalNotional) {
 			return "account_notional_limit", nil
 		}
-		if currentRiskBreached(state.Account, riskBalance) {
-			if state.Account.MaxDailyLoss != nil && riskBalance.DayStartEquity.Sub(riskBalance.Equity).
+		fee := orderNotional.Mul(*state.Account.PaperFeeRate)
+		projectedRiskBalance := riskBalance
+		projectedRiskBalance.Equity = projectedRiskBalance.Equity.Sub(fee)
+		if currentRiskBreached(state.Account, projectedRiskBalance) {
+			if state.Account.MaxDailyLoss != nil && projectedRiskBalance.DayStartEquity.Sub(projectedRiskBalance.Equity).
 				GreaterThanOrEqual(*state.Account.MaxDailyLoss) {
 				return "daily_loss_limit", nil
 			}
 			return "drawdown_limit", nil
 		}
-		fee := orderNotional.Mul(*state.Account.PaperFeeRate)
 		if state.Account.Market == string(marketdata.MarketTypeSpot) && state.DeltaQty.IsPositive() &&
 			state.DeltaQty.Mul(state.Price).Add(fee).GreaterThan(state.Balance.CashBalance) {
 			return "insufficient_balance", nil
