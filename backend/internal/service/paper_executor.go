@@ -245,7 +245,7 @@ func loadAndValidatePaperExecution(tx *gorm.DB, intent db.TradingIntent) (paperE
 	state.TargetQty = quantizeTowardZero(state.TargetQty, state.Instrument.QuantityStep)
 	state.DeltaQty = state.TargetQty.Sub(state.Position.Quantity)
 	state.ReduceOnly = isPaperReduction(state.Position.Quantity, state.TargetQty)
-	if !state.Instance.IsEnabled && (!state.ReduceOnly ||
+	if !state.Instance.IsEnabled && (intent.Mode != "auto" || !state.ReduceOnly ||
 		(state.Account.Status == "active" && !state.Control.EmergencyStopped)) {
 		return state, "strategy_state_changed", false, nil
 	}
