@@ -212,7 +212,7 @@ func loadAndValidatePaperExecution(tx *gorm.DB, intent db.TradingIntent) (paperE
 		return state, "execution_binding_mismatch", true, nil
 	}
 	if state.Signal.StrategyInstanceID != intent.StrategyInstanceID || state.Signal.InstrumentID != intent.InstrumentID ||
-		state.Signal.Target.Cmp(intent.Target) != 0 || state.Signal.Mode != intent.Mode || !state.Instance.IsEnabled {
+		state.Signal.Target.Cmp(intent.Target) != 0 || state.Signal.Mode != intent.Mode {
 		return state, "strategy_state_changed", false, nil
 	}
 	if (intent.Mode == "manual" && state.Signal.Status != "approved") ||
@@ -245,6 +245,10 @@ func loadAndValidatePaperExecution(tx *gorm.DB, intent db.TradingIntent) (paperE
 	state.TargetQty = quantizeTowardZero(state.TargetQty, state.Instrument.QuantityStep)
 	state.DeltaQty = state.TargetQty.Sub(state.Position.Quantity)
 	state.ReduceOnly = isPaperReduction(state.Position.Quantity, state.TargetQty)
+	if !state.Instance.IsEnabled && (intent.Mode != "auto" || !state.ReduceOnly ||
+		(state.Account.Status == "active" && !state.Control.EmergencyStopped)) {
+		return state, "strategy_state_changed", false, nil
+	}
 	if !state.Position.Quantity.IsZero() && (state.Position.OwnerStrategyInstanceID == nil ||
 		*state.Position.OwnerStrategyInstanceID != intent.StrategyInstanceID) {
 		return state, "position_owner_conflict", true, nil
