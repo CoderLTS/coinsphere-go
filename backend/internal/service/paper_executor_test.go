@@ -131,6 +131,25 @@ WHERE venue = 'binance' AND instrument_id = ?
 	assertTradingIntentState(t, fixture.database, increaseIntent.ID, "blocked", "daily_loss_limit")
 	assertPaperPositionQuantity(t, fixture.database, fixture.accountID, fixture.instrumentID, "-5")
 	assertRowCountGORM(t, fixture.database, &db.PaperOrder{}, "account_id = ?", fixture.accountID, 1)
+
+	fixture.app.reauthTokens = map[string]reauthTokenRecord{}
+	fixture.app.revokedAccessTokens = map[string]time.Time{}
+	principal := &Principal{
+		User: &fixture.owner, AccessMode: "authenticated", AccessTokenID: "paper-resume-session",
+	}
+	resumeToken := fixture.app.issueReauthToken(principal, time.Now())
+	if _, err := fixture.app.ResumeTradingAccount(
+		context.Background(), principal, fixture.accountID.String(), "paper-risk-resume", resumeToken,
+	); err != ErrTradingAccountConflict {
+		t.Fatalf("resume USD-M paper account above daily loss limit: %v", err)
+	}
+	var account db.TradingAccount
+	if err := fixture.database.Where("id = ?", fixture.accountID).Take(&account).Error; err != nil {
+		t.Fatalf("load risk-paused USD-M paper account: %v", err)
+	}
+	if account.Status != "paused" || account.PauseReason != "daily_loss_limit" {
+		t.Fatalf("risk-paused USD-M paper account = %#v", account)
+	}
 }
 
 func TestPaperExecutorKeepsIncompleteAutomationDisabled(t *testing.T) {

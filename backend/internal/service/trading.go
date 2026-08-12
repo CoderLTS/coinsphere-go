@@ -622,7 +622,11 @@ func (a *App) ResumeTradingAccount(
 			if err := tx.Where("account_id = ?", row.ID).Take(&balance).Error; err != nil {
 				return err
 			}
-			if currentRiskBreached(row, balance) {
+			riskBalance, _, reason, err := loadPaperRiskSnapshot(tx, row, balance, nil)
+			if err != nil {
+				return err
+			}
+			if reason != "" || currentRiskBreached(row, riskBalance) {
 				return ErrTradingAccountConflict
 			}
 		} else {
