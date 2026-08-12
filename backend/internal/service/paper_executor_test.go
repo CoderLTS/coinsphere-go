@@ -178,6 +178,38 @@ func TestPaperExecutorBlocksFeeThatReachesDailyLossLimit(t *testing.T) {
 	assertRowCountGORM(t, fixture.database, &db.PaperPosition{}, "account_id = ?", fixture.accountID, 0)
 }
 
+func TestPaperExecutorPausesAfterRiskReducingFill(t *testing.T) {
+	fixture := newPaperExecutorFixtureForMarket(t, "manual", true, true, true, marketdata.MarketTypeUSDM)
+	openSignal := fixture.insertSignal(t, "0.5", "paper")
+	openIntent := fixture.enqueueSignal(t, openSignal)
+	if processed, err := fixture.executor.ProcessNext(context.Background()); err != nil || !processed {
+		t.Fatalf("open Paper position before risk reduction: processed=%t err=%v", processed, err)
+	}
+	assertTradingIntentState(t, fixture.database, openIntent.ID, "executed", "")
+
+	if err := fixture.database.Model(&db.TradingAccount{}).Where("id = ?", fixture.accountID).
+		Update("max_daily_loss", decimal.RequireFromString("0.75")).Error; err != nil {
+		t.Fatalf("set Paper daily loss limit to reduction fees: %v", err)
+	}
+	reduceSignal := fixture.insertSignal(t, "0.25", "paper")
+	reduceIntent := fixture.enqueueSignal(t, reduceSignal)
+	if processed, err := fixture.executor.ProcessNext(context.Background()); err != nil || !processed {
+		t.Fatalf("process risk-reducing Paper intent: processed=%t err=%v", processed, err)
+	}
+	assertTradingIntentState(t, fixture.database, reduceIntent.ID, "executed", "")
+	assertPaperPositionQuantity(t, fixture.database, fixture.accountID, fixture.instrumentID, "2.5")
+
+	var account db.TradingAccount
+	if err := fixture.database.Where("id = ?", fixture.accountID).Take(&account).Error; err != nil {
+		t.Fatalf("load Paper account after risk reduction: %v", err)
+	}
+	if account.Status != "paused" || account.PauseReason != "daily_loss_limit" || account.AutomationEnabled {
+		t.Fatalf("Paper account after risk reduction = %#v", account)
+	}
+	assertRowCountGORM(t, fixture.database, &db.PaperOrder{}, "account_id = ?", fixture.accountID, 2)
+	assertRowCountGORM(t, fixture.database, &db.TradingEvent{}, "account_id = ?", fixture.accountID, 6)
+}
+
 func TestPaperExecutorResetsDailyLossAtUTCDayBoundary(t *testing.T) {
 	fixture := newPaperExecutorFixtureForMarket(t, "manual", true, true, true, marketdata.MarketTypeUSDM)
 	previousDay := utcDay(time.Now().UTC()).Add(-24 * time.Hour)
