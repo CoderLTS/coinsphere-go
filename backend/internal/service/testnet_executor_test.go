@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"coinsphere/backend/internal/config"
 	"coinsphere/backend/internal/db"
 	exchangebinance "coinsphere/backend/internal/exchange/binance"
 	"coinsphere/backend/internal/marketdata"
@@ -85,6 +86,29 @@ func TestTestnetExecutorExecutesDeterministicSpotAndUSDMOrders(t *testing.T) {
 				t.Fatalf("%s Testnet audit summary = %#v", market, audit)
 			}
 		})
+	}
+}
+
+func TestUSDMLiveAutoExecutorUsesReleaseGatesAndProtectiveOrder(t *testing.T) {
+	client := &scriptedTestnetOrderClient{}
+	fixture := newPrivateExecutorFixture(t, marketdata.MarketTypeUSDM, client, "live", "auto")
+	fixture.base.app.Cfg = &config.AppConfig{Trading: config.TradingConfig{
+		USDMLiveManualEnabled: true,
+		USDMLiveAutoEnabled:   true,
+	}}
+	signal := fixture.base.insertSignal(t, "0.5", "live")
+	intent := fixture.base.enqueueSignal(t, signal)
+	client.place = func(call testnetOrderCall) (exchangebinance.OrderResult, error) {
+		return filledTestnetResult(call, 801), nil
+	}
+
+	processTestnetSteps(t, fixture.executor, 2, "execute USD-M Live auto order")
+	assertTradingIntentState(t, fixture.database, intent.ID, "executed", "")
+	calls := client.snapshotCalls()
+	if len(calls) != 2 || calls[0].operation != "place" || calls[0].market != marketdata.MarketTypeUSDM ||
+		calls[0].side != "buy" || calls[0].reduceOnly || calls[1].operation != "protect" ||
+		calls[1].orderType != "stop_market" || !calls[1].closePosition || calls[1].workingType != "mark_price" {
+		t.Fatalf("USD-M Live auto calls = %#v", calls)
 	}
 }
 
@@ -797,20 +821,36 @@ func newTestnetExecutorFixture(
 	client testnetOrderClient,
 ) testnetExecutorFixture {
 	t.Helper()
-	base := newPaperExecutorFixtureForMarket(t, "manual", true, true, true, market)
+	return newPrivateExecutorFixture(t, market, client, "testnet", "manual")
+}
+
+func newPrivateExecutorFixture(
+	t *testing.T,
+	market marketdata.MarketType,
+	client testnetOrderClient,
+	environment, mode string,
+) testnetExecutorFixture {
+	t.Helper()
+	base := newPaperExecutorFixtureForMarket(t, mode, true, true, true, market)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	accountUpdates := map[string]any{
-		"environment": "testnet", "updated_at": now,
+		"environment": environment, "updated_at": now,
+	}
+	if environment == "live" {
+		accountUpdates["manual_authorized_at"] = now
+		accountUpdates["manual_authorized_by_user_id"] = base.owner.ID
+		accountUpdates["auto_authorized_at"] = now
+		accountUpdates["auto_authorized_by_user_id"] = base.owner.ID
 	}
 	if err := base.database.Model(&db.TradingAccount{}).Where("id = ?", base.accountID).
 		Updates(accountUpdates).Error; err != nil {
-		t.Fatalf("convert account to %s Testnet: %v", market, err)
+		t.Fatalf("convert account to %s %s: %v", market, environment, err)
 	}
 	if err := base.database.Model(&db.StrategyInstance{}).Where("id = ?", base.instanceID).
 		Updates(map[string]any{
-			"environment": "testnet", "stop_loss_ratio": decimal.RequireFromString("0.05"), "updated_at": now,
+			"environment": environment, "stop_loss_ratio": decimal.RequireFromString("0.05"), "updated_at": now,
 		}).Error; err != nil {
-		t.Fatalf("convert strategy instance to Testnet: %v", err)
+		t.Fatalf("convert strategy instance to %s: %v", environment, err)
 	}
 	var account db.TradingAccount
 	if err := base.database.Where("id = ?", base.accountID).Take(&account).Error; err != nil {
@@ -846,7 +886,14 @@ func newTestnetExecutorFixture(
 	}).Error; err != nil {
 		t.Fatalf("create Testnet executor risk state: %v", err)
 	}
-	executor, err := NewTestnetExecutor(base.database, cipher, client, "testnet-test-worker", time.Millisecond)
+	var executor *TestnetExecutor
+	if environment == "testnet" {
+		executor, err = NewTestnetExecutor(base.database, cipher, client, "testnet-test-worker", time.Millisecond)
+	} else {
+		executor, err = NewPrivateExecutor(
+			base.database, cipher, client, environment+"-test-worker", environment, string(market), mode, time.Millisecond,
+		)
+	}
 	if err != nil {
 		t.Fatalf("create Testnet executor: %v", err)
 	}

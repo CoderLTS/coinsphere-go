@@ -43,6 +43,9 @@ func run(ctx context.Context, configPath, workerID string) (runErr error) {
 	if cfg.Trading.SpotLiveAutoEnabled && !cfg.Trading.SpotLiveManualEnabled {
 		return errors.New("trading.spot_live_auto_enabled requires trading.spot_live_manual_enabled")
 	}
+	if cfg.Trading.USDMLiveAutoEnabled && !cfg.Trading.USDMLiveManualEnabled {
+		return errors.New("trading.usd_m_live_auto_enabled requires trading.usd_m_live_manual_enabled")
+	}
 	if strings.TrimSpace(cfg.Database.DSN) == "" {
 		return errors.New("database DSN is required")
 	}
@@ -146,6 +149,13 @@ func run(ctx context.Context, configPath, workerID string) (runErr error) {
 			return err
 		}
 		runtimes = append(runtimes, verifier.Run, reconciler.Run, executor.Run)
+		if cfg.Trading.USDMLiveAutoEnabled {
+			autoExecutor, err := service.NewPrivateExecutor(gdb, cipher, privateClient, workerID+":live:usd_m:auto", "live", "usd_m", "auto", time.Second)
+			if err != nil {
+				return err
+			}
+			runtimes = append(runtimes, autoExecutor.Run)
+		}
 	}
 	return runTradingRuntime(ctx, runtimes)
 }

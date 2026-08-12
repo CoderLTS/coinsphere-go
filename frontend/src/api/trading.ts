@@ -253,6 +253,7 @@ export interface TradingOverview {
     spotLiveManualEnabled: boolean
     spotLiveAutoEnabled: boolean
     usdMLiveManualEnabled: boolean
+    usdMLiveAutoEnabled: boolean
   }
   control: TradingControl
   accounts: TradingAccount[]

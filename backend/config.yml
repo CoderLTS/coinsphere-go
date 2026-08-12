@@ -22,6 +22,8 @@ trading:
   spot_live_auto_enabled: false
   # USD-M Live manual is isolated from Spot and remains disabled until explicitly released.
   usd_m_live_manual_enabled: false
+  # USD-M Live auto also requires the manual switch and all persisted release gates.
+  usd_m_live_auto_enabled: false
 
 server:
   host: 0.0.0.0

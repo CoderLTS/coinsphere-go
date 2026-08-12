@@ -36,7 +36,7 @@
 | 交易 | `/api/v1/trading/*`、`/api/v1/admin/trading/*` |
 | 通知 | `/api/v1/notification-deliveries`、`/api/v1/ws/notifications` |
 
-交易路由管理 Paper/Testnet 账户、风险限额、自动化开关/授权、全局急停及其只读投影。`trading.spot_live_manual_enabled`、`trading.spot_live_auto_enabled` 和 `trading.usd_m_live_manual_enabled` 默认关闭；Spot auto 只有在 manual 同时启用时才有效，USD-M Live 只允许 manual。USD-M Live 账户必须保持逐仓、单向和配置的低杠杆，缺少任一对账证据时禁止执行。账户创建、风险修改、恢复、自动化切换、授权和急停命令都要求 `Idempotency-Key`；风险修改、账户恢复、启用自动化、管理员授权和解除急停还要求有效的 `X-Reauth-Token`。
+交易路由管理 Paper/Testnet 账户、风险限额、自动化开关/授权、全局急停及其只读投影。`trading.spot_live_manual_enabled`、`trading.spot_live_auto_enabled`、`trading.usd_m_live_manual_enabled` 和 `trading.usd_m_live_auto_enabled` 默认关闭；Spot/USD-M auto 只有在对应 manual 同时启用时才有效。USD-M Live manual/auto 账户必须保持逐仓、单向和配置的低杠杆，缺少任一对账证据时禁止执行。账户创建、风险修改、恢复、自动化切换、授权和急停命令都要求 `Idempotency-Key`；风险修改、账户恢复、启用自动化、管理员授权和解除急停还要求有效的 `X-Reauth-Token`。
 
 Testnet 或已启用的 Spot/USD-M Live 凭据通过 `PUT /api/v1/trading/accounts/{accountId}/credentials` 保存，通过 `POST /api/v1/trading/accounts/{accountId}/credentials/revoke` 撤销。两条命令同时要求 `Idempotency-Key` 和 `X-Reauth-Token`；保存还要求调用方明确确认已关闭提现并配置 IP 白名单。凭据使用应用主密钥加密，API 只返回配置与验证状态，永不返回 API Key、Secret 或密文。保存后的状态固定为 `unverified`，账户保持暂停且自动实例被关闭；后续对应环境的 Executor 验证凭据并完成首次对账前，账户不能恢复或启用执行。关闭能力开关后仍允许撤销已有 Live 凭据。
 
@@ -71,7 +71,7 @@ def on_bar(candles: Sequence[Candle], params: Mapping[str, JSONScalar]) -> Decim
 
 用户从已发布策略版本创建 `signal_only | manual | auto`、`paper | testnet | live` 两个维度的策略实例；新实例默认关闭。启用实例订阅对应 Binance 闭合 K 线，每个实例和 K 线只生成一条持久信号。实时 Worker 复用策略 `on_bar` 契约，并把信号与 `strategy.signal.created` Outbox 事件放在同一事务提交。
 
-`manual` 信号在下一根 K 线闭合时过期，每个策略实例最多保留一条 `active` 手动信号；延迟完成的旧 K 线信号直接记为 `expired`。批准和拒绝只允许信号 Owner 对仍处于 `active` 且未过期的手动信号执行；重复决策、越权和过期决策均拒绝。两类命令都要求 `Idempotency-Key`，同键同请求返回原结果，同键不同决策返回冲突；批准还要求当前登录会话签发、五分钟有效的 `X-Reauth-Token`。批准 Paper/Testnet 手动信号时在同一事务创建唯一交易意图；显式启用 Spot Live manual 后，只有已验证凭据、对账一致并由 Owner 再认证恢复的 Live 账户可创建 `live + spot + manual` 意图。自动信号由 Outbox 消费路径幂等创建同环境意图，但 Live auto 始终拒绝。两条路径都不直接创建订单或调用交易所。
+`manual` 信号在下一根 K 线闭合时过期，每个策略实例最多保留一条 `active` 手动信号；延迟完成的旧 K 线信号直接记为 `expired`。批准和拒绝只允许信号 Owner 对仍处于 `active` 且未过期的手动信号执行；重复决策、越权和过期决策均拒绝。两类命令都要求 `Idempotency-Key`，同键同请求返回原结果，同键不同决策返回冲突；批准还要求当前登录会话签发、五分钟有效的 `X-Reauth-Token`。批准 Paper/Testnet 手动信号时在同一事务创建唯一交易意图；显式启用 Spot/USD-M Live manual 后，只有已验证凭据、对账一致并由 Owner 再认证恢复的对应市场 Live 账户可创建 `live + market + manual` 意图。自动信号由 Outbox 消费路径幂等创建同环境意图；Live auto 只有在对应市场开关、manual 放行、管理员授权、Owner auto 放行、完整风控和匹配对账全部满足时才可创建。两条路径都不直接创建订单或调用交易所。
 
 信号事件由 Go App 按固定规则幂等投递到站内通知，以及 Owner 已启用的钉钉机器人、QQ Bot 和 SMTP 渠道。每个信号和渠道最多一条投递记录：成功后重放跳过，失败由同一 Outbox 退避重试；某个通知渠道失败不得阻止已匹配工作流入队。站内通知列表返回信号模式、状态和过期时间，通知 WebSocket 只作实时提示，持久记录仍是离线与重连后的事实源。普通领域事件继续由工作流通知节点编排。
 
@@ -99,7 +99,7 @@ Paper 只追加 `order/fill/fee/funding` 事件，订单、仓位、余额和盈
 
 Testnet 私有访问默认关闭。显式启用后，只有 Go Executor 会解密凭据，并向 Spot `/api/v3/account`、`/api/v3/openOrders`、`/api/v3/order` 与 USD-M `/fapi/v3/account`、`/fapi/v1/openOrders`、`/fapi/v1/order` 发送带 UTC `timestamp`、`recvWindow` 和 HMAC-SHA256 签名的请求。API Key 只进入 `X-MBX-APIKEY` 请求头；认证、权限、限流、时钟偏差、协议和网络失败只保存固定脱敏错误码。
 
-Spot Live 使用独立的默认关闭开关和 Binance Live Spot 客户端。`spot_live_manual_enabled` 装配 Spot manual；`spot_live_auto_enabled` 只有在 manual 同时启用时才额外装配按 `mode=auto` 隔离的 Executor。`usd_m_live_manual_enabled` 装配独立的 USD-M Live manual 客户端，USD-M auto 没有装配路径。Live manual 要求账户处于 active、凭据已验证、对账 matched、风控完整、无急停并有 Owner 手工恢复；USD-M 对账还必须持续确认逐仓、单向、低杠杆、标记价和强平距离。Spot auto 另要求管理员 `automation_authorized_at`、Owner `automation_enabled` 和独立的 `auto_authorized_at` 全部有效。凭据/风控变化、对账暂停、急停、Owner 关闭或管理员撤销会清除 Owner auto 放行并关闭自动策略实例；保护单与紧急平仓不依赖已被清除的放行记录。CI、Codex、自动部署和工作流不得提供 Live 凭据、启用开关或发起私有请求；Binance 环境验证延期到全部开发完成后。
+Spot Live 使用独立的默认关闭开关和 Binance Live Spot 客户端。`spot_live_manual_enabled` 装配 Spot manual；`spot_live_auto_enabled` 只有在 manual 同时启用时才额外装配按 `mode=auto` 隔离的 Executor。`usd_m_live_manual_enabled` 装配独立的 USD-M Live manual 客户端，`usd_m_live_auto_enabled` 只有在 manual 同时启用时才额外装配按 `mode=auto` 隔离的 Executor。Live manual 要求账户处于 active、凭据已验证、对账 matched、风控完整、无急停并有 Owner 手工恢复；USD-M 对账还必须持续确认逐仓、单向、低杠杆、标记价和强平距离。Spot/USD-M auto 另要求管理员 `automation_authorized_at`、Owner `automation_enabled` 和独立的 `auto_authorized_at` 全部有效。凭据/风控变化、对账暂停、急停、Owner 关闭或管理员撤销会清除 Owner auto 放行并关闭自动策略实例；保护单与紧急平仓不依赖已被清除的放行记录。CI、Codex、自动部署和工作流不得提供 Live 凭据、启用开关或发起私有请求；Binance 环境验证延期到全部开发完成后。
 
 凭据验证成功后，Executor 把余额、USD-M 仓位和开放订单写入绑定当前凭据版本的独立 Testnet 投影。首次快照中的开放订单、非白名单资产、Spot 既有持仓、USD-M 既有仓位或双向持仓模式仍形成固定 `mismatch`；外部协议或网络失败形成 `unknown`。只有 `matched` 允许用户手工恢复账户，后台对账不会自动启用自动化、修改外部订单或创建交易意图；凭据或风险白名单变化会清空旧投影并重新暂停账户。
 

@@ -325,6 +325,7 @@ type TradingCapabilitiesView struct {
 	SpotLiveManualEnabled bool `json:"spotLiveManualEnabled"`
 	SpotLiveAutoEnabled   bool `json:"spotLiveAutoEnabled"`
 	USDMLiveManualEnabled bool `json:"usdMLiveManualEnabled"`
+	USDMLiveAutoEnabled   bool `json:"usdMLiveAutoEnabled"`
 }
 
 type validatedTradingRisk struct {
@@ -524,8 +525,7 @@ func (a *App) SetTradingAutomation(
 			Where("id = ? AND owner_user_id = ?", accountID, principal.User.ID).Take(&row).Error; err != nil {
 			return tradingAccountLookupError(err)
 		}
-		if row.Environment == "live" && enabled &&
-			(!a.spotLiveAutoEnabled() || row.Market != string(marketdata.MarketTypeSpot)) {
+		if row.Environment == "live" && enabled && !a.liveAutoEnabled(row.Market) {
 			return ErrTradingExecutionUnavailable
 		}
 		_, reused, err := a.reserveIdempotencyRecord(
@@ -671,8 +671,7 @@ func (a *App) SetTradingAuthorization(
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", accountID).Take(&row).Error; err != nil {
 			return tradingAccountLookupError(err)
 		}
-		if row.Environment == "live" && authorized &&
-			(!a.spotLiveAutoEnabled() || row.Market != string(marketdata.MarketTypeSpot)) {
+		if row.Environment == "live" && authorized && !a.liveAutoEnabled(row.Market) {
 			return ErrTradingExecutionUnavailable
 		}
 		_, reused, err := a.reserveIdempotencyRecord(
@@ -823,7 +822,7 @@ func (a *App) GetTradingOverview(ctx context.Context, userID int64) (TradingOver
 	result := TradingOverviewView{
 		Capabilities: TradingCapabilitiesView{
 			SpotLiveManualEnabled: a.spotLiveManualEnabled(), SpotLiveAutoEnabled: a.spotLiveAutoEnabled(),
-			USDMLiveManualEnabled: a.usdmLiveManualEnabled(),
+			USDMLiveManualEnabled: a.usdmLiveManualEnabled(), USDMLiveAutoEnabled: a.usdmLiveAutoEnabled(),
 		},
 		Control: serializeTradingControl(control), Accounts: []TradingAccountView{}, Intents: []TradingIntentView{},
 		Orders: []PaperOrderView{}, Positions: []PaperPositionView{}, Balances: []PaperBalanceView{},
@@ -941,7 +940,7 @@ func (a *App) createTradingIntentForSignalWithDB(database *gorm.DB, signal db.St
 	if signal.Environment != "paper" && signal.Environment != "testnet" &&
 		!(signal.Environment == "live" &&
 			((signal.Mode == "manual" && (a.spotLiveManualEnabled() || a.usdmLiveManualEnabled())) ||
-				(signal.Mode == "auto" && a.spotLiveAutoEnabled()))) {
+				(signal.Mode == "auto" && (a.spotLiveAutoEnabled() || a.usdmLiveAutoEnabled())))) {
 		if strict {
 			return ErrTradingExecutionUnavailable
 		}
@@ -983,8 +982,8 @@ func (a *App) createTradingIntentForSignalWithDB(database *gorm.DB, signal db.St
 	}
 	if signal.Environment == "live" && (!a.liveManualEnabled(account.Market) ||
 		account.ManualAuthorizedAt == nil || account.Status != "active" ||
-		(signal.Mode == "auto" && (account.Market != string(marketdata.MarketTypeSpot) ||
-			!account.AutomationEnabled || account.AutomationAuthorizedAt == nil || account.AutoAuthorizedAt == nil))) {
+		(signal.Mode == "auto" && (!a.liveAutoEnabled(account.Market) || !account.AutomationEnabled ||
+			account.AutomationAuthorizedAt == nil || account.AutoAuthorizedAt == nil))) {
 		if strict {
 			return ErrTradingExecutionUnavailable
 		}
@@ -1175,7 +1174,7 @@ func (a *App) validateStrategyInstanceExecutionReady(database *gorm.DB, instance
 		}
 	}
 	if instance.Environment == "live" && (!a.liveManualEnabled(account.Market) ||
-		(instance.Mode == "auto" && (account.Market != string(marketdata.MarketTypeSpot) || !a.spotLiveAutoEnabled())) ||
+		(instance.Mode == "auto" && !a.liveAutoEnabled(account.Market)) ||
 		(instance.Mode != "manual" && instance.Mode != "auto") ||
 		account.ManualAuthorizedAt == nil) {
 		return ErrTradingExecutionUnavailable
@@ -1661,9 +1660,18 @@ func (a *App) usdmLiveManualEnabled() bool {
 	return a != nil && a.Cfg != nil && a.Cfg.Trading.USDMLiveManualEnabled
 }
 
+func (a *App) usdmLiveAutoEnabled() bool {
+	return a.usdmLiveManualEnabled() && a.Cfg.Trading.USDMLiveAutoEnabled
+}
+
 func (a *App) liveManualEnabled(market string) bool {
 	return (market == string(marketdata.MarketTypeSpot) && a.spotLiveManualEnabled()) ||
 		(market == string(marketdata.MarketTypeUSDM) && a.usdmLiveManualEnabled())
+}
+
+func (a *App) liveAutoEnabled(market string) bool {
+	return (market == string(marketdata.MarketTypeSpot) && a.spotLiveAutoEnabled()) ||
+		(market == string(marketdata.MarketTypeUSDM) && a.usdmLiveAutoEnabled())
 }
 
 func utcDay(value time.Time) time.Time {
