@@ -298,19 +298,55 @@ func validatePaperNotionalRisk(tx *gorm.DB, state paperExecutionState) (string, 
 		if err := tx.Where("account_id = ?", state.Account.ID).Find(&positions).Error; err != nil {
 			return "", err
 		}
-		total := decimal.Zero
+		prices := map[uuid.UUID]decimal.Decimal{state.Instrument.ID: state.Price}
+		otherInstrumentIDs := make([]uuid.UUID, 0, len(positions))
 		for _, position := range positions {
+			if !position.Quantity.IsZero() && position.InstrumentID != state.Instrument.ID {
+				otherInstrumentIDs = append(otherInstrumentIDs, position.InstrumentID)
+			}
+		}
+		if len(otherInstrumentIDs) > 0 {
+			var quotes []struct {
+				InstrumentID uuid.UUID
+				OccurredAt   time.Time
+				LastPrice    decimal.Decimal
+			}
+			if err := tx.Table("market_ticker_snapshots").Select("instrument_id", "occurred_at", "last_price").Where(
+				"venue = ? AND instrument_id IN ?", marketdata.VenueBinance, otherInstrumentIDs,
+			).Find(&quotes).Error; err != nil {
+				return "", err
+			}
+			if len(quotes) != len(otherInstrumentIDs) {
+				return "quote_missing", nil
+			}
+			now := time.Now().UTC()
+			for _, quote := range quotes {
+				age := now.Sub(quote.OccurredAt.UTC())
+				if age < 0 || age > time.Duration(*state.Account.MaxQuoteAgeSeconds)*time.Second {
+					return "quote_stale", nil
+				}
+				prices[quote.InstrumentID] = quote.LastPrice
+			}
+		}
+		total := decimal.Zero
+		riskBalance := state.Balance
+		for _, position := range positions {
+			if position.Quantity.IsZero() {
+				continue
+			}
+			price := prices[position.InstrumentID]
+			riskBalance.Equity = riskBalance.Equity.Add(position.Quantity.Mul(price.Sub(position.LastPrice)))
 			if position.InstrumentID == state.Instrument.ID {
 				continue
 			}
-			total = total.Add(position.Quantity.Abs().Mul(position.LastPrice))
+			total = total.Add(position.Quantity.Abs().Mul(price))
 		}
 		total = total.Add(targetNotional)
 		if state.Account.MaxTotalNotional == nil || total.GreaterThan(*state.Account.MaxTotalNotional) {
 			return "account_notional_limit", nil
 		}
-		if currentRiskBreached(state.Account, state.Balance) {
-			if state.Account.MaxDailyLoss != nil && state.Balance.DayStartEquity.Sub(state.Balance.Equity).
+		if currentRiskBreached(state.Account, riskBalance) {
+			if state.Account.MaxDailyLoss != nil && riskBalance.DayStartEquity.Sub(riskBalance.Equity).
 				GreaterThanOrEqual(*state.Account.MaxDailyLoss) {
 				return "daily_loss_limit", nil
 			}
@@ -323,7 +359,7 @@ func validatePaperNotionalRisk(tx *gorm.DB, state paperExecutionState) (string, 
 		}
 		if state.Account.Market == string(marketdata.MarketTypeUSDM) {
 			if state.Account.Leverage == nil || total.Div(decimal.NewFromInt(int64(*state.Account.Leverage))).
-				Add(fee).GreaterThan(state.Balance.Equity) {
+				Add(fee).GreaterThan(riskBalance.Equity) {
 				return "insufficient_margin", nil
 			}
 		}
