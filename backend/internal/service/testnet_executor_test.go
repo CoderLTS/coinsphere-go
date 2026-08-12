@@ -886,13 +886,14 @@ func newPrivateExecutorFixture(
 	}).Error; err != nil {
 		t.Fatalf("create Testnet executor risk state: %v", err)
 	}
-	executorMode := ""
-	if environment == "live" {
-		executorMode = mode
+	var executor *TestnetExecutor
+	if environment == "testnet" {
+		executor, err = NewTestnetExecutor(base.database, cipher, client, "testnet-test-worker", time.Millisecond)
+	} else {
+		executor, err = NewPrivateExecutor(
+			base.database, cipher, client, environment+"-test-worker", environment, string(market), mode, time.Millisecond,
+		)
 	}
-	executor, err := NewPrivateExecutor(
-		base.database, cipher, client, environment+"-test-worker", environment, string(market), executorMode, time.Millisecond,
-	)
 	if err != nil {
 		t.Fatalf("create Testnet executor: %v", err)
 	}
