@@ -74,7 +74,7 @@ jobs:
               case "$file" in
                 backend/*) backend=true ;;
                 frontend/*) frontend=true ;;
-                scripts/release/*|deploy/production/*|.github/workflows/release.yml) release=true ;;
+                scripts/release/*|deploy/production/*|.github/workflows/deploy.yml|.github/workflows/release.yml) release=true ;;
                 worker/*) worker=true ;;
                 .github/workflows/ci.yml)
                   backend=true

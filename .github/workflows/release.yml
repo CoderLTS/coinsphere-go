@@ -1,6 +1,15 @@
 name: Release and deploy
 
 on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      deploy_only:
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       version:
@@ -17,7 +26,7 @@ concurrency:
 
 jobs:
   release:
-    name: Build, publish and deploy
+    name: Build and deploy
     runs-on: [self-hosted, Linux, X64, coinsphere-release, production]
     environment: production
     timeout-minutes: 60
@@ -33,7 +42,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          [[ "$GITHUB_REF" == "refs/heads/main" ]] || { echo "只能从 main 手工发布" >&2; exit 1; }
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || { echo "只能从 main 手工发布或部署" >&2; exit 1; }
           [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || { echo "版本号必须符合 vX.Y.Z 格式" >&2; exit 1; }
           git fetch --quiet origin main --tags
           [[ "$(git rev-parse HEAD)" == "$(git rev-parse origin/main)" ]] || { echo "当前 Commit 不是最新 main" >&2; exit 1; }
@@ -143,6 +152,7 @@ jobs:
           retention-days: 14
 
       - name: Upload draft GitHub Release
+        if: inputs.deploy_only != true
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: ${{ inputs.version }}
@@ -159,6 +169,7 @@ jobs:
         run: bash scripts/release/deploy-dpanel-stack.sh "$VERSION" dist/release-manifest.json
 
       - name: Publish GitHub Release
+        if: inputs.deploy_only != true
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: ${{ inputs.version }}
