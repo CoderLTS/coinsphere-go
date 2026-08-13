@@ -61,7 +61,7 @@ Windows/Linux 包内的 Web 目录需要 Nginx 或等价 Web Server 托管，并
 
 1. 确认目标代码已合并到最新 `main`，CI、安全检查和迁移说明已通过；涉及数据库时先创建并验证 PostgreSQL 备份。
 2. 在 GitHub Actions 手工运行 `Deploy`，选择 `main`，输入不会与 Release Tag 冲突的部署版本号（例如 `v0.2.0-deploy.1`）。
-3. 工作流复用发布流程完成构建、SBOM、镜像与归档扫描、Manifest 校验和固定 digest 部署，并保留 14 天 Artifact，但不创建 GitHub Release。
+3. 工作流复用发布流程完成三份镜像构建、CRITICAL 镜像扫描、Manifest 校验和固定 digest 部署；Deploy 不构建 Windows/Linux/Compose 归档，不生成 SBOM，不上传 Artifact，也不创建 GitHub Release。
 4. 按“手工发布”第 7 步检查五个 CoinSphere 服务和全局急停状态。
 
 ## 失败与回滚

@@ -1,15 +1,24 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-VERSION=${1:?用法: build.sh vX.Y.Z COMMIT_SHA [OUTPUT_DIR]}
-COMMIT_SHA=${2:?用法: build.sh vX.Y.Z COMMIT_SHA [OUTPUT_DIR]}
+VERSION=${1:?用法: build.sh vX.Y.Z COMMIT_SHA [OUTPUT_DIR] [release|images-only]}
+COMMIT_SHA=${2:?用法: build.sh vX.Y.Z COMMIT_SHA [OUTPUT_DIR] [release|images-only]}
 OUTPUT_DIR=${3:-dist}
+BUILD_MODE=${4:-release}
 REGISTRY=${COINSPHERE_REGISTRY:-127.0.0.1:5000}
 GO_PROXY=${COINSPHERE_GO_PROXY:-https://goproxy.cn,direct}
 BUILDER=${COINSPHERE_BUILDER:-coinsphere-release}
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 OUTPUT_DIR=$(mkdir -p "$OUTPUT_DIR" && cd "$OUTPUT_DIR" && pwd)
 DOCKER_CONFIG_FILE="${DOCKER_CONFIG:-${HOME:?HOME 未设置}/.docker}/config.json"
+
+case "$BUILD_MODE" in
+  release|images-only) ;;
+  *)
+    echo "build mode must be release or images-only: $BUILD_MODE" >&2
+    exit 2
+    ;;
+esac
 
 HTTP_PROXY=${HTTP_PROXY:-${http_proxy:-}}
 HTTPS_PROXY=${HTTPS_PROXY:-${https_proxy:-}}
@@ -29,7 +38,11 @@ if [[ ! $BUILDER =~ ^[0-9A-Za-z][0-9A-Za-z_.-]*$ ]]; then
   echo "Buildx Builder 名称无效: $BUILDER" >&2
   exit 2
 fi
-for command_name in docker jq zip tar gzip sha256sum; do
+required_commands=(docker jq)
+if [[ $BUILD_MODE == release ]]; then
+  required_commands+=(zip tar gzip sha256sum)
+fi
+for command_name in "${required_commands[@]}"; do
   command -v "$command_name" >/dev/null || { echo "缺少命令: $command_name" >&2; exit 3; }
 done
 if [[ -f $DOCKER_CONFIG_FILE ]]; then
@@ -104,6 +117,7 @@ run_buildx --load \
   -t "$worker_image" -t "$REGISTRY/coinsphere/worker:$sha_tag" \
   "$ROOT_DIR/worker"
 
+if [[ $BUILD_MODE == release ]]; then
 run_buildx \
   --build-arg TARGETOS=linux --build-arg TARGETARCH=amd64 --build-arg "GOPROXY=$GO_PROXY" \
   --target binaries --output "type=local,dest=$work_dir/linux" "$ROOT_DIR/backend"
@@ -145,6 +159,8 @@ tar "${tar_options[@]}" -C "$work_dir/packages" -cf - "$linux_name" |
 tar "${tar_options[@]}" -C "$work_dir/packages" -cf - "$docker_name" |
   gzip -n >"$OUTPUT_DIR/$docker_name.tar.gz"
 
+fi
+
 docker push "$backend_image"
 docker push "$REGISTRY/coinsphere/backend:$sha_tag"
 docker push "$web_image"
@@ -168,4 +184,6 @@ cat >"$OUTPUT_DIR/release-manifest.json" <<EOF
 }
 EOF
 
-(cd "$OUTPUT_DIR" && sha256sum ./*.zip ./*.tar.gz ./release-manifest.json >SHA256SUMS)
+if [[ $BUILD_MODE == release ]]; then
+  (cd "$OUTPUT_DIR" && sha256sum ./*.zip ./*.tar.gz ./release-manifest.json >SHA256SUMS)
+fi
