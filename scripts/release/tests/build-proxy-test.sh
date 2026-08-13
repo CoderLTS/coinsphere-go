@@ -168,6 +168,31 @@ for proxy_value in "$EXPECTED_HTTP_PROXY" "$EXPECTED_HTTPS_PROXY" "$EXPECTED_NO_
   fi
 done
 
+: >"$BUILD_DOCKER_ALL_LOG"
+: >"$BUILD_DOCKER_BUILD_LOG"
+images_only_output="$TEST_DIR/images-only-output"
+DOCKER_CONFIG="$TEST_DIR/docker-clean" \
+COINSPHERE_BUILDER=coinsphere-images-only-test \
+bash "$ROOT_DIR/scripts/release/build.sh" \
+  v1.2.3 0123456789abcdef0123456789abcdef01234567 "$images_only_output" images-only
+
+if [[ $(wc -l <"$BUILD_DOCKER_BUILD_LOG") -ne 3 ]]; then
+  echo "images-only should run three Buildx image builds" >&2
+  exit 1
+fi
+if [[ $(find "$images_only_output" -maxdepth 1 -type f | wc -l) -ne 1 ]] ||
+  [[ ! -f "$images_only_output/release-manifest.json" ]]; then
+  echo "images-only should only produce release-manifest.json" >&2
+  exit 1
+fi
+jq -e '
+  .version == "v1.2.3" and
+  .commit == "0123456789abcdef0123456789abcdef01234567" and
+  (.backendDigest | test("@sha256:[0-9]{64}$")) and
+  (.webDigest | test("@sha256:[0-9]{64}$")) and
+  (.workerDigest | test("@sha256:[0-9]{64}$"))
+' "$images_only_output/release-manifest.json" >/dev/null
+
 mkdir -p "$TEST_DIR/docker-global"
 cat >"$TEST_DIR/docker-global/config.json" <<'EOF'
 {"auths":{},"proxies":{"default":{"httpProxy":"http://127.0.0.1:17890"}}}
