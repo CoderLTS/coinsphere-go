@@ -1,52 +1,109 @@
-# coinsphere-go
+# CoinSphere
 
-coinsphere 的 Go 版整合仓库:Go 后端(单二进制)+ Vue 前端。
+CoinSphere 是面向个人自托管和少量受邀用户的 Binance 低频量化平台。项目采用模块化单体架构，在一套系统内提供后台管理、RBAC、工作流、行情、策略、回测、信号和受控交易能力。
 
+> 当前正式验收边界是 Paper 模拟交易和离线契约。Testnet、Spot Live 与 USD-M Live 的私有运行时代码已经实现，但默认关闭，也未完成 Binance 环境晋级；部署完成不等于允许真实交易。
+
+## 当前能力
+
+| 能力 | 当前入口 | 状态 |
+| --- | --- | --- |
+| 登录、用户、角色、菜单 | Web | 可用，不开放公开注册 |
+| 工作流定义、任务定义、执行记录 | Web | 可用，仅负责粗粒度编排 |
+| 新闻、推送、AI 模型、智能体、通知渠道 | Web | 可用 |
+| Paper 账户、风控、持仓、订单、意图和账本 | Web | 可用，推荐的个人使用方式 |
+| Binance 品种、K 线、自选 | `/api/v1` | 后端已实现，Web 尚无完整操作页 |
+| 策略、回测、实时信号和人工决策 | `/api/v1` | 后端已实现，Web 尚无完整操作页 |
+| Testnet、Spot Live、USD-M Live | Web + `/api/v1` | 默认关闭，尚未生产放行 |
+
+详细操作见[使用手册](docs/user-guide.md)，接口语义见[公共契约](docs/contracts/README.md)。
+
+## 架构
+
+```mermaid
+flowchart LR
+    WEB["Vue Web"] --> APP["单实例 Go App"]
+    APP --> DB["PostgreSQL / TimescaleDB"]
+    APP --> PUBLIC["Binance 公共行情 API"]
+    APP --> CHANNELS["站内 / 钉钉 / QQ / SMTP"]
+    DB --> WORKER["Python realtime / backtest Worker"]
+    DB --> EXECUTOR["Go Executor"]
+    EXECUTOR --> PRIVATE["Binance 私有交易 API\n默认关闭"]
+    WORKER --> ARTIFACTS["本地回测产物"]
 ```
-backend/    Go 后端 —— 单进程内运行 HTTP API + 工作流调度/执行/事件分发(详见 backend/README.md)
-frontend/   Vue 3 + Vite 前端(原 fronted/,权限走 backend 模式)
-worker/     Python 3.12 量化 Worker(A1 PostgreSQL 租约、心跳、恢复与取消)
+
+Go App 负责 API、认证/RBAC、工作流、公共行情、信号协调和通知；Worker 负责实时策略计算与回测；Executor 是唯一允许访问交易所私有接口的组件。所有组件通过 PostgreSQL/TimescaleDB 协作，不依赖 Redis、消息中间件或 Kubernetes。完整设计见[架构说明](docs/architecture/overview.md)。
+
+## 快速启动
+
+推荐使用 Docker Compose。需要 Docker Engine 或 Docker Desktop，并支持 Compose v2。
+
+Linux/macOS：
+
+```bash
+export COINSPHERE_AUTH__SECRET_KEY="$(openssl rand -hex 32)"
+docker compose up -d --build
+docker compose ps
+```
+
+PowerShell：
+
+```powershell
+$bytes = New-Object byte[] 32
+[Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+$env:COINSPHERE_AUTH__SECRET_KEY = [BitConverter]::ToString($bytes).Replace('-', '').ToLowerInvariant()
+docker compose up -d --build
+docker compose ps
+```
+
+浏览器打开 <http://localhost:8080>。初始超级管理员是 `coinsphere` / `coinsphere`；首次登录后立即在“用户管理”中修改密码。`COINSPHERE_AUTH__SECRET_KEY` 必须长期保持一致，变更后已有登录令牌会失效。
+
+Compose 会启动 `timescaledb`、一次性 `migrate`、`backend`、`executor`、两条 Worker 通道和 `web`。停止服务不会删除数据：
+
+```bash
+docker compose down
+```
+
+完整安装、首次配置、备份和排障步骤见[使用手册](docs/user-guide.md)。
+
+## 目录
+
+```text
+backend/             Go App、Executor、迁移和领域模块
+frontend/            Vue 3 + Vite Web
+worker/              Python 实时计算与回测 Worker
+deploy/production/   生产 Compose 模板
+docs/                架构、契约、路线图、质量门禁和 Runbook
+scripts/             验证、发布和部署脚本
 ```
 
 ## 开发
 
-准备一个 PostgreSQL/TimescaleDB 空库后，两个终端分别启动：
+本地工具链为 Go 1.26、Node.js 24、pnpm 10.33、Python 3.12、uv 和 PostgreSQL/TimescaleDB。全量验证：
 
 ```powershell
-# 1) 后端（默认读 backend/config.yml，监听 :6987）
-cd backend
-$env:COINSPHERE_DATABASE__DSN = 'postgresql://coinsphere:test-only@127.0.0.1:5432/coinsphere?sslmode=disable'
-$env:COINSPHERE_AUTH__SECRET_KEY = 'local-random-secret'
-go run ./cmd/migrate -config ./config.yml -direction up
-go build -o coinsphere-server.exe .
-.\coinsphere-server.exe
-
-# 2) 前端(:3006,dev 代理把请求转发到 http://127.0.0.1:6987)
-cd frontend
-pnpm install
-pnpm dev
+.\scripts\verify.ps1
 ```
-
-Migration 建立完整 schema，后端首次启动只写种子数据。默认超管账号为 `coinsphere` / `coinsphere`，首登后必须尽快改密；可用 `COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD` 指定强初始密码。
-
-## 开发 Compose(Docker 一键起)
-
-拓扑：`web`（Nginx）托管前端 dist 并反代 Backend；Backend、一次性 `migrate` 和 Python Worker 通过内部网络共享固定版本的 TimescaleDB。
-前端生产环境 `VITE_API_URL = /`,与 nginx 同源,故无需改前端代码。
 
 ```bash
-# 必须先给一个签名密钥(未设置则 compose 直接报错):
-export COINSPHERE_AUTH__SECRET_KEY=$(openssl rand -hex 32)
-docker compose up -d --build
-# 浏览器打开 http://localhost:8080,默认超管 coinsphere / coinsphere(首登后尽快改密)
+./scripts/verify.sh
 ```
 
-- 入口只有 `web`(默认 `8080`,可用 `COINSPHERE_WEB_PORT` 改);`backend` 不对外暴露,仅经 nginx 反代。
-- A1 `worker` 使用 PostgreSQL 租约消费任务，健康状态为 `a1-postgres`；不开放端口、不挂载业务数据卷、不持有交易凭据。
-- 持久化：TimescaleDB（`timescale-data` 卷）、上传文件（`backend-uploads`）、后端静态（`backend-static`）。
-- 数据库只支持 PostgreSQL/TimescaleDB；直接运行时通过 `COINSPHERE_DATABASE__DSN` 注入 DSN，Compose 已提供开发专用 DSN。
-- 前端使用项目自带的 `pnpm build`，包含 `vue-tsc` 类型检查。
+按模块启动与诊断见[本地开发手册](docs/runbooks/development.md)，数据库变更见[迁移手册](docs/runbooks/database-migrations.md)。
 
-> 说明:Go 后端只在 `/static/`、`/uploads/` 提供文件，并在 `/api/v1`、`/api/v1/ws`、`/health` 提供接口；**不在根路径托管 SPA**，由 nginx 托管前端并反代后端。
+## 文档
 
-数据库配置与迁移规则见 `backend/README.md` 和 `docs/runbooks/database-migrations.md`。
+- [使用手册](docs/user-guide.md)：安装、页面操作、Paper、备份、升级和排障
+- [架构说明](docs/architecture/overview.md)：系统边界、组件职责和关键数据流
+- [公共契约](docs/contracts/README.md)：`/api/v1` 接口和交易安全语义
+- [路线图](docs/roadmap/README.md)：能力依赖、里程碑和退出条件
+- [质量门禁](docs/quality/quality-gates.md)：测试与验收要求
+- [发布与回滚](docs/runbooks/release.md)：手工发布、固定 digest 部署和回滚
+
+## 安全边界
+
+- 不把真实 API Key、Secret、令牌、DSN 或生产配置提交到仓库、日志、Issue、PR 或 AI 上下文。
+- Codex、CI 和工作流不接触真实交易密钥，不启用 Live 开关，也不解除全局急停。
+- 工作流和通用 HTTP 节点不能调用交易所私有接口、创建交易命令或绕过风控。
+- 新交易能力默认关闭；缺少完整风控、匹配对账、管理员授权或 Owner 手工放行时保持禁用。
+- 个人部署应优先使用 Paper。启用任何私有交易能力前，先完成对应路线图门禁和独立安全评审。
