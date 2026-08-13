@@ -13,6 +13,7 @@ interface WorkflowPayload {
 }
 
 const createdAt = '2026-08-01T00:00:00Z'
+const accessToken = `header.${Buffer.from(JSON.stringify({ exp: 4102444800 })).toString('base64url')}.signature`
 
 const productionCsp = readFileSync(new URL('../nginx.conf', import.meta.url), 'utf8').match(
   /add_header Content-Security-Policy "([^"]+)" always;/
@@ -135,7 +136,7 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
 
     if (method === 'POST' && path === '/api/v1/auth/login') {
       if (accessMode === 'authenticated') {
-        await fulfillApi(route, { accessToken: 'playwright-access-token' })
+        await fulfillApi(route, { accessToken })
         return
       }
       await route.fulfill({
@@ -152,7 +153,7 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
       return
     }
     if (method === 'GET' && path === '/api/v1/me') {
-      const hasTestSession = request.headers().authorization === 'Bearer playwright-access-token'
+      const hasTestSession = request.headers().authorization === `Bearer ${accessToken}`
       if (accessMode === 'authenticated' && hasTestSession) {
         await fulfillApi(route, userInfo('authenticated'))
         return

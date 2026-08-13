@@ -44,6 +44,20 @@ export function decodeNotificationWsEnvelope(
 
 const NOTIFICATION_WS_PROTOCOL = 'coinsphere.notifications.v1'
 
+function accessTokenExpiresAt(accessToken: string) {
+  try {
+    const payload = accessToken.split('.')[1]
+    const base64 = payload
+      .replace(/-/g, '+')
+      .replace(/_/g, '/')
+      .padEnd(Math.ceil(payload.length / 4) * 4, '=')
+    const { exp } = JSON.parse(atob(base64)) as { exp?: unknown }
+    return typeof exp === 'number' && Number.isSafeInteger(exp) ? exp * 1000 : 0
+  } catch {
+    return 0
+  }
+}
+
 export function buildNotificationWsUrl(pageOrigin: string) {
   const url = new URL('/api/v1/ws/notifications', pageOrigin)
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
@@ -66,6 +80,7 @@ export const useNotificationStore = defineStore('notificationStore', () => {
 
   let socket: WebSocket | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  let sessionExpiryTimer: ReturnType<typeof setTimeout> | null = null
   let manualClose = false
   let lastSequence = 0
 
@@ -193,6 +208,12 @@ export const useNotificationStore = defineStore('notificationStore', () => {
     if (userStore.accessMode !== 'authenticated' || !userStore.accessToken) {
       return
     }
+    const accessToken = userStore.accessToken
+    const expiresAt = accessTokenExpiresAt(accessToken)
+    if (expiresAt <= Date.now()) {
+      userStore.clearSession()
+      return
+    }
     if (
       socket &&
       (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)
@@ -201,9 +222,15 @@ export const useNotificationStore = defineStore('notificationStore', () => {
     }
     manualClose = false
     lastSequence = 0
+    if (sessionExpiryTimer) clearTimeout(sessionExpiryTimer)
+    sessionExpiryTimer = setTimeout(() => {
+      if (userStore.accessToken !== accessToken) return
+      disconnect()
+      userStore.clearSession()
+    }, expiresAt - Date.now())
     const currentSocket = new WebSocket(buildNotificationWsUrl(window.location.origin), [
       NOTIFICATION_WS_PROTOCOL,
-      userStore.accessToken
+      accessToken
     ])
     socket = currentSocket
     currentSocket.onopen = () => {
@@ -247,6 +274,10 @@ export const useNotificationStore = defineStore('notificationStore', () => {
     if (reconnectTimer) {
       clearTimeout(reconnectTimer)
       reconnectTimer = null
+    }
+    if (sessionExpiryTimer) {
+      clearTimeout(sessionExpiryTimer)
+      sessionExpiryTimer = null
     }
     if (socket) {
       socket.close()

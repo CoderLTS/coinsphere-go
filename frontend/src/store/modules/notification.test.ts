@@ -1,11 +1,12 @@
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useNotificationStore } from './notification'
 
 const userStore = vi.hoisted(() => ({
   accessMode: 'authenticated' as 'authenticated' | 'guest',
-  accessToken: 'header.payload.signature'
+  accessToken: '',
+  clearSession: vi.fn()
 }))
 
 vi.mock('./user', () => ({ useUserStore: () => userStore }))
@@ -57,14 +58,31 @@ class FakeWebSocket {
 
 const occurredAt = '2026-08-03T08:00:00.123456789Z'
 
+function accessTokenExpiringAt(exp: number) {
+  const payload = btoa(JSON.stringify({ exp }))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '')
+  return `header.${payload}.signature`
+}
+
 describe('notification websocket', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     FakeWebSocket.instances = []
     userStore.accessMode = 'authenticated'
-    userStore.accessToken = 'header.payload.signature'
+    userStore.accessToken = accessTokenExpiringAt(Math.floor(Date.now() / 1000) + 3600)
+    userStore.clearSession.mockReset()
+    userStore.clearSession.mockImplementation(() => {
+      userStore.accessMode = 'guest'
+      userStore.accessToken = ''
+    })
     vi.stubGlobal('window', { location: { origin: 'https://app.example:8443' } })
     vi.stubGlobal('WebSocket', FakeWebSocket)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('使用页面同源 URL 并消费 version=1 的递增信封', () => {
@@ -163,6 +181,24 @@ describe('notification websocket', () => {
       data: { unreadCount: 5 }
     })
     expect(store.unreadCount).toBe(5)
+  })
+
+  it('令牌到期时结束会话且不再重连', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-13T10:00:00Z'))
+    userStore.accessToken = accessTokenExpiringAt(Math.floor(Date.now() / 1000) + 1)
+    const store = useNotificationStore()
+    store.connect()
+    const socket = FakeWebSocket.instances[0]
+    socket.open()
+
+    vi.advanceTimersByTime(1000)
+    socket.finishClose()
+    vi.advanceTimersByTime(3000)
+
+    expect(userStore.clearSession).toHaveBeenCalledOnce()
+    expect(store.connected).toBe(false)
+    expect(FakeWebSocket.instances).toHaveLength(1)
   })
 
   it('人工决策后同步更新本地信号状态', () => {
