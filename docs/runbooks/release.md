@@ -6,7 +6,7 @@
 
 生产 Backend 通过主机 Secret 连接外部 PostgreSQL/TimescaleDB；应用启动只读校验 migration 版本。部署脚本停止 CoinSphere 服务、执行目标镜像内的 Up、启动固定 digest 镜像并检查健康状态，不自动执行 Down 或覆盖数据库。
 
-发布只能由用户从最新 `main` 手工触发。GitHub Actions、Codex、普通应用角色和工作流不得接触真实交易所密钥、发起真实订单或解除急停。当前私有仓库套餐不提供强制 Environment reviewer，`workflow_dispatch`、`main` 校验和用户审查是现行门禁。
+发布和部署只能由用户从最新 `main` 手工触发。GitHub Actions、Codex、普通应用角色和工作流不得接触真实交易所密钥、发起真实订单或解除急停。当前私有仓库套餐不提供强制 Environment reviewer，`workflow_dispatch`、`main` 校验和用户审查是现行门禁。
 
 ## 生产位置
 
@@ -56,6 +56,13 @@
 首次接入失败时脚本停止候选 Executor 并恢复此前已部署的服务。数据库 schema、`trading_events` 和现有投影全部保留，不执行 Down；若投影不一致，修复后由 Executor 从追加事件重建，禁止删除事件来回滚。
 
 Windows/Linux 包内的 Web 目录需要 Nginx 或等价 Web Server 托管，并反向代理到 Backend；它们不是桌面应用。
+
+## 手工部署（不创建 Release）
+
+1. 确认目标代码已合并到最新 `main`，CI、安全检查和迁移说明已通过；涉及数据库时先创建并验证 PostgreSQL 备份。
+2. 在 GitHub Actions 手工运行 `Deploy`，选择 `main`，输入不会与 Release Tag 冲突的部署版本号（例如 `v0.2.0-deploy.1`）。
+3. 工作流复用发布流程完成构建、SBOM、镜像与归档扫描、Manifest 校验和固定 digest 部署，并保留 14 天 Artifact，但不创建 GitHub Release。
+4. 按“手工发布”第 7 步检查五个 CoinSphere 服务和全局急停状态。
 
 ## 失败与回滚
 
