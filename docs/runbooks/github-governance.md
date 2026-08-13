@@ -1,6 +1,6 @@
 # GitHub 仓库治理手册
 
-用户明确要求交付并授权外部同步时，Codex 可以推送 `codex/*` 分支并创建 Draft PR，但不能合并；仅分析、复审、状态报告或本地整理请求不推送、不建 PR。仓库为私有且当前套餐不提供完整 Branch Protection/Environment required reviewers，因此用户审查、手工合并、最新 `main` 校验和最终只读复审是现阶段补偿控制。
+用户明确要求交付并授权外部同步时，Codex 可以推送 `codex/*` 分支并创建 PR；用户在当前任务进一步明确授权合并后，Codex 可以在 CI 全绿和最终只读复审通过后合并。仅分析、复审、状态报告或本地整理请求不推送、不建 PR。仓库为私有且当前套餐不提供完整 Branch Protection/Environment required reviewers，因此当前任务授权、最新 `main` 校验和最终只读复审是现阶段补偿控制。
 
 ## 动态进度
 
@@ -13,7 +13,7 @@
 
 - 分支使用 `codex/<phase>-<slug>`，PR 标题使用 `[type] 中文描述`。
 - 独立 PR 以 `main` 为 base；stacked PR 在依赖未合并时保持 Draft 并指向父分支。所有 Ready PR 必须以 `main` 为 base。
-- CI 通过后由 Codex 完成一次最终只读复审；用户检查代码、migration、风险、回滚和证据后手工合并。
+- CI 通过后由 Codex 完成一次最终只读复审；默认由用户检查代码、migration、风险、回滚和证据后合并，用户在当前任务明确授权时可由 Codex 合并。
 - 交易能力需要独立阶段放行。代码合并或部署不等于允许 Paper、Testnet 或 Live 运行。
 
 ## Actions 与发布权限
@@ -23,10 +23,10 @@
 - Deploy Workflow 为复用 Release Workflow 保留 `contents: write`，但跳过 GitHub Release 创建步骤。
 - 交易所密钥、SSH 私钥和生产数据库凭据不得进入 Actions Secret；私有 Registry 凭据只保存在生产 Runner 本机。
 - Fork PR 不运行持有写权限或高权限 Secret 的步骤。
-- 生产发布和部署仅允许用户从最新 `main` 手工触发。进入 Live 前按发布 Runbook 分离构建与固定部署器。
+- 生产 Release/Deploy 默认不触发；用户在当前任务明确授权后，Codex 可从最新 `main` 触发既有 `workflow_dispatch` 并监控验证。进入 Live 前按发布 Runbook 分离构建与固定部署器。
 
 ## 依赖与清理
 
 - Renovate 只创建依赖 PR，不自动合并；每周检查被阻塞或存在安全公告的更新。
-- 用户合并后，确认 PR 为 `MERGED`、远端 `main` 已包含提交且分支未被活跃 worktree 使用，再删除对应本地和远端分支。
+- PR 合并后，确认状态为 `MERGED`、远端 `main` 已包含提交且分支未被活跃 worktree 使用，再删除对应本地和远端分支。
 - 不得删除 `main`、未合并分支、历史 Issue/Milestone 或版本 Tag。

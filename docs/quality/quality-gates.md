@@ -19,6 +19,6 @@ Security workflow 在 `main` 和每周计划任务运行 Secret、Go、Python �
 
 ## 发布
 
-Release 和 Deploy 只能由用户从最新 `main` 手工触发。Release 构建固定版本和 digest，生成三份 SBOM，扫描镜像和归档并校验 Manifest/SHA-256；Deploy 复用镜像构建、CRITICAL 扫描、Manifest 校验和固定 digest 部署，但跳过归档、SBOM、归档扫描、Artifact 和 GitHub Release。生产流程不得接触真实交易所密钥、自动下单、启用真实策略或解除急停。
+Release 和 Deploy 默认不触发；用户在当前任务明确授权后，Codex 可从最新 `main` 触发既有工作流并监控验证。Release 构建固定版本和 digest，生成三份 SBOM，扫描镜像和归档并校验 Manifest/SHA-256；Deploy 复用镜像构建、CRITICAL 扫描、Manifest 校验和固定 digest 部署，但跳过归档、SBOM、归档扫描、Artifact 和 GitHub Release。生产流程不得接触真实交易所密钥、自动下单、启用真实策略或解除急停。
 
 Migration 的冻结点、Up/Down 安全和备份恢复见[数据库迁移手册](../runbooks/database-migrations.md)；发布故障处理见[发布手册](../runbooks/release.md)。

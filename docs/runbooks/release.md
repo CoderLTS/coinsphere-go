@@ -6,7 +6,7 @@
 
 生产 Backend 通过主机 Secret 连接外部 PostgreSQL/TimescaleDB；应用启动只读校验 migration 版本。部署脚本停止 CoinSphere 服务、执行目标镜像内的 Up、启动固定 digest 镜像并检查健康状态，不自动执行 Down 或覆盖数据库。
 
-发布和部署只能由用户从最新 `main` 手工触发。GitHub Actions、Codex、普通应用角色和工作流不得接触真实交易所密钥、发起真实订单或解除急停。当前私有仓库套餐不提供强制 Environment reviewer，`workflow_dispatch`、`main` 校验和用户审查是现行门禁。
+Release 和 Deploy 默认不触发；用户在当前任务明确授权后，Codex 可从最新 `main` 触发既有 `workflow_dispatch` 并监控验证。GitHub Actions、Codex、普通应用角色和工作流不得接触真实交易所密钥、发起真实订单或解除急停。当前私有仓库套餐不提供强制 Environment reviewer，当前任务授权、`workflow_dispatch`、`main` 校验和最终只读复审是现行门禁。
 
 ## 生产位置
 
