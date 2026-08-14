@@ -76,6 +76,10 @@ func NormalizeInstrumentSnapshot(payload []byte, marketType marketdata.MarketTyp
 	seen := make(map[string]struct{}, len(response.Symbols))
 	updatedAt := time.Now().UTC()
 	for _, source := range response.Symbols {
+		// USD-M exchangeInfo 也包含交割合约、非 USDT 合约和 TradFi 合约，不属于当前领域市场。
+		if marketType == marketdata.MarketTypeUSDM && (source.ContractType != "PERPETUAL" || source.QuoteAsset != "USDT") {
+			continue
+		}
 		// Binance 会列出领域代码契约无法表示的 Unicode 营销币对；其余协议错误仍整批拒绝。
 		if strings.ContainsFunc(source.Symbol+source.BaseAsset+source.QuoteAsset, func(character rune) bool { return character > unicode.MaxASCII }) {
 			continue

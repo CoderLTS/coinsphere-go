@@ -151,6 +151,19 @@ func TestNormalizeInstrumentSnapshotSkipsUnsupportedUnicodeCodes(t *testing.T) {
 	}
 }
 
+func TestNormalizeInstrumentSnapshotSkipsUnsupportedUSDMContracts(t *testing.T) {
+	payload := bytes.Replace(
+		readFixture(t, "instruments_usd_m.json"),
+		[]byte(`"symbols":[`),
+		[]byte(`"symbols":[{"symbol":"ETHUSDT_260925","quoteAsset":"USDT","contractType":"CURRENT_QUARTER"},{"symbol":"BTCUSDC","quoteAsset":"USDC","contractType":"PERPETUAL"},{"symbol":"AAPLUSDT","quoteAsset":"USDT","contractType":"TRADIFI_PERPETUAL"},`),
+		1,
+	)
+	metadata, err := NormalizeInstrumentSnapshot(payload, marketdata.MarketTypeUSDM)
+	if err != nil || len(metadata) != 1 || metadata[0].NativeSymbol != "BTCUSDT" {
+		t.Fatalf("normalized metadata = %#v, err=%v", metadata, err)
+	}
+}
+
 func TestSourceWebSocketReconnectCancelAndClosedDeduplication(t *testing.T) {
 	instrument := testInstrument(t, marketdata.MarketTypeSpot, "019c2f6d-7c00-7000-8000-000000000001")
 	openPayload := readFixture(t, "candle_1m_event.json")
