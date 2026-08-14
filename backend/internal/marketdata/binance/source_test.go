@@ -26,8 +26,14 @@ func TestSourceRESTRoutingAndCursor(t *testing.T) {
 		paths = append(paths, request.URL.Path)
 		switch request.URL.Path {
 		case "/api/v3/exchangeInfo":
+			if request.URL.Query().Get("showPermissionSets") != "false" {
+				t.Errorf("unexpected spot exchangeInfo query: %s", request.URL.RawQuery)
+			}
 			writeFixture(response, "instruments_spot.json")
 		case "/fapi/v1/exchangeInfo":
+			if request.URL.RawQuery != "" {
+				t.Errorf("unexpected USD-M exchangeInfo query: %s", request.URL.RawQuery)
+			}
 			writeFixture(response, "instruments_usd_m.json")
 		case "/api/v3/klines":
 			query := request.URL.Query()
@@ -129,6 +135,19 @@ func TestSourceDefaultResponseLimitCoversLargeInstrumentSnapshot(t *testing.T) {
 	}
 	if len(body) != len(payload) {
 		t.Fatalf("large instrument snapshot length = %d, want %d", len(body), len(payload))
+	}
+}
+
+func TestNormalizeInstrumentSnapshotSkipsUnsupportedUnicodeCodes(t *testing.T) {
+	payload := bytes.Replace(
+		readFixture(t, "instruments_spot.json"),
+		[]byte(`"symbols":[`),
+		[]byte(`"symbols":[{"symbol":"\u5e01\u5b89\u4eba\u751fUSDT","baseAsset":"\u5e01\u5b89\u4eba\u751f","quoteAsset":"USDT"},`),
+		1,
+	)
+	metadata, err := NormalizeInstrumentSnapshot(payload, marketdata.MarketTypeSpot)
+	if err != nil || len(metadata) != 1 || metadata[0].NativeSymbol != "BTCUSDT" {
+		t.Fatalf("normalized metadata = %#v, err=%v", metadata, err)
 	}
 }
 
