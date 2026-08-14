@@ -179,7 +179,11 @@ func (source *Source) SnapshotInstruments(ctx context.Context, marketType market
 	if err := validateMarketType(marketType); err != nil {
 		return nil, err
 	}
-	body, err := source.get(ctx, marketType, "/exchangeInfo")
+	query := url.Values{}
+	if marketType == marketdata.MarketTypeSpot {
+		query.Set("showPermissionSets", "false")
+	}
+	body, err := source.get(ctx, marketType, "/exchangeInfo", query)
 	if err != nil {
 		return nil, err
 	}

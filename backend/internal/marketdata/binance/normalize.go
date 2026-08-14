@@ -7,7 +7,9 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
+	"unicode"
 
 	"coinsphere/backend/internal/marketdata"
 	"github.com/shopspring/decimal"
@@ -74,6 +76,10 @@ func NormalizeInstrumentSnapshot(payload []byte, marketType marketdata.MarketTyp
 	seen := make(map[string]struct{}, len(response.Symbols))
 	updatedAt := time.Now().UTC()
 	for _, source := range response.Symbols {
+		// Binance 会列出领域代码契约无法表示的 Unicode 营销币对；其余协议错误仍整批拒绝。
+		if strings.ContainsFunc(source.Symbol+source.BaseAsset+source.QuoteAsset, func(character rune) bool { return character > unicode.MaxASCII }) {
+			continue
+		}
 		item, err := normalizeInstrument(source, marketType, updatedAt)
 		if err != nil {
 			return nil, err
