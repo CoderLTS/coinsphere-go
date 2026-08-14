@@ -1,6 +1,6 @@
 module coinsphere/backend
 
-go 1.26
+go 1.26.6
 
 require (
 	github.com/fernet/fernet-go v0.0.0-20240119011108-303da6aec611

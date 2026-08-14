@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # coinsphere Go 后端:多阶段构建 → 服务与迁移静态二进制。
 # 构建上下文 = ./backend
-FROM golang:1.26-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS build
+FROM golang:1.26.6-alpine@sha256:af8d6740070b8906d12eae1c3e3ea0957fb63f492051ea05e354c38ef9fe88df AS build
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 ARG GOPROXY=https://proxy.golang.org,direct

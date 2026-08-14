@@ -24,7 +24,7 @@ function Resolve-Go {
 
     $candidates = @(
         $(if ($env:GOROOT) { Join-Path $env:GOROOT 'bin\go.exe' }),
-        $(if ($env:USERPROFILE) { Join-Path $env:USERPROFILE 'go\go1.26.5\bin\go.exe' })
+        $(if ($env:USERPROFILE) { Join-Path $env:USERPROFILE 'go\go1.26.6\bin\go.exe' })
     ) | Where-Object { $_ }
     foreach ($candidate in $candidates) {
         if (Test-Path -LiteralPath $candidate) {
