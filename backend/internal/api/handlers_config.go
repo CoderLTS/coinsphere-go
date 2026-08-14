@@ -500,6 +500,10 @@ func notificationWebSocketToken(r *http.Request) (string, bool) {
 
 // handleNotificationsWS 建立只回显固定协议的通知连接。
 func (s *Server) handleNotificationsWS(w http.ResponseWriter, r *http.Request) {
+	if !checkWebSocketOrigin(r) {
+		writeProblem(w, r, http.StatusForbidden, "websocket origin forbidden")
+		return
+	}
 	token, ok := notificationWebSocketToken(r)
 	if !ok {
 		writeProblem(w, r, http.StatusUnauthorized, "invalid websocket authentication")
