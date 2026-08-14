@@ -112,6 +112,19 @@ func TestWebSocketUpgraderEnforcesOrigin(t *testing.T) {
 	}
 }
 
+func TestNotificationWebSocketRejectsCrossOriginBeforeAuthentication(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "http://app.example/api/v1/ws/notifications", nil)
+	r.Header.Set("Origin", "http://evil.example")
+	r.Header.Set("Sec-WebSocket-Protocol", notificationsWebSocketProtocol+", invalid.test.token")
+	w := httptest.NewRecorder()
+
+	(&Server{}).handleNotificationsWS(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin handshake status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+}
+
 func TestNotificationWebSocketTokenContract(t *testing.T) {
 	tests := []struct {
 		name       string
