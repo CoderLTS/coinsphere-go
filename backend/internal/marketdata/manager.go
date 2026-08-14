@@ -85,7 +85,7 @@ func (manager *Manager) Run(ctx context.Context) error {
 
 		if !metadataReady {
 			if err := manager.syncInstruments(ctx); err != nil {
-				slog.WarnContext(ctx, "market metadata sync failed", "error_category", "external_data")
+				slog.WarnContext(ctx, "market metadata sync failed", "error_category", "external_data", "error", err)
 			} else {
 				metadataReady = true
 			}

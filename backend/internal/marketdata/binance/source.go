@@ -24,6 +24,7 @@ const (
 
 	defaultReconnectBackoff    = 250 * time.Millisecond
 	defaultMaxReconnectBackoff = 5 * time.Second
+	defaultHTTPTimeout         = 60 * time.Second
 	defaultResponseLimit       = 32 << 20
 )
 
@@ -105,7 +106,7 @@ func NewSource(config SourceConfig) (*Source, error) {
 
 	httpClient := config.HTTPClient
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 15 * time.Second}
+		httpClient = &http.Client{Timeout: defaultHTTPTimeout}
 	}
 	dialer := config.WebSocketDialer
 	if dialer == nil {
