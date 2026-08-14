@@ -81,6 +81,7 @@ jobs:
                   frontend=true
                   release=true
                   worker=true
+                  full=true
                   ;;
               esac
             done < <(git diff --name-only --diff-filter=ACMRTD "$BASE_SHA" "$HEAD_SHA")
