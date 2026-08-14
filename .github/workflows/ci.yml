@@ -384,6 +384,7 @@ jobs:
       - changes
       - backend
       - browser-smoke
+      - containers
       - frontend
       - release
       - worker
@@ -406,5 +407,6 @@ jobs:
           require_selected "${{ needs.changes.outputs.backend }}" "${{ needs.backend.result }}" backend
           require_selected "${{ needs.changes.outputs.frontend }}" "${{ needs.frontend.result }}" frontend
           require_selected "${{ needs.changes.outputs.frontend }}" "${{ needs.browser-smoke.result }}" browser-smoke
-          require_selected "${{ needs.changes.outputs.release }}" "${{ needs.release.result }}" release
+          require_selected "${{ needs.changes.outputs.release == 'true' && needs.changes.outputs.full != 'true' }}" "${{ needs.release.result }}" release
           require_selected "${{ needs.changes.outputs.worker }}" "${{ needs.worker.result }}" worker
+          require_selected "${{ needs.changes.outputs.full }}" "${{ needs.containers.result }}" containers
