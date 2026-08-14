@@ -353,8 +353,23 @@ jobs:
         run: |
           docker compose exec -T worker python -m coinsphere_worker health |
             python3 -c 'import json, sys; assert json.load(sys.stdin) == {"mode": "a1-postgres", "protocolVersion": 1, "role": "quant-worker", "status": "healthy", "taskConsumer": True}'
-      - name: Smoke test health endpoint
-        run: curl --fail --show-error --retry 10 --retry-all-errors --retry-delay 3 http://127.0.0.1:8080/health
+      - name: Smoke test health and WebSocket origin
+        run: |
+          curl --fail --show-error --retry 10 --retry-all-errors --retry-delay 3 http://127.0.0.1:8080/health
+          same_origin_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            -H 'Host: app.example' \
+            -H 'Origin: https://app.example' \
+            -H 'CF-Visitor: {"scheme":"https"}' \
+            -H 'Sec-WebSocket-Protocol: coinsphere.notifications.v1, invalid.test.token' \
+            http://127.0.0.1:8080/api/v1/ws/notifications)
+          [[ $same_origin_status == 401 ]]
+          cross_origin_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            -H 'Host: app.example' \
+            -H 'Origin: https://evil.example' \
+            -H 'CF-Visitor: {"scheme":"https"}' \
+            -H 'Sec-WebSocket-Protocol: coinsphere.notifications.v1, invalid.test.token' \
+            http://127.0.0.1:8080/api/v1/ws/notifications)
+          [[ $cross_origin_status == 403 ]]
       - name: Print Compose logs on failure
         if: failure()
         run: docker compose logs --no-color
