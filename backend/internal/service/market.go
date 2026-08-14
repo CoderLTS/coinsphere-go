@@ -99,7 +99,7 @@ func (a *App) ListMarketSymbols(ctx context.Context, query MarketSymbolQuery) (C
 		return CursorResult[MarketSymbol]{}, err
 	}
 
-	q := a.dbWithContext(ctx).Model(&db.MarketInstrument{}).Where("venue = ?", marketdata.VenueBinance)
+	q := a.dbWithContext(ctx).Model(&db.MarketInstrument{}).Where("venue = ? AND status = ?", marketdata.VenueBinance, marketdata.InstrumentStatusTrading)
 	if market != "" {
 		q = q.Where("market_type = ?", market)
 	}
