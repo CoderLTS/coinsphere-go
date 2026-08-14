@@ -24,7 +24,7 @@ const (
 
 	defaultReconnectBackoff    = 250 * time.Millisecond
 	defaultMaxReconnectBackoff = 5 * time.Second
-	defaultResponseLimit       = 16 << 20
+	defaultResponseLimit       = 32 << 20
 )
 
 // SourceConfig configures Binance's public REST and WebSocket endpoints.

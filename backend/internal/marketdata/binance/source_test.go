@@ -112,6 +112,26 @@ func TestSourceHTTPErrorClassification(t *testing.T) {
 	}
 }
 
+func TestSourceDefaultResponseLimitCoversLargeInstrumentSnapshot(t *testing.T) {
+	payload := bytes.Repeat([]byte{' '}, (16<<20)+1)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		_, _ = response.Write(payload)
+	}))
+	defer server.Close()
+
+	source, err := NewSource(SourceConfig{RESTBaseURL: server.URL, WebSocketBaseURL: "ws://127.0.0.1:1"})
+	if err != nil {
+		t.Fatalf("new source: %v", err)
+	}
+	body, err := source.get(context.Background(), marketdata.MarketTypeSpot, "/exchangeInfo")
+	if err != nil {
+		t.Fatalf("large instrument snapshot: %v", err)
+	}
+	if len(body) != len(payload) {
+		t.Fatalf("large instrument snapshot length = %d, want %d", len(body), len(payload))
+	}
+}
+
 func TestSourceWebSocketReconnectCancelAndClosedDeduplication(t *testing.T) {
 	instrument := testInstrument(t, marketdata.MarketTypeSpot, "019c2f6d-7c00-7000-8000-000000000001")
 	openPayload := readFixture(t, "candle_1m_event.json")
