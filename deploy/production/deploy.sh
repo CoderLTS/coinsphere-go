@@ -191,7 +191,7 @@ if [[ -n $STACK_ROOT ]]; then
     legacy_available=true
     while IFS= read -r service; do
       case "$service" in
-        coinsphere-backend|coinsphere-web|coinsphere-worker|coinsphere-worker-backtest|coinsphere-executor)
+        coinsphere-backend|coinsphere-web|coinsphere-worker|coinsphere-worker-backtest|coinsphere-executor|coinsphere-timescaledb)
           legacy_services+=("$service")
           ;;
       esac
@@ -199,7 +199,7 @@ if [[ -n $STACK_ROOT ]]; then
       --env-file "$legacy_env_file" -f "$legacy_compose_file" config --services)
     while IFS= read -r service; do
       case "$service" in
-        coinsphere-backend|coinsphere-web|coinsphere-worker|coinsphere-worker-backtest|coinsphere-executor)
+        coinsphere-backend|coinsphere-web|coinsphere-worker|coinsphere-worker-backtest|coinsphere-executor|coinsphere-timescaledb)
           legacy_running_services+=("$service")
           ;;
       esac

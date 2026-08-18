@@ -55,11 +55,11 @@ if [[ ${1:-} == inspect ]]; then
   exit 0
 fi
 if [[ ${1:-} == compose && $* == *'config --services'* ]]; then
-  printf 'coinsphere-backend\ncoinsphere-executor\nsub2api\n'
+  printf 'coinsphere-backend\ncoinsphere-executor\ncoinsphere-timescaledb\nsub2api\n'
   exit 0
 fi
 if [[ ${1:-} == compose && $* == *'ps --services --status running'* ]]; then
-  printf 'coinsphere-backend\ncoinsphere-executor\nsub2api\n'
+  printf 'coinsphere-backend\ncoinsphere-executor\ncoinsphere-timescaledb\nsub2api\n'
   exit 0
 fi
 exit 0
@@ -100,8 +100,8 @@ if ! grep -Fq "run --rm --no-deps backend /app/coinsphere-migrate -config /app/c
   echo "启动服务前必须通过后端镜像执行 PostgreSQL migration" >&2
   exit 1
 fi
-if ! grep -Fq "stop coinsphere-backend coinsphere-executor" "$DEPLOY_DOCKER_LOG" \
-  || ! grep -Fq "rm -f coinsphere-backend coinsphere-executor" "$DEPLOY_DOCKER_LOG"; then
+if ! grep -Fq "stop coinsphere-backend coinsphere-executor coinsphere-timescaledb" "$DEPLOY_DOCKER_LOG" \
+  || ! grep -Fq "rm -f coinsphere-backend coinsphere-executor coinsphere-timescaledb" "$DEPLOY_DOCKER_LOG"; then
   echo "首次独立部署必须只移除旧 CoinSphere 服务" >&2
   exit 1
 fi
