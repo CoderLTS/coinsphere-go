@@ -11,15 +11,31 @@ MANIFEST_FILE=${2:-}
 REGISTRY=${COINSPHERE_REGISTRY:-127.0.0.1:5000}
 SOURCE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 STACK_ROOT=${COINSPHERE_STACK_ROOT:-}
+DEPLOY_DIR=${COINSPHERE_DEPLOY_DIR:-}
 WEB_BIND=${COINSPHERE_WEB_BIND:-127.0.0.1}
 WEB_PORT=${COINSPHERE_WEB_PORT:-8080}
 DOCKER_CONFIG_FILE="${DOCKER_CONFIG:-${HOME:?HOME 未设置}/.docker}/config.json"
 
-if [[ -n ${COINSPHERE_DEPLOY_DIR:-} ]]; then
-  DEPLOY_DIR=$COINSPHERE_DEPLOY_DIR
-elif [[ -n $STACK_ROOT ]]; then
+if [[ -z $DEPLOY_DIR && -z $STACK_ROOT ]]; then
+  existing_container=$(docker ps -aq --filter label=com.docker.compose.project=coinsphere-go | sed -n '1p')
+  if [[ -n $existing_container ]]; then
+    candidate_dir=$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$existing_container")
+    [[ -f $candidate_dir/compose.yaml ]] && DEPLOY_DIR=$candidate_dir
+  fi
+  if [[ -z $DEPLOY_DIR ]]; then
+    legacy_container=$(docker ps -aq --filter label=com.docker.compose.project=apps \
+      --filter label=com.docker.compose.service=coinsphere-backend | sed -n '1p')
+    if [[ -n $legacy_container ]]; then
+      legacy_dir=$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$legacy_container")
+      [[ -f $legacy_dir/docker-compose.yaml ]] && STACK_ROOT=$(cd "$legacy_dir/../.." && pwd)
+    fi
+  fi
+fi
+
+if [[ -z $DEPLOY_DIR && -n $STACK_ROOT ]]; then
   DEPLOY_DIR=$STACK_ROOT/compose/coinsphere-go
-else
+fi
+if [[ -z $DEPLOY_DIR ]]; then
   echo "请设置 COINSPHERE_DEPLOY_DIR 或 COINSPHERE_STACK_ROOT" >&2
   exit 3
 fi
@@ -175,7 +191,7 @@ if [[ -n $STACK_ROOT ]]; then
     legacy_available=true
     while IFS= read -r service; do
       case "$service" in
-        coinsphere-backend|coinsphere-web|coinsphere-worker|coinsphere-worker-backtest|coinsphere-executor)
+        coinsphere-backend|coinsphere-web|coinsphere-worker|coinsphere-worker-backtest|coinsphere-executor|coinsphere-timescaledb)
           legacy_services+=("$service")
           ;;
       esac
@@ -183,7 +199,7 @@ if [[ -n $STACK_ROOT ]]; then
       --env-file "$legacy_env_file" -f "$legacy_compose_file" config --services)
     while IFS= read -r service; do
       case "$service" in
-        coinsphere-backend|coinsphere-web|coinsphere-worker|coinsphere-worker-backtest|coinsphere-executor)
+        coinsphere-backend|coinsphere-web|coinsphere-worker|coinsphere-worker-backtest|coinsphere-executor|coinsphere-timescaledb)
           legacy_running_services+=("$service")
           ;;
       esac
