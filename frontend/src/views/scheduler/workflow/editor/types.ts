@@ -48,6 +48,8 @@ export interface WorkflowMaterialItem {
   iconText: string
   width: number
   height: number
+  presetConfig?: Record<string, any>
+  presetSubtitle?: string
 }
 
 export interface WorkflowMaterialGroup {
@@ -197,6 +199,10 @@ export interface WorkflowEditorDraftState {
 
 export interface WorkflowMaterialDropPayload {
   typeCode: string
+  title?: string
+  color?: string
+  presetConfig?: Record<string, any>
+  presetSubtitle?: string
   source: 'click' | 'drag'
   position: {
     x: number

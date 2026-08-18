@@ -149,13 +149,13 @@ func TestTestnetExecutorHonorsGlobalEmergencyStopLifecycle(t *testing.T) {
 
 			stopKey := "testnet-emergency-stop-" + string(market)
 			activated, err := fixture.base.app.ActivateTradingEmergencyStop(
-				context.Background(), principal, "M3 Testnet emergency drill", stopKey,
+				context.Background(), principal, "Testnet emergency drill", stopKey,
 			)
-			if err != nil || !activated.EmergencyStopped || activated.StopReason != "M3 Testnet emergency drill" {
+			if err != nil || !activated.EmergencyStopped || activated.StopReason != "Testnet emergency drill" {
 				t.Fatalf("activate %s Testnet emergency stop: control=%#v err=%v", market, activated, err)
 			}
 			replayed, err := fixture.base.app.ActivateTradingEmergencyStop(
-				context.Background(), principal, "M3 Testnet emergency drill", stopKey,
+				context.Background(), principal, "Testnet emergency drill", stopKey,
 			)
 			if err != nil || replayed.UpdatedAt != activated.UpdatedAt || replayed.StoppedAt != activated.StoppedAt {
 				t.Fatalf("replay %s Testnet emergency stop: control=%#v err=%v", market, replayed, err)

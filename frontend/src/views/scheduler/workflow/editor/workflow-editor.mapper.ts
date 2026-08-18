@@ -854,6 +854,9 @@ export function createStencilNode(material: WorkflowMaterialItem) {
     attrs: buildStencilAttrs(material),
     data: {
       stencilTypeCode: material.typeCode,
+      stencilTitle: material.title,
+      stencilPresetConfig: material.presetConfig,
+      stencilPresetSubtitle: material.presetSubtitle,
       title: material.title,
       description: material.description,
       iconText: material.iconText,

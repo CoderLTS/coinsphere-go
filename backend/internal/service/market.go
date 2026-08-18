@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -28,9 +29,11 @@ type CursorResult[T any] struct {
 }
 
 type MarketSymbolQuery struct {
-	Page    CursorPage
-	Market  string
-	Keyword string
+	Page       CursorPage
+	Market     string
+	QuoteAsset string
+	Status     string
+	Keyword    string
 }
 
 type MarketSymbol struct {
@@ -90,6 +93,17 @@ func (a *App) ListMarketSymbols(ctx context.Context, query MarketSymbolQuery) (C
 	if market != "" && market != string(marketdata.MarketTypeSpot) && market != string(marketdata.MarketTypeUSDM) {
 		return CursorResult[MarketSymbol]{}, invalidMarket("market must be spot or usd_m")
 	}
+	quoteAsset := strings.ToUpper(strings.TrimSpace(query.QuoteAsset))
+	if quoteAsset != "" && quoteAsset != "USDT" && quoteAsset != "USDC" && quoteAsset != "FDUSD" {
+		return CursorResult[MarketSymbol]{}, invalidMarket("quoteAsset must be USDT, USDC or FDUSD")
+	}
+	status := strings.ToLower(strings.TrimSpace(query.Status))
+	if status == "" {
+		status = string(marketdata.InstrumentStatusTrading)
+	}
+	if status != "trading" && status != "suspended" && status != "all" {
+		return CursorResult[MarketSymbol]{}, invalidMarket("status must be trading, suspended or all")
+	}
 	keyword := strings.ToUpper(strings.TrimSpace(query.Keyword))
 	if len(keyword) > 64 {
 		return CursorResult[MarketSymbol]{}, invalidMarket("keyword must not exceed 64 characters")
@@ -99,9 +113,15 @@ func (a *App) ListMarketSymbols(ctx context.Context, query MarketSymbolQuery) (C
 		return CursorResult[MarketSymbol]{}, err
 	}
 
-	q := a.dbWithContext(ctx).Model(&db.MarketInstrument{}).Where("venue = ? AND status = ?", marketdata.VenueBinance, marketdata.InstrumentStatusTrading)
+	q := a.dbWithContext(ctx).Model(&db.MarketInstrument{}).Where("venue = ?", marketdata.VenueBinance)
+	if status != "all" {
+		q = q.Where("status = ?", status)
+	}
 	if market != "" {
 		q = q.Where("market_type = ?", market)
+	}
+	if quoteAsset != "" {
+		q = q.Where("quote_asset = ?", quoteAsset)
 	}
 	if keyword != "" {
 		like := "%" + keyword + "%"
@@ -131,6 +151,161 @@ func (a *App) ListMarketSymbols(ctx context.Context, query MarketSymbolQuery) (C
 		lastKey = rows[len(rows)-1].ID.String()
 	}
 	return typedCursorResult(records, query.Page, lastKey, hasMore, total), nil
+}
+
+type MarketSyncSettingsPayload struct {
+	MarketTypes []string `json:"marketTypes"`
+	QuoteAssets []string `json:"quoteAssets"`
+}
+
+type MarketSyncSettingsView struct {
+	Venue           string   `json:"venue"`
+	MarketTypes     []string `json:"marketTypes"`
+	QuoteAssets     []string `json:"quoteAssets"`
+	UpdatedByUserID *int64   `json:"updatedByUserId"`
+	CreatedAt       string   `json:"createdAt"`
+	UpdatedAt       string   `json:"updatedAt"`
+}
+
+const marketMetadataWorkflowCode = "binance_market_metadata_sync"
+
+func (a *App) GetMarketSyncSettings(ctx context.Context) (MarketSyncSettingsView, error) {
+	var row db.MarketSyncSettings
+	if err := a.dbWithContext(ctx).First(&row, 1).Error; err != nil {
+		return MarketSyncSettingsView{}, err
+	}
+	return serializeMarketSyncSettings(row)
+}
+
+func (a *App) UpdateMarketSyncSettings(ctx context.Context, userID int64, payload MarketSyncSettingsPayload) (MarketSyncSettingsView, error) {
+	marketTypes, err := normalizeOptions(payload.MarketTypes, map[string]bool{"spot": true, "usd_m": true}, "marketTypes")
+	if err != nil {
+		return MarketSyncSettingsView{}, err
+	}
+	quoteAssets, err := normalizeOptions(payload.QuoteAssets, map[string]bool{"USDT": true, "USDC": true, "FDUSD": true}, "quoteAssets")
+	if err != nil {
+		return MarketSyncSettingsView{}, err
+	}
+	marketsJSON, _ := json.Marshal(marketTypes)
+	quotesJSON, _ := json.Marshal(quoteAssets)
+	result := a.dbWithContext(ctx).Model(&db.MarketSyncSettings{}).Where("id = 1").Updates(map[string]any{
+		"market_types": string(marketsJSON), "quote_assets": string(quotesJSON),
+		"updated_by_user_id": userID, "updated_at": time.Now().UTC(),
+	})
+	if result.Error != nil {
+		return MarketSyncSettingsView{}, result.Error
+	}
+	if result.RowsAffected != 1 {
+		return MarketSyncSettingsView{}, ErrMarketResourceMissing
+	}
+	return a.GetMarketSyncSettings(ctx)
+}
+
+func normalizeOptions(values []string, allowed map[string]bool, field string) ([]string, error) {
+	if len(values) == 0 {
+		return nil, invalidMarket(field + " must not be empty")
+	}
+	result := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if !allowed[value] {
+			return nil, invalidMarket(field + " contains an unsupported value")
+		}
+		if !seen[value] {
+			seen[value] = true
+			result = append(result, value)
+		}
+	}
+	return result, nil
+}
+
+func serializeMarketSyncSettings(row db.MarketSyncSettings) (MarketSyncSettingsView, error) {
+	view := MarketSyncSettingsView{
+		Venue: row.Venue, UpdatedByUserID: row.UpdatedByUserID,
+		CreatedAt: formatUTC(row.CreatedAt), UpdatedAt: formatUTC(row.UpdatedAt),
+	}
+	if err := json.Unmarshal([]byte(row.MarketTypesJSON), &view.MarketTypes); err != nil {
+		return MarketSyncSettingsView{}, err
+	}
+	if err := json.Unmarshal([]byte(row.QuoteAssetsJSON), &view.QuoteAssets); err != nil {
+		return MarketSyncSettingsView{}, err
+	}
+	return view, nil
+}
+
+func (a *App) GetMarketSyncStatus(ctx context.Context) (M, error) {
+	status := M{"lastSyncAt": nil, "nextSyncAt": nil, "lastExecution": nil}
+	var state db.WorkflowRuntimeState
+	if err := a.dbWithContext(ctx).Where("workflow_code = ?", marketMetadataWorkflowCode).First(&state).Error; err != nil {
+		return status, err
+	}
+	if state.ActiveWorkflowDefinitionID == nil {
+		return status, nil
+	}
+	var entry db.WorkflowRuntimeEntry
+	if err := a.dbWithContext(ctx).Where(
+		"workflow_definition_id = ? AND entry_key = ?", *state.ActiveWorkflowDefinitionID, "market.metadata.hourly",
+	).First(&entry).Error; err == nil && entry.NextRunAt != nil {
+		status["nextSyncAt"] = formatUTC(*entry.NextRunAt)
+	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	var execution db.WorkflowExecution
+	err := a.dbWithContext(ctx).Where("workflow_definition_id = ?", *state.ActiveWorkflowDefinitionID).
+		Order("id DESC").First(&execution).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return status, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	status["lastExecution"] = a.serializeExecutionSummary(&execution)
+	if execution.Status == "success" && execution.FinishedAt != nil {
+		status["lastSyncAt"] = formatUTC(*execution.FinishedAt)
+	}
+	return status, nil
+}
+
+func (a *App) RunMarketMetadataSync(ctx context.Context, userID int64, idempotencyKey string) (M, error) {
+	normalizedKey, err := normalizeIdempotencyKey(idempotencyKey)
+	if err != nil {
+		return nil, invalidMarket(err.Error())
+	}
+	var state db.WorkflowRuntimeState
+	if err := a.dbWithContext(ctx).Where("workflow_code = ?", marketMetadataWorkflowCode).First(&state).Error; err != nil {
+		return nil, err
+	}
+	if state.ActiveWorkflowDefinitionID == nil {
+		return nil, bizErr("Market metadata workflow is not active")
+	}
+	executions, err := a.RunManualStarts(*state.ActiveWorkflowDefinitionID, []string{"market.metadata.manual"}, userID, M{}, normalizedKey)
+	if err != nil {
+		return nil, err
+	}
+	return executions[0], nil
+}
+
+// PublishMarketCandleClosed 把首次闭合 K 线写入 Outbox，后续策略只由事件工作流编排。
+func (a *App) PublishMarketCandleClosed(ctx context.Context, candle marketdata.Candle) error {
+	var instrument db.MarketInstrument
+	if err := a.dbWithContext(ctx).Where("id = ? AND venue = ?", candle.InstrumentID, candle.Venue).First(&instrument).Error; err != nil {
+		return err
+	}
+	payload := M{
+		"instrumentId": candle.InstrumentID.String(), "venue": string(candle.Venue),
+		"market": instrument.Market, "symbol": instrument.NativeSymbol,
+		"baseAsset": instrument.BaseAsset, "quoteAsset": instrument.QuoteAsset,
+		"interval": string(candle.Interval), "openTime": formatUTC(candle.OpenTime),
+		"closeTime": formatUTC(candle.CloseTime), "open": candle.Open.String(),
+		"high": candle.High.String(), "low": candle.Low.String(), "close": candle.Close.String(),
+		"baseVolume": candle.BaseVolume.String(),
+	}
+	_, err := a.publishDomainEventWithDB(
+		a.dbWithContext(ctx), "market.candle.closed", "market_candle", candle.InstrumentID.String(),
+		payload, M{}, nil, nil,
+	)
+	return err
 }
 
 func (a *App) ListMarketCandles(ctx context.Context, query CandleListQuery) (CursorResult[MarketCandle], error) {

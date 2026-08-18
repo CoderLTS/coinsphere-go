@@ -28,6 +28,8 @@ const (
 	DataNewsDelete         = "data.news.delete"
 	DataNewsAnalyze        = "data.news.analyze"
 	DataPushDeliveriesView = "data.push_deliveries.view"
+	DataMarketView         = "data.market.view"
+	DataMarketManage       = "data.market.manage"
 
 	ConfigOverviewView               = "config.overview.view"
 	ConfigAiModelsView               = "config.ai_models.view"
@@ -74,6 +76,8 @@ var MenuPermissionCodes = map[string]string{
 	"DataCenter":           "",
 	"NewsData":             DataNewsView,
 	"PushData":             DataPushDeliveriesView,
+	"MarketMetadata":       DataMarketView,
+	"MarketChart":          DataMarketView,
 	"ConfigCenter":         "",
 	"ConfigOverview":       ConfigOverviewView,
 	"AiModelConfig":        ConfigAiModelsView,
@@ -117,6 +121,9 @@ var ButtonSpecs = map[string][]ButtonSpec{
 		{"update", DataNewsUpdate, "编辑"},
 		{"delete", DataNewsDelete, "删除"},
 		{"analyze", DataNewsAnalyze, "AI 分析"},
+	},
+	"MarketMetadata": {
+		{"manage", DataMarketManage, "管理同步设置"},
 	},
 	"AiModelConfig": {
 		{"create", ConfigAiModelsCreate, "新增"},

@@ -151,14 +151,8 @@ write(
     "COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD=replace-with-a-strong-random-password\n",
 )
 write(
-    docker_root / "worker-runtime.env.example",
-    "COINSPHERE_WORKER_DATABASE_DSN="
-    "postgresql://coinsphere_worker:replace-with-database-password@database/coinsphere\n",
-)
-write(
     docker_root / "executor-runtime.env.example",
-    "COINSPHERE_DATABASE__DSN="
-    "postgresql://coinsphere_executor:replace-with-database-password@database/coinsphere\n",
+    "COINSPHERE_AUTH__ENCRYPTION_KEY=replace-with-the-backend-encryption-key\n",
 )
 
 if mode == "credential":

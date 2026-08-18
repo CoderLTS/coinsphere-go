@@ -19,6 +19,9 @@ func TestLoginIssuesAccessToken(t *testing.T) {
 		t.Fatalf("create auth contract app: %v", err)
 	}
 	t.Cleanup(app.runtimeCancel)
+	if app.Paper == nil {
+		t.Fatal("app did not own the Paper executor")
+	}
 	user := db.SystemUser{
 		Username: "access-only-user", PasswordHash: app.Hasher.HashPassword("test-password"),
 		Nickname: "access-only-user", IsActive: true,

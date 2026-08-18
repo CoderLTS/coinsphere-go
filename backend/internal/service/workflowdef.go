@@ -642,6 +642,9 @@ func (a *App) DeleteWorkflowDefinition(definitionID int64) error {
 		if err != nil {
 			return err
 		}
+		if definition.IsBuiltin {
+			return bizErr("Builtin workflow definition cannot be deleted")
+		}
 		var state db.WorkflowRuntimeState
 		err = tx.Where("workflow_code = ?", definition.Code).First(&state).Error
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {

@@ -191,11 +191,10 @@ def sensitive_path(path, kind, version):
     basename = parts[-1]
     if kind == "docker" and parts in (
         [f"coinsphere-{version}-docker".casefold(), "runtime.env.example"],
-        [f"coinsphere-{version}-docker".casefold(), "worker-runtime.env.example"],
         [f"coinsphere-{version}-docker".casefold(), "executor-runtime.env.example"],
     ):
         return None
-    if basename in {"runtime.env.example", "worker-runtime.env.example", "executor-runtime.env.example"}:
+    if basename in {"runtime.env.example", "executor-runtime.env.example"}:
         return "运行时 env"
     if (
         basename.startswith(".env")
@@ -262,7 +261,6 @@ def check_archive_inventory(kind, files, directories, version):
             f"{root}/compose.yaml",
             f"{root}/deploy.sh",
             f"{root}/runtime.env.example",
-            f"{root}/worker-runtime.env.example",
             f"{root}/executor-runtime.env.example",
         }
         if files != expected or any(directory != root for directory in directories):

@@ -203,7 +203,7 @@ export const ensureWorkflowGraphEdgeRegistered = () => {
       },
       attrs: {
         line: {
-          stroke: '#5f95ff',
+          stroke: '#8c9296',
           strokeWidth: 2,
           strokeDasharray: '8 6',
           targetMarker: {

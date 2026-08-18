@@ -2,13 +2,13 @@
 
 > 🔰 **Go 新手请先读 [`GO入门笔记.md`](./GO入门笔记.md)**:从零讲清本项目用到的 Go 语法和框架,代码里的中文注释会引用它的小节名。
 
-原 Python(FastAPI + Peewee + Redis + APScheduler)后端的 Go 重写版。Go App 在单进程内运行 HTTP API、工作流调度器与事件分发；数据库 migration 和 Executor 使用同一镜像中的独立二进制。量化策略由独立 Python Worker 执行，不再依赖 Redis 或旧 orchestrator。
+原 Python(FastAPI + Peewee + Redis + APScheduler)后端的 Go 重写版。Go App 在单进程内运行 HTTP API、工作流、调度、公共行情、通知和 Paper Executor；数据库 migration 与可选 Private Executor 使用同一镜像中的独立二进制。量化策略由单进程双 lane Python Worker 执行，不再依赖 Redis 或旧 orchestrator。
 
 ## 架构变化
 
 | 原 Python 版 | Go 版 |
 |---|---|
-| api / orchestrator / worker / init 四种进程角色 | 一个 Go App 承载 API 与后台循环；独立 migration 二进制拥有 DDL；Go Executor 和 Python Worker 使用受限独立进程 |
+| api / orchestrator / worker / init 四种进程角色 | 一个 Go App 承载 API、后台循环和 Paper；独立 migration 二进制拥有 DDL；Python Worker 使用受限独立进程 |
 | Redis Stream + 消费组做执行派发 | 数据库即队列:`workflow_executions.status` + 乐观锁 `UPDATE ... WHERE status='queued'` 认领 |
 | Redis ZSet 做重试到期索引 | 直接查 `status='retry_waiting' AND next_retry_at <= now` |
 | Redis 分布式锁选 leader | 单实例,无需选主 |
@@ -26,7 +26,7 @@ go build -o coinsphere-server.exe .
 .\coinsphere-server.exe            # 默认读取 ./config.yml，监听 :6987
 ```
 
-独立命令必须先把空 schema 应用到当前版本；服务只读校验 migration 版本，不会执行 DDL。版本缺失、落后或领先时服务明确拒绝启动。首次成功启动写入内置角色、菜单、超管 `coinsphere`/`coinsphere` 和两个内置工作流。
+独立命令必须先把空 schema 应用到当前版本；服务只读校验 migration 版本，不会执行 DDL。版本缺失、落后或领先时服务明确拒绝启动。首次成功启动写入内置角色、菜单、超管 `coinsphere`/`coinsphere` 和内置工作流。
 
 ## 版本化数据库迁移
 
@@ -73,10 +73,10 @@ DSN 必须指向已经存在的数据库和全新 CoinSphere schema；连接入�
 - **重试**:可重试失败(timeout/connection/429/5xx)按 `retry_backoff_seconds` 退避,`retry_waiting → queued` 自动提升。
 - **恢复**:心跳超时(含进程崩溃重启后的孤儿执行)标记 `worker_lost` 并按剩余次数重试或失败。
 - **事件**:工作流终态与标准领域事件在同一短事务写入 `domain_event_outbox`；PostgreSQL 存储层使用 `FOR UPDATE SKIP LOCKED` 原子批量认领，并用数据库时间续租和 fencing 投递。匹配 `start.event` 入口后以稳定幂等键触发工作流；订阅失败按 `retry_backoff_seconds` 重排，尝试耗尽进入死信，未告警死信由 `alerted_at` 原子去重后输出脱敏日志。
-- **Executor**:默认只按账户串行处理 Paper 意图和可重建投影。`COINSPHERE_TRADING__TESTNET_PRIVATE_API_ENABLED=true` 可独立装配 Testnet；Spot Live manual 由 `COINSPHERE_TRADING__SPOT_LIVE_MANUAL_ENABLED=true` 装配，USD-M Live manual 由 `COINSPHERE_TRADING__USD_M_LIVE_MANUAL_ENABLED=true` 装配，两个市场使用隔离客户端。Spot auto 还必须同时设置 `COINSPHERE_TRADING__SPOT_LIVE_AUTO_ENABLED=true`，USD-M auto 还必须同时设置 `COINSPHERE_TRADING__USD_M_LIVE_AUTO_ENABLED=true`。私有运行时要求安全的 `auth.encryption_key`，默认和生产配置均保持关闭。Live manual 要求 Owner 恢复放行；Spot 与 USD-M Live auto 另要求管理员授权和 Owner 独立放行。USD-M Live manual/auto 复用逐仓、单向、低杠杆、标记价、强平距离与保护单风控。暂停、凭据/风控变化、对账差异或急停会撤销 Owner 放行。CI、Codex、自动部署和工作流不得提供 Live 凭据或启用 Live 开关；Binance 环境验证延期到全部开发完成后，当前只验 Paper 和离线契约。
+- **执行器**:Go App 内置 Paper Executor，按账户串行处理 Paper 意图和可重建投影。独立 `coinsphere-executor` 只在 `private` profile 中装配 Testnet/Live；各私有能力开关和风控保持默认关闭。CI、Codex、自动部署和工作流不得提供 Live 凭据或启用 Live 开关；Binance 环境验证延期到全部开发完成后，当前只验 Paper 和离线契约。
 - **清理**:每天 03:00 后按批删除超过保留期的终态执行。
 
-Python Worker 通过独立 PostgreSQL 连接消费 `worker_tasks`，使用唯一租约完成认领、心跳、崩溃回收和 5 秒内取消。生产 Release 构建并部署 realtime/backtest Worker 与 Paper Executor；二者均使用专用数据库身份且不持有真实交易凭据。
+Python Worker 通过独立 PostgreSQL 连接消费 `worker_tasks`，在同一进程的 realtime/backtest 两个线程中使用唯一租约完成认领、心跳、崩溃回收和取消。任一 lane 异常会结束整个 Worker 进程并交给容器重启；Worker 不持有真实交易凭据。
 
 工作流版本、激活、Outbox 和 Worker 契约都在随机隔离的 PostgreSQL schema 上验证。设置测试 DSN 后运行：
 
@@ -96,7 +96,7 @@ go test -count=1 ./internal/service ./internal/api
 ```
 main.go                 入口:根 Context → 配置 → 版本校验/种子 → Runtime/HTTP → 有界关机
 cmd/migrate             独立版本化 SQL migration 命令
-cmd/executor            Paper 执行与默认关闭的 Testnet/Spot Live 私有运行时
+cmd/executor            默认关闭的 Testnet/Spot Live 私有运行时
 internal/exchange       Executor 专属的 Binance 私有协议
 internal/config         YAML + 环境变量覆盖
 internal/db             GORM 模型 / PostgreSQL 连接 / 种子数据

@@ -205,7 +205,7 @@
 
   let shapeRegistered = false
   // JSON 定义面板的宽度，算画布可视区内边距时要减掉它。
-  const JSON_PANEL_WIDTH = 380
+  const SIDE_PANEL_WIDTH = 360
 
   const ensureShapesRegistered = () => {
     if (shapeRegistered) return
@@ -327,7 +327,8 @@
 
   const getViewportPadding = () => ({
     top: 132,
-    right: props.jsonDefinitionVisible ? 20 + JSON_PANEL_WIDTH + 36 : 56,
+    right:
+      selectedNode.value || props.jsonDefinitionVisible ? 16 + SIDE_PANEL_WIDTH + 36 : 56,
     bottom: 80,
     left: props.materialsVisible ? 20 + STENCIL_PANEL_WIDTH + 36 : 20
   })
@@ -592,17 +593,16 @@
     if (selectedNode.value) {
       const cell = graph.getCellById(selectedNode.value.id)
       if (cell?.isNode()) {
-        const bbox = cell.getBBox()
-        const topLeft = graph.localToClient({ x: bbox.x, y: bbox.y }) as { x: number; y: number }
         const shellRect = shell.getBoundingClientRect()
-        const panelWidth = Math.min(352, Math.max(300, shellRect.width - 24))
-        const panelHeight = Math.min(520, Math.max(320, shellRect.height - 96))
-        const anchorLeft = topLeft.x - shellRect.left
-        const anchorTop = topLeft.y - shellRect.top
+        const mobile = shellRect.width <= 768
+        const panelWidth = mobile ? Math.max(280, shellRect.width - 16) : SIDE_PANEL_WIDTH
+        const panelHeight = mobile
+          ? Math.max(320, shellRect.height - 76)
+          : Math.max(320, shellRect.height - 88)
 
         nodeEditorStyle.value = {
-          left: `${Math.max(12, Math.min(anchorLeft, shellRect.width - panelWidth - 12))}px`,
-          top: `${Math.max(76, Math.min(anchorTop, shellRect.height - panelHeight - 12))}px`,
+          right: mobile ? '8px' : '16px',
+          top: mobile ? '68px' : '72px',
           width: `${panelWidth}px`,
           height: `${panelHeight}px`
         }
@@ -1219,13 +1219,18 @@
     })
 
     graph.on('node:added', ({ node }) => {
-      const typeCode = String(node.getData()?.stencilTypeCode || '')
+      const data = node.getData() || {}
+      const typeCode = String(data.stencilTypeCode || '')
       if (!typeCode) return
       const position = node.position()
       suppressRemovedCellId.value = node.id
       node.remove()
       emit('material-drop', {
         typeCode,
+        title: String(data.stencilTitle || ''),
+        color: String(data.color || ''),
+        presetConfig: data.stencilPresetConfig,
+        presetSubtitle: String(data.stencilPresetSubtitle || ''),
         source: 'drag',
         position: {
           x: position.x,
@@ -1387,9 +1392,11 @@
     width: 100%;
     height: 100%;
     overflow: hidden;
-    background:
-      radial-gradient(circle at top center, rgb(255 255 255 / 0.92) 0%, rgb(251 253 255 / 0) 38%),
-      linear-gradient(180deg, #fbfdff 0%, #f5f8fd 100%);
+    background-color: #111315;
+    background-image:
+      linear-gradient(rgb(255 255 255 / 0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(255 255 255 / 0.045) 1px, transparent 1px);
+    background-size: 24px 24px;
   }
 
   .workflow-canvas--panning {
@@ -1413,18 +1420,18 @@
 
   .workflow-canvas__toolbar-slot {
     position: absolute;
-    top: 20px;
-    right: 20px;
-    left: 20px;
+    top: 12px;
+    right: 16px;
+    left: 16px;
     z-index: 20;
     pointer-events: none;
   }
 
   .workflow-canvas__stencil {
     position: absolute;
-    top: 60px;
-    bottom: 14px;
-    left: 20px;
+    top: 72px;
+    bottom: 16px;
+    left: 16px;
     z-index: 18;
     display: flex;
     flex-direction: column;
@@ -1432,11 +1439,10 @@
     width: 252px;
     padding: 0 0 0 10px;
     overflow: visible;
-    background: rgb(255 255 255 / 0.96);
-    backdrop-filter: blur(12px);
-    border: 1px solid rgb(212 216 226 / 0.92);
-    border-radius: 14px;
-    box-shadow: 0 12px 26px rgb(15 23 42 / 0.08);
+    background: #181b1e;
+    border: 1px solid #3b4144;
+    border-radius: 2px;
+    box-shadow: 0 18px 36px rgb(0 0 0 / 0.28);
     transition:
       width 0.2s ease,
       height 0.2s ease,
@@ -1476,8 +1482,8 @@
     position: absolute;
     right: 0;
     width: 4px;
-    background: rgb(148 163 184 / 0.96);
-    border-radius: 999px;
+    background: #737b7f;
+    border-radius: 2px;
   }
 
   .workflow-canvas__stencil-empty {
@@ -1496,11 +1502,10 @@
     gap: 6px;
     min-width: 196px;
     padding: 10px;
-    background: rgb(255 255 255 / 0.96);
-    backdrop-filter: blur(16px);
-    border: 1px solid rgb(203 213 225 / 0.88);
-    border-radius: 16px;
-    box-shadow: 0 18px 32px rgb(15 23 42 / 0.12);
+    background: #181b1e;
+    border: 1px solid #4b5256;
+    border-radius: 2px;
+    box-shadow: 0 18px 32px rgb(0 0 0 / 0.32);
   }
 
   .workflow-canvas__context-menu-title {
@@ -1509,10 +1514,10 @@
     font-size: 13px;
     font-weight: 700;
     line-height: 18px;
-    color: #0f172a;
+    color: #f4f3ee;
     text-overflow: ellipsis;
     white-space: nowrap;
-    border-bottom: 1px solid rgb(226 232 240 / 0.92);
+    border-bottom: 1px solid #34393c;
   }
 
   .workflow-canvas__context-menu-item {
@@ -1523,25 +1528,25 @@
     padding: 0 12px;
     font-size: 13px;
     font-weight: 600;
-    color: #334155;
+    color: #c8ced1;
     cursor: pointer;
     background: transparent;
     border: 0;
-    border-radius: 10px;
+    border-radius: 2px;
     transition:
       background-color 0.15s ease,
       color 0.15s ease;
 
     &:hover {
-      color: #3158d6;
-      background: #eef4ff;
+      color: #111315;
+      background: #c7f46b;
     }
   }
 
   .workflow-canvas__context-menu-item--danger {
     &:hover {
-      color: #dc2626;
-      background: #fff1f0;
+      color: #111315;
+      background: #ff705b;
     }
   }
 
@@ -1551,9 +1556,8 @@
     z-index: 24;
     display: grid;
     place-items: center;
-    background: rgb(255 255 255 / 0.76);
-    backdrop-filter: blur(10px);
-    border-radius: 20px;
+    background: rgb(17 19 21 / 0.82);
+    border-radius: 2px;
   }
 
   :deep(.x6-graph) {
@@ -1565,7 +1569,7 @@
   }
 
   :deep(.workflow-port-dot) {
-    filter: drop-shadow(0 0 10px rgb(37 99 235 / 0.12));
+    filter: drop-shadow(0 0 7px rgb(199 244 107 / 0.34));
   }
 
   :deep(.x6-edge[shape='workflow-editor-edge'] path) {
@@ -1606,8 +1610,8 @@
     font-size: 11px;
     font-weight: 700;
     line-height: 16px;
-    color: #475569;
-    letter-spacing: 0.04em;
+    color: #b7bec1;
+    letter-spacing: 0;
     background: transparent !important;
   }
 
@@ -1636,10 +1640,9 @@
     width: 16px;
     height: 16px;
     content: '';
-    background: rgb(255 255 255 / 0.96);
-    border: 1px solid rgb(148 163 184 / 0.75);
-    border-radius: 999px;
-    box-shadow: 0 2px 8px rgb(15 23 42 / 0.06);
+    background: #24282b;
+    border: 1px solid #5b6468;
+    border-radius: 2px;
     transform: translateY(-58%);
   }
 
@@ -1650,14 +1653,14 @@
     width: 8px;
     height: 8px;
     content: '';
-    background: linear-gradient(#64748b, #64748b) center / 8px 1.5px no-repeat;
+    background: linear-gradient(#b7bec1, #b7bec1) center / 8px 1.5px no-repeat;
     transform: translateY(-58%);
   }
 
   :deep(.x6-widget-stencil-group.collapsable.collapsed > .x6-widget-stencil-group-title::after) {
     background:
-      linear-gradient(#64748b, #64748b) center / 8px 1.5px no-repeat,
-      linear-gradient(#64748b, #64748b) center / 1.5px 8px no-repeat;
+      linear-gradient(#b7bec1, #b7bec1) center / 8px 1.5px no-repeat,
+      linear-gradient(#b7bec1, #b7bec1) center / 1.5px 8px no-repeat;
   }
 
   :deep(.x6-widget-stencil-group-content) {
@@ -1672,10 +1675,10 @@
     gap: 10px;
     align-items: center;
     padding: 8px 10px;
-    background: #fff;
-    border: 1px solid #5f95ff;
-    border-radius: 8px;
-    box-shadow: 0 4px 12px rgb(95 149 255 / 0.08);
+    background: #222629;
+    border: 1px solid #4c5559;
+    border-radius: 2px;
+    box-shadow: none;
     transition:
       transform 0.18s ease,
       box-shadow 0.18s ease,
@@ -1692,7 +1695,7 @@
     font-size: 12px;
     font-weight: 600;
     line-height: 1;
-    border-radius: 8px;
+    border-radius: 2px;
   }
 
   :deep(.workflow-stencil-card__body) {
@@ -1709,7 +1712,7 @@
     font-size: 14px;
     font-weight: 600;
     line-height: 18px;
-    color: #141414;
+    color: #f4f3ee;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -1719,19 +1722,36 @@
     overflow: hidden;
     font-size: 12px;
     line-height: 16px;
-    color: rgb(0 0 0 / 0.65);
+    color: #aab2b5;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
   }
 
   :deep(.x6-widget-stencil-node:hover .workflow-stencil-card) {
-    border-color: #3d7eff;
-    box-shadow: 0 8px 20px rgb(95 149 255 / 0.18);
+    border-color: #c7f46b;
+    box-shadow: 0 8px 20px rgb(0 0 0 / 0.28);
     transform: translateY(-1px);
   }
 
   :deep(.x6-widget-transform) {
     display: none !important;
+  }
+
+  @media (max-width: 768px) {
+    .workflow-canvas__toolbar-slot {
+      top: 8px;
+      right: 8px;
+      left: 8px;
+    }
+
+    .workflow-canvas__stencil {
+      inset: 68px 8px 8px;
+      width: auto;
+    }
+
+    .workflow-canvas__overlay {
+      max-width: calc(100% - 16px);
+    }
   }
 </style>
 

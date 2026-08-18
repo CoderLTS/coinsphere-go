@@ -18,7 +18,7 @@ uv run pytest tests/test_queue_runtime.py
 
 ## 运行契约
 
-`python -m coinsphere_worker run --lane realtime` 和 `python -m coinsphere_worker run --lane backtest` 必须通过 `COINSPHERE_WORKER_DATABASE_DSN` 连接已经应用 CoinSphere migration 的 PostgreSQL/TimescaleDB；配置缺失、lane 非法或数据库异常时进程 fail-closed 非零退出。每个消费者只认领本 lane，并按优先级、创建时间和任务 ID 稳定排序；两个消费者各自串行执行一个任务，不共享槽位，也不使用 Redis、Kafka 或 NATS。
+`python -m coinsphere_worker run` 默认在线程中同时启动 realtime/backtest 两个独立槽位，必须通过 `COINSPHERE_WORKER_DATABASE_DSN` 连接已经应用 CoinSphere migration 的 PostgreSQL/TimescaleDB；任一 lane 异常会停止另一个 lane 并让进程非零退出。`--lane realtime|backtest` 仅用于定向诊断。每个消费者只认领本 lane，并按优先级、创建时间和任务 ID 稳定排序；两个消费者各自串行执行一个任务，不共享槽位，也不使用 Redis、Kafka 或 NATS。
 
 回测业务处理器调用 `run_backtest_isolated` 时必须显式传入墙钟、CPU、内存和产物大小上限。子进程使用 `spawn`、清空环境并在 Linux 应用原生资源限制；超时会有界终止整个子进程。纯 `run_backtest` 只承载固定 `decimal-bar-v1` 的确定性金融计算，不读取时钟、环境、数据库或网络。输入 JSONL 首条冻结策略、参数、运行时、模拟器和费用配置，后续记录冻结完整闭合 K 线。
 
@@ -30,12 +30,11 @@ uv run pytest tests/test_queue_runtime.py
 
 ## 容器契约
 
-根目录开发 Compose 使用内部数据库网络启动共享 TimescaleDB、一次性 migration、Backend，以及相互隔离的 realtime/backtest Worker。Worker 保持只读文件系统、移除全部 Linux capabilities、启用 `no-new-privileges`，不暴露端口，也不持有交易所凭据；只有 backtest Worker 挂载独立可写产物卷并显式配置墙钟、CPU、内存和产物上限。Manifest 中路径必须为相对 POSIX 路径。
+根目录开发 Compose 使用内部数据库网络启动共享 TimescaleDB、一次性 migration、Backend，以及包含 realtime/backtest 两个线程的单 Worker 进程。Worker 保持只读文件系统、移除全部 Linux capabilities、启用 `no-new-privileges`，不暴露端口，也不持有交易所凭据；仅产物目录可写，并显式配置墙钟、CPU、内存和产物上限。Manifest 中路径必须为相对 POSIX 路径。
 
 ```bash
-docker compose up --detach --build --wait worker worker-backtest
+docker compose up --detach --build --wait worker
 docker compose exec -T worker python -m coinsphere_worker health
-docker compose exec -T worker-backtest python -m coinsphere_worker health
 ```
 
 健康检查会在三秒连接预算内确认 `worker_tasks` 可访问，成功输出固定 JSON：
@@ -46,4 +45,4 @@ docker compose exec -T worker-backtest python -m coinsphere_worker health
 
 ## 回滚
 
-先停止 realtime/backtest 消费者，确认不再产生心跳或认领，再回退本纵向 PR。`00008` 只允许在信号决策和信号通知均为空时回退；`00007` 只允许在策略实例、信号和 realtime 任务均为空时回退；`00006` 只允许在策略草稿、版本、回测及其量化任务均为空时回退。否则保留 schema、任务和回测产物，等待兼容版本恢复消费，不得删除任务或手工修改 migration 版本。生产 Release 会与 Backend/Web 一起回滚两个 Worker 服务，但仍不部署 Executor、不修改交易权限或接触真实交易凭据。
+先停止 Worker，确认两个 lane 不再产生心跳或认领，再回退本纵向 PR。`00008` 只允许在信号决策和信号通知均为空时回退；`00007` 只允许在策略实例、信号和 realtime 任务均为空时回退；`00006` 只允许在策略草稿、版本、回测及其量化任务均为空时回退。否则保留 schema、任务和回测产物，等待兼容版本恢复消费，不得删除任务或手工修改 migration 版本。生产 Release 会与 Backend/Web 一起回滚 Worker，但仍不部署 Private Executor、不修改交易权限或接触真实交易凭据。

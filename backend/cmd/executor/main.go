@@ -1,4 +1,4 @@
-// coinsphere-executor always runs Paper and only starts explicitly enabled private runtimes.
+// coinsphere-executor only runs explicitly enabled private trading runtimes.
 package main
 
 import (
@@ -28,7 +28,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	hostname, _ := os.Hostname()
-	workerID := fmt.Sprintf("paper:%s:%d", hostname, os.Getpid())
+	workerID := fmt.Sprintf("private:%s:%d", hostname, os.Getpid())
 	if err := run(ctx, *configPath, workerID); err != nil {
 		slog.Error("executor stopped", "error_category", "runtime")
 		os.Exit(1)
@@ -65,13 +65,9 @@ func run(ctx context.Context, configPath, workerID string) (runErr error) {
 	if err := runner.ValidateCurrent(ctx); err != nil {
 		return fmt.Errorf("validate database schema: %w", err)
 	}
-	paperExecutor, err := service.NewPaperExecutor(gdb, workerID, time.Second)
-	if err != nil {
-		return err
-	}
 	if !cfg.Trading.TestnetPrivateAPIEnabled && !cfg.Trading.SpotLiveManualEnabled &&
 		!cfg.Trading.USDMLiveManualEnabled {
-		return paperExecutor.Run(ctx)
+		return errors.New("private executor requires an explicitly enabled private trading runtime")
 	}
 	if cfg.Auth.EncryptionKey == "" || cfg.Auth.EncryptionKey == config.DefaultInsecureSecret ||
 		cfg.Auth.EncryptionKey != strings.TrimSpace(cfg.Auth.EncryptionKey) {
@@ -81,7 +77,7 @@ func run(ctx context.Context, configPath, workerID string) (runErr error) {
 	if err != nil {
 		return errors.New("build private credential cipher")
 	}
-	runtimes := []func(context.Context) error{paperExecutor.Run}
+	runtimes := make([]func(context.Context) error, 0, 9)
 	if cfg.Trading.TestnetPrivateAPIEnabled {
 		privateClient, err := exchangebinance.NewPrivateClient(exchangebinance.PrivateClientConfig{})
 		if err != nil {

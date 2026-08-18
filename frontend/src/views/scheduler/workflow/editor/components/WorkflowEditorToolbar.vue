@@ -180,7 +180,7 @@
   .editor-toolbar {
     position: relative;
     width: 100%;
-    min-height: 52px;
+    min-height: 48px;
     pointer-events: none;
   }
 
@@ -216,11 +216,10 @@
     gap: 6px;
     align-items: center;
     padding: 5px 6px;
-    background: rgb(255 255 255 / 0.96);
-    backdrop-filter: blur(12px);
-    border: 1px solid rgb(206 212 226 / 0.9);
-    border-radius: 16px;
-    box-shadow: 0 10px 24px rgb(15 23 42 / 0.08);
+    background: var(--workflow-overlay-bg, #f4f3ee);
+    border: 1px solid var(--workflow-overlay-border, #34383a);
+    border-radius: 2px;
+    box-shadow: 0 8px 18px rgb(0 0 0 / 0.24);
   }
 
   .editor-toolbar__tools-group {
@@ -243,7 +242,7 @@
   .editor-toolbar__page {
     font-size: 13px;
     font-weight: 600;
-    color: #334155;
+    color: var(--workflow-overlay-text, #24282a);
     white-space: nowrap;
   }
 
@@ -254,20 +253,20 @@
     padding: 0 12px;
     font-size: 12px;
     font-weight: 600;
-    color: #667085;
+    color: var(--workflow-overlay-muted, #5d6467);
     white-space: nowrap;
-    background: #f5f5fb;
-    border-radius: 999px;
+    background: var(--workflow-overlay-soft-2, #deddd7);
+    border-radius: 2px;
   }
 
   .editor-toolbar__status--warning {
-    color: #c2410c;
-    background: #fff3e8;
+    color: #111315;
+    background: #eab24d;
   }
 
   .editor-toolbar__status--danger {
-    color: #dc2626;
-    background: #fef2f2;
+    color: #111315;
+    background: #ff705b;
   }
 
   .editor-toolbar__icon-btn {
@@ -277,40 +276,74 @@
     width: 34px;
     height: 34px;
     padding: 0;
-    color: #334155;
+    color: var(--workflow-overlay-text, #24282a);
     background: transparent;
     border-color: transparent;
-    border-radius: 10px;
+    border-radius: 2px;
   }
 
   .editor-toolbar__icon-btn:hover {
-    color: #1f3fb7;
-    background: #f3f4fb;
+    color: var(--workflow-overlay-text, #111315);
+    background: var(--workflow-overlay-hover, #d8d7d1);
   }
 
   .editor-toolbar__icon-btn--active {
-    color: #1f3fb7;
-    background: #eef4ff;
+    color: #111315;
+    background: #c7f46b;
   }
 
   .editor-toolbar__divider {
     width: 1px;
     height: 18px;
-    background: rgb(203 213 225 / 0.92);
+    background: var(--workflow-overlay-border-soft, #a6aaab);
   }
 
   .editor-toolbar__zoom {
     min-width: 48px;
     font-size: 12px;
     font-weight: 700;
-    color: #0f172a;
+    color: var(--workflow-overlay-text, #111315);
     text-align: center;
   }
 
   .editor-toolbar__save {
     height: 44px;
     padding: 0 18px;
-    border-radius: 14px;
-    box-shadow: 0 12px 24px rgb(99 102 241 / 0.22);
+    color: #111315;
+    background: #c7f46b;
+    border-color: #c7f46b;
+    border-radius: 2px;
+    box-shadow: 0 8px 18px rgb(0 0 0 / 0.22);
+  }
+
+  @media (max-width: 980px) {
+    .editor-toolbar {
+      display: flex;
+      gap: 6px;
+      align-items: flex-start;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    .editor-toolbar::-webkit-scrollbar {
+      display: none;
+    }
+
+    .editor-toolbar__back,
+    .editor-toolbar__tools,
+    .editor-toolbar__actions {
+      position: static;
+      flex: 0 0 auto;
+      transform: none;
+    }
+
+    .editor-toolbar__actions {
+      margin-left: auto;
+    }
+
+    .editor-toolbar__meta,
+    .editor-toolbar__divider {
+      display: none;
+    }
   }
 </style>

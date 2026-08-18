@@ -10,8 +10,6 @@ BACKEND_DIGEST=$(printf 'a%.0s' {1..64})
 WEB_DIGEST=$(printf 'b%.0s' {1..64})
 WORKER_DIGEST=$(printf 'c%.0s' {1..64})
 POSTGRES_DSN='postgresql://coinsphere:test-only-password@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic'
-WORKER_POSTGRES_DSN='postgresql://coinsphere_worker:test-only-password@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic'
-EXECUTOR_POSTGRES_DSN='postgresql://coinsphere_executor:test-only-password@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic'
 
 cleanup() {
   rm -rf -- "$TEST_DIR"
@@ -22,10 +20,6 @@ command -v jq >/dev/null || { echo "缺少命令: jq" >&2; exit 3; }
 mkdir -p "$TEST_DIR/bin" "$TEST_DIR/deploy"
 printf 'COINSPHERE_DATABASE__DSN=%s\nCOINSPHERE_AUTH__SECRET_KEY=replace-with-random-value\n' \
   "$POSTGRES_DSN" >"$TEST_DIR/deploy/runtime.env"
-printf 'COINSPHERE_WORKER_DATABASE_DSN=%s\n' \
-  "$WORKER_POSTGRES_DSN" >"$TEST_DIR/deploy/worker-runtime.env"
-printf 'COINSPHERE_DATABASE__DSN=%s\n' \
-  "$EXECUTOR_POSTGRES_DSN" >"$TEST_DIR/deploy/executor-runtime.env"
 cat >"$TEST_DIR/release-manifest.json" <<EOF
 {
   "version": "$VERSION",
@@ -70,18 +64,18 @@ if ! grep -Fxq "COINSPHERE_BACKEND_IMAGE=$REGISTRY/coinsphere/backend@sha256:$BA
   exit 1
 fi
 if ! grep -Fxq "COINSPHERE_DATABASE__DSN=$POSTGRES_DSN" "$TEST_DIR/deploy/runtime.env"; then
-  echo "生产部署必须保留 PostgreSQL DSN" >&2
+  echo "生产部署必须保留 Backend 运行配置" >&2
   exit 1
 fi
-if ! grep -Fxq "COINSPHERE_WORKER_DATABASE_DSN=$WORKER_POSTGRES_DSN" "$TEST_DIR/deploy/worker-runtime.env"; then
-  echo "生产部署必须保留 Worker 独立 PostgreSQL DSN" >&2
+if ! grep -Eq '^COINSPHERE_DATABASE_PASSWORD=[0-9a-f]{64}$' "$TEST_DIR/deploy/.env"; then
+  echo "独立 Compose 必须生成并保存数据库密码" >&2
   exit 1
 fi
-if ! grep -Fxq "COINSPHERE_DATABASE__DSN=$EXECUTOR_POSTGRES_DSN" "$TEST_DIR/deploy/executor-runtime.env"; then
-  echo "生产部署必须保留 Executor 独立 PostgreSQL DSN" >&2
+if ! grep -Fq -- '--project-name coinsphere-go' "$DEPLOY_DOCKER_LOG"; then
+  echo "生产部署必须使用独立 Compose 项目" >&2
   exit 1
 fi
-if ! grep -Fq "run --rm backend /app/coinsphere-migrate -config /app/config.yml -direction up" "$DEPLOY_DOCKER_LOG"; then
+if ! grep -Fq "run --rm --no-deps backend /app/coinsphere-migrate -config /app/config.yml -direction up" "$DEPLOY_DOCKER_LOG"; then
   echo "启动服务前必须通过后端镜像执行 PostgreSQL migration" >&2
   exit 1
 fi

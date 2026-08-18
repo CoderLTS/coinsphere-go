@@ -5,14 +5,24 @@ if (( $# < 1 || $# > 2 )); then
   echo "用法: deploy.sh vX.Y.Z [release-manifest.json]" >&2
   exit 2
 fi
+
 VERSION=$1
 MANIFEST_FILE=${2:-}
 REGISTRY=${COINSPHERE_REGISTRY:-127.0.0.1:5000}
 SOURCE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-DEPLOY_DIR=${COINSPHERE_DEPLOY_DIR:-$SOURCE_DIR}
+STACK_ROOT=${COINSPHERE_STACK_ROOT:-}
 WEB_BIND=${COINSPHERE_WEB_BIND:-127.0.0.1}
 WEB_PORT=${COINSPHERE_WEB_PORT:-8080}
 DOCKER_CONFIG_FILE="${DOCKER_CONFIG:-${HOME:?HOME 未设置}/.docker}/config.json"
+
+if [[ -n ${COINSPHERE_DEPLOY_DIR:-} ]]; then
+  DEPLOY_DIR=$COINSPHERE_DEPLOY_DIR
+elif [[ -n $STACK_ROOT ]]; then
+  DEPLOY_DIR=$STACK_ROOT/compose/coinsphere-go
+else
+  echo "请设置 COINSPHERE_DEPLOY_DIR 或 COINSPHERE_STACK_ROOT" >&2
+  exit 3
+fi
 
 if [[ ! $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
   echo "版本号必须符合 vX.Y.Z 格式: $VERSION" >&2
@@ -22,6 +32,11 @@ if [[ ! $REGISTRY =~ ^[0-9A-Za-z.-]+(:[0-9]{1,5})?$ ]]; then
   echo "Registry 地址格式无效" >&2
   exit 2
 fi
+if [[ ! $WEB_PORT =~ ^[0-9]+$ ]] || ((WEB_PORT < 1 || WEB_PORT > 65535)); then
+  echo "COINSPHERE_WEB_PORT 无效" >&2
+  exit 2
+fi
+
 BACKEND_IMAGE=$REGISTRY/coinsphere/backend:$VERSION
 WEB_IMAGE=$REGISTRY/coinsphere/web:$VERSION
 WORKER_IMAGE=$REGISTRY/coinsphere/worker:$VERSION
@@ -56,29 +71,23 @@ if [[ -n $MANIFEST_FILE ]]; then
     exit 2
   fi
   mapfile -t release_images <<<"$manifest_images"
-  if [[ ${#release_images[@]} -ne 3 ]]; then
-    echo "发布 Manifest 镜像字段无效" >&2
-    exit 2
-  fi
   BACKEND_IMAGE=${release_images[0]}
   WEB_IMAGE=${release_images[1]}
   WORKER_IMAGE=${release_images[2]}
 fi
+
 if [[ -f $DOCKER_CONFIG_FILE ]]; then
   command -v jq >/dev/null || { echo "缺少命令: jq" >&2; exit 3; }
-  if ! docker_config_state=$(jq -r -s '
+  docker_config_state=$(jq -r -s '
     if length != 1 or (.[0] | type) != "object" then "invalid"
     elif (.[0] | has("proxies")) then "proxies"
     else "clean"
     end
-  ' "$DOCKER_CONFIG_FILE" 2>/dev/null); then
-    docker_config_state=invalid
-  fi
+  ' "$DOCKER_CONFIG_FILE" 2>/dev/null || printf invalid)
   case "$docker_config_state" in
     clean) ;;
     proxies)
       echo "Docker 客户端配置禁止包含全局 proxies: $DOCKER_CONFIG_FILE" >&2
-      echo "请移除全局代理后再执行部署，避免代理注入运行容器。" >&2
       exit 5
       ;;
     *)
@@ -89,46 +98,54 @@ if [[ -f $DOCKER_CONFIG_FILE ]]; then
 fi
 
 mkdir -p "$DEPLOY_DIR"
-if [[ ! -f $DEPLOY_DIR/runtime.env ]]; then
-  echo "缺少 $DEPLOY_DIR/runtime.env，请先按 runtime.env.example 创建生产配置" >&2
-  exit 3
-fi
-if [[ ! -f $DEPLOY_DIR/worker-runtime.env ]]; then
-  echo "缺少 $DEPLOY_DIR/worker-runtime.env，请先按 worker-runtime.env.example 创建 Worker 配置" >&2
-  exit 3
-fi
-if [[ ! -f $DEPLOY_DIR/executor-runtime.env ]]; then
-  echo "缺少 $DEPLOY_DIR/executor-runtime.env，请先按 executor-runtime.env.example 创建 Paper Executor 配置" >&2
-  exit 3
-fi
-if ! docker network inspect infrastructure >/dev/null 2>&1; then
-  echo "缺少 Docker external network: infrastructure" >&2
-  exit 4
+RUNTIME_ENV=$DEPLOY_DIR/runtime.env
+if [[ ! -f $RUNTIME_ENV ]]; then
+  runtime_source=${COINSPHERE_RUNTIME_ENV_FILE:-}
+  if [[ -z $runtime_source && -n $STACK_ROOT ]]; then
+    runtime_source=$STACK_ROOT/secrets/coinsphere-runtime.env
+  fi
+  if [[ -z $runtime_source || ! -f $runtime_source ]]; then
+    echo "缺少 $RUNTIME_ENV，请先按 runtime.env.example 创建生产配置" >&2
+    exit 3
+  fi
+  install -m 0600 "$runtime_source" "$RUNTIME_ENV"
 fi
 
-next_env=$(mktemp "$DEPLOY_DIR/.env.next.XXXXXX")
+had_previous=false
 previous_env=$(mktemp "$DEPLOY_DIR/.env.previous.XXXXXX")
 previous_compose=$(mktemp "$DEPLOY_DIR/.compose.previous.XXXXXX.yaml")
-had_previous=false
-
-cleanup() {
-  rm -f "$next_env" "$previous_env" "$previous_compose"
-}
-trap cleanup EXIT
-
+next_env=$(mktemp "$DEPLOY_DIR/.env.next.XXXXXX")
 if [[ -f $DEPLOY_DIR/.env && -f $DEPLOY_DIR/compose.yaml ]]; then
   cp "$DEPLOY_DIR/.env" "$previous_env"
   cp "$DEPLOY_DIR/compose.yaml" "$previous_compose"
   had_previous=true
 fi
 
+cleanup() {
+  rm -f "$next_env" "$previous_env" "$previous_compose"
+}
+trap cleanup EXIT
+
 if [[ $SOURCE_DIR != "$DEPLOY_DIR" ]]; then
   install -m 0644 "$SOURCE_DIR/compose.yaml" "$DEPLOY_DIR/compose.yaml"
   install -m 0755 "$SOURCE_DIR/deploy.sh" "$DEPLOY_DIR/deploy.sh"
   install -m 0644 "$SOURCE_DIR/runtime.env.example" "$DEPLOY_DIR/runtime.env.example"
-  install -m 0644 "$SOURCE_DIR/worker-runtime.env.example" "$DEPLOY_DIR/worker-runtime.env.example"
   install -m 0644 "$SOURCE_DIR/executor-runtime.env.example" "$DEPLOY_DIR/executor-runtime.env.example"
 fi
+
+database_password=${COINSPHERE_DATABASE_PASSWORD:-}
+if $had_previous; then
+  database_password=$(sed -n 's/^COINSPHERE_DATABASE_PASSWORD=//p' "$previous_env")
+fi
+if [[ -z $database_password ]]; then
+  command -v openssl >/dev/null || { echo "缺少命令: openssl" >&2; exit 3; }
+  database_password=$(openssl rand -hex 32)
+fi
+if [[ ! $database_password =~ ^[0-9A-Za-z._~-]{32,128}$ ]]; then
+  echo "COINSPHERE_DATABASE_PASSWORD 格式无效" >&2
+  exit 3
+fi
+
 cat >"$next_env" <<EOF
 COINSPHERE_VERSION=$VERSION
 COINSPHERE_BACKEND_IMAGE=$BACKEND_IMAGE
@@ -136,18 +153,62 @@ COINSPHERE_WEB_IMAGE=$WEB_IMAGE
 COINSPHERE_WORKER_IMAGE=$WORKER_IMAGE
 COINSPHERE_WEB_BIND=$WEB_BIND
 COINSPHERE_WEB_PORT=$WEB_PORT
+COINSPHERE_DATABASE_PASSWORD=$database_password
 EOF
 
 compose_with() {
   local env_file=$1
   local compose_file=$2
   shift 2
-  docker compose --project-directory "$DEPLOY_DIR" --env-file "$env_file" -f "$compose_file" "$@"
+  docker compose --project-name coinsphere-go --project-directory "$DEPLOY_DIR" \
+    --env-file "$env_file" -f "$compose_file" "$@"
+}
+
+legacy_available=false
+legacy_removed=false
+legacy_services=()
+legacy_running_services=()
+if [[ -n $STACK_ROOT ]]; then
+  legacy_compose_file=$STACK_ROOT/compose/apps/docker-compose.yaml
+  legacy_env_file=$STACK_ROOT/secrets/apps.env
+  if [[ -f $legacy_compose_file && -f $legacy_env_file ]]; then
+    legacy_available=true
+    while IFS= read -r service; do
+      case "$service" in
+        coinsphere-backend|coinsphere-web|coinsphere-worker|coinsphere-worker-backtest|coinsphere-executor)
+          legacy_services+=("$service")
+          ;;
+      esac
+    done < <(docker compose --project-name apps --project-directory "$(dirname "$legacy_compose_file")" \
+      --env-file "$legacy_env_file" -f "$legacy_compose_file" config --services)
+    while IFS= read -r service; do
+      case "$service" in
+        coinsphere-backend|coinsphere-web|coinsphere-worker|coinsphere-worker-backtest|coinsphere-executor)
+          legacy_running_services+=("$service")
+          ;;
+      esac
+    done < <(docker compose --project-name apps --project-directory "$(dirname "$legacy_compose_file")" \
+      --env-file "$legacy_env_file" -f "$legacy_compose_file" ps --services --status running)
+  fi
+fi
+
+previous_services=()
+if $had_previous; then
+  while IFS= read -r service; do
+    case "$service" in
+      backend|worker|web|executor) previous_services+=("$service") ;;
+    esac
+  done < <(compose_with "$previous_env" "$previous_compose" ps --services --status running)
+fi
+
+legacy_compose() {
+  docker compose --project-name apps --project-directory "$(dirname "$legacy_compose_file")" \
+    --env-file "$legacy_env_file" -f "$legacy_compose_file" "$@"
 }
 
 rollback() {
   local status=$1
-  trap - ERR
+  trap - ERR INT TERM
   set +e
   echo "发布失败，开始恢复上一版本" >&2
   compose_with "$next_env" "$DEPLOY_DIR/compose.yaml" down --remove-orphans
@@ -156,25 +217,36 @@ rollback() {
     install -m 0600 "$previous_env" "$DEPLOY_DIR/.env"
     compose_with "$DEPLOY_DIR/.env" "$DEPLOY_DIR/compose.yaml" pull
     compose_with "$DEPLOY_DIR/.env" "$DEPLOY_DIR/compose.yaml" up -d --wait --wait-timeout 180
+  elif $legacy_removed && ((${#legacy_running_services[@]} > 0)); then
+    legacy_compose up -d --no-deps --wait --wait-timeout 180 "${legacy_running_services[@]}"
   else
     rm -f "$DEPLOY_DIR/.env"
   fi
   exit "$status"
 }
 trap 'rollback $?' ERR
+trap 'rollback 130' INT
+trap 'rollback 143' TERM
 
 compose_with "$next_env" "$DEPLOY_DIR/compose.yaml" pull
+compose_with "$next_env" "$DEPLOY_DIR/compose.yaml" up -d --wait --wait-timeout 180 timescaledb
+if ((${#previous_services[@]} > 0)); then
+  compose_with "$previous_env" "$previous_compose" stop "${previous_services[@]}"
+fi
+compose_with "$next_env" "$DEPLOY_DIR/compose.yaml" run --rm --no-deps backend \
+  /app/coinsphere-migrate -config /app/config.yml -direction up
 
-if $had_previous; then
-  compose_with "$previous_env" "$previous_compose" stop
+if $legacy_available && ((${#legacy_services[@]} > 0)); then
+  legacy_compose stop "${legacy_services[@]}"
+  legacy_compose rm -f "${legacy_services[@]}"
+  legacy_removed=true
 fi
 
-compose_with "$next_env" "$DEPLOY_DIR/compose.yaml" run --rm backend \
-  /app/coinsphere-migrate -config /app/config.yml -direction up
-compose_with "$next_env" "$DEPLOY_DIR/compose.yaml" up -d --wait --wait-timeout 180
+compose_with "$next_env" "$DEPLOY_DIR/compose.yaml" up -d --wait --wait-timeout 180 timescaledb backend worker web
+compose_with "$next_env" "$DEPLOY_DIR/compose.yaml" exec -T worker python -m coinsphere_worker health
 curl --fail --show-error --retry 10 --retry-all-errors --retry-delay 3 \
   "http://127.0.0.1:$WEB_PORT/health" >/dev/null
 
 install -m 0600 "$next_env" "$DEPLOY_DIR/.env"
-trap - ERR
-echo "CoinSphere $VERSION 发布成功"
+trap - ERR INT TERM
+echo "CoinSphere $VERSION 已发布到独立 Compose 项目 coinsphere-go"

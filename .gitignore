@@ -4,6 +4,8 @@ Thumbs.db
 .idea/
 .vscode/
 .codegraph/
+__pycache__/
+*.py[cod]
 
 # Local secrets and machine-specific environment overrides
 .env

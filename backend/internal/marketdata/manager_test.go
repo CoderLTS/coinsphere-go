@@ -82,6 +82,67 @@ func TestManagerBackfillIsIdempotentAndDoesNotTriggerRealtimeCallback(t *testing
 	}
 }
 
+func TestManagerStartupDoesNotFetchInstrumentMetadata(t *testing.T) {
+	database := openStoreTestDatabase(t)
+	var snapshots atomic.Int32
+	manager, err := marketdata.NewManager(database, fakeMarketSource{
+		snapshot: func(context.Context, marketdata.MarketType) ([]marketdata.InstrumentMetadata, error) {
+			snapshots.Add(1)
+			return nil, nil
+		},
+	}, marketdata.ManagerConfig{ReconcileInterval: 10 * time.Millisecond, BackfillPageSize: 10})
+	if err != nil {
+		t.Fatalf("create manager: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if runErr := manager.Run(ctx); !errors.Is(runErr, context.DeadlineExceeded) {
+		t.Fatalf("manager shutdown error = %v", runErr)
+	}
+	if snapshots.Load() != 0 {
+		t.Fatalf("startup fetched %d metadata snapshots", snapshots.Load())
+	}
+}
+
+func TestManagerSyncInstrumentsFiltersMarketAndQuoteAsset(t *testing.T) {
+	database := openStoreTestDatabase(t)
+	usdt := managerTestMetadata()
+	usdc := usdt
+	usdc.NativeSymbol, usdc.QuoteAsset = "BTCUSDC", "USDC"
+	var spotSnapshots, usdmSnapshots atomic.Int32
+	manager, err := marketdata.NewManager(database, fakeMarketSource{
+		snapshot: func(_ context.Context, marketType marketdata.MarketType) ([]marketdata.InstrumentMetadata, error) {
+			if marketType == marketdata.MarketTypeSpot {
+				spotSnapshots.Add(1)
+				return []marketdata.InstrumentMetadata{usdt, usdc}, nil
+			}
+			usdmSnapshots.Add(1)
+			return nil, nil
+		},
+	}, marketdata.ManagerConfig{BackfillPageSize: 10})
+	if err != nil {
+		t.Fatalf("create manager: %v", err)
+	}
+	result, err := manager.SyncInstruments(
+		t.Context(),
+		[]marketdata.MarketType{marketdata.MarketTypeSpot, marketdata.MarketTypeSpot},
+		[]string{"USDC"},
+	)
+	if err != nil {
+		t.Fatalf("sync instruments: %v", err)
+	}
+	if result.SyncedCount != 1 || result.ByMarket["spot"] != 1 || spotSnapshots.Load() != 1 || usdmSnapshots.Load() != 0 {
+		t.Fatalf("sync result=%#v spot=%d usdm=%d", result, spotSnapshots.Load(), usdmSnapshots.Load())
+	}
+	var storedQuote string
+	if err := database.QueryRow("SELECT quote_asset FROM market_instruments").Scan(&storedQuote); err != nil {
+		t.Fatalf("read synced instrument: %v", err)
+	}
+	if storedQuote != "USDC" {
+		t.Fatalf("synced quote asset = %s", storedQuote)
+	}
+}
+
 func TestManagerReconcilesDisconnectAndTriggersOneFirstClose(t *testing.T) {
 	database := openStoreTestDatabase(t)
 	store := marketdata.NewPostgresStore(database)

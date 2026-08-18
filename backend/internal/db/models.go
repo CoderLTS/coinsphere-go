@@ -64,6 +64,31 @@ type MarketCandle struct {
 
 func (MarketCandle) TableName() string { return "market_candles" }
 
+// MarketSyncSettings 是 Binance 元数据同步的全局单例设置。
+type MarketSyncSettings struct {
+	ID              int16  `gorm:"primaryKey"`
+	Venue           string `gorm:"size:16"`
+	MarketTypesJSON string `gorm:"column:market_types;type:jsonb"`
+	QuoteAssetsJSON string `gorm:"column:quote_assets;type:jsonb"`
+	UpdatedByUserID *int64 `gorm:"column:updated_by_user_id"`
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+func (MarketSyncSettings) TableName() string { return "market_sync_settings" }
+
+// MarketWorkflowSubscription 是激活工作流中行情订阅节点的持久化意图。
+type MarketWorkflowSubscription struct {
+	WorkflowDefinitionID int64     `gorm:"column:workflow_definition_id;primaryKey"`
+	NodeID               string    `gorm:"column:node_id;size:100;primaryKey"`
+	InstrumentID         uuid.UUID `gorm:"column:instrument_id;type:uuid"`
+	Interval             string    `gorm:"column:interval_code;size:4"`
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+}
+
+func (MarketWorkflowSubscription) TableName() string { return "market_workflow_subscriptions" }
+
 // WatchlistItem 是用户私有自选，资源 API 始终按 OwnerUserID 过滤。
 type WatchlistItem struct {
 	ID           uuid.UUID `gorm:"type:uuid;primaryKey"`
