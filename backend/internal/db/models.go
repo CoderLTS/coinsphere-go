@@ -789,7 +789,7 @@ type SystemMenu struct {
 	Parent         *SystemMenu `gorm:"foreignKey:ParentID;constraint:OnDelete:CASCADE"`
 	Path           string      `gorm:"size:255"`
 	Name           string      `gorm:"size:100;uniqueIndex"`
-	PermissionCode *string     `gorm:"size:120;uniqueIndex"`
+	PermissionCode *string     `gorm:"size:120;index"`
 	Component      string      `gorm:"size:255"`
 	Title          string      `gorm:"size:100"`
 	Icon           string      `gorm:"size:100"`

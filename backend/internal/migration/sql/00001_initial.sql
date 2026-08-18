@@ -343,7 +343,7 @@ CREATE TABLE menus (
     updated_at TIMESTAMPTZ,
     CONSTRAINT fk_menus_parent FOREIGN KEY (parent_id) REFERENCES menus (id) ON DELETE CASCADE
 );
-CREATE UNIQUE INDEX idx_menus_permission_code ON menus (permission_code);
+CREATE INDEX idx_menus_permission_code ON menus (permission_code);
 CREATE UNIQUE INDEX idx_menus_name ON menus (name);
 
 CREATE TABLE menu_buttons (
