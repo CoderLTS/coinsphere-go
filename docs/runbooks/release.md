@@ -14,10 +14,11 @@ CoinSphere 不再部署到 sub2api 或其他应用的 Compose 项目。发布只
 
 ## 服务器准备
 
-自托管 Runner 需要 Docker Compose v2、`jq`、`curl`、`openssl`、本机 Registry 和以下环境之一：
+自托管 Runner 需要 Docker Compose v2、`jq`、`curl`、`openssl` 和本机 Registry。部署目录按以下顺序确定：
 
 - `COINSPHERE_DEPLOY_DIR`：独立部署目录。
 - `COINSPHERE_STACK_ROOT`：部署脚本使用其 `compose/coinsphere-go` 子目录，并在首次迁移时读取既有 CoinSphere Secret 和共享 Compose 位置。
+- 未设置变量时，脚本从 Docker Compose 标签定位已经存在的独立项目；首次迁移则定位旧 CoinSphere Backend 所在的共享项目。
 
 独立目录必须包含权限为 `0600` 的 `runtime.env`。首次由旧部署迁移时，脚本会复制既有 CoinSphere runtime Secret；手工部署则按 `deploy/production/runtime.env.example` 创建。真实 DSN、令牌和密钥不得进入仓库、Actions 日志、Issue 或 PR。
 
