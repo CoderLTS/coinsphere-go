@@ -87,7 +87,9 @@ export function fetchMarketSyncSettings() {
   })
 }
 
-export function fetchUpdateMarketSyncSettings(params: Pick<MarketSyncSettings, 'marketTypes' | 'quoteAssets'>) {
+export function fetchUpdateMarketSyncSettings(
+  params: Pick<MarketSyncSettings, 'marketTypes' | 'quoteAssets'>
+) {
   return request.put<MarketSyncSettings>({
     url: '/api/v1/markets/metadata-sync/settings',
     params,

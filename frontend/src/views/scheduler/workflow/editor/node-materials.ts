@@ -178,7 +178,19 @@ const MATERIAL_META: Record<
 }
 
 /** 已知分组的展示顺序；不在这张表里的分组（新节点带来的）排在后面，不会被丢掉。 */
-const GROUP_ORDER = ['开始', '行情', '策略', '任务', '智能体', '控制', '数据', '事件', '通知', '集成', '结束']
+const GROUP_ORDER = [
+  '开始',
+  '行情',
+  '策略',
+  '任务',
+  '智能体',
+  '控制',
+  '数据',
+  '事件',
+  '通知',
+  '集成',
+  '结束'
+]
 const FALLBACK_GROUP = '其他'
 
 export function inferNodeFormKind(typeCode: string): WorkflowNodeFormKind {

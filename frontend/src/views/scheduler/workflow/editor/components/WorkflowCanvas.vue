@@ -327,8 +327,7 @@
 
   const getViewportPadding = () => ({
     top: 132,
-    right:
-      selectedNode.value || props.jsonDefinitionVisible ? 16 + SIDE_PANEL_WIDTH + 36 : 56,
+    right: selectedNode.value || props.jsonDefinitionVisible ? 16 + SIDE_PANEL_WIDTH + 36 : 56,
     bottom: 80,
     left: props.materialsVisible ? 20 + STENCIL_PANEL_WIDTH + 36 : 20
   })

@@ -31,7 +31,10 @@
         >
           <div class="strategy-option">
             <strong>{{ item.name }}</strong>
-            <span>{{ item.strategyName }} v{{ item.strategyVersion }} · {{ item.symbol }} · {{ item.interval }}</span>
+            <span
+              >{{ item.strategyName }} v{{ item.strategyVersion }} · {{ item.symbol }} ·
+              {{ item.interval }}</span
+            >
           </div>
         </ElOption>
       </ElSelect>
@@ -68,7 +71,11 @@
     <section class="market-tape" aria-label="行情摘要">
       <div class="instrument-title">
         <strong>{{ selectedSymbol?.nativeSymbol || '--' }}</strong>
-        <span>{{ selectedSymbol ? `${selectedSymbol.baseAsset} / ${selectedSymbol.quoteAsset}` : '等待选择标的' }}</span>
+        <span>{{
+          selectedSymbol
+            ? `${selectedSymbol.baseAsset} / ${selectedSymbol.quoteAsset}`
+            : '等待选择标的'
+        }}</span>
       </div>
       <dl>
         <div>
@@ -146,7 +153,11 @@
           <div v-else class="signal-empty">
             <ArtSvgIcon icon="ri:pulse-line" />
             <strong>{{ viewMode === 'market' ? '币种视图不叠加策略' : '当前区间没有信号' }}</strong>
-            <span>{{ viewMode === 'market' ? '切换到策略视图查看目标仓位。' : '策略产生信号后会出现在这里。' }}</span>
+            <span>{{
+              viewMode === 'market'
+                ? '切换到策略视图查看目标仓位。'
+                : '策略产生信号后会出现在这里。'
+            }}</span>
           </div>
         </ElScrollbar>
       </aside>
@@ -238,14 +249,13 @@
     () => new Map(candles.value.map((item) => [timeKey(item.openTime), axisTime(item.openTime)]))
   )
   const chartSignals = computed<KLineSignalItem[]>(() =>
-    [...signals.value]
-      .reverse()
-      .map((item) => ({
-        time: candleLabelByKey.value.get(timeKey(item.candleOpenTime)) || axisTime(item.candleOpenTime),
-        action: item.action,
-        target: Number(item.target),
-        previousTarget: Number(item.previousTarget)
-      }))
+    [...signals.value].reverse().map((item) => ({
+      time:
+        candleLabelByKey.value.get(timeKey(item.candleOpenTime)) || axisTime(item.candleOpenTime),
+      action: item.action,
+      target: Number(item.target),
+      previousTarget: Number(item.previousTarget)
+    }))
   )
 
   const loadChart = async () => {
@@ -303,7 +313,8 @@
       ])
       symbols.value = symbolResult.records
       strategyInstances.value = strategyResult.records
-      const initialStrategy = strategyInstances.value.find((item) => item.isEnabled) || strategyInstances.value[0]
+      const initialStrategy =
+        strategyInstances.value.find((item) => item.isEnabled) || strategyInstances.value[0]
       if (initialStrategy) {
         selectedStrategyId.value = initialStrategy.id
         selectedInstrumentId.value = initialStrategy.instrumentId
@@ -339,9 +350,9 @@
     gap: 18px;
     min-width: 0;
     padding: 24px 28px 32px;
+    font-family: 'Space Grotesk', 'PingFang SC', 'Microsoft YaHei', sans-serif;
     color: var(--ink);
     background: var(--paper);
-    font-family: 'Space Grotesk', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   }
 
   :global(html.dark .market-chart-page) {
@@ -370,8 +381,8 @@
   .page-head,
   .market-tape,
   .panel-head {
-    justify-content: space-between;
     gap: 20px;
+    justify-content: space-between;
   }
 
   .eyebrow,
@@ -384,8 +395,8 @@
   }
 
   .eyebrow {
-    color: var(--muted);
     font-size: 10px;
+    color: var(--muted);
     letter-spacing: 0;
   }
 
@@ -410,8 +421,8 @@
 
   .page-head p {
     margin-top: 7px;
-    color: var(--muted);
     font-size: 13px;
+    color: var(--muted);
   }
 
   .chart-toolbar {
@@ -438,15 +449,15 @@
   }
 
   .strategy-option span {
-    color: var(--el-text-color-secondary);
     font-size: 11px;
+    color: var(--el-text-color-secondary);
   }
 
   .toolbar-meta {
     gap: 8px;
     margin-left: auto;
-    color: var(--muted);
     font-size: 9px;
+    color: var(--muted);
   }
 
   .toolbar-meta span + span {
@@ -465,10 +476,10 @@
 
   .market-tape {
     padding: 14px 17px;
+    color: #eff4f1;
     background: var(--inverse-panel);
     border: 1px solid var(--strong-line);
     border-radius: 2px;
-    color: #eff4f1;
   }
 
   .instrument-title strong,
@@ -483,8 +494,8 @@
 
   .instrument-title span {
     margin-top: 4px;
-    color: #899297;
     font-size: 10px;
+    color: #899297;
   }
 
   .market-tape dl {
@@ -499,8 +510,8 @@
   }
 
   .market-tape dt {
-    color: #899297;
     font-size: 9px;
+    color: #899297;
   }
 
   .market-tape dd {
@@ -537,8 +548,8 @@
   .chart-legend {
     flex-wrap: wrap;
     gap: 14px;
-    color: var(--muted);
     font-size: 10px;
+    color: var(--muted);
   }
 
   .chart-legend span {
@@ -564,9 +575,9 @@
 
   .signal-count {
     display: grid;
+    place-items: center;
     width: 28px;
     height: 28px;
-    place-items: center;
     font-family: 'IBM Plex Mono', Consolas, monospace;
     font-size: 10px;
     border: 1px solid var(--line);
@@ -614,8 +625,8 @@
     height: 9px;
     background: #8c9296;
     border: 2px solid var(--paper);
-    outline: 1px solid #8c9296;
     border-radius: 50%;
+    outline: 1px solid #8c9296;
   }
 
   .signal-row--buy .signal-node {
@@ -649,8 +660,8 @@
   .signal-main small {
     margin-top: 4px;
     overflow: hidden;
-    color: var(--muted);
     font-size: 9px;
+    color: var(--muted);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -666,8 +677,8 @@
 
   .signal-empty {
     display: grid;
-    place-items: center;
     gap: 8px;
+    place-items: center;
     min-height: 280px;
     color: var(--muted);
     text-align: center;
@@ -678,8 +689,8 @@
   }
 
   .signal-empty strong {
-    color: var(--ink);
     font-size: 12px;
+    color: var(--ink);
   }
 
   .signal-empty span {
@@ -704,8 +715,8 @@
 
     .page-head,
     .market-tape {
-      align-items: flex-start;
       flex-direction: column;
+      align-items: flex-start;
     }
 
     h1 {

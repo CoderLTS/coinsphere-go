@@ -34,7 +34,10 @@
               :value="item.id"
             >
               <div class="definition-option">
-                <span class="definition-state" :class="{ 'definition-state--active': item.isActive }"></span>
+                <span
+                  class="definition-state"
+                  :class="{ 'definition-state--active': item.isActive }"
+                ></span>
                 <strong>{{ item.displayName }}</strong>
                 <small>v{{ item.version }}</small>
               </div>
@@ -76,7 +79,9 @@
           </div>
           <div>
             <dt>最近状态</dt>
-            <dd :class="statusClass(latestExecution?.status)">{{ statusLabel(latestExecution?.status) }}</dd>
+            <dd :class="statusClass(latestExecution?.status)">{{
+              statusLabel(latestExecution?.status)
+            }}</dd>
           </div>
           <div>
             <dt>总执行</dt>
@@ -113,7 +118,9 @@
               <span>{{ selectedNodeLog.nodeType }}</span>
               <strong>{{ selectedNodeLog.nodeId }}</strong>
             </div>
-            <span :class="statusClass(selectedNodeLog.status)">{{ statusLabel(selectedNodeLog.status) }}</span>
+            <span :class="statusClass(selectedNodeLog.status)">{{
+              statusLabel(selectedNodeLog.status)
+            }}</span>
             <p v-if="selectedNodeLog.errorMessage">{{ selectedNodeLog.errorMessage }}</p>
             <small>{{ durationText(selectedNodeLog.durationMs) }}</small>
           </div>
@@ -283,7 +290,9 @@
   const activeExecution = computed(() =>
     ['queued', 'running', 'retry_waiting'].includes(latestExecution.value?.status || '')
   )
-  const failedExecutions = computed(() => executions.value.filter((item) => item.status === 'failed'))
+  const failedExecutions = computed(() =>
+    executions.value.filter((item) => item.status === 'failed')
+  )
   const latestFailure = computed(() => failedExecutions.value[0] || null)
   const selectedNodeLog = computed<WorkflowExecutionNodeLog | null>(() => {
     if (!selectedCanvasNodeId.value) return null
@@ -295,7 +304,11 @@
   const previewGraph = computed<WorkflowDomainGraphModel>(() => {
     const graph = selectedExecution.value?.graph || selectedDefinition.value?.graph
     if (!graph) return { nodes: [], edges: [] }
-    return mapServerGraphToDomain(graph, nodeDefinitions.value, flattenMaterials(nodeDefinitions.value))
+    return mapServerGraphToDomain(
+      graph,
+      nodeDefinitions.value,
+      flattenMaterials(nodeDefinitions.value)
+    )
   })
 
   const statusLabel = (status?: string) =>
@@ -307,7 +320,9 @@
       success: '成功',
       failed: '失败',
       canceled: '已取消'
-    })[status || ''] || status || '--'
+    })[status || ''] ||
+    status ||
+    '--'
   const statusClass = (status?: string) => `status-text status-text--${status || 'idle'}`
   const triggerLabel = (type: string) =>
     ({ manual: '手动', schedule: '定时', event: '事件', webhook: 'Webhook' })[type] || type
@@ -413,8 +428,12 @@
         })
       ])
       const candles = [...candleResult.records].reverse()
-      const signalMap = new Map(signalResult.records.map((item) => [timeKey(item.candleOpenTime), item]))
-      const labelMap = new Map(candles.map((item) => [timeKey(item.openTime), axisTime(item.openTime)]))
+      const signalMap = new Map(
+        signalResult.records.map((item) => [timeKey(item.candleOpenTime), item])
+      )
+      const labelMap = new Map(
+        candles.map((item) => [timeKey(item.openTime), axisTime(item.openTime)])
+      )
       previewCandles.value = candles.map((item) => ({
         time: axisTime(item.openTime),
         open: Number(item.open),
@@ -491,9 +510,9 @@
     min-width: 0;
     min-height: 100%;
     padding: 24px 28px 32px;
+    font-family: 'Space Grotesk', 'PingFang SC', 'Microsoft YaHei', sans-serif;
     color: var(--ink);
     background: var(--paper);
-    font-family: 'Space Grotesk', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   }
 
   :global(html.dark .workflow-home) {
@@ -528,8 +547,8 @@
   .canvas-head,
   .rail-head,
   .panel-head {
-    justify-content: space-between;
     gap: 20px;
+    justify-content: space-between;
   }
 
   .eyebrow,
@@ -545,8 +564,8 @@
   }
 
   .eyebrow {
-    color: var(--muted);
     font-size: 10px;
+    color: var(--muted);
     letter-spacing: 0;
   }
 
@@ -571,8 +590,8 @@
 
   .workbench-head p {
     margin-top: 7px;
-    color: var(--muted);
     font-size: 13px;
+    color: var(--muted);
   }
 
   .head-actions {
@@ -640,8 +659,8 @@
 
   .ops-identity span {
     margin-top: 3px;
-    color: #899297;
     font-size: 10px;
+    color: #899297;
   }
 
   .ops-strip dl {
@@ -656,8 +675,8 @@
   }
 
   .ops-strip dt {
-    color: #899297;
     font-size: 9px;
+    color: #899297;
   }
 
   .ops-strip dd {
@@ -690,8 +709,8 @@
     right: 16px;
     left: 16px;
     z-index: 5;
-    color: #899297;
     font-size: 9px;
+    color: #899297;
     pointer-events: none;
   }
 
@@ -754,20 +773,20 @@
   }
 
   .node-popover > div:first-child {
-    justify-content: space-between;
     gap: 8px;
+    justify-content: space-between;
   }
 
   .node-popover span,
   .node-popover small {
-    color: #899297;
     font-size: 9px;
+    color: #899297;
   }
 
   .node-popover p {
     margin: 8px 0;
-    color: var(--signal);
     font-size: 10px;
+    color: var(--signal);
   }
 
   .run-rail {
@@ -832,17 +851,17 @@
   .run-copy small,
   .run-duration {
     margin-top: 4px;
-    color: #899297;
     font-size: 9px;
+    color: #899297;
   }
 
   .run-copy em {
     display: -webkit-box;
     margin-top: 5px;
     overflow: hidden;
-    color: var(--signal);
     font-size: 9px;
     font-style: normal;
+    color: var(--signal);
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
   }
@@ -850,17 +869,17 @@
   .rail-empty,
   .error-empty {
     display: grid;
-    place-items: center;
-    gap: 8px;
     flex: 1;
+    gap: 8px;
+    place-items: center;
     min-height: 220px;
     color: #899297;
     text-align: center;
   }
 
   .rail-empty strong {
-    color: #eff4f1;
     font-size: 12px;
+    color: #eff4f1;
   }
 
   .rail-empty span {
@@ -889,15 +908,15 @@
 
   .preview-meta {
     gap: 8px;
-    color: var(--muted);
     font-size: 10px;
+    color: var(--muted);
   }
 
   .error-count {
     display: grid;
+    place-items: center;
     width: 28px;
     height: 28px;
-    place-items: center;
     color: var(--signal);
     border: 1px solid var(--signal);
   }
@@ -910,14 +929,14 @@
 
   .error-body span,
   .error-body small {
-    color: var(--muted);
     font-size: 9px;
+    color: var(--muted);
   }
 
   .error-body strong {
-    color: var(--signal);
     font-size: 12px;
     line-height: 1.55;
+    color: var(--signal);
   }
 
   .error-empty {
@@ -1004,8 +1023,8 @@
 
     .workbench-head,
     .ops-strip {
-      align-items: flex-start;
       flex-direction: column;
+      align-items: flex-start;
     }
 
     h1 {
@@ -1023,9 +1042,9 @@
     }
 
     .canvas-head {
-      align-items: flex-start;
       flex-direction: column;
       gap: 6px;
+      align-items: flex-start;
     }
 
     .guest-console {

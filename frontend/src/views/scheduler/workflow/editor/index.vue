@@ -1230,7 +1230,12 @@
     resetGraphHistory()
 
     try {
-      const [taskDefinitionResult, nodeDefinitionResult, agentOptionResult, strategyInstanceResult] = await Promise.all([
+      const [
+        taskDefinitionResult,
+        nodeDefinitionResult,
+        agentOptionResult,
+        strategyInstanceResult
+      ] = await Promise.all([
         fetchTaskDefinitions(),
         fetchNodeDefinitions(),
         // 智能体列表拿不到不该挡住整个编辑器（没配智能体也能画别的节点）。

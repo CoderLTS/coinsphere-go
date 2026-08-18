@@ -7,12 +7,7 @@
         <p>管理后续同步范围，查看交易所标的、精度和当前交易状态。</p>
       </div>
       <div class="head-actions">
-        <ElButton
-          v-if="canManage"
-          :icon="Refresh"
-          :loading="syncStarting"
-          @click="runSync"
-        >
+        <ElButton v-if="canManage" :icon="Refresh" :loading="syncStarting" @click="runSync">
           立即同步
         </ElButton>
         <ElButton
@@ -32,7 +27,9 @@
         <span class="sync-mark__dot"></span>
         <div>
           <strong>{{ isSyncing ? '同步工作流运行中' : '同步服务待命' }}</strong>
-          <span>{{ syncStatus.lastSyncAt ? `上次完成 ${syncStatus.lastSyncAt}` : '尚未完成过同步' }}</span>
+          <span>{{
+            syncStatus.lastSyncAt ? `上次完成 ${syncStatus.lastSyncAt}` : '尚未完成过同步'
+          }}</span>
         </div>
       </div>
       <dl class="sync-facts">
@@ -137,16 +134,24 @@
             </template>
           </ElTableColumn>
           <ElTableColumn label="价格精度" min-width="140">
-            <template #default="{ row }"><span class="mono">{{ row.priceTick }}</span></template>
+            <template #default="{ row }"
+              ><span class="mono">{{ row.priceTick }}</span></template
+            >
           </ElTableColumn>
           <ElTableColumn label="数量步长" min-width="140">
-            <template #default="{ row }"><span class="mono">{{ row.quantityStep }}</span></template>
+            <template #default="{ row }"
+              ><span class="mono">{{ row.quantityStep }}</span></template
+            >
           </ElTableColumn>
           <ElTableColumn label="最小名义价值" min-width="150">
-            <template #default="{ row }"><span class="mono">{{ row.minNotional }}</span></template>
+            <template #default="{ row }"
+              ><span class="mono">{{ row.minNotional }}</span></template
+            >
           </ElTableColumn>
           <ElTableColumn label="更新时间" min-width="180">
-            <template #default="{ row }"><span class="mono muted">{{ row.updatedAt }}</span></template>
+            <template #default="{ row }"
+              ><span class="mono muted">{{ row.updatedAt }}</span></template
+            >
           </ElTableColumn>
         </ElTable>
         <div v-if="!symbolsLoading && !symbols.length" class="empty-state">
@@ -217,9 +222,15 @@
   )
 
   const executionStatusLabel = (status: string) =>
-    ({ queued: '排队中', running: '运行中', retry_waiting: '等待重试', success: '成功', failed: '失败' })[
-      status
-    ] || status || '--'
+    ({
+      queued: '排队中',
+      running: '运行中',
+      retry_waiting: '等待重试',
+      success: '成功',
+      failed: '失败'
+    })[status] ||
+    status ||
+    '--'
 
   const loadSettings = async () => {
     const [nextSettings, nextStatus] = await Promise.all([
@@ -334,9 +345,9 @@
     gap: 18px;
     min-width: 0;
     padding: 24px 28px 32px;
+    font-family: 'Space Grotesk', 'PingFang SC', 'Microsoft YaHei', sans-serif;
     color: var(--ink);
     background: var(--paper);
-    font-family: 'Space Grotesk', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   }
 
   :global(html.dark .market-metadata-page) {
@@ -366,8 +377,8 @@
 
   .page-head,
   .band-head {
-    justify-content: space-between;
     gap: 20px;
+    justify-content: space-between;
   }
 
   .eyebrow,
@@ -378,8 +389,8 @@
   }
 
   .eyebrow {
-    color: var(--muted);
     font-size: 10px;
+    color: var(--muted);
     letter-spacing: 0;
   }
 
@@ -404,8 +415,8 @@
 
   .page-head p {
     margin-top: 7px;
-    color: var(--muted);
     font-size: 13px;
+    color: var(--muted);
   }
 
   .head-actions {
@@ -414,8 +425,8 @@
   }
 
   .sync-strip {
-    justify-content: space-between;
     gap: 24px;
+    justify-content: space-between;
     padding: 16px 18px;
     background: var(--panel);
     border: 1px solid var(--strong-line);
@@ -452,8 +463,8 @@
 
   .sync-mark span {
     margin-top: 3px;
-    color: var(--muted);
     font-size: 11px;
+    color: var(--muted);
   }
 
   .sync-facts {
@@ -469,8 +480,8 @@
   }
 
   .sync-facts dt {
-    color: var(--muted);
     font-size: 10px;
+    color: var(--muted);
   }
 
   .sync-facts dd {
@@ -492,16 +503,16 @@
   }
 
   .control-label {
-    color: var(--muted);
     font-size: 10px;
+    color: var(--muted);
     letter-spacing: 0;
   }
 
   .control-note {
     gap: 7px;
     margin-left: auto;
-    color: var(--muted);
     font-size: 11px;
+    color: var(--muted);
   }
 
   .table-band {
@@ -546,14 +557,14 @@
 
   .symbol-cell span {
     margin-top: 4px;
-    color: var(--muted);
     font-size: 11px;
+    color: var(--muted);
   }
 
   .empty-state {
     display: grid;
-    place-items: center;
     gap: 8px;
+    place-items: center;
     min-height: 220px;
     color: var(--muted);
     text-align: center;
@@ -564,8 +575,8 @@
   }
 
   .empty-state strong {
-    color: var(--ink);
     font-size: 13px;
+    color: var(--ink);
   }
 
   .load-more {
@@ -580,8 +591,8 @@
     }
 
     .sync-strip {
-      align-items: flex-start;
       flex-direction: column;
+      align-items: flex-start;
     }
 
     .sync-facts div:first-child {
@@ -596,8 +607,8 @@
     }
 
     .page-head {
-      align-items: flex-start;
       flex-direction: column;
+      align-items: flex-start;
     }
 
     .head-actions {
@@ -605,9 +616,9 @@
     }
 
     .control-block {
-      align-items: flex-start;
       flex-direction: column;
       gap: 7px;
+      align-items: flex-start;
     }
 
     .control-note {
