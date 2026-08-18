@@ -574,12 +574,6 @@ func (a *App) upsertMenu(existing *db.SystemMenu, payload MenuUpsertPayload) (M,
 		return nil, bizErr("菜单路由名称已存在")
 	}
 	permissionCode := strings.TrimSpace(payload.PermissionCode)
-	if permissionCode != "" {
-		a.DB.Model(&db.SystemMenu{}).Where("permission_code = ? AND id <> ?", permissionCode, excludeID).Count(&count)
-		if count > 0 {
-			return nil, bizErr("菜单权限编码已存在")
-		}
-	}
 	if err := a.validateI18nKey(payload.I18nKey, "menu", excludeID); err != nil {
 		return nil, err
 	}

@@ -191,6 +191,10 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
       await fulfillApi(route, [])
       return
     }
+    if (method === 'GET' && path === '/api/v1/strategy-instances') {
+      await fulfillApi(route, { records: [], nextCursor: '', hasMore: false, total: 0 })
+      return
+    }
     if (method === 'POST' && path === '/api/v1/workflows/validate') {
       await fulfillApi(route, { valid: true, issues: [] })
       return

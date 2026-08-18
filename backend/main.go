@@ -116,7 +116,7 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 			ReconcileInterval: time.Duration(cfg.MarketData.ReconcileIntervalSeconds) * time.Second,
 			BackfillPageSize:  cfg.MarketData.BackfillPageSize,
 			OnFirstClosed: func(candle marketdata.Candle) error {
-				return app.EnqueueRealtimeSignals(ctx, candle)
+				return app.PublishMarketCandleClosed(ctx, candle)
 			},
 		})
 		if err != nil {

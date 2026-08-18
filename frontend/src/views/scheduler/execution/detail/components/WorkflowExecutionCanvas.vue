@@ -94,15 +94,15 @@
         position: 0.5,
         attrs: {
           body: {
-            fill: '#ffffff',
-            stroke: '#cbd5e1',
+            fill: '#181b1e',
+            stroke: '#5b6468',
             strokeWidth: 1,
             rx: 10,
             ry: 10
           },
           label: {
             text,
-            fill: '#475569',
+            fill: '#d8dddf',
             fontSize: 11,
             fontWeight: 600
           }
@@ -118,15 +118,15 @@
         position: 0.76,
         attrs: {
           body: {
-            fill: '#eef2ff',
-            stroke: '#c7d2fe',
+            fill: '#27222f',
+            stroke: '#9e8cff',
             strokeWidth: 1,
             rx: 10,
             ry: 10
           },
           label: {
             text: `x${count}`,
-            fill: '#4338ca',
+            fill: '#c5baff',
             fontSize: 11,
             fontWeight: 700
           }
@@ -227,7 +227,7 @@
       const selected = activeCellType.value === 'edge' && activeCellId.value === edge.id
       const targetNodeId = String(edge.getTargetCellId() || '')
       const leadsToFailure = executed && failedNodeIds.value.has(targetNodeId)
-      const stroke = leadsToFailure ? '#ef4444' : executed ? '#14b8a6' : '#94a3b8'
+      const stroke = leadsToFailure ? '#ff705b' : executed ? '#c7f46b' : '#6f777b'
       const opacity = selected ? 1 : executed ? 0.96 : 0.62
       const strokeWidth = selected ? (executed ? 3 : 2.2) : executed ? 1.9 : 1.1
       const baseLabel = String((edge.getData() || {}).label || '')
@@ -397,12 +397,13 @@
     width: 100%;
     height: 100%;
     overflow: hidden;
-    background:
-      radial-gradient(circle at top center, rgb(255 255 255 / 0.9) 0%, rgb(251 253 255 / 0) 36%),
-      linear-gradient(180deg, #fbfdff 0%, #f5f8fd 100%);
-    border: 1px solid rgb(226 232 240 / 0.92);
-    border-radius: 22px;
-    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.64);
+    background-color: #111315;
+    background-image:
+      linear-gradient(rgb(255 255 255 / 0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(255 255 255 / 0.045) 1px, transparent 1px);
+    background-size: 24px 24px;
+    border: 1px solid #34393c;
+    border-radius: 2px;
     contain: layout paint;
   }
 

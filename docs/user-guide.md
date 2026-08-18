@@ -21,7 +21,7 @@ CoinSphere 适合以下场景：
 | --- | --- | --- |
 | Docker Compose | 首次体验、个人长期运行 | `http://localhost:8080` |
 | 本地开发 | 修改 Go、Vue 或 Python 代码 | Web `:3006`、Backend `:6987` |
-| 生产部署 | 已维护 Linux 主机、外部数据库和镜像仓库 | 参照发布 Runbook |
+| 生产部署 | 已维护 Linux 主机和本机镜像仓库 | 独立 CoinSphere Compose，参照发布 Runbook |
 
 首次使用推荐 Docker Compose。生产部署不会自动允许私有交易，详细边界见[发布与回滚](runbooks/release.md)。
 
@@ -74,7 +74,7 @@ docker compose ps
 
 - `timescaledb` 处于 `healthy`。
 - `migrate` 成功退出，退出码为 `0`。
-- `backend`、`executor`、`worker`、`worker-backtest` 和 `web` 正在运行。
+- `backend`、`worker` 和 `web` 正在运行；`executor` 仅属于默认关闭的 `private` profile。
 - 浏览器访问 <http://localhost:8080> 能看到登录页。
 
 端口冲突时，启动前设置 `COINSPHERE_WEB_PORT`：
@@ -90,7 +90,7 @@ PowerShell 使用 `$env:COINSPHERE_WEB_PORT = '18080'`。修改后入口为 <htt
 
 ```bash
 docker compose logs --tail=200 backend
-docker compose logs --tail=200 worker worker-backtest executor
+docker compose logs --tail=200 worker
 docker compose logs -f web backend
 docker compose down
 ```
@@ -139,7 +139,9 @@ CLI 要求密码至少 12 个字符，并要求输入两次确认。不要把生
 
 | 菜单 | 用途 |
 | --- | --- |
-| 首页 | 查看新闻、工作流、激活状态和最近执行概况 |
+| 首页 | 工作流工作台、当前/最近执行和 K 线信号预览 |
+| 市场元数据 | 设置 Spot/USD-M 与报价资产范围，手工同步并查看状态 |
+| 行情图表 | 查看 K 线、成交量、目标仓位和 BUY/SELL/FLAT 信号 |
 | 交易管理 / Paper 账户 | 管理账户、风控、余额、持仓、订单、意图和账本 |
 | 工作流定义 | 创建版本、编辑画布、校验、激活和手工执行 |
 | 任务定义 | 维护工作流任务节点可用的参数 |
@@ -228,7 +230,7 @@ Paper 可用于验证这条授权链，但首次使用建议保持自动化关�
 
 ## 7. 行情、策略、回测与信号
 
-这些能力的后端和 `/api/v1` 契约已经实现，但当前 Web 没有完整操作页。不要按尚不存在的菜单寻找入口；集成方应以[公共契约](contracts/README.md)为准。
+市场元数据和行情图表已有 Web 页面；策略版本、实例、回测和信号的完整写操作仍以 `/api/v1` 契约为准。
 
 当前 API 能力包括：
 
@@ -243,13 +245,13 @@ Paper 可用于验证这条授权链，但首次使用建议保持自动化关�
 
 ## 8. 工作流
 
-工作流用于粗粒度业务编排，例如定时同步新闻、响应领域事件、调用智能体、发送通知或访问允许的公网 HTTP。
+工作流用于粗粒度业务编排，例如同步行情元数据、订阅或补齐 K 线、计算策略、响应领域事件、调用智能体和发送通知。
 
 ### 8.1 创建和激活
 
 1. 需要任务节点时，先在“任务定义”中检查或维护参数。
 2. 进入“工作流定义”，新建工作流。
-3. 在画布放置开始、任务/智能体/控制/通知等节点和结束节点。
+3. 在画布放置开始、行情、策略、任务/智能体、控制、通知等节点和结束节点。
 4. 配置每个节点及连线，使用工具栏校验。
 5. 校验通过后保存为定义版本。
 6. 在版本列表中激活目标版本。
@@ -261,7 +263,7 @@ Paper 可用于验证这条授权链，但首次使用建议保持自动化关�
 
 - 工作流不得调用 Binance 私有接口、保存交易凭据、创建交易命令或绕过风控。
 - 通用 HTTP 节点只访问经过允许的公网服务，不把令牌或原始敏感载荷写入日志。
-- 逐 K 线策略计算由 Worker 执行，不应放入工作流节点。
+- 策略节点只负责创建并等待 Worker 任务；逐 K 线计算循环仍由行情模块和 Worker 执行。
 - 事件触发每次会产生独立执行记录；失败时从执行记录查看具体节点错误。
 
 ## 9. 通知渠道
@@ -376,7 +378,6 @@ curl -fsS http://localhost:8080/metrics
 
 ```bash
 docker compose exec -T worker python -m coinsphere_worker health
-docker compose exec -T worker-backtest python -m coinsphere_worker health
 ```
 
 ### 14.2 常见问题
@@ -388,7 +389,7 @@ docker compose exec -T worker-backtest python -m coinsphere_worker health
 | Web 打不开 | `web` 端口映射、端口冲突、`backend` 是否 healthy |
 | 登录后立即失效 | 重启时是否更换了签名密钥、浏览器时间是否异常 |
 | 行情没有更新 | Binance 公共网络、Backend 日志、自选或策略订阅范围 |
-| 回测一直等待 | `worker-backtest` 健康、任务租约、数据库和产物目录空间 |
+| 回测一直等待 | `worker` 健康、backtest lane 任务租约、数据库和产物目录空间 |
 | 实时信号不生成 | `worker` 健康、闭合 K 线、策略实例状态和输入数据 |
 | Paper 意图被阻断 | 全局急停、账户暂停、风控、行情年龄、授权和阻断原因 |
 | 通知失败 | 渠道启用状态、测试结果、外部网络和供应商配置 |
@@ -397,7 +398,7 @@ docker compose exec -T worker-backtest python -m coinsphere_worker health
 
 ```bash
 docker compose ps
-docker compose logs --tail=200 migrate backend executor worker worker-backtest web
+docker compose logs --tail=200 migrate backend worker web
 docker system df
 ```
 
@@ -417,14 +418,14 @@ COINSPHERE_TRADING__USD_M_LIVE_AUTO_ENABLED
 
 私有能力还要求独立安全的 `COINSPHERE_AUTH__ENCRYPTION_KEY`。Live auto 必须同时启用对应 manual，并满足管理员授权、Owner 放行、完整风控和持续匹配对账；USD-M 还要求逐仓、单向、受限杠杆和强平距离证据。
 
-这些是必要条件，不是当前启用建议。CI、Codex、自动部署和工作流不得提供真实凭据、打开上述开关、发起私有请求或解除急停。晋级顺序和证据要求以[路线图](roadmap/README.md)、[架构说明](architecture/overview.md)和[发布 Runbook](runbooks/release.md)为准。
+这些是必要条件，不是当前启用建议。CI、Codex、自动部署和工作流不得提供真实凭据、打开上述开关、发起私有请求或解除急停。晋级顺序和证据要求以[开发计划](roadmap/README.md)、[架构说明](architecture/overview.md)和[发布 Runbook](runbooks/release.md)为准。
 
 ## 16. 文档索引
 
 - [README](../README.md)：项目定位和快速启动
 - [架构说明](architecture/overview.md)：组件职责、数据归属和关键数据流
 - [公共契约](contracts/README.md)：API、幂等、复验和交易状态语义
-- [路线图](roadmap/README.md)：里程碑、依赖和晋级门禁
+- [开发计划](roadmap/README.md)：能力顺序、完成标准和晋级门禁
 - [质量门禁](quality/quality-gates.md)：本地与 CI 验收标准
 - [本地开发](runbooks/development.md)：开发命令和运行时诊断
 - [数据库迁移](runbooks/database-migrations.md)：迁移、校验和回滚

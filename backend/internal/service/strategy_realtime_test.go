@@ -17,6 +17,7 @@ import (
 	"coinsphere/backend/internal/db"
 	"coinsphere/backend/internal/security"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 func TestStrategyInstanceValidationDefaultsAndBoundaries(t *testing.T) {
@@ -115,6 +116,36 @@ func TestStrategyInstanceValidationDefaultsAndBoundaries(t *testing.T) {
 		if _, err := validateStrategyInstancePayload(payload, version, false, false, false, false); !errors.Is(err, ErrInvalidStrategyRequest) {
 			t.Fatalf("invalid instance %#v returned %v", payload, err)
 		}
+	}
+}
+
+func TestStrategySignalTargetActions(t *testing.T) {
+	base := db.StrategySignal{
+		ID:                 uuid.MustParse("019d4000-0000-7000-8000-000000000010"),
+		StrategyInstanceID: uuid.MustParse("019d4000-0000-7000-8000-000000000011"),
+		StrategyVersionID:  uuid.MustParse("019d4000-0000-7000-8000-000000000012"),
+		InstrumentID:       uuid.MustParse("019d4000-0000-7000-8000-000000000013"),
+		Interval:           "1m",
+		Target:             decimal.RequireFromString("0.5"),
+	}
+	cases := []struct {
+		name, previous, target, action string
+	}{
+		{"hold", "0.5", "0.5", "hold"},
+		{"flat", "0.5", "0", "flat"},
+		{"buy", "0.1", "0.5", "buy"},
+		{"sell", "0.8", "0.5", "sell"},
+	}
+	for _, item := range cases {
+		t.Run(item.name, func(t *testing.T) {
+			row := base
+			row.Target = decimal.RequireFromString(item.target)
+			previous := decimal.RequireFromString(item.previous)
+			view := serializeStrategySignalWithPrevious(row, &previous)
+			if view.Action != item.action || view.PreviousTarget != previous.String() || view.TargetChange != row.Target.Sub(previous).String() {
+				t.Fatalf("signal view = %#v", view)
+			}
+		})
 	}
 }
 
@@ -239,7 +270,7 @@ INSERT INTO strategy_signals (
 	}
 	ownerID := owner.ID
 	dingTalkChannel := db.SystemNotifyChannel{
-		ChannelType: "dingtalk_webhook", OwnerID: &ownerID, DisplayName: "M2 retry",
+		ChannelType: "dingtalk_webhook", OwnerID: &ownerID, DisplayName: "signal retry",
 		IsEnabled: true, SettingsJSON: dumpJSON(M{"webhookBaseUrl": dingTalkServer.URL}),
 		EncryptedSecretsJSON: cipher.Encrypt(dumpJSON(M{"accessToken": dingTalkToken, "secret": dingTalkSecret})),
 		CreatedAt:            time.Now().UTC(), UpdatedAt: time.Now().UTC(),

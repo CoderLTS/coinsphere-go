@@ -148,7 +148,6 @@ done
 install -m 0644 "$ROOT_DIR/deploy/production/compose.yaml" "$work_dir/packages/$docker_name/compose.yaml"
 install -m 0755 "$ROOT_DIR/deploy/production/deploy.sh" "$work_dir/packages/$docker_name/deploy.sh"
 install -m 0644 "$ROOT_DIR/deploy/production/runtime.env.example" "$work_dir/packages/$docker_name/runtime.env.example"
-install -m 0644 "$ROOT_DIR/deploy/production/worker-runtime.env.example" "$work_dir/packages/$docker_name/worker-runtime.env.example"
 install -m 0644 "$ROOT_DIR/deploy/production/executor-runtime.env.example" "$work_dir/packages/$docker_name/executor-runtime.env.example"
 install -m 0644 "$ROOT_DIR/deploy/production/README.md" "$work_dir/packages/$docker_name/README.md"
 

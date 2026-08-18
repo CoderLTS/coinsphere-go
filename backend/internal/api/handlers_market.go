@@ -13,9 +13,39 @@ func (s *Server) handleListMarketSymbols(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	data, err := s.App.ListMarketSymbols(r.Context(), service.MarketSymbolQuery{
-		Page: page, Market: queryStr(r, "market"), Keyword: queryStr(r, "keyword"),
+		Page: page, Market: queryStr(r, "market"), QuoteAsset: queryStr(r, "quoteAsset"),
+		Status: queryStr(r, "status"), Keyword: queryStr(r, "keyword"),
 	})
 	writeMarketResult(w, r, data, err)
+}
+
+func (s *Server) handleGetMarketSyncSettings(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
+	data, err := s.App.GetMarketSyncSettings(r.Context())
+	writeMarketResult(w, r, data, err)
+}
+
+func (s *Server) handleUpdateMarketSyncSettings(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	payload, err := decodeStrictBody[service.MarketSyncSettingsPayload](r)
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "invalid market sync settings")
+		return
+	}
+	data, err := s.App.UpdateMarketSyncSettings(r.Context(), principal.User.ID, *payload)
+	writeMarketResult(w, r, data, err)
+}
+
+func (s *Server) handleGetMarketSyncStatus(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
+	data, err := s.App.GetMarketSyncStatus(r.Context())
+	writeMarketResult(w, r, data, err)
+}
+
+func (s *Server) handleRunMarketSync(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	data, err := s.App.RunMarketMetadataSync(r.Context(), principal.User.ID, r.Header.Get("Idempotency-Key"))
+	if err != nil {
+		writeMarketResult(w, r, nil, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, M{"code": 200, "msg": "同步工作流已加入执行队列", "data": data})
 }
 
 func (s *Server) handleListMarketCandles(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
@@ -67,6 +97,8 @@ func writeMarketResult(w http.ResponseWriter, r *http.Request, data any, err err
 		status, detail = http.StatusNotFound, service.ErrMarketResourceMissing.Error()
 	case errors.Is(err, service.ErrWatchlistExists):
 		status, detail = http.StatusConflict, service.ErrWatchlistExists.Error()
+	case service.IsIdempotencyConflict(err):
+		status, detail = http.StatusConflict, err.Error()
 	}
 	writeProblem(w, r, status, detail)
 }

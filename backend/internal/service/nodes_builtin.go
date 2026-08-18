@@ -124,7 +124,7 @@ func init() {
 					"targetId":   M{"type": "integer"},
 					"targetCode": M{"type": "string"},
 				}}},
-				"channelTypes":    M{"type": "array", "title": "通知渠道", "items": M{"type": "string", "enum": []string{"in_app", "dingtalk_webhook", "smtp_email"}}},
+				"channelTypes":    M{"type": "array", "title": "通知渠道", "items": M{"type": "string", "enum": []string{"in_app", "dingtalk_webhook", "qq_bot", "smtp_email"}}},
 				"titleTemplate":   M{"type": "string", "title": "标题模板"},
 				"contentTemplate": M{"type": "string", "title": "内容模板"},
 				"messageFormat":   M{"type": "string", "title": "消息格式", "default": "markdown"},

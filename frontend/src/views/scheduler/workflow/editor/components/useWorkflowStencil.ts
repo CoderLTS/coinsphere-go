@@ -185,7 +185,8 @@ export function useWorkflowStencil(options: StencilOptions) {
     const graphs = Object.values(((stencil as any).graphs || {}) as Record<string, Graph>)
     graphs.forEach((groupGraph) => {
       groupGraph.on('node:click', ({ node }) => {
-        const typeCode = String(node.getData()?.stencilTypeCode || '')
+        const data = node.getData() || {}
+        const typeCode = String(data.stencilTypeCode || '')
         const graph = options.graphInstance.value
         if (!typeCode || !graph) return
         const centerPoint = graph.clientToLocal(options.viewportCenter()) as {
@@ -196,6 +197,10 @@ export function useWorkflowStencil(options: StencilOptions) {
         insertionCount = (insertionCount + 1) % 6
         options.onInsert({
           typeCode,
+          title: String(data.stencilTitle || ''),
+          color: String(data.color || ''),
+          presetConfig: data.stencilPresetConfig,
+          presetSubtitle: String(data.stencilPresetSubtitle || ''),
           source: 'click',
           position: { x: centerPoint.x + offset, y: centerPoint.y + offset }
         })

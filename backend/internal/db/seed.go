@@ -50,6 +50,8 @@ var menuItems = []menuItem{
 	{"DataCenter", "数据管理", "/data", "/index/index", "ri:database-2-line", "", false, false, false},
 	{"NewsData", "新闻数据", "news", "/data/news", "ri:newspaper-line", "DataCenter", true, false, false},
 	{"PushData", "推送数据", "push", "/data/push", "ri:send-plane-line", "DataCenter", true, false, false},
+	{"MarketMetadata", "币种元数据", "market-metadata", "/data/market-metadata", "ri:coins-line", "DataCenter", true, false, false},
+	{"MarketChart", "K 线与信号", "market-chart", "/data/market-chart", "ri:stock-line", "DataCenter", true, false, false},
 	{"ConfigCenter", "配置管理", "/config", "/index/index", "ri:function-line", "", false, false, false},
 	{"ConfigOverview", "配置概览", "overview", "/config/overview", "ri:apps-2-line", "ConfigCenter", true, false, false},
 	{"AiModelConfig", "模型配置", "ai-model", "/config/ai-model", "ri:cpu-line", "ConfigCenter", true, false, false},
@@ -75,6 +77,8 @@ var menuI18n = map[string][2]string{
 	"DataCenter":           {"数据管理", "Data Management"},
 	"NewsData":             {"新闻数据", "News Data"},
 	"PushData":             {"推送数据", "Push Deliveries"},
+	"MarketMetadata":       {"币种元数据", "Market Metadata"},
+	"MarketChart":          {"K 线与信号", "Candles & Signals"},
 	"ConfigCenter":         {"配置管理", "Configuration"},
 	"ConfigOverview":       {"配置概览", "Config Overview"},
 	"AiModelConfig":        {"模型配置", "Model Config"},
@@ -387,7 +391,7 @@ func seedRoleBindings(
 	// 普通用户只看几项,游客只看首页。
 	roleMenus := map[string][]string{
 		"R_SUPER": allMenuNames,
-		"R_USER":  {"Home", "TradingCenter", "PaperTrading", "ConfigCenter", "AiModelConfig", "NotifyChannels", "UserCenter"},
+		"R_USER":  {"Home", "TradingCenter", "PaperTrading", "DataCenter", "MarketMetadata", "MarketChart", "ConfigCenter", "AiModelConfig", "NotifyChannels", "UserCenter"},
 		"R_GUEST": {"Home"},
 	}
 	superButtons := make([]string, 0)
@@ -533,6 +537,11 @@ func seedWorkflows(tx *gorm.DB, superRoleID int64) error {
 			"响应 workflow.execution.failed 事件并发送失败告警通知。",
 			buildAlertWorkflowFailedGraph(superRoleID),
 		},
+		{
+			"binance_market_metadata_sync", "Binance 币种元数据同步",
+			"按全局设置手动或每小时同步 Binance 币种元数据。",
+			buildMarketMetadataSyncGraph(),
+		},
 	}
 	// int64(1) 是类型转换:把字面量 1 明确成 int64 类型。creator 代表“创建人 = 1 号用户(超管)”。
 	creator := int64(1)
@@ -572,6 +581,42 @@ func seedWorkflows(tx *gorm.DB, superRoleID int64) error {
 		}
 	}
 	return nil
+}
+
+func buildMarketMetadataSyncGraph() map[string]any {
+	return map[string]any{
+		"nodes": []map[string]any{
+			{
+				"id": "start_manual", "type": "start.manual", "label": "手动同步",
+				"config": map[string]any{
+					"entryKey": "market.metadata.manual", "displayName": "手动同步",
+					"inputBindings": map[string]any{},
+				},
+				"position": map[string]any{"x": 120, "y": 180},
+			},
+			{
+				"id": "start_hourly", "type": "start.schedule", "label": "每小时同步",
+				"config": map[string]any{
+					"entryKey": "market.metadata.hourly", "displayName": "每小时同步",
+					"inputBindings": map[string]any{}, "scheduleType": "interval", "value": 1, "unit": "hours",
+				},
+				"position": map[string]any{"x": 120, "y": 340},
+			},
+			{
+				"id": "sync_metadata", "type": "market.metadata.sync", "label": "同步币种元数据",
+				"config": map[string]any{}, "position": map[string]any{"x": 500, "y": 260},
+			},
+			{
+				"id": "end_sync", "type": "end", "label": "完成",
+				"config": map[string]any{}, "position": map[string]any{"x": 880, "y": 260},
+			},
+		},
+		"edges": []map[string]any{
+			{"id": "edge_manual_sync", "source": "start_manual", "target": "sync_metadata"},
+			{"id": "edge_hourly_sync", "source": "start_hourly", "target": "sync_metadata"},
+			{"id": "edge_sync_end", "source": "sync_metadata", "target": "end_sync"},
+		},
+	}
 }
 
 // buildBlockbeatsNewsSyncGraph 用代码手写出“新闻同步”工作流的图,返回 map[string]any

@@ -67,13 +67,12 @@ func NewManager(database *sql.DB, source MarketSource, config ManagerConfig) (*M
 	}, nil
 }
 
-// Run 同步一次元数据，随后持续协调自选订阅与数据缺口。
+// Run 持续协调自选、策略与工作流声明的行情订阅。
 func (manager *Manager) Run(ctx context.Context) error {
 	if ctx == nil {
 		return errors.New("market manager context is required")
 	}
 	defer manager.stopSubscriptions()
-	metadataReady := false
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	for {
@@ -83,13 +82,6 @@ func (manager *Manager) Run(ctx context.Context) error {
 		case <-timer.C:
 		}
 
-		if !metadataReady {
-			if err := manager.syncInstruments(ctx); err != nil {
-				slog.WarnContext(ctx, "market metadata sync failed", "error_category", "external_data", "error", err)
-			} else {
-				metadataReady = true
-			}
-		}
 		if err := manager.reconcile(ctx); err != nil && ctx.Err() == nil {
 			slog.WarnContext(ctx, "market subscription reconcile failed", "error_category", "market_data")
 		}
@@ -134,19 +126,40 @@ func (manager *Manager) Backfill(ctx context.Context, instrument Instrument, int
 	}
 }
 
-func (manager *Manager) syncInstruments(ctx context.Context) error {
-	for _, marketType := range []MarketType{MarketTypeSpot, MarketTypeUSDM} {
+type InstrumentSyncResult struct {
+	SyncedCount int
+	ByMarket    map[string]int
+}
+
+// SyncInstruments 按显式范围同步元数据；启动行情运行时不会调用它。
+func (manager *Manager) SyncInstruments(ctx context.Context, marketTypes []MarketType, quoteAssets []string) (InstrumentSyncResult, error) {
+	result := InstrumentSyncResult{ByMarket: map[string]int{}}
+	quotes := make(map[string]bool, len(quoteAssets))
+	for _, quote := range quoteAssets {
+		quotes[quote] = true
+	}
+	seenMarkets := map[MarketType]bool{}
+	for _, marketType := range marketTypes {
+		if seenMarkets[marketType] || marketType != MarketTypeSpot && marketType != MarketTypeUSDM {
+			continue
+		}
+		seenMarkets[marketType] = true
 		metadata, err := manager.source.SnapshotInstruments(ctx, marketType)
 		if err != nil {
-			return err
+			return result, err
 		}
 		for _, instrument := range metadata {
-			if _, err := manager.store.UpsertInstrument(ctx, instrument); err != nil {
-				return err
+			if !quotes[instrument.QuoteAsset] {
+				continue
 			}
+			if _, err := manager.store.UpsertInstrument(ctx, instrument); err != nil {
+				return result, err
+			}
+			result.SyncedCount++
+			result.ByMarket[string(marketType)]++
 		}
 	}
-	return nil
+	return result, nil
 }
 
 func (manager *Manager) reconcile(ctx context.Context) error {
@@ -249,6 +262,11 @@ FROM (
     FROM strategy_instances AS instance
     JOIN strategy_versions AS version ON version.id = instance.strategy_version_id
     WHERE instance.is_enabled AND version.status = 'published'
+	UNION
+	SELECT subscription.instrument_id, subscription.interval_code
+	FROM market_workflow_subscriptions AS subscription
+	JOIN workflow_runtime_states AS state
+	  ON state.active_workflow_definition_id = subscription.workflow_definition_id
 ) AS desired
 JOIN market_instruments AS instrument ON instrument.id = desired.instrument_id
 WHERE instrument.venue = 'binance' AND instrument.status = 'trading'

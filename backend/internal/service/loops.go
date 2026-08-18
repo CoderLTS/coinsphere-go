@@ -14,7 +14,7 @@ import (
 // StartRuntime 启动全部后台循环:调度、派发、事件、恢复与清理。
 // 单进程内 goroutine 协作,替代原 orchestrator/worker 双进程 + Redis。
 func (a *App) StartRuntime() {
-	if a.runtimeCtx.Err() != nil {
+	if a.runtimeCtx == nil || a.runtimeCtx.Err() != nil {
 		return
 	}
 	a.bootstrapRuntimeEntries(a.runtimeCtx)
@@ -27,6 +27,13 @@ func (a *App) StartRuntime() {
 	a.spawn(a.eventOutboxLoop)
 	a.spawn(a.staleRecoveryLoop)
 	a.spawn(a.cleanupLoop)
+	if a.Paper != nil {
+		a.spawn(func(ctx context.Context) {
+			if err := a.Paper.Run(ctx); err != nil && ctx.Err() == nil {
+				slog.ErrorContext(ctx, "paper executor stopped", "error_category", "database")
+			}
+		})
+	}
 	if a.MarketData != nil {
 		a.spawn(func(ctx context.Context) {
 			if err := a.MarketData.Run(ctx); err != nil && ctx.Err() == nil {

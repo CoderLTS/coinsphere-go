@@ -49,6 +49,7 @@ type App struct {
 	Cipher     *security.SecretCipher
 	Hub        *Hub
 	MarketData *marketdata.Manager
+	Paper      *PaperExecutor
 	database   *gorm.DB
 
 	// authState stores short-lived, process-local authentication state that cannot
@@ -106,6 +107,11 @@ func NewApp(parentCtx context.Context, gdb *gorm.DB, cfg *config.AppConfig, work
 	// 复用同一个 hasher:既装进 App.Hasher,也用它预算一份假哈希填 dummyHash(见评审 #7)。
 	hasher := security.NewPasswordHasher(cfg.Auth.PasswordIterations)
 	runtimeCtx, runtimeCancel := context.WithCancel(parentCtx)
+	paperExecutor, err := NewPaperExecutor(gdb, "paper:"+workerID, defaultPaperExecutorPollInterval)
+	if err != nil {
+		runtimeCancel()
+		return nil, err
+	}
 	// &App{...} 是"结构体字面量 + 取地址(&)":当场把各字段填好,并返回它的指针 *App。
 	// 字段名后跟冒号按名赋值,顺序随意。make(chan struct{}, 1) 造一个容量为 1 的带缓冲 channel。
 	// 结尾的 nil 占据 error 返回值的位置,表示"没有错误"。
@@ -116,6 +122,7 @@ func NewApp(parentCtx context.Context, gdb *gorm.DB, cfg *config.AppConfig, work
 		Tokens:              security.NewTokenManager(cfg.Auth.SecretKey, cfg.Auth.AccessTokenTTLMinutes),
 		Cipher:              cipher,
 		Hub:                 NewHub(),
+		Paper:               paperExecutor,
 		WorkerID:            workerID,
 		dummyHash:           hasher.HashPassword(security.RandomToken()),
 		reauthTokens:        map[string]reauthTokenRecord{},

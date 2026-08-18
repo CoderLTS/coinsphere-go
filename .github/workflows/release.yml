@@ -174,9 +174,9 @@ jobs:
           files: |
             dist/*
 
-      - name: Deploy through shared DPanel Stack
+      - name: Deploy independent CoinSphere Compose
         shell: bash
-        run: bash scripts/release/deploy-dpanel-stack.sh "$VERSION" dist/release-manifest.json
+        run: bash deploy/production/deploy.sh "$VERSION" dist/release-manifest.json
 
       - name: Publish GitHub Release
         if: inputs.deploy_only != true

@@ -58,3 +58,17 @@ func TestTypedMarketCursorReusesOpaqueCursorContract(t *testing.T) {
 		t.Fatalf("cursor result = %#v, next = %#v, err = %v", result, next, err)
 	}
 }
+
+func TestMarketSyncSettingsAndManualTriggerBoundaries(t *testing.T) {
+	if got, err := normalizeOptions([]string{"spot", "spot"}, map[string]bool{"spot": true, "usd_m": true}, "marketTypes"); err != nil || len(got) != 1 || got[0] != "spot" {
+		t.Fatalf("normalize duplicate market types = %#v, err=%v", got, err)
+	}
+	for _, values := range [][]string{nil, {"future"}} {
+		if _, err := normalizeOptions(values, map[string]bool{"spot": true, "usd_m": true}, "marketTypes"); !errors.Is(err, ErrInvalidMarketRequest) {
+			t.Fatalf("invalid market types %v returned %v", values, err)
+		}
+	}
+	if _, err := (&App{}).RunMarketMetadataSync(t.Context(), 1, ""); !errors.Is(err, ErrInvalidMarketRequest) {
+		t.Fatalf("missing idempotency key returned %v", err)
+	}
+}

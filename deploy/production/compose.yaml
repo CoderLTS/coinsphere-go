@@ -1,18 +1,41 @@
 name: coinsphere-go
 
 services:
+  timescaledb:
+    image: timescale/timescaledb:2.29.0-pg17@sha256:3e65c273cbf7218f2a28692492b4625b49f35c7d2142e945561ef52311a8c83a
+    restart: unless-stopped
+    environment:
+      TZ: UTC
+      POSTGRES_DB: coinsphere
+      POSTGRES_USER: coinsphere
+      POSTGRES_PASSWORD: ${COINSPHERE_DATABASE_PASSWORD:?请设置 COINSPHERE_DATABASE_PASSWORD}
+    volumes:
+      - timescale-data:/var/lib/postgresql/data
+    networks:
+      - database
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready --username=coinsphere --dbname=coinsphere"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
   backend:
     image: ${COINSPHERE_BACKEND_IMAGE:?请设置 COINSPHERE_BACKEND_IMAGE}
     restart: unless-stopped
     stop_grace_period: 40s
+    depends_on:
+      timescaledb:
+        condition: service_healthy
     env_file:
       - runtime.env
+    environment:
+      COINSPHERE_DATABASE__DSN: postgresql://coinsphere:${COINSPHERE_DATABASE_PASSWORD}@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic
     volumes:
       - backend-uploads:/app/volumes/uploads
       - backend-static:/app/volumes/static
     networks:
       - default
-      - infrastructure
+      - database
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:6987/health/ready >/dev/null 2>&1 || exit 1"]
       interval: 15s
@@ -20,41 +43,16 @@ services:
       retries: 6
       start_period: 15s
 
-  executor:
-    image: ${COINSPHERE_BACKEND_IMAGE:?请设置 COINSPHERE_BACKEND_IMAGE}
-    restart: unless-stopped
-    command: ["/app/coinsphere-executor", "-config", "/app/config.yml"]
-    env_file:
-      - executor-runtime.env
-    networks:
-      - infrastructure
-    read_only: true
-    cap_drop:
-      - ALL
-    security_opt:
-      - "no-new-privileges:true"
-
   worker:
     image: ${COINSPHERE_WORKER_IMAGE:?请设置 COINSPHERE_WORKER_IMAGE}
     restart: unless-stopped
-    command: ["python", "-m", "coinsphere_worker", "run", "--lane", "realtime"]
-    env_file:
-      - worker-runtime.env
-    networks:
-      - infrastructure
-    read_only: true
-    cap_drop:
-      - ALL
-    security_opt:
-      - "no-new-privileges:true"
-
-  worker-backtest:
-    image: ${COINSPHERE_WORKER_IMAGE:?请设置 COINSPHERE_WORKER_IMAGE}
-    restart: unless-stopped
-    command: ["python", "-m", "coinsphere_worker", "run", "--lane", "backtest"]
-    env_file:
-      - worker-runtime.env
+    command: ["python", "-m", "coinsphere_worker", "run"]
+    depends_on:
+      timescaledb:
+        condition: service_healthy
     environment:
+      TZ: UTC
+      COINSPHERE_WORKER_DATABASE_DSN: postgresql://coinsphere:${COINSPHERE_DATABASE_PASSWORD}@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic
       COINSPHERE_WORKER_ARTIFACT_DIR: /app/artifacts
       COINSPHERE_WORKER_BACKTEST_WALL_SECONDS: "300"
       COINSPHERE_WORKER_BACKTEST_CPU_SECONDS: "300"
@@ -63,7 +61,7 @@ services:
     volumes:
       - worker-artifacts:/app/artifacts
     networks:
-      - infrastructure
+      - database
     read_only: true
     cap_drop:
       - ALL
@@ -78,18 +76,38 @@ services:
         condition: service_healthy
     ports:
       - "${COINSPHERE_WEB_BIND:-127.0.0.1}:${COINSPHERE_WEB_PORT:-8080}:80"
+
+  executor:
+    image: ${COINSPHERE_BACKEND_IMAGE:?请设置 COINSPHERE_BACKEND_IMAGE}
+    profiles: ["private"]
+    restart: unless-stopped
+    command: ["/app/coinsphere-executor", "-config", "/app/config.yml"]
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    env_file:
+      - path: executor-runtime.env
+        required: false
+    environment:
+      COINSPHERE_DATABASE__DSN: postgresql://coinsphere:${COINSPHERE_DATABASE_PASSWORD}@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic
     networks:
-      - default
-      - infrastructure
+      - database
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
 
 volumes:
   backend-uploads:
-    name: coinsphere-backend-uploads
+    name: coinsphere-go-backend-uploads
   backend-static:
-    name: coinsphere-backend-static
+    name: coinsphere-go-backend-static
+  timescale-data:
+    name: coinsphere-go-timescale-data
   worker-artifacts:
-    name: coinsphere-worker-artifacts
+    name: coinsphere-go-worker-artifacts
 
 networks:
-  infrastructure:
-    external: true
+  database:
+    internal: true

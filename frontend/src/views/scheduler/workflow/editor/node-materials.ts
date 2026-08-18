@@ -49,6 +49,34 @@ const MATERIAL_META: Record<
     color: '#16a34a',
     iconText: 'T'
   },
+  'market.metadata.sync': {
+    kind: 'generic',
+    group: '行情',
+    description: '按全局范围同步 Binance 币种元数据',
+    color: '#c7f46b',
+    iconText: 'M'
+  },
+  'market.candles.subscribe': {
+    kind: 'generic',
+    group: '行情',
+    description: '声明工作流需要持续接收的 K 线',
+    color: '#7ec7b7',
+    iconText: 'K'
+  },
+  'market.candles.backfill': {
+    kind: 'generic',
+    group: '行情',
+    description: '补齐指定 UTC 区间的历史 K 线',
+    color: '#5eaa74',
+    iconText: 'B'
+  },
+  'strategy.evaluate': {
+    kind: 'generic',
+    group: '策略',
+    description: '同步等待或异步提交一个策略实例',
+    color: '#9e8cff',
+    iconText: 'Σ'
+  },
   'condition.branch': {
     kind: 'condition',
     group: '控制',
@@ -150,7 +178,19 @@ const MATERIAL_META: Record<
 }
 
 /** 已知分组的展示顺序；不在这张表里的分组（新节点带来的）排在后面，不会被丢掉。 */
-const GROUP_ORDER = ['开始', '任务', '智能体', '控制', '数据', '事件', '通知', '集成', '结束']
+const GROUP_ORDER = [
+  '开始',
+  '行情',
+  '策略',
+  '任务',
+  '智能体',
+  '控制',
+  '数据',
+  '事件',
+  '通知',
+  '集成',
+  '结束'
+]
 const FALLBACK_GROUP = '其他'
 
 export function inferNodeFormKind(typeCode: string): WorkflowNodeFormKind {

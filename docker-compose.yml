@@ -66,6 +66,7 @@ services:
   executor:
     image: coinsphere-go-backend
     container_name: coinsphere-go-executor
+    profiles: ["private"]
     restart: unless-stopped
     command: ["/app/coinsphere-executor", "-config", "/app/config.yml"]
     depends_on:
@@ -74,6 +75,12 @@ services:
     environment:
       TZ: UTC
       COINSPHERE_DATABASE__DSN: postgresql://coinsphere:coinsphere-dev-only@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic
+      COINSPHERE_AUTH__ENCRYPTION_KEY: ${COINSPHERE_AUTH__ENCRYPTION_KEY:-}
+      COINSPHERE_TRADING__TESTNET_PRIVATE_API_ENABLED: ${COINSPHERE_TRADING__TESTNET_PRIVATE_API_ENABLED:-false}
+      COINSPHERE_TRADING__SPOT_LIVE_MANUAL_ENABLED: ${COINSPHERE_TRADING__SPOT_LIVE_MANUAL_ENABLED:-false}
+      COINSPHERE_TRADING__SPOT_LIVE_AUTO_ENABLED: ${COINSPHERE_TRADING__SPOT_LIVE_AUTO_ENABLED:-false}
+      COINSPHERE_TRADING__USD_M_LIVE_MANUAL_ENABLED: ${COINSPHERE_TRADING__USD_M_LIVE_MANUAL_ENABLED:-false}
+      COINSPHERE_TRADING__USD_M_LIVE_AUTO_ENABLED: ${COINSPHERE_TRADING__USD_M_LIVE_AUTO_ENABLED:-false}
     networks:
       - database
     read_only: true
@@ -88,28 +95,7 @@ services:
     image: coinsphere-go-worker
     container_name: coinsphere-go-worker
     restart: unless-stopped
-    command: ["python", "-m", "coinsphere_worker", "run", "--lane", "realtime"]
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-    networks:
-      - database
-    read_only: true
-    cap_drop:
-      - ALL
-    security_opt:
-      - "no-new-privileges:true"
-    environment:
-      TZ: UTC
-      COINSPHERE_WORKER_DATABASE_DSN: postgresql://coinsphere:coinsphere-dev-only@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic
-
-  worker-backtest:
-    build:
-      context: ./worker
-    image: coinsphere-go-worker
-    container_name: coinsphere-go-worker-backtest
-    restart: unless-stopped
-    command: ["python", "-m", "coinsphere_worker", "run", "--lane", "backtest"]
+    command: ["python", "-m", "coinsphere_worker", "run"]
     depends_on:
       migrate:
         condition: service_completed_successfully

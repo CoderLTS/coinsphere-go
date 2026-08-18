@@ -7,7 +7,7 @@
       :graph="domainGraph"
       :materials-visible="materialsVisible"
       :materials="materialItems"
-      :material-groups="materialGroups"
+      :material-groups="editorMaterialGroups"
       :issues="allIssues"
       :task-definitions="taskDefinitions"
       :agent-options="agentOptions"
@@ -94,6 +94,7 @@
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { storeToRefs } from 'pinia'
   import { fetchGetRoleList, fetchGetUserList } from '@/api/system'
+  import { fetchStrategyInstances, type StrategyInstanceItem } from '@/api/signals'
   import {
     fetchCreateWorkflowDefinition,
     fetchNodeDefinitions,
@@ -182,6 +183,7 @@
   const agentOptions = ref<WorkflowAgentOption[]>([])
   const notifyOptionsLoading = ref(false)
   const notifyOptionsLoaded = ref(false)
+  const strategyInstances = ref<StrategyInstanceItem[]>([])
   const zoomText = computed(() => `${Math.round(zoom.value * 100)}%`)
   const cloneGraph = (graph: WorkflowDomainGraphModel): WorkflowDomainGraphModel =>
     JSON.parse(JSON.stringify(graph))
@@ -219,7 +221,37 @@
     return raw ? Number(raw) : null
   })
 
-  const materialItems = computed(() => flattenMaterials(nodeDefinitions.value))
+  const editorMaterialGroups = computed(() => {
+    const baseGroups = materialGroups.value.map((group) => ({ ...group, items: [...group.items] }))
+    if (!strategyInstances.value.length) return baseGroups
+    const strategyTemplate = baseGroups
+      .flatMap((group) => group.items)
+      .find((item) => item.typeCode === 'strategy.evaluate')
+    if (!strategyTemplate) return baseGroups
+
+    const filtered = baseGroups
+      .map((group) => ({
+        ...group,
+        items: group.items.filter((item) => item.typeCode !== 'strategy.evaluate')
+      }))
+      .filter((group) => group.items.length)
+    const strategyGroup = {
+      key: 'strategy-instances',
+      title: '策略实例',
+      items: strategyInstances.value.map((item) => ({
+        ...strategyTemplate,
+        title: item.name,
+        description: `${item.strategyName} v${item.strategyVersion} · ${item.symbol} · ${item.interval}`,
+        presetSubtitle: `${item.symbol} · ${item.interval} · ${item.environment}`,
+        presetConfig: { strategyInstanceId: item.id }
+      }))
+    }
+    const marketIndex = filtered.findIndex((group) => group.title === '行情')
+    filtered.splice(marketIndex < 0 ? filtered.length : marketIndex + 1, 0, strategyGroup)
+    return filtered
+  })
+
+  const materialItems = computed(() => editorMaterialGroups.value.flatMap((group) => group.items))
 
   const currentNode = computed<WorkflowDomainNode | null>(() => {
     if (selection.value.activeCellType !== 'node' || !selection.value.activeCellId) return null
@@ -870,6 +902,12 @@
       materialItems.value,
       domainGraph.value.nodes
     )
+    if (payload.presetConfig) {
+      nextNode.data.config = { ...nextNode.data.config, ...payload.presetConfig }
+      nextNode.data.title = payload.title || nextNode.data.title
+      nextNode.data.subtitle = payload.presetSubtitle || nextNode.data.subtitle
+      nextNode.data.color = payload.color || nextNode.data.color
+    }
 
     const nextGraph: WorkflowDomainGraphModel = {
       ...domainGraph.value,
@@ -1187,17 +1225,27 @@
     notifyRoleOptions.value = []
     notifyOptionsLoading.value = false
     notifyOptionsLoaded.value = false
+    strategyInstances.value = []
     historySessionKey.value += 1
     resetGraphHistory()
 
     try {
-      const [taskDefinitionResult, nodeDefinitionResult, agentOptionResult] = await Promise.all([
+      const [
+        taskDefinitionResult,
+        nodeDefinitionResult,
+        agentOptionResult,
+        strategyInstanceResult
+      ] = await Promise.all([
         fetchTaskDefinitions(),
         fetchNodeDefinitions(),
         // 智能体列表拿不到不该挡住整个编辑器（没配智能体也能画别的节点）。
-        fetchWorkflowAgentOptions().catch(() => [] as WorkflowAgentOption[])
+        fetchWorkflowAgentOptions().catch(() => [] as WorkflowAgentOption[]),
+        fetchStrategyInstances({ limit: 200 })
+          .then((result) => result.records)
+          .catch(() => [] as StrategyInstanceItem[])
       ])
       agentOptions.value = agentOptionResult
+      strategyInstances.value = strategyInstanceResult
 
       // 先把节点定义同步给本地注册表镜像：端口、分支、校验都要按后端声明的图语义来。
       syncNodeDefinitions(nodeDefinitionResult)
@@ -1268,6 +1316,20 @@
 
 <style scoped lang="scss">
   .workflow-editor-page {
+    --workflow-page-bg: #e8e7e2;
+    --workflow-overlay-bg: #f4f3ee;
+    --workflow-overlay-raised: #fbfaf6;
+    --workflow-overlay-soft: #e7e6e0;
+    --workflow-overlay-soft-2: #deddd7;
+    --workflow-overlay-text: #17191b;
+    --workflow-overlay-regular: #34383a;
+    --workflow-overlay-muted: #6d7477;
+    --workflow-overlay-placeholder: #8a8f91;
+    --workflow-overlay-border: #4b5256;
+    --workflow-overlay-border-soft: #c8c7c1;
+    --workflow-overlay-border-subtle: #d7d5ce;
+    --workflow-overlay-hover: #d8d7d1;
+
     position: relative;
     display: flex;
     flex-direction: column;
@@ -1275,7 +1337,23 @@
     height: 100%;
     min-height: 0;
     overflow: hidden;
-    background: #f4f7fb;
+    background: var(--workflow-page-bg);
+  }
+
+  :global(html.dark .workflow-editor-page) {
+    --workflow-page-bg: #0d0f10;
+    --workflow-overlay-bg: #181b1e;
+    --workflow-overlay-raised: #202427;
+    --workflow-overlay-soft: #22272a;
+    --workflow-overlay-soft-2: #2b3134;
+    --workflow-overlay-text: #eff4f1;
+    --workflow-overlay-regular: #d4dadd;
+    --workflow-overlay-muted: #9da6aa;
+    --workflow-overlay-placeholder: #7e878b;
+    --workflow-overlay-border: #596267;
+    --workflow-overlay-border-soft: #3b4347;
+    --workflow-overlay-border-subtle: #333a3e;
+    --workflow-overlay-hover: #30373a;
   }
 
   .workflow-editor-page__canvas {
@@ -1285,20 +1363,19 @@
 
   .workflow-editor-page__json {
     position: absolute;
-    top: 60px;
-    right: 20px;
-    bottom: 14px;
+    top: 72px;
+    right: 16px;
+    bottom: 16px;
     z-index: 18;
     display: flex;
     flex-direction: column;
-    width: 380px;
+    width: 360px;
     padding: 10px 0 10px 10px;
     overflow: hidden;
-    background: rgb(255 255 255 / 0.96);
-    backdrop-filter: blur(12px);
-    border: 1px solid rgb(212 216 226 / 0.92);
-    border-radius: 14px;
-    box-shadow: 0 12px 26px rgb(15 23 42 / 0.08);
+    background: #181b1e;
+    border: 1px solid #3b4144;
+    border-radius: 2px;
+    box-shadow: 0 18px 36px rgb(0 0 0 / 0.28);
   }
 
   .workflow-editor-page__json-head {
@@ -1307,7 +1384,7 @@
     font-size: 13px;
     font-weight: 600;
     line-height: 20px;
-    color: #334155;
+    color: #f4f3ee;
   }
 
   .workflow-editor-page__json-body {
@@ -1323,7 +1400,7 @@
     font-family: 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace;
     font-size: 12px;
     line-height: 1.65;
-    color: #0f172a;
+    color: #d8dddf;
     word-break: break-word;
     white-space: pre-wrap;
   }
@@ -1337,8 +1414,8 @@
   }
 
   .workflow-editor-page__json-body::-webkit-scrollbar-thumb {
-    background: rgb(148 163 184 / 0.88);
-    border-radius: 999px;
+    background: #737b7f;
+    border-radius: 2px;
   }
 
   .workflow-editor-page__meta {
@@ -1347,5 +1424,21 @@
     left: 50%;
     z-index: 30;
     transform: translateX(-50%);
+  }
+
+  @media (max-width: 768px) {
+    .workflow-editor-page__json {
+      top: 68px;
+      right: 8px;
+      bottom: 8px;
+      width: calc(100% - 16px);
+    }
+
+    .workflow-editor-page__meta {
+      top: 68px;
+      right: 8px;
+      left: 8px;
+      transform: none;
+    }
   }
 </style>

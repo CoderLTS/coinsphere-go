@@ -16,13 +16,13 @@
 
 .wf-node {
   --wf-node-accent: #64748b;
-  --wf-node-border: var(--el-border-color, #bcd0ff);
+  --wf-node-border: #4b5256;
   --wf-node-shadow: none;
   --wf-node-icon-bg: color-mix(in srgb, var(--wf-node-accent) 12%, transparent);
   --wf-node-icon-fg: var(--wf-node-accent);
   --wf-node-status-bg: transparent;
   --wf-node-status-fg: var(--el-color-primary, #2563eb);
-  --wf-node-body-fg: var(--el-text-color-regular, #595959);
+  --wf-node-body-fg: #b7bec1;
 
   position: relative;
   box-sizing: border-box;
@@ -30,9 +30,9 @@
   height: 96px;
   overflow: hidden;
   font-family: Inter, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  background: var(--el-bg-color-overlay, #fff);
+  background: #1b1e21;
   border: 1.5px solid var(--wf-node-border);
-  border-radius: 12px;
+  border-radius: 2px;
   box-shadow: var(--wf-node-shadow);
   transition:
     border-color 0.18s ease,
@@ -101,7 +101,7 @@
   line-height: 1;
   color: var(--wf-node-icon-fg);
   background: var(--wf-node-icon-bg);
-  border-radius: 8px;
+  border-radius: 2px;
 }
 
 .wf-node__title {
@@ -111,7 +111,7 @@
   font-size: 16px;
   font-weight: 600;
   line-height: 20px;
-  color: var(--el-text-color-primary, #141414);
+  color: #f4f3ee;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -124,7 +124,7 @@
   color: var(--el-color-primary, #5f95ff);
   white-space: nowrap;
   background: var(--el-color-primary-light-9, #f5f7ff);
-  border-radius: 8px;
+  border-radius: 2px;
 }
 
 .wf-node[data-kind='terminal'] .wf-node__badge {
@@ -144,7 +144,7 @@
   flex: 0 0 auto;
   font-size: 12px;
   line-height: 18px;
-  color: var(--el-text-color-secondary, #8c8c8c);
+  color: #7f888c;
   white-space: nowrap;
 }
 
@@ -183,7 +183,7 @@
   line-height: 16px;
   color: var(--wf-node-status-fg);
   background: var(--wf-node-status-bg);
-  border-radius: 8px;
+  border-radius: 2px;
 }
 
 .wf-node__check {
@@ -192,9 +192,9 @@
   justify-content: center;
   width: 18px;
   height: 18px;
-  color: #fff;
-  background: var(--el-color-success, #22c55e);
-  border-radius: 999px;
+  color: #111315;
+  background: #c7f46b;
+  border-radius: 2px;
   transform: translateY(-1px);
 
   svg {
@@ -217,22 +217,22 @@
 }
 
 .wf-node[data-state='failed'] {
-  --wf-node-border: var(--el-color-danger, #ef4444);
-  --wf-node-icon-bg: var(--el-color-danger-light-9, #fff1f0);
-  --wf-node-icon-fg: var(--el-color-danger, #ef4444);
-  --wf-node-status-bg: var(--el-color-danger-light-9, #fff1f0);
-  --wf-node-status-fg: var(--el-color-danger, #ef4444);
-  --wf-node-body-fg: var(--el-color-danger, #dc2626);
-  --wf-node-shadow: 0 0 0 2px rgb(239 68 68 / 0.14), 0 14px 28px rgb(239 68 68 / 0.14);
+  --wf-node-border: #ff705b;
+  --wf-node-icon-bg: rgb(255 112 91 / 0.16);
+  --wf-node-icon-fg: #ff705b;
+  --wf-node-status-bg: #ff705b;
+  --wf-node-status-fg: #111315;
+  --wf-node-body-fg: #ff9a89;
+  --wf-node-shadow: 0 0 0 2px rgb(255 112 91 / 0.18), 0 14px 28px rgb(0 0 0 / 0.28);
 }
 
 .wf-node[data-state='running'] {
-  --wf-node-border: var(--el-color-warning, #f59e0b);
-  --wf-node-icon-bg: var(--el-color-warning-light-9, #fff7ed);
-  --wf-node-icon-fg: #d97706;
-  --wf-node-status-bg: var(--el-color-warning-light-9, #fff7ed);
-  --wf-node-status-fg: #b45309;
-  --wf-node-shadow: 0 0 0 2px rgb(245 158 11 / 0.12), 0 14px 28px rgb(245 158 11 / 0.12);
+  --wf-node-border: #eab24d;
+  --wf-node-icon-bg: rgb(234 178 77 / 0.16);
+  --wf-node-icon-fg: #eab24d;
+  --wf-node-status-bg: #eab24d;
+  --wf-node-status-fg: #111315;
+  --wf-node-shadow: 0 0 0 2px rgb(234 178 77 / 0.18), 0 14px 28px rgb(0 0 0 / 0.28);
 }
 
 .wf-node[data-state='retryWaiting'] {
@@ -254,12 +254,12 @@
 }
 
 .wf-node[data-state='success'] {
-  --wf-node-border: var(--el-color-success, #22c55e);
-  --wf-node-icon-bg: var(--el-color-success-light-9, #ecfdf5);
-  --wf-node-icon-fg: #16a34a;
-  --wf-node-status-bg: var(--el-color-success-light-9, #ecfdf5);
-  --wf-node-status-fg: #15803d;
-  --wf-node-shadow: 0 0 0 2px rgb(34 197 94 / 0.12), 0 14px 28px rgb(34 197 94 / 0.12);
+  --wf-node-border: #c7f46b;
+  --wf-node-icon-bg: rgb(199 244 107 / 0.14);
+  --wf-node-icon-fg: #c7f46b;
+  --wf-node-status-bg: #c7f46b;
+  --wf-node-status-fg: #111315;
+  --wf-node-shadow: 0 0 0 2px rgb(199 244 107 / 0.14), 0 14px 28px rgb(0 0 0 / 0.26);
 }
 
 .wf-node[data-state='dirty'] {
@@ -270,8 +270,8 @@
 }
 
 .wf-node[data-state='selected'] {
-  --wf-node-border: var(--el-color-primary, #2563eb);
-  --wf-node-shadow: 0 0 0 3px rgb(37 99 235 / 0.22), 0 16px 32px rgb(37 99 235 / 0.16);
+  --wf-node-border: #9e8cff;
+  --wf-node-shadow: 0 0 0 3px rgb(158 140 255 / 0.24), 0 16px 32px rgb(0 0 0 / 0.3);
 }
 
 /* 无状态时开始/结束节点仍保留一点自己的底色，好和中间的处理节点区分开。 */

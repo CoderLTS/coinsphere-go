@@ -1233,6 +1233,18 @@
 
 <style scoped lang="scss">
   .node-editor-card {
+    --el-bg-color: var(--workflow-overlay-bg, #f4f3ee);
+    --el-fill-color-blank: var(--workflow-overlay-raised, #fbfaf6);
+    --el-fill-color-light: var(--workflow-overlay-soft, #e7e6e0);
+    --el-border-color-light: var(--workflow-overlay-border-soft, #c8c7c1);
+    --el-border-color-lighter: var(--workflow-overlay-border-subtle, #d7d5ce);
+    --el-text-color-primary: var(--workflow-overlay-text, #17191b);
+    --el-text-color-regular: var(--workflow-overlay-regular, #34383a);
+    --el-text-color-secondary: var(--workflow-overlay-muted, #6d7477);
+    --el-text-color-placeholder: var(--workflow-overlay-placeholder, #8a8f91);
+    --el-disabled-bg-color: var(--workflow-overlay-soft-2, #e1e0da);
+    --el-disabled-text-color: var(--workflow-overlay-muted, #6d7477);
+
     position: relative;
     display: flex;
     flex-direction: column;
@@ -1240,11 +1252,10 @@
     height: 100%;
     min-height: 0;
     overflow: hidden;
-    background: rgb(255 255 255 / 0.98);
-    backdrop-filter: blur(18px);
-    border: 1px solid rgb(203 213 225 / 0.86);
-    border-radius: 22px;
-    box-shadow: 0 28px 48px rgb(15 23 42 / 0.16);
+    background: var(--workflow-overlay-bg, #f4f3ee);
+    border: 1px solid var(--workflow-overlay-border, #4b5256);
+    border-radius: 2px;
+    box-shadow: 0 20px 42px rgb(0 0 0 / 0.34);
   }
 
   .node-editor-card__commit {
@@ -1257,20 +1268,21 @@
     padding: 0 12px;
     font-size: 12px;
     font-weight: 600;
-    letter-spacing: 0.01em;
-    background: linear-gradient(180deg, #4f8cff 0%, #3b7cff 100%);
-    border: 1px solid rgb(37 99 235 / 0.16);
-    border-radius: 999px;
-    box-shadow: 0 8px 16px rgb(59 124 255 / 0.2);
+    color: #111315;
+    letter-spacing: 0;
+    background: #c7f46b;
+    border: 1px solid #9dbc55;
+    border-radius: 2px;
+    box-shadow: none;
 
     &:hover {
-      background: linear-gradient(180deg, #4684f6 0%, #316ff0 100%);
-      box-shadow: 0 10px 18px rgb(49 111 240 / 0.24);
+      background: #b8e35e;
+      box-shadow: none;
       transform: translateY(-1px);
     }
 
     &:active {
-      box-shadow: 0 6px 12px rgb(49 111 240 / 0.18);
+      box-shadow: none;
       transform: translateY(0);
     }
   }
@@ -1279,7 +1291,7 @@
     margin-top: 6px;
     font-size: 12px;
     line-height: 18px;
-    color: #94a3b8;
+    color: var(--workflow-overlay-muted, #6d7477);
     word-break: break-all;
   }
 
@@ -1326,9 +1338,9 @@
     flex-direction: column;
     gap: 8px;
     padding: 6px 8px;
-    background: rgb(248 250 252 / 0.94);
-    border: 1px solid rgb(226 232 240 / 0.92);
-    border-radius: 14px;
+    background: var(--workflow-overlay-soft, #e7e6e0);
+    border: 1px solid var(--workflow-overlay-border-soft, #c8c7c1);
+    border-radius: 2px;
   }
 
   .target-panel__header {
@@ -1349,9 +1361,9 @@
     flex-direction: column;
     gap: 10px;
     padding: 8px;
-    background: rgb(255 255 255 / 0.88);
-    border: 1px solid rgb(226 232 240 / 0.82);
-    border-radius: 10px;
+    background: var(--workflow-overlay-raised, #f9f8f4);
+    border: 1px solid var(--workflow-overlay-border-subtle, #cbc9c2);
+    border-radius: 2px;
   }
 
   .target-panel__item-header {

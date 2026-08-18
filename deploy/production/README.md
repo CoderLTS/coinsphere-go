@@ -1,14 +1,22 @@
-# Docker 发布包
+# CoinSphere 生产 Compose
 
-该目录会进入 Docker Release 包，供独立 Compose 部署使用。当前生产服务器使用共享 DPanel Stack，由 `scripts/release/deploy-dpanel-stack.sh` 定向发布，不使用本目录脚本。
+该目录是 CoinSphere 唯一的生产 Compose 模板。它以独立项目 `coinsphere-go` 运行 TimescaleDB、Backend、Worker 和 Web，不与 sub2api 或其他应用共享 Compose。
 
-- 自动发布从已扫描的 `release-manifest.json` 读取 Backend、Web 和 Worker 的不可变 RepoDigest；手工恢复使用旧版本已扫描的 Manifest，不使用 `latest`。
-- `deploy.sh` 默认在解压目录原地运行；仅在明确设置 `COINSPHERE_DEPLOY_DIR` 时复制到其他独立目录。
-- `runtime.env` 只保存在服务器，禁止提交或上传到 GitHub Release。
-- `runtime.env` 必须通过 `COINSPHERE_DATABASE__DSN` 指向外部 PostgreSQL/TimescaleDB；数据库备份与恢复由基础设施负责。
-- `worker-runtime.env` 只包含 UTC 和 Worker 专用的 `COINSPHERE_WORKER_DATABASE_DSN`，不得放入认证、通知或交易所密钥。
-- `executor-runtime.env` 只包含 UTC 和 Paper Executor 专用数据库身份；当前保持 `trading.testnet_private_api_enabled=false`、`trading.spot_live_manual_enabled=false`、`trading.spot_live_auto_enabled=false`、`trading.usd_m_live_manual_enabled=false`、`trading.usd_m_live_auto_enabled=false`，不得把 Binance Testnet/Live 凭据写入环境文件。
-- 部署脚本停止旧服务后执行镜像内 migration。失败时恢复上一 Compose 与镜像，但保留当前 schema，不自动执行 Down 或覆盖数据库。
-- realtime/backtest 使用同一 Worker digest，均不暴露端口；只有 backtest 挂载独立产物卷并配置墙钟、CPU、内存和产物上限。
-- 单一 PostgreSQL 基线建立完整业务 schema；应用启动只读校验版本，不执行 `AutoMigrate`。当前生产仍以 Paper 模式部署 Executor，Testnet 私有验证、首次对账和确定性主市价单默认关闭，Worker 不具备任何交易所私有接口能力。
-- 运行容器不需要构建代理。`deploy.sh` 会拒绝 Docker 客户端 `config.json` 中的顶层 `proxies`；出站代理应只保留在 Runner 服务环境中，由发布构建脚本显式传给 BuildKit。Runner 的 `NO_PROXY`/`no_proxy` 必须覆盖本机 Registry、`127.0.0.1` 和 `localhost`。
+## 文件
+
+- `compose.yaml`：默认四服务拓扑；Private Executor 位于默认关闭的 `private` profile。
+- `deploy.sh`：固定 digest 部署、migration、健康检查、旧 CoinSphere 容器迁移和失败回滚。
+- `runtime.env.example`：Backend 运行 Secret 模板，不包含数据库 DSN。
+- `executor-runtime.env.example`：Private Executor 的可选配置模板。
+
+`runtime.env`、`.env` 和真实 Secret 只保存在服务器。首次部署会生成独立数据库密码并写入权限为 `0600` 的 `.env`；后续部署复用该密码和数据卷。
+
+```bash
+cp runtime.env.example runtime.env
+chmod 600 runtime.env
+COINSPHERE_DEPLOY_DIR=/path/to/coinsphere-go ./deploy.sh vX.Y.Z release-manifest.json
+```
+
+自动发布在服务器已配置 `COINSPHERE_STACK_ROOT` 时，将独立项目放在其 `compose/coinsphere-go` 子目录，并从既有 CoinSphere Secret 初始化 `runtime.env`。部署只停止和移除旧共享 Compose 中实际运行的 CoinSphere 容器；不会执行共享项目级 `down`、修改其他服务或删除旧数据卷。
+
+应用 schema 来自 Backend 镜像内的单一初始化 migration。首次独立部署使用新的 TimescaleDB 卷，因此不会改写旧共享数据库；回滚也不会自动执行 migration Down。

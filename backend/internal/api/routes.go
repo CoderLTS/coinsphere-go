@@ -58,8 +58,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	}))
 
 	// Binance 行情元数据和 K 线共享只读，自选始终按当前用户隔离。
-	mux.HandleFunc("GET /api/v1/markets/symbols", s.requireAuth(s.handleListMarketSymbols))
-	mux.HandleFunc("GET /api/v1/markets/candles", s.requireAuth(s.handleListMarketCandles))
+	mux.HandleFunc("GET /api/v1/markets/symbols", s.requirePermission(perm.DataMarketView, s.handleListMarketSymbols))
+	mux.HandleFunc("GET /api/v1/markets/candles", s.requirePermission(perm.DataMarketView, s.handleListMarketCandles))
+	mux.HandleFunc("GET /api/v1/markets/metadata-sync/settings", s.requirePermission(perm.DataMarketView, s.handleGetMarketSyncSettings))
+	mux.HandleFunc("PUT /api/v1/markets/metadata-sync/settings", s.requirePermission(perm.DataMarketManage, s.handleUpdateMarketSyncSettings))
+	mux.HandleFunc("GET /api/v1/markets/metadata-sync/status", s.requirePermission(perm.DataMarketView, s.handleGetMarketSyncStatus))
+	mux.HandleFunc("POST /api/v1/markets/metadata-sync/executions", s.requirePermission(perm.DataMarketManage, s.handleRunMarketSync))
 	mux.HandleFunc("GET /api/v1/watchlists", s.requireAuth(s.handleListWatchlists))
 	mux.HandleFunc("POST /api/v1/watchlists", s.requireAuth(s.handleCreateWatchlist))
 	mux.HandleFunc("DELETE /api/v1/watchlists/{watchlistId}", s.requireAuth(s.handleDeleteWatchlist))

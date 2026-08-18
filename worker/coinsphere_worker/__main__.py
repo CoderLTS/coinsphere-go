@@ -9,7 +9,8 @@ import os
 import signal
 import socket
 from collections.abc import Sequence
-from threading import Event
+from queue import Queue
+from threading import Event, Thread
 from types import FrameType
 
 import psycopg
@@ -17,6 +18,7 @@ import psycopg
 from .queue_runtime import WorkerLane, WorkerRuntime
 
 DATABASE_DSN_ENV = "COINSPHERE_WORKER_DATABASE_DSN"
+ALL_LANES = "all"
 
 
 def health_document(status: str = "healthy", error_category: str | None = None) -> str:
@@ -41,6 +43,41 @@ def database_healthcheck(dsn: str) -> None:
         connection.execute("SELECT 1 FROM worker_tasks LIMIT 0")
 
 
+def run_worker_lanes(
+    dsn: str, worker_id: str, lanes: Sequence[WorkerLane], stop_event: Event
+) -> int:
+    """Run one isolated consumer thread per lane and fail the process with either lane."""
+
+    results: Queue[tuple[WorkerLane, Exception | None]] = Queue()
+
+    def consume(lane: WorkerLane) -> None:
+        try:
+            WorkerRuntime(dsn, f"{worker_id}:{lane.value}", lane=lane).run(stop_event)
+        except Exception as error:
+            results.put((lane, error))
+        else:
+            results.put((lane, None))
+
+    threads = [Thread(target=consume, args=(lane,), name=f"worker-{lane.value}") for lane in lanes]
+    for thread in threads:
+        thread.start()
+
+    lane, error = results.get()
+    failed = error is not None or not stop_event.is_set()
+    if failed:
+        logging.getLogger("coinsphere.worker").error(
+            "event=worker.lane-stopped error_category=lane_failure lane=%s", lane.value
+        )
+    stop_event.set()
+
+    for _ in range(len(threads) - 1):
+        _, lane_error = results.get()
+        failed = failed or lane_error is not None
+    for thread in threads:
+        thread.join()
+    return 1 if failed else 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """执行 Worker 消费循环或一次性数据库健康检查。"""
 
@@ -48,9 +85,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("command", choices=("run", "health"))
     parser.add_argument(
         "--lane",
-        choices=tuple(item.value for item in WorkerLane),
-        default=WorkerLane.REALTIME.value,
-        help="task lane consumed by the worker",
+        choices=(ALL_LANES, *(item.value for item in WorkerLane)),
+        default=ALL_LANES,
+        help="task lane consumed by the worker; all starts one slot per lane",
     )
     args = parser.parse_args(argv)
     command = args.command
@@ -97,14 +134,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     previous_sigint = signal.signal(signal.SIGINT, request_stop)
     previous_sigterm = signal.signal(signal.SIGTERM, request_stop)
     try:
-        WorkerRuntime(dsn, worker_id, lane=args.lane).run(stop_event)
-    except Exception:
-        # 运行时已按异常类型输出固定分类；入口不打印可能包含连接信息的异常正文。
-        return 1
+        lanes = list(WorkerLane) if args.lane == ALL_LANES else [WorkerLane(args.lane)]
+        return run_worker_lanes(dsn, worker_id, lanes, stop_event)
     finally:
         signal.signal(signal.SIGINT, previous_sigint)
         signal.signal(signal.SIGTERM, previous_sigterm)
-    return 0
 
 
 if __name__ == "__main__":

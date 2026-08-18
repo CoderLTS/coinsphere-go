@@ -40,7 +40,10 @@ func (s *Server) handleListStrategySignals(w http.ResponseWriter, r *http.Reques
 	if !valid {
 		return
 	}
-	data, err := s.App.ListStrategySignals(r.Context(), principal.User.ID, page)
+	data, err := s.App.ListStrategySignals(r.Context(), principal.User.ID, service.StrategySignalQuery{
+		Page: page, InstrumentID: queryStr(r, "instrumentId"), StrategyInstanceID: queryStr(r, "strategyInstance"),
+		Interval: queryStr(r, "interval"), StartTime: queryStr(r, "startTime"), EndTime: queryStr(r, "endTime"),
+	})
 	writeStrategyBacktestResult(w, r, data, err)
 }
 
