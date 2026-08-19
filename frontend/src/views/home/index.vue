@@ -1,537 +1,518 @@
 <template>
-  <div class="workflow-home">
+  <div class="operations-home" v-loading="loading && !refreshedAt">
     <template v-if="isGuest">
-      <section class="guest-console">
-        <div class="guest-console__signal"><span></span><span></span><span></span></div>
+      <section class="guest-panel art-card">
+        <span class="guest-panel__icon"><ArtSvgIcon icon="ri:server-line" /></span>
         <div>
-          <div class="eyebrow">COINSPHERE / WORKFLOW OPERATIONS</div>
-          <h1>工作流执行台</h1>
-          <p>登录后查看工作流流转、策略信号与 K 线状态。</p>
-          <ElButton type="primary" @click="goLogin">登录工作台</ElButton>
+          <span class="section-kicker">COINSPHERE OPERATIONS</span>
+          <h1>系统运行中心</h1>
+          <p>登录后查看服务、行情、调度与交易风控状态。</p>
         </div>
+        <ElButton type="primary" @click="goLogin">登录系统</ElButton>
       </section>
     </template>
 
     <template v-else>
-      <header class="workbench-head">
+      <header class="page-head">
         <div>
-          <div class="eyebrow">WORKFLOW OPERATIONS / LIVE</div>
-          <h1>工作流工作台</h1>
-          <p>从触发到行情、策略和通知，在一个画布上检查运行状态。</p>
+          <div class="page-context">
+            <ArtSvgIcon icon="ri:dashboard-3-line" />
+            运行中心
+          </div>
+          <h1>系统运维总览</h1>
+          <p>集中查看核心服务状态、运行负载与需要处理的异常。</p>
         </div>
         <div class="head-actions">
-          <ElSelect
-            v-model="selectedDefinitionId"
-            class="workflow-select"
-            filterable
-            placeholder="选择工作流"
-            @change="handleDefinitionChange"
-          >
-            <ElOption
-              v-for="item in definitions"
-              :key="item.id"
-              :label="`${item.displayName} · v${item.version}`"
-              :value="item.id"
-            >
-              <div class="definition-option">
-                <span
-                  class="definition-state"
-                  :class="{ 'definition-state--active': item.isActive }"
-                ></span>
-                <strong>{{ item.displayName }}</strong>
-                <small>v{{ item.version }}</small>
-              </div>
-            </ElOption>
-          </ElSelect>
-          <ElTooltip content="编辑工作流" placement="bottom">
-            <ElButton
-              :icon="EditPen"
-              :disabled="!selectedDefinition || !canEdit"
-              circle
-              aria-label="编辑工作流"
-              @click="openEditor"
-            />
-          </ElTooltip>
-          <ElButton
-            type="primary"
-            :icon="VideoPlay"
-            :disabled="!manualEntry || !canRun"
-            :loading="runningWorkflow"
-            @click="runWorkflow"
-          >
-            运行工作流
+          <span>更新于 {{ formatTime(refreshedAt, true) }}</span>
+          <ElButton type="primary" :icon="Refresh" :loading="loading" @click="loadDashboard">
+            刷新状态
           </ElButton>
         </div>
       </header>
 
-      <section class="ops-strip">
-        <div class="ops-identity">
-          <span class="ops-live" :class="{ 'ops-live--running': activeExecution }"></span>
+      <section class="health-banner art-card" :class="`health-banner--${overallTone}`">
+        <div class="health-state">
+          <span class="health-state__icon"><ArtSvgIcon :icon="overallIcon" /></span>
           <div>
-            <strong>{{ selectedDefinition?.displayName || '未选择工作流' }}</strong>
-            <span>{{ selectedDefinition?.code || '--' }}</span>
+            <span>系统状态</span>
+            <strong>{{ overallLabel }}</strong>
+            <small>{{ overallDescription }}</small>
           </div>
         </div>
-        <dl>
-          <div>
-            <dt>激活版本</dt>
-            <dd>v{{ selectedDefinition?.activeVersion || selectedDefinition?.version || '--' }}</dd>
-          </div>
-          <div>
-            <dt>最近状态</dt>
-            <dd :class="statusClass(latestExecution?.status)">{{
-              statusLabel(latestExecution?.status)
-            }}</dd>
-          </div>
-          <div>
-            <dt>总执行</dt>
-            <dd>{{ selectedDefinition?.executionCount || 0 }}</dd>
-          </div>
-          <div>
-            <dt>当前耗时</dt>
-            <dd>{{ durationText(selectedExecution?.durationMs || 0) }}</dd>
-          </div>
-        </dl>
+        <div class="health-meta">
+          <div
+            ><span>服务</span><strong>{{ serviceMeta.service || 'CoinSphere' }}</strong></div
+          >
+          <div
+            ><span>版本</span><strong>{{ serviceMeta.version || '--' }}</strong></div
+          >
+          <div
+            ><span>运行域</span><strong>{{ availableDomainCount }} / 4</strong></div
+          >
+        </div>
       </section>
 
-      <section class="workbench-stage">
-        <div class="canvas-pane">
-          <div class="canvas-head">
-            <span>FLOW / {{ selectedDefinition?.code || 'NO WORKFLOW' }}</span>
-            <div class="state-legend">
-              <span><i class="state-dot state-dot--pending"></i>待执行</span>
-              <span><i class="state-dot state-dot--running"></i>运行中</span>
-              <span><i class="state-dot state-dot--success"></i>成功</span>
-              <span><i class="state-dot state-dot--failed"></i>失败</span>
-            </div>
+      <section class="metric-grid" aria-label="运行指标">
+        <article v-for="item in metrics" :key="item.label" class="metric-card art-card">
+          <span class="metric-card__icon" :class="`is-${item.tone}`">
+            <ArtSvgIcon :icon="item.icon" />
+          </span>
+          <div>
+            <span>{{ item.label }}</span>
+            <strong>{{ item.value }}</strong>
+            <small>{{ item.caption }}</small>
           </div>
-          <WorkflowExecutionCanvas
-            class="workflow-canvas"
-            :graph="previewGraph"
-            :node-logs="selectedExecution?.nodeLogs || []"
-            :transition-logs="selectedExecution?.transitionLogs || []"
-            :start-node-id="selectedExecution?.startNodeId || ''"
-            @selection-change="handleCanvasSelection"
-          />
-          <div v-if="selectedNodeLog" class="node-popover">
-            <div>
-              <span>{{ selectedNodeLog.nodeType }}</span>
-              <strong>{{ selectedNodeLog.nodeId }}</strong>
-            </div>
-            <span :class="statusClass(selectedNodeLog.status)">{{
-              statusLabel(selectedNodeLog.status)
-            }}</span>
-            <p v-if="selectedNodeLog.errorMessage">{{ selectedNodeLog.errorMessage }}</p>
-            <small>{{ durationText(selectedNodeLog.durationMs) }}</small>
-          </div>
-        </div>
+        </article>
+      </section>
 
-        <aside class="run-rail">
-          <div class="rail-head">
-            <div>
-              <div class="eyebrow">EXECUTION TRACE</div>
-              <h2>最近执行</h2>
+      <section class="domain-grid" aria-label="核心运行域">
+        <article class="domain-card art-card">
+          <header>
+            <div class="domain-title">
+              <span class="domain-icon is-primary"><ArtSvgIcon icon="ri:server-line" /></span>
+              <div><h2>应用服务</h2><p>Go App 与前端服务</p></div>
             </div>
-            <ElTooltip content="刷新执行记录" placement="bottom">
-              <ElButton
-                :icon="Refresh"
-                circle
-                aria-label="刷新执行记录"
-                :loading="executionsLoading"
-                @click="loadExecutions"
-              />
-            </ElTooltip>
-          </div>
-          <div v-if="executions.length" class="run-list">
-            <button
-              v-for="item in executions"
-              :key="item.id"
-              type="button"
-              class="run-row"
-              :class="{ 'run-row--selected': selectedExecution?.id === item.id }"
-              @click="selectExecution(item.id)"
+            <ElTag type="success" effect="light">在线</ElTag>
+          </header>
+          <dl class="domain-facts">
+            <div><dt>API 状态</dt><dd class="is-success">可用</dd></div>
+            <div
+              ><dt>当前版本</dt><dd>{{ serviceMeta.version || '--' }}</dd></div
             >
-              <span class="run-dot" :class="`run-dot--${item.status}`"></span>
-              <span class="run-copy">
-                <strong>#{{ item.id }} · {{ triggerLabel(item.triggerType) }}</strong>
-                <small>{{ item.startedAt || item.queuedAt || '--' }}</small>
-                <em v-if="item.errorMessage">{{ item.errorMessage }}</em>
-              </span>
-              <span class="run-duration">{{ durationText(item.durationMs) }}</span>
+            <div><dt>认证状态</dt><dd>已连接</dd></div>
+          </dl>
+        </article>
+
+        <article class="domain-card art-card">
+          <header>
+            <div class="domain-title">
+              <span class="domain-icon is-workflow"><ArtSvgIcon icon="ri:flow-chart" /></span>
+              <div><h2>调度引擎</h2><p>队列与执行器运行状态</p></div>
+            </div>
+            <ElTag :type="workflowTone" effect="light">{{ workflowStatus }}</ElTag>
+          </header>
+          <dl class="domain-facts">
+            <div
+              ><dt>运行中</dt><dd>{{ workflowOverview?.stats.runningCount ?? '--' }}</dd></div
+            >
+            <div
+              ><dt>等待执行</dt><dd>{{ workflowQueueCount }}</dd></div
+            >
+            <div
+              ><dt>异常运行</dt
+              ><dd :class="{ 'is-danger': workflowStaleCount > 0 }">{{
+                workflowStaleCount
+              }}</dd></div
+            >
+          </dl>
+          <ElButton v-if="canViewWorkflow" text @click="router.push('/scheduler/definition')">
+            进入调度管理 <ArtSvgIcon icon="ri:arrow-right-line" />
+          </ElButton>
+        </article>
+
+        <article class="domain-card art-card">
+          <header>
+            <div class="domain-title">
+              <span class="domain-icon is-market"><ArtSvgIcon icon="ri:database-2-line" /></span>
+              <div><h2>行情数据</h2><p>Binance 元数据同步</p></div>
+            </div>
+            <ElTag :type="marketTone" effect="light">{{ marketStatusLabel }}</ElTag>
+          </header>
+          <dl class="domain-facts">
+            <div
+              ><dt>标的总数</dt><dd>{{ marketSymbolTotal ?? '--' }}</dd></div
+            >
+            <div
+              ><dt>上次同步</dt><dd>{{ formatTime(marketSync?.lastSyncAt) }}</dd></div
+            >
+            <div
+              ><dt>下次同步</dt><dd>{{ formatTime(marketSync?.nextSyncAt) }}</dd></div
+            >
+          </dl>
+          <ElButton v-if="canViewMarket" text @click="router.push('/data/market-metadata')">
+            查看币种元数据 <ArtSvgIcon icon="ri:arrow-right-line" />
+          </ElButton>
+        </article>
+
+        <article class="domain-card art-card">
+          <header>
+            <div class="domain-title">
+              <span class="domain-icon is-trading"><ArtSvgIcon icon="ri:shield-check-line" /></span>
+              <div><h2>交易风控</h2><p>账户、持仓与全局控制</p></div>
+            </div>
+            <ElTag :type="tradingTone" effect="light">{{ tradingStatusLabel }}</ElTag>
+          </header>
+          <dl class="domain-facts">
+            <div
+              ><dt>启用账户</dt><dd>{{ activeAccountCount }}</dd></div
+            >
+            <div
+              ><dt>持仓数量</dt><dd>{{ tradingOverview?.positions.length ?? '--' }}</dd></div
+            >
+            <div
+              ><dt>未完成订单</dt><dd>{{ openOrderCount }}</dd></div
+            >
+          </dl>
+          <ElButton text @click="router.push('/trading/overview')">
+            进入交易管理 <ArtSvgIcon icon="ri:arrow-right-line" />
+          </ElButton>
+        </article>
+      </section>
+
+      <section class="operations-grid">
+        <article class="activity-panel art-card">
+          <header class="panel-head">
+            <div><h2>最近运行状态</h2><p>各运行域最后一次可观测状态</p></div>
+            <span class="status-legend"><i></i>UTC</span>
+          </header>
+          <div class="activity-list">
+            <div v-for="item in activities" :key="item.label" class="activity-row">
+              <span class="activity-dot" :class="`is-${item.tone}`"></span>
+              <div
+                ><strong>{{ item.label }}</strong
+                ><span>{{ item.description }}</span></div
+              >
+              <time>{{ formatTime(item.time) }}</time>
+            </div>
+          </div>
+        </article>
+
+        <aside class="attention-panel art-card">
+          <header class="panel-head">
+            <div><h2>待处理项</h2><p>影响运行质量的当前状态</p></div>
+            <span class="attention-count">{{ attentionItems.length }}</span>
+          </header>
+          <div v-if="attentionItems.length" class="attention-list">
+            <button
+              v-for="item in attentionItems"
+              :key="item.title"
+              type="button"
+              @click="item.path && router.push(item.path)"
+            >
+              <span :class="`is-${item.tone}`"><ArtSvgIcon :icon="item.icon" /></span>
+              <div
+                ><strong>{{ item.title }}</strong
+                ><small>{{ item.description }}</small></div
+              >
+              <ArtSvgIcon v-if="item.path" icon="ri:arrow-right-s-line" />
             </button>
           </div>
-          <div v-else class="rail-empty">
-            <ArtSvgIcon icon="ri:git-commit-line" />
-            <strong>还没有执行记录</strong>
-            <span>运行手动入口后，流转轨迹会显示在这里。</span>
-          </div>
-          <ElButton
-            v-if="selectedExecution"
-            class="detail-link"
-            text
-            @click="router.push(`/scheduler/execution/${selectedExecution.id}/detail`)"
-          >
-            查看完整执行详情
-            <ArtSvgIcon icon="ri:arrow-right-line" />
-          </ElButton>
-        </aside>
-      </section>
-
-      <section class="lower-grid">
-        <div class="signal-preview">
-          <div class="panel-head">
-            <div>
-              <div class="eyebrow">MARKET SIGNAL PREVIEW</div>
-              <h2>{{ previewStrategy?.symbol || 'K 线信号预览' }}</h2>
-            </div>
-            <div class="preview-meta">
-              <span>{{ previewStrategy?.name || '暂无启用策略' }}</span>
-              <ElButton text @click="router.push('/data/market-chart')">打开完整图表</ElButton>
-            </div>
-          </div>
-          <ArtKLineChart
-            :data="previewCandles"
-            :signals="previewSignals"
-            :loading="marketLoading"
-            :show-volume="true"
-            :show-target="false"
-            :show-data-zoom="false"
-            height="250px"
-          />
-        </div>
-
-        <div class="error-console">
-          <div class="panel-head">
-            <div>
-              <div class="eyebrow">LATEST FAILURE</div>
-              <h2>错误定位</h2>
-            </div>
-            <span class="error-count">{{ failedExecutions.length }}</span>
-          </div>
-          <div v-if="latestFailure" class="error-body">
-            <span>#{{ latestFailure.id }} · {{ latestFailure.failureCategory || 'workflow' }}</span>
-            <strong>{{ latestFailure.errorMessage || '工作流执行失败' }}</strong>
-            <small>{{ latestFailure.finishedAt || latestFailure.startedAt }}</small>
-            <ElButton text @click="selectExecution(latestFailure.id)">在画布中定位</ElButton>
-          </div>
-          <div v-else class="error-empty">
+          <div v-else class="attention-empty">
             <ArtSvgIcon icon="ri:checkbox-circle-line" />
-            <span>最近执行未发现错误</span>
+            <strong>当前没有异常</strong>
+            <span>核心运行域均处于可用状态。</span>
           </div>
-        </div>
+        </aside>
       </section>
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
-  import { EditPen, Refresh, VideoPlay } from '@element-plus/icons-vue'
-  import { ElMessage } from 'element-plus'
-  import {
-    fetchNodeDefinitions,
-    fetchRunWorkflowDefinition,
-    fetchWorkflowDefinitionExecutions,
-    fetchWorkflowDefinitionList,
-    fetchWorkflowExecutionDetail,
-    fetchWorkflowRuntime,
-    type WorkflowDefinitionItem,
-    type WorkflowExecutionDetail,
-    type WorkflowExecutionItem,
-    type WorkflowExecutionNodeLog,
-    type WorkflowNodeDefinitionItem,
-    type WorkflowRuntimeEntryItem
-  } from '@/api/scheduler'
-  import { fetchMarketCandles } from '@/api/market'
-  import {
-    fetchStrategyInstances,
-    fetchStrategySignals,
-    type StrategyInstanceItem
-  } from '@/api/signals'
+  import { Refresh } from '@element-plus/icons-vue'
+  import { fetchHomeMeta } from '@/api/home'
+  import { fetchMarketSymbols, fetchMarketSyncStatus, type MarketSyncStatus } from '@/api/market'
+  import { fetchSchedulerOverview, type WorkflowOverview } from '@/api/scheduler'
+  import { fetchTradingOverview, type TradingOverview } from '@/api/trading'
   import { useUserStore } from '@/store/modules/user'
-  import type { KLineDataItem, KLineSignalItem } from '@/types/component/chart'
-  import WorkflowExecutionCanvas from '@/views/scheduler/execution/detail/components/WorkflowExecutionCanvas.vue'
-  import { flattenMaterials } from '@/views/scheduler/workflow/editor/workflow-editor.mapper'
-  import { mapServerGraphToDomain } from '@/views/scheduler/workflow/editor/workflow-editor.mapper'
-  import type { WorkflowDomainGraphModel } from '@/views/scheduler/workflow/editor/types'
 
   defineOptions({ name: 'HomePage' })
+
+  type Tone = 'primary' | 'success' | 'warning' | 'danger' | 'info'
 
   const router = useRouter()
   const userStore = useUserStore()
   const isGuest = computed(() => userStore.accessMode === 'guest')
-  const canRun = computed(() =>
-    userStore.info.permissions.includes('scheduler.workflow_definitions.run')
+  const canViewWorkflow = computed(() =>
+    userStore.info.permissions.includes('scheduler.workflow_definitions.view')
   )
-  const canEdit = computed(() =>
-    userStore.info.permissions.includes('scheduler.workflow_definitions.update')
-  )
-  const definitions = ref<WorkflowDefinitionItem[]>([])
-  const nodeDefinitions = ref<WorkflowNodeDefinitionItem[]>([])
-  const selectedDefinitionId = ref<number | null>(null)
-  const runtimeEntries = ref<WorkflowRuntimeEntryItem[]>([])
-  const executions = ref<WorkflowExecutionItem[]>([])
-  const selectedExecution = ref<WorkflowExecutionDetail | null>(null)
-  const executionsLoading = ref(false)
-  const runningWorkflow = ref(false)
-  const selectedCanvasNodeId = ref('')
-  const pollTimer = ref<ReturnType<typeof setInterval> | null>(null)
-  const previewStrategy = ref<StrategyInstanceItem | null>(null)
-  const previewCandles = ref<KLineDataItem[]>([])
-  const previewSignals = ref<KLineSignalItem[]>([])
-  const marketLoading = ref(false)
+  const canViewMarket = computed(() => userStore.info.permissions.includes('data.market.view'))
+  const loading = ref(false)
+  const refreshedAt = ref('')
+  const serviceMeta = reactive({ service: '', version: '' })
+  const workflowOverview = ref<WorkflowOverview | null>(null)
+  const marketSync = ref<MarketSyncStatus | null>(null)
+  const marketSymbolTotal = ref<number | null>(null)
+  const tradingOverview = ref<TradingOverview | null>(null)
 
-  const selectedDefinition = computed(
-    () => definitions.value.find((item) => item.id === selectedDefinitionId.value) || null
-  )
-  const manualEntry = computed(
-    () => runtimeEntries.value.find((item) => item.startType === 'manual' && item.isEnabled) || null
-  )
-  const latestExecution = computed(() => executions.value[0] || null)
-  const activeExecution = computed(() =>
-    ['queued', 'running', 'retry_waiting'].includes(latestExecution.value?.status || '')
-  )
-  const failedExecutions = computed(() =>
-    executions.value.filter((item) => item.status === 'failed')
-  )
-  const latestFailure = computed(() => failedExecutions.value[0] || null)
-  const selectedNodeLog = computed<WorkflowExecutionNodeLog | null>(() => {
-    if (!selectedCanvasNodeId.value) return null
-    const logs = selectedExecution.value?.nodeLogs.filter(
-      (item) => item.nodeId === selectedCanvasNodeId.value
-    )
-    return logs?.at(-1) || null
+  const workflowQueueCount = computed(() => {
+    const stats = workflowOverview.value?.stats
+    return stats ? stats.pendingCount + stats.queuedCount + stats.retryWaitingCount : '--'
   })
-  const previewGraph = computed<WorkflowDomainGraphModel>(() => {
-    const graph = selectedExecution.value?.graph || selectedDefinition.value?.graph
-    if (!graph) return { nodes: [], edges: [] }
-    return mapServerGraphToDomain(
-      graph,
-      nodeDefinitions.value,
-      flattenMaterials(nodeDefinitions.value)
-    )
+  const workflowStaleCount = computed(() => workflowOverview.value?.stats.staleRunningCount || 0)
+  const activeAccountCount = computed(
+    () => tradingOverview.value?.accounts.filter((item) => item.status === 'active').length ?? '--'
+  )
+  const openOrderCount = computed(() => {
+    const overview = tradingOverview.value
+    if (!overview) return '--'
+    return [...overview.orders, ...overview.testnetOpenOrders].filter(
+      (item) => !['filled', 'canceled', 'rejected', 'expired'].includes(item.status)
+    ).length
   })
+  const availableDomainCount = computed(
+    () => 2 + Number(Boolean(workflowOverview.value)) + Number(Boolean(marketSync.value))
+  )
 
-  const statusLabel = (status?: string) =>
-    ({
-      queued: '待执行',
-      pending: '待执行',
-      running: '运行中',
-      retry_waiting: '等待重试',
-      success: '成功',
-      failed: '失败',
-      canceled: '已取消'
-    })[status || ''] ||
-    status ||
-    '--'
-  const statusClass = (status?: string) => `status-text status-text--${status || 'idle'}`
-  const triggerLabel = (type: string) =>
-    ({ manual: '手动', schedule: '定时', event: '事件', webhook: 'Webhook' })[type] || type
-  const durationText = (duration: number) => {
-    if (!duration) return '--'
-    if (duration < 1000) return `${duration}ms`
-    return `${(duration / 1000).toFixed(duration < 10000 ? 1 : 0)}s`
-  }
-  const timeKey = (value: string) => String(new Date(value).getTime())
-  const axisTime = (value: string) => {
-    const date = new Date(value)
-    const pad = (part: number) => String(part).padStart(2, '0')
-    return `${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`
-  }
+  const workflowStatus = computed(() => {
+    if (!canViewWorkflow.value) return '未授权'
+    if (!workflowOverview.value) return '未加载'
+    if (workflowStaleCount.value > 0) return '存在异常'
+    if ((workflowOverview.value.stats.runningCount || 0) > 0) return '运行中'
+    return '待命'
+  })
+  const workflowTone = computed(() =>
+    !canViewWorkflow.value
+      ? 'info'
+      : workflowStaleCount.value > 0
+        ? 'danger'
+        : (workflowOverview.value?.stats.runningCount || 0) > 0
+          ? 'warning'
+          : 'success'
+  )
+  const marketStatusLabel = computed(() => {
+    if (!canViewMarket.value) return '未授权'
+    const status = marketSync.value?.lastExecution?.status
+    if (['queued', 'running', 'retry_waiting'].includes(status || '')) return '同步中'
+    if (status === 'failed') return '同步失败'
+    return marketSync.value?.lastSyncAt ? '正常' : '等待同步'
+  })
+  const marketTone = computed(() =>
+    marketSync.value?.lastExecution?.status === 'failed'
+      ? 'danger'
+      : ['queued', 'running', 'retry_waiting'].includes(
+            marketSync.value?.lastExecution?.status || ''
+          )
+        ? 'warning'
+        : canViewMarket.value
+          ? 'success'
+          : 'info'
+  )
+  const tradingStatusLabel = computed(() =>
+    !tradingOverview.value
+      ? '未加载'
+      : tradingOverview.value.control.emergencyStopped
+        ? '已急停'
+        : '运行中'
+  )
+  const tradingTone = computed(() =>
+    !tradingOverview.value
+      ? 'info'
+      : tradingOverview.value.control.emergencyStopped
+        ? 'danger'
+        : 'success'
+  )
 
-  const stopPolling = () => {
-    if (pollTimer.value) clearInterval(pollTimer.value)
-    pollTimer.value = null
-  }
-
-  const syncPolling = () => {
-    stopPolling()
-    if (!activeExecution.value) return
-    pollTimer.value = setInterval(async () => {
-      await loadExecutions()
-      if (selectedExecution.value) {
-        selectedExecution.value = await fetchWorkflowExecutionDetail(selectedExecution.value.id)
-      }
-      if (!activeExecution.value) stopPolling()
-    }, 2000)
-  }
-
-  const loadExecutions = async () => {
-    const definition = selectedDefinition.value
-    if (!definition) return
-    executionsLoading.value = true
-    try {
-      const result = await fetchWorkflowDefinitionExecutions(definition.id, { limit: 8 })
-      executions.value = result.records
-      if (!selectedExecution.value && result.records[0]) {
-        selectedExecution.value = await fetchWorkflowExecutionDetail(result.records[0].id)
-      }
-    } finally {
-      executionsLoading.value = false
-    }
-  }
-
-  const selectExecution = async (executionId: number) => {
-    selectedExecution.value = await fetchWorkflowExecutionDetail(executionId)
-    selectedCanvasNodeId.value = ''
-    syncPolling()
-  }
-
-  const loadSelectedDefinition = async () => {
-    stopPolling()
-    selectedExecution.value = null
-    selectedCanvasNodeId.value = ''
-    const definition = selectedDefinition.value
-    if (!definition) return
-    const runtime = await fetchWorkflowRuntime(definition.id)
-    runtimeEntries.value = runtime.entries || []
-    await loadExecutions()
-    syncPolling()
-  }
-
-  const handleDefinitionChange = () => void loadSelectedDefinition()
-
-  const runWorkflow = async () => {
-    const definition = selectedDefinition.value
-    if (!definition || !manualEntry.value) return
-    runningWorkflow.value = true
-    try {
-      const result = await fetchRunWorkflowDefinition(definition.id, {
-        startEntryKeys: [manualEntry.value.entryKey],
-        inputs: {}
+  const attentionItems = computed(() => {
+    const items: Array<{
+      title: string
+      description: string
+      icon: string
+      tone: Tone
+      path?: string
+    }> = []
+    if (tradingOverview.value?.control.emergencyStopped) {
+      items.push({
+        title: '交易全局急停已开启',
+        description: tradingOverview.value.control.stopReason || '交易账户不会继续执行新指令。',
+        icon: 'ri:stop-circle-line',
+        tone: 'danger',
+        path: '/trading/overview'
       })
-      const execution = result.executions[0]
-      if (execution) await selectExecution(execution.id)
-      await loadExecutions()
-    } finally {
-      runningWorkflow.value = false
     }
+    if (workflowStaleCount.value > 0) {
+      items.push({
+        title: '存在超时运行的调度任务',
+        description: `${workflowStaleCount.value} 个执行需要检查。`,
+        icon: 'ri:time-line',
+        tone: 'warning',
+        path: '/scheduler/execution'
+      })
+    }
+    if (marketSync.value?.lastExecution?.status === 'failed') {
+      items.push({
+        title: '最近一次行情同步失败',
+        description: '检查执行详情后重新同步币种元数据。',
+        icon: 'ri:database-2-line',
+        tone: 'danger',
+        path: '/data/market-metadata'
+      })
+    }
+    const pausedAccounts =
+      tradingOverview.value?.accounts.filter((item) => item.status === 'paused') || []
+    if (pausedAccounts.length) {
+      items.push({
+        title: `${pausedAccounts.length} 个交易账户已暂停`,
+        description: '检查账户风控、凭据或对账状态。',
+        icon: 'ri:pause-circle-line',
+        tone: 'warning',
+        path: '/trading/overview'
+      })
+    }
+    return items
+  })
+
+  const overallTone = computed<Tone>(() => {
+    if (attentionItems.value.some((item) => item.tone === 'danger')) return 'danger'
+    if (attentionItems.value.length) return 'warning'
+    return 'success'
+  })
+  const overallLabel = computed(() =>
+    overallTone.value === 'danger'
+      ? '存在需要处理的异常'
+      : overallTone.value === 'warning'
+        ? '系统可用，部分状态需关注'
+        : '核心服务运行正常'
+  )
+  const overallDescription = computed(() =>
+    attentionItems.value.length
+      ? `${attentionItems.value.length} 项状态需要检查，未影响运维页面访问。`
+      : '应用、行情、调度与交易运行域均已响应。'
+  )
+  const overallIcon = computed(() =>
+    overallTone.value === 'danger'
+      ? 'ri:error-warning-line'
+      : overallTone.value === 'warning'
+        ? 'ri:alert-line'
+        : 'ri:checkbox-circle-line'
+  )
+
+  const metrics = computed(() => [
+    {
+      label: '激活调度',
+      value: workflowOverview.value?.stats.activeDefinitionCount ?? '--',
+      caption: `共 ${workflowOverview.value?.stats.definitionCount ?? '--'} 个定义`,
+      icon: 'ri:flow-chart',
+      tone: 'primary'
+    },
+    {
+      label: '执行总数',
+      value: workflowOverview.value?.stats.executionCount ?? '--',
+      caption: `${workflowOverview.value?.stats.runningCount ?? '--'} 个运行中`,
+      icon: 'ri:play-list-2-line',
+      tone: 'success'
+    },
+    {
+      label: '行情标的',
+      value: marketSymbolTotal.value ?? '--',
+      caption: 'Binance 元数据',
+      icon: 'ri:coins-line',
+      tone: 'primary'
+    },
+    {
+      label: '交易账户',
+      value: tradingOverview.value?.accounts.length ?? '--',
+      caption: `${activeAccountCount.value} 个启用`,
+      icon: 'ri:wallet-3-line',
+      tone: tradingOverview.value?.control.emergencyStopped ? 'danger' : 'success'
+    }
+  ])
+
+  const activities = computed(() => [
+    {
+      label: '应用服务',
+      description: `版本 ${serviceMeta.version || '--'} 已响应`,
+      time: refreshedAt.value,
+      tone: 'success'
+    },
+    {
+      label: '调度引擎',
+      description: `${workflowOverview.value?.stats.executionCount ?? '--'} 次累计执行`,
+      time: workflowOverview.value?.stats.latestExecutedAt || '',
+      tone: workflowStaleCount.value > 0 ? 'danger' : 'success'
+    },
+    {
+      label: '行情数据',
+      description: marketStatusLabel.value,
+      time: marketSync.value?.lastSyncAt || '',
+      tone: marketTone.value
+    },
+    {
+      label: '交易风控',
+      description: tradingStatusLabel.value,
+      time: tradingOverview.value?.control.updatedAt || '',
+      tone: tradingTone.value
+    }
+  ])
+
+  const formatTime = (value?: string | null, timeOnly = false) => {
+    if (!value) return '--'
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return value
+    return new Intl.DateTimeFormat('zh-CN', {
+      month: timeOnly ? undefined : '2-digit',
+      day: timeOnly ? undefined : '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: 'UTC'
+    }).format(date)
   }
 
-  const loadMarketPreview = async () => {
-    marketLoading.value = true
+  const loadDashboard = async () => {
+    loading.value = true
     try {
-      const instanceResult = await fetchStrategyInstances({ limit: 50 })
-      previewStrategy.value =
-        instanceResult.records.find((item) => item.isEnabled) || instanceResult.records[0] || null
-      if (!previewStrategy.value) return
-      const [candleResult, signalResult] = await Promise.all([
-        fetchMarketCandles({
-          instrumentId: previewStrategy.value.instrumentId,
-          interval: previewStrategy.value.interval as any,
-          limit: 80
-        }),
-        fetchStrategySignals({
-          strategyInstance: previewStrategy.value.id,
-          instrumentId: previewStrategy.value.instrumentId,
-          interval: previewStrategy.value.interval,
-          limit: 80
-        })
+      const [meta, trading, workflow, sync, symbols] = await Promise.all([
+        fetchHomeMeta(),
+        fetchTradingOverview(),
+        canViewWorkflow.value ? fetchSchedulerOverview() : Promise.resolve(null),
+        canViewMarket.value ? fetchMarketSyncStatus() : Promise.resolve(null),
+        canViewMarket.value
+          ? fetchMarketSymbols({ limit: 1, status: 'all' })
+          : Promise.resolve(null)
       ])
-      const candles = [...candleResult.records].reverse()
-      const signalMap = new Map(
-        signalResult.records.map((item) => [timeKey(item.candleOpenTime), item])
-      )
-      const labelMap = new Map(
-        candles.map((item) => [timeKey(item.openTime), axisTime(item.openTime)])
-      )
-      previewCandles.value = candles.map((item) => ({
-        time: axisTime(item.openTime),
-        open: Number(item.open),
-        close: Number(item.close),
-        high: Number(item.high),
-        low: Number(item.low),
-        volume: Number(item.baseVolume),
-        target: signalMap.has(timeKey(item.openTime))
-          ? Number(signalMap.get(timeKey(item.openTime))?.target)
-          : null
-      }))
-      previewSignals.value = signalResult.records.map((item) => ({
-        time: labelMap.get(timeKey(item.candleOpenTime)) || axisTime(item.candleOpenTime),
-        action: item.action,
-        target: Number(item.target),
-        previousTarget: Number(item.previousTarget)
-      }))
+      Object.assign(serviceMeta, meta)
+      tradingOverview.value = trading
+      workflowOverview.value = workflow
+      marketSync.value = sync
+      marketSymbolTotal.value = symbols?.total ?? null
+      refreshedAt.value = new Date().toISOString()
     } finally {
-      marketLoading.value = false
-    }
-  }
-
-  const handleCanvasSelection = (payload: { cellId: string | null; cellType: string | null }) => {
-    selectedCanvasNodeId.value = payload.cellType === 'node' ? payload.cellId || '' : ''
-  }
-
-  const openEditor = () => {
-    if (selectedDefinition.value) {
-      router.push(`/scheduler/workflow/${selectedDefinition.value.id}/edit`)
+      loading.value = false
     }
   }
 
   const goLogin = () => router.push({ name: 'Login', query: { redirect: '/home' } })
 
-  onMounted(async () => {
+  let refreshTimer: ReturnType<typeof setInterval> | null = null
+  onMounted(() => {
     if (isGuest.value) return
-    try {
-      const [definitionResult, nodeDefinitionResult] = await Promise.all([
-        fetchWorkflowDefinitionList(),
-        fetchNodeDefinitions()
-      ])
-      definitions.value = definitionResult
-      nodeDefinitions.value = nodeDefinitionResult
-      selectedDefinitionId.value =
-        definitions.value.find((item) => item.isActive)?.id || definitions.value[0]?.id || null
-      await Promise.all([loadSelectedDefinition(), loadMarketPreview()])
-    } catch {
-      ElMessage.error('工作台数据加载失败')
-    }
+    void loadDashboard()
+    refreshTimer = setInterval(() => void loadDashboard(), 30000)
   })
-
-  onBeforeUnmount(stopPolling)
+  onBeforeUnmount(() => {
+    if (refreshTimer) clearInterval(refreshTimer)
+  })
 </script>
 
 <style scoped lang="scss">
-  .workflow-home {
-    --home-text: var(--art-gray-900);
-    --home-muted: var(--art-gray-600);
-    --home-card: var(--default-box-color);
-    --home-line: var(--art-card-border);
-    --home-soft: var(--art-gray-100);
-    --home-hover: var(--art-hover-color);
-    --home-shadow: 0 8px 24px rgb(31 35 48 / 0.05);
-    --home-success: var(--el-color-success);
-    --home-warning: var(--el-color-warning);
-    --home-danger: var(--el-color-danger);
-
+  .operations-home {
     display: flex;
     flex-direction: column;
     gap: 16px;
     min-width: 0;
     min-height: 100%;
     padding: 20px;
-    color: var(--home-text);
+    color: var(--art-gray-900);
     background: var(--default-bg-color);
   }
 
-  .workbench-head,
+  .page-head,
   .head-actions,
-  .ops-strip,
-  .ops-identity,
-  .ops-strip dl,
-  .canvas-head,
-  .state-legend,
-  .state-legend span,
-  .rail-head,
+  .health-banner,
+  .health-state,
+  .health-meta,
+  .domain-card header,
+  .domain-title,
   .panel-head,
-  .preview-meta,
-  .definition-option,
-  .node-popover > div:first-child {
+  .status-legend {
     display: flex;
     align-items: center;
   }
 
-  .workbench-head,
-  .ops-strip,
-  .canvas-head,
-  .rail-head,
+  .page-head,
+  .health-banner,
+  .domain-card header,
   .panel-head {
     gap: 16px;
     justify-content: space-between;
@@ -543,523 +524,564 @@
     margin: 0;
   }
 
-  h1 {
-    margin-top: 6px;
-    font-size: 28px;
-    font-weight: 600;
-    line-height: 1.3;
+  .page-head {
+    min-height: 72px;
   }
 
-  h2 {
-    margin-top: 4px;
-    font-size: 16px;
-    font-weight: 600;
-  }
-
-  .eyebrow {
+  .page-context,
+  .section-kicker {
+    display: flex;
+    gap: 6px;
+    align-items: center;
     font-size: 11px;
     font-weight: 600;
     color: var(--theme-color);
   }
 
-  .workbench-head {
-    min-height: 74px;
+  .page-context :deep(.art-svg-icon) {
+    font-size: 15px;
   }
 
-  .workbench-head p {
-    margin-top: 7px;
-    font-size: 13px;
-    color: var(--home-muted);
+  h1 {
+    margin-top: 6px;
+    font-size: 28px;
+    line-height: 1.3;
+  }
+
+  .page-head p,
+  .panel-head p,
+  .domain-title p {
+    margin-top: 4px;
+    color: var(--art-gray-600);
   }
 
   .head-actions {
-    flex-wrap: wrap;
-    justify-content: flex-end;
-  }
-
-  .workflow-select {
-    width: min(320px, 100%);
-  }
-
-  .definition-option {
-    gap: 8px;
-  }
-
-  .definition-option small {
-    margin-left: auto;
-    color: var(--el-text-color-secondary);
-  }
-
-  .definition-state {
-    width: 7px;
-    height: 7px;
-    background: var(--art-gray-500);
-    border-radius: 50%;
-  }
-
-  .definition-state--active {
-    background: var(--home-success);
-  }
-
-  .ops-strip {
-    padding: 16px 18px;
-    background: var(--home-card);
-    border: 1px solid var(--home-line);
-    border-radius: calc(var(--custom-radius) / 2 + 4px);
-    box-shadow: var(--home-shadow);
-  }
-
-  .ops-identity {
-    gap: 11px;
-    min-width: 210px;
-  }
-
-  .ops-live {
-    width: 9px;
-    height: 9px;
-    background: var(--home-success);
-    border-radius: 50%;
-  }
-
-  .ops-live--running {
-    background: var(--home-warning);
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--home-warning) 15%, transparent);
-  }
-
-  .ops-identity strong,
-  .ops-identity span {
-    display: block;
-  }
-
-  .ops-identity strong {
-    font-size: 13px;
-  }
-
-  .ops-identity span {
-    margin-top: 3px;
-    font-size: 11px;
-    color: var(--home-muted);
-  }
-
-  .ops-strip dl {
-    flex-wrap: wrap;
-    margin: 0;
-  }
-
-  .ops-strip dl div {
-    min-width: 112px;
-    padding: 0 16px;
-    border-left: 1px solid var(--home-line);
-  }
-
-  .ops-strip dt {
-    font-size: 11px;
-    color: var(--home-muted);
-  }
-
-  .ops-strip dd {
-    margin: 5px 0 0;
-    font-size: 13px;
-    font-weight: 600;
-  }
-
-  .workbench-stage {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 310px;
-    min-height: 520px;
-    overflow: hidden;
-    background: var(--home-card);
-    border: 1px solid var(--home-line);
-    border-radius: calc(var(--custom-radius) / 2 + 4px);
-    box-shadow: var(--home-shadow);
-  }
-
-  .canvas-pane {
-    position: relative;
-    min-width: 0;
-    min-height: 520px;
-    overflow: hidden;
-    background: var(--workflow-canvas-bg);
-    border-right: 1px solid var(--home-line);
-  }
-
-  .canvas-head {
-    position: absolute;
-    top: 14px;
-    right: 16px;
-    left: 16px;
-    z-index: 5;
-    font-size: 11px;
-    color: var(--home-muted);
-    pointer-events: none;
-  }
-
-  .state-legend {
-    flex-wrap: wrap;
     gap: 12px;
   }
 
-  .state-legend span {
-    gap: 5px;
+  .head-actions > span {
+    font-size: 11px;
+    color: var(--art-gray-600);
   }
 
-  .state-dot,
-  .run-dot {
-    width: 7px;
-    height: 7px;
+  .health-banner {
+    min-height: 108px;
+    padding: 18px 20px;
+    overflow: hidden;
+    background: var(--default-box-color);
+    border-left: 3px solid var(--el-color-success);
+  }
+
+  .health-banner--warning {
+    border-left-color: var(--el-color-warning);
+  }
+
+  .health-banner--danger {
+    border-left-color: var(--el-color-danger);
+  }
+
+  .health-state {
+    gap: 14px;
+    min-width: 0;
+  }
+
+  .health-state__icon,
+  .metric-card__icon,
+  .domain-icon,
+  .guest-panel__icon {
+    display: grid;
+    flex: 0 0 auto;
+    place-items: center;
+    border-radius: 8px;
+  }
+
+  .health-state__icon {
+    width: 48px;
+    height: 48px;
+    font-size: 24px;
+    color: var(--el-color-success);
+    background: color-mix(in srgb, var(--el-color-success) 11%, transparent);
+  }
+
+  .health-banner--warning .health-state__icon {
+    color: var(--el-color-warning);
+    background: color-mix(in srgb, var(--el-color-warning) 11%, transparent);
+  }
+
+  .health-banner--danger .health-state__icon {
+    color: var(--el-color-danger);
+    background: color-mix(in srgb, var(--el-color-danger) 11%, transparent);
+  }
+
+  .health-state span,
+  .health-state strong,
+  .health-state small,
+  .health-meta span,
+  .health-meta strong {
+    display: block;
+  }
+
+  .health-state span,
+  .health-state small,
+  .health-meta span {
+    font-size: 11px;
+    color: var(--art-gray-600);
+  }
+
+  .health-state strong {
+    margin: 4px 0;
+    font-size: 17px;
+  }
+
+  .health-meta {
+    flex: 0 0 auto;
+  }
+
+  .health-meta > div {
+    min-width: 118px;
+    padding: 4px 20px;
+    border-left: 1px solid var(--art-card-border);
+  }
+
+  .health-meta strong {
+    max-width: 160px;
+    margin-top: 5px;
+    overflow: hidden;
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .metric-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 16px;
+  }
+
+  .metric-card {
+    display: flex;
+    gap: 13px;
+    align-items: center;
+    min-width: 0;
+    min-height: 104px;
+    padding: 16px;
+    background: var(--default-box-color);
+  }
+
+  .metric-card__icon,
+  .domain-icon {
+    width: 40px;
+    height: 40px;
+    font-size: 20px;
+    color: var(--theme-color);
+    background: var(--el-color-primary-light-9);
+  }
+
+  .metric-card__icon.is-success,
+  .domain-icon.is-trading {
+    color: var(--el-color-success);
+    background: color-mix(in srgb, var(--el-color-success) 10%, transparent);
+  }
+
+  .metric-card__icon.is-warning,
+  .domain-icon.is-workflow {
+    color: var(--el-color-warning);
+    background: color-mix(in srgb, var(--el-color-warning) 11%, transparent);
+  }
+
+  .metric-card__icon.is-danger {
+    color: var(--el-color-danger);
+    background: color-mix(in srgb, var(--el-color-danger) 10%, transparent);
+  }
+
+  .metric-card > div {
+    min-width: 0;
+  }
+
+  .metric-card span,
+  .metric-card strong,
+  .metric-card small {
+    display: block;
+  }
+
+  .metric-card span,
+  .metric-card small {
+    color: var(--art-gray-600);
+  }
+
+  .metric-card span {
+    font-size: 11px;
+  }
+
+  .metric-card strong {
+    margin-top: 4px;
+    overflow: hidden;
+    font-size: 20px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .metric-card small {
+    margin-top: 3px;
+    font-size: 10px;
+  }
+
+  .domain-grid,
+  .operations-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+
+  .domain-card,
+  .activity-panel,
+  .attention-panel {
+    min-width: 0;
+    padding: 18px;
+    background: var(--default-box-color);
+  }
+
+  .domain-title {
+    gap: 11px;
+    min-width: 0;
+  }
+
+  .domain-title h2,
+  .panel-head h2 {
+    font-size: 15px;
+  }
+
+  .domain-title p,
+  .panel-head p {
+    font-size: 10px;
+  }
+
+  .domain-facts {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin: 16px 0 10px;
+    border-top: 1px solid var(--art-card-border);
+    border-bottom: 1px solid var(--art-card-border);
+  }
+
+  .domain-facts > div {
+    min-width: 0;
+    padding: 13px 12px;
+    border-right: 1px solid var(--art-card-border);
+  }
+
+  .domain-facts > div:first-child {
+    padding-left: 0;
+  }
+
+  .domain-facts > div:last-child {
+    padding-right: 0;
+    border-right: 0;
+  }
+
+  .domain-facts dt {
+    font-size: 10px;
+    color: var(--art-gray-600);
+  }
+
+  .domain-facts dd {
+    margin: 5px 0 0;
+    overflow: hidden;
+    font-size: 12px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .is-success {
+    color: var(--el-color-success);
+  }
+
+  .is-danger {
+    color: var(--el-color-danger);
+  }
+
+  .panel-head {
+    min-height: 42px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--art-card-border);
+  }
+
+  .status-legend {
+    gap: 6px;
+    font-size: 10px;
+    color: var(--art-gray-600);
+  }
+
+  .status-legend i {
+    width: 6px;
+    height: 6px;
+    background: var(--el-color-success);
     border-radius: 50%;
   }
 
-  .state-dot--pending,
-  .run-dot--queued,
-  .run-dot--pending {
-    background: var(--art-gray-500);
-  }
-
-  .state-dot--running,
-  .run-dot--running,
-  .run-dot--retry_waiting {
-    background: var(--home-warning);
-  }
-
-  .state-dot--success,
-  .run-dot--success {
-    background: var(--home-success);
-  }
-
-  .state-dot--failed,
-  .run-dot--failed,
-  .run-dot--canceled {
-    background: var(--home-danger);
-  }
-
-  .workflow-canvas {
-    width: 100%;
-    height: 100%;
-    min-height: 520px;
-  }
-
-  .workflow-canvas :deep(.workflow-execution-canvas) {
-    border: 0;
-    border-radius: 0;
-  }
-
-  .node-popover {
-    position: absolute;
-    right: 14px;
-    bottom: 14px;
-    z-index: 6;
-    width: min(340px, calc(100% - 28px));
-    padding: 12px;
-    color: var(--home-text);
-    background: color-mix(in srgb, var(--home-card) 94%, transparent);
-    backdrop-filter: blur(10px);
-    border: 1px solid var(--home-line);
-    border-radius: 8px;
-    box-shadow: 0 10px 28px rgb(31 35 48 / 0.1);
-  }
-
-  .node-popover > div:first-child {
-    gap: 8px;
-    justify-content: space-between;
-  }
-
-  .node-popover span,
-  .node-popover small {
-    font-size: 10px;
-    color: var(--home-muted);
-  }
-
-  .node-popover p {
-    margin: 8px 0;
-    font-size: 11px;
-    color: var(--home-danger);
-  }
-
-  .run-rail {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    padding: 18px;
-    color: var(--home-text);
-    background: var(--home-card);
-  }
-
-  .run-list {
-    margin-top: 12px;
-  }
-
-  .run-row {
+  .activity-row {
     display: grid;
-    grid-template-columns: 8px minmax(0, 1fr) auto;
-    gap: 10px;
-    align-items: start;
+    grid-template-columns: 10px minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+    min-height: 66px;
+    border-bottom: 1px solid var(--art-card-border);
+  }
+
+  .activity-row:last-child {
+    border-bottom: 0;
+  }
+
+  .activity-dot {
+    width: 7px;
+    height: 7px;
+    background: var(--art-gray-400);
+    border-radius: 50%;
+  }
+
+  .activity-dot.is-success {
+    background: var(--el-color-success);
+  }
+
+  .activity-dot.is-warning {
+    background: var(--el-color-warning);
+  }
+
+  .activity-dot.is-danger {
+    background: var(--el-color-danger);
+  }
+
+  .activity-row strong,
+  .activity-row span {
+    display: block;
+  }
+
+  .activity-row strong {
+    font-size: 12px;
+  }
+
+  .activity-row span,
+  .activity-row time {
+    margin-top: 4px;
+    font-size: 10px;
+    color: var(--art-gray-600);
+  }
+
+  .attention-count {
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    font-size: 11px;
+    color: var(--el-color-warning);
+    background: color-mix(in srgb, var(--el-color-warning) 11%, transparent);
+    border-radius: 8px;
+  }
+
+  .attention-list button {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr) 18px;
+    gap: 11px;
+    align-items: center;
     width: 100%;
-    padding: 12px 8px;
+    min-height: 66px;
+    padding: 10px 8px;
     color: inherit;
     text-align: left;
     cursor: pointer;
     background: transparent;
     border: 0;
-    border-bottom: 1px solid var(--home-line);
+    border-bottom: 1px solid var(--art-card-border);
     border-radius: 6px;
   }
 
-  .run-row:hover,
-  .run-row--selected {
-    background: var(--home-hover);
+  .attention-list button:hover,
+  .attention-list button:focus-visible {
+    background: var(--art-hover-color);
   }
 
-  .run-row--selected {
-    box-shadow: inset 3px 0 0 var(--theme-color);
+  .attention-list button:focus-visible {
+    outline: 2px solid var(--theme-color);
   }
 
-  .run-dot {
-    margin-top: 4px;
-  }
-
-  .run-copy {
-    min-width: 0;
-  }
-
-  .run-copy strong,
-  .run-copy small,
-  .run-copy em {
-    display: block;
-  }
-
-  .run-copy strong {
-    overflow: hidden;
-    font-size: 12px;
-    font-style: normal;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .run-copy small,
-  .run-duration {
-    margin-top: 4px;
-    font-size: 10px;
-    color: var(--home-muted);
-  }
-
-  .run-copy em {
-    display: -webkit-box;
-    margin-top: 5px;
-    overflow: hidden;
-    font-size: 10px;
-    font-style: normal;
-    color: var(--home-danger);
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-  }
-
-  .rail-empty,
-  .error-empty {
-    display: grid;
-    flex: 1;
-    gap: 8px;
-    place-items: center;
-    min-height: 220px;
-    color: var(--home-muted);
-    text-align: center;
-  }
-
-  .rail-empty :deep(.art-svg-icon),
-  .error-empty :deep(.art-svg-icon) {
-    font-size: 30px;
-    color: var(--el-color-primary-light-4);
-  }
-
-  .rail-empty strong {
-    font-size: 13px;
-    color: var(--home-text);
-  }
-
-  .rail-empty span {
-    max-width: 220px;
-    font-size: 11px;
-    line-height: 1.6;
-  }
-
-  .detail-link {
-    align-self: flex-start;
-    margin-top: auto;
-  }
-
-  .lower-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.55fr);
-    gap: 16px;
-  }
-
-  .signal-preview,
-  .error-console {
-    min-width: 0;
-    padding: 18px;
-    background: var(--home-card);
-    border: 1px solid var(--home-line);
-    border-radius: calc(var(--custom-radius) / 2 + 4px);
-    box-shadow: var(--home-shadow);
-  }
-
-  .preview-meta {
-    gap: 8px;
-    font-size: 11px;
-    color: var(--home-muted);
-  }
-
-  .error-count {
+  .attention-list button > span {
     display: grid;
     place-items: center;
-    width: 28px;
-    height: 28px;
-    font-size: 12px;
-    color: var(--home-danger);
-    background: color-mix(in srgb, var(--home-danger) 8%, transparent);
+    width: 34px;
+    height: 34px;
+    color: var(--el-color-warning);
+    background: color-mix(in srgb, var(--el-color-warning) 11%, transparent);
     border-radius: 8px;
   }
 
-  .error-body {
-    display: grid;
-    gap: 8px;
-    padding: 18px 0 4px;
+  .attention-list button > span.is-danger {
+    color: var(--el-color-danger);
+    background: color-mix(in srgb, var(--el-color-danger) 10%, transparent);
   }
 
-  .error-body span,
-  .error-body small {
-    font-size: 10px;
-    color: var(--home-muted);
+  .attention-list strong,
+  .attention-list small {
+    display: block;
   }
 
-  .error-body strong {
+  .attention-list strong {
     font-size: 12px;
-    line-height: 1.55;
-    color: var(--home-danger);
   }
 
-  .error-empty {
-    min-height: 190px;
+  .attention-list small {
+    margin-top: 4px;
+    font-size: 10px;
+    line-height: 1.5;
+    color: var(--art-gray-600);
   }
 
-  .status-text--running,
-  .status-text--retry_waiting {
-    color: var(--home-warning);
-  }
-
-  .status-text--success {
-    color: var(--home-success);
-  }
-
-  .status-text--failed,
-  .status-text--canceled {
-    color: var(--home-danger);
-  }
-
-  .guest-console {
-    position: relative;
+  .attention-empty {
     display: grid;
-    grid-template-columns: 160px minmax(0, 1fr);
-    gap: 36px;
+    gap: 7px;
+    place-items: center;
+    min-height: 220px;
+    color: var(--art-gray-600);
+    text-align: center;
+  }
+
+  .attention-empty :deep(.art-svg-icon) {
+    font-size: 28px;
+    color: var(--el-color-success);
+  }
+
+  .attention-empty strong {
+    font-size: 13px;
+    color: var(--art-gray-900);
+  }
+
+  .attention-empty span {
+    font-size: 11px;
+  }
+
+  .guest-panel {
+    display: grid;
+    grid-template-columns: 56px minmax(0, 1fr) auto;
+    gap: 18px;
     align-items: center;
-    min-height: 420px;
-    padding: 48px;
-    overflow: hidden;
-    background: var(--home-card);
-    border: 1px solid var(--home-line);
-    border-radius: calc(var(--custom-radius) / 2 + 6px);
-    box-shadow: var(--home-shadow);
+    min-height: 180px;
+    padding: 28px;
+    background: var(--default-box-color);
   }
 
-  .guest-console__signal {
-    display: flex;
-    gap: 14px;
-    align-items: flex-end;
-    justify-content: center;
-    height: 140px;
-    padding: 18px;
+  .guest-panel__icon {
+    width: 56px;
+    height: 56px;
+    font-size: 28px;
+    color: var(--theme-color);
     background: var(--el-color-primary-light-9);
-    border-radius: 12px;
   }
 
-  .guest-console__signal span {
-    width: 26px;
-    height: 104px;
-    background: var(--theme-color);
-    border-radius: 6px 6px 2px 2px;
+  .guest-panel h1 {
+    margin-top: 5px;
   }
 
-  .guest-console__signal span:nth-child(2) {
-    height: 68px;
-    background: var(--el-color-success);
+  .guest-panel p {
+    margin-top: 5px;
+    color: var(--art-gray-600);
   }
 
-  .guest-console__signal span:nth-child(3) {
-    height: 88px;
-    background: var(--el-color-warning);
-  }
-
-  .guest-console p {
-    margin: 10px 0 22px;
-    color: var(--home-muted);
-  }
-
-  @media (max-width: 1100px) {
-    .workbench-stage,
-    .lower-grid {
-      grid-template-columns: 1fr;
+  @media (max-width: 1000px) {
+    .metric-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
-    .canvas-pane {
-      border-right: 0;
-      border-bottom: 1px solid var(--home-line);
-    }
-
-    .run-rail {
-      min-height: 330px;
-    }
-  }
-
-  @media (max-width: 720px) {
-    .workflow-home {
-      padding: 16px;
-    }
-
-    .workbench-head,
-    .ops-strip {
-      flex-direction: column;
+    .health-banner {
       align-items: flex-start;
     }
 
-    h1 {
-      font-size: 24px;
+    .health-meta > div {
+      min-width: 96px;
+      padding: 4px 12px;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .operations-home {
+      padding: 14px 12px 20px;
     }
 
-    .head-actions,
-    .workflow-select {
+    .page-head,
+    .health-banner,
+    .head-actions {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .head-actions .el-button {
       width: 100%;
+      margin: 0;
     }
 
-    .ops-strip dl {
-      width: 100%;
+    .health-meta {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      border-top: 1px solid var(--art-card-border);
     }
 
-    .ops-strip dl div {
-      min-width: 50%;
-      padding: 10px 0;
-      border-top: 1px solid var(--home-line);
+    .health-meta > div {
+      min-width: 0;
+      padding: 12px 8px 0;
+      border-right: 1px solid var(--art-card-border);
       border-left: 0;
     }
 
-    .canvas-head {
-      flex-direction: column;
-      gap: 6px;
-      align-items: flex-start;
+    .health-meta > div:first-child {
+      padding-left: 0;
     }
 
-    .guest-console {
+    .health-meta > div:last-child {
+      padding-right: 0;
+      border-right: 0;
+    }
+
+    .domain-grid,
+    .operations-grid {
       grid-template-columns: 1fr;
-      padding: 28px;
+    }
+
+    .activity-row {
+      grid-template-columns: 10px minmax(0, 1fr);
+    }
+
+    .activity-row time {
+      grid-column: 2;
+      margin: 0;
+    }
+
+    .guest-panel {
+      grid-template-columns: 1fr;
+    }
+
+    .guest-panel .el-button {
+      width: 100%;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .metric-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .domain-facts {
+      grid-template-columns: 1fr;
+    }
+
+    .domain-facts > div,
+    .domain-facts > div:first-child,
+    .domain-facts > div:last-child {
+      padding: 10px 0;
+      border-right: 0;
+      border-bottom: 1px solid var(--art-card-border);
+    }
+
+    .domain-facts > div:last-child {
+      border-bottom: 0;
     }
   }
 </style>
