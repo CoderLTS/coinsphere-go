@@ -18,7 +18,7 @@
     height: '36rem',
     loading: false,
     isEmpty: false,
-    colors: () => ['#67c23a', '#f56c6c'],
+    colors: () => ['#13deb9', '#fa896b'],
     data: () => [],
     signals: () => [],
     showVolume: true,
@@ -62,8 +62,11 @@
       () => props.dataZoomEnd
     ],
     generateOptions: (): EChartsOption => {
-      const upColor = props.colors[0] || useChartOps().colors[3] || '#5eaa74'
-      const downColor = props.colors[1] || '#ff705b'
+      const chartTheme = useChartOps()
+      const upColor = props.colors[0] || chartTheme.colors[3] || '#13deb9'
+      const downColor = props.colors[1] || chartTheme.colors[5] || '#fa896b'
+      const targetColor = chartTheme.themeColor || '#5d87ff'
+      const flatColor = chartTheme.colors[4] || '#ffae1f'
       const times = props.data.map((item) => item.time)
       const signalByTime = new Map(props.signals.map((item) => [item.time, item]))
       const closeByTime = new Map(props.data.map((item) => [item.time, item.close]))
@@ -123,17 +126,17 @@
                 itemStyle: {
                   color:
                     item.action === 'buy'
-                      ? '#67c23a'
+                      ? upColor
                       : item.action === 'sell'
-                        ? '#f56c6c'
-                        : '#e6a23c',
-                  borderColor: isDark.value ? '#101218' : '#ffffff',
+                        ? downColor
+                        : flatColor,
+                  borderColor: isDark.value ? '#161618' : '#ffffff',
                   borderWidth: 1
                 },
                 label: {
                   show: true,
                   formatter: actionLabel[item.action],
-                  color: '#ffffff',
+                  color: item.action === 'flat' ? '#684400' : '#ffffff',
                   fontSize: 9,
                   fontWeight: 700
                 }
@@ -207,9 +210,9 @@
           step: 'end',
           showSymbol: false,
           connectNulls: false,
-          lineStyle: { color: '#9e8cff', width: 2 },
-          itemStyle: { color: '#9e8cff' },
-          areaStyle: { color: 'rgba(158, 140, 255, 0.08)' }
+          lineStyle: { color: targetColor, width: 2 },
+          itemStyle: { color: targetColor },
+          areaStyle: { color: targetColor, opacity: 0.08 }
         })
       }
 
@@ -254,10 +257,11 @@
                 start: props.dataZoomStart,
                 end: props.dataZoomEnd,
                 borderColor: isDark.value ? '#353b48' : '#dfe4ec',
-                fillerColor: 'rgba(158, 140, 255, 0.12)',
+                backgroundColor: isDark.value ? '#202226' : '#f2f4f5',
+                fillerColor: `${targetColor}1f`,
                 handleStyle: {
-                  color: '#9e8cff',
-                  borderColor: isDark.value ? '#101218' : '#ffffff'
+                  color: targetColor,
+                  borderColor: isDark.value ? '#161618' : '#ffffff'
                 }
               }
             ]
