@@ -2,109 +2,174 @@
   <div class="market-chart-page">
     <header class="page-head">
       <div>
-        <div class="eyebrow">MARKET DATA / SIGNAL TRACE</div>
+        <div class="eyebrow">
+          <ArtSvgIcon icon="ri:line-chart-line" />
+          行情分析
+        </div>
         <h1>K 线与策略信号</h1>
-        <p>在同一时间轴上检查闭合 K 线、成交量、目标仓位与策略动作。</p>
+        <p>查看行情走势、目标仓位与策略信号。</p>
       </div>
-      <ElButton :icon="Refresh" :loading="loading" @click="loadChart">刷新数据</ElButton>
+      <ElButton type="primary" :icon="Refresh" :loading="loading" @click="loadChart">
+        刷新数据
+      </ElButton>
     </header>
 
-    <section class="chart-toolbar">
-      <ElRadioGroup v-model="viewMode" @change="handleModeChange">
-        <ElRadioButton label="strategy">策略视图</ElRadioButton>
-        <ElRadioButton label="market">币种视图</ElRadioButton>
-      </ElRadioGroup>
+    <section class="filter-card art-card" aria-label="图表筛选">
+      <div class="filter-group">
+        <span class="filter-label">查看方式</span>
+        <ElRadioGroup v-model="viewMode" @change="handleModeChange">
+          <ElRadioButton label="strategy">策略视图</ElRadioButton>
+          <ElRadioButton label="market">币种视图</ElRadioButton>
+        </ElRadioGroup>
+      </div>
 
-      <ElSelect
-        v-if="viewMode === 'strategy'"
-        v-model="selectedStrategyId"
-        class="strategy-select"
-        filterable
-        placeholder="选择策略实例"
-        @change="handleStrategyChange"
-      >
-        <ElOption
-          v-for="item in strategyInstances"
-          :key="item.id"
-          :label="`${item.name} · ${item.symbol} · ${item.interval}`"
-          :value="item.id"
+      <div class="filter-group filter-group--selector">
+        <span class="filter-label">{{ viewMode === 'strategy' ? '策略实例' : '交易标的' }}</span>
+        <ElSelect
+          v-if="viewMode === 'strategy'"
+          v-model="selectedStrategyId"
+          class="strategy-select"
+          filterable
+          placeholder="选择策略实例"
+          @change="handleStrategyChange"
         >
-          <div class="strategy-option">
-            <strong>{{ item.name }}</strong>
-            <span
-              >{{ item.strategyName }} v{{ item.strategyVersion }} · {{ item.symbol }} ·
-              {{ item.interval }}</span
-            >
-          </div>
-        </ElOption>
-      </ElSelect>
+          <ElOption
+            v-for="item in strategyInstances"
+            :key="item.id"
+            :label="`${item.name} · ${item.symbol} · ${item.interval}`"
+            :value="item.id"
+          >
+            <div class="strategy-option">
+              <strong>{{ item.name }}</strong>
+              <span
+                >{{ item.strategyName }} v{{ item.strategyVersion }} · {{ item.symbol }} ·
+                {{ item.interval }}</span
+              >
+            </div>
+          </ElOption>
+        </ElSelect>
 
-      <ElSelect
-        v-else
-        v-model="selectedInstrumentId"
-        class="symbol-select"
-        filterable
-        placeholder="选择交易对"
-        @change="loadChart"
-      >
-        <ElOption
-          v-for="item in symbols"
-          :key="item.id"
-          :label="`${item.nativeSymbol} · ${item.market === 'usd_m' ? 'USD-M' : 'SPOT'}`"
-          :value="item.id"
-        />
-      </ElSelect>
+        <ElSelect
+          v-else
+          v-model="selectedInstrumentId"
+          class="symbol-select"
+          filterable
+          placeholder="选择交易对"
+          @change="loadChart"
+        >
+          <ElOption
+            v-for="item in symbols"
+            :key="item.id"
+            :label="`${item.nativeSymbol} · ${item.market === 'usd_m' ? 'USD-M' : 'SPOT'}`"
+            :value="item.id"
+          />
+        </ElSelect>
+      </div>
 
-      <ElRadioGroup v-model="selectedInterval" class="interval-control" @change="loadChart">
-        <ElRadioButton v-for="item in intervals" :key="item" :label="item">
-          {{ item }}
-        </ElRadioButton>
-      </ElRadioGroup>
+      <div class="filter-group">
+        <span class="filter-label">K 线周期</span>
+        <ElRadioGroup v-model="selectedInterval" class="interval-control" @change="loadChart">
+          <ElRadioButton v-for="item in intervals" :key="item" :label="item">
+            {{ item }}
+          </ElRadioButton>
+        </ElRadioGroup>
+      </div>
 
-      <div class="toolbar-meta">
-        <span class="live-dot"></span>
-        <span>{{ selectedSymbol?.status === 'trading' ? 'TRADING' : 'SUSPENDED' }}</span>
-        <span>{{ selectedSymbol?.market === 'usd_m' ? 'USD-M' : 'SPOT' }}</span>
+      <div class="market-status">
+        <span
+          class="market-status__dot"
+          :class="{ 'market-status__dot--offline': selectedSymbol?.status !== 'trading' }"
+        ></span>
+        <div>
+          <strong>
+            {{
+              !selectedSymbol
+                ? '未选择标的'
+                : selectedSymbol.status === 'trading'
+                  ? '交易中'
+                  : '已暂停'
+            }}
+          </strong>
+          <span>{{ selectedSymbol?.market === 'usd_m' ? 'USD-M 合约' : '现货市场' }}</span>
+        </div>
       </div>
     </section>
 
-    <section class="market-tape" aria-label="行情摘要">
-      <div class="instrument-title">
-        <strong>{{ selectedSymbol?.nativeSymbol || '--' }}</strong>
-        <span>{{
-          selectedSymbol
-            ? `${selectedSymbol.baseAsset} / ${selectedSymbol.quoteAsset}`
-            : '等待选择标的'
-        }}</span>
-      </div>
-      <dl>
-        <div>
-          <dt>最新收盘</dt>
-          <dd>{{ numberText(latestCandle?.close) }}</dd>
+    <section class="metric-grid" aria-label="行情摘要">
+      <article class="metric-card art-card metric-card--instrument">
+        <span class="metric-icon metric-icon--primary">
+          <ArtSvgIcon icon="ri:coins-line" />
+        </span>
+        <div class="metric-copy">
+          <span>当前标的</span>
+          <strong>{{ selectedSymbol?.nativeSymbol || '--' }}</strong>
+          <small>{{
+            selectedSymbol
+              ? `${selectedSymbol.baseAsset} / ${selectedSymbol.quoteAsset}`
+              : '等待选择标的'
+          }}</small>
         </div>
-        <div>
-          <dt>区间变化</dt>
-          <dd :class="changePercent >= 0 ? 'positive' : 'negative'">
+      </article>
+
+      <article class="metric-card art-card">
+        <span class="metric-icon metric-icon--price">
+          <ArtSvgIcon icon="ri:stock-line" />
+        </span>
+        <div class="metric-copy">
+          <span>最新收盘</span>
+          <strong class="metric-number">{{ numberText(latestCandle?.close) }}</strong>
+          <small>{{ selectedInterval }} 周期</small>
+        </div>
+      </article>
+
+      <article class="metric-card art-card">
+        <span
+          class="metric-icon"
+          :class="changePercent >= 0 ? 'metric-icon--positive' : 'metric-icon--negative'"
+        >
+          <ArtSvgIcon :icon="changePercent >= 0 ? 'ri:arrow-up-line' : 'ri:arrow-down-line'" />
+        </span>
+        <div class="metric-copy">
+          <span>区间变化</span>
+          <strong :class="changePercent >= 0 ? 'positive' : 'negative'">
             {{ changePercent >= 0 ? '+' : '' }}{{ changePercent.toFixed(2) }}%
-          </dd>
+          </strong>
+          <small>当前可见区间</small>
         </div>
-        <div>
-          <dt>目标仓位</dt>
-          <dd class="violet">{{ numberText(latestSignal?.target) }}</dd>
+      </article>
+
+      <article class="metric-card art-card">
+        <span class="metric-icon metric-icon--target">
+          <ArtSvgIcon icon="ri:focus-3-line" />
+        </span>
+        <div class="metric-copy">
+          <span>目标仓位</span>
+          <strong class="target-value">{{ numberText(latestSignal?.target) }}</strong>
+          <small>{{ viewMode === 'strategy' ? '最新策略目标' : '币种视图不展示' }}</small>
         </div>
-        <div>
-          <dt>信号数量</dt>
-          <dd>{{ signals.length }}</dd>
+      </article>
+
+      <article class="metric-card art-card">
+        <span class="metric-icon metric-icon--signal">
+          <ArtSvgIcon icon="ri:pulse-line" />
+        </span>
+        <div class="metric-copy">
+          <span>策略信号</span>
+          <strong>{{ signals.length }}</strong>
+          <small>当前加载区间</small>
         </div>
-      </dl>
+      </article>
     </section>
 
     <div class="chart-layout">
-      <section class="chart-panel">
+      <section class="chart-panel art-card">
         <div class="panel-head">
-          <div>
-            <div class="eyebrow">PRICE / VOLUME / TARGET</div>
-            <h2>{{ selectedStrategy?.name || selectedSymbol?.nativeSymbol || '行情图表' }}</h2>
+          <div class="panel-title">
+            <span class="panel-icon"><ArtSvgIcon icon="ri:candlestick-chart-line" /></span>
+            <div>
+              <h2>{{ selectedStrategy?.name || selectedSymbol?.nativeSymbol || '行情图表' }}</h2>
+              <p>价格 · 成交量 · 目标仓位</p>
+            </div>
           </div>
           <div class="chart-legend" aria-label="图例">
             <span><i class="legend-up"></i>上涨</span>
@@ -117,38 +182,45 @@
           :signals="chartSignals"
           :loading="loading"
           :is-empty="!chartData.length"
-          height="clamp(430px, 58vh, 660px)"
+          height="clamp(440px, 58vh, 620px)"
         />
       </section>
 
-      <aside class="signal-rail">
+      <aside class="signal-rail art-card" v-loading="loading">
         <div class="panel-head">
-          <div>
-            <div class="eyebrow">SIGNAL TIMELINE</div>
-            <h2>信号轨道</h2>
+          <div class="panel-title">
+            <span class="panel-icon panel-icon--signal"><ArtSvgIcon icon="ri:pulse-line" /></span>
+            <div>
+              <h2>策略信号</h2>
+              <p>按时间倒序展示</p>
+            </div>
           </div>
           <span class="signal-count">{{ signals.length }}</span>
         </div>
         <ElScrollbar class="signal-scroll">
           <div v-if="signals.length" class="signal-list">
-            <button
+            <div
               v-for="item in signals"
               :key="item.id"
-              type="button"
               class="signal-row"
               :class="`signal-row--${item.action}`"
             >
-              <span class="signal-node"></span>
+              <span class="signal-action">
+                <ArtSvgIcon :icon="actionIcon[item.action]" />
+              </span>
               <span class="signal-main">
                 <strong>{{ actionLabel[item.action] }}</strong>
-                <small>{{ item.candleOpenTime }}</small>
+                <small>{{ axisTime(item.candleOpenTime) }} UTC</small>
               </span>
               <span class="signal-target">
-                <small>{{ item.previousTarget }}</small>
-                <ArtSvgIcon icon="ri:arrow-right-line" />
-                <strong>{{ item.target }}</strong>
+                <small>目标仓位</small>
+                <span>
+                  {{ numberText(item.previousTarget) }}
+                  <ArtSvgIcon icon="ri:arrow-right-line" />
+                  <strong>{{ numberText(item.target) }}</strong>
+                </span>
               </span>
-            </button>
+            </div>
           </div>
           <div v-else class="signal-empty">
             <ArtSvgIcon icon="ri:pulse-line" />
@@ -210,10 +282,16 @@
   })
 
   const actionLabel: Record<StrategySignalItem['action'], string> = {
-    buy: 'BUY',
-    sell: 'SELL',
-    flat: 'FLAT',
-    hold: 'HOLD'
+    buy: '买入',
+    sell: '卖出',
+    flat: '平仓',
+    hold: '持有'
+  }
+  const actionIcon: Record<StrategySignalItem['action'], string> = {
+    buy: 'ri:arrow-up-line',
+    sell: 'ri:arrow-down-line',
+    flat: 'ri:subtract-line',
+    hold: 'ri:pause-line'
   }
 
   const timeKey = (value: string) => String(new Date(value).getTime())
@@ -334,112 +412,37 @@
 
 <style scoped lang="scss">
   .market-chart-page {
-    --ink: #17191b;
-    --muted: #70777b;
-    --paper: #e8e7e2;
-    --panel: #f4f3ee;
-    --line: #c9c9c2;
-    --strong-line: #17191b;
-    --inverse-panel: #17191b;
-    --acid: #c7f46b;
-    --signal: #ff705b;
-    --violet: #9e8cff;
-
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
-    gap: 18px;
+    gap: 16px;
     min-width: 0;
-    padding: 24px 28px 32px;
-    font-family: 'Space Grotesk', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-    color: var(--ink);
-    background: var(--paper);
-  }
-
-  :global(html.dark .market-chart-page) {
-    --ink: #eff4f1;
-    --muted: #9da6aa;
-    --paper: #0d0f10;
-    --panel: #181b1e;
-    --line: #343a3d;
-    --strong-line: #697276;
-    --inverse-panel: #111315;
+    min-height: 100%;
+    padding: 20px;
+    font-family: inherit;
+    color: var(--art-gray-900);
+    background: var(--default-bg-color);
   }
 
   .page-head,
-  .chart-toolbar,
-  .market-tape,
-  .market-tape dl,
   .panel-head,
   .chart-legend,
   .chart-legend span,
-  .toolbar-meta,
   .signal-target {
     display: flex;
     align-items: center;
   }
 
   .page-head,
-  .market-tape,
   .panel-head {
-    gap: 20px;
+    gap: 16px;
     justify-content: space-between;
-  }
-
-  .eyebrow,
-  .market-tape dt,
-  .market-tape dd,
-  .toolbar-meta,
-  .signal-target,
-  .signal-main small {
-    font-family: 'IBM Plex Mono', 'Cascadia Code', Consolas, monospace;
-  }
-
-  .eyebrow {
-    font-size: 10px;
-    color: var(--muted);
-    letter-spacing: 0;
   }
 
   h1,
   h2,
   p {
     margin: 0;
-  }
-
-  h1 {
-    margin-top: 7px;
-    font-size: 34px;
-    font-weight: 600;
-    letter-spacing: 0;
-  }
-
-  h2 {
-    margin-top: 5px;
-    font-size: 17px;
-    font-weight: 600;
-  }
-
-  .page-head p {
-    margin-top: 7px;
-    font-size: 13px;
-    color: var(--muted);
-  }
-
-  .chart-toolbar {
-    flex-wrap: wrap;
-    gap: 9px;
-    padding: 12px;
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: 2px;
-  }
-
-  .strategy-select {
-    width: min(360px, 100%);
-  }
-
-  .symbol-select {
-    width: min(260px, 100%);
   }
 
   .strategy-option {
@@ -453,195 +456,49 @@
     color: var(--el-text-color-secondary);
   }
 
-  .toolbar-meta {
-    gap: 8px;
-    margin-left: auto;
-    font-size: 9px;
-    color: var(--muted);
-  }
-
-  .toolbar-meta span + span {
-    padding-left: 8px;
-    border-left: 1px solid var(--line);
-  }
-
-  .live-dot {
-    width: 7px;
-    height: 7px;
-    padding: 0 !important;
-    background: #5eaa74;
-    border: 0 !important;
-    border-radius: 50%;
-  }
-
-  .market-tape {
-    padding: 14px 17px;
-    color: #eff4f1;
-    background: var(--inverse-panel);
-    border: 1px solid var(--strong-line);
-    border-radius: 2px;
-  }
-
-  .instrument-title strong,
-  .instrument-title span {
-    display: block;
-  }
-
-  .instrument-title strong {
-    font-family: 'IBM Plex Mono', Consolas, monospace;
-    font-size: 17px;
-  }
-
-  .instrument-title span {
-    margin-top: 4px;
-    font-size: 10px;
-    color: #899297;
-  }
-
-  .market-tape dl {
-    flex-wrap: wrap;
-    margin: 0;
-  }
-
-  .market-tape dl div {
-    min-width: 120px;
-    padding: 0 17px;
-    border-left: 1px solid #30363a;
-  }
-
-  .market-tape dt {
-    font-size: 9px;
-    color: #899297;
-  }
-
-  .market-tape dd {
-    margin: 5px 0 0;
-    font-size: 13px;
-  }
-
-  .positive {
-    color: var(--acid);
-  }
-
-  .negative {
-    color: var(--signal);
-  }
-
-  .violet {
-    color: var(--violet);
-  }
-
   .chart-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 300px;
-    gap: 24px;
+    grid-template-columns: minmax(0, 1fr) 328px;
+    gap: 16px;
     min-width: 0;
-  }
-
-  .chart-panel,
-  .signal-rail {
-    min-width: 0;
-    padding-top: 13px;
-    border-top: 2px solid var(--strong-line);
   }
 
   .chart-legend {
     flex-wrap: wrap;
-    gap: 14px;
-    font-size: 10px;
-    color: var(--muted);
+    gap: 12px;
+    font-size: 11px;
+    color: var(--art-gray-600);
   }
 
   .chart-legend span {
     gap: 5px;
   }
 
-  .chart-legend i {
-    width: 16px;
-    height: 3px;
-  }
-
-  .legend-up {
-    background: #5eaa74;
-  }
-
-  .legend-down {
-    background: var(--signal);
-  }
-
-  .legend-target {
-    background: var(--violet);
-  }
-
   .signal-count {
     display: grid;
     place-items: center;
-    width: 28px;
-    height: 28px;
-    font-family: 'IBM Plex Mono', Consolas, monospace;
-    font-size: 10px;
-    border: 1px solid var(--line);
-  }
-
-  .signal-scroll {
-    height: clamp(430px, 58vh, 660px);
-    margin-top: 10px;
-  }
-
-  .signal-list {
-    position: relative;
-    padding-left: 14px;
-  }
-
-  .signal-list::before {
-    position: absolute;
-    top: 8px;
-    bottom: 8px;
-    left: 18px;
-    width: 1px;
-    content: '';
-    background: var(--line);
+    width: 30px;
+    height: 30px;
+    font-family: inherit;
+    font-size: 11px;
+    color: var(--theme-color);
+    background: var(--el-color-primary-light-9);
+    border: 0;
+    border-radius: 8px;
   }
 
   .signal-row {
-    position: relative;
     display: grid;
-    grid-template-columns: 12px minmax(0, 1fr) auto;
-    gap: 10px;
+    grid-template-columns: 38px minmax(0, 1fr) auto;
+    gap: 11px;
     align-items: center;
     width: 100%;
-    padding: 12px 6px 12px 0;
+    min-height: 70px;
+    padding: 12px 8px;
     color: inherit;
-    text-align: left;
-    cursor: default;
-    background: transparent;
-    border: 0;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .signal-node {
-    z-index: 1;
-    width: 9px;
-    height: 9px;
-    background: #8c9296;
-    border: 2px solid var(--paper);
-    border-radius: 50%;
-    outline: 1px solid #8c9296;
-  }
-
-  .signal-row--buy .signal-node {
-    background: var(--acid);
-    outline-color: #66843a;
-  }
-
-  .signal-row--sell .signal-node {
-    background: var(--signal);
-    outline-color: var(--signal);
-  }
-
-  .signal-row--flat .signal-node {
-    background: #eab24d;
-    outline-color: #9b752d;
+    border-bottom: 1px solid var(--art-card-border);
+    border-radius: 6px;
+    transition: background-color 0.2s;
   }
 
   .signal-main {
@@ -653,52 +510,394 @@
     display: block;
   }
 
-  .signal-main strong {
-    font-size: 11px;
-  }
-
-  .signal-main small {
-    margin-top: 4px;
-    overflow: hidden;
-    font-size: 9px;
-    color: var(--muted);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .signal-target {
-    gap: 5px;
-    font-size: 10px;
-  }
-
-  .signal-target small {
-    color: var(--muted);
-  }
-
   .signal-empty {
     display: grid;
     gap: 8px;
     place-items: center;
-    min-height: 280px;
-    color: var(--muted);
+    min-height: 360px;
+    color: var(--art-gray-600);
     text-align: center;
-  }
-
-  .signal-empty :deep(svg) {
-    font-size: 30px;
-  }
-
-  .signal-empty strong {
-    font-size: 12px;
-    color: var(--ink);
   }
 
   .signal-empty span {
     max-width: 220px;
     font-size: 11px;
+    line-height: 1.6;
   }
 
-  @media (max-width: 1040px) {
+  .page-head {
+    min-height: 72px;
+  }
+
+  .eyebrow {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--theme-color);
+  }
+
+  .eyebrow :deep(.art-svg-icon) {
+    font-size: 15px;
+  }
+
+  h1 {
+    margin-top: 6px;
+    font-size: 28px;
+    line-height: 1.3;
+  }
+
+  .page-head p {
+    color: var(--art-gray-600);
+  }
+
+  .filter-card {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    align-items: flex-end;
+    padding: 16px 18px;
+    background: var(--default-box-color);
+  }
+
+  .filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .filter-group--selector {
+    flex: 1;
+    min-width: 260px;
+  }
+
+  .filter-label {
+    font-size: 11px;
+    color: var(--art-gray-600);
+  }
+
+  .strategy-select,
+  .symbol-select {
+    width: min(100%, 400px);
+  }
+
+  .strategy-option strong {
+    color: var(--art-gray-900);
+  }
+
+  .market-status {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    min-width: 116px;
+    min-height: 32px;
+    padding-left: 18px;
+    margin-left: auto;
+    border-left: 1px solid var(--art-card-border);
+  }
+
+  .market-status__dot {
+    width: 8px;
+    height: 8px;
+    background: var(--el-color-success);
+    border-radius: 50%;
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--el-color-success) 12%, transparent);
+  }
+
+  .market-status__dot--offline {
+    background: var(--art-gray-500);
+    box-shadow: none;
+  }
+
+  .market-status strong,
+  .market-status span {
+    display: block;
+  }
+
+  .market-status strong {
+    font-size: 12px;
+  }
+
+  .market-status span {
+    margin-top: 3px;
+    font-size: 10px;
+    color: var(--art-gray-600);
+  }
+
+  .metric-grid {
+    display: grid;
+    grid-template-columns: minmax(200px, 1.25fr) repeat(4, minmax(132px, 1fr));
+    gap: 16px;
+  }
+
+  .metric-card {
+    display: flex;
+    gap: 13px;
+    align-items: center;
+    min-width: 0;
+    min-height: 104px;
+    padding: 16px;
+    background: var(--default-box-color);
+  }
+
+  .metric-icon,
+  .panel-icon,
+  .signal-action {
+    display: grid;
+    flex: 0 0 auto;
+    place-items: center;
+    border-radius: 8px;
+  }
+
+  .metric-icon {
+    width: 40px;
+    height: 40px;
+    font-size: 20px;
+  }
+
+  .metric-icon--primary,
+  .metric-icon--price,
+  .metric-icon--target {
+    color: var(--theme-color);
+    background: var(--el-color-primary-light-9);
+  }
+
+  .metric-icon--positive {
+    color: var(--el-color-success);
+    background: color-mix(in srgb, var(--el-color-success) 10%, transparent);
+  }
+
+  .metric-icon--negative {
+    color: var(--el-color-danger);
+    background: color-mix(in srgb, var(--el-color-danger) 10%, transparent);
+  }
+
+  .metric-icon--signal {
+    color: var(--el-color-warning);
+    background: color-mix(in srgb, var(--el-color-warning) 11%, transparent);
+  }
+
+  .metric-copy {
+    min-width: 0;
+  }
+
+  .metric-copy > span,
+  .metric-copy > strong,
+  .metric-copy > small {
+    display: block;
+  }
+
+  .metric-copy > span,
+  .metric-copy > small {
+    overflow: hidden;
+    color: var(--art-gray-600);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .metric-copy > span {
+    font-size: 11px;
+  }
+
+  .metric-copy > strong {
+    max-width: 100%;
+    margin-top: 5px;
+    overflow: hidden;
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .metric-copy > small {
+    margin-top: 4px;
+    font-size: 10px;
+  }
+
+  .metric-number,
+  .target-value {
+    font-family: 'Cascadia Code', Consolas, monospace;
+    font-size: 15px !important;
+  }
+
+  .positive {
+    color: var(--el-color-success);
+  }
+
+  .negative {
+    color: var(--el-color-danger);
+  }
+
+  .target-value {
+    color: var(--theme-color);
+  }
+
+  .chart-panel,
+  .signal-rail {
+    min-width: 0;
+    padding: 18px;
+    background: var(--default-box-color);
+    border-top: 1px solid var(--art-card-border);
+  }
+
+  .panel-head {
+    min-height: 42px;
+    margin-bottom: 8px;
+  }
+
+  .panel-title {
+    display: flex;
+    gap: 11px;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .panel-icon {
+    width: 36px;
+    height: 36px;
+    font-size: 18px;
+    color: var(--theme-color);
+    background: var(--el-color-primary-light-9);
+  }
+
+  .panel-icon--signal {
+    color: var(--el-color-warning);
+    background: color-mix(in srgb, var(--el-color-warning) 11%, transparent);
+  }
+
+  .panel-title h2 {
+    margin: 0;
+    overflow: hidden;
+    font-size: 15px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .panel-title p {
+    margin-top: 4px;
+    font-size: 10px;
+    color: var(--art-gray-600);
+  }
+
+  .chart-legend i {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+  }
+
+  .legend-up {
+    background: var(--el-color-success);
+  }
+
+  .legend-down {
+    background: var(--el-color-danger);
+  }
+
+  .legend-target {
+    background: var(--theme-color);
+  }
+
+  .signal-scroll {
+    height: clamp(440px, 58vh, 620px);
+    margin-top: 8px;
+  }
+
+  .signal-list {
+    padding-left: 0;
+  }
+
+  .signal-list::before {
+    display: none;
+  }
+
+  .signal-row:hover {
+    background: var(--art-hover-color);
+  }
+
+  .signal-action {
+    width: 34px;
+    height: 34px;
+    font-size: 17px;
+    color: var(--art-gray-600);
+    background: var(--art-gray-200);
+  }
+
+  .signal-row--buy .signal-action {
+    color: var(--el-color-success);
+    background: color-mix(in srgb, var(--el-color-success) 10%, transparent);
+  }
+
+  .signal-row--sell .signal-action {
+    color: var(--el-color-danger);
+    background: color-mix(in srgb, var(--el-color-danger) 10%, transparent);
+  }
+
+  .signal-row--flat .signal-action {
+    color: var(--el-color-warning);
+    background: color-mix(in srgb, var(--el-color-warning) 11%, transparent);
+  }
+
+  .signal-main strong {
+    font-size: 12px;
+    color: var(--art-gray-900);
+  }
+
+  .signal-main small {
+    margin-top: 5px;
+    font-family: inherit;
+    font-size: 10px;
+    color: var(--art-gray-600);
+  }
+
+  .signal-target {
+    flex-direction: column;
+    gap: 5px;
+    align-items: flex-end;
+    font-family: inherit;
+  }
+
+  .signal-target > small {
+    font-size: 9px;
+    color: var(--art-gray-600);
+  }
+
+  .signal-target > span {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    font-family: 'Cascadia Code', Consolas, monospace;
+    font-size: 10px;
+    color: var(--art-gray-600);
+  }
+
+  .signal-target strong {
+    color: var(--art-gray-900);
+  }
+
+  .signal-empty :deep(.art-svg-icon) {
+    font-size: 34px;
+    color: var(--el-color-primary-light-4);
+  }
+
+  .signal-empty strong {
+    color: var(--art-gray-900);
+  }
+
+  @media (max-width: 1280px) {
+    .metric-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .metric-card--instrument {
+      grid-column: span 2;
+    }
+  }
+
+  @media (max-width: 1100px) {
     .chart-layout {
       grid-template-columns: 1fr;
     }
@@ -708,39 +907,87 @@
     }
   }
 
-  @media (max-width: 720px) {
+  @media (max-width: 760px) {
     .market-chart-page {
-      padding: 18px 16px 24px;
+      padding: 16px;
     }
 
-    .page-head,
-    .market-tape {
+    .page-head {
       flex-direction: column;
       align-items: flex-start;
     }
 
     h1 {
-      font-size: 26px;
+      font-size: 24px;
     }
 
-    .chart-toolbar > :deep(*) {
-      max-width: 100%;
+    .filter-card {
+      align-items: stretch;
     }
 
-    .toolbar-meta {
+    .filter-group,
+    .filter-group--selector,
+    .strategy-select,
+    .symbol-select {
       width: 100%;
-      margin-left: 0;
+      min-width: 0;
     }
 
-    .market-tape dl div:first-child {
-      padding-left: 0;
+    .market-status {
+      width: 100%;
+      padding: 12px 0 0;
+      margin-left: 0;
+      border-top: 1px solid var(--art-card-border);
       border-left: 0;
+    }
+
+    .metric-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .metric-card--instrument {
+      grid-column: span 2;
+    }
+
+    .chart-panel,
+    .signal-rail {
+      padding: 14px;
+    }
+
+    .panel-head {
+      align-items: flex-start;
+    }
+
+    .chart-legend {
+      justify-content: flex-end;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .metric-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .metric-card--instrument {
+      grid-column: auto;
     }
 
     .interval-control {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      width: 100%;
+    }
+
+    .signal-row {
+      grid-template-columns: 34px minmax(0, 1fr);
+    }
+
+    .signal-target {
+      grid-column: 2;
+      align-items: flex-start;
+    }
+
+    .chart-legend {
+      display: none;
     }
   }
 </style>
