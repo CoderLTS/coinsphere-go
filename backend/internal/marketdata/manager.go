@@ -174,6 +174,20 @@ func (manager *Manager) CheckConnectivity(ctx context.Context, restBaseURLs map[
 	return time.Since(startedAt), err
 }
 
+func (manager *Manager) ConfigurePublicAccess(restBaseURLs map[MarketType]string, proxyURL string, restartSubscriptions bool) error {
+	if err := manager.source.ConfigurePublicAccess(restBaseURLs, proxyURL); err != nil {
+		return err
+	}
+	if restartSubscriptions {
+		manager.mu.Lock()
+		for _, running := range manager.subscriptions {
+			running.cancel()
+		}
+		manager.mu.Unlock()
+	}
+	return nil
+}
+
 func (manager *Manager) reconcile(ctx context.Context) error {
 	desired, err := manager.store.listWatchlistSubscriptions(ctx)
 	if err != nil {

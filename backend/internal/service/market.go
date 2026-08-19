@@ -258,6 +258,9 @@ func (a *App) UpdateMarketSyncSettings(ctx context.Context, userID int64, payloa
 	if result.RowsAffected != 1 {
 		return MarketSyncSettingsView{}, ErrMarketResourceMissing
 	}
+	if err := a.applyMarketDataAccess(ctx, true); err != nil {
+		return MarketSyncSettingsView{}, err
+	}
 	return a.GetMarketSyncSettings(ctx)
 }
 
@@ -373,6 +376,25 @@ func (a *App) marketSyncRuntimeSettings(ctx context.Context) (MarketSyncSettings
 		parsed.User = url.UserPassword(row.ProxyUsername, password)
 	}
 	return view, parsed.String(), nil
+}
+
+// InitializeMarketDataAccess 在行情运行时启动前装载已持久化的网络配置。
+func (a *App) InitializeMarketDataAccess(ctx context.Context) error {
+	return a.applyMarketDataAccess(ctx, false)
+}
+
+func (a *App) applyMarketDataAccess(ctx context.Context, restartSubscriptions bool) error {
+	if a.MarketData == nil {
+		return nil
+	}
+	settings, proxyURL, err := a.marketSyncRuntimeSettings(ctx)
+	if err != nil {
+		return err
+	}
+	return a.MarketData.ConfigurePublicAccess(map[marketdata.MarketType]string{
+		marketdata.MarketTypeSpot: settings.SpotRESTBaseURL,
+		marketdata.MarketTypeUSDM: settings.USDMRESTBaseURL,
+	}, proxyURL, restartSubscriptions)
 }
 
 func (a *App) CheckMarketProxy(ctx context.Context) (MarketProxyStatusView, error) {

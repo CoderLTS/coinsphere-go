@@ -122,6 +122,9 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 		if err != nil {
 			return fmt.Errorf("build market data runtime: %w", err)
 		}
+		if err := app.InitializeMarketDataAccess(ctx); err != nil {
+			return fmt.Errorf("load market data network settings: %w", err)
+		}
 	}
 
 	app.StartRuntime()

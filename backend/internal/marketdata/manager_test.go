@@ -237,6 +237,20 @@ VALUES ('019c2f6d-7c00-7000-8000-000000000020', $1, $2, '1m')
 		cancel()
 		t.Fatalf("subscriptions=%d callbacks=%d", subscribeCalls.Load(), callbacks.Load())
 	}
+	if err := manager.ConfigurePublicAccess(map[marketdata.MarketType]string{
+		marketdata.MarketTypeSpot: "https://data-api.binance.vision",
+		marketdata.MarketTypeUSDM: "https://fapi.binance.com",
+	}, "http://proxy.internal:7890", true); err != nil {
+		cancel()
+		t.Fatalf("reload public access: %v", err)
+	}
+	for subscribeCalls.Load() < 3 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if subscribeCalls.Load() < 3 {
+		cancel()
+		t.Fatal("network configuration did not restart the candle subscription")
+	}
 	cancel()
 	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Fatalf("manager shutdown error = %v", err)
