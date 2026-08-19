@@ -45,6 +45,17 @@
 
   /* Element Component Active Color */
   --art-el-active-color: #f2f4f5;
+
+  /* Workflow canvas */
+  --workflow-canvas-bg: #f6f8fc;
+  --workflow-canvas-grid: rgb(76 91 118 / 0.08);
+  --workflow-panel-bg: #fff;
+  --workflow-panel-raised: #f9fafc;
+  --workflow-panel-soft: #f1f4f8;
+  --workflow-panel-border: #dfe4ec;
+  --workflow-panel-text: #263247;
+  --workflow-panel-muted: #78859a;
+  --workflow-edge-color: #98a4b6;
 }
 
 /* ==================== Dark Mode Variables ==================== */
@@ -80,6 +91,17 @@
 
   /* Element Component Active Color */
   --art-el-active-color: #2e2e38;
+
+  /* Workflow canvas */
+  --workflow-canvas-bg: #101218;
+  --workflow-canvas-grid: rgb(255 255 255 / 0.05);
+  --workflow-panel-bg: #1a1d25;
+  --workflow-panel-raised: #222630;
+  --workflow-panel-soft: #252a35;
+  --workflow-panel-border: #353b48;
+  --workflow-panel-text: #e4e9f2;
+  --workflow-panel-muted: #909aac;
+  --workflow-edge-color: #717b8c;
 }
 
 /* ==================== Tailwind Theme Configuration ==================== */

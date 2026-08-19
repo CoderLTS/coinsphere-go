@@ -1,43 +1,51 @@
 <!-- 认证页面：index。 -->
 <template>
-  <div class="flex w-full h-screen">
+  <div class="login-shell">
     <LoginLeftView />
 
-    <div class="relative flex-1">
+    <div class="login-main">
       <AuthTopBar />
 
       <div class="auth-right-wrap">
         <div class="form">
-          <h3 class="title">{{ $t('login.title') }}</h3>
-          <p class="sub-title">{{ $t('login.subTitle') }}</p>
+          <div class="form-intro">
+            <p class="form-eyebrow">SECURE ACCESS / COINSPHERE</p>
+            <h3 class="title">{{ $t('login.title') }}</h3>
+            <p class="sub-title">{{ $t('login.subTitle') }}</p>
+          </div>
           <ElForm
             ref="formRef"
+            class="login-form"
             :model="formData"
             :rules="rules"
             :key="formKey"
             @keyup.enter="handleSubmit"
-            style="margin-top: 25px"
           >
-            <ElFormItem prop="username">
+            <ElFormItem prop="username" :label="$t('login.usernameLabel')">
               <ElInput
                 class="custom-height"
                 :placeholder="$t('login.placeholder.username')"
                 v-model.trim="formData.username"
-              />
+                autocomplete="username"
+              >
+                <template #prefix><ArtSvgIcon icon="ri:user-3-line" /></template>
+              </ElInput>
             </ElFormItem>
-            <ElFormItem prop="password">
+            <ElFormItem prop="password" :label="$t('login.passwordLabel')">
               <ElInput
                 class="custom-height"
                 :placeholder="$t('login.placeholder.password')"
                 v-model.trim="formData.password"
                 type="password"
-                autocomplete="off"
+                autocomplete="current-password"
                 show-password
-              />
+              >
+                <template #prefix><ArtSvgIcon icon="ri:lock-2-line" /></template>
+              </ElInput>
             </ElFormItem>
 
             <!-- 推拽验证 -->
-            <div class="relative pb-5 mt-6">
+            <div class="slider-wrap relative pb-5 mt-6">
               <div
                 class="relative z-[2] overflow-hidden select-none rounded-lg border border-transparent tad-300"
                 :class="{ '!border-[#FF4E4F]': !isPassing && isClickPass }"
@@ -49,7 +57,7 @@
                   textColor="var(--art-gray-700)"
                   :successText="$t('login.sliderSuccessText')"
                   progressBarBg="var(--main-color)"
-                  :background="isDark ? '#26272F' : '#F1F1F4'"
+                  :background="isDark ? '#101217' : '#F4F7F5'"
                   handlerBg="var(--default-box-color)"
                 />
               </div>
@@ -61,13 +69,16 @@
               </p>
             </div>
 
-            <div class="flex-cb mt-2 text-sm">
+            <div class="form-options">
               <ElCheckbox v-model="formData.rememberPassword">{{
                 $t('login.rememberPwd')
               }}</ElCheckbox>
+              <span class="session-note"
+                ><ArtSvgIcon icon="ri:shield-check-line" /> {{ $t('login.sessionNote') }}</span
+              >
             </div>
 
-            <div style="margin-top: 30px">
+            <div class="submit-wrap">
               <ElButton
                 class="w-full custom-height"
                 type="primary"
@@ -76,9 +87,11 @@
                 v-ripple
               >
                 {{ $t('login.btnText') }}
+                <ArtSvgIcon icon="ri:arrow-right-line" />
               </ElButton>
             </div>
           </ElForm>
+          <p class="form-footnote">{{ $t('login.footnote') }}</p>
         </div>
       </div>
     </div>

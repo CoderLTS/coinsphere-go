@@ -93,11 +93,11 @@
   .edge-bubble {
     width: 240px;
     padding: 14px;
-    background: rgb(255 255 255 / 0.98);
+    background: color-mix(in srgb, var(--workflow-overlay-bg) 97%, transparent);
     backdrop-filter: blur(16px);
-    border: 1px solid rgb(203 213 225 / 0.86);
-    border-radius: 18px;
-    box-shadow: 0 18px 32px rgb(15 23 42 / 0.14);
+    border: 1px solid var(--workflow-overlay-border-soft);
+    border-radius: 8px;
+    box-shadow: 0 12px 28px rgb(31 35 48 / 0.14);
   }
 
   .edge-bubble__header {
@@ -106,14 +106,14 @@
     strong {
       display: block;
       font-size: 14px;
-      color: #0f172a;
+      color: var(--workflow-overlay-text);
     }
 
     span {
       display: block;
       margin-top: 4px;
       font-size: 12px;
-      color: #64748b;
+      color: var(--workflow-overlay-muted);
     }
   }
 
@@ -121,7 +121,7 @@
     margin-top: 4px;
     font-size: 12px;
     line-height: 18px;
-    color: #64748b;
+    color: var(--workflow-overlay-muted);
   }
 
   .edge-bubble__footer {

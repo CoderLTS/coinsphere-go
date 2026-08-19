@@ -643,18 +643,18 @@
 
 <style scoped lang="scss">
   .workflow-execution-detail {
-    --workflow-page-bg: #e8e7e2;
-    --workflow-overlay-bg: #f4f3ee;
-    --workflow-overlay-raised: #fbfaf6;
-    --workflow-overlay-soft: #e7e6e0;
-    --workflow-overlay-soft-2: #deddd7;
-    --workflow-overlay-text: #17191b;
-    --workflow-overlay-regular: #34383a;
-    --workflow-overlay-muted: #6d7477;
-    --workflow-overlay-placeholder: #8a8f91;
-    --workflow-overlay-border: #4b5256;
-    --workflow-overlay-border-soft: #c8c7c1;
-    --workflow-overlay-border-subtle: #d7d5ce;
+    --workflow-page-bg: var(--default-bg-color);
+    --workflow-overlay-bg: var(--workflow-panel-bg);
+    --workflow-overlay-raised: var(--workflow-panel-raised);
+    --workflow-overlay-soft: var(--workflow-panel-soft);
+    --workflow-overlay-soft-2: var(--art-gray-200);
+    --workflow-overlay-text: var(--workflow-panel-text);
+    --workflow-overlay-regular: var(--art-gray-800);
+    --workflow-overlay-muted: var(--workflow-panel-muted);
+    --workflow-overlay-placeholder: var(--art-gray-500);
+    --workflow-overlay-border: var(--workflow-panel-border);
+    --workflow-overlay-border-soft: var(--workflow-panel-border);
+    --workflow-overlay-border-subtle: var(--art-card-border);
 
     flex: 1 1 auto;
     width: 100%;
@@ -663,21 +663,6 @@
     min-height: 0;
     overflow: hidden;
     background: var(--workflow-page-bg);
-  }
-
-  :global(html.dark .workflow-execution-detail) {
-    --workflow-page-bg: #0d0f10;
-    --workflow-overlay-bg: #181b1e;
-    --workflow-overlay-raised: #202427;
-    --workflow-overlay-soft: #22272a;
-    --workflow-overlay-soft-2: #2b3134;
-    --workflow-overlay-text: #eff4f1;
-    --workflow-overlay-regular: #d4dadd;
-    --workflow-overlay-muted: #9da6aa;
-    --workflow-overlay-placeholder: #7e878b;
-    --workflow-overlay-border: #596267;
-    --workflow-overlay-border-soft: #3b4347;
-    --workflow-overlay-border-subtle: #333a3e;
   }
 
   .workflow-execution-detail__layout {
@@ -707,7 +692,7 @@
   .workflow-execution-detail__inspector {
     background: var(--workflow-overlay-bg);
     border: 1px solid var(--workflow-overlay-border);
-    box-shadow: 0 14px 30px rgb(0 0 0 / 0.22);
+    box-shadow: 0 12px 30px rgb(31 35 48 / 0.12);
   }
 
   .workflow-execution-detail__overlay-card {
@@ -731,7 +716,7 @@
     gap: 6px;
     max-width: calc(100% - 184px);
     padding: 8px 10px 10px;
-    border-radius: 2px;
+    border-radius: 8px;
     transform: translateX(-50%);
   }
 
@@ -746,8 +731,8 @@
     color: var(--workflow-overlay-text);
     background: var(--workflow-overlay-bg);
     border-color: transparent;
-    border-radius: 2px;
-    box-shadow: 0 8px 18px rgb(0 0 0 / 0.2);
+    border-radius: 7px;
+    box-shadow: 0 6px 16px rgb(31 35 48 / 0.08);
   }
 
   .workflow-execution-detail__icon-btn {
@@ -761,14 +746,14 @@
     background: transparent;
     backdrop-filter: none;
     border-color: transparent;
-    border-radius: 2px;
+    border-radius: 7px;
     box-shadow: none;
   }
 
   .workflow-execution-detail__icon-btn:hover,
   .workflow-execution-detail__panel-btn:hover {
-    color: #111315;
-    background: #c7f46b;
+    color: var(--theme-color);
+    background: var(--el-color-primary-light-9);
   }
 
   .workflow-execution-detail__header-main {
@@ -820,7 +805,7 @@
     padding: 3px 7px;
     background: var(--workflow-overlay-soft-2);
     border: 1px solid var(--workflow-overlay-border-soft);
-    border-radius: 2px;
+    border-radius: 6px;
   }
 
   .workflow-execution-detail__summary-label {
@@ -883,7 +868,7 @@
     max-width: 332px;
     overflow: hidden;
     isolation: isolate;
-    border-radius: 2px;
+    border-radius: 8px;
   }
 
   .workflow-execution-detail__inspector--left {
@@ -950,7 +935,7 @@
     padding: 14px;
     background: var(--workflow-overlay-raised);
     border: 1px solid var(--workflow-overlay-border-subtle);
-    border-radius: 2px;
+    border-radius: 8px;
     box-shadow: none;
   }
 
@@ -964,7 +949,7 @@
     padding: 12px;
     background: var(--workflow-overlay-soft);
     border: 1px solid var(--workflow-overlay-border-soft);
-    border-radius: 2px;
+    border-radius: 7px;
   }
 
   .workflow-execution-detail__json-title {

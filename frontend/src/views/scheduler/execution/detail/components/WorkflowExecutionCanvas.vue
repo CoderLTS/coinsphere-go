@@ -94,15 +94,15 @@
         position: 0.5,
         attrs: {
           body: {
-            fill: '#181b1e',
-            stroke: '#5b6468',
+            fill: 'var(--workflow-panel-bg, #fff)',
+            stroke: 'var(--workflow-panel-border, #dfe4ec)',
             strokeWidth: 1,
             rx: 10,
             ry: 10
           },
           label: {
             text,
-            fill: '#d8dddf',
+            fill: 'var(--workflow-panel-text, #263247)',
             fontSize: 11,
             fontWeight: 600
           }
@@ -118,15 +118,15 @@
         position: 0.76,
         attrs: {
           body: {
-            fill: '#27222f',
-            stroke: '#9e8cff',
+            fill: 'var(--el-color-primary-light-9, #ecf2ff)',
+            stroke: 'var(--theme-color, #5d87ff)',
             strokeWidth: 1,
             rx: 10,
             ry: 10
           },
           label: {
             text: `x${count}`,
-            fill: '#c5baff',
+            fill: 'var(--theme-color, #5d87ff)',
             fontSize: 11,
             fontWeight: 700
           }
@@ -227,7 +227,11 @@
       const selected = activeCellType.value === 'edge' && activeCellId.value === edge.id
       const targetNodeId = String(edge.getTargetCellId() || '')
       const leadsToFailure = executed && failedNodeIds.value.has(targetNodeId)
-      const stroke = leadsToFailure ? '#ff705b' : executed ? '#c7f46b' : '#6f777b'
+      const stroke = leadsToFailure
+        ? 'var(--el-color-danger, #f56c6c)'
+        : executed
+          ? 'var(--el-color-success, #67c23a)'
+          : 'var(--workflow-edge-color, #98a4b6)'
       const opacity = selected ? 1 : executed ? 0.96 : 0.62
       const strokeWidth = selected ? (executed ? 3 : 2.2) : executed ? 1.9 : 1.1
       const baseLabel = String((edge.getData() || {}).label || '')
@@ -397,13 +401,13 @@
     width: 100%;
     height: 100%;
     overflow: hidden;
-    background-color: #111315;
+    background-color: var(--workflow-canvas-bg);
     background-image:
-      linear-gradient(rgb(255 255 255 / 0.045) 1px, transparent 1px),
-      linear-gradient(90deg, rgb(255 255 255 / 0.045) 1px, transparent 1px);
+      linear-gradient(var(--workflow-canvas-grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--workflow-canvas-grid) 1px, transparent 1px);
     background-size: 24px 24px;
-    border: 1px solid #34393c;
-    border-radius: 2px;
+    border: 1px solid var(--workflow-panel-border);
+    border-radius: 8px;
     contain: layout paint;
   }
 

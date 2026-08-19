@@ -1254,8 +1254,8 @@
     overflow: hidden;
     background: var(--workflow-overlay-bg, #f4f3ee);
     border: 1px solid var(--workflow-overlay-border, #4b5256);
-    border-radius: 2px;
-    box-shadow: 0 20px 42px rgb(0 0 0 / 0.34);
+    border-radius: 8px;
+    box-shadow: 0 12px 30px rgb(31 35 48 / 0.12);
   }
 
   .node-editor-card__commit {
@@ -1268,15 +1268,15 @@
     padding: 0 12px;
     font-size: 12px;
     font-weight: 600;
-    color: #111315;
+    color: #fff;
     letter-spacing: 0;
-    background: #c7f46b;
-    border: 1px solid #9dbc55;
-    border-radius: 2px;
+    background: var(--theme-color);
+    border: 1px solid var(--theme-color);
+    border-radius: 6px;
     box-shadow: none;
 
     &:hover {
-      background: #b8e35e;
+      background: var(--el-color-primary-light-3);
       box-shadow: none;
       transform: translateY(-1px);
     }

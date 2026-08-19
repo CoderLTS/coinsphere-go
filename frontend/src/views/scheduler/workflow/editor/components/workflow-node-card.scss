@@ -16,23 +16,23 @@
 
 .wf-node {
   --wf-node-accent: #64748b;
-  --wf-node-border: #4b5256;
-  --wf-node-shadow: none;
+  --wf-node-border: var(--workflow-panel-border, #dfe4ec);
+  --wf-node-shadow: 0 6px 18px rgb(31 35 48 / 0.06);
   --wf-node-icon-bg: color-mix(in srgb, var(--wf-node-accent) 12%, transparent);
   --wf-node-icon-fg: var(--wf-node-accent);
   --wf-node-status-bg: transparent;
   --wf-node-status-fg: var(--el-color-primary, #2563eb);
-  --wf-node-body-fg: #b7bec1;
+  --wf-node-body-fg: var(--workflow-panel-muted, #78859a);
 
   position: relative;
   box-sizing: border-box;
   width: 260px;
   height: 96px;
   overflow: hidden;
-  font-family: Inter, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  background: #1b1e21;
+  font-family: inherit;
+  background: var(--workflow-panel-bg, #fff);
   border: 1.5px solid var(--wf-node-border);
-  border-radius: 2px;
+  border-radius: 8px;
   box-shadow: var(--wf-node-shadow);
   transition:
     border-color 0.18s ease,
@@ -101,7 +101,7 @@
   line-height: 1;
   color: var(--wf-node-icon-fg);
   background: var(--wf-node-icon-bg);
-  border-radius: 2px;
+  border-radius: 7px;
 }
 
 .wf-node__title {
@@ -111,7 +111,7 @@
   font-size: 16px;
   font-weight: 600;
   line-height: 20px;
-  color: #f4f3ee;
+  color: var(--workflow-panel-text, #263247);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -124,7 +124,7 @@
   color: var(--el-color-primary, #5f95ff);
   white-space: nowrap;
   background: var(--el-color-primary-light-9, #f5f7ff);
-  border-radius: 2px;
+  border-radius: 6px;
 }
 
 .wf-node[data-kind='terminal'] .wf-node__badge {
@@ -144,7 +144,7 @@
   flex: 0 0 auto;
   font-size: 12px;
   line-height: 18px;
-  color: #7f888c;
+  color: var(--workflow-panel-muted, #78859a);
   white-space: nowrap;
 }
 
@@ -183,7 +183,7 @@
   line-height: 16px;
   color: var(--wf-node-status-fg);
   background: var(--wf-node-status-bg);
-  border-radius: 2px;
+  border-radius: 6px;
 }
 
 .wf-node__check {
@@ -192,9 +192,9 @@
   justify-content: center;
   width: 18px;
   height: 18px;
-  color: #111315;
-  background: #c7f46b;
-  border-radius: 2px;
+  color: #fff;
+  background: var(--el-color-success, #67c23a);
+  border-radius: 6px;
   transform: translateY(-1px);
 
   svg {
@@ -217,71 +217,73 @@
 }
 
 .wf-node[data-state='failed'] {
-  --wf-node-border: #ff705b;
-  --wf-node-icon-bg: rgb(255 112 91 / 0.16);
-  --wf-node-icon-fg: #ff705b;
-  --wf-node-status-bg: #ff705b;
-  --wf-node-status-fg: #111315;
-  --wf-node-body-fg: #ff9a89;
-  --wf-node-shadow: 0 0 0 2px rgb(255 112 91 / 0.18), 0 14px 28px rgb(0 0 0 / 0.28);
+  --wf-node-border: var(--el-color-danger, #f56c6c);
+  --wf-node-icon-bg: var(--el-color-danger-light-9, #fef0f0);
+  --wf-node-icon-fg: var(--el-color-danger, #f56c6c);
+  --wf-node-status-bg: var(--el-color-danger, #f56c6c);
+  --wf-node-status-fg: #fff;
+  --wf-node-body-fg: var(--el-color-danger, #f56c6c);
+  --wf-node-shadow: 0 0 0 2px color-mix(in srgb, var(--el-color-danger) 15%, transparent);
 }
 
 .wf-node[data-state='running'] {
-  --wf-node-border: #eab24d;
-  --wf-node-icon-bg: rgb(234 178 77 / 0.16);
-  --wf-node-icon-fg: #eab24d;
-  --wf-node-status-bg: #eab24d;
-  --wf-node-status-fg: #111315;
-  --wf-node-shadow: 0 0 0 2px rgb(234 178 77 / 0.18), 0 14px 28px rgb(0 0 0 / 0.28);
+  --wf-node-border: var(--el-color-warning, #e6a23c);
+  --wf-node-icon-bg: var(--el-color-warning-light-9, #fdf6ec);
+  --wf-node-icon-fg: var(--el-color-warning, #e6a23c);
+  --wf-node-status-bg: var(--el-color-warning, #e6a23c);
+  --wf-node-status-fg: #fff;
+  --wf-node-shadow: 0 0 0 2px color-mix(in srgb, var(--el-color-warning) 15%, transparent);
 }
 
 .wf-node[data-state='retryWaiting'] {
-  --wf-node-border: #fb923c;
+  --wf-node-border: var(--el-color-warning, #e6a23c);
   --wf-node-icon-bg: var(--el-color-warning-light-9, #fff7ed);
-  --wf-node-icon-fg: #c2410c;
+  --wf-node-icon-fg: var(--el-color-warning, #e6a23c);
   --wf-node-status-bg: var(--el-color-warning-light-9, #fff7ed);
-  --wf-node-status-fg: #c2410c;
-  --wf-node-shadow: 0 0 0 2px rgb(251 146 60 / 0.12), 0 14px 28px rgb(251 146 60 / 0.12);
+  --wf-node-status-fg: var(--el-color-warning, #e6a23c);
+  --wf-node-shadow: 0 0 0 2px color-mix(in srgb, var(--el-color-warning) 12%, transparent);
 }
 
 .wf-node[data-state='queued'] {
-  --wf-node-border: #60a5fa;
+  --wf-node-border: var(--theme-color, #5d87ff);
   --wf-node-icon-bg: var(--el-color-primary-light-9, #eff6ff);
   --wf-node-icon-fg: var(--el-color-primary, #2563eb);
   --wf-node-status-bg: var(--el-color-primary-light-9, #eff6ff);
   --wf-node-status-fg: var(--el-color-primary, #2563eb);
-  --wf-node-shadow: 0 0 0 2px rgb(96 165 250 / 0.12), 0 14px 28px rgb(96 165 250 / 0.12);
+  --wf-node-shadow: 0 0 0 2px color-mix(in srgb, var(--theme-color) 12%, transparent);
 }
 
 .wf-node[data-state='success'] {
-  --wf-node-border: #c7f46b;
-  --wf-node-icon-bg: rgb(199 244 107 / 0.14);
-  --wf-node-icon-fg: #c7f46b;
-  --wf-node-status-bg: #c7f46b;
-  --wf-node-status-fg: #111315;
-  --wf-node-shadow: 0 0 0 2px rgb(199 244 107 / 0.14), 0 14px 28px rgb(0 0 0 / 0.26);
+  --wf-node-border: var(--el-color-success, #67c23a);
+  --wf-node-icon-bg: var(--el-color-success-light-9, #f0f9eb);
+  --wf-node-icon-fg: var(--el-color-success, #67c23a);
+  --wf-node-status-bg: var(--el-color-success, #67c23a);
+  --wf-node-status-fg: #fff;
+  --wf-node-shadow: 0 0 0 2px color-mix(in srgb, var(--el-color-success) 14%, transparent);
 }
 
 .wf-node[data-state='dirty'] {
-  --wf-node-border: #5f95ff;
+  --wf-node-border: var(--theme-color, #5d87ff);
   --wf-node-status-bg: var(--el-color-primary-light-9, #eff6ff);
   --wf-node-status-fg: var(--el-color-primary, #2563eb);
   --wf-node-shadow: 0 0 0 1px rgb(95 149 255 / 0.08);
 }
 
 .wf-node[data-state='selected'] {
-  --wf-node-border: #9e8cff;
-  --wf-node-shadow: 0 0 0 3px rgb(158 140 255 / 0.24), 0 16px 32px rgb(0 0 0 / 0.3);
+  --wf-node-border: var(--theme-color, #5d87ff);
+  --wf-node-shadow:
+    0 0 0 3px color-mix(in srgb, var(--theme-color) 18%, transparent),
+    0 10px 24px rgb(31 35 48 / 0.1);
 }
 
 /* 无状态时开始/结束节点仍保留一点自己的底色，好和中间的处理节点区分开。 */
 .wf-node[data-state='idle'][data-kind='start'] {
-  --wf-node-icon-bg: #eef2ff;
-  --wf-node-icon-fg: #5f95ff;
+  --wf-node-icon-bg: var(--el-color-primary-light-9, #eef2ff);
+  --wf-node-icon-fg: var(--theme-color, #5d87ff);
 }
 
 .wf-node[data-state='idle'][data-kind='terminal'] {
-  --wf-node-border: #ffb4b0;
+  --wf-node-border: var(--el-color-danger-light-5, #fab6b6);
   --wf-node-icon-bg: var(--el-color-danger-light-9, #fff1f0);
-  --wf-node-icon-fg: #ff7875;
+  --wf-node-icon-fg: var(--el-color-danger, #f56c6c);
 }

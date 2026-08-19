@@ -123,12 +123,39 @@ export const validateMagnet = ({ magnet }: { magnet: Element | null }) => {
 
 /** 端口小圆点的配色：已连上统一走主色，未连上按语义给色。 */
 export const getPortDisplayColor = (portId: string, connected: boolean) => {
-  if (connected) return { stroke: '#5f95ff', fill: '#5f95ff', label: '#2563eb' }
+  if (connected)
+    return {
+      stroke: 'var(--theme-color, #5d87ff)',
+      fill: 'var(--theme-color, #5d87ff)',
+      label: 'var(--theme-color, #5d87ff)'
+    }
   const palette: Record<string, { stroke: string; fill: string; label: string }> = {
-    true: { stroke: '#22c55e', fill: '#ffffff', label: '#15803d' },
-    false: { stroke: '#ef4444', fill: '#ffffff', label: '#b91c1c' },
-    body: { stroke: '#ca8a04', fill: '#ffffff', label: '#a16207' },
-    [LOOP_NEXT_BRANCH]: { stroke: '#0ea5e9', fill: '#ffffff', label: '#0369a1' }
+    true: {
+      stroke: 'var(--el-color-success, #67c23a)',
+      fill: 'var(--workflow-panel-bg, #fff)',
+      label: 'var(--el-color-success, #67c23a)'
+    },
+    false: {
+      stroke: 'var(--el-color-danger, #f56c6c)',
+      fill: 'var(--workflow-panel-bg, #fff)',
+      label: 'var(--el-color-danger, #f56c6c)'
+    },
+    body: {
+      stroke: 'var(--el-color-warning, #e6a23c)',
+      fill: 'var(--workflow-panel-bg, #fff)',
+      label: 'var(--el-color-warning, #e6a23c)'
+    },
+    [LOOP_NEXT_BRANCH]: {
+      stroke: 'var(--el-color-info, #909399)',
+      fill: 'var(--workflow-panel-bg, #fff)',
+      label: 'var(--el-color-info, #909399)'
+    }
   }
-  return palette[portId] || { stroke: '#c2c8d5', fill: '#ffffff', label: '#64748b' }
+  return (
+    palette[portId] || {
+      stroke: 'var(--workflow-edge-color, #98a4b6)',
+      fill: 'var(--workflow-panel-bg, #fff)',
+      label: 'var(--workflow-panel-muted, #78859a)'
+    }
+  )
 }
