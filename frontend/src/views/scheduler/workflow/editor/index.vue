@@ -1316,19 +1316,19 @@
 
 <style scoped lang="scss">
   .workflow-editor-page {
-    --workflow-page-bg: #e8e7e2;
-    --workflow-overlay-bg: #f4f3ee;
-    --workflow-overlay-raised: #fbfaf6;
-    --workflow-overlay-soft: #e7e6e0;
-    --workflow-overlay-soft-2: #deddd7;
-    --workflow-overlay-text: #17191b;
-    --workflow-overlay-regular: #34383a;
-    --workflow-overlay-muted: #6d7477;
-    --workflow-overlay-placeholder: #8a8f91;
-    --workflow-overlay-border: #4b5256;
-    --workflow-overlay-border-soft: #c8c7c1;
-    --workflow-overlay-border-subtle: #d7d5ce;
-    --workflow-overlay-hover: #d8d7d1;
+    --workflow-page-bg: var(--default-bg-color);
+    --workflow-overlay-bg: var(--workflow-panel-bg);
+    --workflow-overlay-raised: var(--workflow-panel-raised);
+    --workflow-overlay-soft: var(--workflow-panel-soft);
+    --workflow-overlay-soft-2: var(--art-gray-200);
+    --workflow-overlay-text: var(--workflow-panel-text);
+    --workflow-overlay-regular: var(--art-gray-800);
+    --workflow-overlay-muted: var(--workflow-panel-muted);
+    --workflow-overlay-placeholder: var(--art-gray-500);
+    --workflow-overlay-border: var(--workflow-panel-border);
+    --workflow-overlay-border-soft: var(--workflow-panel-border);
+    --workflow-overlay-border-subtle: var(--art-card-border);
+    --workflow-overlay-hover: var(--art-hover-color);
 
     position: relative;
     display: flex;
@@ -1338,22 +1338,6 @@
     min-height: 0;
     overflow: hidden;
     background: var(--workflow-page-bg);
-  }
-
-  :global(html.dark .workflow-editor-page) {
-    --workflow-page-bg: #0d0f10;
-    --workflow-overlay-bg: #181b1e;
-    --workflow-overlay-raised: #202427;
-    --workflow-overlay-soft: #22272a;
-    --workflow-overlay-soft-2: #2b3134;
-    --workflow-overlay-text: #eff4f1;
-    --workflow-overlay-regular: #d4dadd;
-    --workflow-overlay-muted: #9da6aa;
-    --workflow-overlay-placeholder: #7e878b;
-    --workflow-overlay-border: #596267;
-    --workflow-overlay-border-soft: #3b4347;
-    --workflow-overlay-border-subtle: #333a3e;
-    --workflow-overlay-hover: #30373a;
   }
 
   .workflow-editor-page__canvas {
@@ -1372,10 +1356,10 @@
     width: 360px;
     padding: 10px 0 10px 10px;
     overflow: hidden;
-    background: #181b1e;
-    border: 1px solid #3b4144;
-    border-radius: 2px;
-    box-shadow: 0 18px 36px rgb(0 0 0 / 0.28);
+    background: var(--workflow-overlay-bg);
+    border: 1px solid var(--workflow-overlay-border-soft);
+    border-radius: 8px;
+    box-shadow: 0 12px 30px rgb(31 35 48 / 0.12);
   }
 
   .workflow-editor-page__json-head {
@@ -1384,7 +1368,7 @@
     font-size: 13px;
     font-weight: 600;
     line-height: 20px;
-    color: #f4f3ee;
+    color: var(--workflow-overlay-text);
   }
 
   .workflow-editor-page__json-body {
@@ -1400,7 +1384,7 @@
     font-family: 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace;
     font-size: 12px;
     line-height: 1.65;
-    color: #d8dddf;
+    color: var(--workflow-overlay-regular);
     word-break: break-word;
     white-space: pre-wrap;
   }
@@ -1414,8 +1398,8 @@
   }
 
   .workflow-editor-page__json-body::-webkit-scrollbar-thumb {
-    background: #737b7f;
-    border-radius: 2px;
+    background: var(--workflow-overlay-muted);
+    border-radius: 4px;
   }
 
   .workflow-editor-page__meta {

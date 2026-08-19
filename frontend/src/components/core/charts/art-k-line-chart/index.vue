@@ -18,7 +18,7 @@
     height: '36rem',
     loading: false,
     isEmpty: false,
-    colors: () => ['#5eaa74', '#ff705b'],
+    colors: () => ['#67c23a', '#f56c6c'],
     data: () => [],
     signals: () => [],
     showVolume: true,
@@ -42,6 +42,7 @@
 
   const {
     chartRef,
+    isDark,
     getAxisLineStyle,
     getAxisLabelStyle,
     getAxisTickStyle,
@@ -122,17 +123,17 @@
                 itemStyle: {
                   color:
                     item.action === 'buy'
-                      ? '#c7f46b'
+                      ? '#67c23a'
                       : item.action === 'sell'
-                        ? '#ff705b'
-                        : '#eab24d',
-                  borderColor: '#17191b',
+                        ? '#f56c6c'
+                        : '#e6a23c',
+                  borderColor: isDark.value ? '#101218' : '#ffffff',
                   borderWidth: 1
                 },
                 label: {
                   show: true,
                   formatter: actionLabel[item.action],
-                  color: '#17191b',
+                  color: '#ffffff',
                   fontSize: 9,
                   fontWeight: 700
                 }
@@ -252,9 +253,12 @@
                 height: 18,
                 start: props.dataZoomStart,
                 end: props.dataZoomEnd,
-                borderColor: '#c9c9c2',
+                borderColor: isDark.value ? '#353b48' : '#dfe4ec',
                 fillerColor: 'rgba(158, 140, 255, 0.12)',
-                handleStyle: { color: '#9e8cff', borderColor: '#17191b' }
+                handleStyle: {
+                  color: '#9e8cff',
+                  borderColor: isDark.value ? '#101218' : '#ffffff'
+                }
               }
             ]
           : undefined

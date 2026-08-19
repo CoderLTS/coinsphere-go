@@ -149,11 +149,18 @@
   },
   "login": {
     "leftView": {
-      "title": "A backend system of beauty and efficiency",
-      "subTitle": "A sleek and practical interface for a great user experience"
+      "title": "Move every market signal into action",
+      "subTitle": "Route market data, strategy decisions, and notifications through one observable workflow."
     },
     "title": "Welcome back",
-    "subTitle": "Please enter your account and password to login",
+    "subTitle": "Sign in to continue managing your CoinSphere workflows",
+    "usernameLabel": "Account",
+    "passwordLabel": "Password",
+    "features": {
+      "workflow": "Workflow design",
+      "signal": "Market signals",
+      "notify": "Notifications"
+    },
     "roles": {
       "super": "Super Admin",
       "admin": "Admin",
@@ -167,7 +174,9 @@
     "sliderText": "Please slide to verify",
     "sliderSuccessText": "Verification successful",
     "rememberPwd": "Remember password",
+    "sessionNote": "Secure session enabled",
     "btnText": "Login",
+    "footnote": "By signing in, you agree to your workspace access policy.",
     "success": {
       "title": "Login successful",
       "message": "Welcome back"

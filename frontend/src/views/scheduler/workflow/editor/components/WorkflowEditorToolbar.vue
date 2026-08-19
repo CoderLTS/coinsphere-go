@@ -218,8 +218,8 @@
     padding: 5px 6px;
     background: var(--workflow-overlay-bg, #f4f3ee);
     border: 1px solid var(--workflow-overlay-border, #34383a);
-    border-radius: 2px;
-    box-shadow: 0 8px 18px rgb(0 0 0 / 0.24);
+    border-radius: 8px;
+    box-shadow: 0 8px 20px rgb(31 35 48 / 0.1);
   }
 
   .editor-toolbar__tools-group {
@@ -256,17 +256,17 @@
     color: var(--workflow-overlay-muted, #5d6467);
     white-space: nowrap;
     background: var(--workflow-overlay-soft-2, #deddd7);
-    border-radius: 2px;
+    border-radius: 6px;
   }
 
   .editor-toolbar__status--warning {
-    color: #111315;
-    background: #eab24d;
+    color: var(--el-color-warning);
+    background: var(--el-color-warning-light-9);
   }
 
   .editor-toolbar__status--danger {
-    color: #111315;
-    background: #ff705b;
+    color: var(--el-color-danger);
+    background: var(--el-color-danger-light-9);
   }
 
   .editor-toolbar__icon-btn {
@@ -279,7 +279,7 @@
     color: var(--workflow-overlay-text, #24282a);
     background: transparent;
     border-color: transparent;
-    border-radius: 2px;
+    border-radius: 6px;
   }
 
   .editor-toolbar__icon-btn:hover {
@@ -288,8 +288,8 @@
   }
 
   .editor-toolbar__icon-btn--active {
-    color: #111315;
-    background: #c7f46b;
+    color: var(--theme-color);
+    background: var(--el-color-primary-light-9);
   }
 
   .editor-toolbar__divider {
@@ -309,11 +309,11 @@
   .editor-toolbar__save {
     height: 44px;
     padding: 0 18px;
-    color: #111315;
-    background: #c7f46b;
-    border-color: #c7f46b;
-    border-radius: 2px;
-    box-shadow: 0 8px 18px rgb(0 0 0 / 0.22);
+    color: #fff;
+    background: var(--theme-color);
+    border-color: var(--theme-color);
+    border-radius: 7px;
+    box-shadow: 0 8px 18px color-mix(in srgb, var(--theme-color) 20%, transparent);
   }
 
   @media (max-width: 980px) {

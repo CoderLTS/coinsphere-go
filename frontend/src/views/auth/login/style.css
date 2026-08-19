@@ -1,38 +1,226 @@
 @reference '@styles/core/tailwind.css';
 
-/* 授权页右侧区域 */
-.auth-right-wrap {
-  @apply absolute inset-0 w-[440px] h-[650px] py-[5px] m-auto overflow-hidden
-    max-sm:px-7 max-sm:w-full
-    animate-[slideInRight_0.6s_cubic-bezier(0.25,0.46,0.45,0.94)_forwards]
-    max-md:animate-none;
-
-  .form {
-    @apply h-full py-[40px];
-  }
-
-  .title {
-    @apply text-g-900 text-4xl font-semibold max-md:text-3xl max-sm:pt-10;
-  }
-
-  .sub-title {
-    @apply mt-[10px] text-g-600 text-sm;
-  }
-
-  .custom-height {
-    @apply !h-[40px];
-  }
+.login-shell {
+  display: flex;
+  width: 100%;
+  min-height: 100dvh;
+  background: var(--default-box-color);
 }
 
-/* 滑入动画 */
-@keyframes slideInRight {
+.login-main {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 100dvh;
+  background: var(--default-box-color);
+}
+
+.auth-right-wrap {
+  position: absolute;
+  inset: 0;
+  width: min(440px, calc(100% - 56px));
+  height: max-content;
+  margin: auto;
+  animation: login-form-enter 0.55s ease both;
+}
+
+.auth-right-wrap .form {
+  padding: 42px 0;
+}
+
+.form-eyebrow {
+  margin: 0 0 14px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--theme-color);
+}
+
+.auth-right-wrap .title {
+  margin: 0;
+  font-size: 36px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--art-gray-900);
+}
+
+.auth-right-wrap .sub-title {
+  margin: 10px 0 0;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--art-gray-600);
+}
+
+.login-form {
+  margin-top: 28px;
+}
+
+.login-form :deep(.el-form-item) {
+  margin-bottom: 20px;
+}
+
+.login-form :deep(.el-form-item__label) {
+  height: auto;
+  padding: 0 0 8px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--art-gray-800);
+}
+
+.login-form :deep(.el-input__wrapper) {
+  min-height: 44px;
+  padding: 0 14px;
+  background: var(--default-bg-color);
+  border: 1px solid var(--default-border);
+  border-radius: calc(var(--custom-radius) / 2 + 4px);
+  box-shadow: none;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.login-form :deep(.el-input__wrapper:hover) {
+  border-color: var(--el-color-primary-light-5);
+}
+
+.login-form :deep(.el-input__wrapper.is-focus) {
+  border-color: var(--theme-color);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-color) 12%, transparent);
+}
+
+.login-form :deep(.el-input__inner) {
+  height: 42px;
+  font-size: 14px;
+  color: var(--art-gray-900);
+}
+
+.login-form :deep(.el-input__prefix-inner) {
+  font-size: 17px;
+  color: var(--art-gray-500);
+}
+
+.login-form :deep(.el-input__wrapper.is-focus .el-input__prefix-inner) {
+  color: var(--theme-color);
+}
+
+.slider-wrap :deep(.drag_verify) {
+  border-color: var(--default-border);
+  border-radius: calc(var(--custom-radius) / 2 + 4px) !important;
+}
+
+.slider-wrap :deep(.dv_handler) {
+  border-right: 1px solid var(--default-border);
+  border-radius: calc(var(--custom-radius) / 2 + 3px);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.06);
+}
+
+.form-options {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--art-gray-600);
+}
+
+.form-options :deep(.el-checkbox__label) {
+  font-size: 13px;
+  color: var(--art-gray-700);
+}
+
+.session-note {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  color: var(--art-gray-500);
+  white-space: nowrap;
+}
+
+.session-note :deep(.art-svg-icon) {
+  font-size: 14px;
+  color: var(--el-color-success);
+}
+
+.submit-wrap {
+  margin-top: 28px;
+}
+
+.submit-wrap :deep(.el-button) {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: calc(var(--custom-radius) / 2 + 4px);
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--theme-color) 18%, transparent);
+}
+
+.submit-wrap :deep(.el-button:hover) {
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--theme-color) 24%, transparent);
+  transform: translateY(-1px);
+}
+
+.form-footnote {
+  margin: 24px 0 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--art-gray-500);
+  text-align: center;
+}
+
+:global(html.dark) .login-main {
+  background: var(--default-box-color);
+}
+
+:global(html.dark) .login-form :deep(.el-input__wrapper) {
+  background: var(--art-gray-200);
+}
+
+@keyframes login-form-enter {
   from {
     opacity: 0;
-    transform: translateX(30px);
+    transform: translateX(22px);
   }
 
   to {
     opacity: 1;
     transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-right-wrap {
+    animation: none;
+  }
+}
+
+@media only screen and (max-width: 1180px) {
+  .auth-right-wrap {
+    top: 46px;
+    width: min(440px, calc(100% - 48px));
+  }
+}
+
+@media only screen and (max-width: 640px) {
+  .auth-right-wrap {
+    top: 52px;
+    width: calc(100% - 44px);
+  }
+
+  .auth-right-wrap .form {
+    padding: 36px 0 28px;
+  }
+
+  .auth-right-wrap .title {
+    font-size: 30px;
+  }
+
+  .form-options {
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-start;
   }
 }
