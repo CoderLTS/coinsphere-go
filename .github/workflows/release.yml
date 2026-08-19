@@ -44,7 +44,11 @@ jobs:
           set -Eeuo pipefail
           [[ "$GITHUB_REF" == "refs/heads/main" ]] || { echo "只能从 main 手工发布或部署" >&2; exit 1; }
           [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || { echo "版本号必须符合 vX.Y.Z 格式" >&2; exit 1; }
-          git fetch --quiet origin main --tags
+          for attempt in 1 2 3; do
+            git fetch --quiet origin main --tags && break
+            [[ "$attempt" -lt 3 ]] || exit 1
+            sleep $((attempt * 5))
+          done
           [[ "$(git rev-parse HEAD)" == "$(git rev-parse origin/main)" ]] || { echo "当前 Commit 不是最新 main" >&2; exit 1; }
           if git show-ref --verify --quiet "refs/tags/$VERSION"; then
             echo "版本标签已存在: $VERSION" >&2
