@@ -20,7 +20,7 @@
           :loading="settingsSaving"
           @click="saveSettings"
         >
-          保存范围
+          保存设置
         </ElButton>
       </div>
     </header>
@@ -124,7 +124,144 @@
             </ElCheckboxGroup>
           </div>
         </div>
+        <div class="endpoint-fields">
+          <div>
+            <label>Spot REST 地址</label>
+            <ElInput
+              v-model="settings.spotRestBaseUrl"
+              :disabled="!canManage"
+              placeholder="https://data-api.binance.vision"
+            />
+            <small>现货元数据与历史 K 线入口</small>
+          </div>
+          <div>
+            <label>USD-M REST 地址</label>
+            <ElInput
+              v-model="settings.usdmRestBaseUrl"
+              :disabled="!canManage"
+              placeholder="https://fapi.binance.com"
+            />
+            <small>仅允许 Binance 官方 HTTPS 域名</small>
+          </div>
+        </div>
       </article>
+    </section>
+
+    <section class="proxy-card art-card">
+      <header class="section-head proxy-head">
+        <div class="section-title">
+          <span class="section-icon is-proxy"><ArtSvgIcon icon="ri:route-line" /></span>
+          <div><h2>行情出站代理</h2><p>Binance REST 与 WebSocket 使用同一条网络路径</p></div>
+        </div>
+        <div class="proxy-actions">
+          <ElTag :type="proxyStatusType" effect="light">{{ proxyStatusLabel }}</ElTag>
+          <ElButton
+            v-if="canManage"
+            :icon="Connection"
+            :loading="proxyChecking"
+            :disabled="proxyDirty"
+            @click="checkProxy"
+          >
+            检测连接
+          </ElButton>
+        </div>
+      </header>
+
+      <div class="proxy-content">
+        <div class="proxy-route" :class="`is-${settings.proxyLastCheckStatus}`">
+          <div class="route-track" aria-label="行情网络路径">
+            <div class="route-node">
+              <span><ArtSvgIcon icon="ri:server-line" /></span>
+              <strong>CoinSphere</strong>
+            </div>
+            <i></i>
+            <div class="route-node is-gateway" :class="{ 'is-disabled': !settings.proxyEnabled }">
+              <span><ArtSvgIcon icon="ri:router-line" /></span>
+              <strong>{{ settings.proxyEnabled ? 'Proxy' : 'Direct' }}</strong>
+            </div>
+            <i></i>
+            <div class="route-node">
+              <span><ArtSvgIcon icon="ri:exchange-line" /></span>
+              <strong>Binance</strong>
+            </div>
+          </div>
+          <div class="route-summary">
+            <div>
+              <span>当前路径</span>
+              <strong>{{ proxyEndpointLabel }}</strong>
+            </div>
+            <div>
+              <span>连接延迟</span>
+              <strong>{{
+                settings.proxyLastLatencyMs == null ? '--' : `${settings.proxyLastLatencyMs} ms`
+              }}</strong>
+            </div>
+            <div>
+              <span>最近检测</span>
+              <strong>{{ formatTime(settings.proxyLastCheckedAt) }}</strong>
+            </div>
+          </div>
+          <p v-if="settings.proxyLastError" class="proxy-error">
+            <ArtSvgIcon icon="ri:error-warning-line" />{{ settings.proxyLastError }}
+          </p>
+        </div>
+
+        <div class="proxy-settings">
+          <div class="proxy-switch-row">
+            <div><strong>启用代理</strong><span>关闭时直接连接 Binance</span></div>
+            <ElSwitch v-model="settings.proxyEnabled" :disabled="!canManage" />
+          </div>
+          <div class="proxy-form-grid">
+            <div>
+              <label>协议</label>
+              <ElSelect v-model="proxyForm.protocol" :disabled="!canManage">
+                <ElOption label="HTTP" value="http" />
+                <ElOption label="SOCKS5" value="socks5" />
+              </ElSelect>
+            </div>
+            <div class="proxy-host-field">
+              <label>主机</label>
+              <ElInput
+                v-model="proxyForm.host"
+                :disabled="!canManage"
+                placeholder="proxy.internal"
+              />
+            </div>
+            <div>
+              <label>端口</label>
+              <ElInputNumber
+                v-model="proxyForm.port"
+                :disabled="!canManage"
+                :min="1"
+                :max="65535"
+                controls-position="right"
+              />
+            </div>
+            <div>
+              <label>用户名</label>
+              <ElInput v-model="settings.proxyUsername" :disabled="!canManage" placeholder="可选" />
+            </div>
+            <div class="proxy-password-field">
+              <label>
+                密码
+                <ElCheckbox
+                  v-if="settings.proxyPasswordConfigured"
+                  v-model="proxyForm.clearPassword"
+                  :disabled="!canManage"
+                  >清除已保存密码</ElCheckbox
+                >
+              </label>
+              <ElInput
+                v-model="proxyForm.password"
+                type="password"
+                show-password
+                :disabled="!canManage || proxyForm.clearPassword"
+                :placeholder="settings.proxyPasswordConfigured ? '留空则保持原密码' : '可选'"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
     </section>
 
     <section class="catalog-card art-card">
@@ -226,9 +363,10 @@
 </template>
 
 <script setup lang="ts">
-  import { Check, Refresh, Search } from '@element-plus/icons-vue'
+  import { Check, Connection, Refresh, Search } from '@element-plus/icons-vue'
   import { ElMessage, type TagProps } from 'element-plus'
   import {
+    fetchCheckMarketProxy,
     fetchMarketSymbols,
     fetchMarketSyncSettings,
     fetchMarketSyncStatus,
@@ -248,6 +386,7 @@
   const { hasAuth } = useAuth()
   const canManage = computed(() => hasAuth('data.market.manage'))
   const settingsSaving = ref(false)
+  const proxyChecking = ref(false)
   const syncStarting = ref(false)
   const symbolsLoading = ref(false)
   const symbols = ref<MarketSymbol[]>([])
@@ -255,10 +394,44 @@
   const hasMore = ref(false)
   const symbolTotal = ref(0)
   const pollTimer = ref<ReturnType<typeof setInterval> | null>(null)
-  const settings = reactive<Pick<MarketSyncSettings, 'marketTypes' | 'quoteAssets'>>({
-    marketTypes: ['spot', 'usd_m'],
-    quoteAssets: ['USDT', 'USDC']
+  const settings = reactive<
+    Pick<
+      MarketSyncSettings,
+      | 'marketTypes'
+      | 'quoteAssets'
+      | 'spotRestBaseUrl'
+      | 'usdmRestBaseUrl'
+      | 'proxyEnabled'
+      | 'proxyUrl'
+      | 'proxyUsername'
+      | 'proxyPasswordConfigured'
+      | 'proxyLastCheckStatus'
+      | 'proxyLastCheckedAt'
+      | 'proxyLastLatencyMs'
+      | 'proxyLastError'
+    >
+  >({
+    marketTypes: ['spot'],
+    quoteAssets: ['USDT', 'USDC'],
+    spotRestBaseUrl: 'https://data-api.binance.vision',
+    usdmRestBaseUrl: 'https://fapi.binance.com',
+    proxyEnabled: false,
+    proxyUrl: '',
+    proxyUsername: '',
+    proxyPasswordConfigured: false,
+    proxyLastCheckStatus: 'unchecked',
+    proxyLastCheckedAt: null,
+    proxyLastLatencyMs: null,
+    proxyLastError: ''
   })
+  const proxyForm = reactive<{
+    protocol: 'http' | 'socks5'
+    host: string
+    port: number
+    password: string
+    clearPassword: boolean
+  }>({ protocol: 'http', host: '', port: 7890, password: '', clearPassword: false })
+  const savedProxy = reactive({ enabled: false, url: '', username: '' })
   const syncStatus = reactive<MarketSyncStatus>({
     lastSyncAt: null,
     nextSyncAt: null,
@@ -283,6 +456,32 @@
     if (isSyncing.value) return 'warning'
     return syncStatus.lastSyncAt ? 'success' : 'info'
   })
+  const proxyStatusType = computed<TagProps['type']>(() => {
+    if (proxyDirty.value) return 'warning'
+    if (settings.proxyLastCheckStatus === 'failed') return 'danger'
+    if (settings.proxyLastCheckStatus === 'healthy') return 'success'
+    return 'info'
+  })
+  const proxyStatusLabel = computed(() => {
+    if (proxyDirty.value) return '配置待保存'
+    if (settings.proxyLastCheckStatus === 'failed') return '连接失败'
+    if (settings.proxyLastCheckStatus === 'healthy')
+      return settings.proxyEnabled ? '代理可用' : '直连可用'
+    return settings.proxyEnabled ? '待检测' : '未启用'
+  })
+  const proxyEndpointLabel = computed(() => {
+    if (!settings.proxyEnabled) return 'DIRECT'
+    if (!proxyForm.host) return '未配置'
+    return `${proxyForm.protocol.toUpperCase()} · ${proxyForm.host}:${proxyForm.port}`
+  })
+  const proxyDirty = computed(
+    () =>
+      settings.proxyEnabled !== savedProxy.enabled ||
+      buildProxyURL() !== savedProxy.url ||
+      settings.proxyUsername.trim() !== savedProxy.username ||
+      proxyForm.password !== '' ||
+      proxyForm.clearPassword
+  )
 
   const executionStatusLabel = (status: string) =>
     ({
@@ -310,13 +509,49 @@
     }).format(date)
   }
 
+  const applyMarketSettings = (nextSettings: MarketSyncSettings) => {
+    settings.marketTypes = [...nextSettings.marketTypes]
+    settings.quoteAssets = [...nextSettings.quoteAssets]
+    settings.spotRestBaseUrl = nextSettings.spotRestBaseUrl
+    settings.usdmRestBaseUrl = nextSettings.usdmRestBaseUrl
+    settings.proxyEnabled = nextSettings.proxyEnabled
+    settings.proxyUrl = nextSettings.proxyUrl
+    settings.proxyUsername = nextSettings.proxyUsername
+    settings.proxyPasswordConfigured = nextSettings.proxyPasswordConfigured
+    settings.proxyLastCheckStatus = nextSettings.proxyLastCheckStatus
+    settings.proxyLastCheckedAt = nextSettings.proxyLastCheckedAt
+    settings.proxyLastLatencyMs = nextSettings.proxyLastLatencyMs
+    settings.proxyLastError = nextSettings.proxyLastError
+    proxyForm.password = ''
+    proxyForm.clearPassword = false
+    savedProxy.enabled = nextSettings.proxyEnabled
+    savedProxy.url = nextSettings.proxyUrl
+    savedProxy.username = nextSettings.proxyUsername
+    if (!nextSettings.proxyUrl) {
+      proxyForm.protocol = 'http'
+      proxyForm.host = ''
+      proxyForm.port = 7890
+      return
+    }
+    const parsed = new URL(nextSettings.proxyUrl)
+    proxyForm.protocol = parsed.protocol === 'socks5:' ? 'socks5' : 'http'
+    proxyForm.host = parsed.hostname.replace(/^\[|\]$/g, '')
+    proxyForm.port = Number(parsed.port)
+  }
+
+  const buildProxyURL = () => {
+    const host = proxyForm.host.trim().replace(/^\[|\]$/g, '')
+    if (!host) return ''
+    const formattedHost = host.includes(':') ? `[${host}]` : host
+    return `${proxyForm.protocol}://${formattedHost}:${proxyForm.port}`
+  }
+
   const loadSettings = async () => {
     const [nextSettings, nextStatus] = await Promise.all([
       fetchMarketSyncSettings(),
       fetchMarketSyncStatus()
     ])
-    settings.marketTypes = [...nextSettings.marketTypes]
-    settings.quoteAssets = [...nextSettings.quoteAssets]
+    applyMarketSettings(nextSettings)
     Object.assign(syncStatus, nextStatus)
   }
 
@@ -348,21 +583,49 @@
   const loadMore = () => void loadSymbols(true)
 
   const saveSettings = async () => {
-    if (!settings.marketTypes.length || !settings.quoteAssets.length) {
-      ElMessage.warning('至少选择一个市场和一个报价资产')
+    const proxyUrl = buildProxyURL()
+    if (
+      !settings.marketTypes.length ||
+      !settings.quoteAssets.length ||
+      !settings.spotRestBaseUrl.trim() ||
+      !settings.usdmRestBaseUrl.trim() ||
+      (settings.proxyEnabled && !proxyUrl)
+    ) {
+      ElMessage.warning('请完整填写同步范围、Binance 地址和代理地址')
       return
     }
     settingsSaving.value = true
     try {
       const nextSettings = await fetchUpdateMarketSyncSettings({
         marketTypes: settings.marketTypes,
-        quoteAssets: settings.quoteAssets
+        quoteAssets: settings.quoteAssets,
+        spotRestBaseUrl: settings.spotRestBaseUrl.trim(),
+        usdmRestBaseUrl: settings.usdmRestBaseUrl.trim(),
+        proxyEnabled: settings.proxyEnabled,
+        proxyUrl,
+        proxyUsername: settings.proxyUsername.trim(),
+        proxyPassword: proxyForm.password || undefined,
+        clearProxyPassword: proxyForm.clearPassword
       })
-      settings.marketTypes = [...nextSettings.marketTypes]
-      settings.quoteAssets = [...nextSettings.quoteAssets]
+      applyMarketSettings(nextSettings)
       await loadSymbols()
     } finally {
       settingsSaving.value = false
+    }
+  }
+
+  const checkProxy = async () => {
+    proxyChecking.value = true
+    try {
+      const result = await fetchCheckMarketProxy()
+      settings.proxyLastCheckStatus = result.status
+      settings.proxyLastCheckedAt = result.checkedAt
+      settings.proxyLastLatencyMs = result.latencyMs
+      settings.proxyLastError = result.status === 'failed' ? result.message : ''
+      if (result.status === 'healthy') ElMessage.success(result.message)
+      else ElMessage.error(result.message)
+    } finally {
+      proxyChecking.value = false
     }
   }
 
@@ -424,7 +687,12 @@
   .section-title,
   .symbol-cell,
   .status-cell,
-  .sync-note {
+  .sync-note,
+  .proxy-actions,
+  .proxy-switch-row,
+  .route-track,
+  .route-summary,
+  .proxy-error {
     display: flex;
     align-items: center;
   }
@@ -571,6 +839,7 @@
 
   .sync-card,
   .scope-card,
+  .proxy-card,
   .catalog-card {
     min-width: 0;
     padding: 18px;
@@ -598,6 +867,11 @@
   .section-icon.is-catalog {
     color: var(--el-color-success);
     background: color-mix(in srgb, var(--el-color-success) 10%, transparent);
+  }
+
+  .section-icon.is-proxy {
+    color: var(--el-color-primary);
+    background: var(--el-color-primary-light-9);
   }
 
   .section-title h2 {
@@ -702,6 +976,234 @@
 
   .scope-fields :deep(.el-checkbox) {
     margin-right: 0;
+  }
+
+  .endpoint-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    padding-top: 16px;
+    margin-top: 16px;
+    border-top: 1px solid var(--art-card-border);
+  }
+
+  .endpoint-fields label,
+  .endpoint-fields small {
+    display: block;
+  }
+
+  .endpoint-fields label {
+    margin-bottom: 8px;
+    font-size: 11px;
+    color: var(--art-gray-600);
+  }
+
+  .endpoint-fields small {
+    margin-top: 6px;
+    font-size: 10px;
+    color: var(--art-gray-600);
+  }
+
+  .endpoint-fields :deep(.el-input__inner) {
+    font-family: 'Cascadia Code', Consolas, monospace;
+    font-size: 11px;
+  }
+
+  .proxy-head {
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--art-card-border);
+  }
+
+  .proxy-actions {
+    gap: 10px;
+  }
+
+  .proxy-content {
+    display: grid;
+    grid-template-columns: minmax(340px, 0.9fr) minmax(460px, 1.1fr);
+    min-width: 0;
+    padding-top: 18px;
+  }
+
+  .proxy-route {
+    min-width: 0;
+    padding: 8px 24px 0 4px;
+  }
+
+  .route-track {
+    justify-content: center;
+  }
+
+  .route-track > i {
+    flex: 1 1 36px;
+    max-width: 72px;
+    height: 1px;
+    margin: 0 8px 20px;
+    background: var(--art-card-border);
+  }
+
+  .route-node {
+    display: grid;
+    flex: 0 0 76px;
+    gap: 7px;
+    place-items: center;
+    min-width: 0;
+    color: var(--art-gray-700);
+  }
+
+  .route-node > span {
+    display: grid;
+    place-items: center;
+    width: 42px;
+    height: 42px;
+    font-size: 19px;
+    color: var(--theme-color);
+    background: var(--el-color-primary-light-9);
+    border: 1px solid color-mix(in srgb, var(--theme-color) 22%, var(--art-card-border));
+    border-radius: 8px;
+  }
+
+  .route-node strong {
+    overflow: hidden;
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .route-node.is-gateway > span {
+    color: var(--el-color-warning);
+    background: color-mix(in srgb, var(--el-color-warning) 10%, var(--default-box-color));
+    border-color: color-mix(in srgb, var(--el-color-warning) 28%, var(--art-card-border));
+  }
+
+  .route-node.is-gateway.is-disabled > span {
+    color: var(--art-gray-500);
+    background: var(--el-fill-color-lighter);
+    border-color: var(--art-card-border);
+  }
+
+  .proxy-route.is-healthy .route-node.is-gateway > span {
+    color: var(--el-color-success);
+    background: color-mix(in srgb, var(--el-color-success) 10%, var(--default-box-color));
+    border-color: color-mix(in srgb, var(--el-color-success) 28%, var(--art-card-border));
+  }
+
+  .proxy-route.is-failed .route-node.is-gateway > span {
+    color: var(--el-color-danger);
+    background: color-mix(in srgb, var(--el-color-danger) 9%, var(--default-box-color));
+    border-color: color-mix(in srgb, var(--el-color-danger) 28%, var(--art-card-border));
+  }
+
+  .route-summary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin-top: 22px;
+    border-top: 1px solid var(--art-card-border);
+  }
+
+  .route-summary > div {
+    min-width: 0;
+    padding: 13px 12px 0;
+    border-left: 1px solid var(--art-card-border);
+  }
+
+  .route-summary > div:first-child {
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .route-summary span,
+  .route-summary strong {
+    display: block;
+  }
+
+  .route-summary span {
+    font-size: 10px;
+    color: var(--art-gray-600);
+  }
+
+  .route-summary strong {
+    margin-top: 5px;
+    overflow: hidden;
+    font-family: 'Cascadia Code', Consolas, monospace;
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .proxy-error {
+    gap: 6px;
+    margin: 12px 0 0;
+    font-size: 10px;
+    color: var(--el-color-danger);
+  }
+
+  .proxy-settings {
+    min-width: 0;
+    padding-left: 24px;
+    border-left: 1px solid var(--art-card-border);
+  }
+
+  .proxy-switch-row {
+    justify-content: space-between;
+    min-height: 34px;
+  }
+
+  .proxy-switch-row strong,
+  .proxy-switch-row span {
+    display: block;
+  }
+
+  .proxy-switch-row strong {
+    font-size: 12px;
+  }
+
+  .proxy-switch-row span {
+    margin-top: 3px;
+    font-size: 10px;
+    color: var(--art-gray-600);
+  }
+
+  .proxy-form-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+    padding-top: 14px;
+    margin-top: 12px;
+    border-top: 1px solid var(--art-card-border);
+  }
+
+  .proxy-form-grid > div,
+  .proxy-form-grid :deep(.el-select),
+  .proxy-form-grid :deep(.el-input-number) {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .proxy-form-grid label {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 18px;
+    margin-bottom: 7px;
+    font-size: 10px;
+    color: var(--art-gray-600);
+  }
+
+  .proxy-form-grid label :deep(.el-checkbox) {
+    height: 18px;
+    margin-right: 0;
+    font-size: 10px;
+  }
+
+  .proxy-host-field {
+    grid-column: span 2;
+  }
+
+  .proxy-form-grid :deep(.el-input__inner) {
+    font-family: 'Cascadia Code', Consolas, monospace;
+    font-size: 11px;
   }
 
   .catalog-head {
@@ -818,6 +1320,20 @@
     .sync-grid {
       grid-template-columns: 1fr;
     }
+
+    .proxy-content {
+      grid-template-columns: 1fr;
+    }
+
+    .proxy-route {
+      padding: 4px 0 20px;
+    }
+
+    .proxy-settings {
+      padding: 20px 0 0;
+      border-top: 1px solid var(--art-card-border);
+      border-left: 0;
+    }
   }
 
   @media (max-width: 760px) {
@@ -826,7 +1342,9 @@
     }
 
     .page-head,
-    .head-actions {
+    .head-actions,
+    .proxy-head,
+    .proxy-actions {
       flex-direction: column;
       align-items: stretch;
     }
@@ -836,8 +1354,22 @@
       margin: 0;
     }
 
+    .proxy-actions .el-button {
+      width: 100%;
+      margin: 0;
+    }
+
+    .proxy-form-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .proxy-host-field {
+      grid-column: span 1;
+    }
+
     .sync-timeline,
-    .scope-fields {
+    .scope-fields,
+    .endpoint-fields {
       grid-template-columns: 1fr;
     }
 
@@ -876,6 +1408,25 @@
 
     .section-head {
       align-items: flex-start;
+    }
+
+    .proxy-head {
+      align-items: stretch;
+    }
+
+    .route-summary {
+      grid-template-columns: 1fr;
+    }
+
+    .route-summary > div,
+    .route-summary > div:first-child {
+      padding: 10px 0;
+      border-bottom: 1px solid var(--art-card-border);
+      border-left: 0;
+    }
+
+    .route-summary > div:last-child {
+      border-bottom: 0;
     }
   }
 </style>

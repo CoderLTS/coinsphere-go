@@ -77,7 +77,7 @@ flowchart LR
 
 工作流负责粗粒度编排：
 
-- `market.metadata.sync` 读取全局同步范围并实时同步元数据。
+- `market.metadata.sync` 读取全局同步范围、Binance REST 地址和可选出站代理并实时同步元数据；代理同时作用于公共 REST 与 WebSocket。
 - `market.candles.subscribe` 保存激活工作流的订阅意图。
 - `market.candles.backfill` 执行指定 UTC 窗口补数。
 - `strategy.evaluate` 以同步或异步方式创建幂等策略任务。
