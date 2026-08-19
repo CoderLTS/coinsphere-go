@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -154,24 +157,49 @@ func (a *App) ListMarketSymbols(ctx context.Context, query MarketSymbolQuery) (C
 }
 
 type MarketSyncSettingsPayload struct {
-	MarketTypes []string `json:"marketTypes"`
-	QuoteAssets []string `json:"quoteAssets"`
+	MarketTypes        []string `json:"marketTypes"`
+	QuoteAssets        []string `json:"quoteAssets"`
+	SpotRESTBaseURL    string   `json:"spotRestBaseUrl"`
+	USDMRESTBaseURL    string   `json:"usdmRestBaseUrl"`
+	ProxyEnabled       bool     `json:"proxyEnabled"`
+	ProxyURL           string   `json:"proxyUrl"`
+	ProxyUsername      string   `json:"proxyUsername"`
+	ProxyPassword      *string  `json:"proxyPassword"`
+	ClearProxyPassword bool     `json:"clearProxyPassword"`
 }
 
 type MarketSyncSettingsView struct {
-	Venue           string   `json:"venue"`
-	MarketTypes     []string `json:"marketTypes"`
-	QuoteAssets     []string `json:"quoteAssets"`
-	UpdatedByUserID *int64   `json:"updatedByUserId"`
-	CreatedAt       string   `json:"createdAt"`
-	UpdatedAt       string   `json:"updatedAt"`
+	Venue                   string   `json:"venue"`
+	MarketTypes             []string `json:"marketTypes"`
+	QuoteAssets             []string `json:"quoteAssets"`
+	SpotRESTBaseURL         string   `json:"spotRestBaseUrl"`
+	USDMRESTBaseURL         string   `json:"usdmRestBaseUrl"`
+	ProxyEnabled            bool     `json:"proxyEnabled"`
+	ProxyURL                string   `json:"proxyUrl"`
+	ProxyUsername           string   `json:"proxyUsername"`
+	ProxyPasswordConfigured bool     `json:"proxyPasswordConfigured"`
+	ProxyLastCheckStatus    string   `json:"proxyLastCheckStatus"`
+	ProxyLastCheckedAt      *string  `json:"proxyLastCheckedAt"`
+	ProxyLastLatencyMillis  *int     `json:"proxyLastLatencyMs"`
+	ProxyLastError          string   `json:"proxyLastError"`
+	UpdatedByUserID         *int64   `json:"updatedByUserId"`
+	CreatedAt               string   `json:"createdAt"`
+	UpdatedAt               string   `json:"updatedAt"`
+}
+
+type MarketProxyStatusView struct {
+	Mode          string `json:"mode"`
+	Status        string `json:"status"`
+	LatencyMillis *int   `json:"latencyMs"`
+	CheckedAt     string `json:"checkedAt"`
+	Message       string `json:"message"`
 }
 
 const marketMetadataWorkflowCode = "binance_market_metadata_sync"
 
 func (a *App) GetMarketSyncSettings(ctx context.Context) (MarketSyncSettingsView, error) {
-	var row db.MarketSyncSettings
-	if err := a.dbWithContext(ctx).First(&row, 1).Error; err != nil {
+	row, err := a.loadMarketSyncSettings(ctx)
+	if err != nil {
 		return MarketSyncSettingsView{}, err
 	}
 	return serializeMarketSyncSettings(row)
@@ -186,19 +214,101 @@ func (a *App) UpdateMarketSyncSettings(ctx context.Context, userID int64, payloa
 	if err != nil {
 		return MarketSyncSettingsView{}, err
 	}
+	spotRESTBaseURL, err := normalizeBinanceRESTBaseURL(payload.SpotRESTBaseURL, "spotRestBaseUrl")
+	if err != nil {
+		return MarketSyncSettingsView{}, err
+	}
+	usdmRESTBaseURL, err := normalizeBinanceRESTBaseURL(payload.USDMRESTBaseURL, "usdmRestBaseUrl")
+	if err != nil {
+		return MarketSyncSettingsView{}, err
+	}
+	proxyURL, err := normalizeMarketProxyURL(payload.ProxyURL, payload.ProxyEnabled)
+	if err != nil {
+		return MarketSyncSettingsView{}, err
+	}
+	proxyUsername := strings.TrimSpace(payload.ProxyUsername)
+	if len(proxyUsername) > 255 {
+		return MarketSyncSettingsView{}, invalidMarket("proxyUsername is too long")
+	}
+	if payload.ProxyPassword != nil && len(*payload.ProxyPassword) > 4096 {
+		return MarketSyncSettingsView{}, invalidMarket("proxyPassword is too long")
+	}
+	if payload.ProxyPassword != nil && payload.ClearProxyPassword {
+		return MarketSyncSettingsView{}, invalidMarket("proxyPassword and clearProxyPassword cannot be used together")
+	}
 	marketsJSON, _ := json.Marshal(marketTypes)
 	quotesJSON, _ := json.Marshal(quoteAssets)
-	result := a.dbWithContext(ctx).Model(&db.MarketSyncSettings{}).Where("id = 1").Updates(map[string]any{
+	fields := map[string]any{
 		"market_types": string(marketsJSON), "quote_assets": string(quotesJSON),
+		"spot_rest_base_url": spotRESTBaseURL, "usdm_rest_base_url": usdmRESTBaseURL,
+		"proxy_enabled": payload.ProxyEnabled, "proxy_url": proxyURL, "proxy_username": proxyUsername,
+		"proxy_last_check_status": "unchecked", "proxy_last_checked_at": nil,
+		"proxy_last_latency_ms": nil, "proxy_last_error": "",
 		"updated_by_user_id": userID, "updated_at": time.Now().UTC(),
-	})
+	}
+	if payload.ProxyPassword != nil {
+		fields["proxy_password_ciphertext"] = a.Cipher.Encrypt(*payload.ProxyPassword)
+	} else if payload.ClearProxyPassword {
+		fields["proxy_password_ciphertext"] = ""
+	}
+	result := a.dbWithContext(ctx).Model(&db.MarketSyncSettings{}).Where("id = 1").Updates(fields)
 	if result.Error != nil {
 		return MarketSyncSettingsView{}, result.Error
 	}
 	if result.RowsAffected != 1 {
 		return MarketSyncSettingsView{}, ErrMarketResourceMissing
 	}
+	if err := a.applyMarketDataAccess(ctx, true); err != nil {
+		return MarketSyncSettingsView{}, err
+	}
 	return a.GetMarketSyncSettings(ctx)
+}
+
+func (a *App) loadMarketSyncSettings(ctx context.Context) (db.MarketSyncSettings, error) {
+	var row db.MarketSyncSettings
+	if err := a.dbWithContext(ctx).First(&row, 1).Error; err != nil {
+		return db.MarketSyncSettings{}, err
+	}
+	return row, nil
+}
+
+func normalizeBinanceRESTBaseURL(value, field string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Scheme != "https" || parsed.Opaque != "" || parsed.User != nil || parsed.Port() != "" ||
+		parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Path != "" && parsed.Path != "/" {
+		return "", invalidMarket(field + " must be an official Binance HTTPS origin")
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host != "binance.com" && !strings.HasSuffix(host, ".binance.com") &&
+		host != "binance.vision" && !strings.HasSuffix(host, ".binance.vision") {
+		return "", invalidMarket(field + " must be an official Binance HTTPS origin")
+	}
+	return "https://" + host, nil
+}
+
+func normalizeMarketProxyURL(value string, enabled bool) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		if enabled {
+			return "", invalidMarket("proxyUrl is required when proxy is enabled")
+		}
+		return "", nil
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed == nil {
+		return "", invalidMarket("proxyUrl must be an HTTP or SOCKS5 origin")
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if parsed.Opaque != "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
+		parsed.Path != "" && parsed.Path != "/" || scheme != "http" && scheme != "socks5" {
+		return "", invalidMarket("proxyUrl must be an HTTP or SOCKS5 origin")
+	}
+	host, portText := strings.ToLower(parsed.Hostname()), parsed.Port()
+	port, portErr := strconv.Atoi(portText)
+	if host == "" || strings.ContainsAny(host, " \t\r\n") || portErr != nil || port < 1 || port > 65535 {
+		return "", invalidMarket("proxyUrl must include a valid host and port")
+	}
+	return scheme + "://" + net.JoinHostPort(host, portText), nil
 }
 
 func normalizeOptions(values []string, allowed map[string]bool, field string) ([]string, error) {
@@ -222,8 +332,16 @@ func normalizeOptions(values []string, allowed map[string]bool, field string) ([
 
 func serializeMarketSyncSettings(row db.MarketSyncSettings) (MarketSyncSettingsView, error) {
 	view := MarketSyncSettingsView{
-		Venue: row.Venue, UpdatedByUserID: row.UpdatedByUserID,
-		CreatedAt: formatUTC(row.CreatedAt), UpdatedAt: formatUTC(row.UpdatedAt),
+		Venue: row.Venue, SpotRESTBaseURL: row.SpotRESTBaseURL, USDMRESTBaseURL: row.USDMRESTBaseURL,
+		ProxyEnabled: row.ProxyEnabled, ProxyURL: row.ProxyURL, ProxyUsername: row.ProxyUsername,
+		ProxyPasswordConfigured: row.ProxyPasswordCiphertext != "", ProxyLastCheckStatus: row.ProxyLastCheckStatus,
+		ProxyLastLatencyMillis: row.ProxyLastLatencyMillis, ProxyLastError: row.ProxyLastError,
+		UpdatedByUserID: row.UpdatedByUserID,
+		CreatedAt:       formatUTC(row.CreatedAt), UpdatedAt: formatUTC(row.UpdatedAt),
+	}
+	if row.ProxyLastCheckedAt != nil {
+		value := formatUTC(*row.ProxyLastCheckedAt)
+		view.ProxyLastCheckedAt = &value
 	}
 	if err := json.Unmarshal([]byte(row.MarketTypesJSON), &view.MarketTypes); err != nil {
 		return MarketSyncSettingsView{}, err
@@ -232,6 +350,97 @@ func serializeMarketSyncSettings(row db.MarketSyncSettings) (MarketSyncSettingsV
 		return MarketSyncSettingsView{}, err
 	}
 	return view, nil
+}
+
+func (a *App) marketSyncRuntimeSettings(ctx context.Context) (MarketSyncSettingsView, string, error) {
+	row, err := a.loadMarketSyncSettings(ctx)
+	if err != nil {
+		return MarketSyncSettingsView{}, "", err
+	}
+	view, err := serializeMarketSyncSettings(row)
+	if err != nil || !row.ProxyEnabled {
+		return view, "", err
+	}
+	parsed, err := url.Parse(row.ProxyURL)
+	if err != nil {
+		return MarketSyncSettingsView{}, "", err
+	}
+	password := ""
+	if row.ProxyPasswordCiphertext != "" {
+		password, err = a.Cipher.Decrypt(row.ProxyPasswordCiphertext)
+		if err != nil {
+			return MarketSyncSettingsView{}, "", err
+		}
+	}
+	if row.ProxyUsername != "" || password != "" {
+		parsed.User = url.UserPassword(row.ProxyUsername, password)
+	}
+	return view, parsed.String(), nil
+}
+
+// InitializeMarketDataAccess 在行情运行时启动前装载已持久化的网络配置。
+func (a *App) InitializeMarketDataAccess(ctx context.Context) error {
+	return a.applyMarketDataAccess(ctx, false)
+}
+
+func (a *App) applyMarketDataAccess(ctx context.Context, restartSubscriptions bool) error {
+	if a.MarketData == nil {
+		return nil
+	}
+	settings, proxyURL, err := a.marketSyncRuntimeSettings(ctx)
+	if err != nil {
+		return err
+	}
+	return a.MarketData.ConfigurePublicAccess(map[marketdata.MarketType]string{
+		marketdata.MarketTypeSpot: settings.SpotRESTBaseURL,
+		marketdata.MarketTypeUSDM: settings.USDMRESTBaseURL,
+	}, proxyURL, restartSubscriptions)
+}
+
+func (a *App) CheckMarketProxy(ctx context.Context) (MarketProxyStatusView, error) {
+	settings, proxyURL, err := a.marketSyncRuntimeSettings(ctx)
+	if err != nil {
+		return MarketProxyStatusView{}, err
+	}
+	mode := "direct"
+	if settings.ProxyEnabled {
+		mode = "proxy"
+	}
+	checkedAt := time.Now().UTC()
+	status := "healthy"
+	message := "Binance Spot 连接正常"
+	var latencyMillis *int
+	if a.MarketData == nil {
+		status, message = "failed", "行情运行时未启用"
+	} else {
+		latency, checkErr := a.MarketData.CheckConnectivity(ctx, map[marketdata.MarketType]string{
+			marketdata.MarketTypeSpot: settings.SpotRESTBaseURL,
+			marketdata.MarketTypeUSDM: settings.USDMRESTBaseURL,
+		}, proxyURL, marketdata.MarketTypeSpot)
+		if checkErr != nil {
+			status, message = "failed", "无法访问 Binance Spot，请检查代理地址与网络"
+		} else {
+			value := int(latency.Milliseconds())
+			latencyMillis = &value
+		}
+	}
+	fields := map[string]any{
+		"proxy_last_check_status": status, "proxy_last_checked_at": checkedAt,
+		"proxy_last_latency_ms": nil, "proxy_last_error": "",
+	}
+	if latencyMillis != nil {
+		fields["proxy_last_latency_ms"] = *latencyMillis
+	}
+	if status == "failed" {
+		fields["proxy_last_error"] = message
+	}
+	if err := a.dbWithContext(ctx).Model(&db.MarketSyncSettings{}).Where("id = 1").Updates(fields).Error; err != nil {
+		return MarketProxyStatusView{}, err
+	}
+	return MarketProxyStatusView{
+		Mode: mode, Status: status, LatencyMillis: latencyMillis,
+		CheckedAt: formatUTC(checkedAt), Message: message,
+	}, nil
 }
 
 func (a *App) GetMarketSyncStatus(ctx context.Context) (M, error) {

@@ -16,7 +16,7 @@ import (
 )
 
 const postgresDSNEnv = "COINSPHERE_TEST_POSTGRES_DSN"
-const latestMigrationVersion = 1
+const latestMigrationVersion = 2
 
 var postgresSchemaSequence atomic.Uint64
 
@@ -34,7 +34,7 @@ func TestInitialMigrationLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply initial migration: %v", err)
 	}
-	if len(results) != 1 || results[0].Version != latestMigrationVersion || results[0].Direction != "up" {
+	if len(results) != latestMigrationVersion || results[len(results)-1].Version != latestMigrationVersion || results[len(results)-1].Direction != "up" {
 		t.Fatalf("migration results = %#v", results)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err != nil {
@@ -47,11 +47,11 @@ func TestInitialMigrationLifecycle(t *testing.T) {
 	if err != nil || len(results) != 0 {
 		t.Fatalf("repeat migration results=%#v err=%v", results, err)
 	}
-	results, err = runner.Down(context.Background(), 1)
+	results, err = runner.Down(context.Background(), latestMigrationVersion)
 	if err != nil {
 		t.Fatalf("roll back empty schema: %v", err)
 	}
-	if len(results) != 1 || results[0].Version != latestMigrationVersion || results[0].Direction != "down" {
+	if len(results) != latestMigrationVersion || results[0].Version != latestMigrationVersion || results[0].Direction != "down" {
 		t.Fatalf("rollback results = %#v", results)
 	}
 	if _, err := runner.Up(context.Background(), 0); err != nil {
@@ -68,14 +68,38 @@ func TestInitialMigrationDownRejectsData(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply initial migration: %v", err)
 	}
+	if _, err := runner.Down(context.Background(), 1); err != nil {
+		t.Fatalf("roll back endpoint migration: %v", err)
+	}
 	if _, err := database.Exec(`INSERT INTO roles (code) VALUES ('rollback-guard')`); err != nil {
 		t.Fatalf("insert rollback guard: %v", err)
 	}
 	if _, err := runner.Down(context.Background(), 1); err == nil {
 		t.Fatal("rollback removed a non-empty schema")
 	}
+	current, _, err := runner.Versions(context.Background())
+	if err != nil || current != 1 {
+		t.Fatalf("failed rollback changed migration version: current=%d err=%v", current, err)
+	}
+}
+
+func TestEndpointMigrationDownRejectsChangedSettings(t *testing.T) {
+	database := openPostgresSchema(t)
+	runner, err := New(database)
+	if err != nil {
+		t.Fatalf("create migration runner: %v", err)
+	}
+	if _, err := runner.Up(context.Background(), 0); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+	if _, err := database.Exec(`UPDATE market_sync_settings SET quote_assets = '["USDT"]'::jsonb WHERE id = 1`); err != nil {
+		t.Fatalf("change sync setting: %v", err)
+	}
+	if _, err := runner.Down(context.Background(), 1); err == nil {
+		t.Fatal("endpoint migration rollback removed changed settings")
+	}
 	if err := runner.ValidateCurrent(context.Background()); err != nil {
-		t.Fatalf("failed rollback changed migration state: %v", err)
+		t.Fatalf("failed endpoint rollback changed migration state: %v", err)
 	}
 }
 
@@ -92,6 +116,8 @@ func TestInitialMigrationCoreConstraints(t *testing.T) {
 	invalidStatements := []string{
 		`UPDATE market_sync_settings SET market_types = '[]'::jsonb WHERE id = 1`,
 		`UPDATE market_sync_settings SET quote_assets = '["BTC"]'::jsonb WHERE id = 1`,
+		`UPDATE market_sync_settings SET spot_rest_base_url = 'http://127.0.0.1' WHERE id = 1`,
+		`UPDATE market_sync_settings SET proxy_enabled = TRUE, proxy_url = 'https://proxy.invalid:7890' WHERE id = 1`,
 		`INSERT INTO worker_tasks (id, task_type, payload_json, status) VALUES ('invalid-status', 'noop', '{}', 'unknown')`,
 		`INSERT INTO trading_controls (id, global_kill_switch) VALUES (2, FALSE)`,
 	}
@@ -117,7 +143,7 @@ func TestValidateCurrentRejectsDatabaseAhead(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply initial migration: %v", err)
 	}
-	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES (2, TRUE)`); err != nil {
+	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES (3, TRUE)`); err != nil {
 		t.Fatalf("record newer migration: %v", err)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err == nil {

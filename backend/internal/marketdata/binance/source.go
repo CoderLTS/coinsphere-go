@@ -10,6 +10,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"coinsphere/backend/internal/marketdata"
@@ -17,9 +18,9 @@ import (
 )
 
 const (
-	defaultSpotRESTURL      = "https://api.binance.com"
+	defaultSpotRESTURL      = "https://data-api.binance.vision"
 	defaultUSDMRESTURL      = "https://fapi.binance.com"
-	defaultSpotWebSocketURL = "wss://stream.binance.com:9443/ws"
+	defaultSpotWebSocketURL = "wss://data-stream.binance.vision/ws"
 	defaultUSDMWebSocketURL = "wss://fstream.binance.com/ws"
 
 	defaultReconnectBackoff    = 250 * time.Millisecond
@@ -54,6 +55,7 @@ type Config = SourceConfig
 
 // Source implements marketdata.MarketSource with Binance public endpoints.
 type Source struct {
+	configMu         sync.RWMutex
 	rest             map[marketdata.MarketType]url.URL
 	websocket        map[marketdata.MarketType]url.URL
 	httpClient       *http.Client
@@ -106,12 +108,15 @@ func NewSource(config SourceConfig) (*Source, error) {
 
 	httpClient := config.HTTPClient
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: defaultHTTPTimeout}
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = nil
+		httpClient = &http.Client{Transport: transport, Timeout: defaultHTTPTimeout}
 	}
 	dialer := config.WebSocketDialer
 	if dialer == nil {
 		copy := *websocket.DefaultDialer
 		copy.HandshakeTimeout = 15 * time.Second
+		copy.Proxy = nil
 		dialer = &copy
 	}
 
@@ -130,6 +135,52 @@ func NewSource(config SourceConfig) (*Source, error) {
 // multiple exchange clients in scope.
 func NewPublicSource(config SourceConfig) (*Source, error) {
 	return NewSource(config)
+}
+
+func (source *Source) ConfigurePublicAccess(values map[marketdata.MarketType]string, rawProxyURL string) error {
+	next := make(map[marketdata.MarketType]url.URL, 2)
+	for _, marketType := range []marketdata.MarketType{marketdata.MarketTypeSpot, marketdata.MarketTypeUSDM} {
+		parsed, err := sourceURL(values[marketType], []string{"https"})
+		if err != nil {
+			return err
+		}
+		next[marketType] = parsed
+	}
+	proxy, err := runtimeProxy(rawProxyURL)
+	if err != nil {
+		return err
+	}
+	source.configMu.Lock()
+	httpClient, err := httpClientWithProxy(source.httpClient, proxy)
+	if err != nil {
+		source.configMu.Unlock()
+		return err
+	}
+	dialer := *source.dialer
+	dialer.Proxy = proxy
+	source.rest = next
+	source.httpClient = httpClient
+	source.dialer = &dialer
+	source.configMu.Unlock()
+	return nil
+}
+
+func (source *Source) CheckConnectivity(ctx context.Context, marketType marketdata.MarketType) error {
+	if err := source.validateContext(ctx); err != nil {
+		return err
+	}
+	if err := validateMarketType(marketType); err != nil {
+		return err
+	}
+	body, err := source.get(ctx, marketType, "/ping")
+	if err != nil {
+		return err
+	}
+	var response struct{}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return protocolError("invalid Binance ping response")
+	}
+	return nil
 }
 
 func (config SourceConfig) restURL(marketType marketdata.MarketType) string {
@@ -284,7 +335,10 @@ func (source *Source) SubscribeTickers(ctx context.Context, instrument marketdat
 }
 
 func (source *Source) get(ctx context.Context, marketType marketdata.MarketType, resource string, query ...url.Values) ([]byte, error) {
+	source.configMu.RLock()
 	base, ok := source.rest[marketType]
+	httpClient := source.httpClient
+	source.configMu.RUnlock()
 	if !ok {
 		return nil, invalidRequestError("invalid market type")
 	}
@@ -297,7 +351,7 @@ func (source *Source) get(ctx context.Context, marketType marketdata.MarketType,
 		return nil, invalidRequestError("invalid Binance endpoint")
 	}
 	request.Header.Set("Accept", "application/json")
-	response, err := source.httpClient.Do(request)
+	response, err := httpClient.Do(request)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, contextError(ctx)
@@ -364,12 +418,15 @@ func (source *Source) subscribe(ctx context.Context, marketType marketdata.Marke
 }
 
 func (source *Source) consumeWebSocket(ctx context.Context, marketType marketdata.MarketType, stream string, handle func([]byte) error) error {
+	source.configMu.RLock()
 	base, ok := source.websocket[marketType]
+	dialer := source.dialer
+	source.configMu.RUnlock()
 	if !ok {
 		return invalidRequestError("invalid market type")
 	}
 	endpoint := websocketEndpoint(base, stream)
-	connection, _, err := source.dialer.DialContext(ctx, endpoint, nil)
+	connection, _, err := dialer.DialContext(ctx, endpoint, nil)
 	if err != nil {
 		if ctx.Err() != nil {
 			return contextError(ctx)
@@ -464,6 +521,40 @@ func sourceURL(raw string, schemes []string) (url.URL, error) {
 		}
 	}
 	return url.URL{}, errors.New("invalid Binance endpoint URL scheme")
+}
+
+func runtimeProxy(raw string) (func(*http.Request) (*url.URL, error), error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Hostname() == "" || parsed.Port() == "" || parsed.RawQuery != "" || parsed.Fragment != "" ||
+		parsed.Path != "" && parsed.Path != "/" || parsed.Scheme != "http" && parsed.Scheme != "socks5" {
+		return nil, errors.New("invalid market proxy URL")
+	}
+	return http.ProxyURL(parsed), nil
+}
+
+func httpClientWithProxy(current *http.Client, proxy func(*http.Request) (*url.URL, error)) (*http.Client, error) {
+	next := *current
+	if next.Transport == nil {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = proxy
+		next.Transport = transport
+		return &next, nil
+	}
+	transport, ok := next.Transport.(*http.Transport)
+	if !ok {
+		if proxy != nil {
+			return nil, errors.New("market HTTP transport does not support runtime proxy configuration")
+		}
+		return &next, nil
+	}
+	clone := transport.Clone()
+	clone.Proxy = proxy
+	next.Transport = clone
+	return &next, nil
 }
 
 func restPath(marketType marketdata.MarketType, resource string) string {

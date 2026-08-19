@@ -46,6 +46,10 @@ WebSocket 使用 `GET /api/v1/ws/notifications`，通过固定子协议携带 Ac
 
 V1 只接受 Binance 的 `spot` 和 `usd_m` 市场，以及交易所原生 `1m`、`5m`、`15m`、`1h`、`4h`、`1d` 周期。品种至少包含交易所、市场、原生代码、基础/计价资产、状态、价格最小变动、数量步长、最小数量、最小名义金额和 UTC 更新时间。
 
+`GET/PUT /api/v1/markets/metadata-sync/settings` 返回或更新同步范围、Binance REST 地址及公共行情出站代理。Binance 地址必须是官方 `https://*.binance.com` 或 `https://*.binance.vision` 根地址；代理支持带显式端口的 `http://` 与 `socks5://`，认证密码仅接收不回传并以密文保存。配置从下一次同步、连通性检测或连接重建开始同时作用于 REST 与 WebSocket。Spot 默认使用 market-data-only 的 `https://data-api.binance.vision`，未被用户修改的初始化范围默认只启用 Spot；USD-M 由用户确认当前部署出口可访问后再启用。
+
+`POST /api/v1/markets/metadata-sync/proxy-check` 使用已保存的网络配置检测 Binance Spot `/api/v3/ping`，返回 `direct|proxy` 模式、`healthy|failed` 状态、延迟和 UTC 检测时间；失败响应不包含代理凭据或上游原始载荷。
+
 K 线至少包含 `instrumentId`、`interval`、`openTime`、`closeTime`、`open`、`high`、`low`、`close`、`baseVolume` 和 `isClosed`。时间必须按周期对齐，OHLC 范围合法且成交量非负；重复键为 `instrumentId + interval + openTime`。
 
 - 只有 Binance Kline 的 `k.x=true` 才能把 K 线视为闭合；未闭合记录可幂等更新，闭合后普通写入不得覆盖。

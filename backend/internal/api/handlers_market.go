@@ -48,6 +48,11 @@ func (s *Server) handleRunMarketSync(w http.ResponseWriter, r *http.Request, pri
 	writeJSON(w, http.StatusAccepted, M{"code": 200, "msg": "同步工作流已加入执行队列", "data": data})
 }
 
+func (s *Server) handleCheckMarketProxy(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
+	data, err := s.App.CheckMarketProxy(r.Context())
+	writeMarketResult(w, r, data, err)
+}
+
 func (s *Server) handleListMarketCandles(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
 	page, valid := cursorPage(w, r)
 	if !valid {

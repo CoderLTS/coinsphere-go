@@ -132,8 +132,11 @@ type InstrumentSyncResult struct {
 }
 
 // SyncInstruments 按显式范围同步元数据；启动行情运行时不会调用它。
-func (manager *Manager) SyncInstruments(ctx context.Context, marketTypes []MarketType, quoteAssets []string) (InstrumentSyncResult, error) {
+func (manager *Manager) SyncInstruments(ctx context.Context, marketTypes []MarketType, quoteAssets []string, restBaseURLs map[MarketType]string, proxyURL string) (InstrumentSyncResult, error) {
 	result := InstrumentSyncResult{ByMarket: map[string]int{}}
+	if err := manager.source.ConfigurePublicAccess(restBaseURLs, proxyURL); err != nil {
+		return result, err
+	}
 	quotes := make(map[string]bool, len(quoteAssets))
 	for _, quote := range quoteAssets {
 		quotes[quote] = true
@@ -160,6 +163,29 @@ func (manager *Manager) SyncInstruments(ctx context.Context, marketTypes []Marke
 		}
 	}
 	return result, nil
+}
+
+func (manager *Manager) CheckConnectivity(ctx context.Context, restBaseURLs map[MarketType]string, proxyURL string, marketType MarketType) (time.Duration, error) {
+	if err := manager.source.ConfigurePublicAccess(restBaseURLs, proxyURL); err != nil {
+		return 0, err
+	}
+	startedAt := time.Now()
+	err := manager.source.CheckConnectivity(ctx, marketType)
+	return time.Since(startedAt), err
+}
+
+func (manager *Manager) ConfigurePublicAccess(restBaseURLs map[MarketType]string, proxyURL string, restartSubscriptions bool) error {
+	if err := manager.source.ConfigurePublicAccess(restBaseURLs, proxyURL); err != nil {
+		return err
+	}
+	if restartSubscriptions {
+		manager.mu.Lock()
+		for _, running := range manager.subscriptions {
+			running.cancel()
+		}
+		manager.mu.Unlock()
+	}
+	return nil
 }
 
 func (manager *Manager) reconcile(ctx context.Context) error {

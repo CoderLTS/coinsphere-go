@@ -25,6 +25,8 @@ func TestSourceRESTRoutingAndCursor(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		paths = append(paths, request.URL.Path)
 		switch request.URL.Path {
+		case "/api/v3/ping":
+			_, _ = response.Write([]byte(`{}`))
 		case "/api/v3/exchangeInfo":
 			if request.URL.Query().Get("showPermissionSets") != "false" {
 				t.Errorf("unexpected spot exchangeInfo query: %s", request.URL.RawQuery)
@@ -67,6 +69,9 @@ func TestSourceRESTRoutingAndCursor(t *testing.T) {
 	if _, err := source.SnapshotInstruments(context.Background(), marketdata.MarketTypeUSDM); err != nil {
 		t.Fatalf("USD-M snapshot: %v", err)
 	}
+	if err := source.CheckConnectivity(context.Background(), marketdata.MarketTypeSpot); err != nil {
+		t.Fatalf("spot connectivity: %v", err)
+	}
 
 	start := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
 	request := marketdata.CandlePageRequest{
@@ -92,8 +97,41 @@ func TestSourceRESTRoutingAndCursor(t *testing.T) {
 		t.Fatalf("second page = %#v", page)
 	}
 
-	if len(paths) != 4 || paths[0] != "/api/v3/exchangeInfo" || paths[1] != "/fapi/v1/exchangeInfo" || paths[2] != "/api/v3/klines" || paths[3] != "/api/v3/klines" {
+	if len(paths) != 5 || paths[0] != "/api/v3/exchangeInfo" || paths[1] != "/fapi/v1/exchangeInfo" || paths[2] != "/api/v3/ping" || paths[3] != "/api/v3/klines" || paths[4] != "/api/v3/klines" {
 		t.Fatalf("REST paths = %#v", paths)
+	}
+}
+
+func TestSourceConfiguresPublicAccessAtomically(t *testing.T) {
+	source, err := NewSource(SourceConfig{})
+	if err != nil {
+		t.Fatalf("new source: %v", err)
+	}
+	if err := source.ConfigurePublicAccess(map[marketdata.MarketType]string{
+		marketdata.MarketTypeSpot: "https://data-api.binance.vision",
+		marketdata.MarketTypeUSDM: "https://fapi.binance.com",
+	}, "http://proxy-user:proxy-pass@proxy.internal:7890"); err != nil {
+		t.Fatalf("configure REST base URLs: %v", err)
+	}
+	if source.rest[marketdata.MarketTypeSpot].Host != "data-api.binance.vision" || source.rest[marketdata.MarketTypeUSDM].Host != "fapi.binance.com" {
+		t.Fatalf("configured REST URLs = %#v", source.rest)
+	}
+	request := httptest.NewRequest(http.MethodGet, "https://data-api.binance.vision/api/v3/ping", nil)
+	httpProxy, err := source.httpClient.Transport.(*http.Transport).Proxy(request)
+	if err != nil || httpProxy.String() != "http://proxy-user:proxy-pass@proxy.internal:7890" {
+		t.Fatalf("configured HTTP proxy = %v, err=%v", httpProxy, err)
+	}
+	websocketProxy, err := source.dialer.Proxy(request)
+	if err != nil || websocketProxy.String() != httpProxy.String() {
+		t.Fatalf("configured WebSocket proxy = %v, err=%v", websocketProxy, err)
+	}
+	if err := source.ConfigurePublicAccess(map[marketdata.MarketType]string{
+		marketdata.MarketTypeSpot: "https://api.binance.com",
+	}, ""); err == nil {
+		t.Fatal("configure accepted a missing USD-M endpoint")
+	}
+	if source.rest[marketdata.MarketTypeSpot].Host != "data-api.binance.vision" {
+		t.Fatal("failed configuration partially changed REST URLs")
 	}
 }
 

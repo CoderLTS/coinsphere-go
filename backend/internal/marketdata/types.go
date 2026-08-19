@@ -120,6 +120,8 @@ type TickerHandler func(Ticker) error
 
 // MarketSource 抽取 Binance public 行情生命周期，不是动态插件扩展点。
 type MarketSource interface {
+	ConfigurePublicAccess(map[MarketType]string, string) error
+	CheckConnectivity(context.Context, MarketType) error
 	SnapshotInstruments(ctx context.Context, marketType MarketType) ([]InstrumentMetadata, error)
 	FetchCandlePage(ctx context.Context, request CandlePageRequest) (CandlePage, error)
 	SubscribeCandles(ctx context.Context, instrument Instrument, interval CandleInterval, handle CandleHandler) error

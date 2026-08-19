@@ -282,6 +282,11 @@ type fixtureSource struct {
 
 var _ marketdata.MarketSource = fixtureSource{}
 
+func (fixtureSource) ConfigurePublicAccess(map[marketdata.MarketType]string, string) error {
+	return nil
+}
+func (fixtureSource) CheckConnectivity(context.Context, marketdata.MarketType) error { return nil }
+
 func (source fixtureSource) SnapshotInstruments(ctx context.Context, marketType marketdata.MarketType) ([]marketdata.InstrumentMetadata, error) {
 	if err := context.Cause(ctx); err != nil {
 		return nil, err

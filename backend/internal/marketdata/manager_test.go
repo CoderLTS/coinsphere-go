@@ -12,9 +12,25 @@ import (
 )
 
 type fakeMarketSource struct {
+	configure func(map[marketdata.MarketType]string, string) error
+	check     func(context.Context, marketdata.MarketType) error
 	snapshot  func(context.Context, marketdata.MarketType) ([]marketdata.InstrumentMetadata, error)
 	fetch     func(context.Context, marketdata.CandlePageRequest) (marketdata.CandlePage, error)
 	subscribe func(context.Context, marketdata.Instrument, marketdata.CandleInterval, marketdata.CandleHandler) error
+}
+
+func (source fakeMarketSource) ConfigurePublicAccess(values map[marketdata.MarketType]string, proxyURL string) error {
+	if source.configure == nil {
+		return nil
+	}
+	return source.configure(values, proxyURL)
+}
+
+func (source fakeMarketSource) CheckConnectivity(ctx context.Context, marketType marketdata.MarketType) error {
+	if source.check == nil {
+		return nil
+	}
+	return source.check(ctx, marketType)
 }
 
 func (source fakeMarketSource) SnapshotInstruments(ctx context.Context, marketType marketdata.MarketType) ([]marketdata.InstrumentMetadata, error) {
@@ -110,7 +126,12 @@ func TestManagerSyncInstrumentsFiltersMarketAndQuoteAsset(t *testing.T) {
 	usdc := usdt
 	usdc.NativeSymbol, usdc.QuoteAsset = "BTCUSDC", "USDC"
 	var spotSnapshots, usdmSnapshots atomic.Int32
+	configuredSpotURL := ""
 	manager, err := marketdata.NewManager(database, fakeMarketSource{
+		configure: func(values map[marketdata.MarketType]string, _ string) error {
+			configuredSpotURL = values[marketdata.MarketTypeSpot]
+			return nil
+		},
 		snapshot: func(_ context.Context, marketType marketdata.MarketType) ([]marketdata.InstrumentMetadata, error) {
 			if marketType == marketdata.MarketTypeSpot {
 				spotSnapshots.Add(1)
@@ -127,11 +148,16 @@ func TestManagerSyncInstrumentsFiltersMarketAndQuoteAsset(t *testing.T) {
 		t.Context(),
 		[]marketdata.MarketType{marketdata.MarketTypeSpot, marketdata.MarketTypeSpot},
 		[]string{"USDC"},
+		map[marketdata.MarketType]string{
+			marketdata.MarketTypeSpot: "https://data-api.binance.vision",
+			marketdata.MarketTypeUSDM: "https://fapi.binance.com",
+		},
+		"",
 	)
 	if err != nil {
 		t.Fatalf("sync instruments: %v", err)
 	}
-	if result.SyncedCount != 1 || result.ByMarket["spot"] != 1 || spotSnapshots.Load() != 1 || usdmSnapshots.Load() != 0 {
+	if result.SyncedCount != 1 || result.ByMarket["spot"] != 1 || spotSnapshots.Load() != 1 || usdmSnapshots.Load() != 0 || configuredSpotURL != "https://data-api.binance.vision" {
 		t.Fatalf("sync result=%#v spot=%d usdm=%d", result, spotSnapshots.Load(), usdmSnapshots.Load())
 	}
 	var storedQuote string
@@ -210,6 +236,20 @@ VALUES ('019c2f6d-7c00-7000-8000-000000000020', $1, $2, '1m')
 	if subscribeCalls.Load() < 2 || callbacks.Load() != 1 {
 		cancel()
 		t.Fatalf("subscriptions=%d callbacks=%d", subscribeCalls.Load(), callbacks.Load())
+	}
+	if err := manager.ConfigurePublicAccess(map[marketdata.MarketType]string{
+		marketdata.MarketTypeSpot: "https://data-api.binance.vision",
+		marketdata.MarketTypeUSDM: "https://fapi.binance.com",
+	}, "http://proxy.internal:7890", true); err != nil {
+		cancel()
+		t.Fatalf("reload public access: %v", err)
+	}
+	for subscribeCalls.Load() < 3 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if subscribeCalls.Load() < 3 {
+		cancel()
+		t.Fatal("network configuration did not restart the candle subscription")
 	}
 	cancel()
 	if err := <-done; !errors.Is(err, context.Canceled) {

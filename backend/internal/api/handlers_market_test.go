@@ -19,6 +19,7 @@ func TestMarketRoutesRequireAuthentication(t *testing.T) {
 		{http.MethodGet, "/api/v1/markets/candles"},
 		{http.MethodGet, "/api/v1/watchlists"},
 		{http.MethodPost, "/api/v1/watchlists"},
+		{http.MethodPost, "/api/v1/markets/metadata-sync/proxy-check"},
 		{http.MethodDelete, "/api/v1/watchlists/019c2f6d-7c00-7000-8000-000000000001"},
 	} {
 		recorder := httptest.NewRecorder()

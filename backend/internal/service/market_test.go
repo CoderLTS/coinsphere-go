@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"coinsphere/backend/internal/db"
+	"coinsphere/backend/internal/marketdata"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -68,7 +69,50 @@ func TestMarketSyncSettingsAndManualTriggerBoundaries(t *testing.T) {
 			t.Fatalf("invalid market types %v returned %v", values, err)
 		}
 	}
+	for _, value := range []string{"", "http://api.binance.com", "https://example.com", "https://api.binance.com/path", "https://127.0.0.1"} {
+		if _, err := normalizeBinanceRESTBaseURL(value, "spotRestBaseUrl"); !errors.Is(err, ErrInvalidMarketRequest) {
+			t.Fatalf("invalid Binance REST base URL %q returned %v", value, err)
+		}
+	}
+	if got, err := normalizeBinanceRESTBaseURL("https://DATA-API.BINANCE.VISION/", "spotRestBaseUrl"); err != nil || got != "https://data-api.binance.vision" {
+		t.Fatalf("normalized Binance REST base URL = %q, err=%v", got, err)
+	}
+	for _, value := range []string{"https://proxy.internal:7890", "http://proxy.internal", "http://user:pass@proxy.internal:7890", "http://proxy.internal:7890/path"} {
+		if _, err := normalizeMarketProxyURL(value, true); !errors.Is(err, ErrInvalidMarketRequest) {
+			t.Fatalf("invalid market proxy URL %q returned %v", value, err)
+		}
+	}
+	for value, expected := range map[string]string{
+		"HTTP://PROXY.INTERNAL:7890/": "http://proxy.internal:7890",
+		"socks5://[::1]:1080":         "socks5://[::1]:1080",
+	} {
+		if got, err := normalizeMarketProxyURL(value, true); err != nil || got != expected {
+			t.Fatalf("normalized market proxy URL = %q, err=%v, want=%q", got, err, expected)
+		}
+	}
+	if got, err := normalizeMarketProxyURL("", false); err != nil || got != "" {
+		t.Fatalf("disabled empty market proxy URL = %q, err=%v", got, err)
+	}
 	if _, err := (&App{}).RunMarketMetadataSync(t.Context(), 1, ""); !errors.Is(err, ErrInvalidMarketRequest) {
 		t.Fatalf("missing idempotency key returned %v", err)
+	}
+}
+
+func TestMarketSourceFailureClassification(t *testing.T) {
+	for _, item := range []struct {
+		kind      marketdata.SourceErrorKind
+		category  string
+		retryable bool
+	}{
+		{marketdata.SourceErrorInvalidRequest, failureBusiness, false},
+		{marketdata.SourceErrorProtocol, failureBusiness, false},
+		{marketdata.SourceErrorRateLimited, failureInfraRetryable, true},
+		{marketdata.SourceErrorUnavailable, failureInfraRetryable, true},
+	} {
+		err := marketNodeSourceError(&marketdata.SourceError{Kind: item.kind})
+		category, retryable := classifyFailure(err, err.Error())
+		if category != item.category || retryable != item.retryable {
+			t.Fatalf("source error %s classified as %s/%t", item.kind, category, retryable)
+		}
 	}
 }

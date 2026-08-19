@@ -66,13 +66,23 @@ func (MarketCandle) TableName() string { return "market_candles" }
 
 // MarketSyncSettings 是 Binance 元数据同步的全局单例设置。
 type MarketSyncSettings struct {
-	ID              int16  `gorm:"primaryKey"`
-	Venue           string `gorm:"size:16"`
-	MarketTypesJSON string `gorm:"column:market_types;type:jsonb"`
-	QuoteAssetsJSON string `gorm:"column:quote_assets;type:jsonb"`
-	UpdatedByUserID *int64 `gorm:"column:updated_by_user_id"`
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID                      int16      `gorm:"primaryKey"`
+	Venue                   string     `gorm:"size:16"`
+	MarketTypesJSON         string     `gorm:"column:market_types;type:jsonb"`
+	QuoteAssetsJSON         string     `gorm:"column:quote_assets;type:jsonb"`
+	SpotRESTBaseURL         string     `gorm:"column:spot_rest_base_url;size:255"`
+	USDMRESTBaseURL         string     `gorm:"column:usdm_rest_base_url;size:255"`
+	ProxyEnabled            bool       `gorm:"column:proxy_enabled"`
+	ProxyURL                string     `gorm:"column:proxy_url;size:512"`
+	ProxyUsername           string     `gorm:"column:proxy_username;size:255"`
+	ProxyPasswordCiphertext string     `gorm:"column:proxy_password_ciphertext;type:text"`
+	ProxyLastCheckStatus    string     `gorm:"column:proxy_last_check_status;size:16"`
+	ProxyLastCheckedAt      *time.Time `gorm:"column:proxy_last_checked_at"`
+	ProxyLastLatencyMillis  *int       `gorm:"column:proxy_last_latency_ms"`
+	ProxyLastError          string     `gorm:"column:proxy_last_error;size:255"`
+	UpdatedByUserID         *int64     `gorm:"column:updated_by_user_id"`
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
 }
 
 func (MarketSyncSettings) TableName() string { return "market_sync_settings" }

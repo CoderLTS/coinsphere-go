@@ -39,7 +39,7 @@ func marketMetadataSyncExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 	if ctx.App.MarketData == nil {
 		return nil, permanentErr(errors.New("market data runtime is disabled"))
 	}
-	settings, err := ctx.App.GetMarketSyncSettings(ctx.Ctx)
+	settings, proxyURL, err := ctx.App.marketSyncRuntimeSettings(ctx.Ctx)
 	if err != nil {
 		return nil, retryableErr(err)
 	}
@@ -48,9 +48,12 @@ func marketMetadataSyncExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 		markets[i] = marketdata.MarketType(value)
 	}
 	startedAt := time.Now().UTC()
-	result, err := ctx.App.MarketData.SyncInstruments(ctx.Ctx, markets, settings.QuoteAssets)
+	result, err := ctx.App.MarketData.SyncInstruments(ctx.Ctx, markets, settings.QuoteAssets, map[marketdata.MarketType]string{
+		marketdata.MarketTypeSpot: settings.SpotRESTBaseURL,
+		marketdata.MarketTypeUSDM: settings.USDMRESTBaseURL,
+	}, proxyURL)
 	if err != nil {
-		return nil, retryableErr(err)
+		return nil, marketNodeSourceError(err)
 	}
 	output := M{
 		"marketTypes": settings.MarketTypes, "quoteAssets": settings.QuoteAssets,
@@ -105,11 +108,19 @@ func marketCandlesBackfillExecute(ctx *nodeExecContext) (*nodeExecResult, error)
 	}
 	written, err := ctx.App.MarketData.Backfill(ctx.Ctx, instrument, interval, *start, *end)
 	if err != nil {
-		return nil, retryableErr(err)
+		return nil, marketNodeSourceError(err)
 	}
 	output := M{"instrumentId": instrument.ID.String(), "interval": interval, "writtenCount": written}
 	setNodeOutput(ctx, output)
 	return &nodeExecResult{Output: output}, nil
+}
+
+func marketNodeSourceError(err error) error {
+	var sourceErr *marketdata.SourceError
+	if errors.As(err, &sourceErr) && !sourceErr.Retryable() {
+		return permanentErr(err)
+	}
+	return retryableErr(err)
 }
 
 func marketNodeInstrument(ctx *nodeExecContext, config M) (uuid.UUID, marketdata.CandleInterval, marketdata.Instrument, error) {

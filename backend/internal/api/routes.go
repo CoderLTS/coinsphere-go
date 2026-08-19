@@ -64,6 +64,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/markets/metadata-sync/settings", s.requirePermission(perm.DataMarketManage, s.handleUpdateMarketSyncSettings))
 	mux.HandleFunc("GET /api/v1/markets/metadata-sync/status", s.requirePermission(perm.DataMarketView, s.handleGetMarketSyncStatus))
 	mux.HandleFunc("POST /api/v1/markets/metadata-sync/executions", s.requirePermission(perm.DataMarketManage, s.handleRunMarketSync))
+	mux.HandleFunc("POST /api/v1/markets/metadata-sync/proxy-check", s.requirePermission(perm.DataMarketManage, s.handleCheckMarketProxy))
 	mux.HandleFunc("GET /api/v1/watchlists", s.requireAuth(s.handleListWatchlists))
 	mux.HandleFunc("POST /api/v1/watchlists", s.requireAuth(s.handleCreateWatchlist))
 	mux.HandleFunc("DELETE /api/v1/watchlists/{watchlistId}", s.requireAuth(s.handleDeleteWatchlist))

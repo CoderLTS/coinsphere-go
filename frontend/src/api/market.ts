@@ -38,9 +38,39 @@ export interface MarketSyncSettings {
   venue: 'binance'
   marketTypes: MarketType[]
   quoteAssets: QuoteAsset[]
+  spotRestBaseUrl: string
+  usdmRestBaseUrl: string
+  proxyEnabled: boolean
+  proxyUrl: string
+  proxyUsername: string
+  proxyPasswordConfigured: boolean
+  proxyLastCheckStatus: 'unchecked' | 'healthy' | 'failed'
+  proxyLastCheckedAt: string | null
+  proxyLastLatencyMs: number | null
+  proxyLastError: string
   updatedByUserId: number | null
   createdAt: string
   updatedAt: string
+}
+
+export interface MarketSyncSettingsUpdate {
+  marketTypes: MarketType[]
+  quoteAssets: QuoteAsset[]
+  spotRestBaseUrl: string
+  usdmRestBaseUrl: string
+  proxyEnabled: boolean
+  proxyUrl: string
+  proxyUsername: string
+  proxyPassword?: string
+  clearProxyPassword: boolean
+}
+
+export interface MarketProxyStatus {
+  mode: 'direct' | 'proxy'
+  status: 'healthy' | 'failed'
+  latencyMs: number | null
+  checkedAt: string
+  message: string
 }
 
 export interface MarketSyncStatus {
@@ -87,13 +117,17 @@ export function fetchMarketSyncSettings() {
   })
 }
 
-export function fetchUpdateMarketSyncSettings(
-  params: Pick<MarketSyncSettings, 'marketTypes' | 'quoteAssets'>
-) {
+export function fetchUpdateMarketSyncSettings(params: MarketSyncSettingsUpdate) {
   return request.put<MarketSyncSettings>({
     url: '/api/v1/markets/metadata-sync/settings',
     params,
     showSuccessMessage: true
+  })
+}
+
+export function fetchCheckMarketProxy() {
+  return request.post<MarketProxyStatus>({
+    url: '/api/v1/markets/metadata-sync/proxy-check'
   })
 }
 
