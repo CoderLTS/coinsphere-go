@@ -110,6 +110,7 @@ jobs:
           format: table
           severity: CRITICAL
           exit-code: "1"
+          timeout: 15m
 
       - name: Scan web release image
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
@@ -120,6 +121,7 @@ jobs:
           format: table
           severity: CRITICAL
           exit-code: "1"
+          timeout: 15m
 
       - name: Scan worker release image
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
@@ -130,6 +132,7 @@ jobs:
           format: table
           severity: CRITICAL
           exit-code: "1"
+          timeout: 15m
 
       - name: Generate final checksums
         if: inputs.deploy_only != true
