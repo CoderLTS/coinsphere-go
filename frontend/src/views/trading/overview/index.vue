@@ -2,18 +2,16 @@
   <div class="trading-page" v-loading="loading">
     <header class="page-toolbar">
       <div>
-        <span class="context-label">{{ t('trading.context') }}</span>
+        <span class="context-label">
+          <ArtSvgIcon icon="ri:exchange-funds-line" />
+          {{ t('trading.context') }}
+        </span>
         <h1>{{ t('trading.title') }}</h1>
+        <p>管理交易账户、风控授权、持仓订单与执行审计。</p>
       </div>
-      <ElTooltip :content="t('common.refresh')">
-        <ElButton
-          class="icon-button"
-          circle
-          :icon="Refresh"
-          :loading="loading"
-          @click="loadOverview"
-        />
-      </ElTooltip>
+      <ElButton type="primary" :icon="Refresh" :loading="loading" @click="loadOverview">
+        {{ t('common.refresh') }}
+      </ElButton>
     </header>
 
     <section
@@ -62,7 +60,44 @@
       </ElButton>
     </section>
 
-    <section v-if="overview.accounts.length === 0" class="empty-state">
+    <section class="overview-metrics" aria-label="交易运行摘要">
+      <article class="overview-metric art-card">
+        <span class="overview-metric__icon is-account"><ArtSvgIcon icon="ri:wallet-3-line" /></span>
+        <div>
+          <span>{{ t('trading.accounts.title') }}</span>
+          <strong>{{ overview.accounts.length }}</strong>
+          <small>{{ activeAccountCount }} 个启用</small>
+        </div>
+      </article>
+      <article class="overview-metric art-card">
+        <span class="overview-metric__icon is-position"><ArtSvgIcon icon="ri:funds-line" /></span>
+        <div>
+          <span>{{ t('trading.tabs.positions') }}</span>
+          <strong>{{ overview.positions.length + overview.testnetPositions.length }}</strong>
+          <small>全部账户持仓</small>
+        </div>
+      </article>
+      <article class="overview-metric art-card">
+        <span class="overview-metric__icon is-order"
+          ><ArtSvgIcon icon="ri:file-list-3-line"
+        /></span>
+        <div>
+          <span>{{ t('trading.tabs.orders') }}</span>
+          <strong>{{ overview.orders.length + overview.testnetOpenOrders.length }}</strong>
+          <small>订单与保护单</small>
+        </div>
+      </article>
+      <article class="overview-metric art-card">
+        <span class="overview-metric__icon is-intent"><ArtSvgIcon icon="ri:pulse-line" /></span>
+        <div>
+          <span>{{ t('trading.tabs.intents') }}</span>
+          <strong>{{ overview.intents.length }}</strong>
+          <small>{{ pendingIntentCount }} 个处理中</small>
+        </div>
+      </article>
+    </section>
+
+    <section v-if="overview.accounts.length === 0" class="empty-state art-card">
       <ElEmpty :description="t('trading.accounts.empty')">
         <ElButton type="primary" :icon="Plus" @click="openCreateDialog">
           {{ t('trading.accounts.create') }}
@@ -70,7 +105,7 @@
       </ElEmpty>
     </section>
 
-    <div v-else class="trading-workspace">
+    <div v-else class="trading-workspace art-card">
       <aside class="account-rail">
         <div class="account-rail-header">
           <div>
@@ -128,6 +163,10 @@
                 :type="selectedAccount.status === 'active' ? 'success' : 'warning'"
               >
                 {{ accountStatusLabel(selectedAccount.status) }}
+              </ElTag>
+              <ElTag size="small" type="info" effect="plain">
+                {{ marketLabel(selectedAccount.market) }} ·
+                {{ selectedAccount.environment.toUpperCase() }}
               </ElTag>
               <ElTag
                 v-if="!selectedAccount.risk.complete"
@@ -971,6 +1010,15 @@
   const selectedAccount = computed(
     () => overview.accounts.find((account) => account.id === selectedAccountId.value) || null
   )
+  const activeAccountCount = computed(
+    () => overview.accounts.filter((account) => account.status === 'active').length
+  )
+  const pendingIntentCount = computed(
+    () =>
+      overview.intents.filter((intent) =>
+        ['pending', 'processing', 'reconciling'].includes(intent.status)
+      ).length
+  )
   const selectedBalance = computed(
     () => overview.balances.find((balance) => balance.accountId === selectedAccountId.value) || null
   )
@@ -1619,20 +1667,23 @@
 
 <style scoped lang="scss">
   .trading-page {
-    --trading-ink: #19242d;
-    --trading-muted: #697681;
-    --trading-line: var(--el-border-color-light);
-    --trading-active: #25745a;
-    --trading-stop: #b83f45;
-    --trading-warning: #a76616;
-    --trading-focus: #3569a8;
+    --trading-ink: var(--art-gray-900);
+    --trading-muted: var(--art-gray-600);
+    --trading-line: var(--art-card-border);
+    --trading-active: var(--el-color-success);
+    --trading-stop: var(--el-color-danger);
+    --trading-warning: var(--el-color-warning);
+    --trading-focus: var(--theme-color);
 
     display: flex;
     flex-direction: column;
     gap: 16px;
     min-width: 0;
-    color: var(--el-text-color-primary);
+    min-height: 100%;
+    padding: 20px;
+    color: var(--art-gray-900);
     letter-spacing: 0;
+    background: var(--default-bg-color);
   }
 
   .page-toolbar,
@@ -1654,21 +1705,32 @@
 
   .page-toolbar {
     justify-content: space-between;
-    min-height: 52px;
+    min-height: 72px;
 
     h1 {
-      margin: 3px 0 0;
-      font-size: 22px;
+      margin: 6px 0 0;
+      font-size: 28px;
       font-weight: 650;
-      line-height: 1.2;
+      line-height: 1.3;
+    }
+
+    p {
+      margin: 4px 0 0;
+      color: var(--trading-muted);
     }
   }
 
   .context-label {
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    display: flex;
+    gap: 6px;
+    align-items: center;
     font-size: 11px;
-    font-weight: 700;
-    color: var(--trading-muted);
+    font-weight: 600;
+    color: var(--theme-color);
+
+    :deep(.art-svg-icon) {
+      font-size: 15px;
+    }
   }
 
   .icon-button {
@@ -1682,13 +1744,14 @@
     grid-template-columns: 38px minmax(180px, 1fr) auto auto;
     gap: 14px;
     min-height: 76px;
-    padding: 12px 16px;
-    border: 1px solid;
+    padding: 14px 18px;
+    background: var(--default-box-color);
+    border: 1px solid var(--trading-line);
+    border-left: 3px solid;
     border-radius: 6px;
 
     &.is-running {
-      background: color-mix(in srgb, var(--trading-active) 8%, var(--el-bg-color));
-      border-color: color-mix(in srgb, var(--trading-active) 38%, var(--trading-line));
+      border-left-color: var(--trading-active);
 
       .safety-symbol,
       .safety-copy strong {
@@ -1697,8 +1760,7 @@
     }
 
     &.is-stopped {
-      background: color-mix(in srgb, var(--trading-stop) 9%, var(--el-bg-color));
-      border-color: color-mix(in srgb, var(--trading-stop) 42%, var(--trading-line));
+      border-left-color: var(--trading-stop);
 
       .safety-symbol,
       .safety-copy strong {
@@ -1712,9 +1774,9 @@
     place-items: center;
     width: 38px;
     height: 38px;
-    background: var(--el-bg-color);
-    border: 1px solid currentcolor;
-    border-radius: 50%;
+    background: color-mix(in srgb, currentcolor 10%, transparent);
+    border: 0;
+    border-radius: 8px;
   }
 
   .safety-copy,
@@ -1754,9 +1816,81 @@
     }
   }
 
+  .overview-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 16px;
+  }
+
+  .overview-metric {
+    display: flex;
+    gap: 13px;
+    align-items: center;
+    min-width: 0;
+    min-height: 104px;
+    padding: 16px;
+    background: var(--default-box-color);
+  }
+
+  .overview-metric__icon {
+    display: grid;
+    flex: 0 0 auto;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    font-size: 20px;
+    color: var(--theme-color);
+    background: var(--el-color-primary-light-9);
+    border-radius: 8px;
+  }
+
+  .overview-metric__icon.is-position {
+    color: var(--el-color-success);
+    background: color-mix(in srgb, var(--el-color-success) 10%, transparent);
+  }
+
+  .overview-metric__icon.is-order {
+    color: var(--el-color-warning);
+    background: color-mix(in srgb, var(--el-color-warning) 11%, transparent);
+  }
+
+  .overview-metric__icon.is-intent {
+    color: var(--el-color-danger);
+    background: color-mix(in srgb, var(--el-color-danger) 10%, transparent);
+  }
+
+  .overview-metric > div {
+    min-width: 0;
+  }
+
+  .overview-metric span,
+  .overview-metric strong,
+  .overview-metric small {
+    display: block;
+  }
+
+  .overview-metric span,
+  .overview-metric small {
+    color: var(--trading-muted);
+  }
+
+  .overview-metric span {
+    font-size: 11px;
+  }
+
+  .overview-metric strong {
+    margin-top: 4px;
+    font-size: 20px;
+  }
+
+  .overview-metric small {
+    margin-top: 3px;
+    font-size: 10px;
+  }
+
   .empty-state,
   .trading-workspace {
-    background: var(--el-bg-color);
+    background: var(--default-box-color);
     border: 1px solid var(--trading-line);
     border-radius: 6px;
   }
@@ -1768,13 +1902,13 @@
   .trading-workspace {
     display: grid;
     grid-template-columns: 248px minmax(0, 1fr);
-    min-height: 640px;
+    min-height: 680px;
     overflow: hidden;
   }
 
   .account-rail {
     min-width: 0;
-    background: color-mix(in srgb, var(--el-fill-color-light) 65%, var(--el-bg-color));
+    background: var(--el-fill-color-lighter);
     border-right: 1px solid var(--trading-line);
   }
 
@@ -1831,7 +1965,7 @@
     }
 
     &.is-selected {
-      background: var(--el-bg-color);
+      background: var(--default-box-color);
       box-shadow: inset 3px 0 0 var(--trading-focus);
     }
   }
@@ -1880,7 +2014,7 @@
 
   .account-detail {
     min-width: 0;
-    padding: 20px;
+    padding: 22px;
   }
 
   .account-heading {
@@ -2065,9 +2199,11 @@
   }
 
   .risk-ledger {
-    padding: 14px 0 0;
+    padding: 16px;
     margin-top: 20px;
-    border-top: 2px solid var(--trading-ink);
+    background: var(--el-fill-color-lighter);
+    border: 1px solid var(--trading-line);
+    border-radius: 6px;
 
     > header {
       gap: 16px;
@@ -2127,9 +2263,11 @@
   }
 
   .audit-summary {
-    padding: 14px 0 0;
+    padding: 16px;
     margin-top: 20px;
-    border-top: 2px solid var(--trading-ink);
+    background: var(--el-fill-color-lighter);
+    border: 1px solid var(--trading-line);
+    border-radius: 6px;
 
     > header {
       gap: 16px;
@@ -2210,7 +2348,10 @@
   }
 
   .trading-tabs {
+    padding: 0 16px 16px;
     margin-top: 20px;
+    border: 1px solid var(--trading-line);
+    border-radius: 6px;
   }
 
   .form-grid {
@@ -2235,6 +2376,10 @@
   }
 
   @media (max-width: 980px) {
+    .overview-metrics {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
     .trading-workspace {
       grid-template-columns: 210px minmax(0, 1fr);
     }
@@ -2265,6 +2410,21 @@
   }
 
   @media (max-width: 720px) {
+    .trading-page {
+      padding: 14px 12px 20px;
+    }
+
+    .page-toolbar {
+      flex-direction: column;
+      gap: 14px;
+      align-items: stretch;
+
+      > .el-button {
+        width: 100%;
+        margin: 0;
+      }
+    }
+
     .safety-rail {
       grid-template-columns: 38px minmax(0, 1fr);
 
@@ -2389,6 +2549,12 @@
     }
 
     .form-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .overview-metrics {
       grid-template-columns: 1fr;
     }
   }
