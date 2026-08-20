@@ -6,39 +6,6 @@ export type WorkflowTriggerType = WorkflowStartType
 export type WorkflowScheduleType = 'cron' | 'interval' | 'once'
 export type WorkflowExecutionStatus = 'queued' | 'running' | 'retry_waiting' | 'success' | 'failed'
 
-export interface TaskDefinitionItem {
-  code: string
-  label: string
-  description: string
-  parameterSchema: Record<string, any>
-  supportedScheduleTypes: WorkflowScheduleType[]
-}
-
-export interface TaskDefinitionManagementItem {
-  code: string
-  label: string
-  description: string
-  parameterSchema: Record<string, any>
-  schemaDefaultParams: Record<string, any>
-  configuredOverrides: Record<string, any>
-  effectiveDefaultParams: Record<string, any>
-  updatedAt: string
-  updatedBy?: number | null
-}
-
-export type TaskDefinitionManagementList =
-  Api.Common.PaginatedResponse<TaskDefinitionManagementItem>
-
-export interface TaskDefinitionQueryParams {
-  cursor?: string
-  limit?: number
-  keyword?: string
-}
-
-export interface TaskDefinitionDefaultParamsPayload {
-  params: Record<string, any>
-}
-
 /** 工作流可编排的智能体选项。requiresRefId / supportsAnalyze 决定节点表单显示哪些输入项。 */
 export interface WorkflowAgentOption {
   code: string
@@ -302,30 +269,6 @@ export interface WorkflowOverview {
 export function fetchSchedulerOverview() {
   return request.get<WorkflowOverview>({
     url: '/api/v1/workflows/overview'
-  })
-}
-
-export function fetchTaskDefinitions() {
-  return request.get<TaskDefinitionItem[]>({
-    url: '/api/v1/workflows/task-definitions'
-  })
-}
-
-export function fetchTaskDefinitionPage(params: TaskDefinitionQueryParams) {
-  return request.get<TaskDefinitionManagementList>({
-    url: '/api/v1/workflows/task-definitions/page',
-    params
-  })
-}
-
-export function fetchUpdateTaskDefinitionDefaultParams(
-  taskCode: string,
-  params: TaskDefinitionDefaultParamsPayload
-) {
-  return request.put<TaskDefinitionManagementItem>({
-    url: `/api/v1/workflows/task-definitions/${taskCode}/default-params`,
-    params,
-    showSuccessMessage: true
   })
 }
 

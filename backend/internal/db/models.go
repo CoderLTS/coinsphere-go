@@ -697,18 +697,6 @@ type WorkflowExecutionTransition struct {
 
 func (WorkflowExecutionTransition) TableName() string { return "workflow_execution_transitions" }
 
-// TaskDefinitionConfig 任务定义的全局默认参数覆盖。
-type TaskDefinitionConfig struct {
-	ID                     int64  `gorm:"primaryKey;autoIncrement"`
-	TaskDefinitionCode     string `gorm:"size:120;uniqueIndex"`
-	ParameterOverridesJSON string `gorm:"column:parameter_overrides_json;type:text"`
-	UpdatedBy              *int64
-	CreatedAt              time.Time
-	UpdatedAt              time.Time
-}
-
-func (TaskDefinitionConfig) TableName() string { return "task_definition_configs" }
-
 // DomainEventOutbox 领域事件 outbox。租约字段只允许 dispatcher 更新，producer 创建事件时由数据库基线补齐默认值。
 type DomainEventOutbox struct {
 	ID                      int64                  `gorm:"primaryKey;autoIncrement"`

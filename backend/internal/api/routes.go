@@ -133,9 +133,6 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 	// 调度中心。
 	mux.HandleFunc("GET /api/v1/workflows/overview", s.requirePermission(perm.SchedulerWorkflowDefinitionsView, s.handleSchedulerOverview))
-	mux.HandleFunc("GET /api/v1/workflows/task-definitions", s.requirePermission(perm.SchedulerWorkflowDefinitionsView, s.handleListTaskDefinitions))
-	mux.HandleFunc("GET /api/v1/workflows/task-definitions/page", s.requirePermission(perm.SchedulerTaskDefinitionsView, s.handleListTaskDefinitionPage))
-	mux.HandleFunc("PUT /api/v1/workflows/task-definitions/{taskCode}/default-params", s.requirePermission(perm.SchedulerTaskDefinitionsUpdate, s.handleUpdateTaskDefaultParams))
 	mux.HandleFunc("GET /api/v1/workflows/node-definitions", s.requirePermission(perm.SchedulerWorkflowDefinitionsView, s.handleListNodeDefinitions))
 	mux.HandleFunc("GET /api/v1/workflows/agent-options", s.requirePermission(perm.SchedulerWorkflowDefinitionsView, s.handleListWorkflowAgentOptions))
 	mux.HandleFunc("GET /api/v1/workflows", s.requirePermission(perm.SchedulerWorkflowDefinitionsView, s.handleListWorkflowDefinitions))

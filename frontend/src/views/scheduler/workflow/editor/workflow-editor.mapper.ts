@@ -1,6 +1,5 @@
 /** 工作流编辑器辅助模块：workflow-editor.mapper。 */
 import type {
-  TaskDefinitionItem,
   WorkflowDefinitionItem,
   WorkflowGraph,
   WorkflowNodeDefinitionItem,
@@ -61,10 +60,6 @@ const LEGACY_NODE_LABELS: Record<string, Record<string, string>> = {
   },
   'start.webhook': {
     'Webhook Start': 'Webhook 开始'
-  },
-  'task.run': {
-    'Run Task': '执行任务',
-    'Fetch News': '抓取新闻'
   },
   'event.publish': {
     'Publish Domain Event': '发布事件',
@@ -202,8 +197,7 @@ export function flattenMaterials(
 }
 
 export function buildDefaultNodeConfig(
-  definition: WorkflowNodeDefinitionItem | undefined,
-  taskDefinitions: TaskDefinitionItem[]
+  definition: WorkflowNodeDefinitionItem | undefined
 ): Record<string, any> {
   const properties = definition?.configSchema?.properties || {}
 
@@ -212,9 +206,7 @@ export function buildDefaultNodeConfig(
       const schema = rawSchema as Record<string, any>
       let fallback: any = ''
 
-      if (key === 'taskDefinitionCode') {
-        fallback = taskDefinitions[0]?.code || ''
-      } else if (schema.type === 'array') {
+      if (schema.type === 'array') {
         fallback = []
       } else if (schema.type === 'object') {
         fallback = {}
@@ -412,9 +404,6 @@ const buildNodeCollapsedSummary = (node: WorkflowDomainNode) => {
       }
       return truncateText(String(config.displayName || '手动触发入口'))
 
-    case 'task':
-      return truncateText(String(config.taskDefinitionCode || '选择任务定义'))
-
     case 'agent': {
       const agentCode = String(config.agentCode || '').trim()
       if (!agentCode) return '选择智能体'
@@ -558,13 +547,12 @@ export function createDomainEdgeFromForm(
 }
 
 export function createDefaultDomainGraph(
-  nodeDefinitions: WorkflowNodeDefinitionItem[],
-  taskDefinitions: TaskDefinitionItem[]
+  nodeDefinitions: WorkflowNodeDefinitionItem[]
 ): WorkflowDomainGraphModel {
   const startTypeCode = 'start.manual'
   const startDefinition = nodeDefinitions.find((item) => item.typeCode === startTypeCode)
   const endDefinition = nodeDefinitions.find((item) => item.typeCode === 'end')
-  const startConfig = buildDefaultNodeConfig(startDefinition, taskDefinitions)
+  const startConfig = buildDefaultNodeConfig(startDefinition)
   startConfig.entryKey = 'manual.default'
   startConfig.displayName = String(startConfig.displayName || '默认手动入口').trim()
 
@@ -597,7 +585,7 @@ export function createDefaultDomainGraph(
       subtitle: '',
       color: getNodeMaterialMeta('end')?.color || '#dc2626',
       iconText: getNodeMaterialMeta('end')?.iconText || 'E',
-      config: buildDefaultNodeConfig(endDefinition, taskDefinitions)
+      config: buildDefaultNodeConfig(endDefinition)
     }
   }
   endNode.data.subtitle = buildNodeCollapsedSummary(endNode)
@@ -1113,7 +1101,6 @@ export function createDomainNodeFromType(
   typeCode: string,
   position: { x: number; y: number },
   nodeDefinitions: WorkflowNodeDefinitionItem[],
-  taskDefinitions: TaskDefinitionItem[],
   materials: WorkflowMaterialItem[],
   existingNodes: WorkflowDomainNode[]
 ): WorkflowDomainNode {
@@ -1128,7 +1115,7 @@ export function createDomainNodeFromType(
     id = `${base}_${index}`
   }
 
-  const config = buildDefaultNodeConfig(definition, taskDefinitions)
+  const config = buildDefaultNodeConfig(definition)
   if (typeCode.startsWith('start.')) {
     config.entryKey = createUniqueStartEntryKey(typeCode, existingNodes)
     config.displayName = String(

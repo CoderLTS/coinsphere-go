@@ -1,5 +1,5 @@
 /** 工作流编辑器辅助模块：workflow-editor.validator。 */
-import type { TaskDefinitionItem, WorkflowAgentOption } from '@/api/scheduler'
+import type { WorkflowAgentOption } from '@/api/scheduler'
 import type {
   WorkflowDomainEdge,
   WorkflowDomainGraphModel,
@@ -436,7 +436,6 @@ export function validateWorkflowDraft(graph: WorkflowDomainGraphModel): Workflow
 export function validateNodeFormDraft(
   node: WorkflowDomainNode | null,
   form: WorkflowNodeFormModel | null,
-  taskDefinitions: TaskDefinitionItem[],
   agentOptions: WorkflowAgentOption[] = []
 ): WorkflowDraftValidationResult {
   if (!node || !form) return { valid: true, errors: [] }
@@ -475,14 +474,6 @@ export function validateNodeFormDraft(
       }
       break
     }
-
-    case 'task':
-      if (!String(config.taskDefinitionCode || '').trim()) {
-        errors.push('请选择任务定义。')
-      } else if (!taskDefinitions.some((item) => item.code === config.taskDefinitionCode)) {
-        errors.push('所选任务定义不存在。')
-      }
-      break
 
     case 'agent': {
       const agentCode = String(config.agentCode || '').trim()

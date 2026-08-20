@@ -19,8 +19,6 @@ const (
 	SchedulerWorkflowRuntimeUpdate   = "scheduler.workflow_runtime.update"
 
 	SchedulerWorkflowExecutionsView = "scheduler.workflow_executions.view"
-	SchedulerTaskDefinitionsView    = "scheduler.task_definitions.view"
-	SchedulerTaskDefinitionsUpdate  = "scheduler.task_definitions.update"
 
 	DataNewsView           = "data.news.view"
 	DataNewsCreate         = "data.news.create"
@@ -72,7 +70,7 @@ var MenuPermissionCodes = map[string]string{
 	"SchedulerCenter":      "",
 	"WorkflowDefinitions":  SchedulerWorkflowDefinitionsView,
 	"WorkflowExecutions":   SchedulerWorkflowExecutionsView,
-	"TaskDefinitions":      SchedulerTaskDefinitionsView,
+	"NodeDefinitions":      SchedulerWorkflowDefinitionsView,
 	"DataCenter":           "",
 	"NewsData":             DataNewsView,
 	"PushData":             DataPushDeliveriesView,
@@ -112,9 +110,6 @@ var ButtonSpecs = map[string][]ButtonSpec{
 	},
 	"WorkflowExecutions": {
 		{"view", SchedulerWorkflowExecutionsView, "查看执行记录"},
-	},
-	"TaskDefinitions": {
-		{"update", SchedulerTaskDefinitionsUpdate, "编辑任务定义"},
 	},
 	"NewsData": {
 		{"create", DataNewsCreate, "新增"},

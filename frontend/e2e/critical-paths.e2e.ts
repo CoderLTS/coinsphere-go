@@ -179,10 +179,6 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
       await fulfillApi(route, [homeMenu])
       return
     }
-    if (method === 'GET' && path === '/api/v1/workflows/task-definitions') {
-      await fulfillApi(route, [])
-      return
-    }
     if (method === 'GET' && path === '/api/v1/workflows/node-definitions') {
       await fulfillApi(route, nodeDefinitions)
       return
@@ -354,7 +350,6 @@ test('授权用户可以填写基础信息并保存默认工作流', async ({ pa
   expect(payload?.graph.edges).toHaveLength(1)
   expect(backend.schedulerApiCalls).toEqual(
     expect.arrayContaining([
-      'GET /api/v1/workflows/task-definitions',
       'GET /api/v1/workflows/node-definitions',
       'GET /api/v1/workflows/agent-options',
       'POST /api/v1/workflows/validate',

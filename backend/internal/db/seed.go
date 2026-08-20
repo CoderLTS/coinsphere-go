@@ -73,7 +73,7 @@ var menuI18n = map[string][2]string{
 	"SchedulerCenter":      {"工作流调度", "Workflow Scheduler"},
 	"WorkflowDefinitions":  {"工作流定义", "Workflow Definitions"},
 	"WorkflowExecutions":   {"执行记录", "Execution Records"},
-	"TaskDefinitions":      {"任务定义", "Task Definitions"},
+	"NodeDefinitions":      {"节点定义", "Node Definitions"},
 	"DataCenter":           {"数据管理", "Data Management"},
 	"NewsData":             {"新闻数据", "News Data"},
 	"PushData":             {"推送数据", "Push Deliveries"},
@@ -319,10 +319,10 @@ func seedMenusAndButtons(tx *gorm.DB) (map[string]*SystemMenu, map[string]*Syste
 			return nil, nil, err
 		}
 	}
-	// TaskDefinitions 挂在调度中心下,sort 固定 35(位于定义与执行记录之间)。
+	// NodeDefinitions 挂在调度中心下,sort 固定 35(位于定义与执行记录之间)。
 	if err := upsertMenu(menuItem{
-		Name: "TaskDefinitions", Title: "任务定义", Path: "task-definition",
-		Component: "/scheduler/task-definition", Icon: "ri:stack-line",
+		Name: "NodeDefinitions", Title: "节点定义", Path: "node-definition",
+		Component: "/scheduler/node-definition", Icon: "ri:stack-line",
 		Parent: "SchedulerCenter", KeepAlive: true,
 	}, 35); err != nil {
 		return nil, nil, err
@@ -385,7 +385,7 @@ func seedRoleBindings(
 	for _, item := range menuItems {
 		allMenuNames = append(allMenuNames, item.Name)
 	}
-	allMenuNames = append(allMenuNames, "TaskDefinitions")
+	allMenuNames = append(allMenuNames, "NodeDefinitions")
 
 	// map 的值也可以是 slice:roleMenus 表示“每种角色能看到的菜单名清单”——超管看全部,
 	// 普通用户只看几项,游客只看首页。
@@ -467,9 +467,6 @@ func seedI18n(tx *gorm.DB, menus map[string]*SystemMenu, buttons map[string]*Sys
 			}
 			key := fmt.Sprintf("permissions.custom.button_%d", button.ID)
 			zh, en := spec.Title, spec.Title
-			if spec.Code == perm.SchedulerTaskDefinitionsUpdate {
-				en = "Edit Task Definition"
-			}
 			if err := upsertI18nPair(tx, "button", button.ID, key, zh, en); err != nil {
 				return err
 			}
@@ -517,21 +514,16 @@ func seedBuiltinChannel(tx *gorm.DB) error {
 	return err
 }
 
-// seedWorkflows 写入内置工作流:系统预置的两条自动化流程——“Blockbeats 新闻同步”和
-// “工作流失败告警”。工作流本身是一张“节点 + 连线”的图,序列化成 JSON 存进 GraphJSON 列。
+// seedWorkflows 写入内置工作流。工作流本身是一张“节点 + 连线”的图,
+// 序列化成 JSON 存进 GraphJSON 列。
 func seedWorkflows(tx *gorm.DB, superRoleID int64) error {
 	now := time.Now()
 	// []struct{...}{...} 是“匿名结构体的 slice”:这个结构只用一次,懒得单独 type 命名,
-	// 就地定义字段(Code/DisplayName/Description/Graph)再直接列出两个元素。
+	// 就地定义字段(Code/DisplayName/Description/Graph)再直接列出元素。
 	definitions := []struct {
 		Code, DisplayName, Description string
 		Graph                          map[string]any
 	}{
-		{
-			"blockbeats_news_sync", "Blockbeats 新闻同步",
-			"定时抓取 Blockbeats 最新新闻,在同一工作流内完成事件发布与站内通知。",
-			buildBlockbeatsNewsSyncGraph(superRoleID),
-		},
 		{
 			"alert_workflow_failed", "工作流失败告警",
 			"响应 workflow.execution.failed 事件并发送失败告警通知。",
@@ -615,75 +607,6 @@ func buildMarketMetadataSyncGraph() map[string]any {
 			{"id": "edge_manual_sync", "source": "start_manual", "target": "sync_metadata"},
 			{"id": "edge_hourly_sync", "source": "start_hourly", "target": "sync_metadata"},
 			{"id": "edge_sync_end", "source": "sync_metadata", "target": "end_sync"},
-		},
-	}
-}
-
-// buildBlockbeatsNewsSyncGraph 用代码手写出“新闻同步”工作流的图,返回 map[string]any
-// (键是字符串、值为任意类型,正好对应一段 JSON 对象)。整张图由两部分组成:nodes(节点列表)
-// 与 edges(连线列表);等价于前端画布导出的 JSON,只是这里写死做种子数据。用到的节点类型:
-// start.schedule(定时触发)、task.run(执行任务)、event.publish(发布事件)、
-// condition.branch(条件分支)、foreach(遍历列表)、notify(发通知)、end(结束);
-// edges 每条含 source(起点 id)、target(终点 id),分支连线还带 "branch":"true"/"false"。
-func buildBlockbeatsNewsSyncGraph(superRoleID int64) map[string]any {
-	return map[string]any{
-		"nodes": []map[string]any{
-			{
-				"id": "start_schedule", "type": "start.schedule", "label": "定时开始",
-				"config": map[string]any{
-					"entryKey": "blockbeats.schedule.default", "displayName": "Blockbeats 定时入口",
-					"inputBindings": map[string]any{"pageSize": 20, "page": 1},
-					"scheduleType":  "cron", "cronExpression": "0 * * * * *",
-				},
-				"position": map[string]any{"x": 140, "y": 280},
-			},
-			{
-				"id": "run_news_fetch", "type": "task.run", "label": "抓取新闻",
-				"config":   map[string]any{"taskDefinitionCode": "blockbeats_news_fetch"},
-				"position": map[string]any{"x": 480, "y": 280},
-			},
-			{
-				"id": "publish_news_synced", "type": "event.publish", "label": "发布同步事件",
-				"config": map[string]any{
-					"eventType": "news.items.synced", "aggregateType": "workflow_execution",
-					"payloadPath": "taskResult",
-				},
-				"position": map[string]any{"x": 820, "y": 280},
-			},
-			{
-				"id": "branch_has_inserted_items", "type": "condition.branch", "label": "存在新增新闻",
-				"config":   map[string]any{"path": "taskResult.insertedCount", "operator": "gt", "value": "0"},
-				"position": map[string]any{"x": 1160, "y": 280},
-			},
-			{
-				"id": "foreach_inserted_items", "type": "foreach", "label": "遍历新增新闻",
-				"config": map[string]any{
-					"itemsPath": "taskResult.insertedItems", "itemKey": "newsItem", "indexKey": "newsIndex",
-				},
-				"position": map[string]any{"x": 1500, "y": 200},
-			},
-			{
-				"id": "notify_news_inserted", "type": "notify", "label": "发送通知",
-				"config": map[string]any{
-					"targets":         []map[string]any{{"targetType": "role", "targetId": superRoleID}},
-					"channelTypes":    []string{"in_app"},
-					"titleTemplate":   "📰 Blockbeats 新资讯:{{ newsItem.title }}",
-					"contentTemplate": "### 📰 Blockbeats 新闻播报\n\n**标题:** {{ newsItem.title }}\n**来源:** {{ newsItem.sourceName }}\n**发布时间:** {{ newsItem.publishedAt }}\n\n**内容:**\n{{ newsItem.content }}\n\n🔗 [原文链接]({{ newsItem.originalUrl }})\n🌐 [来源页面]({{ newsItem.sourceUrl }})\n\n✨ 请及时查看并跟进。",
-					"messageFormat":   "markdown",
-				},
-				"position": map[string]any{"x": 1840, "y": 200},
-			},
-			{"id": "end_notify", "type": "end", "label": "结束", "config": map[string]any{}, "position": map[string]any{"x": 2180, "y": 200}},
-			{"id": "end_without_notify", "type": "end", "label": "结束", "config": map[string]any{}, "position": map[string]any{"x": 1500, "y": 392}},
-		},
-		"edges": []map[string]any{
-			{"id": "edge_start_run", "source": "start_schedule", "target": "run_news_fetch"},
-			{"id": "edge_run_publish", "source": "run_news_fetch", "target": "publish_news_synced"},
-			{"id": "edge_publish_branch", "source": "publish_news_synced", "target": "branch_has_inserted_items"},
-			{"id": "edge_branch_true_foreach", "source": "branch_has_inserted_items", "target": "foreach_inserted_items", "branch": "true"},
-			{"id": "edge_branch_false_end", "source": "branch_has_inserted_items", "target": "end_without_notify", "branch": "false"},
-			{"id": "edge_foreach_notify", "source": "foreach_inserted_items", "target": "notify_news_inserted"},
-			{"id": "edge_notify_end", "source": "notify_news_inserted", "target": "end_notify"},
 		},
 	}
 }

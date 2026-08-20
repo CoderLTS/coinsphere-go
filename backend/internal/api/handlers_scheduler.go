@@ -18,36 +18,6 @@ func (s *Server) handleSchedulerOverview(w http.ResponseWriter, r *http.Request,
 	respond(w, data, err, "")
 }
 
-func (s *Server) handleListTaskDefinitions(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	ok(w, s.App.ListTaskDefinitions())
-}
-
-// handleListTaskDefinitionPage 使用稳定游标查询任务定义。
-func (s *Server) handleListTaskDefinitionPage(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	page, valid := cursorPage(w, r)
-	if !valid {
-		return
-	}
-	ok(w, s.App.ListTaskDefinitionPage(page, queryStr(r, "keyword")))
-}
-
-// handleUpdateTaskDefaultParams 处理 PUT .../task-definitions/{taskCode}/default-params:更新某任务的默认参数。
-func (s *Server) handleUpdateTaskDefaultParams(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	// r.PathValue("taskCode") 取路径参数 {taskCode}。
-	taskCode := r.PathValue("taskCode")
-	// decodeBody[T] 把请求体 JSON 解析成 T。这里 T 是"匿名 struct":只用一次、不值得单独命名的临时结构。
-	// 字段后的 `json:"params"` 是 struct 标签,告诉 JSON 库该字段对应 JSON 里的 "params" 键(见 GO入门笔记『复合类型』)。
-	payload, err := decodeBody[struct {
-		Params M `json:"params"`
-	}](r)
-	if err != nil {
-		fail(w, err.Error())
-		return
-	}
-	data, err := s.App.UpdateTaskDefinitionDefaultParams(taskCode, payload.Params, principal.User.ID)
-	respond(w, data, err, "任务定义参数已更新")
-}
-
 func (s *Server) handleListNodeDefinitions(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
 	ok(w, s.App.ListNodeDefinitions())
 }

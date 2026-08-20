@@ -16,7 +16,7 @@ import (
 )
 
 const postgresDSNEnv = "COINSPHERE_TEST_POSTGRES_DSN"
-const latestMigrationVersion = 2
+const latestMigrationVersion = 3
 
 var postgresSchemaSequence atomic.Uint64
 
@@ -68,8 +68,8 @@ func TestInitialMigrationDownRejectsData(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply initial migration: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 1); err != nil {
-		t.Fatalf("roll back endpoint migration: %v", err)
+	if _, err := runner.Down(context.Background(), 2); err != nil {
+		t.Fatalf("roll back post-baseline migrations: %v", err)
 	}
 	if _, err := database.Exec(`INSERT INTO roles (code) VALUES ('rollback-guard')`); err != nil {
 		t.Fatalf("insert rollback guard: %v", err)
@@ -92,14 +92,18 @@ func TestEndpointMigrationDownRejectsChangedSettings(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
+	if _, err := runner.Down(context.Background(), 1); err != nil {
+		t.Fatalf("roll back node definition migration: %v", err)
+	}
 	if _, err := database.Exec(`UPDATE market_sync_settings SET quote_assets = '["USDT"]'::jsonb WHERE id = 1`); err != nil {
 		t.Fatalf("change sync setting: %v", err)
 	}
 	if _, err := runner.Down(context.Background(), 1); err == nil {
 		t.Fatal("endpoint migration rollback removed changed settings")
 	}
-	if err := runner.ValidateCurrent(context.Background()); err != nil {
-		t.Fatalf("failed endpoint rollback changed migration state: %v", err)
+	current, _, err := runner.Versions(context.Background())
+	if err != nil || current != 2 {
+		t.Fatalf("failed endpoint rollback changed migration version: current=%d err=%v", current, err)
 	}
 }
 
@@ -143,7 +147,7 @@ func TestValidateCurrentRejectsDatabaseAhead(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply initial migration: %v", err)
 	}
-	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES (3, TRUE)`); err != nil {
+	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES (4, TRUE)`); err != nil {
 		t.Fatalf("record newer migration: %v", err)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err == nil {
@@ -159,7 +163,7 @@ func assertCurrentTables(t *testing.T, database *sql.DB) {
 		"market_instruments", "market_sync_settings", "market_ticker_snapshots", "market_workflow_subscriptions", "menu_buttons",
 		"menus", "news_items", "notification_channels", "notification_deliveries", "paper_balances", "paper_orders",
 		"paper_positions", "role_menu_buttons", "role_menus", "roles", "schema_migrations", "strategies", "strategy_instances",
-		"strategy_signals", "strategy_versions", "task_definition_configs", "testnet_balances", "testnet_open_orders", "testnet_orders",
+		"strategy_signals", "strategy_versions", "testnet_balances", "testnet_open_orders", "testnet_orders",
 		"testnet_positions", "testnet_reconciliations", "testnet_risk_states", "testnet_trade_facts", "trading_account_credentials",
 		"trading_account_instruments", "trading_accounts", "trading_controls", "trading_events", "trading_intents", "user_roles",
 		"users", "watchlist_items", "worker_tasks", "workflow_definitions", "workflow_execution_attempts", "workflow_execution_nodes",

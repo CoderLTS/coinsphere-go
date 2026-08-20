@@ -3,19 +3,18 @@
 // 注册表模式(registry pattern)是本文件的核心:与其写一大串 if/switch 判断"是什么类型就干什么",
 // 不如把每种类型和它的处理函数成对登记进一张表,用时按编码查表、拿到函数直接调用。
 //
-// 本文件放"框架";具体的内置节点处理器(start/task/http/notify/condition/foreach…)在
+// 本文件放"框架";具体的内置节点处理器(start/http/notify/condition/foreach…)在
 // nodes_builtin.go 里用 init() 调 registerNode 登记进来。以后加一种节点 = 新开一个文件 +
 // 一个 init(),不用改动本文件,也不用改引擎(engine.go)、不用改校验器(workflowdef.go)——
 // 后两者需要知道的"这个节点在图上怎么连线",由登记项上的 Kind / Branches 声明。
 //
-// 相关文件:taskdef.go 是另一张注册表(可执行"任务",供 task.run 节点调用);
-// schema.go 是两张表共用的 JSON Schema 小工具。
 // 所谓"代码即真源":这些能力直接写死在代码里,不依赖数据库配置。
 
 package service
 
 import (
 	"context"
+	"encoding/json"
 	"strconv"
 	"strings"
 	"sync"
@@ -458,4 +457,20 @@ func toFloatFlexible(value any) (float64, bool) {
 		}
 	}
 	return 0, false
+}
+
+func toFloat(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case json.Number:
+		parsed, err := typed.Float64()
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
 }
