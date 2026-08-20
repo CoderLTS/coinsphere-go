@@ -16,7 +16,7 @@ import (
 )
 
 const postgresDSNEnv = "COINSPHERE_TEST_POSTGRES_DSN"
-const latestMigrationVersion = 3
+const latestMigrationVersion = 4
 
 var postgresSchemaSequence atomic.Uint64
 
@@ -92,10 +92,10 @@ func TestEndpointMigrationDownRejectsChangedSettings(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 1); err != nil {
-		t.Fatalf("roll back node definition migration: %v", err)
+	if _, err := runner.Down(context.Background(), 2); err != nil {
+		t.Fatalf("roll back workflow console and node definition migrations: %v", err)
 	}
-	if _, err := database.Exec(`UPDATE market_sync_settings SET quote_assets = '["USDT"]'::jsonb WHERE id = 1`); err != nil {
+	if _, err := database.Exec(`UPDATE market_sync_settings SET quote_assets = '["USDT","USDC"]'::jsonb WHERE id = 1`); err != nil {
 		t.Fatalf("change sync setting: %v", err)
 	}
 	if _, err := runner.Down(context.Background(), 1); err == nil {
@@ -135,6 +135,8 @@ func TestInitialMigrationCoreConstraints(t *testing.T) {
 		"ix_worker_tasks_lane_claim",
 		"uq_strategy_signals_instance_candle",
 		"uq_trading_intents_signal",
+		"ix_worker_heartbeats_lane_heartbeat",
+		"ix_workflow_node_templates_owner_enabled",
 	})
 }
 
@@ -147,7 +149,7 @@ func TestValidateCurrentRejectsDatabaseAhead(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply initial migration: %v", err)
 	}
-	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES (4, TRUE)`); err != nil {
+	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES (5, TRUE)`); err != nil {
 		t.Fatalf("record newer migration: %v", err)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err == nil {
@@ -166,8 +168,9 @@ func assertCurrentTables(t *testing.T, database *sql.DB) {
 		"strategy_signals", "strategy_versions", "testnet_balances", "testnet_open_orders", "testnet_orders",
 		"testnet_positions", "testnet_reconciliations", "testnet_risk_states", "testnet_trade_facts", "trading_account_credentials",
 		"trading_account_instruments", "trading_accounts", "trading_controls", "trading_events", "trading_intents", "user_roles",
-		"users", "watchlist_items", "worker_tasks", "workflow_definitions", "workflow_execution_attempts", "workflow_execution_nodes",
+		"users", "watchlist_items", "worker_heartbeats", "worker_tasks", "workflow_definitions", "workflow_execution_attempts", "workflow_execution_nodes",
 		"workflow_execution_transitions", "workflow_executions", "workflow_runtime_entries", "workflow_runtime_states",
+		"workflow_node_templates",
 	}
 	rows, err := database.Query(`
 SELECT table_name

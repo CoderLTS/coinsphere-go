@@ -53,7 +53,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		ok(w, s.App.GetHomeMeta())
 	}))
 	mux.HandleFunc("GET /api/v1/home/overview", s.requireAuth(func(w http.ResponseWriter, r *http.Request, p *service.Principal) {
-		data, err := s.App.GetHomeOverview()
+		data, err := s.App.GetHomeOverview(r.Context())
+		if err == nil {
+			for key, value := range s.metrics.snapshot() {
+				data[key] = value
+			}
+		}
 		respond(w, data, err, "")
 	}))
 
@@ -74,6 +79,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/admin/strategies", s.requireAuth(s.handleCreateStrategyDraft))
 	mux.HandleFunc("GET /api/v1/admin/strategies/{strategyId}", s.requireAuth(s.handleGetStrategyDraft))
 	mux.HandleFunc("PUT /api/v1/admin/strategies/{strategyId}", s.requireAuth(s.handleUpdateStrategyDraft))
+	mux.HandleFunc("DELETE /api/v1/admin/strategies/{strategyId}", s.requireAuth(s.handleArchiveStrategyDraft))
 	mux.HandleFunc("POST /api/v1/admin/strategies/{strategyId}/publish", s.requireAuth(s.handlePublishStrategy))
 	mux.HandleFunc("GET /api/v1/strategies", s.requireAuth(s.handleListPublishedStrategies))
 	mux.HandleFunc("GET /api/v1/strategies/{strategyVersionId}", s.requireAuth(s.handleGetPublishedStrategy))
@@ -82,14 +88,15 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/backtests/{backtestId}", s.requireAuth(s.handleGetBacktest))
 	mux.HandleFunc("POST /api/v1/backtests/{backtestId}/cancel", s.requireAuth(s.handleCancelBacktest))
 	mux.HandleFunc("GET /api/v1/strategy-instances", s.requireAuth(s.handleListStrategyInstances))
-	mux.HandleFunc("POST /api/v1/strategy-instances", s.requireAuth(s.handleCreateStrategyInstance))
-	mux.HandleFunc("POST /api/v1/strategy-instances/{instanceId}/enable", s.requireAuth(s.handleEnableStrategyInstance))
-	mux.HandleFunc("POST /api/v1/strategy-instances/{instanceId}/disable", s.requireAuth(s.handleDisableStrategyInstance))
 	mux.HandleFunc("GET /api/v1/signals", s.requireAuth(s.handleListStrategySignals))
 	mux.HandleFunc("POST /api/v1/signals/{signalId}/approve", s.requireAuth(s.handleApproveStrategySignal))
 	mux.HandleFunc("POST /api/v1/signals/{signalId}/reject", s.requireAuth(s.handleRejectStrategySignal))
 	mux.HandleFunc("GET /api/v1/trading/overview", s.requireAuth(s.handleTradingOverview))
+	mux.HandleFunc("GET /api/v1/trading/accounts", s.requireAuth(s.handleListTradingAccounts))
 	mux.HandleFunc("POST /api/v1/trading/accounts", s.requireAuth(s.handleCreateTradingAccount))
+	mux.HandleFunc("GET /api/v1/trading/accounts/{accountId}", s.requireAuth(s.handleGetTradingAccount))
+	mux.HandleFunc("PUT /api/v1/trading/accounts/{accountId}", s.requireAuth(s.handleUpdateTradingAccount))
+	mux.HandleFunc("DELETE /api/v1/trading/accounts/{accountId}", s.requireAuth(s.handleArchiveTradingAccount))
 	mux.HandleFunc("PUT /api/v1/trading/accounts/{accountId}/risk", s.requireAuth(s.handleUpdateTradingRisk))
 	mux.HandleFunc("POST /api/v1/trading/accounts/{accountId}/automation/enable", s.requireAuth(s.handleEnableTradingAutomation))
 	mux.HandleFunc("POST /api/v1/trading/accounts/{accountId}/automation/disable", s.requireAuth(s.handleDisableTradingAutomation))
@@ -134,6 +141,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// 调度中心。
 	mux.HandleFunc("GET /api/v1/workflows/overview", s.requirePermission(perm.SchedulerWorkflowDefinitionsView, s.handleSchedulerOverview))
 	mux.HandleFunc("GET /api/v1/workflows/node-definitions", s.requirePermission(perm.SchedulerWorkflowDefinitionsView, s.handleListNodeDefinitions))
+	mux.HandleFunc("GET /api/v1/workflow-node-templates", s.requirePermission(perm.SchedulerWorkflowDefinitionsView, s.handleListWorkflowNodeTemplates))
+	mux.HandleFunc("POST /api/v1/workflow-node-templates", s.requirePermission(perm.SchedulerWorkflowDefinitionsCreate, s.handleCreateWorkflowNodeTemplate))
+	mux.HandleFunc("PUT /api/v1/workflow-node-templates/{templateId}", s.requirePermission(perm.SchedulerWorkflowDefinitionsUpdate, s.handleUpdateWorkflowNodeTemplate))
+	mux.HandleFunc("DELETE /api/v1/workflow-node-templates/{templateId}", s.requirePermission(perm.SchedulerWorkflowDefinitionsDelete, s.handleDeleteWorkflowNodeTemplate))
 	mux.HandleFunc("GET /api/v1/workflows/agent-options", s.requirePermission(perm.SchedulerWorkflowDefinitionsView, s.handleListWorkflowAgentOptions))
 	mux.HandleFunc("GET /api/v1/workflows", s.requirePermission(perm.SchedulerWorkflowDefinitionsView, s.handleListWorkflowDefinitions))
 	mux.HandleFunc("POST /api/v1/workflows/validate", s.requirePermission(perm.SchedulerWorkflowDefinitionsView, s.handleValidateWorkflowDefinition))

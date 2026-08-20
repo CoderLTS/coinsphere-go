@@ -40,9 +40,6 @@ var (
 type StrategyDraftPayload struct {
 	Name            string                     `json:"name"`
 	SourceCode      string                     `json:"sourceCode"`
-	Market          string                     `json:"market"`
-	InstrumentID    string                     `json:"instrumentId"`
-	Interval        string                     `json:"interval"`
 	LookbackBars    int                        `json:"lookbackBars"`
 	ParameterSchema map[string]json.RawMessage `json:"parameterSchema"`
 }
@@ -51,9 +48,6 @@ type StrategyDraftView struct {
 	ID              string          `json:"id"`
 	Name            string          `json:"name"`
 	SourceCode      string          `json:"sourceCode"`
-	Market          string          `json:"market"`
-	InstrumentID    string          `json:"instrumentId"`
-	Interval        string          `json:"interval"`
 	LookbackBars    int             `json:"lookbackBars"`
 	ParameterSchema json.RawMessage `json:"parameterSchema"`
 	RuntimeVersion  string          `json:"runtimeVersion"`
@@ -70,10 +64,6 @@ type StrategyVersionView struct {
 	SourceCode      string          `json:"sourceCode"`
 	CodeSHA256      string          `json:"codeSha256"`
 	RuntimeVersion  string          `json:"runtimeVersion"`
-	Market          string          `json:"market"`
-	InstrumentID    string          `json:"instrumentId"`
-	Symbol          string          `json:"symbol"`
-	Interval        string          `json:"interval"`
 	LookbackBars    int             `json:"lookbackBars"`
 	ParameterSchema json.RawMessage `json:"parameterSchema"`
 	PublishedAt     *string         `json:"publishedAt,omitempty"`
@@ -82,6 +72,8 @@ type StrategyVersionView struct {
 
 type BacktestCreatePayload struct {
 	StrategyVersionID      string                     `json:"strategyVersionId"`
+	InstrumentID           string                     `json:"instrumentId"`
+	Interval               string                     `json:"interval"`
 	Parameters             map[string]json.RawMessage `json:"parameters"`
 	StartTime              string                     `json:"startTime"`
 	EndTime                string                     `json:"endTime"`
@@ -98,6 +90,10 @@ type BacktestView struct {
 	ID                     string           `json:"id"`
 	OwnerUserID            int64            `json:"ownerUserId"`
 	StrategyVersionID      string           `json:"strategyVersionId"`
+	InstrumentID           string           `json:"instrumentId"`
+	Market                 string           `json:"market"`
+	Symbol                 string           `json:"symbol"`
+	Interval               string           `json:"interval"`
 	SimulatorVersion       string           `json:"simulatorVersion"`
 	Status                 string           `json:"status"`
 	FailureCategory        *string          `json:"failureCategory,omitempty"`
@@ -131,7 +127,7 @@ func (a *App) ListStrategyDrafts(ctx context.Context, page CursorPage) (CursorRe
 	if err != nil {
 		return CursorResult[StrategyDraftView]{}, invalidStrategy(err.Error())
 	}
-	query := a.dbWithContext(ctx).Model(&db.StrategyDraft{})
+	query := a.dbWithContext(ctx).Model(&db.StrategyDraft{}).Where("archived_at IS NULL")
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return CursorResult[StrategyDraftView]{}, err
@@ -159,7 +155,7 @@ func (a *App) ListStrategyDrafts(ctx context.Context, page CursorPage) (CursorRe
 }
 
 func (a *App) CreateStrategyDraft(ctx context.Context, userID int64, payload StrategyDraftPayload) (StrategyDraftView, error) {
-	validated, err := a.validateStrategyDraft(ctx, payload)
+	validated, err := a.validateStrategyDraft(payload)
 	if err != nil {
 		return StrategyDraftView{}, err
 	}
@@ -169,8 +165,7 @@ func (a *App) CreateStrategyDraft(ctx context.Context, userID int64, payload Str
 	}
 	now := time.Now().UTC()
 	row := db.StrategyDraft{
-		ID: id, Name: validated.Name, SourceCode: validated.SourceCode, Market: validated.Market,
-		InstrumentID: validated.InstrumentID, Interval: validated.Interval, LookbackBars: validated.LookbackBars,
+		ID: id, Name: validated.Name, SourceCode: validated.SourceCode, LookbackBars: validated.LookbackBars,
 		ParameterSchemaJSON: validated.ParameterSchemaJSON, RuntimeVersion: strategyRuntimeVersion,
 		CreatedByUserID: userID, UpdatedByUserID: userID, CreatedAt: now, UpdatedAt: now,
 	}
@@ -186,7 +181,7 @@ func (a *App) GetStrategyDraft(ctx context.Context, rawID string) (StrategyDraft
 		return StrategyDraftView{}, err
 	}
 	var row db.StrategyDraft
-	if err := a.dbWithContext(ctx).Where("id = ?", id).Take(&row).Error; err != nil {
+	if err := a.dbWithContext(ctx).Where("id = ? AND archived_at IS NULL", id).Take(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return StrategyDraftView{}, ErrStrategyDraftMissing
 		}
@@ -195,25 +190,40 @@ func (a *App) GetStrategyDraft(ctx context.Context, rawID string) (StrategyDraft
 	return serializeStrategyDraft(row), nil
 }
 
+func (a *App) ArchiveStrategyDraft(ctx context.Context, rawID string) error {
+	id, err := requiredStrategyUUID(rawID, "strategyId")
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	result := a.dbWithContext(ctx).Model(&db.StrategyDraft{}).
+		Where("id = ? AND archived_at IS NULL", id).
+		Updates(map[string]any{"archived_at": now, "updated_at": now})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrStrategyDraftMissing
+	}
+	return nil
+}
+
 func (a *App) UpdateStrategyDraft(ctx context.Context, userID int64, rawID string, payload StrategyDraftPayload) (StrategyDraftView, error) {
 	id, err := requiredStrategyUUID(rawID, "strategyId")
 	if err != nil {
 		return StrategyDraftView{}, err
 	}
-	validated, err := a.validateStrategyDraft(ctx, payload)
+	validated, err := a.validateStrategyDraft(payload)
 	if err != nil {
 		return StrategyDraftView{}, err
 	}
 	var row db.StrategyDraft
 	err = a.dbWithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", id).Take(&row).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND archived_at IS NULL", id).Take(&row).Error; err != nil {
 			return err
 		}
 		row.Name = validated.Name
 		row.SourceCode = validated.SourceCode
-		row.Market = validated.Market
-		row.InstrumentID = validated.InstrumentID
-		row.Interval = validated.Interval
 		row.LookbackBars = validated.LookbackBars
 		row.ParameterSchemaJSON = validated.ParameterSchemaJSON
 		row.RuntimeVersion = strategyRuntimeVersion
@@ -253,11 +263,7 @@ func (a *App) PublishStrategy(ctx context.Context, userID int64, rawID, idempote
 		}
 
 		var draft db.StrategyDraft
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", strategyID).Take(&draft).Error; err != nil {
-			return err
-		}
-		var instrument db.MarketInstrument
-		if err := tx.Where("id = ? AND venue = ? AND market_type = ?", draft.InstrumentID, marketdata.VenueBinance, draft.Market).Take(&instrument).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND archived_at IS NULL", strategyID).Take(&draft).Error; err != nil {
 			return err
 		}
 		var latest int
@@ -285,8 +291,7 @@ func (a *App) PublishStrategy(ctx context.Context, userID int64, rawID, idempote
 			ID: versionID, StrategyID: strategyID, VersionNumber: latest + 1, Status: "pending",
 			WorkerTaskID: taskID.String(), IdempotencyRecordID: record.ID, Name: draft.Name,
 			SourceCode: draft.SourceCode, CodeSHA256: hex.EncodeToString(sum[:]), RuntimeVersion: strategyRuntimeVersion,
-			Market: draft.Market, InstrumentID: draft.InstrumentID, Symbol: instrument.NativeSymbol,
-			Interval: draft.Interval, LookbackBars: draft.LookbackBars, ParameterSchemaJSON: draft.ParameterSchemaJSON,
+			LookbackBars: draft.LookbackBars, ParameterSchemaJSON: draft.ParameterSchemaJSON,
 			PublishedByUserID: userID, CreatedAt: time.Now().UTC(),
 		}
 		return tx.Create(&version).Error
@@ -362,7 +367,20 @@ func (a *App) CreateBacktest(ctx context.Context, userID int64, idempotencyKey s
 		}
 		return BacktestView{}, err
 	}
-	validated, err := validateBacktestPayload(payload, version)
+	instrumentID, err := requiredStrategyUUID(payload.InstrumentID, "instrumentId")
+	if err != nil {
+		return BacktestView{}, err
+	}
+	var instrument db.MarketInstrument
+	if err := a.dbWithContext(ctx).Where(
+		"id = ? AND venue = ? AND quote_asset = 'USDT'", instrumentID, marketdata.VenueBinance,
+	).Take(&instrument).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return BacktestView{}, ErrStrategyInstrumentMissing
+		}
+		return BacktestView{}, err
+	}
+	validated, err := validateBacktestPayload(payload, version, instrument.Market)
 	if err != nil {
 		return BacktestView{}, err
 	}
@@ -396,6 +414,7 @@ func (a *App) CreateBacktest(ctx context.Context, userID int64, idempotencyKey s
 		}
 		row = db.Backtest{
 			ID: backtestID, OwnerUserID: userID, StrategyVersionID: versionID, WorkerTaskID: taskID.String(),
+			InstrumentID: instrumentID, Interval: payload.Interval, Market: instrument.Market, Symbol: instrument.NativeSymbol,
 			IdempotencyRecordID: record.ID, SimulatorVersion: backtestSimulatorVersion,
 			ParametersJSON: validated.ParametersJSON,
 			StartTime:      validated.StartTime, EndTime: validated.EndTime,
@@ -425,16 +444,18 @@ func (a *App) ListBacktests(ctx context.Context, userID int64, page CursorPage) 
 		return CursorResult[BacktestView]{}, invalidStrategy(err.Error())
 	}
 	database := a.dbWithContext(ctx)
-	query := database.Model(&db.Backtest{}).Where("owner_user_id = ?", userID)
+	query := database.Table("backtests AS backtest").Where("backtest.owner_user_id = ?", userID)
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return CursorResult[BacktestView]{}, err
 	}
 	if after != uuid.Nil {
-		query = query.Where("id < ?", after)
+		query = query.Where("backtest.id < ?", after)
 	}
 	var rows []db.Backtest
-	if err := query.Order("id DESC").Limit(page.Limit + 1).Find(&rows).Error; err != nil {
+	if err := query.Select("backtest.*, instrument.market_type AS market, instrument.native_symbol AS symbol").
+		Joins("JOIN market_instruments AS instrument ON instrument.id = backtest.instrument_id").
+		Order("backtest.id DESC").Limit(page.Limit + 1).Scan(&rows).Error; err != nil {
 		return CursorResult[BacktestView]{}, err
 	}
 	hasMore := len(rows) > page.Limit
@@ -500,6 +521,9 @@ func (a *App) CancelBacktest(ctx context.Context, userID int64, rawID string) (B
 		if err != nil {
 			return err
 		}
+		if err := loadBacktestBinding(tx, &row); err != nil {
+			return err
+		}
 		result = serializeBacktest(row, state)
 		return nil
 	})
@@ -510,28 +534,17 @@ func (a *App) CancelBacktest(ctx context.Context, userID int64, rawID string) (B
 }
 
 type validatedStrategyDraft struct {
-	Name, SourceCode, Market, Interval, ParameterSchemaJSON string
-	InstrumentID                                            uuid.UUID
-	LookbackBars                                            int
+	Name, SourceCode, ParameterSchemaJSON string
+	LookbackBars                          int
 }
 
-func (a *App) validateStrategyDraft(ctx context.Context, payload StrategyDraftPayload) (validatedStrategyDraft, error) {
+func (a *App) validateStrategyDraft(payload StrategyDraftPayload) (validatedStrategyDraft, error) {
 	name := strings.TrimSpace(payload.Name)
 	if name == "" || len(name) > 120 || name != payload.Name {
 		return validatedStrategyDraft{}, invalidStrategy("name must be trimmed and between 1 and 120 bytes")
 	}
 	if strings.TrimSpace(payload.SourceCode) == "" || len(payload.SourceCode) > 65536 {
 		return validatedStrategyDraft{}, invalidStrategy("sourceCode must be between 1 and 65536 bytes")
-	}
-	if payload.Market != string(marketdata.MarketTypeSpot) && payload.Market != string(marketdata.MarketTypeUSDM) {
-		return validatedStrategyDraft{}, invalidStrategy("market must be spot or usd_m")
-	}
-	instrumentID, err := requiredStrategyUUID(payload.InstrumentID, "instrumentId")
-	if err != nil {
-		return validatedStrategyDraft{}, err
-	}
-	if _, ok := marketdata.CandleIntervalDuration(marketdata.CandleInterval(payload.Interval)); !ok {
-		return validatedStrategyDraft{}, invalidStrategy("interval is not supported")
 	}
 	if payload.LookbackBars < 1 || payload.LookbackBars > 10000 {
 		return validatedStrategyDraft{}, invalidStrategy("lookbackBars must be between 1 and 10000")
@@ -540,21 +553,9 @@ func (a *App) validateStrategyDraft(ctx context.Context, payload StrategyDraftPa
 	if err != nil {
 		return validatedStrategyDraft{}, err
 	}
-	var instrument db.MarketInstrument
-	if err := a.dbWithContext(ctx).Select("id", "market_type").Where(
-		"id = ? AND venue = ?", instrumentID, marketdata.VenueBinance,
-	).Take(&instrument).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return validatedStrategyDraft{}, ErrStrategyInstrumentMissing
-		}
-		return validatedStrategyDraft{}, err
-	}
-	if instrument.Market != payload.Market {
-		return validatedStrategyDraft{}, invalidStrategy("strategy market must match instrument market")
-	}
 	return validatedStrategyDraft{
-		Name: name, SourceCode: payload.SourceCode, Market: payload.Market, InstrumentID: instrumentID,
-		Interval: payload.Interval, LookbackBars: payload.LookbackBars, ParameterSchemaJSON: string(schema),
+		Name: name, SourceCode: payload.SourceCode,
+		LookbackBars: payload.LookbackBars, ParameterSchemaJSON: string(schema),
 	}, nil
 }
 
@@ -567,7 +568,10 @@ type validatedBacktest struct {
 	StopLossRatio, MaintenanceMarginRatio *decimal.Decimal
 }
 
-func validateBacktestPayload(payload BacktestCreatePayload, version db.StrategyVersion) (validatedBacktest, error) {
+func validateBacktestPayload(payload BacktestCreatePayload, version db.StrategyVersion, market string) (validatedBacktest, error) {
+	if _, ok := marketdata.CandleIntervalDuration(marketdata.CandleInterval(payload.Interval)); !ok {
+		return validatedBacktest{}, invalidStrategy("interval is not supported")
+	}
 	start, err := parseStrictUTC(payload.StartTime, "startTime")
 	if err != nil {
 		return validatedBacktest{}, err
@@ -613,10 +617,10 @@ func validateBacktestPayload(payload BacktestCreatePayload, version db.StrategyV
 	if err != nil {
 		return validatedBacktest{}, err
 	}
-	if version.Market == string(marketdata.MarketTypeUSDM) && payload.FundingRates == nil {
+	if market == string(marketdata.MarketTypeUSDM) && payload.FundingRates == nil {
 		return validatedBacktest{}, invalidStrategy("fundingRates are required for usd_m")
 	}
-	if version.Market == string(marketdata.MarketTypeSpot) && len(payload.FundingRates) > 0 {
+	if market == string(marketdata.MarketTypeSpot) && len(payload.FundingRates) > 0 {
 		return validatedBacktest{}, invalidStrategy("fundingRates must be omitted for spot")
 	}
 	for _, value := range payload.FundingRates {
@@ -630,7 +634,8 @@ func validateBacktestPayload(payload BacktestCreatePayload, version db.StrategyV
 	}
 	fundingJSON, _ := json.Marshal(fundingRates)
 	request := M{
-		"strategyVersionId": version.ID.String(), "parameters": json.RawMessage(parameters),
+		"strategyVersionId": version.ID.String(), "instrumentId": payload.InstrumentID,
+		"interval": payload.Interval, "parameters": json.RawMessage(parameters),
 		"startTime": formatUTC(start), "endTime": formatUTC(end), "allocationUsdt": allocation.String(),
 		"initialEquity": initial.String(), "feeRate": fee.String(), "slippageRate": slippage.String(),
 		"fundingRates": fundingRates, "stopLossRatio": payload.StopLossRatio,
@@ -884,8 +889,7 @@ func invalidStrategy(detail string) error {
 
 func serializeStrategyDraft(row db.StrategyDraft) StrategyDraftView {
 	return StrategyDraftView{
-		ID: row.ID.String(), Name: row.Name, SourceCode: row.SourceCode, Market: row.Market,
-		InstrumentID: row.InstrumentID.String(), Interval: row.Interval, LookbackBars: row.LookbackBars,
+		ID: row.ID.String(), Name: row.Name, SourceCode: row.SourceCode, LookbackBars: row.LookbackBars,
 		ParameterSchema: rawJSON(row.ParameterSchemaJSON, `{}`), RuntimeVersion: row.RuntimeVersion,
 		CreatedAt: formatUTC(row.CreatedAt), UpdatedAt: formatUTC(row.UpdatedAt),
 	}
@@ -900,8 +904,7 @@ func serializeStrategyVersion(row db.StrategyVersion) StrategyVersionView {
 	return StrategyVersionView{
 		ID: row.ID.String(), StrategyID: row.StrategyID.String(), VersionNumber: row.VersionNumber,
 		Status: row.Status, Name: row.Name, SourceCode: row.SourceCode, CodeSHA256: row.CodeSHA256,
-		RuntimeVersion: row.RuntimeVersion, Market: row.Market, InstrumentID: row.InstrumentID.String(),
-		Symbol: row.Symbol, Interval: row.Interval, LookbackBars: row.LookbackBars,
+		RuntimeVersion: row.RuntimeVersion, LookbackBars: row.LookbackBars,
 		ParameterSchema: rawJSON(row.ParameterSchemaJSON, `{}`), PublishedAt: publishedAt,
 		CreatedAt: formatUTC(row.CreatedAt),
 	}
@@ -910,6 +913,7 @@ func serializeStrategyVersion(row db.StrategyVersion) StrategyVersionView {
 func serializeBacktest(row db.Backtest, state backtestTaskState) BacktestView {
 	view := BacktestView{
 		ID: row.ID.String(), OwnerUserID: row.OwnerUserID, StrategyVersionID: row.StrategyVersionID.String(),
+		InstrumentID: row.InstrumentID.String(), Market: row.Market, Symbol: row.Symbol, Interval: row.Interval,
 		SimulatorVersion: row.SimulatorVersion, Status: state.Status,
 		FailureCategory: state.FailureCategory,
 		Parameters:      rawJSON(row.ParametersJSON, `{}`), StartTime: formatUTC(row.StartTime), EndTime: formatUTC(row.EndTime),
@@ -942,7 +946,10 @@ func rawJSON(value, fallback string) json.RawMessage {
 
 func getBacktestWithDB(database *gorm.DB, userID int64, id uuid.UUID) (BacktestView, error) {
 	var row db.Backtest
-	if err := database.Where("id = ? AND owner_user_id = ?", id, userID).Take(&row).Error; err != nil {
+	if err := database.Table("backtests AS backtest").
+		Select("backtest.*, instrument.market_type AS market, instrument.native_symbol AS symbol").
+		Joins("JOIN market_instruments AS instrument ON instrument.id = backtest.instrument_id").
+		Where("backtest.id = ? AND backtest.owner_user_id = ?", id, userID).Take(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return BacktestView{}, ErrBacktestMissing
 		}
@@ -953,6 +960,16 @@ func getBacktestWithDB(database *gorm.DB, userID int64, id uuid.UUID) (BacktestV
 		return BacktestView{}, err
 	}
 	return serializeBacktest(row, state), nil
+}
+
+func loadBacktestBinding(database *gorm.DB, row *db.Backtest) error {
+	var instrument db.MarketInstrument
+	if err := database.Select("market_type", "native_symbol").Where("id = ?", row.InstrumentID).Take(&instrument).Error; err != nil {
+		return err
+	}
+	row.Market = instrument.Market
+	row.Symbol = instrument.NativeSymbol
+	return nil
 }
 
 func loadBacktestTaskState(database *gorm.DB, taskID string) (backtestTaskState, error) {

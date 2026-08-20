@@ -128,7 +128,8 @@ def empty_queue(request: pytest.FixtureRequest) -> Iterator[None]:
     with psycopg.connect(postgres_dsn, autocommit=True) as connection:
         connection.execute(
             "TRUNCATE notification_deliveries, domain_event_outbox, strategy_signals, "
-            "strategy_instances, backtests, strategy_versions, strategies, worker_tasks CASCADE"
+            "strategy_instances, backtests, strategy_versions, strategies, worker_heartbeats, "
+            "worker_tasks CASCADE"
         )
     yield
 
@@ -219,6 +220,24 @@ def test_concurrent_workers_do_not_claim_the_same_task(postgres_dsn: str) -> Non
     assert len(claimed) == 1
     assert claimed[0].task_id == task_id
     assert task_row(postgres_dsn, task_id)["attempt_count"] == 1
+
+
+def test_worker_presence_tracks_lane_queue_and_offline_state(postgres_dsn: str) -> None:
+    insert_task(postgres_dsn, "018f0000-0000-7000-8000-000000000207")
+    with psycopg.connect(postgres_dsn) as connection:
+        store = PostgresTaskStore(connection, "worker-presence", lane=WorkerLane.REALTIME)
+        store.update_presence()
+        row = connection.execute(
+            "SELECT status, queue_depth FROM worker_heartbeats "
+            "WHERE worker_id = 'worker-presence' AND lane = 'realtime'"
+        ).fetchone()
+        assert row == ("online", 1)
+        store.update_presence("offline")
+        status = connection.execute(
+            "SELECT status FROM worker_heartbeats "
+            "WHERE worker_id = 'worker-presence' AND lane = 'realtime'"
+        ).fetchone()
+        assert status == ("offline",)
 
 
 def test_worker_lanes_claim_only_their_own_priority_queue(postgres_dsn: str) -> None:

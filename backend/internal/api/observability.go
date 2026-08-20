@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"runtime"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -29,6 +31,15 @@ type httpMetrics struct {
 	requestsFailed     atomic.Uint64
 	requestsInFlight   atomic.Int64
 	auditWriteFailures atomic.Uint64
+	bucketsMu          sync.Mutex
+	buckets            [60]httpMetricBucket
+}
+
+type httpMetricBucket struct {
+	minute         int64
+	requests       uint64
+	failed         uint64
+	durationMillis uint64
 }
 
 type observedResponseWriter struct {
@@ -94,6 +105,8 @@ func (s *Server) observe(next http.Handler) http.Handler {
 		if failed {
 			s.metrics.requestsFailed.Add(1)
 		}
+		duration := time.Since(startedAt)
+		s.metrics.observeBucket(startedAt, failed, duration)
 
 		route := r.Pattern
 		if route == "" {
@@ -108,7 +121,7 @@ func (s *Server) observe(next http.Handler) http.Handler {
 			"method", r.Method,
 			"route", route,
 			"status", observed.statusCode,
-			"duration_ms", time.Since(startedAt).Milliseconds(),
+			"duration_ms", duration.Milliseconds(),
 		}
 		if failed {
 			slog.WarnContext(r.Context(), "http request completed", attrs...)
@@ -116,6 +129,62 @@ func (s *Server) observe(next http.Handler) http.Handler {
 		}
 		slog.InfoContext(r.Context(), "http request completed", attrs...)
 	})
+}
+
+func (m *httpMetrics) observeBucket(startedAt time.Time, failed bool, duration time.Duration) {
+	minute := startedAt.UTC().Unix() / 60
+	index := int(minute % int64(len(m.buckets)))
+	m.bucketsMu.Lock()
+	bucket := &m.buckets[index]
+	if bucket.minute != minute {
+		*bucket = httpMetricBucket{minute: minute}
+	}
+	bucket.requests++
+	if failed {
+		bucket.failed++
+	}
+	millis := duration.Milliseconds()
+	if millis < 0 {
+		millis = 0
+	}
+	bucket.durationMillis += uint64(millis)
+	m.bucketsMu.Unlock()
+}
+
+func (m *httpMetrics) snapshot() M {
+	now := time.Now().UTC()
+	currentMinute := now.Unix() / 60
+	trend := make([]M, 0, len(m.buckets))
+	m.bucketsMu.Lock()
+	for offset := int64(len(m.buckets) - 1); offset >= 0; offset-- {
+		minute := currentMinute - offset
+		bucket := m.buckets[int(minute%int64(len(m.buckets)))]
+		requests, failed, latency := uint64(0), uint64(0), float64(0)
+		if bucket.minute == minute {
+			requests, failed = bucket.requests, bucket.failed
+			if requests > 0 {
+				latency = float64(bucket.durationMillis) / float64(requests)
+			}
+		}
+		trend = append(trend, M{
+			"time":     time.Unix(minute*60, 0).UTC().Format(time.RFC3339),
+			"requests": requests, "failed": failed, "averageLatencyMs": latency,
+		})
+	}
+	m.bucketsMu.Unlock()
+	var memory runtime.MemStats
+	runtime.ReadMemStats(&memory)
+	return M{
+		"process": M{
+			"uptimeSeconds":      int64(time.Since(m.startedAt).Seconds()),
+			"goMemoryAllocBytes": memory.Alloc, "goMemorySysBytes": memory.Sys,
+			"goroutines": runtime.NumGoroutine(),
+		},
+		"http": M{
+			"requestsTotal": m.requestsTotal.Load(), "requestsFailed": m.requestsFailed.Load(),
+			"requestsInFlight": m.requestsInFlight.Load(), "trend": trend,
+		},
+	}
 }
 
 func (s *Server) recordAudit(r *http.Request, state *requestState, response *observedResponseWriter, failed bool) {

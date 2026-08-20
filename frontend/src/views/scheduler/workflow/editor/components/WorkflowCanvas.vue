@@ -39,6 +39,7 @@
         :agent-options="agentOptions"
         :notify-user-options="notifyUserOptions"
         :notify-role-options="notifyRoleOptions"
+        :notify-channel-options="notifyChannelOptions"
         :notify-options-loading="notifyOptionsLoading"
         :issues="selectedNodeIssues"
         :errors="draftState.errors"
@@ -46,6 +47,7 @@
         @request-commit="$emit('request-commit-node-draft')"
         @request-discard="$emit('request-discard-node-draft')"
         @request-close="$emit('request-close-node-editor')"
+        @request-manage-notify="$emit('request-manage-notify')"
         @request-remove="$emit('request-remove-selection')"
       />
     </div>
@@ -152,6 +154,7 @@
     WorkflowMaterialItem,
     WorkflowNodeContextActionPayload,
     WorkflowNodeFormModel,
+    WorkflowNotifyChannelOption,
     WorkflowNotifyTargetOption
   } from '../types'
   import WorkflowEdgeBubble from './WorkflowEdgeBubble.vue'
@@ -165,6 +168,7 @@
     agentOptions: WorkflowAgentOption[]
     notifyUserOptions: WorkflowNotifyTargetOption[]
     notifyRoleOptions: WorkflowNotifyTargetOption[]
+    notifyChannelOptions: WorkflowNotifyChannelOption[]
     notifyOptionsLoading: boolean
     jsonDefinitionVisible: boolean
     dirtyNodeIds: string[]
@@ -190,6 +194,7 @@
     (e: 'request-commit-node-draft'): void
     (e: 'request-discard-node-draft'): void
     (e: 'request-close-node-editor'): void
+    (e: 'request-manage-notify'): void
     (e: 'request-close-edge-editor'): void
     (e: 'request-remove-selection'): void
     (e: 'request-node-context-action', payload: WorkflowNodeContextActionPayload): void

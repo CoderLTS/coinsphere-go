@@ -7,7 +7,6 @@
           行情数据
         </div>
         <h1>币种元数据</h1>
-        <p>管理 Binance 同步范围，检查交易标的状态与交易精度。</p>
       </div>
       <div class="head-actions">
         <ElButton v-if="canManage" :icon="Refresh" :loading="syncStarting" @click="runSync">
@@ -117,11 +116,7 @@
           </div>
           <div>
             <label>报价资产</label>
-            <ElCheckboxGroup v-model="settings.quoteAssets" :disabled="!canManage">
-              <ElCheckbox label="USDT" border>USDT</ElCheckbox>
-              <ElCheckbox label="USDC" border>USDC</ElCheckbox>
-              <ElCheckbox label="FDUSD" border>FDUSD</ElCheckbox>
-            </ElCheckboxGroup>
+            <ElTag type="success" effect="plain">USDT</ElTag>
           </div>
         </div>
         <div class="endpoint-fields">
@@ -287,12 +282,6 @@
           <ElOption label="Spot" value="spot" />
           <ElOption label="USD-M" value="usd_m" />
         </ElSelect>
-        <ElSelect v-model="filters.quoteAsset" placeholder="全部报价" @change="reloadSymbols">
-          <ElOption label="全部报价" value="" />
-          <ElOption label="USDT" value="USDT" />
-          <ElOption label="USDC" value="USDC" />
-          <ElOption label="FDUSD" value="FDUSD" />
-        </ElSelect>
         <ElRadioGroup v-model="filters.status" @change="reloadSymbols">
           <ElRadioButton label="trading">交易中</ElRadioButton>
           <ElRadioButton label="suspended">已暂停</ElRadioButton>
@@ -302,7 +291,7 @@
       </div>
 
       <div v-loading="symbolsLoading" class="symbol-table-wrap">
-        <ElTable :data="symbols" row-key="id" table-layout="fixed">
+        <ElTable :data="symbols" row-key="id" table-layout="fixed" @row-click="openSymbol">
           <ElTableColumn label="交易对" min-width="180">
             <template #default="{ row }">
               <div class="symbol-cell">
@@ -383,6 +372,7 @@
 
   defineOptions({ name: 'MarketMetadataPage' })
 
+  const router = useRouter()
   const { hasAuth } = useAuth()
   const canManage = computed(() => hasAuth('data.market.manage'))
   const settingsSaving = ref(false)
@@ -412,7 +402,7 @@
     >
   >({
     marketTypes: ['spot'],
-    quoteAssets: ['USDT', 'USDC'],
+    quoteAssets: ['USDT'],
     spotRestBaseUrl: 'https://data-api.binance.vision',
     usdmRestBaseUrl: 'https://fapi.binance.com',
     proxyEnabled: false,
@@ -442,7 +432,7 @@
     market: MarketType | ''
     quoteAsset: QuoteAsset | ''
     status: MarketStatus
-  }>({ keyword: '', market: '', quoteAsset: '', status: 'trading' })
+  }>({ keyword: '', market: '', quoteAsset: 'USDT', status: 'trading' })
 
   const isSyncing = computed(() => {
     const status = syncStatus.lastExecution?.status
@@ -511,7 +501,7 @@
 
   const applyMarketSettings = (nextSettings: MarketSyncSettings) => {
     settings.marketTypes = [...nextSettings.marketTypes]
-    settings.quoteAssets = [...nextSettings.quoteAssets]
+    settings.quoteAssets = ['USDT']
     settings.spotRestBaseUrl = nextSettings.spotRestBaseUrl
     settings.usdmRestBaseUrl = nextSettings.usdmRestBaseUrl
     settings.proxyEnabled = nextSettings.proxyEnabled
@@ -580,6 +570,13 @@
     void loadSymbols()
   }
 
+  const openSymbol = (row: MarketSymbol) => {
+    void router.push({
+      path: '/data/market-chart',
+      query: { instrumentId: row.id, market: row.market, interval: '1h' }
+    })
+  }
+
   const loadMore = () => void loadSymbols(true)
 
   const saveSettings = async () => {
@@ -598,7 +595,7 @@
     try {
       const nextSettings = await fetchUpdateMarketSyncSettings({
         marketTypes: settings.marketTypes,
-        quoteAssets: settings.quoteAssets,
+        quoteAssets: ['USDT'],
         spotRestBaseUrl: settings.spotRestBaseUrl.trim(),
         usdmRestBaseUrl: settings.usdmRestBaseUrl.trim(),
         proxyEnabled: settings.proxyEnabled,

@@ -1,31 +1,60 @@
 /** 前端接口封装：home。 */
 import request from '@/utils/http'
 
-export interface HomeRecentNewsItem {
-  id: number
-  sourceMessageId: number
-  title: string
-  summary: string
-  publishedAt: string
-}
-
-export interface HomeDefinitionItem {
-  workflowDefinitionId: number
-  workflowDefinitionCode: string
-  workflowDefinitionName: string
-  isActive: boolean
-  runCount: number
-  createdAt: string
-}
-
 export interface HomeOverview {
-  stats: {
-    newsTotal: number
-    newsToday: number
-    activeDefinitions: number
+  process: {
+    uptimeSeconds: number
+    goMemoryAllocBytes: number
+    goMemorySysBytes: number
+    goroutines: number
   }
-  recentNews: HomeRecentNewsItem[]
-  definitions: HomeDefinitionItem[]
+  http: {
+    requestsTotal: number
+    requestsFailed: number
+    requestsInFlight: number
+    trend: Array<{ time: string; requests: number; failed: number; averageLatencyMs: number }>
+  }
+  database: {
+    status: 'healthy' | 'unavailable' | string
+    maxOpenConnections: number
+    openConnections: number
+    inUse: number
+    idle: number
+    waitCount: number
+  }
+  workers: Array<{
+    lane: 'realtime' | 'backtest' | string
+    status: 'online' | 'offline' | string
+    workerId: string
+    lastHeartbeatAt: string
+    queuedCount: number
+    activeCount: number
+  }>
+  workflow: {
+    activeDefinitions: number
+    runningCount: number
+    failedCount: number
+    successCount: number
+  }
+  market: {
+    status: string
+    lastSyncAt: string
+    nextSyncAt: string
+    instrumentCount: number
+  }
+  trading: {
+    accountCount: number
+    activeAccountCount: number
+    pausedAccountCount: number
+    emergencyStopped: boolean
+  }
+  alerts: Array<{
+    severity: string
+    title: string
+    description: string
+    count?: number
+    path?: string
+  }>
 }
 
 export function fetchHomeOverview() {

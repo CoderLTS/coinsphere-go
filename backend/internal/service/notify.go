@@ -489,9 +489,9 @@ func (a *App) deliverStrategySignalNotification(ctx context.Context, event *doma
 	if err := database.Where("id = ?", signalID).Take(&signal).Error; err != nil {
 		return fmt.Errorf("load strategy signal notification: %w", err)
 	}
-	var version db.StrategyVersion
-	if err := database.Where("id = ?", signal.StrategyVersionID).Take(&version).Error; err != nil {
-		return fmt.Errorf("load strategy version notification: %w", err)
+	var instrument db.MarketInstrument
+	if err := database.Select("native_symbol").Where("id = ?", signal.InstrumentID).Take(&instrument).Error; err != nil {
+		return fmt.Errorf("load strategy instrument notification: %w", err)
 	}
 	now := time.Now().UTC()
 	title := "策略信号已生成"
@@ -509,7 +509,7 @@ func (a *App) deliverStrategySignalNotification(ctx context.Context, event *doma
 	}
 	content := fmt.Sprintf(
 		"%s %s 目标仓位 %s（%s/%s）",
-		version.Symbol, signal.Interval, signal.Target.String(), signal.Environment, signal.Mode,
+		instrument.NativeSymbol, signal.Interval, signal.Target.String(), signal.Environment, signal.Mode,
 	)
 	if signal.ExpiresAt != nil {
 		content += "，有效期至 " + formatUTC(*signal.ExpiresAt)

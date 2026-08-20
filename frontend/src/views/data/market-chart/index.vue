@@ -7,7 +7,6 @@
           行情分析
         </div>
         <h1>K 线与策略信号</h1>
-        <p>查看行情走势、目标仓位与策略信号。</p>
       </div>
       <ElButton type="primary" :icon="Refresh" :loading="loading" @click="loadChart">
         刷新数据
@@ -256,6 +255,7 @@
 
   defineOptions({ name: 'MarketChartPage' })
 
+  const route = useRoute()
   const intervals: CandleInterval[] = ['1m', '5m', '15m', '1h', '4h', '1d']
   const viewMode = ref<'strategy' | 'market'>('strategy')
   const selectedStrategyId = ref('')
@@ -391,9 +391,16 @@
       ])
       symbols.value = symbolResult.records
       strategyInstances.value = strategyResult.records
+      const queryInstrumentId = String(route.query.instrumentId || '')
+      const queryInterval = String(route.query.interval || '') as CandleInterval
+      const querySymbol = symbols.value.find((item) => item.id === queryInstrumentId)
       const initialStrategy =
         strategyInstances.value.find((item) => item.isEnabled) || strategyInstances.value[0]
-      if (initialStrategy) {
+      if (querySymbol) {
+        viewMode.value = 'market'
+        selectedInstrumentId.value = querySymbol.id
+        selectedInterval.value = intervals.includes(queryInterval) ? queryInterval : '1h'
+      } else if (initialStrategy) {
         selectedStrategyId.value = initialStrategy.id
         selectedInstrumentId.value = initialStrategy.instrumentId
         selectedInterval.value = intervals.includes(initialStrategy.interval as CandleInterval)

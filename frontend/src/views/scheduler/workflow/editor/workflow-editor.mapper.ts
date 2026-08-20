@@ -379,7 +379,7 @@ const buildGenericNodeSummary = (typeCode: string, config: Record<string, any>) 
     case 'workflow.call': {
       const code = String(config.workflowCode || '').trim()
       if (!code) return '选择目标工作流'
-      return truncateText(`${code} / ${String(config.entryKey || '?')}`)
+      return '已配置子工作流'
     }
     default:
       return ''

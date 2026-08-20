@@ -109,14 +109,34 @@
   const props = defineProps<Props>()
   const emit = defineEmits<Emits>()
 
-  const fields = computed(() => buildSchemaFields(props.schema?.properties || {}))
+  const fields = computed(() => {
+    const built = buildSchemaFields(props.schema?.properties || {})
+    const optionMap = props.schema?.properties?.entryKey?.enumByWorkflowCode
+    if (!optionMap || typeof optionMap !== 'object') return built
+    const options = optionMap[String(props.config?.workflowCode || '')]
+    return built.map((field) =>
+      field.key === 'entryKey'
+        ? {
+            ...field,
+            control: 'enum' as const,
+            options: Array.isArray(options) ? options : [],
+            placeholder: '请选择开始入口'
+          }
+        : field
+    )
+  })
   const visibleFields = computed(() =>
     props.keys?.length
       ? fields.value.filter((field) => props.keys?.includes(field.key))
       : fields.value
   )
 
-  const emitUpdate = (key: string, value: any) => emit('update', key, value)
+  const emitUpdate = (key: string, value: any) => {
+    emit('update', key, value)
+    if (key === 'workflowCode' && props.schema?.properties?.entryKey?.enumByWorkflowCode) {
+      emit('update', 'entryKey', '')
+    }
+  }
 
   // ---------- 对象数组行编辑 ----------
 

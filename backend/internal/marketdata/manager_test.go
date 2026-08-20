@@ -268,7 +268,7 @@ func TestManagerSubscribesEnabledPublishedStrategyInstances(t *testing.T) {
 	if err != nil {
 		t.Fatalf("insert instrument: %v", err)
 	}
-	var ownerID, recordID int64
+	var ownerID, recordID, workflowDefinitionID int64
 	if err := database.QueryRow(`INSERT INTO users (username) VALUES ('manager-strategy-owner') RETURNING id`).Scan(&ownerID); err != nil {
 		t.Fatalf("insert strategy owner: %v", err)
 	}
@@ -280,6 +280,13 @@ RETURNING id
 `, ownerID).Scan(&recordID); err != nil {
 		t.Fatalf("insert strategy idempotency record: %v", err)
 	}
+	if err := database.QueryRow(`
+INSERT INTO workflow_definitions (code, version, display_name, graph_json, created_by, created_at)
+VALUES ('manager-strategy-workflow', 1, 'manager strategy workflow', '{"nodes":[],"edges":[]}', $1, CURRENT_TIMESTAMP)
+RETURNING id
+`, ownerID).Scan(&workflowDefinitionID); err != nil {
+		t.Fatalf("insert strategy workflow definition: %v", err)
+	}
 	const strategyID = "019d5000-0000-7000-8000-000000000001"
 	const versionID = "019d5000-0000-7000-8000-000000000002"
 	const publishTaskID = "019d5000-0000-7000-8000-000000000003"
@@ -287,10 +294,10 @@ RETURNING id
 	const sourceCode = "def on_bar(candles, params): return Decimal('0')"
 	if _, err := database.Exec(`
 INSERT INTO strategies (
-    id, name, source_code, market_type, instrument_id, interval_code, lookback_bars,
+    id, name, source_code, lookback_bars,
     parameter_schema_json, created_by_user_id, updated_by_user_id
-) VALUES ($1, 'manager strategy', $2, 'spot', $3, '1m', 1, '{}', $4, $4)
-`, strategyID, sourceCode, instrument.ID, ownerID); err != nil {
+) VALUES ($1, 'manager strategy', $2, 1, '{}', $3, $3)
+`, strategyID, sourceCode, ownerID); err != nil {
 		t.Fatalf("insert strategy draft: %v", err)
 	}
 	if _, err := database.Exec(`
@@ -302,18 +309,20 @@ VALUES ($1, 'strategy.publish', $2, 'succeeded', 1, 'backtest', CURRENT_TIMESTAM
 	if _, err := database.Exec(`
 INSERT INTO strategy_versions (
     id, strategy_id, version_number, status, worker_task_id, idempotency_record_id,
-    name, source_code, code_sha256, runtime_version, market_type, instrument_id, symbol,
-    interval_code, lookback_bars, parameter_schema_json, published_by_user_id, published_at
+    name, source_code, code_sha256, runtime_version, lookback_bars,
+    parameter_schema_json, published_by_user_id, published_at
 ) VALUES ($1, $2, 1, 'published', $3, $4, 'manager strategy', $5, repeat('a', 64),
-          'python3.12', 'spot', $6, 'BTCUSDT', '1m', 1, '{}', $7, CURRENT_TIMESTAMP)
-`, versionID, strategyID, publishTaskID, recordID, sourceCode, instrument.ID, ownerID); err != nil {
+          'python3.12', 1, '{}', $6, CURRENT_TIMESTAMP)
+`, versionID, strategyID, publishTaskID, recordID, sourceCode, ownerID); err != nil {
 		t.Fatalf("insert strategy version: %v", err)
 	}
 	if _, err := database.Exec(`
 INSERT INTO strategy_instances (
-    id, owner_user_id, strategy_version_id, name, mode, environment, is_enabled
-) VALUES ($1, $2, $3, 'enabled manager strategy', 'signal_only', 'paper', TRUE)
-`, instanceID, ownerID, versionID); err != nil {
+    id, owner_user_id, strategy_version_id, market_type, instrument_id, interval_code,
+    workflow_definition_id, workflow_node_id, name, mode, environment, is_enabled
+) VALUES ($1, $2, $3, 'spot', $4, '1m', $5, 'strategy-node',
+          'enabled manager strategy', 'signal_only', 'paper', TRUE)
+`, instanceID, ownerID, versionID, instrument.ID, workflowDefinitionID); err != nil {
 		t.Fatalf("insert enabled strategy instance: %v", err)
 	}
 

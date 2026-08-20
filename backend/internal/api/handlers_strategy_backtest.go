@@ -55,6 +55,18 @@ func (s *Server) handleUpdateStrategyDraft(w http.ResponseWriter, r *http.Reques
 	writeStrategyBacktestResult(w, r, data, err)
 }
 
+func (s *Server) handleArchiveStrategyDraft(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	if !requireStrategyAdmin(w, r, principal) {
+		return
+	}
+	err := s.App.ArchiveStrategyDraft(r.Context(), r.PathValue("strategyId"))
+	if err != nil {
+		writeStrategyBacktestResult(w, r, nil, err)
+		return
+	}
+	ok(w, M{"archived": true})
+}
+
 func (s *Server) handlePublishStrategy(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
 	if !requireStrategyAdmin(w, r, principal) {
 		return

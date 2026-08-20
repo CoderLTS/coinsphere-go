@@ -5,9 +5,6 @@ export interface StrategyDraftItem {
   id: string
   name: string
   sourceCode: string
-  market: 'spot' | 'usd_m'
-  instrumentId: string
-  interval: string
   lookbackBars: number
   parameterSchema: Record<string, unknown>
   runtimeVersion: string
@@ -24,10 +21,6 @@ export interface StrategyVersionItem {
   sourceCode: string
   codeSha256: string
   runtimeVersion: string
-  market: 'spot' | 'usd_m'
-  instrumentId: string
-  symbol: string
-  interval: string
   lookbackBars: number
   parameterSchema: Record<string, unknown>
   publishedAt?: string
@@ -37,11 +30,38 @@ export interface StrategyVersionItem {
 export interface StrategyDraftPayload {
   name: string
   sourceCode: string
-  market: 'spot' | 'usd_m'
-  instrumentId: string
-  interval: string
   lookbackBars: number
   parameterSchema: Record<string, unknown>
+}
+
+export interface StrategyBacktestItem {
+  id: string
+  strategyVersionId: string
+  instrumentId: string
+  market: string
+  symbol: string
+  interval: string
+  status: string
+  startTime: string
+  endTime: string
+  createdAt: string
+  summary?: Record<string, unknown> | null
+}
+
+export interface StrategyBacktestPayload {
+  strategyVersionId: string
+  instrumentId: string
+  interval: string
+  parameters: Record<string, unknown>
+  startTime: string
+  endTime: string
+  allocationUsdt: string
+  initialEquity: string
+  feeRate: string
+  slippageRate: string
+  fundingRates: string[]
+  stopLossRatio: string
+  maintenanceMarginRatio: string
 }
 
 export function parseStrategyParameterSchema(value: string): Record<string, unknown> | null {
@@ -69,6 +89,18 @@ export function fetchPublishedStrategies(params: { cursor?: string; limit?: numb
   })
 }
 
+export function fetchStrategyDraft(strategyId: string) {
+  return request.get<StrategyDraftItem>({
+    url: `/api/v1/admin/strategies/${encodeURIComponent(strategyId)}`
+  })
+}
+
+export function fetchPublishedStrategy(strategyVersionId: string) {
+  return request.get<StrategyVersionItem>({
+    url: `/api/v1/strategies/${encodeURIComponent(strategyVersionId)}`
+  })
+}
+
 export function fetchCreateStrategyDraft(params: StrategyDraftPayload) {
   return request.post<StrategyDraftItem>({
     url: '/api/v1/admin/strategies',
@@ -88,6 +120,22 @@ export function fetchUpdateStrategyDraft(strategyId: string, params: StrategyDra
 export function fetchPublishStrategy(strategyId: string) {
   return request.post<StrategyVersionItem>({
     url: `/api/v1/admin/strategies/${encodeURIComponent(strategyId)}/publish`,
+    headers: { 'Idempotency-Key': crypto.randomUUID() },
+    showSuccessMessage: true
+  })
+}
+
+export function fetchStrategyBacktests(params: { cursor?: string; limit?: number } = {}) {
+  return request.get<Api.Common.PaginatedResponse<StrategyBacktestItem>>({
+    url: '/api/v1/backtests',
+    params
+  })
+}
+
+export function fetchCreateStrategyBacktest(params: StrategyBacktestPayload) {
+  return request.post<StrategyBacktestItem>({
+    url: '/api/v1/backtests',
+    params,
     headers: { 'Idempotency-Key': crypto.randomUUID() },
     showSuccessMessage: true
   })

@@ -31,8 +31,8 @@ func init() {
 		ConfigSchema: M{
 			"type": "object",
 			"properties": M{
-				"workflowCode": M{"type": "string", "title": "目标工作流编码"},
-				"entryKey":     M{"type": "string", "title": "入口标识", "description": "目标工作流里要触发的那个开始节点的 entryKey"},
+				"workflowCode": M{"type": "string", "title": "目标工作流"},
+				"entryKey":     M{"type": "string", "title": "开始入口", "description": "选择目标工作流中要触发的开始节点"},
 				"inputsPath": M{
 					"type": "string", "title": "输入取值路径",
 					"description": "把共享状态里该路径的对象作为子工作流的 inputs 传过去,留空则不传",

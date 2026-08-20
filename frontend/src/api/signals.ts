@@ -20,6 +20,8 @@ export interface StrategyInstanceItem {
   interval: string
   strategyName: string
   strategyVersion: number
+  workflowDefinitionId: number
+  workflowNodeId: string
 }
 
 export interface StrategySignalItem {

@@ -165,7 +165,7 @@ export function validateWorkflowDraft(graph: WorkflowDomainGraphModel): Workflow
           level: 'error',
           nodeId: node.id,
           field: 'entryKey',
-          message: '开始节点必须填写 entryKey。'
+          message: '开始节点的入口配置无效，请重新添加该节点。'
         })
       )
     } else if (entryKeyMap.has(entryKey)) {
@@ -175,7 +175,7 @@ export function validateWorkflowDraft(graph: WorkflowDomainGraphModel): Workflow
           level: 'error',
           nodeId: node.id,
           field: 'entryKey',
-          message: `开始节点 entryKey 不能重复：${entryKey}`
+          message: '开始节点的入口配置冲突，请重新添加其中一个节点。'
         })
       )
     } else {
@@ -430,6 +430,54 @@ export function validateWorkflowDraft(graph: WorkflowDomainGraphModel): Workflow
       }
     })
 
+  nodes
+    .filter((node) => node.data.typeCode === 'strategy.evaluate')
+    .forEach((strategyNode) => {
+      const instrumentId = String(strategyNode.data.config?.instrumentId || '').trim()
+      const interval = String(strategyNode.data.config?.interval || '').trim()
+      const matchingEntry = startNodes.find((startNode) => {
+        if (
+          startNode.data.typeCode !== 'start.event' ||
+          String(startNode.data.config?.eventType || '').trim() !== 'market.candle.closed'
+        ) {
+          return false
+        }
+        const filters = Array.isArray(startNode.data.config?.filters)
+          ? startNode.data.config.filters
+          : []
+        const matchesInstrument = filters.some(
+          (filter: Record<string, any>) =>
+            filter?.path === 'instrumentId' && String(filter?.equals || '') === instrumentId
+        )
+        const matchesInterval = filters.some(
+          (filter: Record<string, any>) =>
+            filter?.path === 'interval' && String(filter?.equals || '') === interval
+        )
+        if (!matchesInstrument || !matchesInterval) return false
+
+        const queue = [startNode.id]
+        const visited = new Set<string>()
+        while (queue.length) {
+          const current = queue.shift() as string
+          if (current === strategyNode.id) return true
+          if (visited.has(current)) continue
+          visited.add(current)
+          ;(adjacency.get(current) || []).forEach((next) => queue.push(next))
+        }
+        return false
+      })
+      if (!matchingEntry) {
+        issues.push(
+          createIssue({
+            scope: 'node',
+            level: 'error',
+            nodeId: strategyNode.id,
+            message: '策略节点必须连接匹配币种和周期的 K 线事件入口。'
+          })
+        )
+      }
+    })
+
   return dedupeIssues(issues)
 }
 
@@ -450,9 +498,9 @@ export function validateNodeFormDraft(
   switch (form.kind) {
     case 'start': {
       const entryKey = String(config.entryKey || '').trim()
-      if (!entryKey) errors.push('开始节点必须填写 entryKey。')
+      if (!entryKey) errors.push('开始节点的入口配置无效，请重新添加该节点。')
       if (!/^[a-z0-9._-]{1,64}$/i.test(entryKey)) {
-        errors.push('entryKey 仅支持字母、数字、点、下划线和中横线，长度不超过 64。')
+        errors.push('开始节点的入口配置无效，请重新添加该节点。')
       }
       if (form.typeCode === 'start.event' && !String(config.eventType || '').trim()) {
         errors.push('事件开始节点必须填写事件类型。')
@@ -462,9 +510,9 @@ export function validateNodeFormDraft(
         if (!scheduleType) {
           errors.push('定时开始节点必须选择计划类型。')
         } else if (scheduleType === 'cron' && !String(config.cronExpression || '').trim()) {
-          errors.push('Cron 计划必须填写 cronExpression。')
+          errors.push('Cron 计划必须填写表达式。')
         } else if (scheduleType === 'interval') {
-          if (Number(config.value || 0) <= 0) errors.push('间隔计划的 value 必须大于 0。')
+          if (Number(config.value || 0) <= 0) errors.push('间隔数值必须大于 0。')
           if (!['seconds', 'minutes', 'hours', 'days'].includes(String(config.unit || '').trim())) {
             errors.push('间隔计划的 unit 不正确。')
           }
@@ -570,6 +618,16 @@ export function validateNodeFormDraft(
       break
 
     default:
+      if (form.typeCode === 'strategy.evaluate') {
+        if (!String(config.strategyVersionId || '').trim()) errors.push('请选择已发布策略版本。')
+        if (!String(config.instrumentId || '').trim()) errors.push('请选择币种。')
+        if (!['1m', '5m', '15m', '1h', '4h', '1d'].includes(String(config.interval || ''))) {
+          errors.push('请选择有效的 K 线周期。')
+        }
+        if (!['paper', 'testnet', 'live'].includes(String(config.environment || 'paper'))) {
+          errors.push('策略运行环境无效。')
+        }
+      }
       break
   }
 

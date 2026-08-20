@@ -114,10 +114,10 @@ func (WatchlistItem) TableName() string { return "watchlist_items" }
 type StrategyDraft struct {
 	ID                  uuid.UUID `gorm:"type:uuid;primaryKey"`
 	Name                string
-	SourceCode          string `gorm:"column:source_code;type:text"`
-	Market              string `gorm:"column:market_type"`
-	InstrumentID        uuid.UUID
-	Interval            string `gorm:"column:interval_code"`
+	SourceCode          string    `gorm:"column:source_code;type:text"`
+	Market              string    `gorm:"-"`
+	InstrumentID        uuid.UUID `gorm:"-"`
+	Interval            string    `gorm:"-"`
 	LookbackBars        int
 	ParameterSchemaJSON string `gorm:"column:parameter_schema_json;type:jsonb"`
 	RuntimeVersion      string
@@ -125,6 +125,7 @@ type StrategyDraft struct {
 	UpdatedByUserID     int64
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
+	ArchivedAt          *time.Time `gorm:"column:archived_at"`
 }
 
 func (StrategyDraft) TableName() string { return "strategies" }
@@ -141,10 +142,10 @@ type StrategyVersion struct {
 	SourceCode          string `gorm:"column:source_code;type:text"`
 	CodeSHA256          string `gorm:"column:code_sha256"`
 	RuntimeVersion      string
-	Market              string `gorm:"column:market_type"`
-	InstrumentID        uuid.UUID
-	Symbol              string
-	Interval            string `gorm:"column:interval_code"`
+	Market              string    `gorm:"-"`
+	InstrumentID        uuid.UUID `gorm:"-"`
+	Symbol              string    `gorm:"-"`
+	Interval            string    `gorm:"-"`
 	LookbackBars        int
 	ParameterSchemaJSON string `gorm:"column:parameter_schema_json;type:jsonb"`
 	PublishedByUserID   int64
@@ -159,6 +160,8 @@ type Backtest struct {
 	ID                     uuid.UUID `gorm:"type:uuid;primaryKey"`
 	OwnerUserID            int64
 	StrategyVersionID      uuid.UUID
+	InstrumentID           uuid.UUID `gorm:"column:instrument_id;type:uuid"`
+	Interval               string    `gorm:"column:interval_code;size:4"`
 	WorkerTaskID           string
 	IdempotencyRecordID    int64
 	SimulatorVersion       string
@@ -177,25 +180,33 @@ type Backtest struct {
 	ResultSHA256           *string          `gorm:"column:result_sha256"`
 	ManifestSHA256         *string          `gorm:"column:manifest_sha256"`
 	CreatedAt              time.Time
+	Market                 string `gorm:"->;-:migration"`
+	Symbol                 string `gorm:"->;-:migration"`
 }
 
 func (Backtest) TableName() string { return "backtests" }
 
 // StrategyInstance 是用户启用的实时策略配置；下单能力不属于本阶段。
 type StrategyInstance struct {
-	ID                uuid.UUID `gorm:"type:uuid;primaryKey"`
-	OwnerUserID       int64
-	StrategyVersionID uuid.UUID
-	TradingAccountID  *uuid.UUID       `gorm:"column:trading_account_id;type:uuid"`
-	AllocationUSDT    *decimal.Decimal `gorm:"column:allocation_usdt;type:numeric(38,18)"`
-	StopLossRatio     *decimal.Decimal `gorm:"column:stop_loss_ratio;type:numeric(38,18)"`
-	Name              string
-	Mode              string
-	Environment       string
-	ParametersJSON    string `gorm:"column:parameters_json;type:jsonb"`
-	IsEnabled         bool   `gorm:"column:is_enabled"`
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	ID                   uuid.UUID `gorm:"type:uuid;primaryKey"`
+	OwnerUserID          int64
+	StrategyVersionID    uuid.UUID
+	Market               string           `gorm:"column:market_type;size:16"`
+	InstrumentID         uuid.UUID        `gorm:"column:instrument_id;type:uuid"`
+	Interval             string           `gorm:"column:interval_code;size:4"`
+	WorkflowDefinitionID int64            `gorm:"column:workflow_definition_id"`
+	WorkflowNodeID       string           `gorm:"column:workflow_node_id;size:100"`
+	TradingAccountID     *uuid.UUID       `gorm:"column:trading_account_id;type:uuid"`
+	AllocationUSDT       *decimal.Decimal `gorm:"column:allocation_usdt;type:numeric(38,18)"`
+	StopLossRatio        *decimal.Decimal `gorm:"column:stop_loss_ratio;type:numeric(38,18)"`
+	Name                 string
+	Mode                 string
+	Environment          string
+	ParametersJSON       string `gorm:"column:parameters_json;type:jsonb"`
+	IsEnabled            bool   `gorm:"column:is_enabled"`
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+	ArchivedAt           *time.Time `gorm:"column:archived_at"`
 }
 
 func (StrategyInstance) TableName() string { return "strategy_instances" }
@@ -262,9 +273,10 @@ type TradingAccount struct {
 	MaxDrawdown                 *decimal.Decimal `gorm:"column:max_drawdown;type:numeric(38,18)"`
 	MaxQuoteAgeSeconds          *int             `gorm:"column:max_quote_age_seconds"`
 	Leverage                    *int
-	CreationIdempotencyRecordID *int64    `gorm:"column:creation_idempotency_record_id"`
-	CreatedAt                   time.Time `gorm:"column:created_at"`
-	UpdatedAt                   time.Time `gorm:"column:updated_at"`
+	CreationIdempotencyRecordID *int64     `gorm:"column:creation_idempotency_record_id"`
+	CreatedAt                   time.Time  `gorm:"column:created_at"`
+	UpdatedAt                   time.Time  `gorm:"column:updated_at"`
+	ArchivedAt                  *time.Time `gorm:"column:archived_at"`
 }
 
 func (TradingAccount) TableName() string { return "trading_accounts" }
@@ -556,6 +568,36 @@ type WorkflowDefinition struct {
 }
 
 func (WorkflowDefinition) TableName() string { return "workflow_definitions" }
+
+// WorkflowNodeTemplate is a user-owned preset for one registered built-in
+// executor. It never stores executable source or permissions.
+type WorkflowNodeTemplate struct {
+	ID                uuid.UUID `gorm:"type:uuid;primaryKey"`
+	OwnerUserID       int64     `gorm:"column:owner_user_id"`
+	Name              string    `gorm:"size:120"`
+	Description       string    `gorm:"size:500"`
+	Icon              string    `gorm:"size:120"`
+	BaseNodeType      string    `gorm:"column:base_node_type;size:120"`
+	DefaultConfigJSON string    `gorm:"column:default_config_json;type:jsonb"`
+	IsEnabled         bool      `gorm:"column:is_enabled"`
+	CreatedAt         time.Time `gorm:"column:created_at"`
+	UpdatedAt         time.Time `gorm:"column:updated_at"`
+}
+
+func (WorkflowNodeTemplate) TableName() string { return "workflow_node_templates" }
+
+// WorkerHeartbeat is the lightweight presence record used by the operations
+// console. Queue depth is intentionally lane-local.
+type WorkerHeartbeat struct {
+	WorkerID        string    `gorm:"column:worker_id;primaryKey;size:120"`
+	Lane            string    `gorm:"primaryKey;size:16"`
+	Status          string    `gorm:"size:16"`
+	LastHeartbeatAt time.Time `gorm:"column:last_heartbeat_at"`
+	QueueDepth      int       `gorm:"column:queue_depth"`
+	UpdatedAt       time.Time `gorm:"column:updated_at"`
+}
+
+func (WorkerHeartbeat) TableName() string { return "worker_heartbeats" }
 
 // WorkflowRuntimeState 每个 workflow code 的激活状态。
 type WorkflowRuntimeState struct {

@@ -151,8 +151,16 @@ func (a *App) ActivateDefinition(definitionID int64, operatorUserID int64) (M, e
 				return err
 			}
 		}
+		if state.ActiveWorkflowDefinitionID != nil {
+			if err := deactivateWorkflowStrategyResourcesWithDB(tx, *state.ActiveWorkflowDefinitionID); err != nil {
+				return err
+			}
+		}
 		// 先重建完整入口，最后再切 active 指针；二者仍在同一事务内，任一步失败整体回滚。
 		if err := a.reconcileRuntimeEntriesForDefinitionWithDB(tx, state, definition, true); err != nil {
+			return err
+		}
+		if err := a.reconcileWorkflowStrategiesWithDB(tx, definition); err != nil {
 			return err
 		}
 		now := time.Now()
@@ -187,6 +195,9 @@ func (a *App) DeactivateDefinition(definitionID int64) (M, error) {
 		}
 		if state == nil || state.ActiveWorkflowDefinitionID == nil {
 			return bizErr("Workflow runtime state does not exist")
+		}
+		if err := deactivateWorkflowStrategyResourcesWithDB(tx, *state.ActiveWorkflowDefinitionID); err != nil {
+			return err
 		}
 		if err := tx.Where("workflow_runtime_state_id = ?", state.ID).Delete(&db.WorkflowRuntimeEntry{}).Error; err != nil {
 			return err
@@ -312,6 +323,12 @@ func (a *App) RunManualStarts(definitionID int64, startEntryKeys []string, trigg
 		return nil, err
 	}
 	graph := loadJSONObject(definition.GraphJSON)
+	if workflowContainsStrategy(graph) {
+		state := a.getRuntimeStateByCode(definition.Code)
+		if state == nil || state.ActiveWorkflowDefinitionID == nil || *state.ActiveWorkflowDefinitionID != definition.ID {
+			return nil, bizErr("包含策略节点的工作流必须先激活")
+		}
+	}
 	// map[string]M{} 造一个空 map(键是 string、值是 M)。见 GO入门笔记『复合类型』。
 	manualStartNodes := map[string]M{}
 	nodes, _ := graph["nodes"].([]any)
@@ -383,6 +400,17 @@ func (a *App) RunManualStarts(definitionID int64, startEntryKeys []string, trigg
 		a.wakeDispatcher()
 	}
 	return executions, nil
+}
+
+func deactivateWorkflowStrategyResourcesWithDB(database *gorm.DB, definitionID int64) error {
+	now := time.Now().UTC()
+	if err := database.Model(&db.StrategyInstance{}).
+		Where("workflow_definition_id = ? AND is_enabled", definitionID).
+		Updates(map[string]any{"is_enabled": false, "updated_at": now}).Error; err != nil {
+		return err
+	}
+	return database.Where("workflow_definition_id = ?", definitionID).
+		Delete(&db.MarketWorkflowSubscription{}).Error
 }
 
 // RunRuntimeEntry 按 runtime entry 入队一次执行。
@@ -840,6 +868,8 @@ type WorkflowExecutionQuery struct {
 	DefinitionID           *int64
 }
 
+var terminalWorkflowExecutionStatuses = []string{"success", "failed", "canceled"}
+
 // ListExecutions 分页查询执行记录。
 func (a *App) ListExecutions(query WorkflowExecutionQuery) (M, error) {
 	if query.DefinitionID != nil {
@@ -862,6 +892,8 @@ func (a *App) ListExecutions(query WorkflowExecutionQuery) (M, error) {
 	}
 	if query.Status != "" {
 		q = q.Where("workflow_executions.status = ?", query.Status)
+	} else {
+		q = q.Where("workflow_executions.status IN ?", terminalWorkflowExecutionStatuses)
 	}
 	if text := strings.TrimSpace(query.Keyword); text != "" {
 		like := "%" + text + "%"
@@ -916,6 +948,8 @@ func (a *App) GetExecutionDetail(executionID int64) (M, error) {
 		graph = loadJSONObject(execution.WorkflowDefinition.GraphJSON)
 	}
 	data["graph"] = graph
+	data["startNodeId"] = execution.StartNodeID
+	nodeNames := workflowNodeDisplayNames(graph)
 
 	// 下面反复用同一套路:查一批行 → make 一个 []M → for range 逐行转成 map(M)塞进去 → 交给前端。
 	var nodeLogs []db.WorkflowExecutionNode
@@ -930,12 +964,10 @@ func (a *App) GetExecutionDetail(executionID int64) (M, error) {
 			durationMs = *item.DurationMs
 		}
 		nodeItems = append(nodeItems, M{
-			"id": item.ID, "nodeId": item.NodeID, "nodeType": item.NodeType, "status": item.Status,
+			"id": item.ID, "nodeId": item.NodeID, "nodeName": nodeNames[item.NodeID],
+			"status": item.Status, "statusLabel": workflowExecutionStatusLabel(item.Status),
 			"startedAt": fmtTimeV(item.StartedAt), "finishedAt": fmtTime(item.FinishedAt),
-			"durationMs":         durationMs,
-			"inputSnapshotJson":  orDefault(item.InputSnapshotJSON, "{}"),
-			"outputSnapshotJson": orDefault(item.OutputSnapshotJSON, "{}"),
-			"errorMessage":       item.ErrorMessage,
+			"durationMs": durationMs, "error": workflowExecutionError(item.ErrorMessage, ""),
 		})
 	}
 	data["nodeLogs"] = nodeItems
@@ -946,10 +978,10 @@ func (a *App) GetExecutionDetail(executionID int64) (M, error) {
 	for i := range attempts {
 		item := attempts[i]
 		attemptItems = append(attemptItems, M{
-			"id": item.ID, "attempt": item.Attempt, "workerId": item.WorkerID,
-			"brokerMessageId": "", "leaseId": "",
+			"id": item.ID, "attempt": item.Attempt,
 			"startedAt": fmtTimeV(item.StartedAt), "finishedAt": fmtTime(item.FinishedAt),
-			"failureCategory": item.FailureCategory, "errorSummary": item.ErrorSummary, "status": item.Status,
+			"status": item.Status, "statusLabel": workflowExecutionStatusLabel(item.Status),
+			"error": workflowExecutionError(item.ErrorSummary, item.FailureCategory),
 		})
 	}
 	data["attempts"] = attemptItems
@@ -966,9 +998,10 @@ func (a *App) GetExecutionDetail(executionID int64) (M, error) {
 		transitionItems = append(transitionItems, M{
 			"id": item.ID, "edgeId": item.EdgeID,
 			"sourceNodeId": item.SourceNodeID, "targetNodeId": item.TargetNodeID,
+			"sourceNodeName": nodeNames[item.SourceNodeID], "targetNodeName": nodeNames[item.TargetNodeID],
 			"traversalIndex": item.TraversalIndex, "iterationIndex": iterationIndex,
-			"branchKey": item.BranchKey, "payloadSnapshotJson": orDefault(item.PayloadSnapshotJSON, "{}"),
-			"createdAt": fmtTimeV(item.CreatedAt),
+			"branchLabel": workflowBranchLabel(item.BranchKey),
+			"createdAt":   fmtTimeV(item.CreatedAt),
 		})
 	}
 	data["transitionLogs"] = transitionItems
@@ -984,7 +1017,7 @@ func (a *App) cleanupTerminalHistory() int {
 	var ids []int64
 	// Pluck("id", &ids):只取某一列的值到切片(等价 SELECT id FROM ...),这里先捞出一批要删的主键。见 GO入门笔记『框架:GORM』。
 	a.DB.Model(&db.WorkflowExecution{}).
-		Where("status IN ? AND finished_at IS NOT NULL AND finished_at < ?", []string{"success", "failed"}, cutoff).
+		Where("status IN ? AND finished_at IS NOT NULL AND finished_at < ?", terminalWorkflowExecutionStatuses, cutoff).
 		Order("finished_at ASC, id ASC").Limit(a.Cfg.Workflow.RetentionDeleteBatchSize).
 		Pluck("id", &ids)
 	if len(ids) == 0 {
@@ -1069,12 +1102,18 @@ func (a *App) countExecutionsByStatus(statuses []string) map[string]int64 {
 
 func serializeRuntimeWithDB(database *gorm.DB, workflowCode string, state *db.WorkflowRuntimeState) (M, error) {
 	entries := []M{}
+	activeGraph := M{}
 	var runtimeStateID, activeDefinitionID any
 	activatedAt := ""
 	if state != nil {
 		runtimeStateID = state.ID
 		if state.ActiveWorkflowDefinitionID != nil {
 			activeDefinitionID = *state.ActiveWorkflowDefinitionID
+			var definition db.WorkflowDefinition
+			if err := database.Select("graph_json").First(&definition, *state.ActiveWorkflowDefinitionID).Error; err != nil {
+				return nil, err
+			}
+			activeGraph = loadJSONObject(definition.GraphJSON)
 		}
 		activatedAt = fmtTime(state.ActivatedAt)
 		var entryRows []db.WorkflowRuntimeEntry
@@ -1082,7 +1121,7 @@ func serializeRuntimeWithDB(database *gorm.DB, workflowCode string, state *db.Wo
 			return nil, err
 		}
 		for i := range entryRows {
-			entries = append(entries, serializeRuntimeEntry(&entryRows[i]))
+			entries = append(entries, serializeRuntimeEntry(&entryRows[i], workflowStartDisplayName(activeGraph, entryRows[i].StartNodeID)))
 		}
 	}
 	return M{
@@ -1092,10 +1131,10 @@ func serializeRuntimeWithDB(database *gorm.DB, workflowCode string, state *db.Wo
 	}, nil
 }
 
-func serializeRuntimeEntry(entry *db.WorkflowRuntimeEntry) M {
+func serializeRuntimeEntry(entry *db.WorkflowRuntimeEntry, entryName string) M {
 	return M{
 		"id": entry.ID, "definitionId": entry.WorkflowDefinitionID,
-		"startNodeId": entry.StartNodeID, "entryKey": entry.EntryKey, "startType": entry.StartType,
+		"startNodeId": entry.StartNodeID, "entryKey": entry.EntryKey, "entryName": entryName, "startType": entry.StartType,
 		"isEnabled": entry.IsEnabled, "registrationStatus": entry.RegistrationStatus,
 		"nextRunAt": fmtTime(entry.NextRunAt), "lastTriggeredAt": fmtTime(entry.LastTriggeredAt),
 		"lastErrorMessage": entry.LastErrorMessage, "secretHint": entry.SecretHint,
@@ -1104,65 +1143,105 @@ func serializeRuntimeEntry(entry *db.WorkflowRuntimeEntry) M {
 }
 
 func (a *App) serializeExecutionSummary(execution *db.WorkflowExecution) M {
-	definitionCode, definitionName := "", ""
+	definitionName := ""
 	definitionVersion := 0
+	entryName := ""
 	if execution.WorkflowDefinition != nil {
-		definitionCode = execution.WorkflowDefinition.Code
 		definitionVersion = execution.WorkflowDefinition.Version
 		definitionName = execution.WorkflowDefinition.DisplayName
+		entryName = workflowStartDisplayName(loadJSONObject(execution.WorkflowDefinition.GraphJSON), execution.StartNodeID)
 	}
 	var durationMs int64
 	if execution.DurationMs != nil {
 		durationMs = *execution.DurationMs
 	}
-	var triggeredBy, triggerKey, idempotencyKey, workerID, triggerOutboxID any
-	if execution.TriggeredBy != nil {
-		triggeredBy = *execution.TriggeredBy
-	}
-	if execution.TriggerKey != nil {
-		triggerKey = *execution.TriggerKey
-	}
-	if execution.IdempotencyKey != nil {
-		idempotencyKey = *execution.IdempotencyKey
-	}
-	if execution.WorkerID != nil {
-		workerID = *execution.WorkerID
-	}
-	if execution.TriggerOutboxID != nil {
-		triggerOutboxID = *execution.TriggerOutboxID
-	}
 	return M{
 		"id":                        execution.ID,
 		"workflowDefinitionId":      execution.WorkflowDefinitionID,
-		"workflowDefinitionCode":    definitionCode,
 		"workflowDefinitionVersion": definitionVersion,
 		"workflowDefinitionName":    definitionName,
-		"startEntryKey":             execution.StartEntryKey,
-		"startNodeId":               execution.StartNodeID,
-		"startNodeType":             execution.StartNodeType,
+		"entryName":                 entryName,
 		"triggerType":               execution.TriggerType,
-		"triggeredBy":               triggeredBy,
-		"triggerKey":                triggerKey,
-		"idempotencyKey":            idempotencyKey,
-		"concurrencyKey":            execution.ConcurrencyKey,
-		"triggerOutboxId":           triggerOutboxID,
+		"triggerLabel":              workflowTriggerLabel(execution.TriggerType),
 		"status":                    execution.Status,
+		"statusLabel":               workflowExecutionStatusLabel(execution.Status),
 		"queuedAt":                  fmtTimeV(execution.QueuedAt),
-		"claimedAt":                 fmtTime(execution.ClaimedAt),
 		"startedAt":                 fmtTime(execution.StartedAt),
 		"finishedAt":                fmtTime(execution.FinishedAt),
-		"lastHeartbeatAt":           fmtTime(execution.LastHeartbeatAt),
-		"workerId":                  workerID,
 		"attemptCount":              execution.AttemptCount,
 		"maxAttempts":               execution.MaxAttempts,
-		"nextRetryAt":               fmtTime(execution.NextRetryAt),
-		"failureCategory":           execution.FailureCategory,
-		"brokerMessageId":           "",
 		"durationMs":                durationMs,
-		"errorMessage":              execution.ErrorMessage,
-		"inputSnapshotJson":         orDefault(execution.InputSnapshotJSON, "{}"),
-		"contextSnapshotJson":       orDefault(execution.ContextSnapshotJSON, "{}"),
-		"resultSnapshotJson":        orDefault(execution.ResultSnapshotJSON, "{}"),
+		"error":                     workflowExecutionError(execution.ErrorMessage, execution.FailureCategory),
+	}
+}
+
+func workflowNodeDisplayNames(graph M) map[string]string {
+	names := map[string]string{}
+	nodes, _ := graph["nodes"].([]any)
+	for _, raw := range nodes {
+		node, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		id := asString(node["id"])
+		name := strings.TrimSpace(asString(node["label"]))
+		if name == "" {
+			name = "未命名节点"
+		}
+		names[id] = name
+	}
+	return names
+}
+
+func workflowStartDisplayName(graph M, startNodeID string) string {
+	nodes, _ := graph["nodes"].([]any)
+	for _, raw := range nodes {
+		node, ok := raw.(map[string]any)
+		if !ok || asString(node["id"]) != startNodeID {
+			continue
+		}
+		config, _ := node["config"].(map[string]any)
+		if name := strings.TrimSpace(asString(config["displayName"])); name != "" {
+			return name
+		}
+		if name := strings.TrimSpace(asString(node["label"])); name != "" {
+			return name
+		}
+	}
+	return "未命名入口"
+}
+
+func workflowExecutionStatusLabel(status string) string {
+	return map[string]string{
+		"queued": "排队中", "running": "运行中", "retry_waiting": "等待重试",
+		"success": "成功", "failed": "失败", "canceled": "已取消",
+	}[status]
+}
+
+func workflowTriggerLabel(triggerType string) string {
+	return map[string]string{
+		"manual": "手动触发", "schedule": "定时触发", "event": "事件触发", "webhook": "Webhook 触发",
+	}[triggerType]
+}
+
+func workflowBranchLabel(branch string) string {
+	if label := map[string]string{"true": "是", "false": "否", "default": "默认"}[branch]; label != "" {
+		return label
+	}
+	return branch
+}
+
+func workflowExecutionError(summary, category string) any {
+	if strings.TrimSpace(summary) == "" && strings.TrimSpace(category) == "" {
+		return nil
+	}
+	categoryLabel := map[string]string{
+		failureInfraRetryable: "临时服务故障",
+		failureBusiness:       "配置或业务校验失败",
+	}[category]
+	return M{
+		"summary": strings.TrimSpace(summary), "category": categoryLabel,
+		"retryable": category == failureInfraRetryable,
 	}
 }
 

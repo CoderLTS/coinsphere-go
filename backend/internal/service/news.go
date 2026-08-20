@@ -3,10 +3,13 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"time"
 
 	"coinsphere/backend/internal/db"
+	"gorm.io/gorm"
 )
 
 // ---------- 新闻管理 CRUD ----------
@@ -191,76 +194,166 @@ func (a *App) GetHomeMeta() M {
 	return M{"service": "coinsphere", "version": "5.0.0"}
 }
 
-// GetHomeOverview 首页概览数据。
-func (a *App) GetHomeOverview() (M, error) {
-	var recentNews []db.BlockbeatsNews
-	a.DB.Order("published_at DESC, id DESC").Limit(5).Find(&recentNews)
-
-	definitions := a.listLatestDefinitions()
-	if len(definitions) > 5 {
-		definitions = definitions[:5]
+// GetHomeOverview aggregates the database-owned operational state. Process and
+// HTTP counters are merged by the API layer because they belong to the server.
+func (a *App) GetHomeOverview(ctx context.Context) (M, error) {
+	database := a.dbWithContext(ctx)
+	sqlDB, err := database.DB()
+	if err != nil {
+		return nil, err
 	}
-	definitionIDs := collectIDs(definitions, func(d db.WorkflowDefinition) int64 { return d.ID })
-	executionCounts := a.countExecutionsByDefinitionIDs(definitionIDs)
+	databaseStatus := "healthy"
+	pingCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	if err := sqlDB.PingContext(pingCtx); err != nil {
+		databaseStatus = "unavailable"
+	}
+	pool := sqlDB.Stats()
 
-	var runtimeStates []db.WorkflowRuntimeState
-	a.DB.Find(&runtimeStates)
-	stateByCode := map[string]*db.WorkflowRuntimeState{}
-	activeCount := 0
-	for i := range runtimeStates {
-		stateByCode[runtimeStates[i].WorkflowCode] = &runtimeStates[i]
-		if runtimeStates[i].ActiveWorkflowDefinitionID != nil {
-			activeCount++
+	type laneQueue struct {
+		Lane   string
+		Queued int64
+		Active int64
+	}
+	var queueRows []laneQueue
+	if err := database.Model(&db.WorkerHeartbeat{}).Raw(`
+SELECT lane,
+       COUNT(*) FILTER (WHERE status = 'queued') AS queued,
+       COUNT(*) FILTER (WHERE status IN ('claimed','running','cancelRequested')) AS active
+FROM worker_tasks
+GROUP BY lane
+`).Scan(&queueRows).Error; err != nil {
+		return nil, err
+	}
+	queueByLane := map[string]laneQueue{}
+	for _, row := range queueRows {
+		queueByLane[row.Lane] = row
+	}
+	var heartbeatRows []db.WorkerHeartbeat
+	if err := database.Order("lane, worker_id").Find(&heartbeatRows).Error; err != nil {
+		return nil, err
+	}
+	heartbeatByLane := map[string]db.WorkerHeartbeat{}
+	for _, row := range heartbeatRows {
+		current, exists := heartbeatByLane[row.Lane]
+		if !exists || row.LastHeartbeatAt.After(current.LastHeartbeatAt) {
+			heartbeatByLane[row.Lane] = row
 		}
 	}
-
-	var newsTotal, newsToday int64
-	a.DB.Model(&db.BlockbeatsNews{}).Count(&newsTotal)
-	a.DB.Model(&db.BlockbeatsNews{}).Where("published_at >= ?", time.Now().Add(-24*time.Hour)).Count(&newsToday)
-
-	newsItems := make([]M, 0, len(recentNews))
-	for i := range recentNews {
-		item := recentNews[i]
-		// []rune(summary) 把字符串按"字符"拆开再数长度 —— 中文按字数算,而不是字节数
-		//(一个中文占多个字节,直接 len(字符串) 会偏大)。
-		summary := strings.ReplaceAll(strings.TrimSpace(item.Content), "\n", " ")
-		if len([]rune(summary)) > 120 {
-			summary = truncateRunes(summary, 120) + "..."
+	now := time.Now().UTC()
+	workers := make([]M, 0, 2)
+	offlineLanes := make([]string, 0, 2)
+	for _, lane := range []string{"realtime", "backtest"} {
+		heartbeat, exists := heartbeatByLane[lane]
+		online := exists && heartbeat.Status == "online" && now.Sub(heartbeat.LastHeartbeatAt) <= 45*time.Second
+		status := "offline"
+		if online {
+			status = "online"
+		} else {
+			offlineLanes = append(offlineLanes, lane)
 		}
-		var sourceMessageID any
-		if item.SourceMessageID != nil {
-			sourceMessageID = *item.SourceMessageID
+		queue := queueByLane[lane]
+		lastHeartbeat := ""
+		workerID := ""
+		if exists {
+			lastHeartbeat = formatUTC(heartbeat.LastHeartbeatAt)
+			workerID = heartbeat.WorkerID
 		}
-		newsItems = append(newsItems, M{
-			"id": item.ID, "sourceMessageId": sourceMessageID,
-			"title": item.Title, "summary": summary, "publishedAt": fmtTime(item.PublishedAt),
+		workers = append(workers, M{
+			"lane": lane, "status": status, "workerId": workerID, "lastHeartbeatAt": lastHeartbeat,
+			"queuedCount": queue.Queued, "activeCount": queue.Active,
 		})
 	}
 
-	definitionItems := make([]M, 0, len(definitions))
-	for i := range definitions {
-		def := definitions[i]
-		isActive := false
-		if state, ok := stateByCode[def.Code]; ok && state.ActiveWorkflowDefinitionID != nil {
-			isActive = *state.ActiveWorkflowDefinitionID == def.ID
+	type workflowCounts struct {
+		Running int64
+		Failed  int64
+		Success int64
+	}
+	var workflow workflowCounts
+	if err := database.Model(&db.WorkflowExecution{}).Select(`
+COUNT(*) FILTER (WHERE status IN ('queued','running','retry_waiting')) AS running,
+COUNT(*) FILTER (WHERE status = 'failed') AS failed,
+COUNT(*) FILTER (WHERE status = 'success') AS success
+`).Scan(&workflow).Error; err != nil {
+		return nil, err
+	}
+	var activeDefinitions int64
+	if err := database.Model(&db.WorkflowRuntimeState{}).
+		Where("active_workflow_definition_id IS NOT NULL").Count(&activeDefinitions).Error; err != nil {
+		return nil, err
+	}
+
+	marketStatus := M{"status": "not_synced", "lastSyncAt": "", "nextSyncAt": ""}
+	if syncStatus, err := a.GetMarketSyncStatus(ctx); err == nil {
+		marketStatus["lastSyncAt"] = syncStatus["lastSyncAt"]
+		marketStatus["nextSyncAt"] = syncStatus["nextSyncAt"]
+		if execution, ok := syncStatus["lastExecution"].(map[string]any); ok {
+			marketStatus["status"] = execution["status"]
 		}
-		definitionItems = append(definitionItems, M{
-			"workflowDefinitionId":   def.ID,
-			"workflowDefinitionCode": def.Code,
-			"workflowDefinitionName": def.DisplayName,
-			"isActive":               isActive,
-			"runCount":               executionCounts[def.ID],
-			"createdAt":              fmtTimeV(def.CreatedAt),
-		})
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	var instrumentCount int64
+	if err := database.Model(&db.MarketInstrument{}).Where("quote_asset = 'USDT'").Count(&instrumentCount).Error; err != nil {
+		return nil, err
+	}
+	marketStatus["instrumentCount"] = instrumentCount
+
+	type accountCounts struct {
+		Total  int64
+		Active int64
+		Paused int64
+	}
+	var accounts accountCounts
+	if err := database.Model(&db.TradingAccount{}).Where("archived_at IS NULL").Select(`
+COUNT(*) AS total,
+COUNT(*) FILTER (WHERE status = 'active') AS active,
+COUNT(*) FILTER (WHERE status = 'paused') AS paused
+`).Scan(&accounts).Error; err != nil {
+		return nil, err
+	}
+	var control db.TradingControl
+	if err := database.Where("id = 1").Take(&control).Error; err != nil {
+		return nil, err
+	}
+
+	alerts := make([]M, 0)
+	if databaseStatus != "healthy" {
+		alerts = append(alerts, M{"severity": "danger", "title": "数据库不可用", "description": "PostgreSQL 健康检查失败", "path": ""})
+	}
+	if len(offlineLanes) > 0 {
+		alerts = append(alerts, M{"severity": "danger", "title": "Worker 离线", "description": strings.Join(offlineLanes, "、") + " 队列超过 45 秒未收到心跳", "path": "/scheduler/execution"})
+	}
+	if workflow.Failed > 0 {
+		alerts = append(alerts, M{"severity": "warning", "title": "存在失败的工作流", "description": "请在执行记录中查看结构化失败信息", "count": workflow.Failed, "path": "/scheduler/execution"})
+	}
+	if marketStatus["status"] == "failed" {
+		alerts = append(alerts, M{"severity": "warning", "title": "行情同步失败", "description": "最近一次币种元数据同步未成功", "path": "/data/market-metadata"})
+	}
+	if control.EmergencyStopped {
+		alerts = append(alerts, M{"severity": "danger", "title": "交易急停已开启", "description": control.StopReason, "path": "/trading/accounts"})
+	}
+	if accounts.Paused > 0 {
+		alerts = append(alerts, M{"severity": "warning", "title": "交易账户已暂停", "description": "请检查账户凭据和风控状态", "count": accounts.Paused, "path": "/trading/accounts"})
 	}
 
 	return M{
-		"stats": M{
-			"newsTotal":         newsTotal,
-			"newsToday":         newsToday,
-			"activeDefinitions": activeCount,
+		"database": M{
+			"status": databaseStatus, "maxOpenConnections": pool.MaxOpenConnections,
+			"openConnections": pool.OpenConnections, "inUse": pool.InUse, "idle": pool.Idle,
+			"waitCount": pool.WaitCount,
 		},
-		"recentNews":  newsItems,
-		"definitions": definitionItems,
+		"workers": workers,
+		"workflow": M{
+			"activeDefinitions": activeDefinitions, "runningCount": workflow.Running,
+			"failedCount": workflow.Failed, "successCount": workflow.Success,
+		},
+		"market": marketStatus,
+		"trading": M{
+			"accountCount": accounts.Total, "activeAccountCount": accounts.Active,
+			"pausedAccountCount": accounts.Paused, "emergencyStopped": control.EmergencyStopped,
+		},
+		"alerts": alerts,
 	}, nil
 }

@@ -95,7 +95,7 @@
       labelWidth: 60,
       props: {
         clearable: true,
-        placeholder: '工作流 / 入口 / 触发键 / 错误信息'
+        placeholder: '工作流 / 入口 / 错误信息'
       }
     },
     {
@@ -137,11 +137,9 @@
         clearable: true,
         placeholder: '全部执行状态',
         options: [
-          { value: 'queued', label: '排队中' },
-          { value: 'running', label: '运行中' },
-          { value: 'retry_waiting', label: '等待重试' },
           { value: 'success', label: '成功' },
-          { value: 'failed', label: '失败' }
+          { value: 'failed', label: '失败' },
+          { value: 'canceled', label: '已取消' }
         ]
       }
     }
@@ -173,7 +171,8 @@
         running: '运行中',
         retry_waiting: '等待重试',
         success: '成功',
-        failed: '失败'
+        failed: '失败',
+        canceled: '已取消'
       }) as Record<string, string>
     )[status] ||
     status ||
@@ -202,25 +201,25 @@
       showOverflowTooltip: true
     },
     {
-      prop: 'workflowDefinitionCode',
+      prop: 'workflowDefinitionVersion',
       label: '定义版本',
-      minWidth: 180,
+      width: 100,
       align: 'center',
-      formatter: (row) => `${row.workflowDefinitionCode} / v${row.workflowDefinitionVersion}`
+      formatter: (row) => `v${row.workflowDefinitionVersion}`
     },
     {
-      prop: 'startEntryKey',
+      prop: 'entryName',
       label: '开始入口',
       minWidth: 160,
       align: 'center',
-      formatter: (row) => row.startEntryKey || '--'
+      formatter: (row) => row.entryName || '--'
     },
     {
       prop: 'triggerType',
       label: '触发方式',
       minWidth: 120,
       align: 'center',
-      formatter: (row) => triggerTypeLabel(row.triggerType)
+      formatter: (row) => row.triggerLabel || triggerTypeLabel(row.triggerType)
     },
     {
       prop: 'status',
@@ -228,8 +227,10 @@
       minWidth: 100,
       align: 'center',
       formatter: (row) =>
-        h(ElTag, { type: statusTagType(row.status), effect: 'plain' }, () =>
-          formatStatusLabel(row.status)
+        h(
+          ElTag,
+          { type: statusTagType(row.status), effect: 'plain' },
+          () => row.statusLabel || formatStatusLabel(row.status)
         )
     },
     {
@@ -254,12 +255,12 @@
       formatter: (row) => (row.durationMs ? row.durationMs : '--')
     },
     {
-      prop: 'errorMessage',
+      prop: 'error',
       label: '错误信息',
       minWidth: 220,
       align: 'center',
       showOverflowTooltip: true,
-      formatter: (row) => row.errorMessage || '--'
+      formatter: (row) => row.error?.summary || '--'
     },
     {
       prop: 'operation',
@@ -342,7 +343,7 @@
     void Promise.all([fetchWorkflowDefinitionList(), loadPageData()]).then(([definitions]) => {
       definitionOptions.value = definitions.map((item) => ({
         value: item.code,
-        label: `${item.displayName} / ${item.code}`
+        label: item.displayName
       }))
     })
   })

@@ -24,7 +24,7 @@ import (
 
 // baseStartProperties 所有 start.* 开始节点共有的配置项。
 var baseStartProperties = M{
-	"entryKey":      M{"type": "string", "title": "入口标识"},
+	"entryKey":      M{"type": "string", "title": "开始入口"},
 	"displayName":   M{"type": "string", "title": "入口名称"},
 	"inputBindings": M{"type": "object", "title": "默认输入绑定"},
 }

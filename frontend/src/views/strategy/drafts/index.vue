@@ -1,224 +1,207 @@
-<!-- 策略中心：管理单文件策略草稿并发布不可变版本。 -->
 <template>
-  <div class="strategy-page">
-    <section class="strategy-hero">
-      <div>
-        <div class="eyebrow">策略研发工作台</div>
-        <h1>创建并发布策略</h1>
-      </div>
-      <div class="hero-actions">
-        <ElButton :icon="Refresh" :loading="loading" @click="loadPageData">刷新</ElButton>
-        <ElButton type="primary" :icon="Plus" @click="resetForm">新建策略</ElButton>
-      </div>
-    </section>
-
-    <section class="summary-grid" aria-label="策略统计">
-      <article class="summary-item">
-        <span>草稿</span>
-        <strong>{{ drafts.total }}</strong>
-      </article>
-      <article class="summary-item">
-        <span>已发布版本</span>
-        <strong>{{ published.total }}</strong>
-      </article>
-      <article class="summary-item summary-item--accent">
-        <span>当前运行时</span>
-        <strong>python3.12</strong>
-      </article>
-    </section>
-
-    <div class="workspace-grid">
-      <ElCard class="draft-card" shadow="never">
-        <template #header>
-          <div class="card-heading">
-            <div>
-              <h2>策略草稿</h2>
-            </div>
-            <ElTag effect="plain">{{ drafts.total }} 条</ElTag>
-          </div>
-        </template>
-
-        <ElTable
-          :data="drafts.records"
-          :loading="loading"
-          stripe
-          height="520"
-          empty-text="暂无策略草稿"
-        >
-          <ElTableColumn prop="name" label="策略名称" min-width="150" show-overflow-tooltip />
-          <ElTableColumn label="行情" width="126">
-            <template #default="{ row }">
-              <div class="market-cell">
-                <ElTag size="small" effect="plain">{{ marketLabel(row.market) }}</ElTag>
-                <span>{{ symbolLabel(row.instrumentId) }}</span>
-              </div>
-            </template>
-          </ElTableColumn>
-          <ElTableColumn prop="interval" label="周期" width="78" />
-          <ElTableColumn prop="lookbackBars" label="回看" width="78" />
-          <ElTableColumn label="操作" width="132" fixed="right">
-            <template #default="{ row }">
-              <div class="table-actions">
-                <ElButton link type="primary" :icon="Edit" @click="editDraft(row)">编辑</ElButton>
-                <ElButton link type="success" :icon="Promotion" @click="publishDraft(row)"
-                  >发布</ElButton
-                >
-              </div>
-            </template>
-          </ElTableColumn>
-        </ElTable>
-      </ElCard>
-
-      <ElCard class="form-card" shadow="never">
-        <template #header>
-          <div class="card-heading">
-            <div>
-              <h2>{{ editingId ? '编辑策略草稿' : '新建策略' }}</h2>
-            </div>
-            <ElTag :type="editingId ? 'warning' : 'info'" effect="plain">
-              {{ editingId ? '编辑中' : '草稿' }}
-            </ElTag>
-          </div>
-        </template>
-
-        <ElForm ref="formRef" :model="form" :rules="rules" label-position="top">
-          <ElFormItem label="策略名称" prop="name">
-            <ElInput
-              v-model.trim="form.name"
-              maxlength="120"
-              show-word-limit
-              placeholder="例如：BTC 趋势跟随"
-            />
-          </ElFormItem>
-
-          <div class="form-row">
-            <ElFormItem label="市场" prop="market">
-              <ElSelect v-model="form.market" @change="handleMarketChange">
-                <ElOption label="现货 Spot" value="spot" />
-                <ElOption label="U 本位合约 USDⓈ-M" value="usd_m" />
-              </ElSelect>
-            </ElFormItem>
-            <ElFormItem label="周期" prop="interval">
-              <ElSelect v-model="form.interval">
-                <ElOption v-for="item in intervals" :key="item" :label="item" :value="item" />
-              </ElSelect>
-            </ElFormItem>
-            <ElFormItem label="回看 K 线" prop="lookbackBars">
-              <ElInputNumber
+  <div class="strategy-console">
+    <header class="console-head"
+      ><div><div class="eyebrow">交易管理</div><h1>策略管理</h1></div
+      ><div class="head-actions"
+        ><ElButton :icon="Refresh" :loading="loading" @click="loadData">刷新</ElButton
+        ><ElButton type="primary" :icon="Plus" @click="newDraft">新建策略</ElButton></div
+      ></header
+    >
+    <div class="strategy-layout">
+      <ElCard shadow="never" class="strategy-list"
+        ><template #header
+          ><div class="card-head"
+            ><strong>策略草稿</strong><ElTag effect="plain">{{ drafts.total }} 条</ElTag></div
+          ></template
+        ><ElTable :data="drafts.records" v-loading="loading" row-key="id" @row-click="selectDraft"
+          ><ElTableColumn
+            prop="name"
+            label="名称"
+            min-width="170"
+            show-overflow-tooltip
+          /><ElTableColumn prop="runtimeVersion" label="运行时" width="110" /><ElTableColumn
+            prop="lookbackBars"
+            label="回看 K 线"
+            width="110"
+          /><ElTableColumn label="状态" width="90"
+            ><template #default
+              ><ElTag type="warning" effect="plain">草稿</ElTag></template
+            ></ElTableColumn
+          ><ElTableColumn label="操作" width="130"
+            ><template #default="{ row }"
+              ><ElButton link type="primary" @click.stop="editDraft(row)">编辑</ElButton
+              ><ElButton link type="success" @click.stop="publish(row)">发布</ElButton></template
+            ></ElTableColumn
+          ></ElTable
+        ></ElCard
+      >
+      <ElCard shadow="never" class="editor-card"
+        ><template #header
+          ><div class="card-head"
+            ><strong>{{ editingId ? '编辑策略草稿' : '新建策略' }}</strong
+            ><ElTag :type="editingId ? 'warning' : 'info'" effect="plain">{{
+              editingId ? '未发布' : '草稿'
+            }}</ElTag></div
+          ></template
+        ><ElForm :model="form" label-position="top"
+          ><ElFormItem label="策略名称" required
+            ><ElInput v-model.trim="form.name" maxlength="120" /></ElFormItem
+          ><div class="editor-meta"
+            ><ElFormItem label="回看 K 线" required
+              ><ElInputNumber
                 v-model="form.lookbackBars"
                 :min="1"
                 :max="10000"
-                controls-position="right"
-              />
-            </ElFormItem>
-          </div>
-
-          <ElFormItem label="交易标的" prop="instrumentId">
-            <ElSelect
-              v-model="form.instrumentId"
-              filterable
-              :loading="symbolsLoading"
-              placeholder="先同步行情元数据，再选择标的"
-            >
-              <ElOption
-                v-for="item in marketSymbols"
-                :key="item.id"
-                :label="`${item.nativeSymbol} · ${item.quoteAsset}`"
-                :value="item.id"
-              />
-            </ElSelect>
-          </ElFormItem>
-
-          <ElFormItem label="参数 schema" prop="parameterSchemaText">
-            <ElInput
+                controls-position="right" /></ElFormItem
+            ><div class="runtime-note"
+              ><span>运行时</span><strong>Python {{ selectedRuntime }}</strong
+              ><small>发布版本不可修改</small></div
+            ></div
+          ><ElFormItem label="Python 源码" required
+            ><div ref="editorHost" class="monaco-host"></div></ElFormItem
+          ><ElFormItem label="参数 Schema（JSON）" required
+            ><ElInput
               v-model="form.parameterSchemaText"
               type="textarea"
-              :rows="6"
-              spellcheck="false"
-              placeholder='例如：{"lookback":{"type":"integer","required":true,"minimum":1}}'
-            />
-          </ElFormItem>
-
-          <ElFormItem label="策略源码" prop="sourceCode">
-            <ElInput
-              v-model="form.sourceCode"
-              type="textarea"
-              :rows="13"
-              spellcheck="false"
-              class="code-input"
-              placeholder="定义 on_bar(candles, params)，返回目标仓位 Decimal。"
-            />
-          </ElFormItem>
-        </ElForm>
-
-        <div class="form-footer">
-          <span class="form-status">{{
-            editingId ? `最后更新：${editingUpdatedAt || '--'}` : '尚未保存'
-          }}</span>
-          <div>
-            <ElButton :icon="Delete" @click="resetForm">清空</ElButton>
-            <ElButton type="primary" :icon="Check" :loading="saving" @click="saveDraft"
-              >保存草稿</ElButton
-            >
-          </div>
-        </div>
-      </ElCard>
+              :rows="7"
+              spellcheck="false" /></ElFormItem></ElForm
+        ><div class="editor-footer"
+          ><span class="muted">{{
+            editingUpdatedAt ? `最近保存 ${editingUpdatedAt}` : '未保存草稿'
+          }}</span
+          ><div
+            ><ElButton @click="newDraft">清空</ElButton
+            ><ElButton type="primary" :loading="saving" @click="saveDraft">保存草稿</ElButton></div
+          ></div
+        ></ElCard
+      >
     </div>
-
-    <ElCard class="published-card" shadow="never">
-      <template #header>
-        <div class="card-heading">
-          <div>
-            <h2>已发布版本</h2>
-          </div>
-        </div>
-      </template>
-      <ElTable :data="published.records" :loading="loading" stripe empty-text="暂无发布版本">
-        <ElTableColumn prop="name" label="策略名称" min-width="180" />
-        <ElTableColumn label="版本" width="100">
-          <template #default="{ row }">v{{ row.versionNumber }}</template>
-        </ElTableColumn>
-        <ElTableColumn prop="symbol" label="标的" min-width="140" />
-        <ElTableColumn prop="interval" label="周期" width="90" />
-        <ElTableColumn prop="publishedAt" label="发布时间" min-width="180" />
-        <ElTableColumn label="状态" width="100">
-          <template #default="{ row }">
-            <ElTag type="success" effect="plain">{{
-              row.status === 'published' ? '已发布' : row.status
-            }}</ElTag>
-          </template>
-        </ElTableColumn>
-      </ElTable>
-    </ElCard>
+    <ElCard shadow="never" class="secondary-card"
+      ><template #header
+        ><ElTabs v-model="activeTab"
+          ><ElTabPane label="发布版本" name="versions" /><ElTabPane
+            label="工作流绑定 / 实例"
+            name="instances" /><ElTabPane label="信号" name="signals" /><ElTabPane
+            label="回测"
+            name="backtests" /></ElTabs></template
+      ><ElTable v-if="activeTab === 'versions'" :data="published.records" size="small"
+        ><ElTableColumn prop="name" label="策略" min-width="180" /><ElTableColumn
+          label="版本"
+          width="90"
+          ><template #default="{ row }">v{{ row.versionNumber }}</template></ElTableColumn
+        ><ElTableColumn prop="runtimeVersion" label="运行时" width="120" /><ElTableColumn
+          prop="publishedAt"
+          label="发布时间"
+          min-width="180"
+        /><ElTableColumn label="操作" width="110"
+          ><template #default="{ row }"
+            ><ElButton link type="primary" @click="openBacktest(row)">回测</ElButton></template
+          ></ElTableColumn
+        ></ElTable
+      ><ElTable v-else-if="activeTab === 'instances'" :data="instances" size="small"
+        ><ElTableColumn prop="strategyName" label="策略" min-width="160" /><ElTableColumn
+          prop="symbol"
+          label="币种"
+          width="130"
+        /><ElTableColumn prop="interval" label="周期" width="90" /><ElTableColumn
+          prop="environment"
+          label="环境"
+          width="100"
+        /><ElTableColumn prop="workflowNodeId" label="工作流节点" min-width="150" /><ElTableColumn
+          label="状态"
+          width="90"
+          ><template #default="{ row }"
+            ><ElTag :type="row.isEnabled ? 'success' : 'info'" effect="plain">{{
+              row.isEnabled ? '运行中' : '已停用'
+            }}</ElTag></template
+          ></ElTableColumn
+        ></ElTable
+      ><ElTable v-else-if="activeTab === 'signals'" :data="signals" size="small"
+        ><ElTableColumn prop="candleOpenTime" label="K 线时间" min-width="180" /><ElTableColumn
+          prop="action"
+          label="动作"
+          width="90" /><ElTableColumn prop="target" label="目标仓位" width="110" /><ElTableColumn
+          prop="status"
+          label="状态"
+          width="100" /><ElTableColumn prop="createdAt" label="生成时间" min-width="180" /></ElTable
+      ><ElTable v-else :data="backtests.records" size="small"
+        ><ElTableColumn prop="symbol" label="币种" width="130" /><ElTableColumn
+          prop="interval"
+          label="周期"
+          width="90" /><ElTableColumn prop="status" label="状态" width="110" /><ElTableColumn
+          prop="startTime"
+          label="开始"
+          min-width="170" /><ElTableColumn prop="endTime" label="结束" min-width="170" /></ElTable
+    ></ElCard>
+    <ElDialog v-model="backtestVisible" title="创建回测" width="520px"
+      ><ElForm :model="backtestForm" label-position="top"
+        ><ElFormItem label="币种"
+          ><ElSelect v-model="backtestForm.instrumentId" filterable
+            ><ElOption
+              v-for="item in symbols"
+              :key="item.id"
+              :label="item.nativeSymbol"
+              :value="item.id" /></ElSelect></ElFormItem
+        ><ElFormItem label="周期"
+          ><ElSelect v-model="backtestForm.interval"
+            ><ElOption
+              v-for="item in intervals"
+              :key="item"
+              :label="item"
+              :value="item" /></ElSelect></ElFormItem
+        ><div class="form-row"
+          ><ElFormItem label="开始时间"
+            ><ElInput
+              v-model="backtestForm.startTime"
+              placeholder="2025-01-01T00:00:00Z" /></ElFormItem
+          ><ElFormItem label="结束时间"
+            ><ElInput
+              v-model="backtestForm.endTime"
+              placeholder="2025-02-01T00:00:00Z" /></ElFormItem></div></ElForm
+      ><template #footer
+        ><ElButton @click="backtestVisible = false">取消</ElButton
+        ><ElButton type="primary" @click="createBacktest">提交回测</ElButton></template
+      ></ElDialog
+    >
   </div>
 </template>
 
 <script setup lang="ts">
-  import { Check, Delete, Edit, Plus, Promotion, Refresh } from '@element-plus/icons-vue'
-  import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
+  import { Plus, Refresh } from '@element-plus/icons-vue'
+  import * as monaco from 'monaco-editor/editor/editor.api.js'
+  import EditorWorker from 'monaco-editor/editor/editor.worker.js?worker'
+  import 'monaco-editor/languages/definitions/python/register.js'
+  import { ElMessage, ElMessageBox } from 'element-plus'
   import { fetchMarketSymbols, type MarketSymbol } from '@/api/market'
   import {
+    fetchCreateStrategyBacktest,
     fetchCreateStrategyDraft,
     fetchPublishStrategy,
     fetchPublishedStrategies,
+    fetchStrategyBacktests,
     fetchStrategyDrafts,
     fetchUpdateStrategyDraft,
-    parseStrategyParameterSchema,
+    type StrategyBacktestItem,
     type StrategyDraftItem,
     type StrategyDraftPayload,
     type StrategyVersionItem
   } from '@/api/strategy'
+  import {
+    fetchStrategyInstances,
+    fetchStrategySignals,
+    type StrategyInstanceItem,
+    type StrategySignalItem
+  } from '@/api/signals'
 
-  defineOptions({ name: 'StrategyDraftsPage' })
-
+  defineOptions({ name: 'StrategyManagementPage' })
+  globalThis.MonacoEnvironment = { getWorker: () => new EditorWorker() }
   const intervals = ['1m', '5m', '15m', '1h', '4h', '1d']
   const loading = ref(false)
   const saving = ref(false)
-  const symbolsLoading = ref(false)
   const editingId = ref('')
   const editingUpdatedAt = ref('')
-  const formRef = ref<FormInstance>()
-  const marketSymbols = ref<MarketSymbol[]>([])
+  const editorHost = ref<HTMLElement>()
+  let editor: monaco.editor.IStandaloneCodeEditor | null = null
   const drafts = ref<Api.Common.PaginatedResponse<StrategyDraftItem>>({
     records: [],
     nextCursor: '',
@@ -231,168 +214,193 @@
     hasMore: false,
     total: 0
   })
-
+  const instances = ref<StrategyInstanceItem[]>([])
+  const signals = ref<StrategySignalItem[]>([])
+  const backtests = ref<Api.Common.PaginatedResponse<StrategyBacktestItem>>({
+    records: [],
+    nextCursor: '',
+    hasMore: false,
+    total: 0
+  })
+  const symbols = ref<MarketSymbol[]>([])
+  const activeTab = ref('versions')
+  const backtestVisible = ref(false)
+  const selectedVersion = ref<StrategyVersionItem | null>(null)
   const form = reactive({
     name: '',
-    sourceCode: `def on_bar(candles, params):
-    return Decimal("0")`,
-    market: 'spot' as 'spot' | 'usd_m',
-    instrumentId: '',
-    interval: '1h',
+    sourceCode: 'def on_bar(candles, params):\n    return Decimal("0")\n',
     lookbackBars: 50,
     parameterSchemaText: '{}'
   })
-
-  const rules = reactive<FormRules>({
-    name: [{ required: true, message: '请输入策略名称', trigger: 'blur' }],
-    market: [{ required: true, message: '请选择市场', trigger: 'change' }],
-    instrumentId: [{ required: true, message: '请选择交易标的', trigger: 'change' }],
-    interval: [{ required: true, message: '请选择周期', trigger: 'change' }],
-    lookbackBars: [{ required: true, message: '请输入回看 K 线数量', trigger: 'change' }],
-    parameterSchemaText: [
-      { required: true, message: '请输入参数 schema，空 schema 请填写 {}', trigger: 'blur' }
-    ],
-    sourceCode: [{ required: true, message: '请输入策略源码', trigger: 'blur' }]
-  })
-
-  const marketLabel = (market: string) => (market === 'usd_m' ? 'USDⓈ-M' : '现货')
-  const symbolLabel = (instrumentId: string) =>
-    marketSymbols.value.find((item) => item.id === instrumentId)?.nativeSymbol ||
-    instrumentId.slice(0, 8)
-
-  const loadSymbols = async () => {
-    symbolsLoading.value = true
-    try {
-      const result = await fetchMarketSymbols({
-        market: form.market,
-        status: 'trading',
-        limit: 200
-      })
-      marketSymbols.value = result.records
-    } finally {
-      symbolsLoading.value = false
-    }
+  const backtestForm = reactive({ instrumentId: '', interval: '1h', startTime: '', endTime: '' })
+  const selectedRuntime = computed(() => '3.12')
+  const syncEditor = () => {
+    if (editor && editor.getValue() !== form.sourceCode) editor.setValue(form.sourceCode)
   }
-
-  const loadPageData = async () => {
-    loading.value = true
-    try {
-      const [draftResult, publishedResult] = await Promise.all([
-        fetchStrategyDrafts({ limit: 100 }),
-        fetchPublishedStrategies({ limit: 100 })
-      ])
-      drafts.value = draftResult
-      published.value = publishedResult
-      await loadSymbols()
-    } finally {
-      loading.value = false
-    }
-  }
-
-  const handleMarketChange = () => {
-    form.instrumentId = ''
-    void loadSymbols()
-  }
-
-  const resetForm = () => {
+  const newDraft = () => {
     editingId.value = ''
     editingUpdatedAt.value = ''
     Object.assign(form, {
       name: '',
-      sourceCode: `def on_bar(candles, params):
-    return Decimal("0")`,
-      market: 'spot',
-      instrumentId: '',
-      interval: '1h',
+      sourceCode: 'def on_bar(candles, params):\n    return Decimal("0")\n',
       lookbackBars: 50,
       parameterSchemaText: '{}'
     })
-    void loadSymbols()
-    nextTick(() => formRef.value?.clearValidate())
+    syncEditor()
   }
-
-  const editDraft = (draft: StrategyDraftItem) => {
-    editingId.value = draft.id
-    editingUpdatedAt.value = draft.updatedAt
+  const editDraft = (row: StrategyDraftItem) => {
+    editingId.value = row.id
+    editingUpdatedAt.value = row.updatedAt
     Object.assign(form, {
-      name: draft.name,
-      sourceCode: draft.sourceCode,
-      market: draft.market,
-      instrumentId: draft.instrumentId,
-      interval: draft.interval,
-      lookbackBars: draft.lookbackBars,
-      parameterSchemaText: JSON.stringify(draft.parameterSchema || {}, null, 2)
+      name: row.name,
+      sourceCode: row.sourceCode,
+      lookbackBars: row.lookbackBars,
+      parameterSchemaText: JSON.stringify(row.parameterSchema || {}, null, 2)
     })
-    void loadSymbols()
-    nextTick(() => formRef.value?.clearValidate())
+    syncEditor()
   }
-
-  const parseSchema = () => {
-    const parsed = parseStrategyParameterSchema(form.parameterSchemaText)
-    if (!parsed) ElMessage.error('参数 schema 必须是 JSON 对象')
-    return parsed
+  const selectDraft = (row: StrategyDraftItem) => editDraft(row)
+  const loadData = async () => {
+    loading.value = true
+    try {
+      const [
+        draftsResult,
+        publishedResult,
+        instanceResult,
+        signalResult,
+        backtestResult,
+        symbolResult
+      ] = await Promise.all([
+        fetchStrategyDrafts({ limit: 100 }),
+        fetchPublishedStrategies({ limit: 100 }),
+        fetchStrategyInstances({ limit: 100 }),
+        fetchStrategySignals({ limit: 100 }),
+        fetchStrategyBacktests({ limit: 100 }),
+        fetchMarketSymbols({ market: '', status: 'trading', limit: 200 })
+      ])
+      drafts.value = draftsResult
+      published.value = publishedResult
+      instances.value = instanceResult.records
+      signals.value = signalResult.records
+      backtests.value = backtestResult
+      symbols.value = symbolResult.records
+    } finally {
+      loading.value = false
+    }
   }
-
   const saveDraft = async () => {
-    if (!formRef.value || saving.value) return
-    await formRef.value.validate()
-    const parameterSchema = parseSchema()
-    if (!parameterSchema) return
+    if (!form.name.trim() || !form.sourceCode.trim())
+      return ElMessage.warning('请填写策略名称和源码')
+    let schema: Record<string, unknown>
+    try {
+      const parsed = JSON.parse(form.parameterSchemaText)
+      if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error()
+      schema = parsed
+    } catch {
+      return ElMessage.error('参数 Schema 必须是 JSON 对象')
+    }
     const payload: StrategyDraftPayload = {
       name: form.name.trim(),
       sourceCode: form.sourceCode,
-      market: form.market,
-      instrumentId: form.instrumentId,
-      interval: form.interval,
       lookbackBars: form.lookbackBars,
-      parameterSchema
+      parameterSchema: schema
     }
     saving.value = true
     try {
-      if (editingId.value) {
-        await fetchUpdateStrategyDraft(editingId.value, payload)
-      } else {
-        await fetchCreateStrategyDraft(payload)
-      }
-      await loadPageData()
-      resetForm()
+      if (editingId.value) await fetchUpdateStrategyDraft(editingId.value, payload)
+      else await fetchCreateStrategyDraft(payload)
+      await loadData()
+      newDraft()
     } finally {
       saving.value = false
     }
   }
-
-  const publishDraft = async (draft: StrategyDraftItem) => {
-    await ElMessageBox.confirm(`发布“${draft.name}”后会生成不可变版本，确认继续吗？`, '发布策略', {
-      type: 'warning',
-      confirmButtonText: '确认发布',
-      cancelButtonText: '取消'
+  const publish = async (row: StrategyDraftItem) => {
+    await ElMessageBox.confirm(`发布“${row.name}”后版本不可修改，确认继续？`, '发布策略', {
+      type: 'warning'
     })
-    await fetchPublishStrategy(draft.id)
-    await loadPageData()
+    await fetchPublishStrategy(row.id)
+    await loadData()
   }
-
+  const openBacktest = (row: StrategyVersionItem) => {
+    selectedVersion.value = row
+    backtestForm.instrumentId = symbols.value[0]?.id || ''
+    backtestVisible.value = true
+  }
+  const createBacktest = async () => {
+    if (
+      !selectedVersion.value ||
+      !backtestForm.instrumentId ||
+      !backtestForm.startTime ||
+      !backtestForm.endTime
+    )
+      return ElMessage.warning('请完整填写回测输入')
+    await fetchCreateStrategyBacktest({
+      strategyVersionId: selectedVersion.value.id,
+      instrumentId: backtestForm.instrumentId,
+      interval: backtestForm.interval,
+      parameters: {},
+      startTime: backtestForm.startTime,
+      endTime: backtestForm.endTime,
+      allocationUsdt: '1000',
+      initialEquity: '1000',
+      feeRate: '0.001',
+      slippageRate: '0',
+      fundingRates: [],
+      stopLossRatio: '',
+      maintenanceMarginRatio: ''
+    })
+    backtestVisible.value = false
+    activeTab.value = 'backtests'
+    await loadData()
+  }
   onMounted(() => {
-    void loadPageData()
+    editor = monaco.editor.create(editorHost.value!, {
+      value: form.sourceCode,
+      language: 'python',
+      theme: 'vs',
+      minimap: { enabled: false },
+      automaticLayout: true,
+      fontSize: 13,
+      tabSize: 4
+    })
+    editor.onDidChangeModelContent(() => {
+      form.sourceCode = editor?.getValue() || ''
+    })
+    void loadData()
+  })
+  onBeforeUnmount(() => {
+    editor?.dispose()
+    editor = null
   })
 </script>
 
 <style scoped lang="scss">
-  .strategy-page {
+  .strategy-console {
     display: flex;
     flex-direction: column;
-    gap: 18px;
+    gap: 16px;
     padding-bottom: 24px;
   }
 
-  .strategy-hero {
+  .console-head,
+  .head-actions,
+  .card-head,
+  .editor-footer,
+  .editor-meta {
     display: flex;
-    gap: 24px;
-    align-items: flex-start;
+    align-items: center;
+  }
+
+  .console-head,
+  .card-head,
+  .editor-footer {
+    gap: 12px;
     justify-content: space-between;
-    padding: 26px 28px;
-    background: var(--el-fill-color-blank);
-    border: 1px solid var(--el-border-color-light);
-    border-left: 4px solid var(--el-color-primary);
+  }
+
+  .head-actions {
+    gap: 8px;
   }
 
   .eyebrow {
@@ -402,100 +410,56 @@
     letter-spacing: 0.08em;
   }
 
-  h1,
-  h2,
-  p {
-    margin: 0;
-  }
-
   h1 {
-    margin-top: 8px;
-    font-size: 28px;
-    line-height: 1.25;
-  }
-
-  .hero-actions,
-  .table-actions,
-  .form-footer,
-  .card-heading {
-    display: flex;
-    align-items: center;
-  }
-
-  .hero-actions {
-    flex-shrink: 0;
-    gap: 10px;
-  }
-
-  .summary-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 14px;
-  }
-
-  .summary-item {
-    padding: 16px 18px;
-    background: var(--el-fill-color-blank);
-    border: 1px solid var(--el-border-color-light);
-  }
-
-  .summary-item span {
-    display: block;
-    color: var(--el-text-color-secondary);
-  }
-
-  .summary-item strong {
-    display: block;
-    margin: 8px 0 4px;
+    margin: 6px 0 0;
     font-size: 24px;
-    color: var(--el-text-color-primary);
   }
 
-  .summary-item--accent strong {
-    font-size: 20px;
-    color: var(--el-color-primary);
-  }
-
-  .workspace-grid {
+  .strategy-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(420px, 0.86fr);
-    gap: 18px;
+    grid-template-columns: minmax(0, 1fr) minmax(420px, 0.9fr);
+    gap: 16px;
     align-items: start;
   }
 
-  .form-card {
+  .editor-card {
     position: sticky;
     top: 16px;
   }
 
-  .card-heading {
-    gap: 12px;
-    justify-content: space-between;
+  .editor-meta {
+    gap: 18px;
   }
 
-  .card-heading h2 {
-    font-size: 17px;
-  }
-
-  .market-cell {
+  .runtime-note {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    align-items: flex-start;
+    padding: 10px 12px;
+    background: var(--el-fill-color-light);
   }
 
-  .market-cell span {
+  .runtime-note span,
+  .runtime-note small,
+  .muted {
     font-size: 12px;
     color: var(--el-text-color-secondary);
   }
 
-  .table-actions {
-    gap: 2px;
+  .monaco-host {
+    height: 360px;
+    overflow: hidden;
+    border: 1px solid var(--el-border-color);
+  }
+
+  .editor-footer {
+    padding-top: 8px;
+    border-top: 1px solid var(--el-border-color-lighter);
   }
 
   .form-row {
     display: grid;
-    grid-template-columns: 1fr 1fr 1.1fr;
+    grid-template-columns: 1fr 1fr;
     gap: 12px;
   }
 
@@ -503,55 +467,22 @@
     min-width: 0;
   }
 
-  .code-input :deep(textarea),
-  .form-card :deep(textarea) {
-    font-family: SFMono-Regular, Consolas, 'Liberation Mono', monospace;
-    line-height: 1.55;
+  .secondary-card :deep(.el-tabs__header) {
+    margin-bottom: 0;
   }
 
-  .form-footer {
-    gap: 12px;
-    justify-content: space-between;
-    padding-top: 4px;
-  }
-
-  .form-status {
-    min-width: 0;
-    overflow: hidden;
-    font-size: 12px;
-    color: var(--el-text-color-secondary);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  @media (max-width: 1200px) {
-    .workspace-grid {
+  @media (max-width: 900px) {
+    .strategy-layout {
       grid-template-columns: 1fr;
     }
 
-    .form-card {
+    .editor-card {
       position: static;
     }
-  }
 
-  @media (max-width: 680px) {
-    .strategy-hero,
-    .form-footer {
+    .console-head {
       flex-direction: column;
-      align-items: stretch;
-    }
-
-    .hero-actions {
-      justify-content: flex-end;
-    }
-
-    .summary-grid,
-    .form-row {
-      grid-template-columns: 1fr;
-    }
-
-    h1 {
-      font-size: 24px;
+      align-items: flex-start;
     }
   }
 </style>

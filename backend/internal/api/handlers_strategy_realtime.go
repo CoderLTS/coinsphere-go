@@ -15,26 +15,6 @@ func (s *Server) handleListStrategyInstances(w http.ResponseWriter, r *http.Requ
 	writeStrategyBacktestResult(w, r, data, err)
 }
 
-func (s *Server) handleCreateStrategyInstance(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	payload, err := decodeStrictBody[service.StrategyInstanceCreatePayload](r)
-	if err != nil {
-		writeProblem(w, r, http.StatusBadRequest, "invalid strategy instance request")
-		return
-	}
-	data, err := s.App.CreateStrategyInstance(r.Context(), principal.User.ID, *payload)
-	writeStrategyBacktestResult(w, r, data, err)
-}
-
-func (s *Server) handleEnableStrategyInstance(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	data, err := s.App.SetStrategyInstanceEnabled(r.Context(), principal.User.ID, r.PathValue("instanceId"), true)
-	writeStrategyBacktestResult(w, r, data, err)
-}
-
-func (s *Server) handleDisableStrategyInstance(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	data, err := s.App.SetStrategyInstanceEnabled(r.Context(), principal.User.ID, r.PathValue("instanceId"), false)
-	writeStrategyBacktestResult(w, r, data, err)
-}
-
 func (s *Server) handleListStrategySignals(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
 	page, valid := cursorPage(w, r)
 	if !valid {

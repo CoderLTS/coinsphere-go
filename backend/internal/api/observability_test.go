@@ -7,12 +7,32 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 var errHijackObserved = errors.New("hijack observed")
 
 type optionalResponseWriter struct {
 	*httptest.ResponseRecorder
+}
+
+func TestHTTPMetricsKeepsSixtyMinuteRuntimeTrend(t *testing.T) {
+	metrics := &httpMetrics{startedAt: time.Now().Add(-time.Minute)}
+	metrics.requestsTotal.Add(2)
+	metrics.requestsFailed.Add(1)
+	now := time.Now().UTC()
+	metrics.observeBucket(now, false, 20*time.Millisecond)
+	metrics.observeBucket(now, true, 40*time.Millisecond)
+	snapshot := metrics.snapshot()
+	httpSnapshot := snapshot["http"].(M)
+	trend := httpSnapshot["trend"].([]M)
+	if len(trend) != 60 {
+		t.Fatalf("trend length = %d, want 60", len(trend))
+	}
+	current := trend[len(trend)-1]
+	if current["requests"] != uint64(2) || current["failed"] != uint64(1) || current["averageLatencyMs"] != float64(30) {
+		t.Fatalf("current trend bucket = %#v", current)
+	}
 }
 
 func (optionalResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
