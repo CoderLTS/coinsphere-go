@@ -12,7 +12,7 @@
 ## 身份与归属
 
 - 不提供公开注册 API 或页面。匿名入口只有登录、健康检查和静态资源；其他页面、HTTP API 和 WebSocket 均要求登录。
-- Binance 品种、K 线和已发布策略版本是登录用户共享的只读资源；自选、策略实例、信号、回测和通知投递按当前用户隔离。
+- Binance 品种、K 线和已发布策略版本是登录用户共享的只读资源；自选、工作流生成的策略实例、信号、回测、节点模板和通知资源按当前用户隔离。
 - 管理员通过独立权限管理接口维护用户和策略草稿。管理员身份不会让普通资源查询自动跨越所有者过滤。
 - 首期使用应用层所有者过滤、数据库外键和唯一约束，不引入 RLS。跨用户关联必须被拒绝。
 
@@ -29,24 +29,30 @@
 | 领域 | 路由 |
 | --- | --- |
 | 身份 | `/api/v1/auth/*`、`/api/v1/me`、`/api/v1/admin/users` |
+| 首页 | `/api/v1/home/overview` |
 | 行情 | `/api/v1/markets/symbols`、`/api/v1/markets/candles`、`/api/v1/watchlists` |
 | 策略 | `/api/v1/admin/strategies`、`/api/v1/strategies`、`/api/v1/strategy-instances` |
 | 回测 | `/api/v1/backtests` |
 | 信号 | `/api/v1/signals`、`/api/v1/signals/{signalId}/approve`、`/api/v1/signals/{signalId}/reject` |
 | 交易 | `/api/v1/trading/*`、`/api/v1/admin/trading/*` |
+| 工作流 | `/api/v1/workflows/*`、`/api/v1/workflow-node-templates` |
 | 通知 | `/api/v1/notification-deliveries`、`/api/v1/ws/notifications` |
 
-交易路由管理 Paper/Testnet 账户、风险限额、自动化开关/授权、全局急停及其只读投影。`trading.spot_live_manual_enabled`、`trading.spot_live_auto_enabled`、`trading.usd_m_live_manual_enabled` 和 `trading.usd_m_live_auto_enabled` 默认关闭；Spot/USD-M auto 只有在对应 manual 同时启用时才有效。USD-M Live manual/auto 账户必须保持逐仓、单向和配置的低杠杆，缺少任一对账证据时禁止执行。账户创建、风险修改、恢复、自动化切换、授权和急停命令都要求 `Idempotency-Key`；风险修改、账户恢复、启用自动化、管理员授权和解除急停还要求有效的 `X-Reauth-Token`。
+交易路由管理 Paper/Testnet 账户、风险限额、自动化开关/授权、全局急停及其只读投影。账户列表与详情使用 `GET /api/v1/trading/accounts` 和 `GET /api/v1/trading/accounts/{accountId}`；`PUT` 只修改名称等可变信息，市场和环境不可变。`DELETE` 是归档命令，要求账户已暂停、自动化关闭、无启用策略绑定、无未完成意图、开放订单或未清仓位，并同时提供 `Idempotency-Key` 和有效的 `X-Reauth-Token`。`trading.spot_live_manual_enabled`、`trading.spot_live_auto_enabled`、`trading.usd_m_live_manual_enabled` 和 `trading.usd_m_live_auto_enabled` 默认关闭；Spot/USD-M auto 只有在对应 manual 同时启用时才有效。USD-M Live manual/auto 账户必须保持逐仓、单向和配置的低杠杆，缺少任一对账证据时禁止执行。账户创建、风险修改、恢复、自动化切换、授权和急停命令都要求 `Idempotency-Key`；风险修改、账户恢复、启用自动化、管理员授权和解除急停还要求有效的 `X-Reauth-Token`。
 
 Testnet 或已启用的 Spot/USD-M Live 凭据通过 `PUT /api/v1/trading/accounts/{accountId}/credentials` 保存，通过 `POST /api/v1/trading/accounts/{accountId}/credentials/revoke` 撤销。两条命令同时要求 `Idempotency-Key` 和 `X-Reauth-Token`；保存还要求调用方明确确认已关闭提现并配置 IP 白名单。凭据使用应用主密钥加密，API 只返回配置与验证状态，永不返回 API Key、Secret 或密文。保存后的状态固定为 `unverified`，账户保持暂停且自动实例被关闭；后续对应环境的 Executor 验证凭据并完成首次对账前，账户不能恢复或启用执行。关闭能力开关后仍允许撤销已有 Live 凭据。
 
 WebSocket 使用 `GET /api/v1/ws/notifications`，通过固定子协议携带 Access Token，禁止查询串 Token。事件信封固定包含 `type`、`version`、`sequence`、`occurredAt` 和 `data`；每条连接只有一个 writer，持久通知记录才是事实源，重连后通过未读快照恢复。
 
+## 首页运行态
+
+`GET /api/v1/home/overview` 聚合进程运行时长、Go 内存、goroutine、HTTP 请求/失败/并发、近 60 分钟吞吐与延迟、PostgreSQL 连接池、Worker 心跳和队列深度，以及工作流、行情同步、交易账户和告警状态。HTTP 趋势使用进程内 60 个一分钟桶，重启后清空；`/metrics` 文本接口继续保留。Worker 每 15 秒按 `realtime | backtest` lane 写入心跳和队列深度，45 秒未更新视为离线。
+
 ## Binance 行情
 
-V1 只接受 Binance 的 `spot` 和 `usd_m` 市场，以及交易所原生 `1m`、`5m`、`15m`、`1h`、`4h`、`1d` 周期。品种至少包含交易所、市场、原生代码、基础/计价资产、状态、价格最小变动、数量步长、最小数量、最小名义金额和 UTC 更新时间。
+V1 只接受 Binance 的 `spot` 和 `usd_m` 市场、`USDT` 计价资产，以及交易所原生 `1m`、`5m`、`15m`、`1h`、`4h`、`1d` 周期。品种至少包含交易所、市场、原生代码、基础/计价资产、状态、价格最小变动、数量步长、最小数量、最小名义金额和 UTC 更新时间。
 
-`GET/PUT /api/v1/markets/metadata-sync/settings` 返回或更新同步范围、Binance REST 地址及公共行情出站代理。Binance 地址必须是官方 `https://*.binance.com` 或 `https://*.binance.vision` 根地址；代理支持带显式端口的 `http://` 与 `socks5://`，认证密码仅接收不回传并以密文保存。配置从下一次同步、连通性检测或连接重建开始同时作用于 REST 与 WebSocket。Spot 默认使用 market-data-only 的 `https://data-api.binance.vision`，未被用户修改的初始化范围默认只启用 Spot；USD-M 由用户确认当前部署出口可访问后再启用。
+`GET/PUT /api/v1/markets/metadata-sync/settings` 返回或更新 Binance Spot/USD-M 同步开关、REST 地址及公共行情出站代理；报价资产固定为 `USDT`，接口拒绝其他值。Binance 地址必须是官方 `https://*.binance.com` 或 `https://*.binance.vision` 根地址；代理支持带显式端口的 `http://` 与 `socks5://`，认证密码仅接收不回传并以密文保存。配置从下一次同步、连通性检测或连接重建开始同时作用于 REST 与 WebSocket。Spot 默认使用 market-data-only 的 `https://data-api.binance.vision`；USD-M 由用户确认当前部署出口可访问后再启用。
 
 `POST /api/v1/markets/metadata-sync/proxy-check` 使用已保存的网络配置检测 Binance Spot `/api/v3/ping`，返回 `direct|proxy` 模式、`healthy|failed` 状态、延迟和 UTC 检测时间；失败响应不包含代理凭据或上游原始载荷。
 
@@ -58,7 +64,7 @@ K 线至少包含 `instrumentId`、`interval`、`openTime`、`closeTime`、`open
 
 ## 策略
 
-只有管理员可以创建、修改和发布可信的单文件 Python 策略。发布版本固定源代码 SHA-256、运行时版本、Binance 市场/品种/周期、回看窗口和参数 Schema；已发布版本不可修改或删除。
+只有管理员可以创建、修改和发布可信的单文件 Python 策略。草稿和发布版本只保存名称、源码、参数 Schema、回看 K 线数量、运行时版本和源码 SHA-256，不绑定市场、品种或周期；草稿删除为归档，已发布版本不可修改或删除。
 
 入口为：
 
@@ -73,7 +79,7 @@ def on_bar(candles: Sequence[Candle], params: Mapping[str, JSONScalar]) -> Decim
 
 ## 实时信号与人工决策
 
-用户从已发布策略版本创建 `signal_only | manual | auto`、`paper | testnet | live` 两个维度的策略实例；新实例默认关闭。启用实例订阅对应 Binance 闭合 K 线，每个实例和 K 线只生成一条持久信号。实时 Worker 复用策略 `on_bar` 契约，并把信号与 `strategy.signal.created` Outbox 事件放在同一事务提交。
+用户不直接创建或启停策略实例。`strategy.evaluate` 节点保存发布版本、`instrumentId`、周期、`signal_only | manual | auto` 模式、`paper | testnet | live` 环境、交易账户、额度、止损和参数。激活工作流时在同一事务校验版本、币种、周期、账户和风控，按工作流版本与节点创建或复用实例、建立 K 线订阅并启用运行入口；停用时关闭对应实例和订阅。每个实例和闭合 K 线只生成一条持久信号，实时 Worker 复用策略 `on_bar` 契约，并把信号与 `strategy.signal.created` Outbox 事件放在同一事务提交。
 
 `manual` 信号在下一根 K 线闭合时过期，每个策略实例最多保留一条 `active` 手动信号；延迟完成的旧 K 线信号直接记为 `expired`。批准和拒绝只允许信号 Owner 对仍处于 `active` 且未过期的手动信号执行；重复决策、越权和过期决策均拒绝。两类命令都要求 `Idempotency-Key`，同键同请求返回原结果，同键不同决策返回冲突；批准还要求当前登录会话签发、五分钟有效的 `X-Reauth-Token`。批准 Paper/Testnet 手动信号时在同一事务创建唯一交易意图；显式启用 Spot/USD-M Live manual 后，只有已验证凭据、对账一致并由 Owner 再认证恢复的对应市场 Live 账户可创建 `live + market + manual` 意图。自动信号由 Outbox 消费路径幂等创建同环境意图；Live auto 只有在对应市场开关、manual 放行、管理员授权、Owner auto 放行、完整风控和匹配对账全部满足时才可创建。两条路径都不直接创建订单或调用交易所。
 
@@ -81,15 +87,25 @@ def on_bar(candles: Sequence[Candle], params: Mapping[str, JSONScalar]) -> Decim
 
 ## 回测与产物
 
+回测请求必须显式提供 `strategyVersionId`、`instrumentId` 和 `interval`；市场由币种元数据确定，不能从策略版本继承或由调用方单独指定。
+
 回测只消费闭合 K 线：当前 K 线闭合时计算目标，目标变化在下一根 K 线开盘按差额成交，最后一根信号不成交。Spot 不允许负仓位；USD-M 使用固定的窄范围 Decimal Bar 模型，费用、滑点、止损、资金费和同 Bar 冲突按保守规则计算，不模拟盘口排队、部分成交或价格改善。
 
 手续费率、滑点率、止损参数和 USD-M `fundingRates` 都由回测请求显式提供并按 Decimal 校验。当前实现只保存并使用调用方提供的资金费率；它们不是 Binance 权威历史，不能单独作为晋级证据。USD-M 缺少资金费率时回测失败，Spot 不接受该字段。
 
 结果和输入使用规范化十进制字符串、UTC 和固定模拟器版本记录 SHA-256。需要留存的回测由 Worker 写入本地内容寻址目录，包含输入、结果和 Manifest；只有成功完成哈希登记的产物才可被引用。
 
+## 工作流与节点
+
+`GET/POST/PUT/DELETE /api/v1/workflow-node-templates` 管理当前用户的节点模板。模板只能引用已注册的内置执行器，保存名称、说明、图标、基础节点类型和默认配置；不授予任意 Go/Python 插件、进程或网络权限。删除模板不修改已保存工作流图中的节点快照。
+
+包含策略节点的未激活工作流不能手工执行。行情事件触发时，运行时再次校验事件中的币种和周期与实例绑定一致；每根 K 线仍产生一条有限执行记录。执行列表默认只返回成功、失败和取消终态；详情按时间返回节点日志、边流转、耗时、重试和结构化错误。面向 UI 的序列化返回工作流、入口和节点展示名及中文状态，不暴露 `workflow.failed.default`、`entryKey`、`typeCode`、`workerId` 或原始 JSON。
+
+通知渠道 API 和加密资源继续保留，但渠道创建、编辑和测试从节点定义页及通知节点配置流程进入，不提供独立通知渠道菜单。
+
 ## Worker
 
-任务队列使用 PostgreSQL。量化任务固定分为 `realtime` 和 `backtest` 两个 lane：各 lane 只认领自己的任务，backtest 使用受限子进程，不能占用 realtime 槽位。`strategy.realtime` 只消费已启用实例和闭合 K 线，信号、Outbox 与任务成功终态在同一租约保护事务提交。认领、心跳、取消、租约过期和崩溃恢复沿用数据库状态约束。
+任务队列使用 PostgreSQL。量化任务固定分为 `realtime` 和 `backtest` 两个 lane：各 lane 只认领自己的任务，backtest 使用受限子进程，不能占用 realtime 槽位。Worker 每 15 秒按 lane 幂等写入心跳和队列数量。`strategy.realtime` 只消费工作流启用的实例和闭合 K 线，信号、Outbox 与任务成功终态在同一租约保护事务提交。认领、心跳、取消、租约过期和崩溃恢复沿用数据库状态约束。
 
 Worker 和策略子进程只接收规范化输入、策略文件、参数和独立产物目录；环境变量按白名单重建，不读取交易凭据，不调用交易所私有接口，不运行时安装依赖或启动逐任务 Docker。墙钟、CPU、内存和产物大小上限必须由部署配置提供。
 

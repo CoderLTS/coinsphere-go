@@ -24,6 +24,8 @@ var (
 
 type StrategyInstanceCreatePayload struct {
 	StrategyVersionID string                     `json:"strategyVersionId"`
+	InstrumentID      string                     `json:"instrumentId"`
+	Interval          string                     `json:"interval"`
 	TradingAccountID  string                     `json:"tradingAccountId"`
 	AllocationUSDT    string                     `json:"allocationUsdt"`
 	StopLossRatio     string                     `json:"stopLossRatio"`
@@ -34,25 +36,27 @@ type StrategyInstanceCreatePayload struct {
 }
 
 type StrategyInstanceView struct {
-	ID                string          `json:"id"`
-	OwnerUserID       int64           `json:"ownerUserId"`
-	StrategyVersionID string          `json:"strategyVersionId"`
-	TradingAccountID  *string         `json:"tradingAccountId"`
-	AllocationUSDT    *string         `json:"allocationUsdt"`
-	StopLossRatio     *string         `json:"stopLossRatio"`
-	Name              string          `json:"name"`
-	Mode              string          `json:"mode"`
-	Environment       string          `json:"environment"`
-	Parameters        json.RawMessage `json:"parameters"`
-	IsEnabled         bool            `json:"isEnabled"`
-	CreatedAt         string          `json:"createdAt"`
-	UpdatedAt         string          `json:"updatedAt"`
-	Market            string          `json:"market"`
-	InstrumentID      string          `json:"instrumentId"`
-	Symbol            string          `json:"symbol"`
-	Interval          string          `json:"interval"`
-	StrategyName      string          `json:"strategyName"`
-	StrategyVersion   int             `json:"strategyVersion"`
+	ID                   string          `json:"id"`
+	OwnerUserID          int64           `json:"ownerUserId"`
+	StrategyVersionID    string          `json:"strategyVersionId"`
+	TradingAccountID     *string         `json:"tradingAccountId"`
+	AllocationUSDT       *string         `json:"allocationUsdt"`
+	StopLossRatio        *string         `json:"stopLossRatio"`
+	Name                 string          `json:"name"`
+	Mode                 string          `json:"mode"`
+	Environment          string          `json:"environment"`
+	Parameters           json.RawMessage `json:"parameters"`
+	IsEnabled            bool            `json:"isEnabled"`
+	CreatedAt            string          `json:"createdAt"`
+	UpdatedAt            string          `json:"updatedAt"`
+	Market               string          `json:"market"`
+	InstrumentID         string          `json:"instrumentId"`
+	Symbol               string          `json:"symbol"`
+	Interval             string          `json:"interval"`
+	StrategyName         string          `json:"strategyName"`
+	StrategyVersion      int             `json:"strategyVersion"`
+	WorkflowDefinitionID int64           `json:"workflowDefinitionId"`
+	WorkflowNodeID       string          `json:"workflowNodeId"`
 }
 
 type StrategySignalView struct {
@@ -86,10 +90,7 @@ type StrategySignalQuery struct {
 
 type strategyInstanceListRow struct {
 	db.StrategyInstance
-	Market                string `gorm:"column:market_type"`
-	InstrumentID          uuid.UUID
 	Symbol                string
-	Interval              string `gorm:"column:interval_code"`
 	StrategyName          string
 	StrategyVersionNumber int
 }
@@ -107,7 +108,7 @@ type validatedStrategyInstance struct {
 }
 
 func validateStrategyInstancePayload(
-	payload StrategyInstanceCreatePayload, version db.StrategyVersion,
+	payload StrategyInstanceCreatePayload, version db.StrategyVersion, market string,
 	spotLiveManualEnabled, usdmLiveManualEnabled, spotLiveAutoEnabled, usdmLiveAutoEnabled bool,
 ) (validatedStrategyInstance, error) {
 	name := strings.TrimSpace(payload.Name)
@@ -128,10 +129,10 @@ func validateStrategyInstancePayload(
 	if environment != "paper" && environment != "testnet" && environment != "live" {
 		return validatedStrategyInstance{}, invalidStrategy("environment must be paper, testnet, or live")
 	}
-	liveManualEnabled := (version.Market == string(marketdata.MarketTypeSpot) && spotLiveManualEnabled) ||
-		(version.Market == string(marketdata.MarketTypeUSDM) && usdmLiveManualEnabled)
-	liveAutoEnabled := (version.Market == string(marketdata.MarketTypeSpot) && spotLiveAutoEnabled) ||
-		(version.Market == string(marketdata.MarketTypeUSDM) && usdmLiveAutoEnabled)
+	liveManualEnabled := (market == string(marketdata.MarketTypeSpot) && spotLiveManualEnabled) ||
+		(market == string(marketdata.MarketTypeUSDM) && usdmLiveManualEnabled)
+	liveAutoEnabled := (market == string(marketdata.MarketTypeSpot) && spotLiveAutoEnabled) ||
+		(market == string(marketdata.MarketTypeUSDM) && usdmLiveAutoEnabled)
 	if environment == "live" && mode == "auto" &&
 		!liveAutoEnabled {
 		return validatedStrategyInstance{}, invalidStrategy("Live auto trading is not enabled for this market")
@@ -185,58 +186,6 @@ func validateStrategyInstancePayload(
 	}, nil
 }
 
-func (a *App) CreateStrategyInstance(ctx context.Context, userID int64, payload StrategyInstanceCreatePayload) (StrategyInstanceView, error) {
-	if userID <= 0 {
-		return StrategyInstanceView{}, invalidStrategy("owner is required")
-	}
-	versionID, err := requiredStrategyUUID(payload.StrategyVersionID, "strategyVersionId")
-	if err != nil {
-		return StrategyInstanceView{}, err
-	}
-	var version db.StrategyVersion
-	if err := a.dbWithContext(ctx).Where("id = ? AND status = 'published'", versionID).Take(&version).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return StrategyInstanceView{}, ErrStrategyVersionMissing
-		}
-		return StrategyInstanceView{}, err
-	}
-	validated, err := validateStrategyInstancePayload(
-		payload, version, a.spotLiveManualEnabled(), a.usdmLiveManualEnabled(), a.spotLiveAutoEnabled(), a.usdmLiveAutoEnabled(),
-	)
-	if err != nil {
-		return StrategyInstanceView{}, err
-	}
-	if validated.TradingAccountID != nil {
-		var account db.TradingAccount
-		if err := a.dbWithContext(ctx).Where(
-			"id = ? AND owner_user_id = ? AND market_type = ? AND environment = ?",
-			*validated.TradingAccountID, userID, version.Market, validated.Environment,
-		).Take(&account).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return StrategyInstanceView{}, ErrTradingAccountMissing
-			}
-			return StrategyInstanceView{}, err
-		}
-	}
-	id, err := uuid.NewV7()
-	if err != nil {
-		return StrategyInstanceView{}, err
-	}
-	now := time.Now().UTC()
-	row := db.StrategyInstance{
-		ID: id, OwnerUserID: userID, StrategyVersionID: versionID, Name: validated.Name,
-		TradingAccountID: validated.TradingAccountID, AllocationUSDT: validated.AllocationUSDT,
-		StopLossRatio: validated.StopLossRatio,
-		Mode:          validated.Mode, Environment: validated.Environment,
-		ParametersJSON: validated.ParametersJSON,
-		IsEnabled:      false, CreatedAt: now, UpdatedAt: now,
-	}
-	if err := a.dbWithContext(ctx).Create(&row).Error; err != nil {
-		return StrategyInstanceView{}, err
-	}
-	return serializeStrategyInstance(row), nil
-}
-
 func (a *App) ListStrategyInstances(ctx context.Context, userID int64, page CursorPage) (CursorResult[StrategyInstanceView], error) {
 	if userID <= 0 {
 		return CursorResult[StrategyInstanceView]{}, invalidStrategy("owner is required")
@@ -248,7 +197,7 @@ func (a *App) ListStrategyInstances(ctx context.Context, userID int64, page Curs
 	if err != nil {
 		return CursorResult[StrategyInstanceView]{}, invalidStrategy(err.Error())
 	}
-	query := a.dbWithContext(ctx).Table("strategy_instances AS instance").Where("instance.owner_user_id = ?", userID)
+	query := a.dbWithContext(ctx).Table("strategy_instances AS instance").Where("instance.owner_user_id = ? AND instance.archived_at IS NULL", userID)
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return CursorResult[StrategyInstanceView]{}, err
@@ -258,9 +207,10 @@ func (a *App) ListStrategyInstances(ctx context.Context, userID int64, page Curs
 	}
 	var rows []strategyInstanceListRow
 	if err := query.Select(`
-instance.*, version.market_type, version.instrument_id, version.symbol, version.interval_code,
+instance.*, instrument.native_symbol AS symbol,
 version.name AS strategy_name, version.version_number AS strategy_version_number
 `).Joins("JOIN strategy_versions AS version ON version.id = instance.strategy_version_id").
+		Joins("JOIN market_instruments AS instrument ON instrument.id = instance.instrument_id").
 		Order("instance.id DESC").Limit(page.Limit + 1).Scan(&rows).Error; err != nil {
 		return CursorResult[StrategyInstanceView]{}, err
 	}
@@ -277,35 +227,6 @@ version.name AS strategy_name, version.version_number AS strategy_version_number
 		lastKey = rows[len(rows)-1].ID.String()
 	}
 	return typedCursorResult(items, page, lastKey, hasMore, total), nil
-}
-
-func (a *App) SetStrategyInstanceEnabled(ctx context.Context, userID int64, rawID string, enabled bool) (StrategyInstanceView, error) {
-	if userID <= 0 {
-		return StrategyInstanceView{}, invalidStrategy("owner is required")
-	}
-	id, err := requiredStrategyUUID(rawID, "instanceId")
-	if err != nil {
-		return StrategyInstanceView{}, err
-	}
-	var row db.StrategyInstance
-	err = a.dbWithContext(ctx).Where("id = ? AND owner_user_id = ?", id, userID).Take(&row).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return StrategyInstanceView{}, ErrStrategyInstanceMissing
-	}
-	if err != nil {
-		return StrategyInstanceView{}, err
-	}
-	if enabled {
-		if err := a.validateStrategyInstanceExecutionReady(a.dbWithContext(ctx), row); err != nil {
-			return StrategyInstanceView{}, err
-		}
-	}
-	row.IsEnabled = enabled
-	row.UpdatedAt = time.Now().UTC()
-	if err := a.dbWithContext(ctx).Save(&row).Error; err != nil {
-		return StrategyInstanceView{}, err
-	}
-	return serializeStrategyInstance(row), nil
 }
 
 func (a *App) ListStrategySignals(ctx context.Context, userID int64, request StrategySignalQuery) (CursorResult[StrategySignalView], error) {
@@ -512,6 +433,8 @@ func serializeStrategyInstance(row db.StrategyInstance) StrategyInstanceView {
 		Name: row.Name, Mode: row.Mode, Environment: row.Environment,
 		Parameters: rawJSON(row.ParametersJSON, `{}`), IsEnabled: row.IsEnabled,
 		CreatedAt: formatUTC(row.CreatedAt), UpdatedAt: formatUTC(row.UpdatedAt),
+		Market: row.Market, InstrumentID: row.InstrumentID.String(), Interval: row.Interval,
+		WorkflowDefinitionID: row.WorkflowDefinitionID, WorkflowNodeID: row.WorkflowNodeID,
 	}
 	if row.TradingAccountID != nil {
 		value := row.TradingAccountID.String()
@@ -530,10 +453,7 @@ func serializeStrategyInstance(row db.StrategyInstance) StrategyInstanceView {
 
 func serializeStrategyInstanceList(row strategyInstanceListRow) StrategyInstanceView {
 	view := serializeStrategyInstance(row.StrategyInstance)
-	view.Market = row.Market
-	view.InstrumentID = row.InstrumentID.String()
 	view.Symbol = row.Symbol
-	view.Interval = row.Interval
 	view.StrategyName = row.StrategyName
 	view.StrategyVersion = row.StrategyVersionNumber
 	return view

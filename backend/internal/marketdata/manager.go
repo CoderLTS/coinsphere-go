@@ -284,10 +284,10 @@ FROM (
     SELECT instrument_id, interval_code
     FROM watchlist_items
     UNION
-    SELECT version.instrument_id, version.interval_code
+    SELECT instance.instrument_id, instance.interval_code
     FROM strategy_instances AS instance
     JOIN strategy_versions AS version ON version.id = instance.strategy_version_id
-    WHERE instance.is_enabled AND version.status = 'published'
+	WHERE instance.is_enabled AND instance.archived_at IS NULL AND version.status = 'published'
 	UNION
 	SELECT subscription.instrument_id, subscription.interval_code
 	FROM market_workflow_subscriptions AS subscription

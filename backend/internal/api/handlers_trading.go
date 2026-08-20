@@ -16,6 +16,37 @@ func (s *Server) handleTradingOverview(w http.ResponseWriter, r *http.Request, p
 	writeTradingResult(w, r, data, err)
 }
 
+func (s *Server) handleListTradingAccounts(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	data, err := s.App.ListTradingAccounts(r.Context(), principal.User.ID)
+	writeTradingResult(w, r, data, err)
+}
+
+func (s *Server) handleGetTradingAccount(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	data, err := s.App.GetTradingAccountDetail(r.Context(), principal.User.ID, r.PathValue("accountId"))
+	writeTradingResult(w, r, data, err)
+}
+
+func (s *Server) handleUpdateTradingAccount(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	payload, err := decodeStrictBody[service.TradingAccountUpdatePayload](r)
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "invalid trading account request")
+		return
+	}
+	data, err := s.App.UpdateTradingAccount(r.Context(), principal.User.ID, r.PathValue("accountId"), *payload)
+	writeTradingResult(w, r, data, err)
+}
+
+func (s *Server) handleArchiveTradingAccount(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	err := s.App.ArchiveTradingAccount(
+		r.Context(), principal, r.PathValue("accountId"), r.Header.Get("Idempotency-Key"), r.Header.Get("X-Reauth-Token"),
+	)
+	if err != nil {
+		writeTradingResult(w, r, nil, err)
+		return
+	}
+	ok(w, M{"archived": true})
+}
+
 func (s *Server) handleCreateTradingAccount(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
 	payload, err := decodeStrictBody[service.TradingAccountCreatePayload](r)
 	if err != nil {

@@ -43,21 +43,20 @@ type menuItem struct {
 var menuItems = []menuItem{
 	{"Home", "首页", "/home", "/home/index", "ri:home-5-line", "", true, true, false},
 	{"TradingCenter", "交易管理", "/trading", "/index/index", "ri:exchange-funds-line", "", false, false, false},
-	{"PaperTrading", "Paper 账户", "overview", "/trading/overview", "ri:shield-check-line", "TradingCenter", true, false, false},
-	{"StrategyCenter", "策略中心", "/strategy", "/strategy/drafts", "ri:flow-chart", "", true, false, false},
+	{"TradingAccounts", "交易账户", "accounts", "/trading/accounts", "ri:wallet-3-line", "TradingCenter", true, false, false},
+	{"StrategyManagement", "策略管理", "strategies", "/strategy/drafts", "ri:code-box-line", "TradingCenter", true, false, false},
 	{"SchedulerCenter", "工作流调度", "/scheduler", "/index/index", "ri:time-line", "", false, false, false},
+	{"NodeDefinitions", "节点定义", "node-definition", "/scheduler/node-definition", "ri:stack-line", "SchedulerCenter", true, false, false},
 	{"WorkflowDefinitions", "工作流定义", "definition", "/scheduler/workflow", "ri:node-tree", "SchedulerCenter", true, false, false},
 	{"WorkflowExecutions", "执行记录", "execution", "/scheduler/execution", "ri:history-line", "SchedulerCenter", true, false, false},
 	{"DataCenter", "数据管理", "/data", "/index/index", "ri:database-2-line", "", false, false, false},
 	{"NewsData", "新闻数据", "news", "/data/news", "ri:newspaper-line", "DataCenter", true, false, false},
-	{"PushData", "推送数据", "push", "/data/push", "ri:send-plane-line", "DataCenter", true, false, false},
-	{"MarketMetadata", "币种元数据", "market-metadata", "/data/market-metadata", "ri:coins-line", "DataCenter", true, false, false},
-	{"MarketChart", "K 线与信号", "market-chart", "/data/market-chart", "ri:stock-line", "DataCenter", true, false, false},
+	{"MarketMetadata", "币种数据", "market-metadata", "/data/market-metadata", "ri:coins-line", "DataCenter", true, false, false},
+	{"MarketChart", "K 线详情", "market-chart", "/data/market-chart", "ri:stock-line", "DataCenter", false, false, true},
 	{"ConfigCenter", "配置管理", "/config", "/index/index", "ri:function-line", "", false, false, false},
 	{"ConfigOverview", "配置概览", "overview", "/config/overview", "ri:apps-2-line", "ConfigCenter", true, false, false},
 	{"AiModelConfig", "模型配置", "ai-model", "/config/ai-model", "ri:cpu-line", "ConfigCenter", true, false, false},
 	{"AssistantAgentConfig", "智能体配置", "assistant-agent", "/config/assistant-agent", "ri:robot-2-line", "ConfigCenter", true, false, false},
-	{"NotifyChannels", "通知渠道", "notify-channel", "/config/notify-channel", "ri:notification-3-line", "ConfigCenter", true, false, false},
 	{"System", "系统管理", "/system", "/index/index", "ri:settings-3-line", "", false, false, false},
 	{"User", "用户管理", "user", "/system/user", "ri:user-3-line", "System", true, false, false},
 	{"Role", "角色管理", "role", "/system/role", "ri:team-line", "System", true, false, false},
@@ -70,22 +69,20 @@ var menuItems = []menuItem{
 var menuI18n = map[string][2]string{
 	"Home":                 {"首页", "Home"},
 	"TradingCenter":        {"交易管理", "Trading"},
-	"PaperTrading":         {"Paper 账户", "Paper Accounts"},
-	"StrategyCenter":       {"策略中心", "Strategy Center"},
+	"TradingAccounts":      {"交易账户", "Trading Accounts"},
+	"StrategyManagement":   {"策略管理", "Strategies"},
 	"SchedulerCenter":      {"工作流调度", "Workflow Scheduler"},
 	"WorkflowDefinitions":  {"工作流定义", "Workflow Definitions"},
 	"WorkflowExecutions":   {"执行记录", "Execution Records"},
 	"NodeDefinitions":      {"节点定义", "Node Definitions"},
 	"DataCenter":           {"数据管理", "Data Management"},
 	"NewsData":             {"新闻数据", "News Data"},
-	"PushData":             {"推送数据", "Push Deliveries"},
-	"MarketMetadata":       {"币种元数据", "Market Metadata"},
-	"MarketChart":          {"K 线与信号", "Candles & Signals"},
+	"MarketMetadata":       {"币种数据", "Instruments"},
+	"MarketChart":          {"K 线详情", "Candles"},
 	"ConfigCenter":         {"配置管理", "Configuration"},
 	"ConfigOverview":       {"配置概览", "Config Overview"},
 	"AiModelConfig":        {"模型配置", "Model Config"},
 	"AssistantAgentConfig": {"智能体配置", "Assistant Agents"},
-	"NotifyChannels":       {"通知渠道", "Notification Channels"},
 	"System":               {"系统管理", "System Management"},
 	"User":                 {"用户管理", "User Management"},
 	"Role":                 {"角色管理", "Role Management"},
@@ -321,13 +318,11 @@ func seedMenusAndButtons(tx *gorm.DB) (map[string]*SystemMenu, map[string]*Syste
 			return nil, nil, err
 		}
 	}
-	// NodeDefinitions 挂在调度中心下,sort 固定 35(位于定义与执行记录之间)。
-	if err := upsertMenu(menuItem{
-		Name: "NodeDefinitions", Title: "节点定义", Path: "node-definition",
-		Component: "/scheduler/node-definition", Icon: "ri:stack-line",
-		Parent: "SchedulerCenter", KeepAlive: true,
-	}, 35); err != nil {
-		return nil, nil, err
+	for _, name := range []string{"PaperTrading", "StrategyCenter", "PushData", "NotifyChannels"} {
+		if err := tx.Model(&SystemMenu{}).Where("name = ?", name).
+			Updates(map[string]any{"is_active": false, "is_hidden": true, "updated_at": now}).Error; err != nil {
+			return nil, nil, err
+		}
 	}
 
 	buttonMap := map[string]*SystemMenuButton{}
@@ -383,17 +378,16 @@ func seedRoleBindings(
 
 	// make([]string, 0, N) 造一个长度为 0、但预留容量 N 的空 slice;随后用 append 往里追加元素。
 	// 预留容量只是性能优化(减少扩容),不影响结果。
-	allMenuNames := make([]string, 0, len(menuItems)+1)
+	allMenuNames := make([]string, 0, len(menuItems))
 	for _, item := range menuItems {
 		allMenuNames = append(allMenuNames, item.Name)
 	}
-	allMenuNames = append(allMenuNames, "NodeDefinitions")
 
 	// map 的值也可以是 slice:roleMenus 表示“每种角色能看到的菜单名清单”——超管看全部,
 	// 普通用户只看几项,游客只看首页。
 	roleMenus := map[string][]string{
 		"R_SUPER": allMenuNames,
-		"R_USER":  {"Home", "TradingCenter", "PaperTrading", "DataCenter", "MarketMetadata", "MarketChart", "ConfigCenter", "AiModelConfig", "NotifyChannels", "UserCenter"},
+		"R_USER":  {"Home", "TradingCenter", "TradingAccounts", "DataCenter", "MarketMetadata", "MarketChart", "ConfigCenter", "AiModelConfig", "UserCenter"},
 		"R_GUEST": {"Home"},
 	}
 	superButtons := make([]string, 0)

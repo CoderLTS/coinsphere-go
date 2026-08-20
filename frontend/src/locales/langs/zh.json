@@ -237,7 +237,9 @@
     },
     "trading": {
       "title": "交易管理",
-      "overview": "交易账户"
+      "overview": "交易账户",
+      "accounts": "交易账户",
+      "strategies": "策略管理"
     },
     "scheduler": {
       "title": "定时任务",

@@ -12,6 +12,7 @@
       :agent-options="agentOptions"
       :notify-user-options="notifyUserOptions"
       :notify-role-options="notifyRoleOptions"
+      :notify-channel-options="notifyChannelOptions"
       :notify-options-loading="notifyOptionsLoading"
       :json-definition-visible="jsonDefinitionVisible"
       :dirty-node-ids="dirtyNodeIds"
@@ -30,6 +31,7 @@
       @request-commit-node-draft="void commitAndCloseNodeEditor()"
       @request-discard-node-draft="discardNodeDraft"
       @request-close-node-editor="void closeNodeEditor()"
+      @request-manage-notify="void router.push('/scheduler/node-definition?tab=channels')"
       @request-close-edge-editor="handleCloseEdgeEditor"
       @request-remove-selection="void removeSelection()"
       @request-node-context-action="void handleNodeContextAction($event)"
@@ -80,7 +82,6 @@
       <WorkflowMetaPopover
         :visible="metaVisible"
         :model="metaDraft"
-        :mode="mode"
         @update:model="metaDraft = $event"
         @submit="handleMetaSubmit"
         @close="metaVisible = false"
@@ -93,16 +94,26 @@
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { storeToRefs } from 'pinia'
   import { fetchGetRoleList, fetchGetUserList } from '@/api/system'
-  import { fetchStrategyInstances, type StrategyInstanceItem } from '@/api/signals'
+  import { fetchNotifyChannelList, type NotifyChannelItem } from '@/api/config'
+  import { fetchMarketSymbols, type MarketSymbol } from '@/api/market'
+  import { fetchPublishedStrategies, type StrategyVersionItem } from '@/api/strategy'
+  import { fetchTradingAccounts, type TradingAccount } from '@/api/trading'
   import {
     fetchCreateWorkflowDefinition,
     fetchNodeDefinitions,
+    fetchWorkflowDefinitionList,
+    fetchWorkflowNodeTemplates,
     fetchWorkflowAgentOptions,
     fetchUpdateWorkflowDefinition,
     fetchValidateWorkflowDefinition,
     fetchWorkflowDefinitionDetail
   } from '@/api/scheduler'
-  import type { WorkflowAgentOption, WorkflowDefinitionItem } from '@/api/scheduler'
+  import type {
+    WorkflowAgentOption,
+    WorkflowDefinitionItem,
+    WorkflowNodeDefinitionItem,
+    WorkflowNodeTemplateItem
+  } from '@/api/scheduler'
   import { useMenuStore } from '@/store/modules/menu'
   import { useWorkflowEditorStore } from '@/store/modules/workflow-editor'
   import { buildWorkflowMaterialGroups } from './node-materials'
@@ -180,7 +191,21 @@
   const agentOptions = ref<WorkflowAgentOption[]>([])
   const notifyOptionsLoading = ref(false)
   const notifyOptionsLoaded = ref(false)
-  const strategyInstances = ref<StrategyInstanceItem[]>([])
+  const nodeTemplates = ref<WorkflowNodeTemplateItem[]>([])
+  const notifyChannels = ref<NotifyChannelItem[]>([])
+  const notifyChannelOptions = computed(() => {
+    const groups = new Map<string, NotifyChannelItem[]>()
+    notifyChannels.value.forEach((item) => {
+      const current = groups.get(item.channelType) || []
+      current.push(item)
+      groups.set(item.channelType, current)
+    })
+    return Array.from(groups, ([value, items]) => ({
+      value,
+      label: items.map((item) => item.displayName).join(' / '),
+      enabled: items.some((item) => item.isEnabled)
+    }))
+  })
   const zoomText = computed(() => `${Math.round(zoom.value * 100)}%`)
   const cloneGraph = (graph: WorkflowDomainGraphModel): WorkflowDomainGraphModel =>
     JSON.parse(JSON.stringify(graph))
@@ -220,33 +245,99 @@
 
   const editorMaterialGroups = computed(() => {
     const baseGroups = materialGroups.value.map((group) => ({ ...group, items: [...group.items] }))
-    if (!strategyInstances.value.length) return baseGroups
-    const strategyTemplate = baseGroups
-      .flatMap((group) => group.items)
-      .find((item) => item.typeCode === 'strategy.evaluate')
-    if (!strategyTemplate) return baseGroups
-
-    const filtered = baseGroups
-      .map((group) => ({
-        ...group,
-        items: group.items.filter((item) => item.typeCode !== 'strategy.evaluate')
-      }))
-      .filter((group) => group.items.length)
-    const strategyGroup = {
-      key: 'strategy-instances',
-      title: '策略实例',
-      items: strategyInstances.value.map((item) => ({
-        ...strategyTemplate,
-        title: item.name,
-        description: `${item.strategyName} v${item.strategyVersion} · ${item.symbol} · ${item.interval}`,
-        presetSubtitle: `${item.symbol} · ${item.interval} · ${item.environment}`,
-        presetConfig: { strategyInstanceId: item.id }
-      }))
-    }
-    const marketIndex = filtered.findIndex((group) => group.title === '行情')
-    filtered.splice(marketIndex < 0 ? filtered.length : marketIndex + 1, 0, strategyGroup)
-    return filtered
+    const materials = baseGroups.flatMap((group) => group.items)
+    const templateItems = nodeTemplates.value
+      .filter((item) => item.isEnabled)
+      .map((item) => {
+        const base = materials.find((material) => material.typeCode === item.baseNodeType)
+        if (!base) return null
+        return {
+          ...base,
+          title: item.name,
+          description: item.description || `基于${item.baseNodeLabel}`,
+          presetSubtitle: item.baseNodeLabel,
+          presetConfig: item.defaultConfig
+        }
+      })
+      .filter((item): item is NonNullable<typeof item> => Boolean(item))
+    return templateItems.length
+      ? [{ key: 'my-templates', title: '我的节点模板', items: templateItems }, ...baseGroups]
+      : baseGroups
   })
+
+  const setSchemaOptions = (
+    definitions: WorkflowNodeDefinitionItem[],
+    typeCode: string,
+    field: string,
+    options: Array<{ value: string; label: string }>
+  ) => {
+    const property = definitions.find((item) => item.typeCode === typeCode)?.configSchema
+      ?.properties?.[field]
+    if (!property || !options.length) return
+    property.enum = options.map((item) => item.value)
+    property.enumLabels = options.map((item) => item.label)
+  }
+
+  const enrichNodeDefinitions = (
+    source: WorkflowNodeDefinitionItem[],
+    strategies: StrategyVersionItem[],
+    instruments: MarketSymbol[],
+    accounts: TradingAccount[],
+    workflows: WorkflowDefinitionItem[]
+  ) => {
+    const definitions: WorkflowNodeDefinitionItem[] = JSON.parse(JSON.stringify(source))
+    const instrumentOptions = instruments.map((item) => ({
+      value: item.id,
+      label: `${item.nativeSymbol} · ${item.market === 'usd_m' ? 'USD-M' : 'Spot'} · ${item.status === 'trading' ? '交易中' : '已暂停'}`
+    }))
+    setSchemaOptions(
+      definitions,
+      'strategy.evaluate',
+      'strategyVersionId',
+      strategies.map((item) => ({
+        value: item.id,
+        label: `${item.name} v${item.versionNumber} · 已发布`
+      }))
+    )
+    setSchemaOptions(definitions, 'strategy.evaluate', 'instrumentId', instrumentOptions)
+    setSchemaOptions(
+      definitions,
+      'strategy.evaluate',
+      'tradingAccountId',
+      accounts.map((item) => ({
+        value: item.id,
+        label: `${item.name} · ${item.environment} · ${item.status === 'active' ? '运行中' : '已暂停'}`
+      }))
+    )
+    setSchemaOptions(definitions, 'market.candles.subscribe', 'instrumentId', instrumentOptions)
+    setSchemaOptions(definitions, 'market.candles.backfill', 'instrumentId', instrumentOptions)
+    setSchemaOptions(
+      definitions,
+      'workflow.call',
+      'workflowCode',
+      workflows.map((item) => ({
+        value: item.code,
+        label: `${item.displayName} · ${item.isWorkflowActive ? '已激活' : '未激活'}`
+      }))
+    )
+    const entryProperty = definitions.find((item) => item.typeCode === 'workflow.call')
+      ?.configSchema?.properties?.entryKey
+    if (entryProperty) {
+      entryProperty.enumByWorkflowCode = Object.fromEntries(
+        workflows.map((workflow) => [
+          workflow.code,
+          workflow.graph.nodes
+            .filter((node) => node.type.startsWith('start.'))
+            .map((node) => ({
+              value: String(node.config?.entryKey || '').trim(),
+              label: String(node.config?.displayName || node.label || '开始入口').trim()
+            }))
+            .filter((item) => item.value)
+        ])
+      )
+    }
+    return definitions
+  }
 
   const materialItems = computed(() => editorMaterialGroups.value.flatMap((group) => group.items))
 
@@ -1201,21 +1292,46 @@
     notifyRoleOptions.value = []
     notifyOptionsLoading.value = false
     notifyOptionsLoaded.value = false
-    strategyInstances.value = []
+    nodeTemplates.value = []
+    notifyChannels.value = []
     historySessionKey.value += 1
     resetGraphHistory()
 
     try {
-      const [nodeDefinitionResult, agentOptionResult, strategyInstanceResult] = await Promise.all([
+      const [
+        rawDefinitions,
+        agentOptionResult,
+        strategyResult,
+        symbolResult,
+        accountResult,
+        templateResult,
+        channelResult,
+        workflowResult
+      ] = await Promise.all([
         fetchNodeDefinitions(),
         // 智能体列表拿不到不该挡住整个编辑器（没配智能体也能画别的节点）。
         fetchWorkflowAgentOptions().catch(() => [] as WorkflowAgentOption[]),
-        fetchStrategyInstances({ limit: 200 })
+        fetchPublishedStrategies({ limit: 200 })
           .then((result) => result.records)
-          .catch(() => [] as StrategyInstanceItem[])
+          .catch(() => [] as StrategyVersionItem[]),
+        fetchMarketSymbols({ limit: 200, quoteAsset: 'USDT', status: 'trading' })
+          .then((result) => result.records)
+          .catch(() => [] as MarketSymbol[]),
+        fetchTradingAccounts().catch(() => [] as TradingAccount[]),
+        fetchWorkflowNodeTemplates().catch(() => [] as WorkflowNodeTemplateItem[]),
+        fetchNotifyChannelList().catch(() => [] as NotifyChannelItem[]),
+        fetchWorkflowDefinitionList().catch(() => [] as WorkflowDefinitionItem[])
       ])
+      const nodeDefinitionResult = enrichNodeDefinitions(
+        rawDefinitions,
+        strategyResult,
+        symbolResult,
+        accountResult,
+        workflowResult
+      )
       agentOptions.value = agentOptionResult
-      strategyInstances.value = strategyInstanceResult
+      nodeTemplates.value = templateResult
+      notifyChannels.value = channelResult
 
       // 先把节点定义同步给本地注册表镜像：端口、分支、校验都要按后端声明的图语义来。
       syncNodeDefinitions(nodeDefinitionResult)

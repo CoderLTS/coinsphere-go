@@ -41,21 +41,12 @@
 
           <ElFormItem label="节点类型">
             <ElInput :model-value="nodeTypeLabel" disabled />
-            <div class="node-editor-card__field-hint">{{ nodeTypeCodeHint }}</div>
           </ElFormItem>
 
           <template v-if="localForm.kind === 'start'">
             <ElAlert type="info" :closable="false" :title="startNodeHint" />
 
-            <ElFormItem label="入口标识 Entry Key">
-              <ElInput
-                v-model="localForm.config.entryKey"
-                placeholder="例如 manual.default"
-                @blur="handleTextBlur(['config', 'entryKey'])"
-              />
-            </ElFormItem>
-
-            <ElFormItem label="入口展示名">
+            <ElFormItem label="入口名称">
               <ElInput
                 v-model="localForm.config.displayName"
                 placeholder="用于运行时入口展示"
@@ -291,10 +282,23 @@
                 v-model="notifyChannelTypes"
                 @change="handleNotifyChannelTypesChange"
               >
-                <ElCheckbox label="站内通知" value="in_app" />
-                <ElCheckbox label="钉钉 Webhook" value="dingtalk_webhook" />
-                <ElCheckbox label="邮件" value="smtp_email" />
+                <ElCheckbox
+                  v-for="channel in notifyChannelChoices"
+                  :key="channel.value"
+                  :value="channel.value"
+                  :disabled="!channel.enabled"
+                >
+                  {{ channel.label }}{{ channel.enabled ? '' : '（已停用）' }}
+                </ElCheckbox>
               </ElCheckboxGroup>
+              <ElButton
+                link
+                type="primary"
+                native-type="button"
+                @click="$emit('request-manage-notify')"
+              >
+                新增、编辑或测试渠道
+              </ElButton>
             </ElFormItem>
 
             <ElFormItem label="标题模板">
@@ -480,6 +484,7 @@
     WorkflowDomainNode,
     WorkflowEditorIssue,
     WorkflowNodeFormModel,
+    WorkflowNotifyChannelOption,
     WorkflowNotifyTargetOption
   } from '../types'
   import { getNodeConfigSchema } from '../node-registry'
@@ -491,6 +496,7 @@
     agentOptions?: WorkflowAgentOption[]
     notifyUserOptions?: WorkflowNotifyTargetOption[]
     notifyRoleOptions?: WorkflowNotifyTargetOption[]
+    notifyChannelOptions?: WorkflowNotifyChannelOption[]
     notifyOptionsLoading?: boolean
     issues: WorkflowEditorIssue[]
     errors?: string[]
@@ -501,6 +507,7 @@
     (e: 'request-commit'): void
     (e: 'request-discard'): void
     (e: 'request-close'): void
+    (e: 'request-manage-notify'): void
     (e: 'request-remove'): void
   }
 
@@ -515,6 +522,7 @@
     agentOptions: () => [],
     notifyUserOptions: () => [],
     notifyRoleOptions: () => [],
+    notifyChannelOptions: () => [],
     notifyOptionsLoading: false
   })
   const emit = defineEmits<Emits>()
@@ -557,6 +565,15 @@
 
   const localForm = reactive<WorkflowNodeFormModel>(cloneModel(props.model))
   const notifyChannelTypes = ref<string[]>([])
+  const notifyChannelChoices = computed<WorkflowNotifyChannelOption[]>(() =>
+    props.notifyChannelOptions.length
+      ? props.notifyChannelOptions
+      : [
+          { value: 'in_app', label: '站内通知', enabled: true },
+          { value: 'dingtalk_webhook', label: '钉钉 Webhook', enabled: true },
+          { value: 'smtp_email', label: '邮件', enabled: true }
+        ]
+  )
   const notifyMessageFormat = ref('markdown')
   const notifyTargetRows = ref<NotifyTargetRow[]>([])
   const startInputBindingsJson = ref('{}')
@@ -565,14 +582,7 @@
   const lastEmittedSnapshot = ref('')
 
   const nodeTypeLabel = computed(
-    () =>
-      NODE_TYPE_LABELS[localForm.typeCode] ||
-      NODE_KIND_LABELS[localForm.kind] ||
-      localForm.typeCode ||
-      '--'
-  )
-  const nodeTypeCodeHint = computed(() =>
-    localForm.typeCode ? `类型编码：${localForm.typeCode}` : ''
+    () => NODE_TYPE_LABELS[localForm.typeCode] || NODE_KIND_LABELS[localForm.kind] || '工作流节点'
   )
 
   // 后端下发的配置 schema：HTTP / 延迟 / 事件 / 遍历这几种「字段直译」的节点直接按它渲染表单，
@@ -623,8 +633,10 @@
       new Set(
         list
           .map((item) => String(item || '').trim())
-          .filter((item): item is string =>
-            (NOTIFY_CHANNEL_TYPES as readonly string[]).includes(item)
+          .filter(
+            (item): item is string =>
+              notifyChannelChoices.value.some((option) => option.value === item) ||
+              (NOTIFY_CHANNEL_TYPES as readonly string[]).includes(item)
           )
       )
     )

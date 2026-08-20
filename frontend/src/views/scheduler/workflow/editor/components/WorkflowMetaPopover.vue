@@ -4,26 +4,12 @@
     <div class="meta-popover__header">
       <div>
         <strong>基础信息</strong>
-        <span
-          >这里只维护工作流定义本身。工作流标识由系统自动生成并保持稳定，开始入口类型回到画布中的开始节点配置。</span
-        >
       </div>
       <ElButton text @click="$emit('close')">关闭</ElButton>
     </div>
 
     <ElForm label-position="top" class="meta-popover__form">
-      <ElFormItem label="工作流标识">
-        <ElInput
-          :model-value="localModel.code"
-          disabled
-          :placeholder="mode === 'create' ? '保存后由系统自动生成稳定标识' : ''"
-        />
-        <div class="meta-popover__hint"
-          >用于版本归组、Webhook 地址和运行态定位，创建后保持稳定。</div
-        >
-      </ElFormItem>
-
-      <ElFormItem label="工作流名称">
+      <ElFormItem class="meta-popover__name" label="工作流名称">
         <ElInput
           v-model.trim="localModel.displayName"
           placeholder="请输入工作流名称"
@@ -50,12 +36,11 @@
 </template>
 
 <script setup lang="ts">
-  import type { WorkflowEditorMetaForm, WorkflowEditorMode } from '../types'
+  import type { WorkflowEditorMetaForm } from '../types'
 
   interface Props {
     visible: boolean
     model: WorkflowEditorMetaForm
-    mode: WorkflowEditorMode
   }
 
   interface Emits {
@@ -134,11 +119,8 @@
     grid-column: 1 / -1;
   }
 
-  .meta-popover__hint {
-    margin-top: 6px;
-    font-size: 12px;
-    line-height: 1.5;
-    color: var(--workflow-overlay-muted);
+  .meta-popover__name {
+    grid-column: 1 / -1;
   }
 
   .meta-popover__footer {

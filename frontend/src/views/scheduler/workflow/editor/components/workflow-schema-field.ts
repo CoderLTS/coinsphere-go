@@ -17,7 +17,7 @@ export interface SchemaFieldMeta {
   title: string
   description: string
   control: SchemaFieldControl
-  options: string[]
+  options: Array<{ value: string; label: string }>
   min?: number
   max?: number
   step?: number
@@ -67,7 +67,10 @@ export function buildSchemaField(key: string, raw: unknown): SchemaFieldMeta {
     title: String(schema.title || key),
     description: String(schema.description || ''),
     control,
-    options: (schema.enum || []).map((item: unknown) => String(item)),
+    options: (schema.enum || []).map((item: unknown, index: number) => ({
+      value: String(item),
+      label: String(schema.enumLabels?.[index] || item)
+    })),
     min: typeof schema.minimum === 'number' ? schema.minimum : undefined,
     max: typeof schema.maximum === 'number' ? schema.maximum : undefined,
     step: schema.type === 'integer' ? 1 : undefined,

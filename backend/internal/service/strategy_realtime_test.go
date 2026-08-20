@@ -35,7 +35,7 @@ func TestStrategyInstanceValidationDefaultsAndBoundaries(t *testing.T) {
 	validated, err := validateStrategyInstancePayload(StrategyInstanceCreatePayload{
 		Name:       "  paper hold  ",
 		Parameters: map[string]json.RawMessage{"threshold": json.RawMessage(`"0.2500"`)},
-	}, version, false, false, false, false)
+	}, version, "spot", false, false, false, false)
 	if err != nil {
 		t.Fatalf("validate default instance: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestStrategyInstanceValidationDefaultsAndBoundaries(t *testing.T) {
 		TradingAccountID: "019d4000-0000-7000-8000-000000000002",
 		AllocationUSDT:   "1000", StopLossRatio: "0.0500",
 		Parameters: map[string]json.RawMessage{"threshold": json.RawMessage(`"0.2500"`)},
-	}, version, false, false, false, false)
+	}, version, "spot", false, false, false, false)
 	if err != nil {
 		t.Fatalf("validate protected Testnet instance: %v", err)
 	}
@@ -67,36 +67,36 @@ func TestStrategyInstanceValidationDefaultsAndBoundaries(t *testing.T) {
 		AllocationUSDT:   "100", StopLossRatio: "0.02",
 		Parameters: map[string]json.RawMessage{"threshold": json.RawMessage(`"0.2500"`)},
 	}
-	if _, err := validateStrategyInstancePayload(livePayload, version, false, false, false, false); !errors.Is(err, ErrInvalidStrategyRequest) {
+	if _, err := validateStrategyInstancePayload(livePayload, version, "spot", false, false, false, false); !errors.Is(err, ErrInvalidStrategyRequest) {
 		t.Fatalf("disabled Live instance returned %v", err)
 	}
-	live, err := validateStrategyInstancePayload(livePayload, version, true, false, false, false)
+	live, err := validateStrategyInstancePayload(livePayload, version, "spot", true, false, false, false)
 	if err != nil || live.Mode != "manual" || live.StopLossRatio == nil {
 		t.Fatalf("enabled Live manual instance = %#v, err=%v", live, err)
 	}
 	livePayload.Mode = "auto"
-	if _, err := validateStrategyInstancePayload(livePayload, version, true, false, false, false); !errors.Is(err, ErrInvalidStrategyRequest) {
+	if _, err := validateStrategyInstancePayload(livePayload, version, "spot", true, false, false, false); !errors.Is(err, ErrInvalidStrategyRequest) {
 		t.Fatalf("Live auto instance returned %v", err)
 	}
-	liveAuto, err := validateStrategyInstancePayload(livePayload, version, true, false, true, false)
+	liveAuto, err := validateStrategyInstancePayload(livePayload, version, "spot", true, false, true, false)
 	if err != nil || liveAuto.Mode != "auto" || liveAuto.StopLossRatio == nil {
 		t.Fatalf("enabled Live auto instance = %#v, err=%v", liveAuto, err)
 	}
 	usdmVersion := version
 	usdmVersion.Market = "usd_m"
 	livePayload.Mode = "manual"
-	if _, err := validateStrategyInstancePayload(livePayload, usdmVersion, true, false, true, false); !errors.Is(err, ErrInvalidStrategyRequest) {
+	if _, err := validateStrategyInstancePayload(livePayload, usdmVersion, "usd_m", true, false, true, false); !errors.Is(err, ErrInvalidStrategyRequest) {
 		t.Fatalf("disabled USD-M Live manual instance returned %v", err)
 	}
-	usdmLive, err := validateStrategyInstancePayload(livePayload, usdmVersion, true, true, true, false)
+	usdmLive, err := validateStrategyInstancePayload(livePayload, usdmVersion, "usd_m", true, true, true, false)
 	if err != nil || usdmLive.Mode != "manual" || usdmLive.StopLossRatio == nil {
 		t.Fatalf("enabled USD-M Live manual instance = %#v, err=%v", usdmLive, err)
 	}
 	livePayload.Mode = "auto"
-	if _, err := validateStrategyInstancePayload(livePayload, usdmVersion, true, true, true, false); !errors.Is(err, ErrInvalidStrategyRequest) {
+	if _, err := validateStrategyInstancePayload(livePayload, usdmVersion, "usd_m", true, true, true, false); !errors.Is(err, ErrInvalidStrategyRequest) {
 		t.Fatalf("USD-M Live auto instance returned %v", err)
 	}
-	usdmLiveAuto, err := validateStrategyInstancePayload(livePayload, usdmVersion, true, true, true, true)
+	usdmLiveAuto, err := validateStrategyInstancePayload(livePayload, usdmVersion, "usd_m", true, true, true, true)
 	if err != nil || usdmLiveAuto.Mode != "auto" || usdmLiveAuto.StopLossRatio == nil {
 		t.Fatalf("enabled USD-M Live auto instance = %#v, err=%v", usdmLiveAuto, err)
 	}
@@ -113,7 +113,7 @@ func TestStrategyInstanceValidationDefaultsAndBoundaries(t *testing.T) {
 		{Name: "paper stop", Mode: "manual", Environment: "paper", TradingAccountID: "019d4000-0000-7000-8000-000000000002", AllocationUSDT: "1000", StopLossRatio: "0.05"},
 	}
 	for _, payload := range invalid {
-		if _, err := validateStrategyInstancePayload(payload, version, false, false, false, false); !errors.Is(err, ErrInvalidStrategyRequest) {
+		if _, err := validateStrategyInstancePayload(payload, version, "spot", false, false, false, false); !errors.Is(err, ErrInvalidStrategyRequest) {
 			t.Fatalf("invalid instance %#v returned %v", payload, err)
 		}
 	}
@@ -185,6 +185,13 @@ INSERT INTO market_instruments (
 	if err := database.Create(&accountRecord).Error; err != nil {
 		t.Fatalf("create paper account idempotency record: %v", err)
 	}
+	workflowDefinition := db.WorkflowDefinition{
+		Code: "m2-signal-workflow", Version: 1, DisplayName: "m2 signal workflow",
+		GraphJSON: `{"nodes":[],"edges":[]}`, CreatedBy: &owner.ID, CreatedAt: time.Now().UTC(),
+	}
+	if err := database.Create(&workflowDefinition).Error; err != nil {
+		t.Fatalf("create signal workflow definition: %v", err)
+	}
 	if err := database.Exec(`
 INSERT INTO trading_accounts (
     id, owner_user_id, name, market_type, environment, initial_balance,
@@ -195,11 +202,11 @@ INSERT INTO trading_accounts (
 	}
 	if err := database.Exec(`
 INSERT INTO strategies (
-    id, name, source_code, market_type, instrument_id, interval_code, lookback_bars,
+    id, name, source_code, lookback_bars,
     parameter_schema_json, created_by_user_id, updated_by_user_id
 ) VALUES (?, 'm2 decision', 'def on_bar(candles, params): return Decimal(''0.5'')',
-          'spot', ?, '1m', 2, '{}', ?, ?)
-`, strategyID, instrumentID, owner.ID, owner.ID).Error; err != nil {
+          2, '{}', ?, ?)
+`, strategyID, owner.ID, owner.ID).Error; err != nil {
 		t.Fatalf("create signal strategy: %v", err)
 	}
 	if err := database.Exec(`
@@ -211,20 +218,22 @@ VALUES (?, 'strategy.publish', ?, 'succeeded', 1, 'backtest', CURRENT_TIMESTAMP)
 	if err := database.Exec(`
 INSERT INTO strategy_versions (
     id, strategy_id, version_number, status, worker_task_id, idempotency_record_id,
-    name, source_code, code_sha256, runtime_version, market_type, instrument_id, symbol,
-    interval_code, lookback_bars, parameter_schema_json, published_by_user_id, published_at
+    name, source_code, code_sha256, runtime_version, lookback_bars,
+    parameter_schema_json, published_by_user_id, published_at
 ) VALUES (?, ?, 1, 'published', ?, ?, 'm2 decision',
           'def on_bar(candles, params): return Decimal(''0.5'')', ?, 'python3.12',
-          'spot', ?, 'BTCUSDT', '1m', 2, '{}', ?, CURRENT_TIMESTAMP)
-`, versionID, strategyID, publishTaskID, publishRecord.ID, strings.Repeat("c", 64), instrumentID, owner.ID).Error; err != nil {
+          2, '{}', ?, CURRENT_TIMESTAMP)
+`, versionID, strategyID, publishTaskID, publishRecord.ID, strings.Repeat("c", 64), owner.ID).Error; err != nil {
 		t.Fatalf("create signal strategy version: %v", err)
 	}
 	if err := database.Exec(`
 INSERT INTO strategy_instances (
-    id, owner_user_id, strategy_version_id, trading_account_id, allocation_usdt,
+    id, owner_user_id, strategy_version_id, market_type, instrument_id, interval_code,
+    workflow_definition_id, workflow_node_id, trading_account_id, allocation_usdt,
     name, mode, environment, is_enabled
-) VALUES (?, ?, ?, ?, 1000, 'm2 manual', 'manual', 'paper', TRUE)
-`, instanceID, owner.ID, versionID, accountID).Error; err != nil {
+) VALUES (?, ?, ?, 'spot', ?, '1m', ?, 'strategy-node', ?, 1000,
+          'm2 manual', 'manual', 'paper', TRUE)
+`, instanceID, owner.ID, versionID, instrumentID, workflowDefinition.ID, accountID).Error; err != nil {
 		t.Fatalf("create strategy instance: %v", err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)

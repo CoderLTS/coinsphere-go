@@ -237,7 +237,9 @@
     },
     "trading": {
       "title": "Trading",
-      "overview": "Trading Accounts"
+      "overview": "Trading Accounts",
+      "accounts": "Trading Accounts",
+      "strategies": "Strategy Management"
     },
     "scheduler": {
       "title": "Scheduler",

@@ -11,11 +11,21 @@ export const tradingRoutes: AppRouteRecord = {
   },
   children: [
     {
-      path: 'overview',
-      name: 'PaperTrading',
-      component: '/trading/overview',
+      path: 'accounts',
+      name: 'TradingAccounts',
+      component: '/trading/accounts',
       meta: {
-        title: 'menus.trading.overview',
+        title: 'menus.trading.accounts',
+        keepAlive: true,
+        roles: ['R_SUPER', 'R_USER']
+      }
+    },
+    {
+      path: 'strategies',
+      name: 'StrategyManagement',
+      component: '/strategy/drafts',
+      meta: {
+        title: 'menus.trading.strategies',
         keepAlive: true,
         roles: ['R_SUPER', 'R_USER']
       }

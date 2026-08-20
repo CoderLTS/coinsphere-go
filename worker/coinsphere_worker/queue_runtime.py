@@ -14,6 +14,7 @@ from enum import StrEnum
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Event, Thread
+from time import monotonic
 from typing import Any, Final, cast
 
 import psycopg
@@ -35,6 +36,7 @@ LOGGER = logging.getLogger("coinsphere.worker")
 DEFAULT_LEASE_SECONDS: Final = 15
 DEFAULT_HEARTBEAT_SECONDS: Final = 1.0
 DEFAULT_POLL_SECONDS: Final = 1.0
+DEFAULT_PRESENCE_SECONDS: Final = 15.0
 MAX_CONTRACT_SLEEP_SECONDS: Final = 300
 REALTIME_STRATEGY_TIMEOUT_SECONDS: Final = 1.0
 REALTIME_CANDLE_TIME_PATTERN: Final = re.compile(
@@ -165,6 +167,30 @@ class PostgresTaskStore:
             lane=cast(str, row[7]),
             priority=cast(int, row[8]),
         )
+
+    def update_presence(self, status: str = "online") -> None:
+        """Upsert lane presence and its current queued task count."""
+
+        if status not in {"online", "offline"}:
+            raise ValueError("worker presence status must be online or offline")
+        with self._connection.transaction():
+            self._connection.execute(
+                """
+                INSERT INTO worker_heartbeats (
+                    worker_id, lane, status, last_heartbeat_at, queue_depth, updated_at
+                )
+                SELECT %s, %s, %s, CURRENT_TIMESTAMP,
+                       COUNT(*) FILTER (WHERE status = 'queued'), CURRENT_TIMESTAMP
+                FROM worker_tasks
+                WHERE lane = %s
+                ON CONFLICT (worker_id, lane) DO UPDATE
+                SET status = EXCLUDED.status,
+                    last_heartbeat_at = EXCLUDED.last_heartbeat_at,
+                    queue_depth = EXCLUDED.queue_depth,
+                    updated_at = EXCLUDED.updated_at
+                """,
+                (self._worker_id, self._lane, status, self._lane),
+            )
 
     def start(self, task: TaskLease) -> bool:
         """把当前租约从 ``claimed`` 转为 ``running``。"""
@@ -527,6 +553,7 @@ class WorkerRuntime:
         self._lease_seconds = lease_seconds
         self._heartbeat_seconds = heartbeat_seconds
         self._poll_seconds = poll_seconds
+        self._last_presence_at = 0.0
         self._artifact_dir: Path | None = None
         self._backtest_limits: BacktestProcessLimits | None = None
         if self._lane == WorkerLane.BACKTEST.value:
@@ -559,22 +586,27 @@ class WorkerRuntime:
                 store = PostgresTaskStore(
                     connection, self._worker_id, self._lease_seconds, self._lane
                 )
-                while not stop_event.is_set():
-                    self._log_recoveries(store.recover_expired())
-                    task = store.claim()
-                    if task is None:
-                        stop_event.wait(self._poll_seconds)
-                        continue
-                    LOGGER.info(
-                        "event=task.claimed task_id=%s worker_id=%s lease_id=%s "
-                        "attempt=%d max_attempts=%d",
-                        task.task_id,
-                        task.worker_id,
-                        task.lease_id,
-                        task.attempt_count,
-                        task.max_attempts,
-                    )
-                    self._run_task(store, task, stop_event)
+                try:
+                    self._heartbeat_presence(store, force=True)
+                    while not stop_event.is_set():
+                        self._heartbeat_presence(store)
+                        self._log_recoveries(store.recover_expired())
+                        task = store.claim()
+                        if task is None:
+                            stop_event.wait(self._poll_seconds)
+                            continue
+                        LOGGER.info(
+                            "event=task.claimed task_id=%s worker_id=%s lease_id=%s "
+                            "attempt=%d max_attempts=%d",
+                            task.task_id,
+                            task.worker_id,
+                            task.lease_id,
+                            task.attempt_count,
+                            task.max_attempts,
+                        )
+                        self._run_task(store, task, stop_event)
+                finally:
+                    store.update_presence("offline")
         except psycopg.Error as exc:
             # psycopg 的错误正文可能包含主机、用户或数据库名，日志只记录异常类型。
             LOGGER.error(
@@ -622,6 +654,7 @@ class WorkerRuntime:
                 except Empty:
                     category, result = "", None
                 state = store.heartbeat(task)
+                self._heartbeat_presence(store)
                 if state is None:
                     cancel_event.set()
                     self._log_lease_lost(task)
@@ -661,6 +694,13 @@ class WorkerRuntime:
         except Exception:
             # 未知任务异常可能携带 payload 或第三方响应，不输出异常正文或 traceback。
             self._finish_failure(store, task, category="task_error", retryable=True)
+
+    def _heartbeat_presence(self, store: PostgresTaskStore, *, force: bool = False) -> None:
+        now = monotonic()
+        if not force and now - self._last_presence_at < DEFAULT_PRESENCE_SECONDS:
+            return
+        store.update_presence()
+        self._last_presence_at = now
 
     def _execute_task(
         self, task: TaskLease, cancel_event: Event, output: Queue[tuple[str, object | None]]
@@ -752,8 +792,8 @@ class WorkerRuntime:
         with psycopg.connect(self._dsn) as connection:
             row = connection.execute(
                 """
-                SELECT source_code, market_type, symbol, interval_code, lookback_bars,
-                       parameter_schema_json, runtime_version, code_sha256
+                SELECT source_code, lookback_bars, parameter_schema_json,
+                       runtime_version, code_sha256
                 FROM strategy_versions
                 WHERE id = %s AND strategy_id = %s
                   AND worker_task_id = %s AND status = 'pending'
@@ -762,12 +802,12 @@ class WorkerRuntime:
             ).fetchone()
         if row is None:
             raise InvalidTaskError
-        source, market, symbol, interval, lookback, schema, runtime, code_sha = row
+        source, lookback, schema, runtime, code_sha = row
         loaded = load_strategy(
             cast(str, source),
-            market=cast(str, market),
-            symbol=cast(str, symbol),
-            interval=cast(str, interval),
+            market="spot",
+            symbol="BTCUSDT",
+            interval="1m",
             lookback_bars=cast(int, lookback),
             parameter_schema=self._schema(schema),
             runtime_version=cast(str, runtime),
@@ -813,14 +853,18 @@ class WorkerRuntime:
                 """
                 SELECT instance.owner_user_id, instance.strategy_version_id,
                        instance.mode, instance.environment, instance.parameters_json,
-                       instance.is_enabled, version.source_code, version.market_type,
-                       version.instrument_id, version.symbol, version.interval_code,
+                       instance.is_enabled, version.source_code, instance.market_type,
+                       instance.instrument_id, instrument.native_symbol,
+                       instance.interval_code,
                        version.lookback_bars, version.parameter_schema_json,
                        version.runtime_version, version.code_sha256
                 FROM strategy_instances AS instance
                 JOIN strategy_versions AS version
                   ON version.id = instance.strategy_version_id
-                WHERE instance.id = %s AND version.status = 'published'
+                JOIN market_instruments AS instrument
+                  ON instrument.id = instance.instrument_id
+                WHERE instance.id = %s AND instance.archived_at IS NULL
+                  AND version.status = 'published'
                 """,
                 (instance_id,),
             ).fetchone()
@@ -936,12 +980,12 @@ class WorkerRuntime:
                        b.allocation_usdt, b.initial_equity, b.fee_rate, b.slippage_rate,
                        b.funding_rates_json, b.stop_loss_ratio, b.maintenance_margin_ratio,
                        b.simulator_version,
-                       v.source_code, v.market_type, v.symbol, v.interval_code,
+                       v.source_code, i.market_type, i.native_symbol, b.interval_code,
                        v.lookback_bars, v.parameter_schema_json, v.runtime_version,
-                       v.code_sha256, i.id
+                       v.code_sha256, b.instrument_id
                 FROM backtests b
                 JOIN strategy_versions v ON v.id = b.strategy_version_id
-                JOIN market_instruments i ON i.id = v.instrument_id
+                JOIN market_instruments i ON i.id = b.instrument_id
                 WHERE b.id = %s AND b.worker_task_id = %s AND v.status = 'published'
                 """,
                 (ids["backtestId"], task.task_id),

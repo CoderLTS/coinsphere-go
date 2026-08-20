@@ -269,6 +269,22 @@ export interface TradingOverview {
   testnetAuditSummaries: TestnetAuditSummary[]
 }
 
+export type TradingAccountListItem = TradingAccount
+
+export interface TradingAccountDetail {
+  account: TradingAccount
+  intents: TradingIntent[]
+  orders: PaperOrder[]
+  positions: PaperPosition[]
+  balances: PaperBalance[]
+  testnetBalances: TestnetBalance[]
+  testnetPositions: TestnetPosition[]
+  testnetOpenOrders: TestnetOpenOrder[]
+  testnetOrders: TestnetOrder[]
+  testnetTradeFacts: TestnetTradeFact[]
+  testnetAuditSummary?: TestnetAuditSummary | null
+}
+
 export interface TradingRiskPayload {
   instrumentIds: string[]
   maxTotalNotional: string
@@ -313,6 +329,36 @@ const commandHeaders = (idempotencyKey: string, reauthToken?: string) => ({
 
 export function fetchTradingOverview() {
   return request.get<TradingOverview>({ url: '/api/v1/trading/overview' })
+}
+
+export function fetchTradingAccounts() {
+  return request.get<TradingAccountListItem[]>({ url: '/api/v1/trading/accounts' })
+}
+
+export function fetchTradingAccountDetail(accountId: string) {
+  return request.get<TradingAccountDetail>({
+    url: `/api/v1/trading/accounts/${encodeURIComponent(accountId)}`
+  })
+}
+
+export function fetchUpdateTradingAccount(accountId: string, payload: { name: string }) {
+  return request.put<TradingAccount>({
+    url: `/api/v1/trading/accounts/${encodeURIComponent(accountId)}`,
+    params: payload,
+    showSuccessMessage: true
+  })
+}
+
+export function fetchArchiveTradingAccount(
+  accountId: string,
+  idempotencyKey: string,
+  reauthToken: string
+) {
+  return request.del<{ archived: boolean }>({
+    url: `/api/v1/trading/accounts/${encodeURIComponent(accountId)}`,
+    headers: commandHeaders(idempotencyKey, reauthToken),
+    showSuccessMessage: true
+  })
 }
 
 export function fetchMarketSymbols(market: 'spot' | 'usd_m') {

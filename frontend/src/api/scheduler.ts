@@ -4,7 +4,14 @@ import request from '@/utils/http'
 export type WorkflowStartType = 'manual' | 'schedule' | 'event' | 'webhook'
 export type WorkflowTriggerType = WorkflowStartType
 export type WorkflowScheduleType = 'cron' | 'interval' | 'once'
-export type WorkflowExecutionStatus = 'queued' | 'running' | 'retry_waiting' | 'success' | 'failed'
+export type WorkflowExecutionStatus =
+  | 'queued'
+  | 'running'
+  | 'retry_waiting'
+  | 'success'
+  | 'failed'
+  | 'canceled'
+export type WorkflowTerminalStatus = 'success' | 'failed' | 'canceled'
 
 /** 工作流可编排的智能体选项。requiresRefId / supportsAnalyze 决定节点表单显示哪些输入项。 */
 export interface WorkflowAgentOption {
@@ -35,6 +42,28 @@ export interface WorkflowNodeDefinitionItem {
   branchesConfigKey?: string
   /** 动态分支之外总是存在的分支（如 switch 的 default）。 */
   extraBranches?: string[]
+}
+
+export interface WorkflowNodeTemplateItem {
+  id: string
+  name: string
+  description: string
+  icon: string
+  baseNodeType: string
+  baseNodeLabel: string
+  defaultConfig: Record<string, any>
+  isEnabled: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface WorkflowNodeTemplatePayload {
+  name: string
+  description: string
+  icon?: string
+  baseNodeType: string
+  defaultConfig: Record<string, any>
+  isEnabled?: boolean
 }
 
 export interface WorkflowNodeItem {
@@ -118,6 +147,7 @@ export interface WorkflowRuntimeEntryItem {
   definitionId: number
   startNodeId: string
   entryKey: string
+  entryName: string
   startType: WorkflowStartType
   isEnabled: boolean
   registrationStatus: 'ready' | 'registered' | 'failed' | 'disabled' | string
@@ -145,14 +175,13 @@ export interface WorkflowRuntimeSecretRotationResult {
 export interface WorkflowExecutionNodeLog {
   id: number
   nodeId: string
-  nodeType: string
+  nodeName: string
   status: WorkflowExecutionStatus | string
+  statusLabel: string
   startedAt: string
   finishedAt: string
   durationMs: number
-  inputSnapshotJson: string
-  outputSnapshotJson: string
-  errorMessage: string
+  error: { summary: string; category: string; retryable: boolean } | null
 }
 
 export interface WorkflowExecutionTransitionLog {
@@ -162,60 +191,47 @@ export interface WorkflowExecutionTransitionLog {
   targetNodeId: string
   traversalIndex: number
   iterationIndex?: number | null
-  branchKey: string
-  payloadSnapshotJson: string
+  sourceNodeName: string
+  targetNodeName: string
+  branchLabel: string
   createdAt: string
 }
 
 export interface WorkflowExecutionItem {
   id: number
   workflowDefinitionId: number
-  workflowDefinitionCode: string
   workflowDefinitionVersion: number
   workflowDefinitionName: string
-  startEntryKey: string
-  startNodeId: string
-  startNodeType: string
+  entryName: string
   triggerType: WorkflowTriggerType | string
   triggeredBy?: number | null
-  triggerKey?: string | null
-  idempotencyKey?: string | null
-  concurrencyKey?: string | null
-  triggerOutboxId?: number | null
   status: WorkflowExecutionStatus | string
+  statusLabel: string
+  triggerLabel: string
   queuedAt: string
   claimedAt: string
   startedAt: string
   finishedAt: string
   lastHeartbeatAt: string
-  workerId?: string | null
   attemptCount: number
   maxAttempts: number
-  nextRetryAt: string
-  failureCategory: string
-  brokerMessageId: string
   durationMs: number
-  errorMessage: string
-  inputSnapshotJson: string
-  contextSnapshotJson: string
-  resultSnapshotJson: string
+  error: { summary: string; category: string; retryable: boolean } | null
 }
 
 export interface WorkflowExecutionAttemptItem {
   id: number
   attempt: number
-  workerId: string
-  brokerMessageId: string
-  leaseId: string
   startedAt: string
   finishedAt: string
-  failureCategory: string
-  errorSummary: string
+  statusLabel: string
+  error: { summary: string; category: string; retryable: boolean } | null
   status: WorkflowExecutionStatus | string
 }
 
 export interface WorkflowExecutionDetail extends WorkflowExecutionItem {
   graph: WorkflowGraph
+  startNodeId: string
   nodeLogs: WorkflowExecutionNodeLog[]
   attempts: WorkflowExecutionAttemptItem[]
   transitionLogs: WorkflowExecutionTransitionLog[]
@@ -275,6 +291,33 @@ export function fetchSchedulerOverview() {
 export function fetchNodeDefinitions() {
   return request.get<WorkflowNodeDefinitionItem[]>({
     url: '/api/v1/workflows/node-definitions'
+  })
+}
+
+export function fetchWorkflowNodeTemplates() {
+  return request.get<WorkflowNodeTemplateItem[]>({ url: '/api/v1/workflow-node-templates' })
+}
+
+export function fetchCreateWorkflowNodeTemplate(params: WorkflowNodeTemplatePayload) {
+  return request.post<WorkflowNodeTemplateItem>({
+    url: '/api/v1/workflow-node-templates',
+    params,
+    showSuccessMessage: true
+  })
+}
+
+export function fetchUpdateWorkflowNodeTemplate(id: string, params: WorkflowNodeTemplatePayload) {
+  return request.put<WorkflowNodeTemplateItem>({
+    url: `/api/v1/workflow-node-templates/${encodeURIComponent(id)}`,
+    params,
+    showSuccessMessage: true
+  })
+}
+
+export function fetchDeleteWorkflowNodeTemplate(id: string) {
+  return request.del<{ deleted: boolean }>({
+    url: `/api/v1/workflow-node-templates/${encodeURIComponent(id)}`,
+    showSuccessMessage: true
   })
 }
 

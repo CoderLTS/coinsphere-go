@@ -38,7 +38,6 @@
           min-width="220"
           show-overflow-tooltip
         />
-        <ElTableColumn prop="code" label="工作流编码" min-width="200" show-overflow-tooltip />
         <ElTableColumn label="最新版本" width="100" align="center">
           <template #default="{ row }">
             <ElTag :type="row.isLatest ? 'primary' : 'info'" effect="plain"
@@ -141,7 +140,9 @@
           <div class="version-header">
             <div>
               <div class="version-header__title">{{ versionFamilyDetail.displayName }}</div>
-              <div class="version-header__meta">{{ versionFamilyDetail.code }}</div>
+              <div v-if="versionFamilyDetail.description" class="version-header__meta">
+                {{ versionFamilyDetail.description }}
+              </div>
             </div>
             <ElTag effect="plain" type="info">{{ versionDialogVersions.length }} 个版本</ElTag>
           </div>
@@ -272,7 +273,7 @@
           />
 
           <ElTable v-else :data="runtimeState.entries" stripe>
-            <ElTableColumn prop="entryKey" label="入口标识" min-width="180" />
+            <ElTableColumn prop="entryName" label="开始入口" min-width="180" />
             <ElTableColumn label="开始类型" width="120" align="center">
               <template #default="{ row }">
                 {{ startTypeLabel(row.startType) }}
@@ -290,7 +291,11 @@
                 </ElTag>
               </template>
             </ElTableColumn>
-            <ElTableColumn prop="registrationStatus" label="注册状态" width="130" align="center" />
+            <ElTableColumn label="运行状态" width="130" align="center">
+              <template #default="{ row }">
+                {{ registrationStatusLabel(row.registrationStatus) }}
+              </template>
+            </ElTableColumn>
             <ElTableColumn prop="nextRunAt" label="下次运行" min-width="160" />
             <ElTableColumn prop="lastTriggeredAt" label="最近触发" min-width="160" />
             <ElTableColumn
@@ -414,7 +419,6 @@
 
   const initialFilters = {
     keyword: '',
-    code: '',
     activeStatus: ''
   }
 
@@ -429,15 +433,6 @@
       props: {
         clearable: true,
         placeholder: '搜索工作流名称'
-      }
-    },
-    {
-      label: '编码',
-      key: 'code',
-      type: 'input',
-      props: {
-        clearable: true,
-        placeholder: '搜索 workflow code'
       }
     },
     {
@@ -456,12 +451,10 @@
 
   const filteredDefinitionList = computed(() => {
     const keyword = appliedFilters.keyword.trim().toLowerCase()
-    const code = appliedFilters.code.trim().toLowerCase()
     const activeStatus = appliedFilters.activeStatus
 
     return definitionList.value.filter((item) => {
       if (keyword && !item.displayName.toLowerCase().includes(keyword)) return false
-      if (code && !item.code.toLowerCase().includes(code)) return false
       if (activeStatus === 'active' && !item.isWorkflowActive) return false
       if (activeStatus === 'inactive' && item.isWorkflowActive) return false
       return true
@@ -487,9 +480,9 @@
   const runtimeHeaderMeta = computed(() => {
     if (!runtimeFamilyDetail.value) return ''
     if (runtimeActiveVersion.value) {
-      return `${runtimeFamilyDetail.value.code} / v${runtimeActiveVersion.value.version}`
+      return `版本 v${runtimeActiveVersion.value.version}`
     }
-    return `${runtimeFamilyDetail.value.code} / 未激活`
+    return '未激活'
   })
 
   const manualEntryOptions = computed(() => {
@@ -508,7 +501,7 @@
 
   const runTargetLabel = computed(() => {
     if (!runDefinition.value) return ''
-    return `${runDefinition.value.displayName} / ${runDefinition.value.code} / v${runDefinition.value.version}`
+    return `${runDefinition.value.displayName} / v${runDefinition.value.version}`
   })
 
   const loadPageData = async () => {
@@ -527,6 +520,14 @@
       event: '事件',
       webhook: 'Webhook'
     })[value] || value
+
+  const registrationStatusLabel = (value: string) =>
+    ({
+      ready: '就绪',
+      registered: '已注册',
+      failed: '注册失败',
+      disabled: '已停用'
+    })[value] || '未知状态'
 
   const findLatestDefinitionByCode = (workflowCode: string) =>
     definitionList.value.find((item) => item.code === workflowCode) || null

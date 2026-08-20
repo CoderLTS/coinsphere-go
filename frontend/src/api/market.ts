@@ -2,7 +2,7 @@ import request from '@/utils/http'
 import type { WorkflowExecutionItem } from './scheduler'
 
 export type MarketType = 'spot' | 'usd_m'
-export type QuoteAsset = 'USDT' | 'USDC' | 'FDUSD'
+export type QuoteAsset = 'USDT'
 export type MarketStatus = 'trading' | 'suspended' | 'all'
 export type CandleInterval = '1m' | '5m' | '15m' | '1h' | '4h' | '1d'
 
@@ -55,7 +55,7 @@ export interface MarketSyncSettings {
 
 export interface MarketSyncSettingsUpdate {
   marketTypes: MarketType[]
-  quoteAssets: QuoteAsset[]
+  quoteAssets: ['USDT']
   spotRestBaseUrl: string
   usdmRestBaseUrl: string
   proxyEnabled: boolean
@@ -83,7 +83,7 @@ export interface MarketSymbolQuery {
   cursor?: string
   limit?: number
   market?: MarketType | ''
-  quoteAsset?: QuoteAsset | ''
+  quoteAsset?: 'USDT' | ''
   status?: MarketStatus
   keyword?: string
 }

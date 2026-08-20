@@ -16,7 +16,12 @@
     :placeholder="field.placeholder"
     @update:model-value="$emit('update', $event)"
   >
-    <ElOption v-for="option in field.options" :key="option" :label="option" :value="option" />
+    <ElOption
+      v-for="option in field.options"
+      :key="option.value"
+      :label="option.label"
+      :value="option.value"
+    />
   </ElSelect>
 
   <ElInputNumber

@@ -61,6 +61,12 @@ export interface WorkflowNotifyTargetOption {
   label: string
 }
 
+export interface WorkflowNotifyChannelOption {
+  value: string
+  label: string
+  enabled: boolean
+}
+
 export interface WorkflowDomainPort {
   id: string
   group: string

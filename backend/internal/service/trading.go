@@ -47,6 +47,10 @@ type TradingAccountCreatePayload struct {
 	Risk           TradingRiskPayload `json:"risk"`
 }
 
+type TradingAccountUpdatePayload struct {
+	Name string `json:"name"`
+}
+
 type TradingRiskView struct {
 	InstrumentIDs      []string `json:"instrumentIds"`
 	MaxTotalNotional   *string  `json:"maxTotalNotional"`
@@ -83,6 +87,21 @@ type TradingAccountView struct {
 	Risk                   TradingRiskView           `json:"risk"`
 	CreatedAt              string                    `json:"createdAt"`
 	UpdatedAt              string                    `json:"updatedAt"`
+	ArchivedAt             *string                   `json:"archivedAt,omitempty"`
+}
+
+type TradingAccountDetailView struct {
+	Account             TradingAccountView       `json:"account"`
+	Intents             []TradingIntentView      `json:"intents"`
+	Orders              []PaperOrderView         `json:"orders"`
+	Positions           []PaperPositionView      `json:"positions"`
+	Balances            []PaperBalanceView       `json:"balances"`
+	TestnetBalances     []TestnetBalanceView     `json:"testnetBalances"`
+	TestnetPositions    []TestnetPositionView    `json:"testnetPositions"`
+	TestnetOpenOrders   []TestnetOpenOrderView   `json:"testnetOpenOrders"`
+	TestnetOrders       []TestnetOrderView       `json:"testnetOrders"`
+	TestnetTradeFacts   []TestnetTradeFactView   `json:"testnetTradeFacts"`
+	TestnetAuditSummary *TestnetAuditSummaryView `json:"testnetAuditSummary,omitempty"`
 }
 
 type TestnetReconciliationView struct {
@@ -432,6 +451,201 @@ func (a *App) CreateTradingAccount(
 		return TradingAccountView{}, err
 	}
 	return a.loadTradingAccountView(a.dbWithContext(ctx), row)
+}
+
+func (a *App) ListTradingAccounts(ctx context.Context, userID int64) ([]TradingAccountView, error) {
+	if userID <= 0 {
+		return nil, invalidTrading("owner is required")
+	}
+	database := a.dbWithContext(ctx)
+	var rows []db.TradingAccount
+	if err := database.Where("owner_user_id = ? AND archived_at IS NULL", userID).
+		Order("updated_at DESC, id DESC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	items := make([]TradingAccountView, 0, len(rows))
+	for _, row := range rows {
+		view, err := a.loadTradingAccountView(database, row)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, view)
+	}
+	return items, nil
+}
+
+func (a *App) GetTradingAccountDetail(ctx context.Context, userID int64, rawID string) (TradingAccountDetailView, error) {
+	accountID, err := requiredTradingUUID(rawID, "accountId")
+	if err != nil {
+		return TradingAccountDetailView{}, err
+	}
+	database := a.dbWithContext(ctx)
+	var row db.TradingAccount
+	if err := database.Where("id = ? AND owner_user_id = ? AND archived_at IS NULL", accountID, userID).Take(&row).Error; err != nil {
+		return TradingAccountDetailView{}, tradingAccountLookupError(err)
+	}
+	account, err := a.loadTradingAccountView(database, row)
+	if err != nil {
+		return TradingAccountDetailView{}, err
+	}
+	result := TradingAccountDetailView{
+		Account: account, Intents: []TradingIntentView{}, Orders: []PaperOrderView{}, Positions: []PaperPositionView{},
+		Balances: []PaperBalanceView{}, TestnetBalances: []TestnetBalanceView{}, TestnetPositions: []TestnetPositionView{},
+		TestnetOpenOrders: []TestnetOpenOrderView{}, TestnetOrders: []TestnetOrderView{}, TestnetTradeFacts: []TestnetTradeFactView{},
+	}
+	var instruments []db.MarketInstrument
+	if err := database.Find(&instruments).Error; err != nil {
+		return TradingAccountDetailView{}, err
+	}
+	symbols := make(map[uuid.UUID]string, len(instruments))
+	for _, instrument := range instruments {
+		symbols[instrument.ID] = instrument.NativeSymbol
+	}
+	var intents []db.TradingIntent
+	if err := database.Where("account_id = ?", accountID).Order("created_at DESC, id DESC").Limit(100).Find(&intents).Error; err != nil {
+		return TradingAccountDetailView{}, err
+	}
+	for _, item := range intents {
+		result.Intents = append(result.Intents, serializeTradingIntent(item, symbols[item.InstrumentID]))
+	}
+	var orders []db.PaperOrder
+	if err := database.Where("account_id = ?", accountID).Order("created_at DESC, id DESC").Limit(100).Find(&orders).Error; err != nil {
+		return TradingAccountDetailView{}, err
+	}
+	for _, item := range orders {
+		result.Orders = append(result.Orders, serializePaperOrder(item, symbols[item.InstrumentID]))
+	}
+	var positions []db.PaperPosition
+	if err := database.Where("account_id = ?", accountID).Order("instrument_id").Find(&positions).Error; err != nil {
+		return TradingAccountDetailView{}, err
+	}
+	for _, item := range positions {
+		result.Positions = append(result.Positions, serializePaperPosition(item, symbols[item.InstrumentID]))
+	}
+	var balances []db.PaperBalance
+	if err := database.Where("account_id = ?", accountID).Find(&balances).Error; err != nil {
+		return TradingAccountDetailView{}, err
+	}
+	for _, item := range balances {
+		result.Balances = append(result.Balances, serializePaperBalance(item))
+	}
+	if isPrivateTradingEnvironment(row.Environment) {
+		var testnetBalances []db.TestnetBalance
+		if err := database.Where("account_id = ?", accountID).Order("asset").Find(&testnetBalances).Error; err != nil {
+			return TradingAccountDetailView{}, err
+		}
+		for _, item := range testnetBalances {
+			result.TestnetBalances = append(result.TestnetBalances, serializeTestnetBalance(item))
+		}
+		var testnetPositions []db.TestnetPosition
+		if err := database.Where("account_id = ?", accountID).Order("native_symbol, position_side").Find(&testnetPositions).Error; err != nil {
+			return TradingAccountDetailView{}, err
+		}
+		for _, item := range testnetPositions {
+			result.TestnetPositions = append(result.TestnetPositions, serializeTestnetPosition(item))
+		}
+		var openOrders []db.TestnetOpenOrder
+		if err := database.Where("account_id = ?", accountID).Order("native_symbol, exchange_order_id").Find(&openOrders).Error; err != nil {
+			return TradingAccountDetailView{}, err
+		}
+		for _, item := range openOrders {
+			result.TestnetOpenOrders = append(result.TestnetOpenOrders, serializeTestnetOpenOrder(item))
+		}
+		var managedOrders []db.TestnetOrder
+		if err := database.Where("account_id = ?", accountID).Order("created_at DESC, id DESC").Limit(100).Find(&managedOrders).Error; err != nil {
+			return TradingAccountDetailView{}, err
+		}
+		for _, item := range managedOrders {
+			result.TestnetOrders = append(result.TestnetOrders, serializeTestnetOrder(item, symbols[item.InstrumentID]))
+		}
+		var facts []db.TestnetTradeFact
+		if err := database.Where("account_id = ?", accountID).Order("occurred_at DESC, id DESC").Limit(100).Find(&facts).Error; err != nil {
+			return TradingAccountDetailView{}, err
+		}
+		for _, item := range facts {
+			result.TestnetTradeFacts = append(result.TestnetTradeFacts, serializeTestnetTradeFact(item))
+		}
+		summary, err := a.loadTestnetAuditSummary(database, row)
+		if err != nil {
+			return TradingAccountDetailView{}, err
+		}
+		result.TestnetAuditSummary = &summary
+	}
+	return result, nil
+}
+
+func (a *App) UpdateTradingAccount(ctx context.Context, userID int64, rawID string, payload TradingAccountUpdatePayload) (TradingAccountView, error) {
+	accountID, err := requiredTradingUUID(rawID, "accountId")
+	if err != nil {
+		return TradingAccountView{}, err
+	}
+	name := strings.TrimSpace(payload.Name)
+	if name == "" || len(name) > 120 {
+		return TradingAccountView{}, invalidTrading("name must be between 1 and 120 bytes")
+	}
+	database := a.dbWithContext(ctx)
+	var row db.TradingAccount
+	if err := database.Where("id = ? AND owner_user_id = ? AND archived_at IS NULL", accountID, userID).Take(&row).Error; err != nil {
+		return TradingAccountView{}, tradingAccountLookupError(err)
+	}
+	if err := database.Model(&row).Updates(map[string]any{"name": name, "updated_at": time.Now().UTC()}).Error; err != nil {
+		return TradingAccountView{}, err
+	}
+	row.Name = name
+	return a.loadTradingAccountView(database, row)
+}
+
+func (a *App) ArchiveTradingAccount(ctx context.Context, principal *Principal, rawID, idempotencyKey, reauthToken string) error {
+	if principal == nil || principal.User == nil {
+		return invalidTrading("owner is required")
+	}
+	accountID, err := requiredTradingUUID(rawID, "accountId")
+	if err != nil {
+		return err
+	}
+	requestHash, _ := canonicalRequestHash(M{"archived": true})
+	return a.dbWithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var row db.TradingAccount
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND owner_user_id = ? AND archived_at IS NULL", accountID, principal.User.ID).Take(&row).Error; err != nil {
+			return tradingAccountLookupError(err)
+		}
+		_, reused, err := a.reserveIdempotencyRecord(tx, principal.User.ID, "trading-account:archive:"+accountID.String(), idempotencyKey, requestHash)
+		if err != nil || reused {
+			return err
+		}
+		if !a.ConsumeReauthToken(reauthToken, principal) {
+			return ErrTradingReauthentication
+		}
+		if row.Status != "paused" || row.AutomationEnabled {
+			return ErrTradingAccountConflict
+		}
+		var blockers int64
+		checks := []struct {
+			model any
+			where string
+			args  []any
+		}{
+			{&db.StrategyInstance{}, "trading_account_id = ? AND is_enabled", []any{accountID}},
+			{&db.TradingIntent{}, "account_id = ? AND status IN ?", []any{accountID, []string{"pending", "processing", "reconciling"}}},
+			{&db.PaperOrder{}, "account_id = ? AND status IN ?", []any{accountID, []string{"accepted"}}},
+			{&db.PaperPosition{}, "account_id = ? AND quantity <> 0", []any{accountID}},
+			{&db.TestnetOpenOrder{}, "account_id = ?", []any{accountID}},
+			{&db.TestnetPosition{}, "account_id = ? AND quantity <> 0", []any{accountID}},
+		}
+		for _, check := range checks {
+			var count int64
+			if err := tx.Model(check.model).Where(check.where, check.args...).Count(&count).Error; err != nil {
+				return err
+			}
+			blockers += count
+		}
+		if blockers > 0 {
+			return ErrTradingAccountConflict
+		}
+		now := time.Now().UTC()
+		return tx.Model(&row).Updates(map[string]any{"archived_at": now, "updated_at": now}).Error
+	})
 }
 
 func (a *App) UpdateTradingRisk(
@@ -1138,14 +1352,17 @@ func (a *App) validateStrategyInstanceExecutionReady(database *gorm.DB, instance
 		instance.TradingAccountID == nil || instance.AllocationUSDT == nil {
 		return ErrTradingExecutionUnavailable
 	}
+	if instance.InstrumentID == uuid.Nil || instance.Market == "" || instance.Interval == "" {
+		return ErrTradingExecutionUnavailable
+	}
 	var version db.StrategyVersion
-	if err := database.Select("id", "market_type", "instrument_id").Where("id = ?", instance.StrategyVersionID).Take(&version).Error; err != nil {
+	if err := database.Select("id").Where("id = ? AND status = 'published'", instance.StrategyVersionID).Take(&version).Error; err != nil {
 		return err
 	}
 	var account db.TradingAccount
 	if err := database.Where(
 		"id = ? AND owner_user_id = ? AND market_type = ? AND environment = ?",
-		*instance.TradingAccountID, instance.OwnerUserID, version.Market, instance.Environment,
+		*instance.TradingAccountID, instance.OwnerUserID, instance.Market, instance.Environment,
 	).Take(&account).Error; err != nil {
 		return tradingAccountLookupError(err)
 	}
@@ -1155,7 +1372,7 @@ func (a *App) validateStrategyInstanceExecutionReady(database *gorm.DB, instance
 	}
 	var whitelisted int64
 	if err := database.Model(&db.TradingAccountInstrument{}).Where(
-		"account_id = ? AND instrument_id = ?", account.ID, version.InstrumentID,
+		"account_id = ? AND instrument_id = ?", account.ID, instance.InstrumentID,
 	).Count(&whitelisted).Error; err != nil {
 		return err
 	}
@@ -1256,6 +1473,10 @@ func (a *App) loadTradingAccountView(database *gorm.DB, row db.TradingAccount) (
 	if row.AutoAuthorizedAt != nil {
 		value := formatUTC(*row.AutoAuthorizedAt)
 		view.AutoAuthorizedAt = &value
+	}
+	if row.ArchivedAt != nil {
+		value := formatUTC(*row.ArchivedAt)
+		view.ArchivedAt = &value
 	}
 	if isPrivateTradingEnvironment(row.Environment) {
 		view.Reconciliation.Status = "pending"

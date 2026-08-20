@@ -99,9 +99,6 @@
                         <ElDescriptionsItem label="节点名称">{{
                           selectedNode.data.title
                         }}</ElDescriptionsItem>
-                        <ElDescriptionsItem label="节点类型">{{
-                          selectedNode.data.typeCode
-                        }}</ElDescriptionsItem>
                         <ElDescriptionsItem label="执行次数">{{
                           selectedNodeLogs.length
                         }}</ElDescriptionsItem>
@@ -113,20 +110,13 @@
                       </ElDescriptions>
                     </div>
 
-                    <div class="workflow-execution-detail__section">
-                      <div class="workflow-execution-detail__section-title">节点配置</div>
-                      <div class="workflow-execution-detail__json-block">
-                        <pre>{{ formatJsonText(selectedNode.data.config) }}</pre>
-                      </div>
-                    </div>
-
                     <ElAlert
-                      v-if="selectedNodeLogs.some((item) => item.errorMessage)"
+                      v-if="selectedNodeLogs.some((item) => item.error)"
                       class="workflow-execution-detail__alert"
                       type="error"
                       :closable="false"
                       :title="
-                        selectedNodeLogs.find((item) => item.errorMessage)?.errorMessage ||
+                        selectedNodeLogs.find((item) => item.error)?.error?.summary ||
                         '节点执行失败'
                       "
                     />
@@ -161,16 +151,13 @@
                         </ElDescriptionsItem>
                       </ElDescriptions>
 
-                      <div class="workflow-execution-detail__json-group">
-                        <div class="workflow-execution-detail__json-block">
-                          <div class="workflow-execution-detail__json-title">输入快照</div>
-                          <pre>{{ formatJsonText(log.inputSnapshotJson) }}</pre>
-                        </div>
-                        <div class="workflow-execution-detail__json-block">
-                          <div class="workflow-execution-detail__json-title">输出快照</div>
-                          <pre>{{ formatJsonText(log.outputSnapshotJson) }}</pre>
-                        </div>
-                      </div>
+                      <ElAlert
+                        v-if="log.error"
+                        class="workflow-execution-detail__alert"
+                        type="error"
+                        :closable="false"
+                        :title="log.error.summary"
+                      />
                     </div>
                   </template>
 
@@ -214,18 +201,13 @@
                         <ElDescriptionsItem label="循环轮次">
                           {{ transition.iterationIndex ?? '--' }}
                         </ElDescriptionsItem>
-                        <ElDescriptionsItem label="分支标识">
-                          {{ transition.branchKey || '--' }}
+                        <ElDescriptionsItem label="分支">
+                          {{ transition.branchLabel || '--' }}
                         </ElDescriptionsItem>
                         <ElDescriptionsItem label="记录时间">
                           {{ transition.createdAt || '--' }}
                         </ElDescriptionsItem>
                       </ElDescriptions>
-
-                      <div class="workflow-execution-detail__json-block">
-                        <div class="workflow-execution-detail__json-title">边上传递的数据</div>
-                        <pre>{{ formatJsonText(transition.payloadSnapshotJson) }}</pre>
-                      </div>
                     </div>
                   </template>
 
@@ -237,12 +219,10 @@
                           executionDetail.workflowDefinitionName
                         }}</ElDescriptionsItem>
                         <ElDescriptionsItem label="定义版本">
-                          {{ executionDetail.workflowDefinitionCode }} / v{{
-                            executionDetail.workflowDefinitionVersion
-                          }}
+                          v{{ executionDetail.workflowDefinitionVersion }}
                         </ElDescriptionsItem>
                         <ElDescriptionsItem label="开始入口">{{
-                          executionDetail.startEntryKey || '--'
+                          executionDetail.entryName || '--'
                         }}</ElDescriptionsItem>
                         <ElDescriptionsItem label="开始时间">{{
                           executionDetail.startedAt || executionDetail.queuedAt || '--'
@@ -254,24 +234,21 @@
                           formatDuration(executionDetail.durationMs)
                         }}</ElDescriptionsItem>
                         <ElDescriptionsItem label="触发方式">
-                          {{ triggerTypeLabel(executionDetail.triggerType) }}
+                          {{
+                            executionDetail.triggerLabel ||
+                            triggerTypeLabel(executionDetail.triggerType)
+                          }}
                         </ElDescriptionsItem>
                         <ElDescriptionsItem label="执行状态">
                           <ElTag :type="statusTagType(executionDetail.status)" effect="plain">
-                            {{ statusLabel(executionDetail.status) }}
+                            {{ executionDetail.statusLabel || statusLabel(executionDetail.status) }}
                           </ElTag>
                         </ElDescriptionsItem>
                         <ElDescriptionsItem label="当前尝试次数">
                           {{ executionDetail.attemptCount }}/{{ executionDetail.maxAttempts }}
                         </ElDescriptionsItem>
-                        <ElDescriptionsItem label="当前 Worker">
-                          {{ executionDetail.workerId || '--' }}
-                        </ElDescriptionsItem>
-                        <ElDescriptionsItem label="下次重试时间">
-                          {{ executionDetail.nextRetryAt || '--' }}
-                        </ElDescriptionsItem>
-                        <ElDescriptionsItem label="失败分类">
-                          {{ executionDetail.failureCategory || '--' }}
+                        <ElDescriptionsItem v-if="executionDetail.error" label="失败摘要">
+                          {{ executionDetail.error.summary }}
                         </ElDescriptionsItem>
                         <ElDescriptionsItem label="节点执行数">
                           {{ executedNodeCount }}/{{ domainGraph.nodes.length }}
@@ -297,22 +274,18 @@
                       />
                       <ElTable v-else :data="executionDetail.attempts" stripe size="small">
                         <ElTableColumn prop="attempt" label="尝试" width="72" align="center" />
-                        <ElTableColumn
-                          prop="workerId"
-                          label="Worker"
-                          min-width="150"
-                          show-overflow-tooltip
-                        />
                         <ElTableColumn label="状态" width="110" align="center">
                           <template #default="{ row }">
                             <ElTag :type="statusTagType(row.status)" effect="plain">
-                              {{ statusLabel(row.status) }}
+                              {{ row.statusLabel || statusLabel(row.status) }}
                             </ElTag>
                           </template>
                         </ElTableColumn>
                         <ElTableColumn prop="startedAt" label="开始时间" min-width="160" />
                         <ElTableColumn prop="finishedAt" label="结束时间" min-width="160" />
-                        <ElTableColumn prop="failureCategory" label="失败分类" min-width="120" />
+                        <ElTableColumn label="失败摘要" min-width="180" show-overflow-tooltip>
+                          <template #default="{ row }">{{ row.error?.summary || '--' }}</template>
+                        </ElTableColumn>
                       </ElTable>
                     </div>
 
@@ -325,23 +298,18 @@
                     />
 
                     <div class="workflow-execution-detail__section">
-                      <div class="workflow-execution-detail__section-title">执行输入</div>
-                      <div class="workflow-execution-detail__json-block">
-                        <pre>{{ formatJsonText(executionDetail.inputSnapshotJson) }}</pre>
-                      </div>
-                    </div>
-
-                    <div class="workflow-execution-detail__section">
-                      <div class="workflow-execution-detail__section-title">执行上下文</div>
-                      <div class="workflow-execution-detail__json-block">
-                        <pre>{{ formatJsonText(executionDetail.contextSnapshotJson) }}</pre>
-                      </div>
-                    </div>
-
-                    <div class="workflow-execution-detail__section">
-                      <div class="workflow-execution-detail__section-title">执行结果</div>
-                      <div class="workflow-execution-detail__json-block">
-                        <pre>{{ formatJsonText(executionDetail.resultSnapshotJson) }}</pre>
+                      <div class="workflow-execution-detail__section-title">运行日志</div>
+                      <ElEmpty v-if="!executionTimeline.length" description="暂无运行日志" />
+                      <div v-else class="workflow-execution-detail__timeline">
+                        <div
+                          v-for="item in executionTimeline"
+                          :key="item.key"
+                          class="workflow-execution-detail__timeline-item"
+                        >
+                          <span>{{ item.time || '--' }}</span>
+                          <strong>{{ item.title }}</strong>
+                          <small>{{ item.detail }}</small>
+                        </div>
                       </div>
                     </div>
                   </template>
@@ -524,21 +492,30 @@
     return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)} s`
   }
 
-  const formatJsonText = (value: unknown) => {
-    if (value === null || value === undefined || value === '') return '{}'
-    if (typeof value === 'string') {
-      try {
-        return JSON.stringify(JSON.parse(value), null, 2)
-      } catch {
-        return value
-      }
-    }
-    try {
-      return JSON.stringify(value, null, 2)
-    } catch {
-      return String(value)
-    }
-  }
+  const executionTimeline = computed(() => {
+    const detail = executionDetail.value
+    if (!detail) return []
+    return [
+      ...detail.nodeLogs.map((item) => ({
+        key: `node-${item.id}`,
+        time: item.startedAt,
+        title: `${item.nodeName} · ${item.statusLabel}`,
+        detail: item.error?.summary || `耗时 ${formatDuration(item.durationMs)}`
+      })),
+      ...detail.transitionLogs.map((item) => ({
+        key: `edge-${item.id}`,
+        time: item.createdAt,
+        title: `${item.sourceNodeName} → ${item.targetNodeName}`,
+        detail: item.branchLabel || '边流转'
+      })),
+      ...detail.attempts.slice(1).map((item) => ({
+        key: `attempt-${item.id}`,
+        time: item.startedAt,
+        title: `第 ${item.attempt} 次尝试`,
+        detail: item.error?.summary || item.statusLabel
+      }))
+    ].sort((left, right) => Date.parse(left.time || '') - Date.parse(right.time || ''))
+  })
 
   const transitionTitle = (transition: WorkflowExecutionTransitionLog, index: number) => {
     if (transition.iterationIndex !== null && transition.iterationIndex !== undefined) {
@@ -602,7 +579,7 @@
       )
       if (!options.preserveSelection && detail.status === 'failed') {
         const failed = detail.nodeLogs.find(
-          (item) => item.status === 'failed' || Boolean(item.errorMessage)
+          (item) => item.status === 'failed' || Boolean(item.error)
         )
         if (failed) {
           selectedCellId.value = failed.nodeId
@@ -937,6 +914,31 @@
     border: 1px solid var(--workflow-overlay-border-subtle);
     border-radius: 8px;
     box-shadow: none;
+  }
+
+  .workflow-execution-detail__timeline {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .workflow-execution-detail__timeline-item {
+    display: grid;
+    grid-template-columns: 132px minmax(0, 1fr);
+    gap: 4px 10px;
+    padding: 10px;
+    background: var(--workflow-overlay-soft);
+    border-left: 3px solid var(--el-color-primary);
+  }
+
+  .workflow-execution-detail__timeline-item span,
+  .workflow-execution-detail__timeline-item small {
+    font-size: 12px;
+    color: var(--workflow-overlay-muted);
+  }
+
+  .workflow-execution-detail__timeline-item small {
+    grid-column: 2;
   }
 
   .workflow-execution-detail__json-group {
