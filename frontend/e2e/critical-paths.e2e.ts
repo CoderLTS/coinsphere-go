@@ -191,6 +191,22 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
       await fulfillApi(route, { records: [], nextCursor: '', hasMore: false, total: 0 })
       return
     }
+    if (method === 'GET' && (path === '/api/v1/strategies' || path === '/api/v1/markets/symbols')) {
+      await fulfillApi(route, { records: [], nextCursor: '', hasMore: false, total: 0 })
+      return
+    }
+    if (
+      method === 'GET' &&
+      [
+        '/api/v1/trading/accounts',
+        '/api/v1/workflow-node-templates',
+        '/api/v1/notification-channels',
+        '/api/v1/workflows'
+      ].includes(path)
+    ) {
+      await fulfillApi(route, [])
+      return
+    }
     if (method === 'POST' && path === '/api/v1/workflows/validate') {
       await fulfillApi(route, { valid: true, issues: [] })
       return

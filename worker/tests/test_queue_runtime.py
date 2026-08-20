@@ -581,11 +581,11 @@ def test_strategy_failure_and_backtest_result_commit(
         connection.execute(
             """
             INSERT INTO strategies (
-                id, name, source_code, market_type, instrument_id, interval_code,
-                lookback_bars, parameter_schema_json, created_by_user_id, updated_by_user_id
-            ) VALUES (%s, 'hold', %s, 'spot', %s, '1m', 1, '{}', %s, %s)
+                id, name, source_code, lookback_bars, parameter_schema_json,
+                created_by_user_id, updated_by_user_id
+            ) VALUES (%s, 'hold', %s, 1, '{}', %s, %s)
             """,
-            (strategy_id, source, instrument_id, owner[0], owner[0]),
+            (strategy_id, source, owner[0], owner[0]),
         )
         connection.execute(
             """
@@ -603,17 +603,16 @@ def test_strategy_failure_and_backtest_result_commit(
             """
             INSERT INTO strategy_versions (
                 id, strategy_id, version_number, worker_task_id, idempotency_record_id,
-                name, source_code, code_sha256, runtime_version, market_type, instrument_id, symbol,
-                interval_code, lookback_bars, parameter_schema_json, published_by_user_id
+                name, source_code, code_sha256, runtime_version, lookback_bars,
+                parameter_schema_json, published_by_user_id
             ) VALUES (%s, %s, 1, %s, %s, 'invalid', 'invalid source', repeat('e', 64),
-                      'python3.12', 'spot', %s, 'BTCUSDT', '1m', 1, '{}', %s)
+                      'python3.12', 1, '{}', %s)
             """,
             (
                 failed_version_id,
                 strategy_id,
                 failed_task_id,
                 record_ids[0],
-                instrument_id,
                 owner[0],
             ),
         )
@@ -653,10 +652,10 @@ def test_strategy_failure_and_backtest_result_commit(
             """
             INSERT INTO strategy_versions (
                 id, strategy_id, version_number, worker_task_id, idempotency_record_id,
-                name, source_code, code_sha256, runtime_version, market_type, instrument_id, symbol,
-                interval_code, lookback_bars, parameter_schema_json, published_by_user_id
-            ) VALUES (%s, %s, 2, %s, %s, 'hold', %s, %s, 'python3.12', 'spot', %s, 'BTCUSDT',
-                      '1m', 1, '{"count":{"type":"integer","default":1,
+                name, source_code, code_sha256, runtime_version, lookback_bars,
+                parameter_schema_json, published_by_user_id
+            ) VALUES (%s, %s, 2, %s, %s, 'hold', %s, %s, 'python3.12',
+                      1, '{"count":{"type":"integer","default":1,
                       "minimum":"1","maximum":"2"}}', %s)
             """,
             (
@@ -666,7 +665,6 @@ def test_strategy_failure_and_backtest_result_commit(
                 record_ids[1],
                 source,
                 code_sha,
-                instrument_id,
                 owner[0],
             ),
         )
@@ -688,11 +686,12 @@ def test_strategy_failure_and_backtest_result_commit(
         connection.execute(
             """
             INSERT INTO backtests (
-                id, owner_user_id, strategy_version_id, worker_task_id,
+                id, owner_user_id, strategy_version_id, instrument_id, interval_code,
+                worker_task_id,
                 idempotency_record_id, simulator_version, parameters_json,
                 start_time, end_time, allocation_usdt, initial_equity, fee_rate,
                 slippage_rate, funding_rates_json
-            ) VALUES (%s, %s, %s, %s, %s, 'decimal-bar-v1', '{}',
+            ) VALUES (%s, %s, %s, %s, '1m', %s, %s, 'decimal-bar-v1', '{}',
                       TIMESTAMPTZ '2026-08-01 00:00:00+00',
                       TIMESTAMPTZ '2026-08-01 00:01:00+00', 100, 1000, 0, 0, '[]')
             """,
@@ -700,6 +699,7 @@ def test_strategy_failure_and_backtest_result_commit(
                 backtest_id,
                 owner[0],
                 published_version_id,
+                instrument_id,
                 backtest_task_id,
                 record_ids[2],
             ),
@@ -784,6 +784,17 @@ def test_realtime_signal_is_idempotent_and_expires_manual(postgres_dsn: str) -> 
             "INSERT INTO users (username) VALUES ('worker-realtime-owner') RETURNING id"
         ).fetchone()
         assert owner is not None
+        workflow = connection.execute(
+            """
+            INSERT INTO workflow_definitions (
+                code, version, display_name, graph_json, created_by, created_at
+            ) VALUES ('worker_realtime_test', 1, 'Worker realtime test', '{}', %s,
+                      CURRENT_TIMESTAMP)
+            RETURNING id
+            """,
+            (owner[0],),
+        ).fetchone()
+        assert workflow is not None
         record = connection.execute(
             """
             INSERT INTO idempotency_records (
@@ -798,11 +809,11 @@ def test_realtime_signal_is_idempotent_and_expires_manual(postgres_dsn: str) -> 
         connection.execute(
             """
             INSERT INTO strategies (
-                id, name, source_code, market_type, instrument_id, interval_code,
-                lookback_bars, parameter_schema_json, created_by_user_id, updated_by_user_id
-            ) VALUES (%s, 'realtime hold', %s, 'spot', %s, '1m', 2, '{}', %s, %s)
+                id, name, source_code, lookback_bars, parameter_schema_json,
+                created_by_user_id, updated_by_user_id
+            ) VALUES (%s, 'realtime hold', %s, 2, '{}', %s, %s)
             """,
-            (strategy_id, source, instrument_id, owner[0], owner[0]),
+            (strategy_id, source, owner[0], owner[0]),
         )
         connection.execute(
             """
@@ -819,12 +830,10 @@ def test_realtime_signal_is_idempotent_and_expires_manual(postgres_dsn: str) -> 
             """
             INSERT INTO strategy_versions (
                 id, strategy_id, version_number, status, worker_task_id, idempotency_record_id,
-                name, source_code, code_sha256, runtime_version, market_type, instrument_id,
-                symbol, interval_code, lookback_bars, parameter_schema_json,
-                published_by_user_id, published_at
+                name, source_code, code_sha256, runtime_version, lookback_bars,
+                parameter_schema_json, published_by_user_id, published_at
             ) VALUES (%s, %s, 1, 'published', %s, %s, 'realtime hold', %s, %s,
-                      'python3.12', 'spot', %s, 'ETHUSDT', '1m', 2, '{}', %s,
-                      CURRENT_TIMESTAMP)
+                      'python3.12', 2, '{}', %s, CURRENT_TIMESTAMP)
             """,
             (
                 version_id,
@@ -833,25 +842,30 @@ def test_realtime_signal_is_idempotent_and_expires_manual(postgres_dsn: str) -> 
                 record[0],
                 source,
                 code_sha,
-                instrument_id,
                 owner[0],
             ),
         )
         connection.execute(
             """
             INSERT INTO strategy_instances (
-                id, owner_user_id, strategy_version_id, name, mode, environment, is_enabled
-            ) VALUES (%s, %s, %s, 'realtime manual', 'manual', 'paper', TRUE)
+                id, owner_user_id, strategy_version_id, name, mode, environment, is_enabled,
+                market_type, instrument_id, interval_code, workflow_definition_id,
+                workflow_node_id
+            ) VALUES (%s, %s, %s, 'realtime manual', 'manual', 'paper', TRUE,
+                      'spot', %s, '1m', %s, 'strategy-main')
             """,
-            (instance_id, owner[0], version_id),
+            (instance_id, owner[0], version_id, instrument_id, workflow[0]),
         )
         connection.execute(
             """
             INSERT INTO strategy_instances (
-                id, owner_user_id, strategy_version_id, name, mode, environment, is_enabled
-            ) VALUES (%s, %s, %s, 'out of order manual', 'manual', 'paper', TRUE)
+                id, owner_user_id, strategy_version_id, name, mode, environment, is_enabled,
+                market_type, instrument_id, interval_code, workflow_definition_id,
+                workflow_node_id
+            ) VALUES (%s, %s, %s, 'out of order manual', 'manual', 'paper', TRUE,
+                      'spot', %s, '1m', %s, 'strategy-out-of-order')
             """,
-            (out_of_order_instance_id, owner[0], version_id),
+            (out_of_order_instance_id, owner[0], version_id, instrument_id, workflow[0]),
         )
         base_candle_open = datetime(2099, 8, 8, tzinfo=UTC)
         for index in range(102):

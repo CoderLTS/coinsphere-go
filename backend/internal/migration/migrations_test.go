@@ -68,7 +68,7 @@ func TestInitialMigrationDownRejectsData(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply initial migration: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 2); err != nil {
+	if _, err := runner.Down(context.Background(), 3); err != nil {
 		t.Fatalf("roll back post-baseline migrations: %v", err)
 	}
 	if _, err := database.Exec(`INSERT INTO roles (code) VALUES ('rollback-guard')`); err != nil {
@@ -95,7 +95,7 @@ func TestEndpointMigrationDownRejectsChangedSettings(t *testing.T) {
 	if _, err := runner.Down(context.Background(), 2); err != nil {
 		t.Fatalf("roll back workflow console and node definition migrations: %v", err)
 	}
-	if _, err := database.Exec(`UPDATE market_sync_settings SET quote_assets = '["USDT","USDC"]'::jsonb WHERE id = 1`); err != nil {
+	if _, err := database.Exec(`UPDATE market_sync_settings SET spot_rest_base_url = 'https://api.binance.com' WHERE id = 1`); err != nil {
 		t.Fatalf("change sync setting: %v", err)
 	}
 	if _, err := runner.Down(context.Background(), 1); err == nil {

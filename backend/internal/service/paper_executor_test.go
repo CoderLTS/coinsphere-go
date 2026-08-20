@@ -538,9 +538,18 @@ VALUES (?, 'strategy.publish', ?, 'succeeded', 1, 'backtest', ?)
 	}).Error; err != nil {
 		t.Fatalf("create paper balance: %v", err)
 	}
+	workflow := db.WorkflowDefinition{
+		Code: "paper-" + instanceID.String(), Version: 1, DisplayName: "Paper strategy test",
+		GraphJSON: "{}", CreatedBy: &owner.ID, CreatedAt: now,
+	}
+	if err := database.Create(&workflow).Error; err != nil {
+		t.Fatalf("create paper workflow definition: %v", err)
+	}
 	allocation := decimal.RequireFromString("1000")
 	instance := db.StrategyInstance{
 		ID: instanceID, OwnerUserID: owner.ID, StrategyVersionID: versionID,
+		Market: string(market), InstrumentID: instrumentID, Interval: "1m",
+		WorkflowDefinitionID: workflow.ID, WorkflowNodeID: "strategy-" + instanceID.String(),
 		TradingAccountID: &accountID, AllocationUSDT: &allocation, Name: "paper instance",
 		Mode: mode, Environment: "paper", ParametersJSON: "{}", IsEnabled: true,
 		CreatedAt: now, UpdatedAt: now,
