@@ -149,132 +149,6 @@
             </template>
           </template>
 
-          <template v-else-if="localForm.kind === 'task'">
-            <ElFormItem label="任务定义">
-              <ElSelect
-                v-model="localForm.config.taskDefinitionCode"
-                placeholder="请选择任务定义"
-                filterable
-                clearable
-                @change="handleTaskDefinitionChange"
-              >
-                <ElOption
-                  v-for="item in taskDefinitions"
-                  :key="item.code"
-                  :label="item.label"
-                  :value="item.code"
-                />
-              </ElSelect>
-            </ElFormItem>
-
-            <ElFormItem label="输入路径">
-              <ElInput
-                v-model="localForm.config.inputsPath"
-                placeholder="默认 inputs"
-                @blur="handleTextBlur(['config', 'inputsPath'])"
-              />
-            </ElFormItem>
-
-            <template v-if="selectedTaskDefinition">
-              <ElAlert
-                v-if="supportedTaskParameterFields.length"
-                type="info"
-                :closable="false"
-                title="任务节点参数会覆盖任务定义默认值；留空表示当前节点不显式设置，继续使用默认值或运行输入。"
-              />
-
-              <ElFormItem
-                v-for="field in supportedTaskParameterFields"
-                :key="field.key"
-                :label="field.label"
-              >
-                <div class="node-editor-card__param-control">
-                  <ElSelect
-                    v-if="field.type === 'enum'"
-                    :model-value="getTaskParameterValue(field)"
-                    class="node-editor-card__param-input"
-                    clearable
-                    placeholder="未设置时使用默认值"
-                    @update:model-value="setTaskParameterValue(field, $event)"
-                  >
-                    <ElOption
-                      v-for="option in field.enumOptions"
-                      :key="`${field.key}-${String(option.value)}`"
-                      :label="option.label"
-                      :value="option.value"
-                    />
-                  </ElSelect>
-
-                  <ElInput
-                    v-else-if="field.type === 'string'"
-                    :model-value="getTaskParameterValue(field)"
-                    class="node-editor-card__param-input"
-                    clearable
-                    placeholder="留空时使用默认值"
-                    @update:model-value="setTaskParameterValue(field, $event)"
-                  />
-
-                  <ElInputNumber
-                    v-else-if="field.type === 'integer' || field.type === 'number'"
-                    :model-value="getTaskParameterValue(field)"
-                    class="node-editor-card__param-input"
-                    :min="
-                      typeof field.schema.minimum === 'number' ? field.schema.minimum : undefined
-                    "
-                    :max="
-                      typeof field.schema.maximum === 'number' ? field.schema.maximum : undefined
-                    "
-                    :step="field.type === 'integer' ? 1 : 0.1"
-                    @update:model-value="setTaskParameterValue(field, $event)"
-                  />
-
-                  <div v-else-if="field.type === 'boolean'" class="node-editor-card__param-boolean">
-                    <ElSwitch
-                      :model-value="Boolean(getTaskParameterValue(field))"
-                      @update:model-value="setTaskParameterValue(field, $event)"
-                    />
-                    <ElButton
-                      v-if="hasExplicitTaskParameter(field.key)"
-                      link
-                      type="primary"
-                      native-type="button"
-                      @click="clearTaskParameter(field.key)"
-                    >
-                      恢复默认
-                    </ElButton>
-                  </div>
-
-                  <ElButton
-                    v-if="field.type !== 'boolean' && hasExplicitTaskParameter(field.key)"
-                    link
-                    type="primary"
-                    native-type="button"
-                    @click="clearTaskParameter(field.key)"
-                  >
-                    恢复默认
-                  </ElButton>
-                </div>
-                <div class="node-editor-card__field-hint">{{ buildTaskParameterHint(field) }}</div>
-              </ElFormItem>
-
-              <ElAlert
-                v-if="unsupportedTaskParameterFields.length"
-                type="warning"
-                :closable="false"
-                :title="unsupportedTaskParameterAlert"
-              />
-            </template>
-
-            <ElDescriptions v-if="selectedTaskDefinition" :column="1" border size="small">
-              <ElDescriptionsItem label="任务说明">
-                {{ selectedTaskDefinition.description || '--' }}
-              </ElDescriptionsItem>
-              <ElDescriptionsItem label="参数 Schema">
-                <pre>{{ prettyJson(selectedTaskDefinition.parameterSchema) }}</pre>
-              </ElDescriptionsItem>
-            </ElDescriptions>
-          </template>
-
           <template v-else-if="localForm.kind === 'agent'">
             <ElFormItem label="智能体">
               <ElSelect
@@ -601,7 +475,7 @@
 </template>
 
 <script setup lang="ts">
-  import type { TaskDefinitionItem, WorkflowAgentOption } from '@/api/scheduler'
+  import type { WorkflowAgentOption } from '@/api/scheduler'
   import type {
     WorkflowDomainNode,
     WorkflowEditorIssue,
@@ -614,7 +488,6 @@
   interface Props {
     node: WorkflowDomainNode
     model: WorkflowNodeFormModel | null
-    taskDefinitions: TaskDefinitionItem[]
     agentOptions?: WorkflowAgentOption[]
     notifyUserOptions?: WorkflowNotifyTargetOption[]
     notifyRoleOptions?: WorkflowNotifyTargetOption[]
@@ -637,19 +510,6 @@
     targetIds: number[]
   }
 
-  type TaskParameterFieldType = 'string' | 'integer' | 'number' | 'boolean' | 'enum' | 'unsupported'
-
-  interface TaskParameterFieldMeta {
-    key: string
-    label: string
-    schema: Record<string, any>
-    type: TaskParameterFieldType
-    enumOptions: Array<{
-      label: string
-      value: any
-    }>
-  }
-
   const props = withDefaults(defineProps<Props>(), {
     errors: () => [],
     agentOptions: () => [],
@@ -664,7 +524,6 @@
     'start.schedule': '开始节点（定时触发）',
     'start.event': '开始节点（事件触发）',
     'start.webhook': '开始节点（Webhook 触发）',
-    'task.run': '任务执行节点',
     'condition.branch': '条件判断节点',
     foreach: '遍历节点',
     notify: '通知节点',
@@ -676,7 +535,6 @@
 
   const NODE_KIND_LABELS: Record<string, string> = {
     start: '开始节点',
-    task: '任务节点',
     condition: '判断节点',
     foreach: '遍历节点',
     notify: '通知节点',
@@ -689,8 +547,6 @@
   const NOTIFY_TARGET_TYPES = ['user', 'role'] as const
   const NOTIFY_CHANNEL_TYPES = ['in_app', 'dingtalk_webhook', 'smtp_email'] as const
   const NOTIFY_MESSAGE_FORMATS = ['markdown', 'plain_text'] as const
-  const TASK_PARAMETER_BASE_TYPES = ['string', 'integer', 'number', 'boolean'] as const
-
   const cloneModel = (value: WorkflowNodeFormModel | null): WorkflowNodeFormModel => ({
     id: value?.id || props.node.id,
     label: value?.label || props.node.data.title,
@@ -743,76 +599,6 @@
       return 'Webhook 开始节点只声明入口，Secret 在版本激活后由运行态生成和轮换。'
     }
     return '手动开始节点用于声明可供人工启动的入口。'
-  })
-
-  const selectedTaskDefinition = computed(
-    () =>
-      props.taskDefinitions.find((item) => item.code === localForm.config.taskDefinitionCode) ||
-      null
-  )
-
-  const resolveTaskParameterType = (schema: Record<string, any>): TaskParameterFieldType => {
-    const enumValues = Array.isArray(schema.enum) ? schema.enum : []
-    if (enumValues.length) return 'enum'
-    const rawType = schema.type
-    const typeList = Array.isArray(rawType)
-      ? rawType.map((item) => String(item || ''))
-      : [String(rawType || '')]
-    return (TASK_PARAMETER_BASE_TYPES.find((item) => typeList.includes(item)) ||
-      'unsupported') as TaskParameterFieldType
-  }
-
-  const formatTaskParameterOptionLabel = (value: unknown) => {
-    if (typeof value === 'boolean') return value ? 'true' : 'false'
-    return String(value)
-  }
-
-  const readTaskParameterSchemaProperties = () => {
-    const properties = selectedTaskDefinition.value?.parameterSchema?.properties
-    if (!properties || typeof properties !== 'object' || Array.isArray(properties)) return {}
-    return properties as Record<string, Record<string, any>>
-  }
-
-  const readTaskParameterConfig = () => {
-    const value = localForm.config.taskParams
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-    return value as Record<string, any>
-  }
-
-  const ensureTaskParameterConfig = () => {
-    const current = readTaskParameterConfig()
-    if (current === localForm.config.taskParams) return current
-    localForm.config.taskParams = { ...current }
-    return localForm.config.taskParams as Record<string, any>
-  }
-
-  const taskParameterFields = computed<TaskParameterFieldMeta[]>(() =>
-    Object.entries(readTaskParameterSchemaProperties()).map(([key, schema]) => ({
-      key,
-      label: String(schema.title || key),
-      schema,
-      type: resolveTaskParameterType(schema),
-      enumOptions: Array.isArray(schema.enum)
-        ? schema.enum.map((value) => ({
-            label: formatTaskParameterOptionLabel(value),
-            value
-          }))
-        : []
-    }))
-  )
-
-  const supportedTaskParameterFields = computed(() =>
-    taskParameterFields.value.filter((field) => field.type !== 'unsupported')
-  )
-
-  const unsupportedTaskParameterFields = computed(() =>
-    taskParameterFields.value.filter((field) => field.type === 'unsupported')
-  )
-
-  const unsupportedTaskParameterAlert = computed(() => {
-    if (!unsupportedTaskParameterFields.value.length) return ''
-    const labels = unsupportedTaskParameterFields.value.map((field) => field.label).join('、')
-    return `以下参数类型当前只展示 schema，暂不支持可视化编辑：${labels}`
   })
 
   const createNotifyTargetRow = (value?: Partial<NotifyTargetRow>): NotifyTargetRow => ({
@@ -873,96 +659,6 @@
     )
   }
 
-  const hasExplicitTaskParameter = (key: string) =>
-    Object.prototype.hasOwnProperty.call(readTaskParameterConfig(), key)
-
-  const getTaskParameterValue = (field: TaskParameterFieldMeta) => {
-    const taskParams = readTaskParameterConfig()
-    if (Object.prototype.hasOwnProperty.call(taskParams, field.key)) {
-      return taskParams[field.key]
-    }
-    if (field.type === 'boolean' && typeof field.schema.default === 'boolean') {
-      return field.schema.default
-    }
-    return undefined
-  }
-
-  const normalizeTaskParameterValue = (field: TaskParameterFieldMeta, value: unknown) => {
-    if (value === undefined || value === null) return undefined
-    if (field.type === 'enum') {
-      return value === '' ? undefined : value
-    }
-    if (field.type === 'string') {
-      const text = String(value)
-      return text.trim() ? text.trim() : undefined
-    }
-    if (field.type === 'integer') {
-      const numeric = Number(value)
-      return Number.isInteger(numeric) ? numeric : undefined
-    }
-    if (field.type === 'number') {
-      const numeric = Number(value)
-      return Number.isFinite(numeric) ? numeric : undefined
-    }
-    if (field.type === 'boolean') {
-      return Boolean(value)
-    }
-    return undefined
-  }
-
-  const setTaskParameterValue = (field: TaskParameterFieldMeta, value: unknown) => {
-    const taskParams = ensureTaskParameterConfig()
-    const normalized = normalizeTaskParameterValue(field, value)
-    if (normalized === undefined) {
-      delete taskParams[field.key]
-      if (!Object.keys(taskParams).length) {
-        delete localForm.config.taskParams
-      }
-    } else {
-      taskParams[field.key] = normalized
-    }
-    emitModel()
-  }
-
-  const clearTaskParameter = (key: string) => {
-    const taskParams = readTaskParameterConfig()
-    if (!Object.prototype.hasOwnProperty.call(taskParams, key)) return
-    delete taskParams[key]
-    if (!Object.keys(taskParams).length) {
-      delete localForm.config.taskParams
-    }
-    emitModel()
-  }
-
-  const formatTaskParameterDefault = (value: unknown) => {
-    if (value === undefined) return ''
-    if (typeof value === 'string') return value
-    return JSON.stringify(value)
-  }
-
-  const buildTaskParameterHint = (field: TaskParameterFieldMeta) => {
-    const hintParts: string[] = []
-    if (field.schema.description) {
-      hintParts.push(String(field.schema.description))
-    }
-    if (field.schema.default !== undefined) {
-      hintParts.push(`Schema 默认值：${formatTaskParameterDefault(field.schema.default)}`)
-    }
-    if (typeof field.schema.minimum === 'number' || typeof field.schema.maximum === 'number') {
-      const bounds = [
-        typeof field.schema.minimum === 'number' ? `最小 ${field.schema.minimum}` : '',
-        typeof field.schema.maximum === 'number' ? `最大 ${field.schema.maximum}` : ''
-      ].filter(Boolean)
-      if (bounds.length) hintParts.push(bounds.join('，'))
-    }
-    hintParts.push(
-      hasExplicitTaskParameter(field.key)
-        ? '当前节点已显式覆盖该参数。'
-        : '未显式设置时，会继续使用任务定义默认值和运行输入。'
-    )
-    return hintParts.join(' / ')
-  }
-
   const syncJsonTextRefs = () => {
     startInputBindingsJson.value = JSON.stringify(
       localForm.config.inputBindings &&
@@ -1020,31 +716,6 @@
   const resolveNotifyTargetOptions = (targetType: 'user' | 'role') =>
     targetType === 'role' ? props.notifyRoleOptions : props.notifyUserOptions
 
-  const handleTaskDefinitionChange = (value: string | number | boolean) => {
-    const nextCode = String(value || '').trim()
-    localForm.config.taskDefinitionCode = nextCode
-    const definition = props.taskDefinitions.find((item) => item.code === nextCode) || null
-    if (!definition) {
-      delete localForm.config.taskParams
-      emitModel()
-      return
-    }
-    const properties = definition.parameterSchema?.properties
-    const allowedKeys =
-      properties && typeof properties === 'object' && !Array.isArray(properties)
-        ? new Set(Object.keys(properties))
-        : new Set<string>()
-    const nextParams = Object.fromEntries(
-      Object.entries(readTaskParameterConfig()).filter(([key]) => allowedKeys.has(key))
-    )
-    if (Object.keys(nextParams).length) {
-      localForm.config.taskParams = nextParams
-    } else {
-      delete localForm.config.taskParams
-    }
-    emitModel()
-  }
-
   const updateLocalForm = (value: WorkflowNodeFormModel | null) => {
     const next = cloneModel(value)
     localForm.id = next.id
@@ -1052,15 +723,6 @@
     localForm.typeCode = next.typeCode
     localForm.kind = next.kind
     localForm.config = next.config
-    if (
-      localForm.kind === 'task' &&
-      localForm.config.taskParams !== undefined &&
-      (!localForm.config.taskParams ||
-        typeof localForm.config.taskParams !== 'object' ||
-        Array.isArray(localForm.config.taskParams))
-    ) {
-      delete localForm.config.taskParams
-    }
     syncNotifyConfigToRows()
     syncJsonTextRefs()
     const snapshot = JSON.stringify(cloneModel(localForm))
@@ -1218,8 +880,6 @@
     syncNotifyRowsToConfig()
     emitModel()
   }
-
-  const prettyJson = (value: Record<string, any>) => JSON.stringify(value || {}, null, 2)
 
   watch(
     () => [props.node.id, JSON.stringify(cloneModel(props.model))],

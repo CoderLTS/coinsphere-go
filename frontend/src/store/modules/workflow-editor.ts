@@ -1,11 +1,7 @@
 /** 状态管理模块：workflow-editor。 */
 import { computed, reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
-import type {
-  TaskDefinitionItem,
-  WorkflowDefinitionItem,
-  WorkflowNodeDefinitionItem
-} from '@/api/scheduler'
+import type { WorkflowDefinitionItem, WorkflowNodeDefinitionItem } from '@/api/scheduler'
 import { buildEditorSnapshot } from '@/views/scheduler/workflow/editor/workflow-editor.mapper'
 import type {
   WorkflowDefinitionRegistryPayload,
@@ -56,7 +52,6 @@ export const useWorkflowEditorStore = defineStore('workflowEditorStore', () => {
 
   const definitionDetail = ref<WorkflowDefinitionItem | null>(null)
   const metaForm = reactive<WorkflowEditorMetaForm>(createInitialMetaForm())
-  const taskDefinitions = ref<TaskDefinitionItem[]>([])
   const nodeDefinitions = ref<WorkflowNodeDefinitionItem[]>([])
   const materialGroups = ref<WorkflowMaterialGroup[]>([])
   const domainGraph = ref<WorkflowDomainGraphModel>(createInitialGraph())
@@ -88,7 +83,6 @@ export const useWorkflowEditorStore = defineStore('workflowEditorStore', () => {
     validating.value = false
     definitionDetail.value = null
     Object.assign(metaForm, createInitialMetaForm())
-    taskDefinitions.value = []
     nodeDefinitions.value = []
     materialGroups.value = []
     domainGraph.value = createInitialGraph()
@@ -118,7 +112,6 @@ export const useWorkflowEditorStore = defineStore('workflowEditorStore', () => {
 
   const setRegistryPayload = (payload: WorkflowDefinitionRegistryPayload) => {
     // 节点注册表和物料分组来自后端定义，用于编辑器面板和表单映射。
-    taskDefinitions.value = payload.taskDefinitions
     nodeDefinitions.value = payload.nodeDefinitions
     materialGroups.value = payload.materialGroups
   }
@@ -179,7 +172,6 @@ export const useWorkflowEditorStore = defineStore('workflowEditorStore', () => {
     validating,
     definitionDetail,
     metaForm,
-    taskDefinitions,
     nodeDefinitions,
     materialGroups,
     domainGraph,

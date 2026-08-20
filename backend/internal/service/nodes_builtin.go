@@ -89,18 +89,6 @@ func init() {
 	})
 
 	registerNode(&workflowNodeDefinition{
-		TypeCode: "task.run", Label: "执行任务",
-		ConfigSchema: M{
-			"type": "object",
-			"properties": M{
-				"taskDefinitionCode": M{"type": "string", "title": "任务定义编码"},
-				"inputsPath":         M{"type": "string", "title": "输入路径", "default": "inputs"},
-			},
-			"required": []string{"taskDefinitionCode"},
-		},
-		Execute: taskRunExecute,
-	})
-	registerNode(&workflowNodeDefinition{
 		TypeCode: "event.publish", Label: "发布事件",
 		ConfigSchema: M{
 			"type": "object",
@@ -219,36 +207,6 @@ func startNodeExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 		"triggerType": ctx.TriggerCtx["triggerType"],
 		"entryKey":    asString(config["entryKey"]),
 	}}, nil
-}
-
-// taskRunExecute 按配置里的 taskDefinitionCode 查任务、合并输入后执行,结果写进共享状态的 taskResult 供下游引用。
-func taskRunExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
-	config := nodeConfig(ctx)
-	definitionCode := cfgStr(config, "taskDefinitionCode", "")
-	if definitionCode == "" {
-		return nil, bizErr("Task node is missing taskDefinitionCode")
-	}
-	definition, err := getTaskDefinition(definitionCode)
-	if err != nil {
-		return nil, err
-	}
-	inputsPath := cfgStr(config, "inputsPath", "inputs")
-	inputValues, _ := ctx.State.get(inputsPath).(map[string]any)
-	if inputValues == nil {
-		inputValues, _ = ctx.State.get("inputs").(map[string]any)
-	}
-	taskParams, _ := config["taskParams"].(map[string]any)
-	mergedInputs, err := ctx.App.buildExecutionInputs(definitionCode, taskParams, inputValues)
-	if err != nil {
-		return nil, err
-	}
-	payload, err := definition.Execute(ctx.Ctx, ctx.App, mergedInputs)
-	if err != nil {
-		return nil, err
-	}
-	ctx.State.set("taskResult", payload)
-	setNodeOutput(ctx, payload)
-	return &nodeExecResult{Output: payload}, nil
 }
 
 // eventPublishExecute 从共享状态取载荷/元数据,发布一条领域事件。

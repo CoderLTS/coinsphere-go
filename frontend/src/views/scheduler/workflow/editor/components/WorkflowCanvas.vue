@@ -36,7 +36,6 @@
       <WorkflowNodeEditorCard
         :node="selectedNode"
         :model="nodeDraftModel"
-        :task-definitions="taskDefinitions"
         :agent-options="agentOptions"
         :notify-user-options="notifyUserOptions"
         :notify-role-options="notifyRoleOptions"
@@ -115,7 +114,7 @@
   import { ElEmpty, ElSkeleton } from 'element-plus'
   import { Edge, Graph, History, Keyboard, Selection, Snapline } from '@antv/x6'
   import type { CSSProperties } from 'vue'
-  import type { TaskDefinitionItem, WorkflowAgentOption } from '@/api/scheduler'
+  import type { WorkflowAgentOption } from '@/api/scheduler'
   import ArtMenuRight from '@/components/core/others/art-menu-right/index.vue'
   import {
     ensureWorkflowGraphEdgeRegistered,
@@ -163,7 +162,6 @@
     materials: WorkflowMaterialItem[]
     materialGroups: WorkflowMaterialGroup[]
     issues: WorkflowEditorIssue[]
-    taskDefinitions: TaskDefinitionItem[]
     agentOptions: WorkflowAgentOption[]
     notifyUserOptions: WorkflowNotifyTargetOption[]
     notifyRoleOptions: WorkflowNotifyTargetOption[]

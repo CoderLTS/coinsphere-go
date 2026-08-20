@@ -1,6 +1,5 @@
 /** 工作流编辑器辅助模块：types。 */
 import type {
-  TaskDefinitionItem,
   WorkflowDefinitionValidationIssue,
   WorkflowEdgeItem,
   WorkflowNodeDefinitionItem,
@@ -18,7 +17,6 @@ export type WorkflowEditorMode = 'create' | 'edit'
  */
 export type WorkflowNodeFormKind =
   | 'start'
-  | 'task'
   | 'agent'
   | 'condition'
   | 'foreach'
@@ -236,7 +234,6 @@ export interface WorkflowGraphCommitPayload {
 }
 
 export interface WorkflowDefinitionRegistryPayload {
-  taskDefinitions: TaskDefinitionItem[]
   nodeDefinitions: WorkflowNodeDefinitionItem[]
   materialGroups: WorkflowMaterialGroup[]
 }

@@ -692,14 +692,6 @@ declare namespace Api {
     type WorkflowScheduleType = 'cron' | 'interval' | 'once'
     type WorkflowExecutionStatus = 'queued' | 'running' | 'retry_waiting' | 'success' | 'failed'
 
-    interface TaskDefinitionItem {
-      code: string
-      label: string
-      description: string
-      parameterSchema: Record<string, any>
-      supportedScheduleTypes: WorkflowScheduleType[]
-    }
-
     interface WorkflowNodeDefinitionItem {
       typeCode: string
       label: string

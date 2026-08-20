@@ -42,13 +42,6 @@ const MATERIAL_META: Record<
     color: '#1e40af',
     iconText: 'S'
   },
-  'task.run': {
-    kind: 'task',
-    group: '任务',
-    description: '执行一个代码注册的任务能力',
-    color: '#16a34a',
-    iconText: 'T'
-  },
   'market.metadata.sync': {
     kind: 'generic',
     group: '行情',
@@ -182,7 +175,6 @@ const GROUP_ORDER = [
   '开始',
   '行情',
   '策略',
-  '任务',
   '智能体',
   '控制',
   '数据',
@@ -194,7 +186,7 @@ const GROUP_ORDER = [
 const FALLBACK_GROUP = '其他'
 
 export function inferNodeFormKind(typeCode: string): WorkflowNodeFormKind {
-  return MATERIAL_META[typeCode]?.kind || 'task'
+  return MATERIAL_META[typeCode]?.kind || 'generic'
 }
 
 export function getNodeMaterialMeta(typeCode: string) {
@@ -208,7 +200,7 @@ export function buildWorkflowMaterialGroups(
     const meta = MATERIAL_META[definition.typeCode]
     return {
       typeCode: definition.typeCode,
-      kind: meta?.kind || 'task',
+      kind: meta?.kind || 'generic',
       group: meta?.group || FALLBACK_GROUP,
       title: definition.label,
       description: meta?.description || definition.typeCode,

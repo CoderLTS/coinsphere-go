@@ -9,7 +9,6 @@
       :materials="materialItems"
       :material-groups="editorMaterialGroups"
       :issues="allIssues"
-      :task-definitions="taskDefinitions"
       :agent-options="agentOptions"
       :notify-user-options="notifyUserOptions"
       :notify-role-options="notifyRoleOptions"
@@ -98,7 +97,6 @@
   import {
     fetchCreateWorkflowDefinition,
     fetchNodeDefinitions,
-    fetchTaskDefinitions,
     fetchWorkflowAgentOptions,
     fetchUpdateWorkflowDefinition,
     fetchValidateWorkflowDefinition,
@@ -155,7 +153,6 @@
     validating,
     dirty,
     metaForm,
-    taskDefinitions,
     nodeDefinitions,
     materialGroups,
     domainGraph,
@@ -425,7 +422,7 @@
     if (!node) return false
 
     const draft = mapDomainNodeToForm(node)
-    const validation = validateNodeFormDraft(node, draft, taskDefinitions.value, agentOptions.value)
+    const validation = validateNodeFormDraft(node, draft, agentOptions.value)
     editorStore.seedDraft({
       cellId,
       cellType: 'node',
@@ -562,12 +559,7 @@
     }
 
     const draft = mapDomainNodeToForm(currentNode.value)
-    const validation = validateNodeFormDraft(
-      currentNode.value,
-      draft,
-      taskDefinitions.value,
-      agentOptions.value
-    )
+    const validation = validateNodeFormDraft(currentNode.value, draft, agentOptions.value)
     editorStore.seedDraft({
       cellId: currentNode.value.id,
       cellType: 'node',
@@ -582,12 +574,7 @@
     const nextSnapshot = JSON.stringify(model)
     const currentSnapshot = JSON.stringify(draftState.value.model || null)
     if (nextSnapshot === currentSnapshot) return
-    const validation = validateNodeFormDraft(
-      currentNode.value,
-      model,
-      taskDefinitions.value,
-      agentOptions.value
-    )
+    const validation = validateNodeFormDraft(currentNode.value, model, agentOptions.value)
     editorStore.updateDraft({
       model,
       valid: validation.valid,
@@ -637,12 +624,7 @@
       return true
 
     const nextForm = draftState.value.model as WorkflowNodeFormModel
-    const validation = validateNodeFormDraft(
-      currentNode.value,
-      nextForm,
-      taskDefinitions.value,
-      agentOptions.value
-    )
+    const validation = validateNodeFormDraft(currentNode.value, nextForm, agentOptions.value)
     editorStore.updateDraft({
       valid: validation.valid,
       errors: validation.errors
@@ -661,12 +643,7 @@
 
     const updatedNode = nextGraph.nodes.find((node) => node.id === currentNode.value?.id) || null
     const nextDraft = mapDomainNodeToForm(updatedNode)
-    const nextValidation = validateNodeFormDraft(
-      updatedNode,
-      nextDraft,
-      taskDefinitions.value,
-      agentOptions.value
-    )
+    const nextValidation = validateNodeFormDraft(updatedNode, nextDraft, agentOptions.value)
     editorStore.seedDraft({
       cellId: updatedNode?.id || null,
       cellType: updatedNode ? 'node' : null,
@@ -898,7 +875,6 @@
       payload.typeCode,
       resolvedPosition,
       nodeDefinitions.value,
-      taskDefinitions.value,
       materialItems.value,
       domainGraph.value.nodes
     )
@@ -1230,13 +1206,7 @@
     resetGraphHistory()
 
     try {
-      const [
-        taskDefinitionResult,
-        nodeDefinitionResult,
-        agentOptionResult,
-        strategyInstanceResult
-      ] = await Promise.all([
-        fetchTaskDefinitions(),
+      const [nodeDefinitionResult, agentOptionResult, strategyInstanceResult] = await Promise.all([
         fetchNodeDefinitions(),
         // 智能体列表拿不到不该挡住整个编辑器（没配智能体也能画别的节点）。
         fetchWorkflowAgentOptions().catch(() => [] as WorkflowAgentOption[]),
@@ -1251,7 +1221,6 @@
       syncNodeDefinitions(nodeDefinitionResult)
       const nextMaterialGroups = buildWorkflowMaterialGroups(nodeDefinitionResult)
       editorStore.setRegistryPayload({
-        taskDefinitions: taskDefinitionResult,
         nodeDefinitions: nodeDefinitionResult,
         materialGroups: nextMaterialGroups
       })
@@ -1259,9 +1228,7 @@
       if (currentMode.value === 'create') {
         const nextMeta = normalizeDefinitionMeta(null)
         editorStore.setMetaForm(nextMeta)
-        editorStore.setDomainGraph(
-          createDefaultDomainGraph(nodeDefinitionResult, taskDefinitionResult)
-        )
+        editorStore.setDomainGraph(createDefaultDomainGraph(nodeDefinitionResult))
       } else if (currentDefinitionId.value) {
         const detail = await fetchWorkflowDefinitionDetail(currentDefinitionId.value)
         editorStore.setDefinitionDetail(detail)
