@@ -269,7 +269,6 @@
         limit: 200
       })
       marketSymbols.value = result.records
-      if (!marketSymbols.value.some((item) => item.id === form.instrumentId)) form.instrumentId = ''
     } finally {
       symbolsLoading.value = false
     }
