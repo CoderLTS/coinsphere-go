@@ -141,6 +141,7 @@ func TestTestnetExecutorHonorsGlobalEmergencyStopLifecycle(t *testing.T) {
 			automated.ID = mustUUIDv7(t)
 			automated.Name = "testnet emergency automation"
 			automated.Mode = "auto"
+			automated.WorkflowNodeID = "strategy-" + automated.ID.String()
 			automated.CreatedAt = now
 			automated.UpdatedAt = now
 			if err := fixture.database.Create(&automated).Error; err != nil {
