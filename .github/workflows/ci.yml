@@ -203,13 +203,13 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ needs.changes.outputs.full == 'true' && 'all' || 'chromium' }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
       - name: Install Chromium
-        if: needs.changes.outputs.full != 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
+        if: needs.changes.outputs.full != 'true'
         run: pnpm exec playwright install --with-deps chromium
       - name: Run Chromium smoke tests
         if: needs.changes.outputs.full != 'true'
         run: pnpm exec playwright test --project=chromium
       - name: Install all Playwright browsers
-        if: needs.changes.outputs.full == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
+        if: needs.changes.outputs.full == 'true'
         run: pnpm exec playwright install --with-deps chromium firefox webkit
       - name: Run all browser smoke tests
         if: needs.changes.outputs.full == 'true'
