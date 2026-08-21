@@ -107,6 +107,72 @@ func TestEndpointMigrationDownRejectsChangedSettings(t *testing.T) {
 	}
 }
 
+func TestWorkflowConsoleMigrationAllowsOnlyPristinePaperBalance(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		fees        string
+		wantVersion int64
+		wantError   bool
+	}{
+		{name: "pristine balance", fees: "0", wantVersion: 4},
+		{name: "changed balance", fees: "1", wantVersion: 3, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			database := openPostgresSchema(t)
+			runner, err := New(database)
+			if err != nil {
+				t.Fatalf("create migration runner: %v", err)
+			}
+			if _, err := runner.Up(context.Background(), 3); err != nil {
+				t.Fatalf("apply pre-console migrations: %v", err)
+			}
+
+			var ownerID, idempotencyID int64
+			if err := database.QueryRow(`INSERT INTO users (username) VALUES ('migration-paper-owner') RETURNING id`).Scan(&ownerID); err != nil {
+				t.Fatalf("insert Paper account owner: %v", err)
+			}
+			if err := database.QueryRow(`
+INSERT INTO idempotency_records (user_id, scope, key_hash, request_hash, expires_at, created_at)
+VALUES ($1, 'trading-account:create', repeat('a', 64), repeat('b', 64),
+        CURRENT_TIMESTAMP + INTERVAL '1 day', CURRENT_TIMESTAMP)
+RETURNING id
+`, ownerID).Scan(&idempotencyID); err != nil {
+				t.Fatalf("insert Paper account idempotency record: %v", err)
+			}
+			const accountID = "019d5000-0000-7000-8000-000000000100"
+			if _, err := database.Exec(`
+INSERT INTO trading_accounts (
+    id, owner_user_id, name, market_type, environment, initial_balance,
+    paper_fee_rate, creation_idempotency_record_id
+) VALUES ($1, $2, 'migration paper', 'spot', 'paper', 10000, 0.001, $3)
+`, accountID, ownerID, idempotencyID); err != nil {
+				t.Fatalf("insert Paper account: %v", err)
+			}
+			if _, err := database.Exec(`
+INSERT INTO paper_balances (
+    account_id, cash_balance, equity, peak_equity, day_start_date,
+    day_start_equity, realized_pnl, unrealized_pnl, fees, funding, updated_at
+) VALUES ($1, 10000, 10000, 10000, CURRENT_DATE, 10000, 0, 0, $2, 0, CURRENT_TIMESTAMP)
+`, accountID, test.fees); err != nil {
+				t.Fatalf("insert Paper balance: %v", err)
+			}
+
+			_, err = runner.Up(context.Background(), 4)
+			if (err != nil) != test.wantError {
+				t.Fatalf("apply workflow console migration: err=%v wantError=%t", err, test.wantError)
+			}
+			current, _, versionErr := runner.Versions(context.Background())
+			if versionErr != nil || current != test.wantVersion {
+				t.Fatalf("migration version=%d want=%d err=%v", current, test.wantVersion, versionErr)
+			}
+			var balances int
+			if err := database.QueryRow(`SELECT COUNT(*) FROM paper_balances WHERE account_id = $1`, accountID).Scan(&balances); err != nil || balances != 1 {
+				t.Fatalf("Paper balance count=%d want=1 err=%v", balances, err)
+			}
+		})
+	}
+}
+
 func TestInitialMigrationCoreConstraints(t *testing.T) {
 	database := openPostgresSchema(t)
 	runner, err := New(database)

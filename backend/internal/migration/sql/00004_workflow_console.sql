@@ -1,9 +1,9 @@
 -- +goose Up
 
 -- The console reset is allowed to remove strategy execution state, but never
--- financial facts. Keep the guard in the database transaction so a partial
--- deployment cannot silently discard an account history.
-LOCK TABLE trading_intents, paper_orders, paper_positions, paper_balances,
+-- financial facts. A Paper account always has one pristine balance snapshot;
+-- allow only that untouched snapshot through the guard.
+LOCK TABLE trading_accounts, trading_intents, paper_orders, paper_positions, paper_balances,
     trading_events, testnet_orders, testnet_trade_facts, testnet_balances,
     testnet_positions, testnet_open_orders, strategy_signals, strategy_instances
     IN ACCESS EXCLUSIVE MODE;
@@ -17,7 +17,20 @@ SELECT
     (SELECT COUNT(*) FROM trading_intents)
     + (SELECT COUNT(*) FROM paper_orders)
     + (SELECT COUNT(*) FROM paper_positions)
-    + (SELECT COUNT(*) FROM paper_balances)
+    + (
+        SELECT COUNT(*)
+        FROM paper_balances AS balance
+        JOIN trading_accounts AS account ON account.id = balance.account_id
+        WHERE account.environment <> 'paper'
+           OR balance.cash_balance <> account.initial_balance
+           OR balance.equity <> account.initial_balance
+           OR balance.peak_equity <> account.initial_balance
+           OR balance.day_start_equity <> account.initial_balance
+           OR balance.realized_pnl <> 0
+           OR balance.unrealized_pnl <> 0
+           OR balance.fees <> 0
+           OR balance.funding <> 0
+    )
     + (SELECT COUNT(*) FROM trading_events)
     + (SELECT COUNT(*) FROM testnet_orders)
     + (SELECT COUNT(*) FROM testnet_trade_facts)
