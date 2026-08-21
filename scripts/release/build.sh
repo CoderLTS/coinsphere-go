@@ -8,6 +8,7 @@ BUILD_MODE=${4:-release}
 REGISTRY=${COINSPHERE_REGISTRY:-127.0.0.1:5000}
 GO_PROXY=${COINSPHERE_GO_PROXY:-https://goproxy.cn,direct}
 BUILDER=${COINSPHERE_BUILDER:-coinsphere-release}
+BUILDER_MEMORY=${COINSPHERE_BUILDER_MEMORY:-2560m}
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 OUTPUT_DIR=$(mkdir -p "$OUTPUT_DIR" && cd "$OUTPUT_DIR" && pwd)
 DOCKER_CONFIG_FILE="${DOCKER_CONFIG:-${HOME:?HOME 未设置}/.docker}/config.json"
@@ -36,6 +37,10 @@ if [[ ! $COMMIT_SHA =~ ^[0-9a-f]{40}$ ]]; then
 fi
 if [[ ! $BUILDER =~ ^[0-9A-Za-z][0-9A-Za-z_.-]*$ ]]; then
   echo "Buildx Builder 名称无效: $BUILDER" >&2
+  exit 2
+fi
+if [[ ! $BUILDER_MEMORY =~ ^[1-9][0-9]*[kKmMgG]$ ]]; then
+  echo "Buildx Builder 内存限制无效: $BUILDER_MEMORY" >&2
   exit 2
 fi
 required_commands=(docker jq)
@@ -95,7 +100,13 @@ run_buildx() {
 
 if ! docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
   docker buildx create --name "$BUILDER" --driver docker-container --driver-opt network=host \
+    --driver-opt "memory=$BUILDER_MEMORY" --driver-opt "memory-swap=$BUILDER_MEMORY" \
     --buildkitd-config "$ROOT_DIR/scripts/release/buildkitd.toml" >/dev/null
+fi
+builder_container="buildx_buildkit_${BUILDER}0"
+if docker container inspect "$builder_container" >/dev/null 2>&1; then
+  docker update --memory "$BUILDER_MEMORY" --memory-swap "$BUILDER_MEMORY" \
+    "$builder_container" >/dev/null
 fi
 docker buildx inspect --bootstrap "$BUILDER" >/dev/null
 

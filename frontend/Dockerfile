@@ -8,10 +8,9 @@ COPY package.json pnpm-lock.yaml ./
 RUN --mount=type=cache,id=coinsphere-pnpm-store,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 COPY . .
-# 生产环境 VITE_API_URL=/(同源),API 走 nginx 反代;若 vue-tsc 类型检查阻塞可改 `pnpm exec vite build`
+# 生产环境 VITE_API_URL=/(同源),API 走 nginx 反代。
 ARG VITE_VERSION=development
-# The production bundle can exceed Node's default heap during Rollup chunking.
-ENV NODE_OPTIONS=--max-old-space-size=4096
+ENV NODE_OPTIONS=--max-old-space-size=2048
 RUN VITE_VERSION="${VITE_VERSION}" pnpm build
 
 FROM scratch AS assets
