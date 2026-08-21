@@ -3,7 +3,6 @@ import vue from '@vitejs/plugin-vue'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import vueDevTools from 'vite-plugin-vue-devtools'
-import viteCompression from 'vite-plugin-compression'
 import Components from 'unplugin-vue-components/vite'
 import AutoImport from 'unplugin-auto-import/vite'
 import ElementPlus from 'unplugin-element-plus/vite'
@@ -49,7 +48,7 @@ export default ({ mode }: { mode: string }) => {
       }
     },
     build: {
-      target: 'es2015',
+      target: 'es2020',
       outDir: 'dist',
       chunkSizeWarningLimit: 2000,
       reportCompressedSize: false,
@@ -84,15 +83,6 @@ export default ({ mode }: { mode: string }) => {
       // 按需定制主题配置
       ElementPlus({
         useSource: true
-      }),
-      // 压缩
-      viteCompression({
-        verbose: false, // 是否在控制台输出压缩结果
-        disable: false, // 是否禁用
-        algorithm: 'gzip', // 压缩算法
-        ext: '.gz', // 压缩后的文件名后缀
-        threshold: 10240, // 只有大小大于该值的资源会被处理 10240B = 10KB
-        deleteOriginFile: false // 压缩后是否删除原文件
       }),
       mode === 'development' && vueDevTools()
     ],
