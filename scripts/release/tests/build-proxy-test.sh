@@ -24,6 +24,21 @@ if [[ ${1:-} == buildx && ${2:-} == version ]]; then
   exit 0
 fi
 if [[ ${1:-} == buildx && ${2:-} == inspect ]]; then
+  if [[ ${3:-} != --bootstrap && ${MOCK_BUILDER_EXISTS:-true} != true ]]; then
+    exit 1
+  fi
+  exit 0
+fi
+if [[ ${1:-} == container && ${2:-} == inspect ]]; then
+  [[ ${MOCK_BUILDER_EXISTS:-true} == true ]]
+  exit 0
+fi
+if [[ ${1:-} == buildx && ${2:-} == create ]]; then
+  [[ $* == *"--driver-opt memory=$EXPECTED_BUILDER_MEMORY --driver-opt memory-swap=$EXPECTED_BUILDER_MEMORY"* ]]
+  exit 0
+fi
+if [[ ${1:-} == update ]]; then
+  [[ $* == "update --memory $EXPECTED_BUILDER_MEMORY --memory-swap $EXPECTED_BUILDER_MEMORY buildx_buildkit_${EXPECTED_BUILDER}0" ]]
   exit 0
 fi
 if [[ ${1:-} == buildx && ${2:-} == build ]]; then
@@ -90,6 +105,8 @@ export BUILD_DOCKER_BUILD_LOG="$TEST_DIR/docker-build.log"
 export EXPECTED_HTTP_PROXY=http://127.0.0.1:17890
 export EXPECTED_HTTPS_PROXY=http://127.0.0.1:17891
 export EXPECTED_NO_PROXY=127.0.0.1,localhost
+export EXPECTED_BUILDER=coinsphere-proxy-test
+export EXPECTED_BUILDER_MEMORY=2560m
 unset HTTP_PROXY HTTPS_PROXY NO_PROXY
 export http_proxy=$EXPECTED_HTTP_PROXY
 export https_proxy=$EXPECTED_HTTPS_PROXY
@@ -98,6 +115,7 @@ export no_proxy=$EXPECTED_NO_PROXY
 TAR_OPTIONS=--blocking-factor=64 \
 DOCKER_CONFIG="$TEST_DIR/docker-clean" \
 COINSPHERE_BUILDER=coinsphere-proxy-test \
+COINSPHERE_BUILDER_MEMORY=$EXPECTED_BUILDER_MEMORY \
 bash "$ROOT_DIR/scripts/release/build.sh" \
   v1.2.3 0123456789abcdef0123456789abcdef01234567 "$TEST_DIR/output"
 
@@ -171,8 +189,11 @@ done
 : >"$BUILD_DOCKER_ALL_LOG"
 : >"$BUILD_DOCKER_BUILD_LOG"
 images_only_output="$TEST_DIR/images-only-output"
+export EXPECTED_BUILDER=coinsphere-images-only-test
+export MOCK_BUILDER_EXISTS=false
 DOCKER_CONFIG="$TEST_DIR/docker-clean" \
 COINSPHERE_BUILDER=coinsphere-images-only-test \
+COINSPHERE_BUILDER_MEMORY=$EXPECTED_BUILDER_MEMORY \
 bash "$ROOT_DIR/scripts/release/build.sh" \
   v1.2.3 0123456789abcdef0123456789abcdef01234567 "$images_only_output" images-only
 
@@ -185,6 +206,7 @@ if [[ $(find "$images_only_output" -maxdepth 1 -type f | wc -l) -ne 1 ]] ||
   echo "images-only should only produce release-manifest.json" >&2
   exit 1
 fi
+unset MOCK_BUILDER_EXISTS
 jq -e '
   .version == "v1.2.3" and
   .commit == "0123456789abcdef0123456789abcdef01234567" and
@@ -225,5 +247,16 @@ assert_config_rejected() {
 assert_config_rejected "$TEST_DIR/docker-global" 4 global-proxy
 assert_config_rejected "$TEST_DIR/docker-array" 3 array
 assert_config_rejected "$TEST_DIR/docker-multiple" 3 multiple-documents
+
+: >"$BUILD_DOCKER_ALL_LOG"
+status=0
+COINSPHERE_BUILDER_MEMORY=unlimited \
+bash "$ROOT_DIR/scripts/release/build.sh" \
+  v1.2.4 0123456789abcdef0123456789abcdef01234567 "$TEST_DIR/output-invalid-memory" \
+  >"$TEST_DIR/invalid-memory.log" 2>&1 || status=$?
+if [[ $status -ne 2 || -s $BUILD_DOCKER_ALL_LOG ]]; then
+  echo "无效内存限制应在调用 Docker 前被拒绝" >&2
+  exit 1
+fi
 
 echo "发布构建代理隔离测试通过"

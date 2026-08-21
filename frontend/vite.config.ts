@@ -52,20 +52,15 @@ export default ({ mode }: { mode: string }) => {
       target: 'es2015',
       outDir: 'dist',
       chunkSizeWarningLimit: 2000,
-      minify: 'terser',
-      terserOptions: {
-        compress: {
-          // 生产环境去除 console
-          drop_console: true,
-          // 生产环境去除 debugger
-          drop_debugger: true
-        }
-      },
+      reportCompressedSize: false,
       dynamicImportVarsOptions: {
         warnOnError: true,
         exclude: [],
         include: ['src/views/**/*.vue']
       }
+    },
+    esbuild: {
+      drop: ['console', 'debugger']
     },
     plugins: [
       vue(),
@@ -99,7 +94,7 @@ export default ({ mode }: { mode: string }) => {
         threshold: 10240, // 只有大小大于该值的资源会被处理 10240B = 10KB
         deleteOriginFile: false // 压缩后是否删除原文件
       }),
-      !isE2E && vueDevTools()
+      mode === 'development' && vueDevTools()
     ],
     // 依赖预构建：避免运行时重复请求与转换，提升首次加载速度
     optimizeDeps: {
