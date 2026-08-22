@@ -93,7 +93,7 @@ func TestBacklogExhaustionDeadLettersAndAlertsOnce(t *testing.T) {
 		StartNodeID:          entry.StartNodeID,
 		StartNodeType:        entry.StartType,
 		TriggerType:          "manual",
-		ConcurrencyKey:       definition.Code + ":" + entry.EntryKey,
+		ConcurrencyKey:       "1:" + definition.Code + ":" + entry.EntryKey,
 		Status:               "queued",
 		QueuedAt:             time.Now(),
 		MaxAttempts:          1,

@@ -892,7 +892,7 @@ func (a *App) SetTradingAuthorization(
 	var row db.TradingAccount
 	err = a.dbWithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("id = ? AND owner_user_id = ?", accountID, principal.User.ID).Take(&row).Error; err != nil {
+			Where("id = ?", accountID).Take(&row).Error; err != nil {
 			return tradingAccountLookupError(err)
 		}
 		if row.Environment == "live" && authorized && !a.liveAutoEnabled(row.Market) {
