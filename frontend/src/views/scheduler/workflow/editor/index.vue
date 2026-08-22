@@ -14,7 +14,7 @@
       :notify-role-options="notifyRoleOptions"
       :notify-channel-options="notifyChannelOptions"
       :notify-options-loading="notifyOptionsLoading"
-      :json-definition-visible="jsonDefinitionVisible"
+      :readonly="editorReadonly"
       :dirty-node-ids="dirtyNodeIds"
       :draft-state="draftState"
       :active-cell-id="selection.activeCellId"
@@ -31,7 +31,7 @@
       @request-commit-node-draft="void commitAndCloseNodeEditor()"
       @request-discard-node-draft="discardNodeDraft"
       @request-close-node-editor="void closeNodeEditor()"
-      @request-manage-notify="void router.push('/scheduler/node-definition?tab=channels')"
+      @request-manage-notify="ElMessage.info('请使用通知渠道配置节点完成该任务。')"
       @request-close-edge-editor="handleCloseEdgeEditor"
       @request-remove-selection="void removeSelection()"
       @request-node-context-action="void handleNodeContextAction($event)"
@@ -48,10 +48,16 @@
           :status-type="statusType"
           :zoom-text="zoomText"
           :materials-visible="materialsVisible"
-          :json-visible="jsonDefinitionVisible"
+          :readonly="editorReadonly"
+          :activating="activating"
+          :cancelling="cancelling"
+          :template-mode="Boolean(definitionDetail?.isBuiltin)"
+          :action-count="definitionActions.length"
+          :can-activate="canActivateDefinition"
+          :can-run="canRunDefinition"
+          :can-cancel="canCancelExecution"
           @back="handleBack"
           @toggle-materials="handleToggleMaterials"
-          @toggle-json="handleToggleJsonDefinition"
           @undo="void handleUndo()"
           @redo="void handleRedo()"
           @zoom-out="handleZoomOut"
@@ -61,22 +67,33 @@
           @validate="void handleValidate()"
           @save="void handleSave()"
           @open-meta="void openMetaPopover()"
+          @activate="void activateDefinition()"
+          @run="runVisible = true"
+          @cancel="void cancelLatestExecution()"
+          @actions="actionsVisible = true"
         />
       </template>
     </WorkflowCanvas>
 
-    <div
-      v-if="jsonDefinitionVisible"
-      class="workflow-editor-page__json"
-      @pointerdown.stop
-      @click.stop
-      @contextmenu.prevent
-    >
-      <div class="workflow-editor-page__json-head">JSON 定义</div>
-      <div class="workflow-editor-page__json-body">
-        <pre class="workflow-editor-page__json-pre">{{ jsonDefinitionText }}</pre>
-      </div>
+    <div v-if="mobileReadonly" class="workflow-editor-page__mobile-note">
+      移动端仅支持查看、运行和处置，编辑请使用桌面端。
     </div>
+
+    <section v-if="definitionExecutions.length" class="workflow-editor-page__timeline">
+      <header
+        ><span>最近执行</span><small>{{ definitionExecutions.length }} 条</small></header
+      >
+      <button
+        v-for="execution in definitionExecutions.slice(0, 5)"
+        :key="execution.id"
+        type="button"
+        @click="router.push(`/runs/${execution.id}`)"
+      >
+        <i :class="`is-${execution.status}`"></i>
+        <span>{{ execution.statusLabel || execution.status }}</span>
+        <small>#{{ execution.id }} · {{ formatExecutionTime(execution.queuedAt) }}</small>
+      </button>
+    </section>
 
     <div v-if="metaVisible" class="workflow-editor-page__meta">
       <WorkflowMetaPopover
@@ -87,6 +104,17 @@
         @close="metaVisible = false"
       />
     </div>
+
+    <WorkflowRunDialog
+      v-model="runVisible"
+      :workflow="definitionDetail"
+      @started="handleRunStarted"
+    />
+    <WorkflowActionDrawer
+      v-model="actionsVisible"
+      :actions="definitionActions"
+      @decided="refreshEditorActivity"
+    />
   </div>
 </template>
 
@@ -94,13 +122,31 @@
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { storeToRefs } from 'pinia'
   import { fetchGetRoleList, fetchGetUserList } from '@/api/system'
-  import { fetchNotifyChannelList, type NotifyChannelItem } from '@/api/config'
+  import {
+    fetchAiModelList,
+    fetchAssistantAgentList,
+    fetchNotifyChannelList,
+    type AiModelConfigItem,
+    type AssistantAgentItem,
+    type NotifyChannelItem
+  } from '@/api/config'
+  import { fetchNewsList } from '@/api/data'
   import { fetchMarketSymbols, type MarketSymbol } from '@/api/market'
-  import { fetchPublishedStrategies, type StrategyVersionItem } from '@/api/strategy'
+  import { fetchStrategySignals, type StrategySignalItem } from '@/api/signals'
+  import {
+    fetchPublishedStrategies,
+    fetchStrategyDrafts,
+    type StrategyDraftItem,
+    type StrategyVersionItem
+  } from '@/api/strategy'
   import { fetchTradingAccounts, type TradingAccount } from '@/api/trading'
   import {
     fetchCreateWorkflowDefinition,
+    fetchActivateWorkflowDefinition,
+    fetchCancelWorkflowExecution,
     fetchNodeDefinitions,
+    fetchWorkflowActionList,
+    fetchWorkflowDefinitionExecutions,
     fetchWorkflowDefinitionList,
     fetchWorkflowNodeTemplates,
     fetchWorkflowAgentOptions,
@@ -111,10 +157,14 @@
   import type {
     WorkflowAgentOption,
     WorkflowDefinitionItem,
+    WorkflowExecutionItem,
+    WorkflowActionItem,
+    RunWorkflowDefinitionResponse,
     WorkflowNodeDefinitionItem,
     WorkflowNodeTemplateItem
   } from '@/api/scheduler'
   import { useMenuStore } from '@/store/modules/menu'
+  import { useUserStore } from '@/store/modules/user'
   import { useWorkflowEditorStore } from '@/store/modules/workflow-editor'
   import { buildWorkflowMaterialGroups } from './node-materials'
   import { syncNodeDefinitions } from './node-registry'
@@ -148,12 +198,15 @@
   import WorkflowCanvas from './components/WorkflowCanvas.vue'
   import WorkflowEditorToolbar from './components/WorkflowEditorToolbar.vue'
   import WorkflowMetaPopover from './components/WorkflowMetaPopover.vue'
+  import WorkflowActionDrawer from '@/views/workbench/components/WorkflowActionDrawer.vue'
+  import WorkflowRunDialog from '@/views/workbench/components/WorkflowRunDialog.vue'
 
   defineOptions({ name: 'SchedulerWorkflowDefinitionEditorPage' })
 
   const route = useRoute()
   const router = useRouter()
   const menuStore = useMenuStore()
+  const userStore = useUserStore()
   const editorStore = useWorkflowEditorStore()
 
   const {
@@ -163,6 +216,7 @@
     saving,
     validating,
     dirty,
+    definitionDetail,
     metaForm,
     nodeDefinitions,
     materialGroups,
@@ -178,7 +232,13 @@
   const awaitingInitialRender = ref(false)
   const metaVisible = ref(false)
   const materialsVisible = ref(true)
-  const jsonDefinitionVisible = ref(false)
+  const mobileReadonly = ref(false)
+  const activating = ref(false)
+  const cancelling = ref(false)
+  const runVisible = ref(false)
+  const actionsVisible = ref(false)
+  const definitionExecutions = ref<WorkflowExecutionItem[]>([])
+  const actionItems = ref<WorkflowActionItem[]>([])
   const autoOpenedMeta = ref(false)
   const metaDraft = ref<WorkflowEditorMetaForm>(normalizeDefinitionMeta(null))
   const pendingEdgeDraft = ref<WorkflowEdgeFormModel | null>(null)
@@ -207,6 +267,45 @@
     }))
   })
   const zoomText = computed(() => `${Math.round(zoom.value * 100)}%`)
+  const latestExecution = computed(
+    () =>
+      definitionExecutions.value.find((item) => item.canCancel) ||
+      definitionExecutions.value[0] ||
+      null
+  )
+  const definitionActions = computed(() => {
+    const executionIds = new Set(definitionExecutions.value.map((item) => item.id))
+    return actionItems.value.filter((item) => executionIds.has(item.executionId))
+  })
+  const hasPermission = (permission: string) => userStore.info.permissions.includes(permission)
+  const canSaveDefinition = computed(() => {
+    if (currentMode.value === 'create' || definitionDetail.value?.isBuiltin) {
+      return hasPermission('scheduler.workflow_definitions.create')
+    }
+    return hasPermission('scheduler.workflow_definitions.update')
+  })
+  const editorReadonly = computed(() => mobileReadonly.value || !canSaveDefinition.value)
+  const canActivateDefinition = computed(
+    () =>
+      hasPermission('scheduler.workflow_runtime.activate') &&
+      Boolean(
+        definitionDetail.value &&
+          !definitionDetail.value.isBuiltin &&
+          !definitionDetail.value.isActive
+      )
+  )
+  const canRunDefinition = computed(
+    () =>
+      hasPermission('scheduler.workflow_definitions.run') &&
+      Boolean(definitionDetail.value) &&
+      !definitionDetail.value?.isBuiltin &&
+      (definitionDetail.value?.graph.nodes || []).some((node) => node.type === 'start.manual')
+  )
+  const canCancelExecution = computed(
+    () =>
+      hasPermission('scheduler.workflow_definitions.run') &&
+      Boolean(latestExecution.value?.canCancel)
+  )
   const cloneGraph = (graph: WorkflowDomainGraphModel): WorkflowDomainGraphModel =>
     JSON.parse(JSON.stringify(graph))
   const graphEquals = (left: WorkflowDomainGraphModel, right: WorkflowDomainGraphModel) =>
@@ -234,7 +333,7 @@
 
   const currentMode = computed<WorkflowEditorMode>(() => {
     const routeName = String(route.name || '')
-    if (routeName === 'SchedulerWorkflowDefinitionCreate') return 'create'
+    if (routeName === 'WorkflowDefinitionCreate') return 'create'
     return 'edit'
   })
 
@@ -265,24 +364,35 @@
       : baseGroups
   })
 
-  const setSchemaOptions = (
+  const setResourceOptions = (
     definitions: WorkflowNodeDefinitionItem[],
-    typeCode: string,
-    field: string,
-    options: Array<{ value: string; label: string }>
+    resource: string,
+    options: Array<{ value: string | number; label: string }>
   ) => {
-    const property = definitions.find((item) => item.typeCode === typeCode)?.configSchema
-      ?.properties?.[field]
-    if (!property || !options.length) return
-    property.enum = options.map((item) => item.value)
-    property.enumLabels = options.map((item) => item.label)
+    if (!options.length) return
+    definitions.forEach((definition) => {
+      Object.values(definition.configSchema?.properties || {}).forEach((rawProperty) => {
+        const property = rawProperty as Record<string, any>
+        if (property.resource !== resource) return
+        property.enum = options.map((item) => item.value)
+        property.enumLabels = options.map((item) => item.label)
+      })
+    })
   }
 
   const enrichNodeDefinitions = (
     source: WorkflowNodeDefinitionItem[],
     strategies: StrategyVersionItem[],
+    strategyDrafts: StrategyDraftItem[],
     instruments: MarketSymbol[],
     accounts: TradingAccount[],
+    signals: StrategySignalItem[],
+    aiModels: AiModelConfigItem[],
+    assistants: AssistantAgentItem[],
+    channels: NotifyChannelItem[],
+    news: Api.Data.NewsListItem[],
+    users: Api.System.UserListItem[],
+    roles: Api.System.RoleListItem[],
     workflows: WorkflowDefinitionItem[]
   ) => {
     const definitions: WorkflowNodeDefinitionItem[] = JSON.parse(JSON.stringify(source))
@@ -290,31 +400,75 @@
       value: item.id,
       label: `${item.nativeSymbol} · ${item.market === 'usd_m' ? 'USD-M' : 'Spot'} · ${item.status === 'trading' ? '交易中' : '已暂停'}`
     }))
-    setSchemaOptions(
+    setResourceOptions(
       definitions,
-      'strategy.evaluate',
-      'strategyVersionId',
+      'strategy-version',
       strategies.map((item) => ({
         value: item.id,
         label: `${item.name} v${item.versionNumber} · 已发布`
       }))
     )
-    setSchemaOptions(definitions, 'strategy.evaluate', 'instrumentId', instrumentOptions)
-    setSchemaOptions(
+    setResourceOptions(
       definitions,
-      'strategy.evaluate',
-      'tradingAccountId',
+      'strategy-draft',
+      strategyDrafts.map((item) => ({ value: item.id, label: item.name }))
+    )
+    setResourceOptions(definitions, 'market-instrument', instrumentOptions)
+    setResourceOptions(
+      definitions,
+      'trading-account',
       accounts.map((item) => ({
         value: item.id,
         label: `${item.name} · ${item.environment} · ${item.status === 'active' ? '运行中' : '已暂停'}`
       }))
     )
-    setSchemaOptions(definitions, 'market.candles.subscribe', 'instrumentId', instrumentOptions)
-    setSchemaOptions(definitions, 'market.candles.backfill', 'instrumentId', instrumentOptions)
-    setSchemaOptions(
+    setResourceOptions(
       definitions,
-      'workflow.call',
-      'workflowCode',
+      'strategy-signal',
+      signals.map((item) => ({
+        value: item.id,
+        label: `${item.action.toUpperCase()} · ${item.status} · ${item.id.slice(0, 8)}`
+      }))
+    )
+    setResourceOptions(
+      definitions,
+      'ai-model',
+      aiModels.map((item) => ({
+        value: item.id,
+        label: `${item.displayName} · ${item.modelIdentifier}`
+      }))
+    )
+    setResourceOptions(
+      definitions,
+      'assistant',
+      assistants.map((item) => ({ value: item.id, label: `${item.displayName} · ${item.code}` }))
+    )
+    setResourceOptions(
+      definitions,
+      'notification-channel',
+      channels.map((item) => ({
+        value: item.id,
+        label: `${item.displayName} · ${item.channelTypeLabel}`
+      }))
+    )
+    setResourceOptions(
+      definitions,
+      'news',
+      news.map((item) => ({ value: item.id, label: item.title }))
+    )
+    setResourceOptions(
+      definitions,
+      'user',
+      users.map((item) => ({ value: item.id, label: buildNotifyUserLabel(item) }))
+    )
+    setResourceOptions(
+      definitions,
+      'role',
+      roles.map((item) => ({ value: item.id, label: buildNotifyRoleLabel(item) }))
+    )
+    setResourceOptions(
+      definitions,
+      'workflow-code',
       workflows.map((item) => ({
         value: item.code,
         label: `${item.displayName} · ${item.isWorkflowActive ? '已激活' : '未激活'}`
@@ -350,38 +504,6 @@
     if (selection.value.activeCellType !== 'edge' || !selection.value.activeCellId) return null
     return domainGraph.value.edges.find((edge) => edge.id === selection.value.activeCellId) || null
   })
-
-  const previewGraphForJson = computed<WorkflowDomainGraphModel>(() => {
-    // JSON 预览优先展示“当前草稿效果”，避免用户打开节点编辑器后右侧预览仍是旧值。
-    if (
-      draftState.value.cellType !== 'node' ||
-      !draftState.value.cellId ||
-      !draftState.value.model ||
-      selection.value.activeCellType !== 'node'
-    ) {
-      return domainGraph.value
-    }
-
-    return {
-      ...domainGraph.value,
-      nodes: domainGraph.value.nodes.map((node) =>
-        node.id === draftState.value.cellId
-          ? applyNodeFormToDomain(node, draftState.value.model as WorkflowNodeFormModel)
-          : node
-      )
-    }
-  })
-
-  const jsonDefinitionText = computed(() =>
-    JSON.stringify(
-      buildPayload({
-        graph: previewGraphForJson.value,
-        meta: metaVisible.value ? metaDraft.value : metaForm.value
-      }),
-      null,
-      2
-    )
-  )
 
   const dirtyNodeIds = computed(() => {
     // 这里专门算出相对基线发生变化的节点，用于画布层高亮“已改动但未保存”的节点。
@@ -1058,12 +1180,6 @@
     canvasRef.value?.centerContent()
   }
 
-  const handleToggleJsonDefinition = async () => {
-    jsonDefinitionVisible.value = !jsonDefinitionVisible.value
-    await nextTick()
-    canvasRef.value?.centerContent()
-  }
-
   const handleCenterContent = () => {
     canvasRef.value?.centerContent()
   }
@@ -1204,6 +1320,8 @@
 
       if (currentMode.value === 'create') {
         result = await fetchCreateWorkflowDefinition(payload)
+      } else if (definitionDetail.value?.isBuiltin) {
+        result = await fetchCreateWorkflowDefinition(payload)
       } else if (definitionId.value) {
         // 编辑任何版本都不会原地覆盖，而是由后端生成一个新的 definition version。
         result = await fetchUpdateWorkflowDefinition(definitionId.value, payload)
@@ -1212,7 +1330,13 @@
       }
 
       if (currentMode.value === 'create') {
-        await router.replace(`/scheduler/workflow/${result.id}/edit`)
+        await router.replace(`/workflows/${result.id}`)
+        return
+      }
+
+      if (definitionDetail.value?.isBuiltin) {
+        ElMessage.success('已从模板创建工作流。')
+        await router.replace(`/workflows/${result.id}`)
         return
       }
 
@@ -1222,7 +1346,7 @@
             ? '已保存为新版本，当前激活版本未切换。'
             : '已保存为新版本。'
         ElMessage.success(message)
-        await router.replace(`/scheduler/workflow/${result.id}/edit`)
+        await router.replace(`/workflows/${result.id}`)
         return
       }
 
@@ -1232,6 +1356,60 @@
       saving.value = false
     }
   }
+
+  const refreshEditorActivity = async () => {
+    if (!definitionId.value) {
+      definitionExecutions.value = []
+      actionItems.value = []
+      return
+    }
+    const [executionResult, actions] = await Promise.all([
+      fetchWorkflowDefinitionExecutions(definitionId.value, { limit: 20 }).catch(() => null),
+      fetchWorkflowActionList().catch(() => [] as WorkflowActionItem[])
+    ])
+    definitionExecutions.value = executionResult?.records || []
+    actionItems.value = actions
+  }
+
+  const activateDefinition = async () => {
+    if (!definitionId.value || !definitionDetail.value || definitionDetail.value.isActive) return
+    if (dirty.value) {
+      ElMessage.warning('请先保存当前修改，再激活该版本。')
+      return
+    }
+    activating.value = true
+    try {
+      await fetchActivateWorkflowDefinition(definitionId.value)
+      definitionDetail.value = await fetchWorkflowDefinitionDetail(definitionId.value)
+    } finally {
+      activating.value = false
+    }
+  }
+
+  const cancelLatestExecution = async () => {
+    const execution = latestExecution.value
+    if (!execution?.canCancel) return
+    await ElMessageBox.confirm('取消会在当前节点边界或心跳处生效。', '取消执行', {
+      type: 'warning',
+      confirmButtonText: '确认取消',
+      cancelButtonText: '返回'
+    })
+    cancelling.value = true
+    try {
+      await fetchCancelWorkflowExecution(execution.id)
+      await refreshEditorActivity()
+    } finally {
+      cancelling.value = false
+    }
+  }
+
+  const handleRunStarted = async (result: RunWorkflowDefinitionResponse) => {
+    await refreshEditorActivity()
+    if (result.executions[0]) await router.push(`/runs/${result.executions[0].id}`)
+  }
+
+  const formatExecutionTime = (value: string) =>
+    value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '--'
 
   const handleBack = async () => {
     if (!(await requirePendingEdgeResolved())) return
@@ -1245,7 +1423,7 @@
     const activePath =
       typeof route.meta.activePath === 'string' && route.meta.activePath
         ? route.meta.activePath
-        : '/scheduler/definition'
+        : '/workbench'
     const resolvedActiveRoute = router.resolve(activePath)
 
     if (resolvedActiveRoute.name && resolvedActiveRoute.name !== 'Exception404') {
@@ -1294,6 +1472,8 @@
     notifyOptionsLoaded.value = false
     nodeTemplates.value = []
     notifyChannels.value = []
+    definitionExecutions.value = []
+    actionItems.value = []
     historySessionKey.value += 1
     resetGraphHistory()
 
@@ -1302,10 +1482,17 @@
         rawDefinitions,
         agentOptionResult,
         strategyResult,
+        strategyDraftResult,
         symbolResult,
         accountResult,
+        signalResult,
+        aiModelResult,
+        assistantResult,
         templateResult,
         channelResult,
+        newsResult,
+        userResult,
+        roleResult,
         workflowResult
       ] = await Promise.all([
         fetchNodeDefinitions(),
@@ -1314,19 +1501,44 @@
         fetchPublishedStrategies({ limit: 200 })
           .then((result) => result.records)
           .catch(() => [] as StrategyVersionItem[]),
+        fetchStrategyDrafts({ limit: 200 })
+          .then((result) => result.records)
+          .catch(() => [] as StrategyDraftItem[]),
         fetchMarketSymbols({ limit: 200, quoteAsset: 'USDT', status: 'trading' })
           .then((result) => result.records)
           .catch(() => [] as MarketSymbol[]),
         fetchTradingAccounts().catch(() => [] as TradingAccount[]),
+        fetchStrategySignals({ limit: 200 })
+          .then((result) => result.records)
+          .catch(() => [] as StrategySignalItem[]),
+        fetchAiModelList().catch(() => [] as AiModelConfigItem[]),
+        fetchAssistantAgentList().catch(() => [] as AssistantAgentItem[]),
         fetchWorkflowNodeTemplates().catch(() => [] as WorkflowNodeTemplateItem[]),
         fetchNotifyChannelList().catch(() => [] as NotifyChannelItem[]),
+        fetchNewsList({ limit: 200 })
+          .then((result) => result.records)
+          .catch(() => [] as Api.Data.NewsListItem[]),
+        fetchGetUserList({ limit: 200, isActive: true })
+          .then((result) => result.records)
+          .catch(() => [] as Api.System.UserListItem[]),
+        fetchGetRoleList({ limit: 200, isEnabled: true })
+          .then((result) => result.records)
+          .catch(() => [] as Api.System.RoleListItem[]),
         fetchWorkflowDefinitionList().catch(() => [] as WorkflowDefinitionItem[])
       ])
       const nodeDefinitionResult = enrichNodeDefinitions(
         rawDefinitions,
         strategyResult,
+        strategyDraftResult,
         symbolResult,
         accountResult,
+        signalResult,
+        aiModelResult,
+        assistantResult,
+        channelResult,
+        newsResult,
+        userResult,
+        roleResult,
         workflowResult
       )
       agentOptions.value = agentOptionResult
@@ -1356,6 +1568,7 @@
             flattenMaterials(nodeDefinitionResult)
           )
         )
+        await refreshEditorActivity()
       }
 
       metaDraft.value = { ...metaForm.value }
@@ -1374,6 +1587,28 @@
     },
     { immediate: true }
   )
+
+  let mobileMedia: MediaQueryList | null = null
+  let activityTimer: number | null = null
+  const syncMobileMode = (matches: boolean) => {
+    mobileReadonly.value = matches
+    if (matches) materialsVisible.value = false
+  }
+  const handleMobileChange = (event: MediaQueryListEvent) => syncMobileMode(event.matches)
+
+  onMounted(() => {
+    mobileMedia = window.matchMedia('(max-width: 768px)')
+    syncMobileMode(mobileMedia.matches)
+    mobileMedia.addEventListener('change', handleMobileChange)
+    activityTimer = window.setInterval(() => {
+      if (!document.hidden && definitionId.value) void refreshEditorActivity()
+    }, 5000)
+  })
+
+  onBeforeUnmount(() => {
+    if (activityTimer) window.clearInterval(activityTimer)
+    mobileMedia?.removeEventListener('change', handleMobileChange)
+  })
 
   onBeforeRouteLeave(async () => {
     if (!(await requirePendingEdgeResolved())) return false
@@ -1428,61 +1663,95 @@
     min-height: 0;
   }
 
-  .workflow-editor-page__json {
+  .workflow-editor-page__timeline {
     position: absolute;
-    top: 72px;
     right: 16px;
-    bottom: 16px;
-    z-index: 18;
+    bottom: 14px;
+    left: 280px;
+    z-index: 16;
     display: flex;
-    flex-direction: column;
-    width: 360px;
-    padding: 10px 0 10px 10px;
-    overflow: hidden;
+    gap: 4px;
+    align-items: center;
+    min-height: 48px;
+    padding: 6px 8px;
+    overflow-x: auto;
     background: var(--workflow-overlay-bg);
     border: 1px solid var(--workflow-overlay-border-soft);
     border-radius: 8px;
-    box-shadow: 0 12px 30px rgb(31 35 48 / 0.12);
+    box-shadow: 0 8px 20px rgb(31 35 48 / 0.1);
+
+    header {
+      display: flex;
+      min-width: 80px;
+      flex-direction: column;
+      gap: 2px;
+      padding: 0 8px;
+
+      span {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--workflow-overlay-text);
+      }
+      small {
+        color: var(--workflow-overlay-muted);
+      }
+    }
+
+    button {
+      display: grid;
+      grid-template-columns: 5px minmax(60px, auto);
+      gap: 2px 8px;
+      align-items: center;
+      min-width: 150px;
+      padding: 5px 8px;
+      color: var(--workflow-overlay-text);
+      text-align: left;
+      background: var(--workflow-overlay-soft);
+      border: 0;
+      border-radius: 5px;
+      cursor: pointer;
+
+      i {
+        grid-row: 1 / 3;
+        width: 5px;
+        height: 24px;
+        background: #10a6a6;
+        border-radius: 2px;
+      }
+      i.is-waiting_action,
+      i.is-retry_waiting,
+      i.is-waiting_job {
+        background: #d69a2d;
+      }
+      i.is-failed,
+      i.is-canceled,
+      i.is-cancel_requested {
+        background: #d94b55;
+      }
+      span {
+        font-size: 12px;
+        font-weight: 600;
+      }
+      small {
+        color: var(--workflow-overlay-muted);
+        white-space: nowrap;
+      }
+    }
   }
 
-  .workflow-editor-page__json-head {
-    flex: 0 0 auto;
-    padding: 2px 14px 8px 6px;
-    font-size: 13px;
-    font-weight: 600;
-    line-height: 20px;
-    color: var(--workflow-overlay-text);
-  }
-
-  .workflow-editor-page__json-body {
-    flex: 1;
-    min-height: 0;
-    padding: 0 14px 8px 6px;
-    overflow: auto;
-  }
-
-  .workflow-editor-page__json-pre {
-    min-height: 100%;
-    margin: 0;
-    font-family: 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace;
+  .workflow-editor-page__mobile-note {
+    position: absolute;
+    top: 66px;
+    right: 8px;
+    left: 8px;
+    z-index: 20;
+    padding: 8px 10px;
     font-size: 12px;
-    line-height: 1.65;
-    color: var(--workflow-overlay-regular);
-    word-break: break-word;
-    white-space: pre-wrap;
-  }
-
-  .workflow-editor-page__json-body::-webkit-scrollbar {
-    width: 8px;
-  }
-
-  .workflow-editor-page__json-body::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  .workflow-editor-page__json-body::-webkit-scrollbar-thumb {
-    background: var(--workflow-overlay-muted);
-    border-radius: 4px;
+    color: var(--el-color-warning-dark-2);
+    text-align: center;
+    background: var(--el-color-warning-light-9);
+    border: 1px solid var(--el-color-warning-light-7);
+    border-radius: 6px;
   }
 
   .workflow-editor-page__meta {
@@ -1494,11 +1763,10 @@
   }
 
   @media (max-width: 768px) {
-    .workflow-editor-page__json {
-      top: 68px;
+    .workflow-editor-page__timeline {
       right: 8px;
       bottom: 8px;
-      width: calc(100% - 16px);
+      left: 8px;
     }
 
     .workflow-editor-page__meta {

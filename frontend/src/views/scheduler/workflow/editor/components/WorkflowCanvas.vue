@@ -2,7 +2,10 @@
 <template>
   <div
     ref="shellRef"
-    :class="['workflow-canvas', { 'workflow-canvas--materials-hidden': !props.materialsVisible }]"
+    :class="[
+      'workflow-canvas',
+      { 'workflow-canvas--materials-hidden': !props.materialsVisible || props.readonly }
+    ]"
   >
     <div
       ref="graphRef"
@@ -14,7 +17,7 @@
       <slot name="toolbar" />
     </div>
 
-    <div v-show="props.materialsVisible" class="workflow-canvas__stencil">
+    <div v-show="props.materialsVisible && !props.readonly" class="workflow-canvas__stencil">
       <div v-if="!materialCount" class="workflow-canvas__stencil-empty">
         <ElEmpty description="暂无可用物料" :image-size="40" />
       </div>
@@ -59,13 +62,14 @@
     >
       <WorkflowEdgeBubble
         :edge="selectedEdge"
+        :nodes="graph.nodes"
         @confirm="$emit('commit-edge-draft', $event)"
         @cancel="$emit('request-close-edge-editor')"
       />
     </div>
 
     <div
-      v-if="nodeContextMenu.visible && nodeContextMenuStyle"
+      v-if="!props.readonly && nodeContextMenu.visible && nodeContextMenuStyle"
       class="workflow-canvas__overlay"
       :style="nodeContextMenuStyle"
     >
@@ -95,6 +99,7 @@
     </div>
 
     <ArtMenuRight
+      v-if="!props.readonly"
       ref="nodeContextMenuRef"
       :menu-items="nodeContextMenuItems"
       :menu-width="144"
@@ -103,6 +108,7 @@
     />
 
     <ArtMenuRight
+      v-if="!props.readonly"
       ref="edgeContextMenuRef"
       :menu-items="edgeContextMenuItems"
       :menu-width="144"
@@ -128,7 +134,7 @@
     graphKindOfCell,
     validateMagnet
   } from '../canvas-connection-rules'
-  import { LOOP_NEXT_BRANCH } from '../node-registry'
+  import { LOOP_NEXT_BRANCH, parseDataPortId } from '../node-registry'
   import {
     createDomainEdgeFromForm,
     mapDomainGraphToX6,
@@ -170,7 +176,6 @@
     notifyRoleOptions: WorkflowNotifyTargetOption[]
     notifyChannelOptions: WorkflowNotifyChannelOption[]
     notifyOptionsLoading: boolean
-    jsonDefinitionVisible: boolean
     dirtyNodeIds: string[]
     draftState: WorkflowEditorDraftState
     materialsVisible: boolean
@@ -179,6 +184,7 @@
     edgeEditorCellId: string | null
     pendingEdgeDraft: WorkflowEdgeFormModel | null
     historySessionKey: number
+    readonly: boolean
   }
 
   interface Emits {
@@ -330,9 +336,9 @@
 
   const getViewportPadding = () => ({
     top: 132,
-    right: selectedNode.value || props.jsonDefinitionVisible ? 16 + SIDE_PANEL_WIDTH + 36 : 56,
+    right: selectedNode.value ? 16 + SIDE_PANEL_WIDTH + 36 : 56,
     bottom: 80,
-    left: props.materialsVisible ? 20 + STENCIL_PANEL_WIDTH + 36 : 20
+    left: props.materialsVisible && !props.readonly ? 20 + STENCIL_PANEL_WIDTH + 36 : 20
   })
 
   const getContentBounds = (graphModel: WorkflowDomainGraphModel) => {
@@ -386,10 +392,15 @@
   })
 
   const showNodeEditor = computed(
-    () => !!selectedNode.value && props.draftState.cellType === 'node' && !!props.draftState.model
+    () =>
+      !props.readonly &&
+      !!selectedNode.value &&
+      props.draftState.cellType === 'node' &&
+      !!props.draftState.model
   )
   const showEdgeBubble = computed(
-    () => !!selectedEdge.value && props.edgeEditorCellId === selectedEdge.value.id
+    () =>
+      !props.readonly && !!selectedEdge.value && props.edgeEditorCellId === selectedEdge.value.id
   )
   const nodeDraftModel = computed(
     () => (props.draftState.model as WorkflowNodeFormModel | null) || null
@@ -529,14 +540,16 @@
 
   const buildEdgeFormFromCell = (edge: Edge): WorkflowEdgeFormModel => {
     const sourcePort = String(edge.getSourcePortId() || '')
+    const targetPort = String(edge.getTargetPortId() || 'in')
     const data = edge.getData() || {}
+    const edgeKind = parseDataPortId(sourcePort).kind
     const sourceCell = graphInstance.value?.getCellById(String(edge.getSourceCellId() || ''))
     // 分支节点的出口名就是 branch；循环节点只有 NEXT 那条算 branch，BODY 不带（与后端一致）。
-    const kind = sourceCell ? graphKindOfCell(sourceCell) : 'plain'
+    const nodeKind = sourceCell ? graphKindOfCell(sourceCell) : 'plain'
     const branchFromPort =
-      kind === 'branch'
+      nodeKind === 'branch'
         ? sourcePort
-        : kind === 'loop' && sourcePort === LOOP_NEXT_BRANCH
+        : nodeKind === 'loop' && sourcePort === LOOP_NEXT_BRANCH
           ? LOOP_NEXT_BRANCH
           : ''
     return {
@@ -544,9 +557,12 @@
       source: String(edge.getSourceCellId() || ''),
       target: String(edge.getTargetCellId() || ''),
       sourcePort,
-      targetPort: String(edge.getTargetPortId() || 'in'),
-      branch: branchFromPort || String(data.branch || ''),
-      label: String(data.label || '')
+      targetPort,
+      kind: edgeKind,
+      branch: edgeKind === 'flow' ? branchFromPort || String(data.branch || '') : '',
+      label: String(data.label || ''),
+      sourcePointer: String(data.sourcePointer || ''),
+      targetPointer: String(data.targetPointer || '')
     }
   }
 
@@ -565,8 +581,11 @@
         shape: 'workflow-editor-edge',
         zIndex: 3,
         data: {
+          kind: 'flow',
           branch: '',
-          label: ''
+          label: '',
+          sourcePointer: '',
+          targetPointer: ''
         }
       }) as Edge
     }
@@ -576,8 +595,11 @@
       shape: 'workflow-editor-edge',
       zIndex: 3,
       data: {
+        kind: 'flow',
         branch: '',
-        label: ''
+        label: '',
+        sourcePointer: '',
+        targetPointer: ''
       }
     })
   }
@@ -842,13 +864,15 @@
   const updateEdgePresentation = (edge: Edge) => {
     const data = edge.getData() || {}
     const text = String(data.label || '')
+    const isDataEdge = data.kind === 'data'
     edge.setConnector({
       name: 'smooth'
     })
     edge.setAttrs({
       line: {
-        stroke: 'var(--workflow-edge-color, #98a4b6)',
+        stroke: isDataEdge ? '#0f9f8f' : 'var(--workflow-edge-color, #98a4b6)',
         strokeWidth: 1.6,
+        strokeDasharray: isDataEdge ? '7 5' : '',
         targetMarker: {
           name: 'block',
           width: 12,
@@ -1012,7 +1036,7 @@
     const graph = new Graph({
       container: graphRef.value,
       interacting: {
-        nodeMovable: true,
+        nodeMovable: !props.readonly,
         edgeMovable: false,
         arrowheadMovable: false,
         vertexMovable: false
@@ -1062,7 +1086,7 @@
         connectionPoint: 'anchor',
         createEdge,
         validateConnection,
-        validateMagnet
+        validateMagnet: props.readonly ? () => false : validateMagnet
       }
     })
 
@@ -1092,6 +1116,7 @@
     })
 
     graph.on('node:contextmenu', ({ node, e }) => {
+      if (props.readonly) return
       const target = e?.target as HTMLElement | null
       if (target?.closest('.x6-port')) return
       e?.preventDefault()
@@ -1102,7 +1127,7 @@
 
     graph.on('node:mouseenter', ({ node }) => {
       hoveredNodeId.value = node.id
-      showNodePorts(node.id, true)
+      showNodePorts(node.id, !props.readonly)
     })
 
     graph.on('node:mouseleave', ({ node }) => {
@@ -1119,6 +1144,7 @@
     })
 
     graph.on('edge:contextmenu', ({ edge, e }) => {
+      if (props.readonly) return
       e?.preventDefault()
       e?.stopPropagation()
       hideNodeContextMenu()
@@ -1126,6 +1152,7 @@
     })
 
     graph.on('edge:mouseenter', ({ edge }) => {
+      if (props.readonly) return
       edge.addTools([
         {
           name: 'button-remove',
@@ -1167,6 +1194,11 @@
     })
 
     graph.on('edge:connected', ({ edge, isNew }) => {
+      const connectedSourcePort = String(edge.getSourcePortId() || '')
+      edge.setData({
+        ...(edge.getData() || {}),
+        kind: parseDataPortId(connectedSourcePort).kind
+      })
       updateEdgePresentation(edge)
       const sourceCellId = edge.getSourceCellId()
       const sourcePortId = edge.getSourcePortId()
@@ -1251,6 +1283,7 @@
     })
 
     graph.bindKey(['delete', 'backspace'], (event) => {
+      if (props.readonly) return false
       event.preventDefault()
       emit('request-remove-selection')
       return false
@@ -1262,7 +1295,7 @@
       return false
     })
 
-    createStencil()
+    if (!props.readonly) createStencil()
     ready.value = true
   }
 
@@ -1270,6 +1303,7 @@
     () => props.materialGroups,
     () => {
       if (!graphInstance.value) return
+      if (props.readonly) return
       createStencil()
     },
     { deep: true }
@@ -1278,7 +1312,7 @@
   watch(
     () => props.materialsVisible,
     async (visible) => {
-      if (!visible) {
+      if (!visible || props.readonly) {
         stencilScrollbar.visible = false
         return
       }

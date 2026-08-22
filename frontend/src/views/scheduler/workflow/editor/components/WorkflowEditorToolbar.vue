@@ -11,7 +11,11 @@
 
     <div class="editor-toolbar__tools editor-toolbar__surface">
       <div class="editor-toolbar__tools-group editor-toolbar__tools-group--left">
-        <ElTooltip :content="materialsVisible ? '隐藏节点面板' : '显示节点面板'" placement="bottom">
+        <ElTooltip
+          v-if="!readonly"
+          :content="materialsVisible ? '隐藏节点面板' : '显示节点面板'"
+          placement="bottom"
+        >
           <ElButton
             :class="[
               'editor-toolbar__icon-btn',
@@ -24,13 +28,13 @@
         </ElTooltip>
 
         <div class="editor-toolbar__zoom-group">
-          <ElTooltip content="撤销" placement="bottom">
+          <ElTooltip v-if="!readonly" content="撤销" placement="bottom">
             <ElButton class="editor-toolbar__icon-btn" @click="$emit('undo')">
               <ElIcon><RefreshLeft /></ElIcon>
             </ElButton>
           </ElTooltip>
 
-          <ElTooltip content="前进" placement="bottom">
+          <ElTooltip v-if="!readonly" content="前进" placement="bottom">
             <ElButton class="editor-toolbar__icon-btn" @click="$emit('redo')">
               <ElIcon><RefreshRight /></ElIcon>
             </ElButton>
@@ -67,25 +71,13 @@
       <span class="editor-toolbar__divider" aria-hidden="true"></span>
 
       <div class="editor-toolbar__tools-group editor-toolbar__tools-group--right">
-        <ElTooltip content="基础信息" placement="bottom">
+        <ElTooltip v-if="!readonly" content="基础信息" placement="bottom">
           <ElButton class="editor-toolbar__icon-btn" @click="$emit('open-meta')">
             <ElIcon><Document /></ElIcon>
           </ElButton>
         </ElTooltip>
 
-        <ElTooltip :content="jsonVisible ? '隐藏 JSON 定义' : '显示 JSON 定义'" placement="bottom">
-          <ElButton
-            :class="[
-              'editor-toolbar__icon-btn',
-              { 'editor-toolbar__icon-btn--active': jsonVisible }
-            ]"
-            @click="$emit('toggle-json')"
-          >
-            <ElIcon><DocumentCopy /></ElIcon>
-          </ElButton>
-        </ElTooltip>
-
-        <ElTooltip content="校验" placement="bottom">
+        <ElTooltip v-if="!readonly" content="校验" placement="bottom">
           <ElButton
             class="editor-toolbar__icon-btn"
             :loading="validating"
@@ -106,12 +98,52 @@
       </div>
 
       <ElButton
+        v-if="mode === 'edit' && actionCount"
+        :icon="Bell"
+        type="warning"
+        plain
+        @click="$emit('actions')"
+      >
+        待办 {{ actionCount }}
+      </ElButton>
+      <ElButton
+        v-if="mode === 'edit' && canCancel"
+        :icon="CircleClose"
+        type="danger"
+        plain
+        :loading="cancelling"
+        @click="$emit('cancel')"
+      >
+        取消
+      </ElButton>
+      <ElButton
+        v-if="mode === 'edit' && canActivate && !readonly"
+        :icon="Select"
+        type="success"
+        plain
+        :loading="activating"
+        @click="$emit('activate')"
+      >
+        激活
+      </ElButton>
+      <ElButton
+        v-if="mode === 'edit' && canRun"
+        :icon="VideoPlay"
+        type="primary"
+        plain
+        :loading="running"
+        @click="$emit('run')"
+      >
+        运行
+      </ElButton>
+      <ElButton
+        v-if="!readonly"
         type="primary"
         class="editor-toolbar__save"
         :loading="saving"
         @click="$emit('save')"
       >
-        保存定义
+        {{ templateMode ? '创建副本' : '保存定义' }}
       </ElButton>
     </div>
   </div>
@@ -123,13 +155,16 @@
     ArrowLeft,
     CircleCheck,
     Document,
-    DocumentCopy,
+    Bell,
+    CircleClose,
     FullScreen,
     Grid,
     Minus,
     Plus,
     RefreshLeft,
-    RefreshRight
+    RefreshRight,
+    Select,
+    VideoPlay
   } from '@element-plus/icons-vue'
   import { ElButton, ElIcon, ElTooltip } from 'element-plus'
 
@@ -141,7 +176,15 @@
     statusType?: 'default' | 'warning' | 'danger'
     zoomText?: string
     materialsVisible?: boolean
-    jsonVisible?: boolean
+    readonly?: boolean
+    activating?: boolean
+    running?: boolean
+    cancelling?: boolean
+    templateMode?: boolean
+    actionCount?: number
+    canActivate?: boolean
+    canRun?: boolean
+    canCancel?: boolean
   }
 
   interface Emits {
@@ -156,7 +199,10 @@
     (e: 'zoom-out'): void
     (e: 'center-content'): void
     (e: 'toggle-materials'): void
-    (e: 'toggle-json'): void
+    (e: 'activate'): void
+    (e: 'run'): void
+    (e: 'cancel'): void
+    (e: 'actions'): void
   }
 
   const props = withDefaults(defineProps<Props>(), {
@@ -165,13 +211,22 @@
     statusType: 'default',
     zoomText: '100%',
     materialsVisible: true,
-    jsonVisible: false
+    readonly: false,
+    activating: false,
+    running: false,
+    cancelling: false,
+    templateMode: false,
+    actionCount: 0,
+    canActivate: false,
+    canRun: false,
+    canCancel: false
   })
 
   defineEmits<Emits>()
 
   const title = computed(() => {
     if (props.mode === 'create') return '新建工作流定义'
+    if (props.templateMode) return '内置工作流模板'
     return '编辑工作流定义'
   })
 </script>

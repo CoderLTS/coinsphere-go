@@ -554,14 +554,13 @@ func (PaperBalance) TableName() string { return "paper_balances" }
 
 // WorkflowDefinition 不可变的工作流定义版本。
 type WorkflowDefinition struct {
-	// 多个字段共用同一个 uniqueIndex 名(ux_workflow_def_code_version)并带 priority = 联合唯一索引:
-	// 这里约束 (code, version) 组合唯一。default:1 表示这一列在数据库里的默认值。
 	ID          int64  `gorm:"primaryKey;autoIncrement"`
-	Code        string `gorm:"size:120;uniqueIndex:ux_workflow_def_code_version,priority:1"`
-	Version     int    `gorm:"default:1;uniqueIndex:ux_workflow_def_code_version,priority:2"`
+	OwnerUserID *int64 `gorm:"column:owner_user_id"`
+	Code        string `gorm:"size:120"`
+	Version     int    `gorm:"default:1"`
 	DisplayName string `gorm:"size:255"`
 	Description string `gorm:"type:text"`
-	GraphJSON   string `gorm:"column:graph_json;type:text"`
+	GraphJSON   string `gorm:"column:graph_json;type:jsonb"`
 	IsBuiltin   bool   `gorm:"default:false"`
 	CreatedBy   *int64
 	CreatedAt   time.Time
@@ -605,7 +604,8 @@ type WorkflowRuntimeState struct {
 	// ActiveWorkflowDefinitionID 是真正存进表里的外键列;ActiveWorkflowDefinition 是查询时可一并加载的关联对象(表里没有这一列)。
 	// foreignKey 指明用哪个字段做外键;constraint:OnDelete:SET NULL = 被引用行被删时,把这里的外键置为 NULL。
 	ID                         int64               `gorm:"primaryKey;autoIncrement"`
-	WorkflowCode               string              `gorm:"size:120;uniqueIndex"`
+	OwnerUserID                int64               `gorm:"column:owner_user_id"`
+	WorkflowCode               string              `gorm:"size:120"`
 	ActiveWorkflowDefinitionID *int64              `gorm:"column:active_workflow_definition_id"`
 	ActiveWorkflowDefinition   *WorkflowDefinition `gorm:"foreignKey:ActiveWorkflowDefinitionID;constraint:OnDelete:SET NULL"`
 	ActivatedAt                *time.Time
@@ -643,6 +643,7 @@ func (WorkflowRuntimeEntry) TableName() string { return "workflow_runtime_entrie
 // WorkflowExecution 一次具体执行。status 即队列状态,替代原 Redis Stream。
 type WorkflowExecution struct {
 	ID                   int64               `gorm:"primaryKey;autoIncrement"`
+	OwnerUserID          int64               `gorm:"column:owner_user_id;index:ix_workflow_exec_owner_queue,priority:1"`
 	WorkflowDefinitionID int64               `gorm:"column:workflow_definition_id;index"`
 	WorkflowDefinition   *WorkflowDefinition `gorm:"foreignKey:WorkflowDefinitionID;constraint:OnDelete:RESTRICT"`
 	StartEntryKey        string              `gorm:"size:64"`
@@ -654,7 +655,7 @@ type WorkflowExecution struct {
 	IdempotencyKey       *string `gorm:"size:255;uniqueIndex:ux_workflow_exec_trigger_idem,priority:2"`
 	ConcurrencyKey       string  `gorm:"size:255;index:ix_workflow_exec_backlog,priority:1"`
 	TriggerOutboxID      *int64
-	Status               string    `gorm:"size:32;default:queued;index:ix_workflow_exec_queue,priority:1;index:ix_workflow_exec_backlog,priority:2"`
+	Status               string    `gorm:"size:32;default:queued;index:ix_workflow_exec_queue,priority:1;index:ix_workflow_exec_backlog,priority:2;index:ix_workflow_exec_owner_queue,priority:2"`
 	QueuedAt             time.Time `gorm:"index:ix_workflow_exec_queue,priority:2"`
 	ClaimedAt            *time.Time
 	StartedAt            *time.Time
@@ -665,6 +666,8 @@ type WorkflowExecution struct {
 	MaxAttempts          int        `gorm:"default:4"`
 	DurationMs           *int64
 	NextRetryAt          *time.Time `gorm:"index"`
+	CancelRequestedAt    *time.Time `gorm:"column:cancel_requested_at"`
+	RerunOfExecutionID   *int64     `gorm:"column:rerun_of_execution_id"`
 	FailureCategory      string     `gorm:"size:64"`
 	InputSnapshotJSON    string     `gorm:"column:input_snapshot_json;type:text"`
 	ContextSnapshotJSON  string     `gorm:"column:context_snapshot_json;type:text"`
@@ -673,6 +676,33 @@ type WorkflowExecution struct {
 }
 
 func (WorkflowExecution) TableName() string { return "workflow_executions" }
+
+// WorkflowExecutionWait pauses one sequential execution for a worker result or a human decision.
+// RequestJSON and ResultJSON are deliberately limited to non-sensitive, display-safe data.
+type WorkflowExecutionWait struct {
+	ID                      uuid.UUID              `gorm:"type:uuid;primaryKey"`
+	OwnerUserID             int64                  `gorm:"column:owner_user_id"`
+	WorkflowExecutionID     int64                  `gorm:"column:workflow_execution_id"`
+	WorkflowExecution       *WorkflowExecution     `gorm:"foreignKey:WorkflowExecutionID;constraint:OnDelete:CASCADE"`
+	WorkflowExecutionNodeID *int64                 `gorm:"column:workflow_execution_node_id"`
+	WorkflowExecutionNode   *WorkflowExecutionNode `gorm:"foreignKey:WorkflowExecutionNodeID;constraint:OnDelete:SET NULL"`
+	Kind                    string                 `gorm:"size:32"`
+	ActionType              string                 `gorm:"column:action_type;size:120"`
+	TargetType              string                 `gorm:"column:target_type;size:64"`
+	TargetID                string                 `gorm:"column:target_id;size:120"`
+	Status                  string                 `gorm:"size:24"`
+	RequestJSON             string                 `gorm:"column:request_json;type:jsonb"`
+	ResultJSON              string                 `gorm:"column:result_json;type:jsonb"`
+	ResumeNodeID            string                 `gorm:"column:resume_node_id;size:100"`
+	ResumeBranch            string                 `gorm:"column:resume_branch;size:32"`
+	ExpiresAt               *time.Time             `gorm:"column:expires_at"`
+	ResolvedAt              *time.Time             `gorm:"column:resolved_at"`
+	ResolvedBy              *int64                 `gorm:"column:resolved_by"`
+	CreatedAt               time.Time              `gorm:"column:created_at"`
+	UpdatedAt               time.Time              `gorm:"column:updated_at"`
+}
+
+func (WorkflowExecutionWait) TableName() string { return "workflow_execution_waits" }
 
 // IdempotencyRecord binds a public command key to one authenticated user and request payload.
 // Only hashes are persisted; workflow executions use a key derived from this record's ID.

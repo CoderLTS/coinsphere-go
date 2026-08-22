@@ -682,7 +682,12 @@ func (a *App) UpdateTradingRisk(
 		if err := validateTradingInstruments(tx, risk.InstrumentIDs, row.Market); err != nil {
 			return err
 		}
-		if !a.ConsumeReauthToken(reauthToken, principal) {
+		var existingInstrumentIDs []uuid.UUID
+		if err := tx.Model(&db.TradingAccountInstrument{}).Where("account_id = ?", row.ID).
+			Pluck("instrument_id", &existingInstrumentIDs).Error; err != nil {
+			return err
+		}
+		if tradingRiskExpands(row, existingInstrumentIDs, risk) && !a.ConsumeReauthToken(reauthToken, principal) {
 			return ErrTradingReauthentication
 		}
 		now := time.Now().UTC()
@@ -886,7 +891,8 @@ func (a *App) SetTradingAuthorization(
 	requestHash, _ := canonicalRequestHash(M{"authorized": authorized})
 	var row db.TradingAccount
 	err = a.dbWithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", accountID).Take(&row).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND owner_user_id = ?", accountID, principal.User.ID).Take(&row).Error; err != nil {
 			return tradingAccountLookupError(err)
 		}
 		if row.Environment == "live" && authorized && !a.liveAutoEnabled(row.Market) {
@@ -898,7 +904,7 @@ func (a *App) SetTradingAuthorization(
 		if err != nil || reused {
 			return err
 		}
-		if !a.ConsumeReauthToken(reauthToken, principal) {
+		if authorized && !a.ConsumeReauthToken(reauthToken, principal) {
 			return ErrTradingReauthentication
 		}
 		now := time.Now().UTC()
@@ -1316,6 +1322,36 @@ func validateTradingInstruments(database *gorm.DB, ids []uuid.UUID, market strin
 		return invalidTrading("instrumentIds must contain trading Binance instruments from the account market")
 	}
 	return nil
+}
+
+func tradingRiskExpands(current db.TradingAccount, currentInstruments []uuid.UUID, next validatedTradingRisk) bool {
+	if decimalLimitExpands(current.MaxTotalNotional, next.MaxTotalNotional) ||
+		decimalLimitExpands(current.MaxSymbolNotional, next.MaxSymbolNotional) ||
+		decimalLimitExpands(current.MaxOrderNotional, next.MaxOrderNotional) ||
+		decimalLimitExpands(current.MaxDailyLoss, next.MaxDailyLoss) ||
+		decimalLimitExpands(current.MaxDrawdown, next.MaxDrawdown) ||
+		intLimitExpands(current.MaxQuoteAgeSeconds, next.MaxQuoteAgeSeconds) ||
+		intLimitExpands(current.Leverage, next.Leverage) {
+		return true
+	}
+	allowed := make(map[uuid.UUID]bool, len(currentInstruments))
+	for _, id := range currentInstruments {
+		allowed[id] = true
+	}
+	for _, id := range next.InstrumentIDs {
+		if !allowed[id] {
+			return true
+		}
+	}
+	return false
+}
+
+func decimalLimitExpands(current, next *decimal.Decimal) bool {
+	return next == nil && current != nil || current != nil && next != nil && next.GreaterThan(*current)
+}
+
+func intLimitExpands(current, next *int) bool {
+	return next == nil && current != nil || current != nil && next != nil && *next > *current
 }
 
 func replaceTradingInstrumentWhitelist(database *gorm.DB, accountID uuid.UUID, ids []uuid.UUID, now time.Time) error {

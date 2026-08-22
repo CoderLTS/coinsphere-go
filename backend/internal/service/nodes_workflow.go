@@ -5,18 +5,15 @@
 // 两个必须防住的坑:
 //  1. 递归。A 调 B、B 又调 A 会无限展开。这里在共享状态里带一条调用链,
 //     链上出现过的 code 直接拒绝,并限制总深度。
-//  2. 等待子流程时占着执行槽。派发器同时只跑 executor_concurrency 个执行,
-//     父执行等子执行时自己也占着一个槽;等的父执行一多就可能互相饿死。
-//     所以 waitForResult 默认关闭(发射后不管),开启时要清楚这层代价。
+//  2. 子流程始终异步派发，父执行不占槽轮询等待。
 
 package service
 
 import (
-	"context"
 	"strings"
-	"time"
 
 	"coinsphere/backend/internal/db"
+	"coinsphere/backend/internal/perm"
 )
 
 // 调用链在共享状态里的键,以及允许的最大嵌套层数。
@@ -27,22 +24,19 @@ const (
 
 func init() {
 	registerNode(&workflowNodeDefinition{
-		TypeCode: "workflow.call", Label: "调用子工作流",
+		TypeCode: "workflow.call", Label: "调用子工作流", RequiredPermission: perm.SchedulerWorkflowDefinitionsRun,
+		InputPorts: []workflowNodePortDefinition{
+			nodePort("inputs", "运行输入", false, M{"type": "object"}),
+		},
+		OutputPorts: []workflowNodePortDefinition{
+			nodePort("result", "调用结果", false, M{"type": "object"}),
+			nodePort("executionId", "子执行 ID", false, M{"type": "integer"}),
+		},
 		ConfigSchema: M{
 			"type": "object",
 			"properties": M{
-				"workflowCode": M{"type": "string", "title": "目标工作流"},
+				"workflowCode": M{"type": "string", "title": "目标工作流", "resource": "workflow-code"},
 				"entryKey":     M{"type": "string", "title": "开始入口", "description": "选择目标工作流中要触发的开始节点"},
-				"inputsPath": M{
-					"type": "string", "title": "输入取值路径",
-					"description": "把共享状态里该路径的对象作为子工作流的 inputs 传过去,留空则不传",
-				},
-				"waitForResult": M{
-					"type": "boolean", "title": "等待子工作流完成", "default": false,
-					"description": "开启后本节点会阻塞到子工作流结束。注意它会一直占用一个执行槽,嵌套多层时请调大 executor_concurrency",
-				},
-				"waitTimeoutMs": M{"type": "integer", "title": "等待超时毫秒", "default": 300000, "minimum": 1000},
-				"outputKey":     M{"type": "string", "title": "结果写入变量名", "default": "subWorkflowResult"},
 			},
 			"required": []string{"workflowCode", "entryKey"},
 		},
@@ -66,16 +60,14 @@ func workflowCallExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 		return nil, err
 	}
 
-	entry, err := ctx.App.requireActiveRuntimeEntry(workflowCode, entryKey)
+	entry, err := ctx.App.requireActiveRuntimeEntry(ctx.Execution.OwnerUserID, workflowCode, entryKey)
 	if err != nil {
 		return nil, err
 	}
 
-	inputs := M{}
-	if inputsPath := cfgStr(config, "inputsPath", ""); inputsPath != "" {
-		if value, ok := ctx.State.get(inputsPath).(map[string]any); ok {
-			inputs = value
-		}
+	inputs, _ := ctx.Inputs["inputs"].(map[string]any)
+	if inputs == nil {
+		inputs = M{}
 	}
 	triggerCtx := M{
 		"triggerType": "workflow",
@@ -104,25 +96,8 @@ func workflowCallExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 	output := M{
 		"workflowCode": workflowCode, "entryKey": entryKey,
 		"executionId": executionID, "duplicate": started["duplicate"],
-		"status": asString(execution["status"]), "waited": false,
+		"status": asString(execution["status"]),
 	}
-
-	if isTruthy(config["waitForResult"]) {
-		timeout := time.Duration(cfgInt(config, "waitTimeoutMs", 300000)) * time.Millisecond
-		final, err := ctx.App.waitForExecution(ctx.Ctx, executionID, timeout)
-		if err != nil {
-			return nil, err
-		}
-		output["waited"] = true
-		output["status"] = final.Status
-		output["errorMessage"] = final.ErrorMessage
-		output["result"] = loadJSONObject(final.ResultSnapshotJSON)
-		if final.Status != "success" {
-			return nil, bizErr("子工作流 %s 执行失败: %s", workflowCode, orString(final.ErrorMessage, final.Status))
-		}
-	}
-
-	ctx.State.set(cfgStr(config, "outputKey", "subWorkflowResult"), output)
 	setNodeOutput(ctx, output)
 	return &nodeExecResult{Output: output}, nil
 }
@@ -160,8 +135,8 @@ func chainCodes(chain []any) []string {
 }
 
 // requireActiveRuntimeEntry 按 workflowCode + entryKey 找到当前生效版本的运行入口。
-func (a *App) requireActiveRuntimeEntry(workflowCode, entryKey string) (*db.WorkflowRuntimeEntry, error) {
-	state := a.getRuntimeStateByCode(workflowCode)
+func (a *App) requireActiveRuntimeEntry(ownerUserID int64, workflowCode, entryKey string) (*db.WorkflowRuntimeEntry, error) {
+	state := a.getRuntimeStateByCode(ownerUserID, workflowCode)
 	if state == nil || state.ActiveWorkflowDefinitionID == nil {
 		return nil, bizErr("子工作流 %s 未激活", workflowCode)
 	}
@@ -174,39 +149,6 @@ func (a *App) requireActiveRuntimeEntry(workflowCode, entryKey string) (*db.Work
 		return nil, bizErr("子工作流 %s 的入口 %s 已停用", workflowCode, entryKey)
 	}
 	return &entry, nil
-}
-
-// waitForExecution 轮询等待某次执行到达终态。
-//
-// ponytail: 用轮询而不是通知/回调 —— 执行状态本来就落在库里,一秒查一次足够,
-// 也不用为此新增一套跨 goroutine 的等待注册表。真要更实时再换。
-func (a *App) waitForExecution(ctx context.Context, executionID int64, timeout time.Duration) (*db.WorkflowExecution, error) {
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	for {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		var execution db.WorkflowExecution
-		if err := a.DB.WithContext(ctx).First(&execution, executionID).Error; err != nil {
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-			return nil, bizErr("子工作流执行记录不存在: %d", executionID)
-		}
-		if execution.Status == "success" || execution.Status == "failed" {
-			return &execution, nil
-		}
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-timer.C:
-			return nil, retryableErr(bizErr("等待子工作流执行 %d 超时", executionID))
-		case <-ticker.C:
-		}
-	}
 }
 
 // loadWorkflowCallChain 从触发上下文里取回父级传下来的调用链,跑图开始时放进共享状态。

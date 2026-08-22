@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -46,7 +47,18 @@ type runResult struct {
 	SharedState  M
 	StartedAt    time.Time
 	FinishedAt   time.Time
+	PendingWait  *pendingWorkflowWait
 }
+
+type pendingWorkflowWait struct {
+	Request                 workflowWaitRequest
+	WorkflowExecutionNodeID int64
+	SourceNodeID            string
+	ResumeNodeID            string
+	ResumeBranch            string
+}
+
+var ErrWorkflowWaiting = errors.New("workflow execution waiting")
 
 // runExecutionGraph 只负责跑图,不推进 execution 终态状态机。
 func (a *App) runExecutionGraph(ctx context.Context, executionID int64) (*runResult, error) {
@@ -91,6 +103,21 @@ func (a *App) runExecutionGraph(ctx context.Context, executionID int64) (*runRes
 		// 父工作流传下来的调用链(workflow.call 节点用它检测循环调用);顶层执行时是空数组。
 		workflowCallChainKey: loadWorkflowCallChain(triggerCtx),
 	}
+	startNodeID := execution.StartNodeID
+	var resumeWait db.WorkflowExecutionWait
+	resumeErr := a.DB.Where("workflow_execution_id = ? AND status = ?", execution.ID, "completed").
+		Order("resolved_at DESC, updated_at DESC").Take(&resumeWait).Error
+	if resumeErr == nil {
+		if restored := loadJSONObject(execution.ContextSnapshotJSON); len(restored) > 0 {
+			sharedState = restored
+		}
+		startNodeID = resumeWait.ResumeNodeID
+		if trigger, ok := sharedState["trigger"].(map[string]any); ok {
+			triggerCtx["payload"] = orEmptyMap(trigger["payload"])
+		}
+	} else if !errors.Is(resumeErr, gorm.ErrRecordNotFound) {
+		return nil, resumeErr
+	}
 
 	result := &runResult{
 		Execution: execution, Definition: definition, RuntimeEntry: runtimeEntry,
@@ -105,7 +132,10 @@ func (a *App) runExecutionGraph(ctx context.Context, executionID int64) (*runRes
 		result.FinishedAt = time.Now()
 		return result, err
 	}
-	startNode := findStartNode(graph, execution.StartNodeID, execution.StartEntryKey)
+	startNode := findStartNode(graph, startNodeID, execution.StartEntryKey)
+	if startNode == nil && resumeErr == nil {
+		startNode = buildGraphIndex(graph).nodes[startNodeID]
+	}
 	if startNode == nil {
 		result.FinishedAt = time.Now()
 		return result, bizErr("Start entry does not exist in workflow definition")
@@ -141,11 +171,22 @@ type graphEdge struct {
 	Branch string
 }
 
+type graphDataEdge struct {
+	ID            string
+	Source        string
+	Target        string
+	SourcePort    string
+	TargetPort    string
+	SourcePointer string
+	TargetPointer string
+}
+
 // graphIndex 一张图的只读索引:节点按 id 查,边按源/目标两个方向各建一张表。
 type graphIndex struct {
 	nodes    map[string]M
 	outEdges map[string][]*graphEdge // 源节点 id → 出边
 	inEdges  map[string][]*graphEdge // 目标节点 id → 入边
+	dataIn   map[string][]*graphDataEdge
 }
 
 // buildGraphIndex 把 JSON 形态的图整理成索引。出边按 edge id 排序,让调度顺序稳定可复现
@@ -155,6 +196,7 @@ func buildGraphIndex(graph M) *graphIndex {
 		nodes:    map[string]M{},
 		outEdges: map[string][]*graphEdge{},
 		inEdges:  map[string][]*graphEdge{},
+		dataIn:   map[string][]*graphDataEdge{},
 	}
 	nodesAny, _ := graph["nodes"].([]any)
 	for _, nodeAny := range nodesAny {
@@ -168,6 +210,15 @@ func buildGraphIndex(graph M) *graphIndex {
 		if !ok {
 			continue
 		}
+		if asString(raw["kind"]) == "data" {
+			edge := &graphDataEdge{
+				ID: asString(raw["id"]), Source: asString(raw["source"]), Target: asString(raw["target"]),
+				SourcePort: asString(raw["sourcePort"]), TargetPort: asString(raw["targetPort"]),
+				SourcePointer: asString(raw["sourcePointer"]), TargetPointer: asString(raw["targetPointer"]),
+			}
+			index.dataIn[edge.Target] = append(index.dataIn[edge.Target], edge)
+			continue
+		}
 		edge := &graphEdge{
 			ID:     asString(raw["id"]),
 			Source: asString(raw["source"]),
@@ -178,6 +229,9 @@ func buildGraphIndex(graph M) *graphIndex {
 		index.inEdges[edge.Target] = append(index.inEdges[edge.Target], edge)
 	}
 	for _, edgeList := range index.outEdges {
+		sort.Slice(edgeList, func(i, j int) bool { return edgeList[i].ID < edgeList[j].ID })
+	}
+	for _, edgeList := range index.dataIn {
 		sort.Slice(edgeList, func(i, j int) bool { return edgeList[i].ID < edgeList[j].ID })
 	}
 	return index
@@ -405,25 +459,61 @@ func (r *graphRun) runDAG(parentCtx context.Context, startNodeID string, nodeSet
 
 // processNode 运行一个节点:落"运行中"日志 → 查处理器执行 → 落成功/失败日志 → 点亮出边交给 advance。
 func (r *graphRun) processNode(ctx context.Context, nodeID string, advance func([]resolution)) error {
-	// 整组已被取消(别的分支失败/超时)就别再跑。
-	if err := ctx.Err(); err != nil {
+	// 节点边界同时检查用户取消与进程上下文，取消不会开始下一个节点。
+	if err := r.cancellationBoundary(ctx); err != nil {
 		return err
 	}
 	node := r.nodes[nodeID]
 	if node == nil {
 		return bizErr("Workflow node does not exist: %s", nodeID)
 	}
-	nodeLog, err := r.openNodeLog(nodeID, asString(node["type"]))
+	inputs, err := r.resolveNodeInputs(nodeID)
+	if err != nil {
+		return err
+	}
+	nodeLog, err := r.openNodeLog(nodeID, asString(node["type"]), inputs)
 	if err != nil {
 		return err
 	}
 
-	nodeResult, execErr := r.runNodeBody(ctx, node, nodeLog)
+	nodeResult, execErr := r.runNodeBody(ctx, node, nodeLog, inputs)
 	if execErr != nil {
+		if boundaryErr := r.cancellationBoundary(ctx); errors.Is(boundaryErr, ErrWorkflowCanceled) {
+			execErr = boundaryErr
+		}
 		r.closeNodeLog(ctx, nodeLog, nil, execErr)
 		return execErr
 	}
+	if err := r.cancellationBoundary(ctx); err != nil {
+		r.closeNodeLog(ctx, nodeLog, nil, err)
+		return err
+	}
 	r.closeNodeLog(ctx, nodeLog, nodeResult, nil)
+	r.state.setNodeOutput(nodeID, nodeResult.Output)
+	if nodeResult.Wait != nil {
+		resolutions := r.fireEdges(nodeID, r.outEdges[nodeID], nodeResult)
+		resumeNodeID := ""
+		for _, item := range resolutions {
+			if item.fired {
+				if resumeNodeID != "" {
+					return bizErr("Waiting nodes must have exactly one active successor")
+				}
+				resumeNodeID = item.node
+			}
+		}
+		if resumeNodeID == "" {
+			return bizErr("Waiting nodes require a flow successor")
+		}
+		resumeBranch := ""
+		if nodeResult.SelectedBranch != nil {
+			resumeBranch = *nodeResult.SelectedBranch
+		}
+		r.result.PendingWait = &pendingWorkflowWait{
+			Request: *nodeResult.Wait, WorkflowExecutionNodeID: nodeLog.ID,
+			SourceNodeID: nodeID, ResumeNodeID: resumeNodeID, ResumeBranch: resumeBranch,
+		}
+		return ErrWorkflowWaiting
+	}
 
 	// 循环节点:对数组逐个跑一遍循环体子图(元素间串行,子图内部仍可并发),跑完再推进循环后继。
 	// 注意此时执行令牌已经归还 —— 循环体里的节点要自己去取令牌,父节点不能占着不放。
@@ -436,25 +526,36 @@ func (r *graphRun) processNode(ctx context.Context, nodeID string, advance func(
 	return nil
 }
 
+func (r *graphRun) cancellationBoundary(ctx context.Context) error {
+	requested, err := r.app.executionCancellationRequested(context.WithoutCancel(ctx), r.result.Execution.ID)
+	if err != nil {
+		return err
+	}
+	if requested {
+		return ErrWorkflowCanceled
+	}
+	return ctx.Err()
+}
+
 // runNodeBody 在"执行令牌"的保护下跑一个节点的处理器:令牌限制同时干活的节点数,
 // 出了这个函数就立刻归还,所以后面跑循环体、推进下游都不占用配额。
-func (r *graphRun) runNodeBody(ctx context.Context, node M, nodeLog *db.WorkflowExecutionNode) (*nodeExecResult, error) {
+func (r *graphRun) runNodeBody(ctx context.Context, node M, nodeLog *db.WorkflowExecutionNode, inputs M) (*nodeExecResult, error) {
 	if err := r.acquireSlot(ctx); err != nil {
 		return nil, err
 	}
 	defer r.releaseSlot()
-	return r.executeNode(ctx, node, nodeLog)
+	return r.executeNode(ctx, node, nodeLog, inputs)
 }
 
 // openNodeLog 进入节点时写一条"运行中"日志,并按配置决定要不要留一份当下共享状态的输入快照。
 // 输入快照是全量状态序列化,大图 / 多元素循环时成本可观,可用 disable_node_input_snapshot 关掉。
-func (r *graphRun) openNodeLog(nodeID, nodeType string) (*db.WorkflowExecutionNode, error) {
+func (r *graphRun) openNodeLog(nodeID, nodeType string, inputs M) (*db.WorkflowExecutionNode, error) {
 	nodeLog := &db.WorkflowExecutionNode{
 		WorkflowExecutionID: r.result.Execution.ID, NodeID: nodeID, NodeType: nodeType,
 		Status: "running", StartedAt: time.Now(),
 	}
 	if !r.app.Cfg.Workflow.DisableNodeInputSnapshot {
-		nodeLog.InputSnapshotJSON = r.state.snapshotJSON(r.app.Cfg.Workflow.MaxOutputSnapshotBytes)
+		nodeLog.InputSnapshotJSON = serializeSnapshot(inputs, r.app.Cfg.Workflow.MaxOutputSnapshotBytes)
 	}
 	if err := r.app.DB.Create(nodeLog).Error; err != nil {
 		return nil, err
@@ -469,8 +570,15 @@ func (r *graphRun) closeNodeLog(ctx context.Context, nodeLog *db.WorkflowExecuti
 		"finished_at": finishedAt,
 		"duration_ms": finishedAt.Sub(nodeLog.StartedAt).Milliseconds(),
 	}
-	if execErr != nil {
-		updates["status"] = "failed"
+	if nodeResult != nil && nodeResult.Wait != nil {
+		updates["status"] = "waiting"
+		updates["output_snapshot_json"] = serializeSnapshot(nodeResult.Output, r.app.Cfg.Workflow.MaxOutputSnapshotBytes)
+	} else if execErr != nil {
+		if errors.Is(execErr, ErrWorkflowCanceled) {
+			updates["status"] = "canceled"
+		} else {
+			updates["status"] = "failed"
+		}
 		updates["error_message"] = execErr.Error()
 		category, _ := classifyFailure(execErr, execErr.Error())
 		slog.WarnContext(ctx, "workflow node failed", "execution_id", r.result.Execution.ID, "node_id", nodeLog.NodeID, "error_category", category)
@@ -486,17 +594,138 @@ func (r *graphRun) closeNodeLog(ctx context.Context, nodeLog *db.WorkflowExecuti
 }
 
 // executeNode 按节点类型查处理器并执行。查不到处理器就直接把错误返回(交给失败分支处理)。
-func (r *graphRun) executeNode(ctx context.Context, node M, nodeLog *db.WorkflowExecutionNode) (*nodeExecResult, error) {
+func (r *graphRun) executeNode(ctx context.Context, node M, nodeLog *db.WorkflowExecutionNode, inputs M) (*nodeExecResult, error) {
 	definition, err := getNodeDefinition(asString(node["type"]))
 	if err != nil {
+		return nil, err
+	}
+	if err := r.app.requireCurrentNodePermission(r.result.Execution.OwnerUserID, definition, rawNodeConfig(node)); err != nil {
 		return nil, err
 	}
 	return definition.Execute(&nodeExecContext{
 		Ctx: ctx, App: r.app, Definition: r.result.Definition, RuntimeEntry: r.result.RuntimeEntry,
 		Execution: r.result.Execution, NodeLog: nodeLog, Node: node, Graph: r.graph,
-		State: r.state, TriggerCtx: r.result.TriggerCtx,
+		Inputs: inputs, State: r.state, TriggerCtx: r.result.TriggerCtx,
 		PublishEvent: r.eventPublisher(nodeLog),
 	})
+}
+
+func (r *graphRun) resolveNodeInputs(nodeID string) (M, error) {
+	inputs := M{}
+	definition, err := getNodeDefinition(r.nodeType(nodeID))
+	if err != nil {
+		return nil, err
+	}
+	for _, edge := range r.dataIn[nodeID] {
+		output, ok := r.state.nodeOutput(edge.Source)
+		if !ok {
+			return nil, bizErr("Data edge source output is unavailable: %s", edge.Source)
+		}
+		var value any = output
+		if edge.SourcePort != "result" {
+			var exists bool
+			value, exists = output[edge.SourcePort]
+			if !exists {
+				return nil, bizErr("Data edge source port has no runtime value: %s.%s", edge.Source, edge.SourcePort)
+			}
+		}
+		value, err = workflowValueAtPointer(value, edge.SourcePointer)
+		if err != nil {
+			return nil, bizErr("Data edge source value is invalid: %s", err.Error())
+		}
+		port := findWorkflowPort(definition.InputPorts, edge.TargetPort)
+		if port == nil {
+			return nil, bizErr("Data edge target port does not exist: %s.%s", nodeID, edge.TargetPort)
+		}
+		tokens, err := decodeWorkflowJSONPointer(edge.TargetPointer)
+		if err != nil {
+			return nil, err
+		}
+		mapped, err := setWorkflowMappedValue(inputs[edge.TargetPort], port.Schema, tokens, value)
+		if err != nil {
+			return nil, bizErr("Data edge target value is invalid: %s", err.Error())
+		}
+		inputs[edge.TargetPort] = mapped
+	}
+	for _, port := range definition.InputPorts {
+		if port.Required && inputs[port.ID] == nil {
+			return nil, bizErr("Required node input is unavailable: %s.%s", nodeID, port.ID)
+		}
+	}
+	return inputs, nil
+}
+
+func workflowValueAtPointer(value any, pointer string) (any, error) {
+	tokens, err := decodeWorkflowJSONPointer(pointer)
+	if err != nil {
+		return nil, err
+	}
+	current := value
+	for _, token := range tokens {
+		switch typed := current.(type) {
+		case map[string]any:
+			var ok bool
+			current, ok = typed[token]
+			if !ok {
+				return nil, errors.New("field does not exist")
+			}
+		case []any:
+			index, err := strconv.Atoi(token)
+			if err != nil || index < 0 || index >= len(typed) {
+				return nil, errors.New("array index is invalid")
+			}
+			current = typed[index]
+		default:
+			return nil, errors.New("pointer traverses a scalar value")
+		}
+	}
+	return current, nil
+}
+
+func setWorkflowMappedValue(current any, schema M, tokens []string, value any) (any, error) {
+	if len(tokens) == 0 {
+		return value, nil
+	}
+	token := tokens[0]
+	switch asString(schema["type"]) {
+	case "", "object":
+		object, _ := current.(map[string]any)
+		if object == nil {
+			object = M{}
+		}
+		properties, _ := schema["properties"].(map[string]any)
+		childSchema, _ := properties[token].(map[string]any)
+		if childSchema == nil {
+			return nil, errors.New("target field does not exist")
+		}
+		child, err := setWorkflowMappedValue(object[token], childSchema, tokens[1:], value)
+		if err != nil {
+			return nil, err
+		}
+		object[token] = child
+		return object, nil
+	case "array":
+		index, err := strconv.Atoi(token)
+		if err != nil || index < 0 {
+			return nil, errors.New("target array index is invalid")
+		}
+		array, _ := current.([]any)
+		for len(array) <= index {
+			array = append(array, nil)
+		}
+		itemSchema, _ := schema["items"].(map[string]any)
+		if itemSchema == nil {
+			return nil, errors.New("target array item schema is missing")
+		}
+		child, err := setWorkflowMappedValue(array[index], itemSchema, tokens[1:], value)
+		if err != nil {
+			return nil, err
+		}
+		array[index] = child
+		return array, nil
+	default:
+		return nil, errors.New("target pointer traverses a scalar value")
+	}
 }
 
 // eventPublisher 造一个注入给节点的发事件回调:节点只管给 payload/metadata,

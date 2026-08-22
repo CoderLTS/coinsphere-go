@@ -2,7 +2,7 @@
 
 ## 产品边界
 
-CoinSphere 是个人自托管的 Binance 低频量化平台。系统以可视化工作流为主要操作入口，覆盖行情元数据、K 线订阅与补数、策略计算、信号展示、通知和 Paper 执行。
+CoinSphere 是个人自托管的 Binance 低频量化平台。`/home` 保留应用运行概览，`/workbench` 是业务任务的统一入口，以可视化工作流覆盖行情、策略、回测、配置、安全处置和 Paper 执行。
 
 - 只支持 PostgreSQL/TimescaleDB、Binance Spot 与 USD-M、交易所原生周期和闭合 K 线。
 - 不开放注册；RBAC 控制页面和 API，用户资源按 Owner 隔离。
@@ -29,7 +29,7 @@ flowchart LR
 
 ### Web
 
-Vue Web 提供工作流工作台、X6 工作流编辑器、执行回放、行情元数据、K 线与信号图表、策略、账户和系统管理页面。页面沿用同一应用外壳和 RBAC 菜单，不维护第二套导航或状态模型。
+Vue Web 保留只读运维首页，并提供独立工作流工作台、X6 编辑器、执行覆盖层、时间线和人工待办。桌面端可拖拽、配置和运行；移动端只提供查看、回放、运行、取消、重跑与人工处置。旧业务管理页不再作为产品入口。
 
 ### Go App
 
@@ -55,7 +55,7 @@ Worker 单进程运行两个固定槽位：
 
 数据库是唯一持久事实源：
 
-- 工作流定义、执行、节点状态、调度和订阅意图。
+- 按 Owner 隔离的工作流定义、运行态、执行、活动等待、节点状态、调度和订阅意图。
 - 行情品种、Ticker、K 线和用户自选。
 - 策略版本、实例、任务、回测、信号和产物索引。
 - 用户、权限、通知、Outbox、Paper/Private 交易事实和投影。
@@ -77,11 +77,14 @@ flowchart LR
 
 工作流负责粗粒度编排：
 
+- `WorkflowGraphV2` 用 `flow` 边表达执行顺序，用带类型端口的 `data` 边表达节点数据映射；保存和激活均校验类型、Owner、权限与安全策略。
+
 - `market.metadata.sync` 读取全局同步范围、Binance REST 地址和可选出站代理并实时同步元数据；代理同时作用于公共 REST 与 WebSocket。
 - `market.candles.subscribe` 保存激活工作流的订阅意图。
 - `market.candles.backfill` 执行指定 UTC 窗口补数。
 - `strategy.evaluate` 以同步或异步方式创建幂等策略任务。
 - `notify` 统一使用站内、钉钉、QQ 和 SMTP 渠道。
+- Worker 任务和人工动作可使执行进入持久等待；完成、批准、拒绝或过期后由数据库状态恢复执行。取消在节点边界和心跳生效，整次重跑创建关联的新执行。
 
 闭合 K 线发布 `market.candle.closed`，策略成功发布 `strategy.signal.created`。逐 K 线写入、Worker 执行循环和交易执行不进入工作流引擎，避免把高频状态机塞进画布。
 

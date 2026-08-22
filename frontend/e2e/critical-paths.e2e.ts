@@ -7,8 +7,9 @@ interface WorkflowPayload {
   displayName: string
   description: string
   graph: {
+    schemaVersion: 2
     nodes: Array<{ id: string; type: string }>
-    edges: Array<{ id: string; source: string; target: string }>
+    edges: Array<{ id: string; kind: 'flow' | 'data'; source: string; target: string }>
   }
 }
 
@@ -63,13 +64,23 @@ const nodeDefinitions = [
     typeCode: 'start.manual',
     label: '手动开始',
     configSchema: { type: 'object', properties: {} },
-    kind: 'start'
+    kind: 'start',
+    inputPorts: [],
+    outputPorts: [],
+    executionMode: 'sync',
+    securityPolicy: 'standard',
+    requiredPermission: ''
   },
   {
     typeCode: 'end',
     label: '结束',
     configSchema: { type: 'object', properties: {} },
-    kind: 'terminal'
+    kind: 'terminal',
+    inputPorts: [],
+    outputPorts: [],
+    executionMode: 'sync',
+    securityPolicy: 'standard',
+    requiredPermission: ''
   }
 ]
 
@@ -77,7 +88,16 @@ function userInfo(accessMode: AccessMode) {
   const authenticated = accessMode === 'authenticated'
   return {
     permissions: authenticated
-      ? ['scheduler.workflow_definitions.create', 'scheduler.workflow_definitions.update']
+      ? [
+          'scheduler.workflow_definitions.view',
+          'scheduler.workflow_definitions.create',
+          'scheduler.workflow_definitions.update',
+          'scheduler.workflow_definitions.run',
+          'scheduler.workflow_runtime.view',
+          'scheduler.workflow_runtime.activate',
+          'scheduler.workflow_runtime.update',
+          'scheduler.workflow_executions.view'
+        ]
       : [],
     roleCodes: [authenticated ? 'R_SUPER' : 'R_GUEST'],
     userId: authenticated ? 1 : 0,
@@ -127,7 +147,11 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
     const path = new URL(request.url()).pathname
     const method = request.method()
 
-    if (path.startsWith('/api/v1/workflows')) {
+    if (
+      path.startsWith('/api/v1/workflows') ||
+      path.startsWith('/api/v1/workflow-executions') ||
+      path.startsWith('/api/v1/workflow-actions')
+    ) {
       schedulerApiCalls.push(`${method} ${path}`)
     }
     if (path.startsWith('/api/v1/auth/')) {
@@ -187,11 +211,18 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
       await fulfillApi(route, [])
       return
     }
-    if (method === 'GET' && path === '/api/v1/strategy-instances') {
-      await fulfillApi(route, { records: [], nextCursor: '', hasMore: false, total: 0 })
-      return
-    }
-    if (method === 'GET' && (path === '/api/v1/strategies' || path === '/api/v1/markets/symbols')) {
+    if (
+      method === 'GET' &&
+      [
+        '/api/v1/admin/strategies',
+        '/api/v1/strategies',
+        '/api/v1/markets/symbols',
+        '/api/v1/signals',
+        '/api/v1/data/news',
+        '/api/v1/admin/users',
+        '/api/v1/system/roles'
+      ].includes(path)
+    ) {
       await fulfillApi(route, { records: [], nextCursor: '', hasMore: false, total: 0 })
       return
     }
@@ -201,6 +232,9 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
         '/api/v1/trading/accounts',
         '/api/v1/workflow-node-templates',
         '/api/v1/notification-channels',
+        '/api/v1/config/ai-models',
+        '/api/v1/config/assistant-agents',
+        '/api/v1/workflow-actions',
         '/api/v1/workflows'
       ].includes(path)
     ) {
@@ -236,6 +270,10 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
         await fulfillApi(route, createdDefinition)
         return
       }
+    }
+    if (method === 'GET' && path === '/api/v1/workflow-executions') {
+      await fulfillApi(route, { records: [], nextCursor: '', hasMore: false, total: 0 })
+      return
     }
 
     unexpectedApiCalls.push(`${method} ${path}`)
@@ -319,7 +357,7 @@ test('生产 CSP 不会阻断登录页首屏渲染', async ({ page }) => {
 test('匿名访问工作流编辑器时被登录边界拦截', async ({ page }) => {
   const backend = await installBackendMocks(page, 'guest')
 
-  await page.goto('/scheduler/workflow/create')
+  await page.goto('/workflows/new')
 
   await expect(page).toHaveURL(/\/auth\/login\?redirect=/)
   await expect(page.getByRole('button', { name: '登录', exact: true })).toBeVisible()
@@ -331,7 +369,7 @@ test('匿名访问工作流编辑器时被登录边界拦截', async ({ page }) 
 test('授权用户可以填写基础信息并保存默认工作流', async ({ page }) => {
   const backend = await installBackendMocks(page, 'authenticated')
 
-  await loginAsTestUser(page, '/scheduler/workflow/create')
+  await loginAsTestUser(page, '/workflows/new')
 
   await expect(page.getByText('新建工作流定义', { exact: true })).toBeVisible()
   await page.getByLabel('工作流名称').fill('浏览器门禁工作流')
@@ -348,7 +386,7 @@ test('授权用户可以填写基础信息并保存默认工作流', async ({ pa
   await page.getByRole('button', { name: '离开', exact: true }).click()
   await detailResponse
 
-  await expect(page).toHaveURL(/\/scheduler\/workflow\/42\/edit$/)
+  await expect(page).toHaveURL(/\/workflows\/42$/)
   await expect(
     page.getByRole('navigation', { name: 'breadcrumb' }).getByText('编辑工作流定义', {
       exact: true
@@ -360,7 +398,8 @@ test('授权用户可以填写基础信息并保存默认工作流', async ({ pa
   expect(payload).not.toBeNull()
   expect(payload).toMatchObject({
     displayName: '浏览器门禁工作流',
-    description: '验证工作流编辑器关键保存路径'
+    description: '验证工作流编辑器关键保存路径',
+    graph: { schemaVersion: 2 }
   })
   expect(payload?.graph.nodes.map((node) => node.type)).toEqual(['start.manual', 'end'])
   expect(payload?.graph.edges).toHaveLength(1)

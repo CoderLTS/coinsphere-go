@@ -27,11 +27,7 @@ go run ./cmd/migrate -config ./config.yml -direction down -steps 1
 - `Down` 必须保护持久数据；无法无损回滚时依赖备份，不提供伪可逆 SQL。
 - 禁止应用启动自动建表、手工修改 `schema_migrations` 或用删除业务数据修复版本差异。
 
-## `00004_workflow_console` 注意事项
-
-`00004_workflow_console.sql` 是正式 Paper 观察前的一次性工作流控制台切换。Up 会先在事务内确认交易意图、订单、成交、账本和持仓事实均为空；Paper 账户创建时自动生成且金额仍等于初始本金、盈亏/费用/资金费均为零的初始余额快照可以保留通过，其他余额变化均拒绝迁移。通过保护后会清理旧策略草稿、版本、回测、信号、策略实例，以及包含策略节点的用户工作流定义和执行历史，再迁移纯策略定义、工作流运行绑定、节点模板、Worker 心跳和 USDT-only 行情设置。交易账户和审计/金融事实不因该迁移被删除。
-
-Down 只允许在新策略、策略版本、实例、回测、节点模板和 Worker 心跳数据全部为空时执行。生产回滚保留当前 schema 并恢复已验证备份，不自动执行 Down。
+当前正式 Paper 观察尚未开始，原 `00001` 至 `00005` 已整理为新的单一空库基线。开发环境必须重建数据库，不提供旧工作流图、旧路由或中间 migration 的升级转换；开始记录 Paper 晋级证据后冻结该基线，此后只追加版本。
 
 ## 验证
 
@@ -43,7 +39,7 @@ COINSPHERE_TEST_POSTGRES_DSN='postgres://coinsphere:test-only@127.0.0.1:5432/coi
   go test -count=1 ./internal/migration ./internal/db ./internal/service ./cmd/migrate
 ```
 
-最小验收范围是空库 Up、重复 Up、空库 Down、重新 Up、关键约束/索引、Timescale 生命周期、`00004` 金融事实 Up 保护和非空库 Down 保护。
+最小验收范围是空库 Up、重复 Up、空库 Down、重新 Up、关键约束/索引、Graph V2/Owner/等待表契约和 Timescale 生命周期。没有可用 PostgreSQL/TimescaleDB 时只能完成静态包测试，不能据此宣称空库 Up/Down 已通过。
 
 ## 发布与回滚
 
