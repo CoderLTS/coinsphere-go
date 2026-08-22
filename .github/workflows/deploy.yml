@@ -7,6 +7,10 @@ on:
         description: "部署版本号，例如 v0.2.0-deploy.1"
         required: true
         type: string
+      deploy_dir:
+        description: "可选的 CoinSphere 独立 Compose 目录"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -17,3 +21,4 @@ jobs:
     with:
       version: ${{ inputs.version }}
       deploy_only: true
+      deploy_dir: ${{ inputs.deploy_dir }}

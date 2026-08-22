@@ -10,11 +10,19 @@ on:
         required: false
         type: boolean
         default: false
+      deploy_dir:
+        required: false
+        type: string
+        default: ''
   workflow_dispatch:
     inputs:
       version:
         description: "版本号，例如 v0.1.0"
         required: true
+        type: string
+      deploy_dir:
+        description: "可选的 CoinSphere 独立 Compose 目录"
+        required: false
         type: string
 
 permissions:
@@ -33,6 +41,7 @@ jobs:
     env:
       VERSION: ${{ inputs.version }}
       COINSPHERE_REGISTRY: 127.0.0.1:5000
+      COINSPHERE_DEPLOY_DIR: ${{ inputs.deploy_dir }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
