@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -14,6 +15,8 @@ import (
 	"coinsphere/backend/internal/config"
 	"coinsphere/backend/internal/db"
 	"coinsphere/backend/internal/migration"
+	"coinsphere/backend/internal/perm"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	gormpostgres "gorm.io/driver/postgres"
@@ -38,6 +41,166 @@ func TestWorkflowTransactionContractPostgres(t *testing.T) {
 func runWorkflowTransactionContract(t *testing.T) {
 	t.Helper()
 
+	t.Run("owner scope hides every workflow resource", func(t *testing.T) {
+		database := openPostgresWorkflowContractDatabase(t)
+		app := newWorkflowContractApp(database.primary)
+		ownerOne, err := app.CreateWorkflowDefinition(workflowContractPayload("同名租户", "owner1"), 1)
+		if err != nil {
+			t.Fatalf("create owner one workflow: %v", err)
+		}
+		ownerTwo, err := app.CreateWorkflowDefinition(workflowContractPayload("同名租户", "owner2"), 2)
+		if err != nil {
+			t.Fatalf("create owner two workflow: %v", err)
+		}
+		ownerOneID := workflowContractResultID(t, ownerOne)
+		ownerTwoID := workflowContractResultID(t, ownerTwo)
+		first := readWorkflowContractDefinition(t, database.primary, ownerOneID)
+		second := readWorkflowContractDefinition(t, database.primary, ownerTwoID)
+		if first.Code != second.Code {
+			t.Fatalf("owner-scoped workflow codes = %q and %q, want equal", first.Code, second.Code)
+		}
+		if _, err := app.GetWorkflowDefinition(ownerTwoID, 1); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("cross-owner definition read error = %v", err)
+		}
+		if _, err := app.UpdateWorkflowDefinition(ownerTwoID, workflowContractPayload("越权", "owner2"), 1); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("cross-owner definition update error = %v", err)
+		}
+		if err := app.DeleteWorkflowDefinition(ownerTwoID, 1); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("cross-owner definition delete error = %v", err)
+		}
+		if _, err := app.ActivateDefinition(ownerTwoID, 2); err != nil {
+			t.Fatalf("activate owner two workflow: %v", err)
+		}
+		if _, err := app.GetRuntimeByDefinition(ownerTwoID, 1); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("cross-owner runtime read error = %v", err)
+		}
+		execution := db.WorkflowExecution{
+			OwnerUserID: 2, WorkflowDefinitionID: ownerTwoID, StartEntryKey: "manual.owner2",
+			StartNodeID: "manual-owner2", StartNodeType: "start.manual", TriggerType: "manual",
+			ConcurrencyKey: "2:" + second.Code + ":manual.owner2", Status: "failed", QueuedAt: time.Now(), MaxAttempts: 1,
+		}
+		if err := database.primary.Create(&execution).Error; err != nil {
+			t.Fatalf("create owner two execution: %v", err)
+		}
+		if _, err := app.GetExecutionDetail(execution.ID, 1); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("cross-owner execution read error = %v", err)
+		}
+		listed, err := app.ListExecutions(WorkflowExecutionQuery{OwnerUserID: 1, Page: CursorPage{Limit: 20}})
+		if err != nil {
+			t.Fatalf("list owner one executions: %v", err)
+		}
+		if listed["total"] != int64(0) {
+			t.Fatalf("owner one execution total = %#v, want 0", listed["total"])
+		}
+
+		ownerTwoOnly, err := app.CreateWorkflowDefinition(workflowContractPayload("租户二专属", "owner2-only"), 2)
+		if err != nil {
+			t.Fatalf("create owner two resource workflow: %v", err)
+		}
+		ownerTwoOnlyDefinition := readWorkflowContractDefinition(t, database.primary, workflowContractResultID(t, ownerTwoOnly))
+		resourceGraph := M{"nodes": []any{M{
+			"id": "call-owner2", "type": "workflow.call",
+			"config": M{"workflowCode": ownerTwoOnlyDefinition.Code, "entryKey": "manual.owner2-only"},
+		}}}
+		if err := app.assertWorkflowResourcesOwned(resourceGraph, 1); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("cross-owner workflow node resource error = %v, want not found", err)
+		}
+		if err := app.assertWorkflowResourcesOwned(resourceGraph, 2); err != nil {
+			t.Fatalf("owner workflow node resource check: %v", err)
+		}
+	})
+
+	t.Run("global workflow resources are recognized", func(t *testing.T) {
+		database := openPostgresWorkflowContractDatabase(t)
+		app := newWorkflowContractApp(database.primary)
+		news := db.BlockbeatsNews{Title: "workflow resource"}
+		agent := db.AssistantAgent{Code: "workflow-resource", DisplayName: "Workflow Resource"}
+		role := db.SystemRole{Code: "workflow-resource", DisplayName: "Workflow Resource", IsEnabled: true}
+		for _, record := range []any{&news, &agent, &role} {
+			if err := database.primary.Create(record).Error; err != nil {
+				t.Fatalf("create global workflow resource: %v", err)
+			}
+		}
+
+		graph := M{"nodes": []any{
+			M{"id": "news", "type": "news.manage", "config": M{"action": "update", "newsId": news.ID}},
+			M{"id": "assistant", "type": "config.assistant", "config": M{"action": "update", "agentId": agent.ID}},
+			M{"id": "user", "type": "admin.user", "config": M{"action": "update", "userId": int64(1)}},
+			M{"id": "role", "type": "admin.role", "config": M{"action": "update", "roleId": role.ID}},
+			M{"id": "permissions", "type": "admin.permissions", "config": M{"roleId": role.ID}},
+		}}
+		if err := app.assertWorkflowResourcesOwned(graph, 1); err != nil {
+			t.Fatalf("global workflow resource check: %v", err)
+		}
+		graph["nodes"].([]any)[4].(M)["config"].(M)["roleId"] = int64(999999)
+		if err := app.assertWorkflowResourcesOwned(graph, 1); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("missing global workflow resource error = %v, want not found", err)
+		}
+	})
+
+	t.Run("concurrent action decisions have one winner", func(t *testing.T) {
+		database := openPostgresWorkflowContractDatabase(t)
+		peer := database.openPeer(t)
+		apps := []*App{newWorkflowContractApp(database.primary), newWorkflowContractApp(peer)}
+		definitionID := createWorkflowContractDefinition(t, apps[0], workflowContractPayload("人工决策", "action"))
+		now := time.Now().UTC()
+		execution := db.WorkflowExecution{
+			OwnerUserID: 1, WorkflowDefinitionID: definitionID, StartEntryKey: "manual.action",
+			StartNodeID: "manual-action", StartNodeType: "start.manual", TriggerType: "manual",
+			ConcurrencyKey: "1:action", Status: "waiting_action", QueuedAt: now, StartedAt: &now,
+			MaxAttempts: 1, InputSnapshotJSON: "{}", ContextSnapshotJSON: "{}", ResultSnapshotJSON: "{}",
+		}
+		if err := database.primary.Create(&execution).Error; err != nil {
+			t.Fatalf("create waiting execution: %v", err)
+		}
+		waitID, err := uuid.NewV7()
+		if err != nil {
+			t.Fatalf("create workflow action id: %v", err)
+		}
+		wait := db.WorkflowExecutionWait{
+			ID: waitID, OwnerUserID: 1, WorkflowExecutionID: execution.ID,
+			Kind: "human_action", ActionType: "strategy.archive", TargetType: "strategy", TargetID: "unused",
+			Status: "pending", RequestJSON: "{}", ResultJSON: "{}", CreatedAt: now, UpdatedAt: now,
+		}
+		if err := database.primary.Create(&wait).Error; err != nil {
+			t.Fatalf("create workflow action: %v", err)
+		}
+		principal := &Principal{User: &db.SystemUser{ID: 1, IsActive: true}, PermissionCodes: map[string]bool{perm.TradingOverviewView: true}}
+		start := make(chan struct{})
+		results := make(chan error, len(apps))
+		for index := range apps {
+			go func(index int) {
+				<-start
+				_, err := apps[index].DecideWorkflowAction(
+					context.Background(), waitID.String(), principal,
+					WorkflowActionDecision{Decision: "rejected"}, fmt.Sprintf("workflow-reject-%d", index), "",
+				)
+				results <- err
+			}(index)
+		}
+		close(start)
+		succeeded, conflicted := 0, 0
+		for range apps {
+			switch err := <-results; {
+			case err == nil:
+				succeeded++
+			case errors.Is(err, ErrWorkflowActionConflict):
+				conflicted++
+			default:
+				t.Fatalf("concurrent workflow action decision: %v", err)
+			}
+		}
+		if succeeded != 1 || conflicted != 1 {
+			t.Fatalf("decision outcomes succeeded=%d conflicted=%d, want 1/1", succeeded, conflicted)
+		}
+		if err := database.primary.First(&wait, "id = ?", waitID).Error; err != nil {
+			t.Fatalf("reload workflow action: %v", err)
+		}
+		if wait.Status != "rejected" {
+			t.Fatalf("workflow action status = %q, want rejected", wait.Status)
+		}
+	})
+
 	t.Run("concurrent same-name creation allocates distinct families", func(t *testing.T) {
 		database := openPostgresWorkflowContractDatabase(t)
 		peer := database.openPeer(t)
@@ -55,7 +218,7 @@ func runWorkflowTransactionContract(t *testing.T) {
 		for index := range apps {
 			go func(index int) {
 				<-start
-				result, err := apps[index].CreateWorkflowDefinition(workflowContractPayload("同名并发", fmt.Sprintf("create%d", index)), int64(index+1))
+				result, err := apps[index].CreateWorkflowDefinition(workflowContractPayload("同名并发", fmt.Sprintf("create%d", index)), 1)
 				if err != nil {
 					results <- createResult{err: err}
 					return
@@ -101,7 +264,7 @@ func runWorkflowTransactionContract(t *testing.T) {
 				_, err := apps[index%len(apps)].UpdateWorkflowDefinition(
 					baseID,
 					workflowContractPayload(fmt.Sprintf("并发版本-%d", index), "version"),
-					int64(index+10),
+					1,
 				)
 				results <- err
 			}(index)
@@ -133,7 +296,7 @@ func runWorkflowTransactionContract(t *testing.T) {
 		baseID := createWorkflowContractDefinition(t, app, workflowContractPayload("版本缺口", "gap1"))
 		secondID := createWorkflowContractVersion(t, app, baseID, workflowContractPayload("版本缺口-2", "gap2"))
 		thirdID := createWorkflowContractVersion(t, app, secondID, workflowContractPayload("版本缺口-3", "gap3"))
-		if err := app.DeleteWorkflowDefinition(secondID); err != nil {
+		if err := app.DeleteWorkflowDefinition(secondID, 1); err != nil {
 			t.Fatalf("delete middle workflow version: %v", err)
 		}
 		createdID := createWorkflowContractVersion(t, app, thirdID, workflowContractPayload("版本缺口-4", "gap4"))
@@ -158,8 +321,8 @@ func runWorkflowTransactionContract(t *testing.T) {
 			_, err := app.ActivateDefinition(definitionID, operatorID)
 			results <- err
 		}
-		go activate(primaryApp, firstID, 21)
-		go activate(peerApp, secondID, 22)
+		go activate(primaryApp, firstID, 1)
+		go activate(peerApp, secondID, 1)
 		close(start)
 		for range 2 {
 			if err := <-results; err != nil {
@@ -179,19 +342,19 @@ func runWorkflowTransactionContract(t *testing.T) {
 		app := newWorkflowContractApp(database.primary)
 		firstID := createWorkflowContractDefinition(t, app, workflowContractPayload("激活回滚", "stable"))
 		secondID := createWorkflowContractVersion(t, app, firstID, workflowContractPayload("激活回滚-2", "stable"))
-		if _, err := app.ActivateDefinition(firstID, 31); err != nil {
+		if _, err := app.ActivateDefinition(firstID, 1); err != nil {
 			t.Fatalf("activate rollback fixture: %v", err)
 		}
-		if _, err := app.SetEntryEnabled(firstID, "manual.stable", false); err != nil {
+		if _, err := app.SetEntryEnabled(firstID, 1, "manual.stable", false); err != nil {
 			t.Fatalf("disable rollback fixture entry: %v", err)
 		}
-		if _, err := app.RotateWebhookSecret(firstID, "webhook.stable"); err != nil {
+		if _, err := app.RotateWebhookSecret(firstID, 1, "webhook.stable"); err != nil {
 			t.Fatalf("rotate rollback fixture secret: %v", err)
 		}
 		before := readWorkflowRuntimeSnapshot(t, database.primary, "激活回滚")
 		installWorkflowEntryInsertFailureTrigger(t, database.primary, secondID, "webhook.stable")
 
-		if _, err := app.ActivateDefinition(secondID, 32); err == nil {
+		if _, err := app.ActivateDefinition(secondID, 1); err == nil {
 			t.Fatal("activation unexpectedly succeeded after entry failure injection")
 		}
 		after := readWorkflowRuntimeSnapshot(t, database.primary, "激活回滚")
@@ -212,7 +375,7 @@ func runWorkflowTransactionContract(t *testing.T) {
 		writer := newWorkflowContractApp(database.primary)
 		firstID := createWorkflowContractDefinition(t, writer, workflowContractPayload("中间状态", "old"))
 		secondID := createWorkflowContractVersion(t, writer, firstID, workflowContractPayload("中间状态-2", "new"))
-		if _, err := writer.ActivateDefinition(firstID, 41); err != nil {
+		if _, err := writer.ActivateDefinition(firstID, 1); err != nil {
 			t.Fatalf("activate intermediate-state fixture: %v", err)
 		}
 		before := readWorkflowRuntimeSnapshot(t, peer, "中间状态")
@@ -240,7 +403,7 @@ func runWorkflowTransactionContract(t *testing.T) {
 
 		activationDone := make(chan error, 1)
 		go func() {
-			_, err := writer.ActivateDefinition(secondID, 42)
+			_, err := writer.ActivateDefinition(secondID, 1)
 			activationDone <- err
 		}()
 		waitWorkflowContractSignal(t, paused, "activation did not pause after the first uncommitted entry")
@@ -265,7 +428,7 @@ func runWorkflowTransactionContract(t *testing.T) {
 		writer := newWorkflowContractApp(peer)
 		firstID := createWorkflowContractDefinition(t, reader, workflowContractPayload("一致读取", "old"))
 		secondID := createWorkflowContractVersion(t, reader, firstID, workflowContractPayload("一致读取-2", "new"))
-		if _, err := writer.ActivateDefinition(firstID, 51); err != nil {
+		if _, err := writer.ActivateDefinition(firstID, 1); err != nil {
 			t.Fatalf("activate runtime-read fixture: %v", err)
 		}
 
@@ -295,11 +458,11 @@ func runWorkflowTransactionContract(t *testing.T) {
 		}
 		readDone := make(chan runtimeResult, 1)
 		go func() {
-			data, err := reader.GetRuntimeByDefinition(firstID)
+			data, err := reader.GetRuntimeByDefinition(firstID, 1)
 			readDone <- runtimeResult{data: data, err: err}
 		}()
 		waitWorkflowContractSignal(t, paused, "runtime read did not pause after loading state")
-		if _, err := writer.ActivateDefinition(secondID, 52); err != nil {
+		if _, err := writer.ActivateDefinition(secondID, 1); err != nil {
 			t.Fatalf("activate new definition during runtime read: %v", err)
 		}
 		release()
@@ -320,13 +483,13 @@ func runWorkflowTransactionContract(t *testing.T) {
 		database := openPostgresWorkflowContractDatabase(t)
 		app := newWorkflowContractApp(database.primary)
 		definitionID := createWorkflowContractDefinition(t, app, workflowContractPayload("停用回滚", "deactivate"))
-		if _, err := app.ActivateDefinition(definitionID, 61); err != nil {
+		if _, err := app.ActivateDefinition(definitionID, 1); err != nil {
 			t.Fatalf("activate deactivation fixture: %v", err)
 		}
 		before := readWorkflowRuntimeSnapshot(t, database.primary, "停用回滚")
 		installWorkflowStateDeactivateFailureTrigger(t, database.primary, before.State.ID)
 
-		if _, err := app.DeactivateDefinition(definitionID); err == nil {
+		if _, err := app.DeactivateDefinition(definitionID, 1); err == nil {
 			t.Fatal("deactivation unexpectedly succeeded after state failure injection")
 		}
 		after := readWorkflowRuntimeSnapshot(t, database.primary, "停用回滚")
@@ -350,14 +513,15 @@ func workflowContractPayload(displayName, suffix string) WorkflowDefinitionUpser
 	return WorkflowDefinitionUpsertPayload{
 		DisplayName: displayName,
 		Graph: M{
+			"schemaVersion": 2,
 			"nodes": []any{
 				M{"id": "manual-" + suffix, "type": "start.manual", "config": M{"entryKey": "manual." + suffix}},
 				M{"id": "webhook-" + suffix, "type": "start.webhook", "config": M{"entryKey": "webhook." + suffix}},
 				M{"id": "end-" + suffix, "type": "end", "config": M{}},
 			},
 			"edges": []any{
-				M{"source": "manual-" + suffix, "target": "end-" + suffix},
-				M{"source": "webhook-" + suffix, "target": "end-" + suffix},
+				M{"id": "manual-end-" + suffix, "kind": "flow", "source": "manual-" + suffix, "target": "end-" + suffix},
+				M{"id": "webhook-end-" + suffix, "kind": "flow", "source": "webhook-" + suffix, "target": "end-" + suffix},
 			},
 		},
 	}
@@ -378,7 +542,7 @@ func createWorkflowContractDefinition(t *testing.T, app *App, payload WorkflowDe
 
 func createWorkflowContractVersion(t *testing.T, app *App, definitionID int64, payload WorkflowDefinitionUpsertPayload) int64 {
 	t.Helper()
-	result, err := app.UpdateWorkflowDefinition(definitionID, payload, 2)
+	result, err := app.UpdateWorkflowDefinition(definitionID, payload, 1)
 	if err != nil {
 		t.Fatalf("create workflow version: %v", err)
 	}
@@ -726,5 +890,11 @@ func prepareWorkflowContractRelations(t *testing.T, database *gorm.DB) {
 	}
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply workflow contract baseline: %v", err)
+	}
+	if err := database.Exec(`INSERT INTO users (id, username, is_active) VALUES (1, 'workflow-owner-1', TRUE), (2, 'workflow-owner-2', TRUE)`).Error; err != nil {
+		t.Fatalf("seed workflow contract owners: %v", err)
+	}
+	if err := database.Exec(`SELECT setval(pg_get_serial_sequence('users', 'id'), 2, TRUE)`).Error; err != nil {
+		t.Fatalf("advance workflow contract owner sequence: %v", err)
 	}
 }

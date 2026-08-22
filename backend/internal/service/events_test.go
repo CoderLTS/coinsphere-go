@@ -87,12 +87,13 @@ func TestBacklogExhaustionDeadLettersAndAlertsOnce(t *testing.T) {
 	app.Cfg.Workflow.BacklogLimitPerKey = 1
 	definition, entry := createServiceTestSubscriber(t, database, "service.delivery.backlog")
 	if err := database.Create(&db.WorkflowExecution{
+		OwnerUserID:          1,
 		WorkflowDefinitionID: definition.ID,
 		StartEntryKey:        entry.EntryKey,
 		StartNodeID:          entry.StartNodeID,
 		StartNodeType:        entry.StartType,
 		TriggerType:          "manual",
-		ConcurrencyKey:       definition.Code + ":" + entry.EntryKey,
+		ConcurrencyKey:       "1:" + definition.Code + ":" + entry.EntryKey,
 		Status:               "queued",
 		QueuedAt:             time.Now(),
 		MaxAttempts:          1,
@@ -422,18 +423,20 @@ func loadServiceTestOutbox(t *testing.T, database *gorm.DB, outboxID int64) db.D
 func createServiceTestSubscriber(t *testing.T, database *gorm.DB, eventType string) (*db.WorkflowDefinition, *db.WorkflowRuntimeEntry) {
 	t.Helper()
 	entryKey := "event-entry"
+	ownerID := int64(1)
 	definition := &db.WorkflowDefinition{
+		OwnerUserID: &ownerID,
 		Code:        eventType,
 		Version:     1,
 		DisplayName: eventType,
-		GraphJSON: dumpJSON(M{"nodes": []any{
+		GraphJSON: dumpJSON(M{"schemaVersion": 2, "nodes": []any{
 			M{"id": "event-start", "type": "start.event", "config": M{"entryKey": entryKey, "eventType": eventType}},
-		}}),
+		}, "edges": []any{}}),
 	}
 	if err := database.Create(definition).Error; err != nil {
 		t.Fatalf("create event subscriber definition: %v", err)
 	}
-	state := &db.WorkflowRuntimeState{WorkflowCode: definition.Code, ActiveWorkflowDefinitionID: &definition.ID}
+	state := &db.WorkflowRuntimeState{OwnerUserID: ownerID, WorkflowCode: definition.Code, ActiveWorkflowDefinitionID: &definition.ID}
 	if err := database.Create(state).Error; err != nil {
 		t.Fatalf("create event subscriber state: %v", err)
 	}
@@ -462,6 +465,7 @@ func createTerminalServiceFixture(t *testing.T, database *gorm.DB, app *App, cod
 	now := time.Now().Add(-time.Second)
 	workerID := app.WorkerID
 	execution := &db.WorkflowExecution{
+		OwnerUserID:          1,
 		WorkflowDefinitionID: definition.ID,
 		StartEntryKey:        entry.EntryKey,
 		StartNodeID:          entry.StartNodeID,

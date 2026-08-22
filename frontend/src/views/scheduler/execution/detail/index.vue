@@ -42,6 +42,36 @@
                 <ElTag v-if="executionDetail.finishedAt" type="info" effect="plain">
                   耗时 {{ formatDuration(executionDetail.durationMs) }}
                 </ElTag>
+                <ElButton
+                  v-if="executionActions.length"
+                  :icon="Bell"
+                  type="warning"
+                  plain
+                  size="small"
+                  @click="actionsVisible = true"
+                >
+                  待办 {{ executionActions.length }}
+                </ElButton>
+                <ElButton
+                  v-if="canOperateExecution && executionDetail.canCancel"
+                  :icon="CircleClose"
+                  type="danger"
+                  plain
+                  size="small"
+                  :loading="operationLoading"
+                  @click="cancelExecution"
+                >
+                  取消
+                </ElButton>
+                <ElButton
+                  v-if="canOperateExecution && executionDetail.canRerun"
+                  :icon="RefreshRight"
+                  size="small"
+                  :loading="operationLoading"
+                  @click="rerunExecution"
+                >
+                  重跑
+                </ElButton>
               </div>
             </div>
           </section>
@@ -320,20 +350,35 @@
         </div>
       </template>
     </div>
+
+    <WorkflowActionDrawer
+      v-model="actionsVisible"
+      :actions="executionActions"
+      @decided="() => loadPageData({ preserveSelection: true })"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-  import { ArrowLeft, Hide, View } from '@element-plus/icons-vue'
-  import { ElMessage } from 'element-plus'
-  import type { WorkflowExecutionTransitionLog, WorkflowNodeDefinitionItem } from '@/api/scheduler'
+  import { ArrowLeft, Bell, CircleClose, Hide, RefreshRight, View } from '@element-plus/icons-vue'
+  import { ElMessage, ElMessageBox } from 'element-plus'
+  import type {
+    WorkflowActionItem,
+    WorkflowExecutionTransitionLog,
+    WorkflowNodeDefinitionItem
+  } from '@/api/scheduler'
   import {
+    fetchCancelWorkflowExecution,
     fetchNodeDefinitions,
+    fetchRerunWorkflowExecution,
+    fetchWorkflowActionList,
     fetchWorkflowExecutionDetail,
     type WorkflowExecutionDetail
   } from '@/api/scheduler'
   import { useAutoLayoutHeight } from '@/hooks/core/useLayoutHeight'
+  import { useUserStore } from '@/store/modules/user'
   import WorkflowExecutionCanvas from './components/WorkflowExecutionCanvas.vue'
+  import WorkflowActionDrawer from '@/views/workbench/components/WorkflowActionDrawer.vue'
   import {
     flattenMaterials,
     mapServerGraphToDomain
@@ -350,6 +395,7 @@
 
   const router = useRouter()
   const route = useRoute()
+  const userStore = useUserStore()
   const loading = ref(false)
   const loadError = ref('')
   const executionDetail = ref<WorkflowExecutionDetail | null>(null)
@@ -357,6 +403,9 @@
   const selectedCellId = ref<string | null>(null)
   const selectedCellType = ref<WorkflowActiveCellType>(null)
   const inspectorVisible = ref(true)
+  const actionsVisible = ref(false)
+  const actionItems = ref<WorkflowActionItem[]>([])
+  const operationLoading = ref(false)
   const { containerMinHeight } = useAutoLayoutHeight(undefined, { updateCssVar: false })
   let pollTimer: number | null = null
 
@@ -366,7 +415,7 @@
   }))
 
   const toolbarStyle = computed(() => ({
-    width: '720px'
+    width: '920px'
   }))
 
   const nodeMap = computed(
@@ -374,6 +423,12 @@
   )
   const edgeMap = computed(
     () => new Map((domainGraph.value?.edges || []).map((item) => [item.id, item]))
+  )
+  const executionActions = computed(() =>
+    actionItems.value.filter((item) => item.executionId === executionDetail.value?.id)
+  )
+  const canOperateExecution = computed(() =>
+    userStore.info.permissions.includes('scheduler.workflow_definitions.run')
   )
 
   const executedNodeCount = computed(() => {
@@ -434,7 +489,7 @@
       router.back()
       return
     }
-    router.push('/scheduler/execution')
+    router.push('/workbench')
   }
 
   const clearSelection = () => {
@@ -460,6 +515,10 @@
         queued: '排队中',
         running: '运行中',
         retry_waiting: '等待重试',
+        waiting_job: '等待任务',
+        waiting_action: '等待处理',
+        cancel_requested: '取消中',
+        canceled: '已取消',
         success: '成功',
         failed: '失败'
       }) as Record<string, string>
@@ -470,7 +529,12 @@
   const statusTagType = (status: string) => {
     if (status === 'failed') return 'danger'
     if (status === 'success') return 'success'
-    if (status === 'running' || status === 'retry_waiting') return 'warning'
+    if (
+      ['running', 'retry_waiting', 'waiting_job', 'waiting_action', 'cancel_requested'].includes(
+        status
+      )
+    )
+      return 'warning'
     return 'info'
   }
 
@@ -526,8 +590,48 @@
 
   const shouldPollExecution = computed(() => {
     const status = executionDetail.value?.status
-    return status === 'queued' || status === 'running' || status === 'retry_waiting'
+    return [
+      'queued',
+      'running',
+      'retry_waiting',
+      'waiting_job',
+      'waiting_action',
+      'cancel_requested'
+    ].includes(String(status))
   })
+
+  const cancelExecution = async () => {
+    const detail = executionDetail.value
+    if (!canOperateExecution.value || !detail?.canCancel) return
+    await ElMessageBox.confirm('取消会在当前节点边界或心跳处生效，确认继续吗？', '取消执行', {
+      type: 'warning',
+      confirmButtonText: '确认取消',
+      cancelButtonText: '返回'
+    })
+    operationLoading.value = true
+    try {
+      await fetchCancelWorkflowExecution(detail.id)
+      await loadPageData({ preserveSelection: true })
+    } finally {
+      operationLoading.value = false
+    }
+  }
+
+  const rerunExecution = async () => {
+    const detail = executionDetail.value
+    if (!canOperateExecution.value || !detail?.canRerun) return
+    await ElMessageBox.confirm('将使用原定义版本和脱敏输入创建一条新执行。', '整次重跑', {
+      confirmButtonText: '开始重跑',
+      cancelButtonText: '取消'
+    })
+    operationLoading.value = true
+    try {
+      const result = await fetchRerunWorkflowExecution(detail.id)
+      await router.push(`/runs/${result.execution.id}`)
+    } finally {
+      operationLoading.value = false
+    }
+  }
 
   const clearPollTimer = () => {
     if (pollTimer !== null) {
@@ -565,11 +669,13 @@
     try {
       // 节点定义和执行详情一起加载，随后把服务端 graph 映射成前端 domain graph，
       // 这样详情画布和编辑器画布可以共用一套节点形状与映射逻辑。
-      const [detail, nodeDefinitions] = await Promise.all([
+      const [detail, nodeDefinitions, actions] = await Promise.all([
         fetchWorkflowExecutionDetail(executionId),
-        fetchNodeDefinitions().catch(() => [] as WorkflowNodeDefinitionItem[])
+        fetchNodeDefinitions().catch(() => [] as WorkflowNodeDefinitionItem[]),
+        fetchWorkflowActionList().catch(() => [] as WorkflowActionItem[])
       ])
       executionDetail.value = detail
+      actionItems.value = actions
       // 详情画布共用编辑器那套映射，注册表镜像也得同步，端口与分支才画得对。
       syncNodeDefinitions(nodeDefinitions)
       domainGraph.value = mapServerGraphToDomain(

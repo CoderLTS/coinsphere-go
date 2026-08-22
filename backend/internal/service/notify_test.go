@@ -360,11 +360,12 @@ func serveSMTPTestConnection(conn net.Conn) (string, error) {
 func TestExternalDeliveryFinalizesAfterCancellation(t *testing.T) {
 	gdb := openMigratedServiceDatabase(t)
 
-	definition := db.WorkflowDefinition{Code: "notify-cancel", Version: 1}
+	ownerID := int64(1)
+	definition := db.WorkflowDefinition{OwnerUserID: &ownerID, Code: "notify-cancel", Version: 1, GraphJSON: `{"schemaVersion":2,"nodes":[],"edges":[]}`}
 	if err := gdb.Create(&definition).Error; err != nil {
 		t.Fatalf("create definition: %v", err)
 	}
-	execution := db.WorkflowExecution{WorkflowDefinitionID: definition.ID, Status: "running", QueuedAt: time.Now()}
+	execution := db.WorkflowExecution{OwnerUserID: ownerID, WorkflowDefinitionID: definition.ID, Status: "running", QueuedAt: time.Now()}
 	if err := gdb.Create(&execution).Error; err != nil {
 		t.Fatalf("create execution: %v", err)
 	}

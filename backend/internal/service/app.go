@@ -26,6 +26,9 @@ import (
 // 首字母大写 ErrPermission = 导出标识符,别的包能引用;见 GO入门笔记『项目怎么组织』。
 var ErrPermission = errors.New("permission denied")
 
+// ErrNotFound deliberately covers both missing and cross-owner resources.
+var ErrNotFound = errors.New("resource not found")
+
 // App 单进程运行时:数据库 + 配置 + 安全组件 + 实时推送 + 队列内部状态。
 //
 // App 就是本包的"依赖容器":把整个后端要共用的东西(数据库连接、配置、安全工具、
@@ -229,7 +232,7 @@ func dumpJSON(value any) string {
 
 // serializeSnapshot 序列化快照并按字节上限截断。
 func serializeSnapshot(value any, maxBytes int) string {
-	text := dumpJSON(value)
+	text := dumpJSON(snapshotSafeValue(value))
 	if len(text) <= maxBytes {
 		return text
 	}
@@ -246,11 +249,48 @@ func serializeSnapshot(value any, maxBytes int) string {
 	return dumpJSON(M{"_truncated": true, "preview": preview})
 }
 
+func snapshotSafeValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		result := make(M, len(typed))
+		for key, item := range typed {
+			if workflowSensitiveKey(key) {
+				result[key] = "[REDACTED]"
+				continue
+			}
+			result[key] = snapshotSafeValue(item)
+		}
+		return result
+	case []any:
+		result := make([]any, len(typed))
+		for index := range typed {
+			result[index] = snapshotSafeValue(typed[index])
+		}
+		return result
+	default:
+		return value
+	}
+}
+
+func workflowSensitiveKey(key string) bool {
+	normalized := strings.NewReplacer("_", "", "-", "", ".", "").Replace(strings.ToLower(key))
+	for _, marker := range []string{"password", "secret", "token", "credential", "apikey", "authorization", "cookie", "privatekey"} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // bizErr 业务错误(等价原后端的 ValueError,统一转为 code=400)。
 // args ...any 是"可变参数":调用时可传任意多个值,函数内部 args 就是一个切片;
 // 传给 fmt.Errorf 时用 args... 再"展开"回去。fmt.Errorf 按格式串生成一个 error 值。
 func bizErr(format string, args ...any) error {
 	return fmt.Errorf(format, args...)
+}
+
+func notFoundErr(resource string) error {
+	return fmt.Errorf("%w: %s", ErrNotFound, resource)
 }
 
 // truncate 截断字符串到 n 个字节内(按 rune 安全)。

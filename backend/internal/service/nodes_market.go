@@ -7,6 +7,7 @@ import (
 
 	"coinsphere/backend/internal/db"
 	"coinsphere/backend/internal/marketdata"
+	"coinsphere/backend/internal/perm"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -14,20 +15,20 @@ import (
 
 func init() {
 	registerNode(&workflowNodeDefinition{
-		TypeCode: "market.metadata.sync", Label: "同步币种元数据",
+		TypeCode: "market.metadata.sync", Label: "同步币种元数据", RequiredPermission: perm.DataMarketManage,
 		ConfigSchema: M{"type": "object", "properties": M{}}, Execute: marketMetadataSyncExecute,
 	})
 	registerNode(&workflowNodeDefinition{
-		TypeCode: "market.candles.subscribe", Label: "订阅 K 线",
+		TypeCode: "market.candles.subscribe", Label: "订阅 K 线", RequiredPermission: perm.DataMarketManage,
 		ConfigSchema: M{"type": "object", "properties": M{
-			"instrumentId": M{"type": "string", "title": "标的"},
+			"instrumentId": M{"type": "string", "title": "标的", "resource": "market-instrument"},
 			"interval":     M{"type": "string", "title": "周期", "enum": []string{"1m", "5m", "15m", "1h", "4h", "1d"}},
 		}, "required": []string{"instrumentId", "interval"}}, Execute: marketCandlesSubscribeExecute,
 	})
 	registerNode(&workflowNodeDefinition{
-		TypeCode: "market.candles.backfill", Label: "补齐 K 线",
+		TypeCode: "market.candles.backfill", Label: "补齐 K 线", RequiredPermission: perm.DataMarketManage,
 		ConfigSchema: M{"type": "object", "properties": M{
-			"instrumentId": M{"type": "string", "title": "标的"},
+			"instrumentId": M{"type": "string", "title": "标的", "resource": "market-instrument"},
 			"interval":     M{"type": "string", "title": "周期", "enum": []string{"1m", "5m", "15m", "1h", "4h", "1d"}},
 			"startTime":    M{"type": "string", "title": "开始时间(UTC)"},
 			"endTime":      M{"type": "string", "title": "结束时间(UTC)"},

@@ -16,9 +16,19 @@ import (
 )
 
 const postgresDSNEnv = "COINSPHERE_TEST_POSTGRES_DSN"
-const latestMigrationVersion = 4
+const latestMigrationVersion = 1
 
 var postgresSchemaSequence atomic.Uint64
+
+func TestMigrationBundleIsSingleBaseline(t *testing.T) {
+	entries, err := embeddedSQL.ReadDir("sql")
+	if err != nil {
+		t.Fatalf("read embedded migrations: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "00001_initial.sql" {
+		t.Fatalf("migration bundle = %v, want only 00001_initial.sql", entries)
+	}
+}
 
 func TestInitialMigrationLifecycle(t *testing.T) {
 	database := openPostgresSchema(t)
@@ -68,9 +78,6 @@ func TestInitialMigrationDownRejectsData(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply initial migration: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 3); err != nil {
-		t.Fatalf("roll back post-baseline migrations: %v", err)
-	}
 	if _, err := database.Exec(`INSERT INTO roles (code) VALUES ('rollback-guard')`); err != nil {
 		t.Fatalf("insert rollback guard: %v", err)
 	}
@@ -78,98 +85,8 @@ func TestInitialMigrationDownRejectsData(t *testing.T) {
 		t.Fatal("rollback removed a non-empty schema")
 	}
 	current, _, err := runner.Versions(context.Background())
-	if err != nil || current != 1 {
+	if err != nil || current != latestMigrationVersion {
 		t.Fatalf("failed rollback changed migration version: current=%d err=%v", current, err)
-	}
-}
-
-func TestEndpointMigrationDownRejectsChangedSettings(t *testing.T) {
-	database := openPostgresSchema(t)
-	runner, err := New(database)
-	if err != nil {
-		t.Fatalf("create migration runner: %v", err)
-	}
-	if _, err := runner.Up(context.Background(), 0); err != nil {
-		t.Fatalf("apply migrations: %v", err)
-	}
-	if _, err := runner.Down(context.Background(), 2); err != nil {
-		t.Fatalf("roll back workflow console and node definition migrations: %v", err)
-	}
-	if _, err := database.Exec(`UPDATE market_sync_settings SET spot_rest_base_url = 'https://api.binance.com' WHERE id = 1`); err != nil {
-		t.Fatalf("change sync setting: %v", err)
-	}
-	if _, err := runner.Down(context.Background(), 1); err == nil {
-		t.Fatal("endpoint migration rollback removed changed settings")
-	}
-	current, _, err := runner.Versions(context.Background())
-	if err != nil || current != 2 {
-		t.Fatalf("failed endpoint rollback changed migration version: current=%d err=%v", current, err)
-	}
-}
-
-func TestWorkflowConsoleMigrationAllowsOnlyPristinePaperBalance(t *testing.T) {
-	for _, test := range []struct {
-		name        string
-		fees        string
-		wantVersion int64
-		wantError   bool
-	}{
-		{name: "pristine balance", fees: "0", wantVersion: 4},
-		{name: "changed balance", fees: "1", wantVersion: 3, wantError: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			database := openPostgresSchema(t)
-			runner, err := New(database)
-			if err != nil {
-				t.Fatalf("create migration runner: %v", err)
-			}
-			if _, err := runner.Up(context.Background(), 3); err != nil {
-				t.Fatalf("apply pre-console migrations: %v", err)
-			}
-
-			var ownerID, idempotencyID int64
-			if err := database.QueryRow(`INSERT INTO users (username) VALUES ('migration-paper-owner') RETURNING id`).Scan(&ownerID); err != nil {
-				t.Fatalf("insert Paper account owner: %v", err)
-			}
-			if err := database.QueryRow(`
-INSERT INTO idempotency_records (user_id, scope, key_hash, request_hash, expires_at, created_at)
-VALUES ($1, 'trading-account:create', repeat('a', 64), repeat('b', 64),
-        CURRENT_TIMESTAMP + INTERVAL '1 day', CURRENT_TIMESTAMP)
-RETURNING id
-`, ownerID).Scan(&idempotencyID); err != nil {
-				t.Fatalf("insert Paper account idempotency record: %v", err)
-			}
-			const accountID = "019d5000-0000-7000-8000-000000000100"
-			if _, err := database.Exec(`
-INSERT INTO trading_accounts (
-    id, owner_user_id, name, market_type, environment, initial_balance,
-    paper_fee_rate, creation_idempotency_record_id
-) VALUES ($1, $2, 'migration paper', 'spot', 'paper', 10000, 0.001, $3)
-`, accountID, ownerID, idempotencyID); err != nil {
-				t.Fatalf("insert Paper account: %v", err)
-			}
-			if _, err := database.Exec(`
-INSERT INTO paper_balances (
-    account_id, cash_balance, equity, peak_equity, day_start_date,
-    day_start_equity, realized_pnl, unrealized_pnl, fees, funding, updated_at
-) VALUES ($1, 10000, 10000, 10000, CURRENT_DATE, 10000, 0, 0, $2, 0, CURRENT_TIMESTAMP)
-`, accountID, test.fees); err != nil {
-				t.Fatalf("insert Paper balance: %v", err)
-			}
-
-			_, err = runner.Up(context.Background(), 4)
-			if (err != nil) != test.wantError {
-				t.Fatalf("apply workflow console migration: err=%v wantError=%t", err, test.wantError)
-			}
-			current, _, versionErr := runner.Versions(context.Background())
-			if versionErr != nil || current != test.wantVersion {
-				t.Fatalf("migration version=%d want=%d err=%v", current, test.wantVersion, versionErr)
-			}
-			var balances int
-			if err := database.QueryRow(`SELECT COUNT(*) FROM paper_balances WHERE account_id = $1`, accountID).Scan(&balances); err != nil || balances != 1 {
-				t.Fatalf("Paper balance count=%d want=1 err=%v", balances, err)
-			}
-		})
 	}
 }
 
@@ -190,6 +107,8 @@ func TestInitialMigrationCoreConstraints(t *testing.T) {
 		`UPDATE market_sync_settings SET proxy_enabled = TRUE, proxy_url = 'https://proxy.invalid:7890' WHERE id = 1`,
 		`INSERT INTO worker_tasks (id, task_type, payload_json, status) VALUES ('invalid-status', 'noop', '{}', 'unknown')`,
 		`INSERT INTO trading_controls (id, global_kill_switch) VALUES (2, FALSE)`,
+		`INSERT INTO workflow_definitions (code, version, graph_json, is_builtin) VALUES ('ownerless', 1, '{"schemaVersion":2}', FALSE)`,
+		`INSERT INTO workflow_definitions (code, version, graph_json, is_builtin) VALUES ('graph-v1', 1, '{"schemaVersion":1}', TRUE)`,
 	}
 	for _, statement := range invalidStatements {
 		if _, err := database.Exec(statement); err == nil {
@@ -203,7 +122,21 @@ func TestInitialMigrationCoreConstraints(t *testing.T) {
 		"uq_trading_intents_signal",
 		"ix_worker_heartbeats_lane_heartbeat",
 		"ix_workflow_node_templates_owner_enabled",
+		"ux_workflow_wait_active_execution",
+		"ix_workflow_wait_owner_status",
 	})
+	var waitIndexPredicate string
+	if err := database.QueryRow(`
+SELECT pg_get_expr(index.indpred, index.indrelid)
+FROM pg_index AS index
+JOIN pg_class AS relation ON relation.oid = index.indexrelid
+WHERE relation.relname = 'ux_workflow_wait_active_execution'
+`).Scan(&waitIndexPredicate); err != nil {
+		t.Fatalf("inspect active workflow wait index: %v", err)
+	}
+	if !strings.Contains(waitIndexPredicate, "pending") || !strings.Contains(waitIndexPredicate, "processing") {
+		t.Fatalf("active workflow wait predicate = %q", waitIndexPredicate)
+	}
 }
 
 func TestValidateCurrentRejectsDatabaseAhead(t *testing.T) {
@@ -215,7 +148,7 @@ func TestValidateCurrentRejectsDatabaseAhead(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply initial migration: %v", err)
 	}
-	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES (5, TRUE)`); err != nil {
+	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES (2, TRUE)`); err != nil {
 		t.Fatalf("record newer migration: %v", err)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err == nil {
@@ -235,7 +168,7 @@ func assertCurrentTables(t *testing.T, database *sql.DB) {
 		"testnet_positions", "testnet_reconciliations", "testnet_risk_states", "testnet_trade_facts", "trading_account_credentials",
 		"trading_account_instruments", "trading_accounts", "trading_controls", "trading_events", "trading_intents", "user_roles",
 		"users", "watchlist_items", "worker_heartbeats", "worker_tasks", "workflow_definitions", "workflow_execution_attempts", "workflow_execution_nodes",
-		"workflow_execution_transitions", "workflow_executions", "workflow_runtime_entries", "workflow_runtime_states",
+		"workflow_execution_transitions", "workflow_execution_waits", "workflow_executions", "workflow_runtime_entries", "workflow_runtime_states",
 		"workflow_node_templates",
 	}
 	rows, err := database.Query(`

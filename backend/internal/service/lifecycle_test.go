@@ -16,23 +16,26 @@ func TestRuntimeCancellationFinalizesInFlightExecution(t *testing.T) {
 	gdb := openMigratedServiceDatabase(t)
 
 	graph := M{
+		"schemaVersion": 2,
 		"nodes": []any{
 			M{"id": "start", "type": "start.manual", "config": M{"entryKey": "manual"}},
 			M{"id": "wait", "type": "delay.wait", "config": M{"durationMs": 60_000}},
 			M{"id": "end", "type": "end", "config": M{}},
 		},
 		"edges": []any{
-			M{"id": "start-wait", "source": "start", "target": "wait"},
-			M{"id": "wait-end", "source": "wait", "target": "end"},
+			M{"id": "start-wait", "kind": "flow", "source": "start", "target": "wait"},
+			M{"id": "wait-end", "kind": "flow", "source": "wait", "target": "end"},
 		},
 	}
-	definition := db.WorkflowDefinition{Code: "test-cancel", Version: 1, DisplayName: "取消测试", GraphJSON: dumpJSON(graph)}
+	ownerID := int64(1)
+	definition := db.WorkflowDefinition{OwnerUserID: &ownerID, Code: "test-cancel", Version: 1, DisplayName: "取消测试", GraphJSON: dumpJSON(graph)}
 	if err := gdb.Create(&definition).Error; err != nil {
 		t.Fatalf("create definition: %v", err)
 	}
 	workerID := "test-worker"
 	startedAt := time.Now()
 	execution := db.WorkflowExecution{
+		OwnerUserID:          ownerID,
 		WorkflowDefinitionID: definition.ID,
 		StartEntryKey:        "manual",
 		StartNodeID:          "start",
@@ -114,11 +117,13 @@ func TestClaimHandoffSurvivesCancellationAfterUpdate(t *testing.T) {
 		WorkerID:    workerID,
 		runningKeys: map[string]int{},
 	}
-	definition := db.WorkflowDefinition{Code: "claim-cancel", Version: 1}
+	ownerID := int64(1)
+	definition := db.WorkflowDefinition{OwnerUserID: &ownerID, Code: "claim-cancel", Version: 1, GraphJSON: `{"schemaVersion":2,"nodes":[],"edges":[]}`}
 	if err := gdb.Create(&definition).Error; err != nil {
 		t.Fatalf("create definition: %v", err)
 	}
 	execution := db.WorkflowExecution{
+		OwnerUserID:          ownerID,
 		WorkflowDefinitionID: definition.ID,
 		Status:               "queued",
 		QueuedAt:             time.Now(),

@@ -7,6 +7,10 @@
 
 CoinSphere 采用 `Web + Go App + Python Worker + PostgreSQL/TimescaleDB` 的模块化单体架构，并以工作流作为用户可见的统一编排入口。
 
+- `/home` 保留为运行概览，业务任务统一从 `/workbench` 进入；不维护旧业务导航与工作台两套操作界面。
+- 工作流使用 Graph V2 的 `flow`/`data` 双边模型和 JSON Schema 端口，界面生成数据映射，不要求用户填写内部状态路径。
+- 工作流定义、运行态、执行和等待均保存 Owner，所有用户查询强制按 Owner 过滤；内置定义只作为不可执行模板。
+- Worker 任务和高风险人工动作通过数据库等待记录暂停与恢复执行；取消、整次重跑、幂等决策继续复用现有 PostgreSQL 队列和事务边界。
 - Go App 承担 API、RBAC、工作流、调度、公共行情、通知和 Paper 执行。
 - Python Worker 单进程保留 realtime/backtest 两个独立槽位。
 - PostgreSQL 同时保存业务事实、工作流状态、任务队列和 Outbox；不增加消息中间件。
@@ -18,6 +22,6 @@ CoinSphere 采用 `Web + Go App + Python Worker + PostgreSQL/TimescaleDB` 的模
 
 ## 结果
 
-默认部署只有 Web、Go App、Python Worker 和 TimescaleDB 四个常驻服务。用户可在同一画布连接定时、手工、事件、行情、策略和通知节点，并从执行记录查看节点状态、边流转、重试和结构化错误。系统不提供任意后端插件 SDK；工作流激活负责把已发布策略定义变成受风控约束的运行实例。
+默认部署只有 Web、Go App、Python Worker 和 TimescaleDB 四个常驻服务。用户可在同一工作台连接、配置、运行、审批和排障，并从画布覆盖层与时间线查看节点状态、实际边流转、重试和结构化错误。系统不提供任意后端插件 SDK；工作流激活负责把已发布策略定义变成受风控约束的运行实例。
 
 当前完整设计以[架构概览](../overview.md)为准。

@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -25,6 +26,8 @@ func TestRoutesUseV1AndRemoveLegacyEntrypoints(t *testing.T) {
 		{http.MethodGet, "/ws/notifications"},
 		{http.MethodGet, "/api/data/push-deliveries"},
 		{http.MethodGet, "/api/v1/data/push-deliveries"},
+		{http.MethodPost, "/api/v1/workflows/42/executions"},
+		{http.MethodGet, "/api/v1/workflows/42/executions"},
 	} {
 		request := httptest.NewRequest(route.method, route.path, nil)
 		if _, pattern := mux.Handler(request); pattern != "" {
@@ -39,6 +42,7 @@ func TestRoutesUseV1AndRemoveLegacyEntrypoints(t *testing.T) {
 		{http.MethodPost, "/api/v1/auth/logout"},
 		{http.MethodPost, "/api/v1/auth/reauth"},
 		{http.MethodGet, "/api/v1/me"},
+		{http.MethodGet, "/api/v1/workbench"},
 		{http.MethodGet, "/api/v1/ws/notifications"},
 		{http.MethodGet, "/api/v1/admin/strategies"},
 		{http.MethodPost, "/api/v1/admin/strategies/019c2f6d-7c00-7000-8000-000000000001/publish"},
@@ -50,6 +54,11 @@ func TestRoutesUseV1AndRemoveLegacyEntrypoints(t *testing.T) {
 		{http.MethodPost, "/api/v1/signals/019c2f6d-7c00-7000-8000-000000000001/approve"},
 		{http.MethodPost, "/api/v1/signals/019c2f6d-7c00-7000-8000-000000000001/reject"},
 		{http.MethodGet, "/api/v1/trading/overview"},
+		{http.MethodGet, "/api/v1/workflow-executions"},
+		{http.MethodPost, "/api/v1/workflow-executions"},
+		{http.MethodGet, "/api/v1/workflow-executions/42"},
+		{http.MethodPost, "/api/v1/workflow-executions/42/cancel"},
+		{http.MethodPost, "/api/v1/workflow-executions/42/rerun"},
 		{http.MethodPost, "/api/v1/trading/accounts"},
 		{http.MethodPut, "/api/v1/trading/accounts/019c2f6d-7c00-7000-8000-000000000001/risk"},
 		{http.MethodPost, "/api/v1/trading/accounts/019c2f6d-7c00-7000-8000-000000000001/automation/enable"},
@@ -65,6 +74,15 @@ func TestRoutesUseV1AndRemoveLegacyEntrypoints(t *testing.T) {
 		request := httptest.NewRequest(route.method, route.path, nil)
 		if _, pattern := mux.Handler(request); pattern == "" {
 			t.Fatalf("v1 path %q has no route", route.path)
+		}
+	}
+	for _, legacyPath := range []string{
+		"/api/v1/workflows/executions",
+		"/api/v1/workflows/executions/42",
+	} {
+		request := httptest.NewRequest(http.MethodGet, legacyPath, nil)
+		if _, pattern := mux.Handler(request); pattern == "GET /api/v1/workflows/executions" || strings.Contains(pattern, "workflowPath") {
+			t.Fatalf("legacy workflow execution path %q still has execution route %q", legacyPath, pattern)
 		}
 	}
 }

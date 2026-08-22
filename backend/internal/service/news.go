@@ -323,19 +323,19 @@ COUNT(*) FILTER (WHERE status = 'paused') AS paused
 		alerts = append(alerts, M{"severity": "danger", "title": "数据库不可用", "description": "PostgreSQL 健康检查失败", "path": ""})
 	}
 	if len(offlineLanes) > 0 {
-		alerts = append(alerts, M{"severity": "danger", "title": "Worker 离线", "description": strings.Join(offlineLanes, "、") + " 队列超过 45 秒未收到心跳", "path": "/scheduler/execution"})
+		alerts = append(alerts, M{"severity": "danger", "title": "Worker 离线", "description": strings.Join(offlineLanes, "、") + " 队列超过 45 秒未收到心跳", "path": "/workbench"})
 	}
 	if workflow.Failed > 0 {
-		alerts = append(alerts, M{"severity": "warning", "title": "存在失败的工作流", "description": "请在执行记录中查看结构化失败信息", "count": workflow.Failed, "path": "/scheduler/execution"})
+		alerts = append(alerts, M{"severity": "warning", "title": "存在失败的工作流", "description": "请在工作流工作台查看结构化失败信息", "count": workflow.Failed, "path": "/workbench"})
 	}
 	if marketStatus["status"] == "failed" {
-		alerts = append(alerts, M{"severity": "warning", "title": "行情同步失败", "description": "最近一次币种元数据同步未成功", "path": "/data/market-metadata"})
+		alerts = append(alerts, M{"severity": "warning", "title": "行情同步失败", "description": "最近一次币种元数据同步未成功", "path": "/workbench"})
 	}
 	if control.EmergencyStopped {
-		alerts = append(alerts, M{"severity": "danger", "title": "交易急停已开启", "description": control.StopReason, "path": "/trading/accounts"})
+		alerts = append(alerts, M{"severity": "danger", "title": "交易急停已开启", "description": control.StopReason, "path": "/workbench"})
 	}
 	if accounts.Paused > 0 {
-		alerts = append(alerts, M{"severity": "warning", "title": "交易账户已暂停", "description": "请检查账户凭据和风控状态", "count": accounts.Paused, "path": "/trading/accounts"})
+		alerts = append(alerts, M{"severity": "warning", "title": "交易账户已暂停", "description": "请检查账户凭据和风控状态", "count": accounts.Paused, "path": "/workbench"})
 	}
 
 	return M{

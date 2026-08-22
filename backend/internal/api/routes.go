@@ -47,6 +47,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/logout", s.requireAuth(s.handleLogout))
 	mux.HandleFunc("POST /api/v1/auth/reauth", s.requireAuth(s.handleReauth))
 	mux.HandleFunc("GET /api/v1/me", s.requireAuth(s.handleMe))
+	mux.HandleFunc("GET /api/v1/workbench", s.requireAuth(s.handleWorkbench))
 
 	// 首页。
 	mux.HandleFunc("GET /api/v1/home/meta", s.requireAuth(func(w http.ResponseWriter, r *http.Request, p *service.Principal) {
@@ -138,8 +139,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/system/menu-buttons/{buttonId}", s.requirePermission(perm.SystemMenusUpdate, s.handleUpdateMenuButton))
 	mux.HandleFunc("DELETE /api/v1/system/menu-buttons/{buttonId}", s.requirePermission(perm.SystemMenusDelete, s.handleDeleteMenuButton))
 
-	// 调度中心。
-	mux.HandleFunc("GET /api/v1/workflows/overview", s.requirePermission(perm.SchedulerWorkflowDefinitionsView, s.handleSchedulerOverview))
+	// 工作流工作台。
 	mux.HandleFunc("GET /api/v1/workflows/node-definitions", s.requirePermission(perm.SchedulerWorkflowDefinitionsView, s.handleListNodeDefinitions))
 	mux.HandleFunc("GET /api/v1/workflow-node-templates", s.requirePermission(perm.SchedulerWorkflowDefinitionsView, s.handleListWorkflowNodeTemplates))
 	mux.HandleFunc("POST /api/v1/workflow-node-templates", s.requirePermission(perm.SchedulerWorkflowDefinitionsCreate, s.handleCreateWorkflowNodeTemplate))
@@ -157,10 +157,14 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/workflows/{definitionId}/runtime", s.requirePermission(perm.SchedulerWorkflowRuntimeView, s.handleGetWorkflowRuntime))
 	mux.HandleFunc("PATCH /api/v1/workflows/{definitionId}/runtime/entries/{entryKey}", s.requirePermission(perm.SchedulerWorkflowRuntimeUpdate, s.handlePatchRuntimeEntry))
 	mux.HandleFunc("POST /api/v1/workflows/{definitionId}/runtime/entries/{entryKey}/rotate-secret", s.requirePermission(perm.SchedulerWorkflowRuntimeUpdate, s.handleRotateWebhookSecret))
-	mux.HandleFunc("POST /api/v1/workflows/{definitionId}/executions", s.requirePermission(perm.SchedulerWorkflowDefinitionsRun, s.handleRunWorkflowStarts))
-	mux.HandleFunc("GET /api/v1/workflows/{definitionId}/executions", s.requirePermission(perm.SchedulerWorkflowExecutionsView, s.handleListDefinitionExecutions))
-	mux.HandleFunc("GET /api/v1/workflows/executions", s.requirePermission(perm.SchedulerWorkflowExecutionsView, s.handleListAllExecutions))
-	mux.HandleFunc("GET /api/v1/workflows/{workflowPath...}", s.requirePermission(perm.SchedulerWorkflowExecutionsView, s.handleWorkflowCatchAll))
+	mux.HandleFunc("GET /api/v1/workflow-executions", s.requirePermission(perm.SchedulerWorkflowExecutionsView, s.handleListAllExecutions))
+	mux.HandleFunc("POST /api/v1/workflow-executions", s.requirePermission(perm.SchedulerWorkflowDefinitionsRun, s.handleCreateWorkflowExecution))
+	mux.HandleFunc("GET /api/v1/workflow-executions/{executionId}", s.requirePermission(perm.SchedulerWorkflowExecutionsView, s.handleGetExecutionDetail))
+	mux.HandleFunc("POST /api/v1/workflow-executions/{executionId}/cancel", s.requirePermission(perm.SchedulerWorkflowDefinitionsRun, s.handleCancelExecution))
+	mux.HandleFunc("POST /api/v1/workflow-executions/{executionId}/rerun", s.requirePermission(perm.SchedulerWorkflowDefinitionsRun, s.handleRerunExecution))
+	mux.HandleFunc("GET /api/v1/workflow-actions", s.requireAuth(s.handleListWorkflowActions))
+	mux.HandleFunc("GET /api/v1/workflow-actions/{actionId}", s.requireAuth(s.handleGetWorkflowAction))
+	mux.HandleFunc("POST /api/v1/workflow-actions/{actionId}/decisions", s.requireAuth(s.handleDecideWorkflowAction))
 	// webhook 同时要求登录 token 和请求头 secret，避免公开 HTTP 入口绕过登录边界。
 	mux.HandleFunc("POST /api/v1/workflows/webhooks/{workflowCode}/{entryKey}", s.requireAuth(s.handleWebhookTrigger))
 
