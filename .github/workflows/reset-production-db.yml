@@ -49,9 +49,9 @@ jobs:
             exit 1
           }
 
-          running_services=$(docker ps --filter label=com.docker.compose.project=coinsphere-go \
-            --format '{{ index .Labels "com.docker.compose.service" }}')
-          if grep -qx 'executor' <<<"$running_services"; then
+          if docker ps -q \
+            --filter label=com.docker.compose.project=coinsphere-go \
+            --filter label=com.docker.compose.service=executor | grep -q .; then
             echo "Private Executor 正在运行，拒绝删除数据库卷" >&2
             exit 1
           fi
