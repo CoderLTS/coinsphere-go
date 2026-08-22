@@ -8,21 +8,10 @@ export type WorkflowExecutionStatus =
   | 'queued'
   | 'running'
   | 'retry_waiting'
-  | 'waiting_job'
-  | 'waiting_action'
-  | 'cancel_requested'
   | 'success'
   | 'failed'
   | 'canceled'
 export type WorkflowTerminalStatus = 'success' | 'failed' | 'canceled'
-export type WorkflowEdgeKind = 'flow' | 'data'
-
-export interface WorkflowNodePortDefinition {
-  id: string
-  label: string
-  required: boolean
-  schema: Record<string, any>
-}
 
 /** 工作流可编排的智能体选项。requiresRefId / supportsAnalyze 决定节点表单显示哪些输入项。 */
 export interface WorkflowAgentOption {
@@ -53,13 +42,6 @@ export interface WorkflowNodeDefinitionItem {
   branchesConfigKey?: string
   /** 动态分支之外总是存在的分支（如 switch 的 default）。 */
   extraBranches?: string[]
-  inputPorts: WorkflowNodePortDefinition[]
-  outputPorts: WorkflowNodePortDefinition[]
-  executionMode: 'sync' | 'worker_job' | 'human_action' | string
-  securityPolicy: 'standard' | 'automatic_restrictive' | 'human_reauth' | string
-  requiredPermission: string
-  permissionConfigKey?: string
-  permissionByValue?: Record<string, string>
 }
 
 export interface WorkflowNodeTemplateItem {
@@ -97,19 +79,13 @@ export interface WorkflowNodeItem {
 
 export interface WorkflowEdgeItem {
   id: string
-  kind: WorkflowEdgeKind
   source: string
   target: string
   branch?: string
   label?: string
-  sourcePort?: string
-  targetPort?: string
-  sourcePointer?: string
-  targetPointer?: string
 }
 
 export interface WorkflowGraph {
-  schemaVersion: 2
   nodes: WorkflowNodeItem[]
   edges: WorkflowEdgeItem[]
 }
@@ -206,8 +182,6 @@ export interface WorkflowExecutionNodeLog {
   finishedAt: string
   durationMs: number
   error: { summary: string; category: string; retryable: boolean } | null
-  input: Record<string, any>
-  output: Record<string, any>
 }
 
 export interface WorkflowExecutionTransitionLog {
@@ -243,10 +217,6 @@ export interface WorkflowExecutionItem {
   maxAttempts: number
   durationMs: number
   error: { summary: string; category: string; retryable: boolean } | null
-  cancelRequestedAt: string
-  rerunOfExecutionId?: number | null
-  canCancel: boolean
-  canRerun: boolean
 }
 
 export interface WorkflowExecutionAttemptItem {
@@ -265,8 +235,6 @@ export interface WorkflowExecutionDetail extends WorkflowExecutionItem {
   nodeLogs: WorkflowExecutionNodeLog[]
   attempts: WorkflowExecutionAttemptItem[]
   transitionLogs: WorkflowExecutionTransitionLog[]
-  input: Record<string, any>
-  output: Record<string, any>
 }
 
 export type WorkflowExecutionList = Api.Common.PaginatedResponse<WorkflowExecutionItem>
@@ -274,7 +242,6 @@ export type WorkflowExecutionList = Api.Common.PaginatedResponse<WorkflowExecuti
 export interface WorkflowExecutionQueryParams {
   cursor?: string
   limit?: number
-  workflowDefinitionId?: number
   workflowDefinitionCode?: string
   keyword?: string
   triggerType?: WorkflowTriggerType | string
@@ -284,10 +251,6 @@ export interface WorkflowExecutionQueryParams {
 export interface WorkflowManualRunPayload {
   startEntryKeys: string[]
   inputs?: Record<string, any>
-}
-
-export interface WorkflowExecutionCreatePayload extends WorkflowManualRunPayload {
-  workflowDefinitionId: number
 }
 
 export interface RunWorkflowDefinitionResponse {
@@ -319,39 +282,10 @@ export interface WorkflowOverview {
   definitions: WorkflowOverviewDefinitionItem[]
 }
 
-export interface WorkflowActionItem {
-  id: string
-  executionId: number
-  actionType: string
-  title: string
-  targetType: string
-  targetId: string
-  status: string
-  request: Record<string, any>
-  result: Record<string, any>
-  requiresReauth: boolean
-  requiredPermission: string
-  expiresAt: string
-  formSchema: Record<string, any>
-  resolvedAt: string
-  createdAt: string
-}
-
-export interface WorkflowActionDecisionPayload {
-  decision: 'approved' | 'rejected'
-  formData: Record<string, any>
-}
-
-export interface WorkflowWorkbench {
-  workflows: WorkflowDefinitionItem[]
-  executions: WorkflowExecutionItem[]
-  actions: WorkflowActionItem[]
-  health: WorkflowOverview & { system?: Record<string, any> }
-  nodeDefinitions: WorkflowNodeDefinitionItem[]
-}
-
-export function fetchWorkflowWorkbench() {
-  return request.get<WorkflowWorkbench>({ url: '/api/v1/workbench' })
+export function fetchSchedulerOverview() {
+  return request.get<WorkflowOverview>({
+    url: '/api/v1/workflows/overview'
+  })
 }
 
 export function fetchNodeDefinitions() {
@@ -480,7 +414,14 @@ export function fetchRotateWorkflowRuntimeEntrySecret(definitionId: number, entr
 }
 
 export function fetchRunWorkflowDefinition(definitionId: number, params: WorkflowManualRunPayload) {
-  return fetchCreateWorkflowExecution({ workflowDefinitionId: definitionId, ...params })
+  const idempotencyKey = crypto.randomUUID()
+
+  return request.post<RunWorkflowDefinitionResponse>({
+    url: `/api/v1/workflows/${definitionId}/executions`,
+    params,
+    headers: { 'Idempotency-Key': idempotencyKey },
+    showSuccessMessage: true
+  })
 }
 
 export function fetchWorkflowDefinitionExecutions(
@@ -488,73 +429,20 @@ export function fetchWorkflowDefinitionExecutions(
   params: WorkflowExecutionQueryParams
 ) {
   return request.get<WorkflowExecutionList>({
-    url: '/api/v1/workflow-executions',
-    params: { ...params, workflowDefinitionId: definitionId }
+    url: `/api/v1/workflows/${definitionId}/executions`,
+    params
   })
 }
 
 export function fetchWorkflowExecutionList(params: WorkflowExecutionQueryParams) {
   return request.get<WorkflowExecutionList>({
-    url: '/api/v1/workflow-executions',
+    url: '/api/v1/workflows/executions',
     params
   })
 }
 
 export function fetchWorkflowExecutionDetail(executionId: number) {
   return request.get<WorkflowExecutionDetail>({
-    url: `/api/v1/workflow-executions/${executionId}`
-  })
-}
-
-export function fetchCreateWorkflowExecution(params: WorkflowExecutionCreatePayload) {
-  return request.post<RunWorkflowDefinitionResponse>({
-    url: '/api/v1/workflow-executions',
-    params,
-    headers: { 'Idempotency-Key': crypto.randomUUID() },
-    showSuccessMessage: true
-  })
-}
-
-export function fetchCancelWorkflowExecution(executionId: number) {
-  return request.post<WorkflowExecutionItem>({
-    url: `/api/v1/workflow-executions/${executionId}/cancel`,
-    showSuccessMessage: true
-  })
-}
-
-export function fetchRerunWorkflowExecution(executionId: number) {
-  return request.post<{ execution: WorkflowExecutionItem; duplicate: boolean }>({
-    url: `/api/v1/workflow-executions/${executionId}/rerun`,
-    headers: { 'Idempotency-Key': crypto.randomUUID() },
-    showSuccessMessage: true
-  })
-}
-
-export function fetchWorkflowActionList(status?: string) {
-  return request.get<WorkflowActionItem[]>({
-    url: '/api/v1/workflow-actions',
-    params: status ? { status } : undefined
-  })
-}
-
-export function fetchWorkflowActionDetail(actionId: string) {
-  return request.get<WorkflowActionItem>({
-    url: `/api/v1/workflow-actions/${encodeURIComponent(actionId)}`
-  })
-}
-
-export function fetchDecideWorkflowAction(
-  actionId: string,
-  params: WorkflowActionDecisionPayload,
-  reauthToken?: string
-) {
-  return request.post<WorkflowActionItem>({
-    url: `/api/v1/workflow-actions/${encodeURIComponent(actionId)}/decisions`,
-    params,
-    headers: {
-      'Idempotency-Key': crypto.randomUUID(),
-      ...(reauthToken ? { 'X-Reauth-Token': reauthToken } : {})
-    },
-    showSuccessMessage: true
+    url: `/api/v1/workflows/executions/${executionId}`
   })
 }

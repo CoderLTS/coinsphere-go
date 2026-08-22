@@ -25,7 +25,6 @@ func (a *App) StartRuntime() {
 	a.spawn(a.schedulerLoop)
 	a.spawn(a.dispatchLoop)
 	a.spawn(a.eventOutboxLoop)
-	a.spawn(a.workflowWaitLoop)
 	a.spawn(a.staleRecoveryLoop)
 	a.spawn(a.cleanupLoop)
 	if a.Paper != nil {
@@ -125,7 +124,7 @@ func (a *App) bootstrapRuntimeEntries(ctx context.Context) {
 			if _, err := lockWorkflowDefinitionFamily(tx, *state.ActiveWorkflowDefinitionID); err != nil {
 				return err
 			}
-			current, err := findRuntimeStateByCodeWithDB(tx, state.OwnerUserID, state.WorkflowCode)
+			current, err := findRuntimeStateByCodeWithDB(tx, state.WorkflowCode)
 			if err != nil {
 				return err
 			}
@@ -467,8 +466,6 @@ func (a *App) processExecution(ctx context.Context, execution *db.WorkflowExecut
 		WorkflowExecutionID: execution.ID, Attempt: attempt,
 		WorkerID: a.WorkerID, StartedAt: startedAt, Status: "running",
 	})
-	runCtx, cancelRun := context.WithCancel(ctx)
-	defer cancelRun()
 
 	// 心跳 goroutine:证明本执行仍在运行,供 stale 恢复判定。
 	// heartbeatStop 是一个只用来发"停止"信号的 channel(struct{} 零字节)。见 GO入门笔记『并发』。
@@ -493,78 +490,24 @@ func (a *App) processExecution(ctx context.Context, execution *db.WorkflowExecut
 				return
 			// 每当 ticker 到点 → 刷新一次 last_heartbeat_at 时间戳(带 worker_id/attempt 条件,确保只更新自己这一轮)。
 			case <-ticker.C:
-				requested, err := a.executionCancellationRequested(ctx, execution.ID)
-				if err == nil && requested {
-					cancelRun()
-					return
-				}
 				a.DB.WithContext(ctx).Model(&db.WorkflowExecution{}).
-					Where("id = ? AND status IN ? AND attempt_count = ? AND worker_id = ?", execution.ID, []string{"running", "cancel_requested"}, attempt, a.WorkerID).
+					Where("id = ? AND status = ? AND attempt_count = ? AND worker_id = ?", execution.ID, "running", attempt, a.WorkerID).
 					Update("last_heartbeat_at", time.Now())
 			}
 		}
 	}()
 
 	// 真正执行工作流图;返回 (结果, 错误)。这一行会阻塞到执行结束。
-	result, runErr := a.runExecutionGraph(runCtx, execution.ID)
+	result, runErr := a.runExecutionGraph(ctx, execution.ID)
 	close(heartbeatStop)
 	<-heartbeatDone
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cleanupCancel()
-	cancelRequested, cancelCheckErr := a.executionCancellationRequested(cleanupCtx, execution.ID)
-	if cancelCheckErr == nil && (cancelRequested || errors.Is(runErr, ErrWorkflowCanceled)) {
-		a.finalizeCanceled(cleanupCtx, execution, attempt, result)
-		return
-	}
-	if errors.Is(runErr, ErrWorkflowWaiting) {
-		if err := a.finalizeWaiting(cleanupCtx, execution, attempt, result); errors.Is(err, ErrWorkflowCanceled) {
-			a.finalizeCanceled(cleanupCtx, execution, attempt, result)
-		} else if err != nil {
-			a.finalizeFailure(cleanupCtx, execution, attempt, result, err)
-		}
-		return
-	}
 	if runErr != nil {
 		a.finalizeFailure(cleanupCtx, execution, attempt, result, runErr)
 		return
 	}
 	a.finalizeSuccess(cleanupCtx, execution, attempt, result)
-}
-
-func (a *App) finalizeCanceled(ctx context.Context, execution *db.WorkflowExecution, attempt int, result *runResult) {
-	finishedAt := time.Now().UTC()
-	startedAt := firstTime(execution.StartedAt, execution.ClaimedAt, &execution.QueuedAt)
-	updates := map[string]any{
-		"status": "canceled", "finished_at": finishedAt,
-		"duration_ms": finishedAt.Sub(startedAt).Milliseconds(), "next_retry_at": nil,
-		"failure_category": "", "error_message": "",
-	}
-	if result != nil {
-		if !result.FinishedAt.IsZero() {
-			finishedAt = result.FinishedAt
-			updates["finished_at"] = finishedAt
-			updates["duration_ms"] = finishedAt.Sub(result.StartedAt).Milliseconds()
-		}
-		updates["context_snapshot_json"] = serializeSnapshot(result.SharedState, a.Cfg.Workflow.MaxOutputSnapshotBytes)
-		updates["result_snapshot_json"] = serializeSnapshot(orEmptyMap(result.SharedState["nodeOutputs"]), a.Cfg.Workflow.MaxOutputSnapshotBytes)
-	}
-	err := a.dbWithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		terminal := tx.Model(&db.WorkflowExecution{}).
-			Where("id = ? AND status IN ? AND attempt_count = ? AND worker_id = ?", execution.ID, []string{"running", "cancel_requested"}, attempt, a.WorkerID).
-			Updates(updates)
-		if terminal.Error != nil || terminal.RowsAffected == 0 {
-			return terminal.Error
-		}
-		if err := tx.Model(&db.WorkflowExecutionWait{}).
-			Where("workflow_execution_id = ? AND status = ?", execution.ID, "pending").
-			Updates(map[string]any{"status": "canceled", "resolved_at": finishedAt, "updated_at": finishedAt}).Error; err != nil {
-			return err
-		}
-		return a.closeAttemptWithDB(tx, execution.ID, attempt, a.WorkerID, "canceled", startedAt, finishedAt, "", "")
-	})
-	if err != nil {
-		slog.ErrorContext(ctx, "execution terminal transaction failed", "execution_id", execution.ID, "status", "canceled", "error_category", "database")
-	}
 }
 
 // finalizeSuccess 把执行写成 success 终态。
@@ -754,7 +697,7 @@ func (a *App) staleRecoveryLoop(ctx context.Context) {
 		var staleRows []db.WorkflowExecution
 		// Preload("WorkflowDefinition"):GORM 顺带把关联的定义一起查出来(类似预加载 JOIN),省得后面再查一次。见 GO入门笔记『框架:GORM』。
 		a.DB.WithContext(ctx).Preload("WorkflowDefinition").
-			Where("status IN ? AND last_heartbeat_at IS NOT NULL AND last_heartbeat_at < ?", []string{"running", "cancel_requested"}, staleBefore).
+			Where("status = ? AND last_heartbeat_at IS NOT NULL AND last_heartbeat_at < ?", "running", staleBefore).
 			Order("last_heartbeat_at ASC, id ASC").Limit(a.Cfg.Workflow.OutboxBatchSize).
 			Find(&staleRows)
 		for i := range staleRows {
@@ -781,9 +724,7 @@ func (a *App) recoverStaleExecution(ctx context.Context, execution *db.WorkflowE
 	}
 	nextStatus := "failed"
 	var nextRetryAt *time.Time
-	if execution.Status == "cancel_requested" || execution.CancelRequestedAt != nil {
-		nextStatus = "canceled"
-	} else if attempt < maxAttempts {
+	if attempt < maxAttempts {
 		nextStatus = "retry_waiting"
 		retryAt := a.computeNextRetryAt(attempt)
 		nextRetryAt = &retryAt
@@ -809,7 +750,7 @@ func (a *App) recoverStaleExecution(ctx context.Context, execution *db.WorkflowE
 			Where(
 				"id = ? AND status = ? AND attempt_count = ? AND worker_id = ? AND last_heartbeat_at = ?",
 				execution.ID,
-				execution.Status,
+				"running",
 				attempt,
 				*execution.WorkerID,
 				*execution.LastHeartbeatAt,

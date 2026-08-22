@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -18,27 +17,17 @@ import (
 // ErrBacklogExceeded 表示同一并发键的等待队列已满。
 var ErrBacklogExceeded = errors.New("current start entry backlog exceeded the configured limit")
 
-// ErrWorkflowCanceled separates a user cancellation from retryable process cancellation.
-var ErrWorkflowCanceled = errors.New("workflow execution canceled")
-
 // ---------- 概览与查询 ----------
 
 // 从这里开始是供 API 层调用的业务方法。(a *App) 是接收者(见 loops.go 已说明的"方法与接收者")。
 // 返回类型 (M, error):M 是本项目定义的类型别名(type M = map[string]any),专门用来拼 JSON 响应;error 表示错误。见 GO入门笔记『复合类型』『变量、函数、错误』。
 // GetSchedulerOverview 调度首页概览。
-func (a *App) GetSchedulerOverview(ownerUserID int64) (M, error) {
-	definitions := a.listLatestDefinitions(ownerUserID)
-	owned := definitions[:0]
-	for _, definition := range definitions {
-		if !definition.IsBuiltin {
-			owned = append(owned, definition)
-		}
-	}
-	definitions = owned
+func (a *App) GetSchedulerOverview() (M, error) {
+	definitions := a.listLatestDefinitions()
 	var runtimeStates []db.WorkflowRuntimeState
-	a.DB.Where("owner_user_id = ?", ownerUserID).Find(&runtimeStates)
+	a.DB.Find(&runtimeStates)
 	executionCounts := a.countExecutionsByDefinitionIDs(collectIDs(definitions, func(d db.WorkflowDefinition) int64 { return d.ID }))
-	countsByStatus := a.countExecutionsByStatus(ownerUserID, []string{"queued", "running", "retry_waiting", "waiting_job", "waiting_action", "cancel_requested"})
+	countsByStatus := a.countExecutionsByStatus([]string{"queued", "running", "retry_waiting"})
 
 	var totalExecutions int64
 	// range 一个 map:_ 丢弃键,只累加每个值。遍历 map 的顺序是随机的,这里只做求和不受影响。见 GO入门笔记『复合类型』。
@@ -55,20 +44,20 @@ func (a *App) GetSchedulerOverview(ownerUserID int64) (M, error) {
 	var latestExecution db.WorkflowExecution
 	latestExecutedAt := ""
 	// First 取排序后的第一条(SELECT ... ORDER BY ... LIMIT 1)。查不到会返回错误,所以这里用 err == nil 表示"确实查到了才处理"。见 GO入门笔记『框架:GORM』。
-	if err := a.DB.Where("owner_user_id = ?", ownerUserID).Order("COALESCE(started_at, queued_at) DESC, id DESC").First(&latestExecution).Error; err == nil {
+	if err := a.DB.Order("COALESCE(started_at, queued_at) DESC, id DESC").First(&latestExecution).Error; err == nil {
 		at := firstTime(latestExecution.FinishedAt, latestExecution.StartedAt, &latestExecution.QueuedAt)
 		latestExecutedAt = fmtTimeV(at)
 	}
 
 	var oldestQueued *time.Time
 	var oldestRow db.WorkflowExecution
-	if err := a.DB.Where("owner_user_id = ? AND status = ?", ownerUserID, "queued").Order("queued_at ASC, id ASC").First(&oldestRow).Error; err == nil {
+	if err := a.DB.Where("status = ?", "queued").Order("queued_at ASC, id ASC").First(&oldestRow).Error; err == nil {
 		oldestQueued = &oldestRow.QueuedAt
 	}
 	staleBefore := time.Now().Add(-time.Duration(a.Cfg.Workflow.ExecutionStaleTimeoutSeconds) * time.Second)
 	var staleRunningCount int64
 	a.DB.Model(&db.WorkflowExecution{}).
-		Where("owner_user_id = ? AND status = ? AND last_heartbeat_at IS NOT NULL AND last_heartbeat_at < ?", ownerUserID, "running", staleBefore).
+		Where("status = ? AND last_heartbeat_at IS NOT NULL AND last_heartbeat_at < ?", "running", staleBefore).
 		Count(&staleRunningCount)
 
 	// make([]M, 0) 造一个长度为 0 的空切片,后面用 append 往里追加元素。见 GO入门笔记『复合类型』。
@@ -111,9 +100,6 @@ func (a *App) GetSchedulerOverview(ownerUserID int64) (M, error) {
 			"queuedCount":           countsByStatus["queued"],
 			"runningCount":          countsByStatus["running"],
 			"retryWaitingCount":     countsByStatus["retry_waiting"],
-			"waitingJobCount":       countsByStatus["waiting_job"],
-			"waitingActionCount":    countsByStatus["waiting_action"],
-			"cancelRequestedCount":  countsByStatus["cancel_requested"],
 			"oldestPendingAgeMs":    oldestAgeMs,
 			"staleRunningCount":     staleRunningCount,
 		},
@@ -122,16 +108,16 @@ func (a *App) GetSchedulerOverview(ownerUserID int64) (M, error) {
 }
 
 // GetRuntimeByDefinition 定义对应 workflow code 的运行态。
-func (a *App) GetRuntimeByDefinition(definitionID, ownerUserID int64) (M, error) {
+func (a *App) GetRuntimeByDefinition(definitionID int64) (M, error) {
 	var result M
 	// state 与 entries 必须来自同一数据库快照；否则激活在两次 SELECT 之间提交时，
 	// 响应可能把旧 activeDefinitionId 与新入口拼成不存在的中间状态。
 	err := a.DB.Transaction(func(tx *gorm.DB) error {
-		definition, err := requireOwnedDefinitionWithDB(tx, definitionID, ownerUserID)
+		definition, err := requireDefinitionWithDB(tx, definitionID)
 		if err != nil {
 			return err
 		}
-		state, err := findRuntimeStateByCodeWithDB(tx, ownerUserID, definition.Code)
+		state, err := findRuntimeStateByCodeWithDB(tx, definition.Code)
 		if err != nil {
 			return err
 		}
@@ -150,20 +136,17 @@ func (a *App) GetRuntimeByDefinition(definitionID, ownerUserID int64) (M, error)
 func (a *App) ActivateDefinition(definitionID int64, operatorUserID int64) (M, error) {
 	var workflowCode string
 	err := a.DB.Transaction(func(tx *gorm.DB) error {
-		if _, err := requireOwnedDefinitionWithDB(tx, definitionID, operatorUserID); err != nil {
-			return err
-		}
 		definition, err := lockWorkflowDefinitionFamily(tx, definitionID)
 		if err != nil {
 			return err
 		}
 		workflowCode = definition.Code
-		state, err := findRuntimeStateByCodeWithDB(tx, operatorUserID, workflowCode)
+		state, err := findRuntimeStateByCodeWithDB(tx, workflowCode)
 		if err != nil {
 			return err
 		}
 		if state == nil {
-			state = &db.WorkflowRuntimeState{OwnerUserID: operatorUserID, WorkflowCode: workflowCode}
+			state = &db.WorkflowRuntimeState{WorkflowCode: workflowCode}
 			if err := tx.Create(state).Error; err != nil {
 				return err
 			}
@@ -196,37 +179,17 @@ func (a *App) ActivateDefinition(definitionID int64, operatorUserID int64) (M, e
 	if err != nil {
 		return nil, err
 	}
-	return a.GetRuntimeByDefinition(definitionID, operatorUserID)
-}
-
-func (a *App) ActivateDefinitionForPrincipal(definitionID int64, principal *Principal) (M, error) {
-	if principal == nil || principal.User == nil {
-		return nil, ErrPermission
-	}
-	definition, err := requireOwnedDefinitionWithDB(a.DB, definitionID, principal.User.ID)
-	if err != nil {
-		return nil, err
-	}
-	if err := assertWorkflowNodePermissions(loadJSONObject(definition.GraphJSON), principal); err != nil {
-		return nil, err
-	}
-	if err := a.assertWorkflowResourcesOwned(loadJSONObject(definition.GraphJSON), principal.User.ID); err != nil {
-		return nil, err
-	}
-	return a.ActivateDefinition(definitionID, principal.User.ID)
+	return a.GetRuntimeByDefinition(definitionID)
 }
 
 // DeactivateDefinition 停用 definition 所属 workflow code。
-func (a *App) DeactivateDefinition(definitionID, ownerUserID int64) (M, error) {
+func (a *App) DeactivateDefinition(definitionID int64) (M, error) {
 	err := a.DB.Transaction(func(tx *gorm.DB) error {
-		if _, err := requireOwnedDefinitionWithDB(tx, definitionID, ownerUserID); err != nil {
-			return err
-		}
 		definition, err := lockWorkflowDefinitionFamily(tx, definitionID)
 		if err != nil {
 			return err
 		}
-		state, err := findRuntimeStateByCodeWithDB(tx, ownerUserID, definition.Code)
+		state, err := findRuntimeStateByCodeWithDB(tx, definition.Code)
 		if err != nil {
 			return err
 		}
@@ -253,15 +216,12 @@ func (a *App) DeactivateDefinition(definitionID, ownerUserID int64) (M, error) {
 	if err != nil {
 		return nil, err
 	}
-	return a.GetRuntimeByDefinition(definitionID, ownerUserID)
+	return a.GetRuntimeByDefinition(definitionID)
 }
 
 // SetEntryEnabled 启停运行入口。
-func (a *App) SetEntryEnabled(definitionID, ownerUserID int64, entryKey string, isEnabled bool) (M, error) {
+func (a *App) SetEntryEnabled(definitionID int64, entryKey string, isEnabled bool) (M, error) {
 	err := a.DB.Transaction(func(tx *gorm.DB) error {
-		if _, err := requireOwnedDefinitionWithDB(tx, definitionID, ownerUserID); err != nil {
-			return err
-		}
 		if _, err := lockWorkflowDefinitionFamily(tx, definitionID); err != nil {
 			return err
 		}
@@ -300,17 +260,14 @@ func (a *App) SetEntryEnabled(definitionID, ownerUserID int64, entryKey string, 
 	if err != nil {
 		return nil, err
 	}
-	return a.GetRuntimeByDefinition(definitionID, ownerUserID)
+	return a.GetRuntimeByDefinition(definitionID)
 }
 
 // RotateWebhookSecret 轮换 webhook 密钥。
 // RotateWebhookSecret 轮换 webhook 密钥:生成新明文 secret,数据库里只存它的哈希(secret_hash)与提示片段,明文只在本次响应里返回一次。
-func (a *App) RotateWebhookSecret(definitionID, ownerUserID int64, entryKey string) (M, error) {
+func (a *App) RotateWebhookSecret(definitionID int64, entryKey string) (M, error) {
 	secret := security.RandomURLSafe(24)
 	err := a.DB.Transaction(func(tx *gorm.DB) error {
-		if _, err := requireOwnedDefinitionWithDB(tx, definitionID, ownerUserID); err != nil {
-			return err
-		}
 		if _, err := lockWorkflowDefinitionFamily(tx, definitionID); err != nil {
 			return err
 		}
@@ -361,13 +318,13 @@ func (a *App) RunManualStarts(definitionID int64, startEntryKeys []string, trigg
 	if err != nil {
 		return nil, err
 	}
-	definition, err := requireOwnedDefinitionWithDB(a.DB, definitionID, triggeredBy)
+	definition, err := a.requireDefinition(definitionID)
 	if err != nil {
 		return nil, err
 	}
 	graph := loadJSONObject(definition.GraphJSON)
 	if workflowContainsStrategy(graph) {
-		state := a.getRuntimeStateByCode(triggeredBy, definition.Code)
+		state := a.getRuntimeStateByCode(definition.Code)
 		if state == nil || state.ActiveWorkflowDefinitionID == nil || *state.ActiveWorkflowDefinitionID != definition.ID {
 			return nil, bizErr("包含策略节点的工作流必须先激活")
 		}
@@ -502,7 +459,7 @@ func (a *App) TriggerWebhook(triggeredBy int64, workflowCode, entryKey, secret s
 	if err != nil {
 		return nil, err
 	}
-	state := a.getRuntimeStateByCode(triggeredBy, workflowCode)
+	state := a.getRuntimeStateByCode(workflowCode)
 	if state == nil || state.ActiveWorkflowDefinitionID == nil {
 		return nil, bizErr("Workflow code is not active")
 	}
@@ -521,7 +478,7 @@ func (a *App) TriggerWebhook(triggeredBy int64, workflowCode, entryKey, secret s
 		!security.SecureCompare(security.HashWebhookSecret(a.Cfg.Auth.WebhookPepper, secret), entry.SecretHash) {
 		return nil, bizErr("Webhook secret is invalid")
 	}
-	definition, err := requireOwnedDefinitionWithDB(a.DB, entry.WorkflowDefinitionID, triggeredBy)
+	definition, err := a.requireDefinition(entry.WorkflowDefinitionID)
 	if err != nil {
 		return nil, err
 	}
@@ -585,9 +542,6 @@ func (a *App) enqueueStartNodeExecution(definition *db.WorkflowDefinition, start
 }
 
 func (a *App) enqueueStartNodeExecutionWithDB(database *gorm.DB, definition *db.WorkflowDefinition, startNode M, triggerCtx M) (*db.WorkflowExecution, bool, error) {
-	if definition.OwnerUserID == nil || *definition.OwnerUserID <= 0 || definition.IsBuiltin {
-		return nil, false, bizErr("Builtin workflow templates cannot be executed")
-	}
 	config, _ := startNode["config"].(map[string]any)
 	startEntryKey := strings.TrimSpace(asString(config["entryKey"]))
 	if startEntryKey == "" {
@@ -616,7 +570,7 @@ func (a *App) enqueueStartNodeExecutionWithDB(database *gorm.DB, definition *db.
 	}
 
 	// concurrencyKey = 定义code:入口key,同一入口的执行共用它,用于限并发与限积压。
-	concurrencyKey := int64Text(*definition.OwnerUserID) + ":" + definition.Code + ":" + startEntryKey
+	concurrencyKey := definition.Code + ":" + startEntryKey
 	var backlogCount int64
 	// 数一下该键还有多少条在排队 / 待重试(status IN ('queued','retry_waiting'));IN ? 里传一个切片当列表。见 GO入门笔记『框架:GORM』。
 	database.Model(&db.WorkflowExecution{}).
@@ -627,10 +581,9 @@ func (a *App) enqueueStartNodeExecutionWithDB(database *gorm.DB, definition *db.
 		return nil, false, ErrBacklogExceeded
 	}
 
-	inputs := buildStartInputs(triggerCtx)
+	inputs := buildStartInputs(startNode, triggerCtx)
 	now := time.Now()
 	execution := db.WorkflowExecution{
-		OwnerUserID:          *definition.OwnerUserID,
 		WorkflowDefinitionID: definition.ID,
 		StartEntryKey:        startEntryKey,
 		StartNodeID:          asString(startNode["id"]),
@@ -683,9 +636,16 @@ func (a *App) enqueueStartNodeExecutionWithDB(database *gorm.DB, definition *db.
 	return created, false, nil
 }
 
-// buildStartInputs 只接受本次触发的输入；定义中的固定值由节点配置承担。
-func buildStartInputs(triggerCtx M) M {
+// buildStartInputs 拼出一次执行的初始输入:先铺开始节点配置里的 inputBindings(默认输入绑定),
+// 再用本次触发带来的 inputs 覆盖同名键——后写的覆盖先写的,所以触发方传的值优先级最高。
+func buildStartInputs(startNode M, triggerCtx M) M {
+	config := rawNodeConfig(startNode)
 	result := M{}
+	if base, ok := config["inputBindings"].(map[string]any); ok {
+		for key, value := range base {
+			result[key] = value
+		}
+	}
 	if extra, ok := triggerCtx["inputs"].(map[string]any); ok {
 		for key, value := range extra {
 			result[key] = value
@@ -900,7 +860,6 @@ func computeNextScheduleTime(config map[string]any, after time.Time) (*time.Time
 // struct 是"把一组字段打包"的类型;字段首字母大写表示导出(能被别的包访问)。见 GO入门笔记『复合类型』『项目怎么组织』。
 // DefinitionID 是 *int64(指针):用 nil 表示"未指定这个过滤条件",以区别于"指定为 0"。
 type WorkflowExecutionQuery struct {
-	OwnerUserID            int64
 	Page                   CursorPage
 	WorkflowDefinitionCode string
 	Keyword                string
@@ -911,192 +870,16 @@ type WorkflowExecutionQuery struct {
 
 var terminalWorkflowExecutionStatuses = []string{"success", "failed", "canceled"}
 
-// CancelExecution requests cancellation for a running execution and immediately
-// closes executions that are not currently owned by a worker.
-func (a *App) CancelExecution(executionID, ownerUserID int64) (M, error) {
-	if ownerUserID <= 0 {
-		return nil, notFoundErr("workflow execution")
-	}
-	now := time.Now().UTC()
-	err := a.DB.Transaction(func(tx *gorm.DB) error {
-		var wait db.WorkflowExecutionWait
-		waitErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("workflow_execution_id = ? AND owner_user_id = ? AND status IN ?", executionID, ownerUserID, []string{"pending", "processing"}).
-			Take(&wait).Error
-		if waitErr != nil && !errors.Is(waitErr, gorm.ErrRecordNotFound) {
-			return waitErr
-		}
-		hasActiveWait := waitErr == nil
-		if wait.Status == "processing" {
-			return ErrWorkflowActionConflict
-		}
-
-		var execution db.WorkflowExecution
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("id = ? AND owner_user_id = ?", executionID, ownerUserID).
-			Take(&execution).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return notFoundErr("workflow execution")
-		}
-		if err != nil {
-			return err
-		}
-		switch execution.Status {
-		case "success", "failed", "canceled":
-			return nil
-		case "running", "cancel_requested":
-			if err := tx.Model(&db.WorkflowExecution{}).
-				Where("id = ? AND owner_user_id = ? AND status IN ?", executionID, ownerUserID, []string{"running", "cancel_requested"}).
-				Updates(map[string]any{"status": "cancel_requested", "cancel_requested_at": now}).Error; err != nil {
-				return err
-			}
-		default:
-			if err := tx.Model(&db.WorkflowExecution{}).
-				Where("id = ? AND owner_user_id = ? AND status NOT IN ?", executionID, ownerUserID, terminalWorkflowExecutionStatuses).
-				Updates(map[string]any{
-					"status": "canceled", "cancel_requested_at": now, "finished_at": now,
-					"next_retry_at": nil, "failure_category": "", "error_message": "",
-				}).Error; err != nil {
-				return err
-			}
-		}
-		if !hasActiveWait {
-			return nil
-		}
-		return tx.Model(&wait).Where("status = ?", "pending").
-			Updates(map[string]any{"status": "canceled", "resolved_at": now, "updated_at": now}).Error
-	})
-	if err != nil {
-		return nil, err
-	}
-	execution, err := a.getOwnedExecutionByID(executionID, ownerUserID)
-	if err != nil {
-		return nil, err
-	}
-	a.wakeDispatcher()
-	return a.serializeExecutionSummary(execution), nil
-}
-
-// RerunExecution creates a new queue item pinned to the original definition
-// version and persisted (already display-safe) input snapshot.
-func (a *App) RerunExecution(executionID, ownerUserID int64, idempotencyKey string) (M, error) {
-	if ownerUserID <= 0 {
-		return nil, notFoundErr("workflow execution")
-	}
-	requestHash, err := canonicalRequestHash(M{"executionId": executionID})
-	if err != nil {
-		return nil, err
-	}
-	var rerun *db.WorkflowExecution
-	created := false
-	err = a.DB.Transaction(func(tx *gorm.DB) error {
-		var original db.WorkflowExecution
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Preload("WorkflowDefinition").
-			Where("id = ? AND owner_user_id = ?", executionID, ownerUserID).
-			Take(&original).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return notFoundErr("workflow execution")
-		}
-		if err != nil {
-			return err
-		}
-		if !containsString(terminalWorkflowExecutionStatuses, original.Status) {
-			return bizErr("Only completed workflow executions can be rerun")
-		}
-		if original.WorkflowDefinition == nil || original.WorkflowDefinition.OwnerUserID == nil ||
-			*original.WorkflowDefinition.OwnerUserID != ownerUserID || original.WorkflowDefinition.IsBuiltin {
-			return notFoundErr("workflow definition")
-		}
-
-		record, reused, err := a.reserveIdempotencyRecord(
-			tx, ownerUserID, "workflow:rerun:"+int64Text(executionID), idempotencyKey, requestHash,
-		)
-		if err != nil {
-			return err
-		}
-		internalKey := workflowExecutionIdempotencyKey(record.ID, "rerun:"+int64Text(executionID))
-		if reused {
-			rerun, err = a.getExecutionByIdempotencyKeyWithDB(tx, "rerun", internalKey)
-			if err != nil {
-				return err
-			}
-			if rerun == nil {
-				return errors.New("idempotency record has no workflow execution")
-			}
-			return nil
-		}
-
-		triggerCtx := extractTriggerContext(original.ContextSnapshotJSON)
-		triggerCtx["triggerType"] = "rerun"
-		triggerCtx["triggeredBy"] = ownerUserID
-		triggerCtx["rerunOfExecutionId"] = executionID
-		triggerKey := "rerun:" + int64Text(executionID)
-		now := time.Now().UTC()
-		row := db.WorkflowExecution{
-			OwnerUserID: ownerUserID, WorkflowDefinitionID: original.WorkflowDefinitionID,
-			StartEntryKey: original.StartEntryKey, StartNodeID: original.StartNodeID, StartNodeType: original.StartNodeType,
-			TriggerType: "rerun", TriggeredBy: &ownerUserID, TriggerKey: &triggerKey, IdempotencyKey: &internalKey,
-			ConcurrencyKey: original.ConcurrencyKey, Status: "queued", QueuedAt: now,
-			MaxAttempts: original.MaxAttempts, InputSnapshotJSON: original.InputSnapshotJSON,
-			ContextSnapshotJSON: serializeSnapshot(triggerCtx, a.Cfg.Workflow.MaxOutputSnapshotBytes),
-			ResultSnapshotJSON:  "{}", RerunOfExecutionID: &original.ID,
-		}
-		if row.MaxAttempts <= 0 {
-			row.MaxAttempts = a.Cfg.Workflow.MaxAttempts
-		}
-		if err := tx.Create(&row).Error; err != nil {
-			return err
-		}
-		rerun, err = a.getExecutionByIDWithDB(tx, row.ID)
-		created = err == nil
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	if created {
-		a.wakeDispatcher()
-	}
-	return M{"execution": a.serializeExecutionSummary(rerun), "duplicate": !created}, nil
-}
-
-func containsString(values []string, value string) bool {
-	for _, candidate := range values {
-		if candidate == value {
-			return true
-		}
-	}
-	return false
-}
-
-func (a *App) executionCancellationRequested(ctx context.Context, executionID int64) (bool, error) {
-	var row struct {
-		Status            string
-		CancelRequestedAt *time.Time
-	}
-	err := a.dbWithContext(ctx).Model(&db.WorkflowExecution{}).
-		Select("status", "cancel_requested_at").Where("id = ?", executionID).Take(&row).Error
-	if err != nil {
-		return false, err
-	}
-	return row.Status == "cancel_requested" || row.Status == "canceled" || row.CancelRequestedAt != nil, nil
-}
-
 // ListExecutions 分页查询执行记录。
 func (a *App) ListExecutions(query WorkflowExecutionQuery) (M, error) {
-	if query.OwnerUserID <= 0 {
-		return nil, notFoundErr("workflow execution")
-	}
 	if query.DefinitionID != nil {
-		if _, err := requireOwnedDefinitionWithDB(a.DB, *query.DefinitionID, query.OwnerUserID); err != nil {
+		if _, err := a.requireDefinition(*query.DefinitionID); err != nil {
 			return nil, err
 		}
 	}
 	// GORM 的查询是"链式构建":先拿到基础查询 q,再按条件一段段 q = q.Where(...) 累加,最后才真正执行(Count / Find)。
 	q := a.DB.Model(&db.WorkflowExecution{}).
-		Joins("LEFT JOIN workflow_definitions ON workflow_executions.workflow_definition_id = workflow_definitions.id").
-		Where("workflow_executions.owner_user_id = ?", query.OwnerUserID)
+		Joins("LEFT JOIN workflow_definitions ON workflow_executions.workflow_definition_id = workflow_definitions.id")
 	// query.DefinitionID 是指针,!= nil 表示调用方指定了这个过滤;*query.DefinitionID 取出它指向的值。见 GO入门笔记『复合类型』。
 	if query.DefinitionID != nil {
 		q = q.Where("workflow_executions.workflow_definition_id = ?", *query.DefinitionID)
@@ -1154,20 +937,18 @@ func (a *App) ListExecutions(query WorkflowExecutionQuery) (M, error) {
 }
 
 // GetExecutionDetail 执行详情(图 + 节点日志 + attempt + 边日志)。
-func (a *App) GetExecutionDetail(executionID, ownerUserID int64) (M, error) {
-	execution, err := a.getOwnedExecutionByID(executionID, ownerUserID)
+func (a *App) GetExecutionDetail(executionID int64) (M, error) {
+	execution, err := a.getExecutionByID(executionID)
 	if err != nil {
 		return nil, err
 	}
 	data := a.serializeExecutionSummary(execution)
-	graph := M{"schemaVersion": 2, "nodes": []any{}, "edges": []any{}}
+	graph := M{"nodes": []any{}, "edges": []any{}}
 	if execution.WorkflowDefinition != nil {
 		graph = loadJSONObject(execution.WorkflowDefinition.GraphJSON)
 	}
 	data["graph"] = graph
 	data["startNodeId"] = execution.StartNodeID
-	data["input"] = loadJSONObject(execution.InputSnapshotJSON)
-	data["output"] = loadJSONObject(execution.ResultSnapshotJSON)
 	nodeNames := workflowNodeDisplayNames(graph)
 
 	// 下面反复用同一套路:查一批行 → make 一个 []M → for range 逐行转成 map(M)塞进去 → 交给前端。
@@ -1187,7 +968,6 @@ func (a *App) GetExecutionDetail(executionID, ownerUserID int64) (M, error) {
 			"status": item.Status, "statusLabel": workflowExecutionStatusLabel(item.Status),
 			"startedAt": fmtTimeV(item.StartedAt), "finishedAt": fmtTime(item.FinishedAt),
 			"durationMs": durationMs, "error": workflowExecutionError(item.ErrorMessage, ""),
-			"input": loadJSONObject(item.InputSnapshotJSON), "output": loadJSONObject(item.OutputSnapshotJSON),
 		})
 	}
 	data["nodeLogs"] = nodeItems
@@ -1258,21 +1038,12 @@ func (a *App) getExecutionByIDWithDB(database *gorm.DB, executionID int64) (*db.
 	var execution db.WorkflowExecution
 	err := database.Preload("WorkflowDefinition").First(&execution, executionID).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, notFoundErr("workflow execution")
+		return nil, bizErr("Workflow execution does not exist")
 	}
 	if err != nil {
 		return nil, err
 	}
 	return &execution, nil
-}
-
-func (a *App) getOwnedExecutionByID(executionID, ownerUserID int64) (*db.WorkflowExecution, error) {
-	var execution db.WorkflowExecution
-	err := a.DB.Preload("WorkflowDefinition").Where("id = ? AND owner_user_id = ?", executionID, ownerUserID).Take(&execution).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, notFoundErr("workflow execution")
-	}
-	return &execution, err
 }
 
 func (a *App) getExecutionByIdempotencyKeyWithDB(database *gorm.DB, triggerType, idempotencyKey string) (*db.WorkflowExecution, error) {
@@ -1311,7 +1082,7 @@ func requireRuntimeEntryWithDB(database *gorm.DB, definitionID int64, entryKey s
 	return &entry, nil
 }
 
-func (a *App) countExecutionsByStatus(ownerUserID int64, statuses []string) map[string]int64 {
+func (a *App) countExecutionsByStatus(statuses []string) map[string]int64 {
 	result := map[string]int64{}
 	if len(statuses) == 0 {
 		return result
@@ -1322,7 +1093,7 @@ func (a *App) countExecutionsByStatus(ownerUserID int64, statuses []string) map[
 	}
 	a.DB.Model(&db.WorkflowExecution{}).
 		Select("status, COUNT(id) AS count").
-		Where("owner_user_id = ? AND status IN ?", ownerUserID, statuses).Group("status").Scan(&rows)
+		Where("status IN ?", statuses).Group("status").Scan(&rows)
 	for _, row := range rows {
 		result[row.Status] = row.Count
 	}
@@ -1384,7 +1155,6 @@ func (a *App) serializeExecutionSummary(execution *db.WorkflowExecution) M {
 	if execution.DurationMs != nil {
 		durationMs = *execution.DurationMs
 	}
-	terminal := containsString(terminalWorkflowExecutionStatuses, execution.Status)
 	return M{
 		"id":                        execution.ID,
 		"workflowDefinitionId":      execution.WorkflowDefinitionID,
@@ -1398,14 +1168,10 @@ func (a *App) serializeExecutionSummary(execution *db.WorkflowExecution) M {
 		"queuedAt":                  fmtTimeV(execution.QueuedAt),
 		"startedAt":                 fmtTime(execution.StartedAt),
 		"finishedAt":                fmtTime(execution.FinishedAt),
-		"cancelRequestedAt":         fmtTime(execution.CancelRequestedAt),
-		"rerunOfExecutionId":        nilOrValue(execution.RerunOfExecutionID),
 		"attemptCount":              execution.AttemptCount,
 		"maxAttempts":               execution.MaxAttempts,
 		"durationMs":                durationMs,
 		"error":                     workflowExecutionError(execution.ErrorMessage, execution.FailureCategory),
-		"canCancel":                 !terminal && execution.Status != "cancel_requested",
-		"canRerun":                  terminal,
 	}
 }
 
@@ -1448,14 +1214,13 @@ func workflowStartDisplayName(graph M, startNodeID string) string {
 func workflowExecutionStatusLabel(status string) string {
 	return map[string]string{
 		"queued": "排队中", "running": "运行中", "retry_waiting": "等待重试",
-		"waiting_job": "等待任务", "waiting_action": "等待处理", "cancel_requested": "取消中",
 		"success": "成功", "failed": "失败", "canceled": "已取消",
 	}[status]
 }
 
 func workflowTriggerLabel(triggerType string) string {
 	return map[string]string{
-		"manual": "手动触发", "rerun": "重新运行", "schedule": "定时触发", "event": "事件触发", "webhook": "Webhook 触发",
+		"manual": "手动触发", "schedule": "定时触发", "event": "事件触发", "webhook": "Webhook 触发",
 	}[triggerType]
 }
 

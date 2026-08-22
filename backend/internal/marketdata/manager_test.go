@@ -281,8 +281,8 @@ RETURNING id
 		t.Fatalf("insert strategy idempotency record: %v", err)
 	}
 	if err := database.QueryRow(`
-INSERT INTO workflow_definitions (owner_user_id, code, version, display_name, graph_json, created_by, created_at)
-VALUES ($1, 'manager-strategy-workflow', 1, 'manager strategy workflow', '{"schemaVersion":2,"nodes":[],"edges":[]}', $1, CURRENT_TIMESTAMP)
+INSERT INTO workflow_definitions (code, version, display_name, graph_json, created_by, created_at)
+VALUES ('manager-strategy-workflow', 1, 'manager strategy workflow', '{"nodes":[],"edges":[]}', $1, CURRENT_TIMESTAMP)
 RETURNING id
 `, ownerID).Scan(&workflowDefinitionID); err != nil {
 		t.Fatalf("insert strategy workflow definition: %v", err)

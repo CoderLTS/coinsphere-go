@@ -31,9 +31,6 @@ import (
 // 关键点是第二层查的是注册表,不是写死的类型名。新增一种节点类型只要在 registerNode 里声明
 // Kind / Branches,这里自动适配,不用改本文件。
 func validateWorkflowGraph(graph M) error {
-	if asInt64(graph["schemaVersion"]) != 2 {
-		return bizErr("Workflow graph schemaVersion must be 2")
-	}
 	// 参数类型 M 是别名 map[string]any(见 app.go),即“字符串键 → 任意值”的 JSON 对象。
 	// graph["nodes"] 取出的值类型是 any,.([]any) 是“类型断言”:把它断言成 []any(any 的 slice)。
 	// 双返回值形式 v, ok := x.(T) 断言失败也不会崩,只是 ok=false、v 取零值;这里用 _ 忽略了 ok。
@@ -43,10 +40,6 @@ func validateWorkflowGraph(graph M) error {
 	// bizErr(...) 返回一个“业务错误”(普通 error)。校验不通过就把它 return 出去,告诉调用方原因。
 	if graph["edges"] != nil && !edgesOK {
 		return bizErr("Workflow edges must be a list")
-	}
-	flowEdges, dataEdges, err := splitWorkflowEdges(edgesAny)
-	if err != nil {
-		return err
 	}
 	if len(nodesAny) == 0 {
 		return bizErr("Workflow must contain at least one node")
@@ -109,7 +102,8 @@ func validateWorkflowGraph(graph M) error {
 	adjacency := map[string][]M{}
 	incoming := map[string]int{}
 	outgoing := map[string]int{}
-	for _, edge := range flowEdges {
+	for _, edgeAny := range edgesAny {
+		edge, _ := edgeAny.(map[string]any)
 		source := strings.TrimSpace(asString(edge["source"]))
 		target := strings.TrimSpace(asString(edge["target"]))
 		if nodeMap[source] == nil || nodeMap[target] == nil {
@@ -147,10 +141,6 @@ func validateWorkflowGraph(graph M) error {
 		definition := nodeDefs[nodeID]
 		edgesFromNode := adjacency[nodeID]
 		switch definition.kind() {
-		case nodeKindStart, nodeKindPlain:
-			if len(edgesFromNode) > 1 {
-				return bizErr("Sequential workflow nodes support at most one flow successor")
-			}
 		case nodeKindTerminal:
 			if len(edgesFromNode) > 0 {
 				return bizErr("End node cannot have outgoing edges")
@@ -179,178 +169,7 @@ func validateWorkflowGraph(graph M) error {
 	if len(visited) != len(nodeIDs) {
 		return bizErr("Workflow contains unreachable nodes")
 	}
-	if err := validateWorkflowDataEdges(dataEdges, nodeMap, nodeDefs, adjacency); err != nil {
-		return err
-	}
 	return nil
-}
-
-func splitWorkflowEdges(edges []any) ([]M, []M, error) {
-	flow := []M{}
-	data := []M{}
-	ids := map[string]bool{}
-	for _, edgeAny := range edges {
-		edge, ok := edgeAny.(map[string]any)
-		if !ok {
-			return nil, nil, bizErr("Workflow edge must be an object")
-		}
-		id := strings.TrimSpace(asString(edge["id"]))
-		if id == "" || ids[id] {
-			return nil, nil, bizErr("Workflow edge id must be present and unique")
-		}
-		ids[id] = true
-		switch strings.TrimSpace(asString(edge["kind"])) {
-		case "flow":
-			flow = append(flow, edge)
-		case "data":
-			data = append(data, edge)
-		default:
-			return nil, nil, bizErr("Workflow edge kind must be flow or data")
-		}
-	}
-	return flow, data, nil
-}
-
-func validateWorkflowDataEdges(edges []M, nodes map[string]M, definitions map[string]*workflowNodeDefinition, flowAdjacency map[string][]M) error {
-	targets := map[string]bool{}
-	mappedPorts := map[string]bool{}
-	for _, edge := range edges {
-		sourceID := strings.TrimSpace(asString(edge["source"]))
-		targetID := strings.TrimSpace(asString(edge["target"]))
-		if nodes[sourceID] == nil || nodes[targetID] == nil || sourceID == targetID {
-			return bizErr("Workflow contains an invalid data edge")
-		}
-		if !dfsReachable(flowAdjacency, []string{sourceID})[targetID] {
-			return bizErr("Data edge source must be a flow ancestor of its target")
-		}
-		sourcePortID := strings.TrimSpace(asString(edge["sourcePort"]))
-		targetPortID := strings.TrimSpace(asString(edge["targetPort"]))
-		sourcePort := findWorkflowPort(definitions[sourceID].OutputPorts, sourcePortID)
-		targetPort := findWorkflowPort(definitions[targetID].InputPorts, targetPortID)
-		if sourcePort == nil || targetPort == nil {
-			return bizErr("Data edge references an unknown node port")
-		}
-		sourceSchema, err := workflowSchemaAtPointer(sourcePort.Schema, asString(edge["sourcePointer"]))
-		if err != nil {
-			return bizErr("Data edge sourcePointer is invalid: %s", err.Error())
-		}
-		targetSchema, err := workflowSchemaAtPointer(targetPort.Schema, asString(edge["targetPointer"]))
-		if err != nil {
-			return bizErr("Data edge targetPointer is invalid: %s", err.Error())
-		}
-		if !workflowSchemasCompatible(sourceSchema, targetSchema) {
-			return bizErr("Data edge port types are incompatible: %s.%s -> %s.%s", sourceID, sourcePortID, targetID, targetPortID)
-		}
-		targetKey := targetID + "\x00" + targetPortID + "\x00" + asString(edge["targetPointer"])
-		if targets[targetKey] {
-			return bizErr("Data edges cannot write the same target field more than once")
-		}
-		targets[targetKey] = true
-		mappedPorts[targetID+"\x00"+targetPortID] = true
-	}
-	for nodeID, definition := range definitions {
-		for _, port := range definition.InputPorts {
-			if port.Required && !mappedPorts[nodeID+"\x00"+port.ID] {
-				return bizErr("Required node input is not connected: %s.%s", nodeID, port.ID)
-			}
-		}
-	}
-	return nil
-}
-
-func findWorkflowPort(ports []workflowNodePortDefinition, id string) *workflowNodePortDefinition {
-	for index := range ports {
-		if ports[index].ID == id {
-			return &ports[index]
-		}
-	}
-	return nil
-}
-
-func workflowSchemaAtPointer(schema M, pointer string) (M, error) {
-	tokens, err := decodeWorkflowJSONPointer(pointer)
-	if err != nil {
-		return nil, err
-	}
-	current := schema
-	for _, token := range tokens {
-		switch asString(current["type"]) {
-		case "":
-			return M{}, nil
-		case "object":
-			properties, _ := current["properties"].(map[string]any)
-			next, _ := properties[token].(map[string]any)
-			if next == nil {
-				if current["additionalProperties"] != false {
-					return M{}, nil
-				}
-				return nil, errors.New("field does not exist in port schema")
-			}
-			current = next
-		case "array":
-			next, _ := current["items"].(map[string]any)
-			if next == nil {
-				return nil, errors.New("array item schema is missing")
-			}
-			current = next
-		default:
-			return nil, errors.New("pointer traverses a scalar schema")
-		}
-	}
-	return current, nil
-}
-
-func decodeWorkflowJSONPointer(pointer string) ([]string, error) {
-	if pointer == "" {
-		return nil, nil
-	}
-	if !strings.HasPrefix(pointer, "/") {
-		return nil, errors.New("RFC 6901 pointer must start with slash")
-	}
-	raw := strings.Split(pointer[1:], "/")
-	result := make([]string, len(raw))
-	for index, token := range raw {
-		var builder strings.Builder
-		for i := 0; i < len(token); i++ {
-			if token[i] != '~' {
-				builder.WriteByte(token[i])
-				continue
-			}
-			if i+1 >= len(token) || (token[i+1] != '0' && token[i+1] != '1') {
-				return nil, errors.New("RFC 6901 pointer contains an invalid escape")
-			}
-			i++
-			if token[i] == '0' {
-				builder.WriteByte('~')
-			} else {
-				builder.WriteByte('/')
-			}
-		}
-		result[index] = builder.String()
-	}
-	return result, nil
-}
-
-func workflowSchemasCompatible(source, target M) bool {
-	sourceType := asString(source["type"])
-	targetType := asString(target["type"])
-	if sourceType == "" || targetType == "" {
-		return true
-	}
-	if sourceType != targetType && !(sourceType == "integer" && targetType == "number") {
-		return false
-	}
-	if asString(target["format"]) == "decimal" && asString(source["format"]) != "decimal" {
-		return false
-	}
-	if sourceType == "array" {
-		sourceItems, _ := source["items"].(map[string]any)
-		targetItems, _ := target["items"].(map[string]any)
-		if sourceItems != nil && targetItems != nil {
-			return workflowSchemasCompatible(sourceItems, targetItems)
-		}
-	}
-	return true
 }
 
 // assertNodeConfig 校验节点配置里 schema 声明为 required 的项都填了。
@@ -649,67 +468,9 @@ func (a *App) ValidateWorkflowDefinition(payload WorkflowDefinitionUpsertPayload
 	return M{"valid": len(issues) == 0, "issues": issues}
 }
 
-// ValidateWorkflowDefinitionForPrincipal applies RBAC in addition to the pure
-// graph contract. The pure validator remains available to internal callers.
-func (a *App) ValidateWorkflowDefinitionForPrincipal(payload WorkflowDefinitionUpsertPayload, principal *Principal) M {
-	result := a.ValidateWorkflowDefinition(payload)
-	issues, _ := result["issues"].([]M)
-	if err := assertWorkflowNodePermissions(payload.Graph, principal); err != nil {
-		issues = append(issues, M{"scope": "permission", "level": "error", "message": err.Error()})
-	}
-	if principal != nil && principal.User != nil {
-		if err := a.assertWorkflowResourcesOwned(payload.Graph, principal.User.ID); err != nil {
-			issues = append(issues, M{"scope": "resource", "level": "error", "message": err.Error()})
-		}
-	}
-	return M{"valid": len(issues) == 0, "issues": issues}
-}
-
-func firstWorkflowValidationError(validation M) error {
-	if validation["valid"] == true {
-		return nil
-	}
-	issues, _ := validation["issues"].([]M)
-	if len(issues) == 0 {
-		return bizErr("Workflow validation failed")
-	}
-	if asString(issues[0]["scope"]) == "permission" {
-		return ErrPermission
-	}
-	return bizErr("%s", asString(issues[0]["message"]))
-}
-
-func (a *App) CreateWorkflowDefinitionForPrincipal(payload WorkflowDefinitionUpsertPayload, principal *Principal) (M, error) {
-	if principal == nil || principal.User == nil {
-		return nil, ErrPermission
-	}
-	if err := firstWorkflowValidationError(a.ValidateWorkflowDefinitionForPrincipal(payload, principal)); err != nil {
-		return nil, err
-	}
-	return a.CreateWorkflowDefinition(payload, principal.User.ID)
-}
-
-func (a *App) UpdateWorkflowDefinitionForPrincipal(definitionID int64, payload WorkflowDefinitionUpsertPayload, principal *Principal) (M, error) {
-	if principal == nil || principal.User == nil {
-		return nil, ErrPermission
-	}
-	definition, err := requireOwnedDefinitionWithDB(a.DB, definitionID, principal.User.ID)
-	if err != nil {
-		return nil, err
-	}
-	merged := payload
-	if len(merged.Graph) == 0 {
-		merged.Graph = loadJSONObject(definition.GraphJSON)
-	}
-	if err := firstWorkflowValidationError(a.ValidateWorkflowDefinitionForPrincipal(merged, principal)); err != nil {
-		return nil, err
-	}
-	return a.UpdateWorkflowDefinition(definitionID, payload, principal.User.ID)
-}
-
 // ListWorkflowDefinitions 每个 code 最新版本摘要。
-func (a *App) ListWorkflowDefinitions(ownerUserID int64) ([]M, error) {
-	all := a.listVisibleDefinitions(ownerUserID)
+func (a *App) ListWorkflowDefinitions() ([]M, error) {
+	all := a.listAllDefinitions()
 	versionMap := map[int64]int{}
 	for _, item := range all {
 		versionMap[item.ID] = item.Version
@@ -719,23 +480,19 @@ func (a *App) ListWorkflowDefinitions(ownerUserID int64) ([]M, error) {
 	seenCodes := map[string]bool{}
 	definitions := make([]db.WorkflowDefinition, 0)
 	for _, item := range all {
-		familyKey := workflowDefinitionFamilyKey(&item)
-		if seenCodes[familyKey] {
+		if seenCodes[item.Code] {
 			continue
 		}
-		seenCodes[familyKey] = true
+		seenCodes[item.Code] = true
 		definitions = append(definitions, item)
 	}
-	stateMap := a.runtimeStateMap(ownerUserID)
+	stateMap := a.runtimeStateMap()
 	executionCounts := a.countExecutionsByDefinitionIDs(collectIDs(all, func(d db.WorkflowDefinition) int64 { return d.ID }))
 
 	result := make([]M, 0, len(definitions))
 	for i := range definitions {
 		definition := definitions[i]
 		state := stateMap[definition.Code]
-		if definition.IsBuiltin {
-			state = nil
-		}
 		executionCount := int64(0)
 		if state != nil && state.ActiveWorkflowDefinitionID != nil {
 			executionCount = executionCounts[*state.ActiveWorkflowDefinitionID]
@@ -746,19 +503,16 @@ func (a *App) ListWorkflowDefinitions(ownerUserID int64) ([]M, error) {
 }
 
 // GetWorkflowDefinition 定义详情 + 版本列表。
-func (a *App) GetWorkflowDefinition(definitionID, ownerUserID int64) (M, error) {
-	definition, err := requireVisibleDefinitionWithDB(a.DB, definitionID, ownerUserID)
+func (a *App) GetWorkflowDefinition(definitionID int64) (M, error) {
+	definition, err := a.requireDefinition(definitionID)
 	if err != nil {
 		return nil, err
 	}
-	state := a.getRuntimeStateByCode(ownerUserID, definition.Code)
-	if definition.IsBuiltin {
-		state = nil
-	}
+	state := a.getRuntimeStateByCode(definition.Code)
 	var versions []db.WorkflowDefinition
 	// 查这个 code 的所有版本:等价 SQL 是 SELECT * FROM ... WHERE code = ? ORDER BY version DESC, id DESC。
 	// Find(&versions) 把多行结果回填进 versions 这个 slice。见 GO入门笔记『框架:GORM』。
-	familyQuery(a.DB, definition).Order("version DESC, id DESC").Find(&versions)
+	a.DB.Where("code = ?", definition.Code).Order("version DESC, id DESC").Find(&versions)
 	versionMap := map[int64]int{}
 	for _, item := range versions {
 		versionMap[item.ID] = item.Version
@@ -804,10 +558,7 @@ func (a *App) CreateWorkflowDefinition(payload WorkflowDefinitionUpsertPayload, 
 		err := a.DB.Transaction(func(tx *gorm.DB) error {
 			definition := buildWorkflowDefinition(code, 1, payload, false, operatorUserID)
 			created := tx.Clauses(clause.OnConflict{
-				Columns: []clause.Column{{Name: "owner_user_id"}, {Name: "code"}, {Name: "version"}},
-				TargetWhere: clause.Where{Exprs: []clause.Expression{
-					clause.Expr{SQL: "owner_user_id IS NOT NULL"},
-				}},
+				Columns:   []clause.Column{{Name: "code"}, {Name: "version"}},
 				DoNothing: true,
 			}).Create(&definition)
 			if created.Error != nil {
@@ -817,7 +568,7 @@ func (a *App) CreateWorkflowDefinition(payload WorkflowDefinitionUpsertPayload, 
 				return errWorkflowCodeTaken
 			}
 			var familySize int64
-			if err := tx.Model(&db.WorkflowDefinition{}).Where("owner_user_id = ? AND code = ?", operatorUserID, code).Count(&familySize).Error; err != nil {
+			if err := tx.Model(&db.WorkflowDefinition{}).Where("code = ?", code).Count(&familySize).Error; err != nil {
 				return err
 			}
 			if familySize != 1 {
@@ -833,12 +584,12 @@ func (a *App) CreateWorkflowDefinition(payload WorkflowDefinitionUpsertPayload, 
 			return nil, err
 		}
 	}
-	return a.GetWorkflowDefinition(definitionID, operatorUserID)
+	return a.GetWorkflowDefinition(definitionID)
 }
 
 // UpdateWorkflowDefinition 编辑生成新版本。
 func (a *App) UpdateWorkflowDefinition(definitionID int64, payload WorkflowDefinitionUpsertPayload, operatorUserID int64) (M, error) {
-	definition, err := requireOwnedDefinitionWithDB(a.DB, definitionID, operatorUserID)
+	definition, err := a.requireDefinition(definitionID)
 	if err != nil {
 		return nil, err
 	}
@@ -866,7 +617,7 @@ func (a *App) UpdateWorkflowDefinition(definitionID int64, payload WorkflowDefin
 		}
 		var maxVersion int
 		if err := tx.Model(&db.WorkflowDefinition{}).
-			Where("owner_user_id = ? AND code = ?", operatorUserID, locked.Code).
+			Where("code = ?", locked.Code).
 			Select("COALESCE(MAX(version), 0)").
 			Scan(&maxVersion).Error; err != nil {
 			return err
@@ -881,15 +632,12 @@ func (a *App) UpdateWorkflowDefinition(definitionID int64, payload WorkflowDefin
 	if err != nil {
 		return nil, err
 	}
-	return a.GetWorkflowDefinition(createdID, operatorUserID)
+	return a.GetWorkflowDefinition(createdID)
 }
 
 // DeleteWorkflowDefinition 删除未激活且无执行历史的版本。
-func (a *App) DeleteWorkflowDefinition(definitionID, ownerUserID int64) error {
+func (a *App) DeleteWorkflowDefinition(definitionID int64) error {
 	return a.DB.Transaction(func(tx *gorm.DB) error {
-		if _, err := requireOwnedDefinitionWithDB(tx, definitionID, ownerUserID); err != nil {
-			return err
-		}
 		definition, err := lockWorkflowDefinitionFamily(tx, definitionID)
 		if err != nil {
 			return err
@@ -898,7 +646,7 @@ func (a *App) DeleteWorkflowDefinition(definitionID, ownerUserID int64) error {
 			return bizErr("Builtin workflow definition cannot be deleted")
 		}
 		var state db.WorkflowRuntimeState
-		err = tx.Where("owner_user_id = ? AND workflow_code = ?", ownerUserID, definition.Code).First(&state).Error
+		err = tx.Where("workflow_code = ?", definition.Code).First(&state).Error
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
@@ -923,8 +671,7 @@ func buildWorkflowDefinition(code string, version int, payload WorkflowDefinitio
 		graph = M{}
 	}
 	return db.WorkflowDefinition{
-		OwnerUserID: &operatorUserID,
-		Code:        code, Version: version, DisplayName: displayName,
+		Code: code, Version: version, DisplayName: displayName,
 		Description: strings.TrimSpace(payload.Description),
 		GraphJSON:   dumpJSON(graph), IsBuiltin: isBuiltin,
 		CreatedBy: &operatorUserID, CreatedAt: time.Now(),
@@ -933,33 +680,24 @@ func buildWorkflowDefinition(code string, version int, payload WorkflowDefinitio
 
 // ---------- 内部 ----------
 
-func (a *App) listVisibleDefinitions(ownerUserID int64) []db.WorkflowDefinition {
+func (a *App) listAllDefinitions() []db.WorkflowDefinition {
 	var all []db.WorkflowDefinition
-	a.DB.Where("owner_user_id = ? OR owner_user_id IS NULL", ownerUserID).
-		Order("is_builtin ASC, code ASC, version DESC, id DESC").Find(&all)
+	a.DB.Order("code ASC, version DESC, id DESC").Find(&all)
 	return all
 }
 
-func (a *App) listLatestDefinitions(ownerUserID int64) []db.WorkflowDefinition {
-	all := a.listVisibleDefinitions(ownerUserID)
+func (a *App) listLatestDefinitions() []db.WorkflowDefinition {
+	all := a.listAllDefinitions()
 	seen := map[string]bool{}
 	result := make([]db.WorkflowDefinition, 0)
 	for _, item := range all {
-		key := workflowDefinitionFamilyKey(&item)
-		if seen[key] {
+		if seen[item.Code] {
 			continue
 		}
-		seen[key] = true
+		seen[item.Code] = true
 		result = append(result, item)
 	}
 	return result
-}
-
-func workflowDefinitionFamilyKey(definition *db.WorkflowDefinition) string {
-	if definition.OwnerUserID == nil {
-		return "builtin:" + definition.Code
-	}
-	return "owner:" + int64Text(*definition.OwnerUserID) + ":" + definition.Code
 }
 
 // requireDefinition 按主键查一条定义,查不到就返回业务错误;返回 *db.WorkflowDefinition(指针)。
@@ -971,7 +709,7 @@ func requireDefinitionWithDB(database *gorm.DB, definitionID int64) (*db.Workflo
 	var definition db.WorkflowDefinition
 	err := database.First(&definition, definitionID).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, notFoundErr("workflow definition")
+		return nil, bizErr("Workflow definition does not exist")
 	}
 	if err != nil {
 		return nil, err
@@ -979,54 +717,26 @@ func requireDefinitionWithDB(database *gorm.DB, definitionID int64) (*db.Workflo
 	return &definition, nil
 }
 
-func requireOwnedDefinitionWithDB(database *gorm.DB, definitionID, ownerUserID int64) (*db.WorkflowDefinition, error) {
-	var definition db.WorkflowDefinition
-	err := database.Where("id = ? AND owner_user_id = ?", definitionID, ownerUserID).Take(&definition).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, notFoundErr("workflow definition")
-	}
-	return &definition, err
-}
-
-func requireVisibleDefinitionWithDB(database *gorm.DB, definitionID, ownerUserID int64) (*db.WorkflowDefinition, error) {
-	var definition db.WorkflowDefinition
-	err := database.Where("id = ? AND (owner_user_id = ? OR owner_user_id IS NULL)", definitionID, ownerUserID).Take(&definition).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, notFoundErr("workflow definition")
-	}
-	return &definition, err
-}
-
-func familyQuery(database *gorm.DB, definition *db.WorkflowDefinition) *gorm.DB {
-	query := database.Where("code = ?", definition.Code)
-	if definition.OwnerUserID == nil {
-		return query.Where("owner_user_id IS NULL")
-	}
-	return query.Where("owner_user_id = ?", *definition.OwnerUserID)
-}
-
 // lockWorkflowDefinitionFamily 用一条无值变化的 UPDATE 获取同一 code 的数据库写锁。
 // PostgreSQL 会锁住 family 的定义行；后续必须只使用同一个 tx，才能让版本分配、激活和删除在多进程下串行。
 func lockWorkflowDefinitionFamily(tx *gorm.DB, definitionID int64) (*db.WorkflowDefinition, error) {
-	definition, err := requireDefinitionWithDB(tx, definitionID)
-	if err != nil {
-		return nil, err
-	}
-	result := familyQuery(tx.Model(&db.WorkflowDefinition{}), definition).UpdateColumn("version", gorm.Expr("version"))
+	result := tx.Model(&db.WorkflowDefinition{}).
+		Where("code = (?)", tx.Model(&db.WorkflowDefinition{}).Select("code").Where("id = ?", definitionID)).
+		UpdateColumn("version", gorm.Expr("version"))
 	if result.Error != nil {
 		return nil, result.Error
 	}
-	return definition, nil
+	return requireDefinitionWithDB(tx, definitionID)
 }
 
-func (a *App) getRuntimeStateByCode(ownerUserID int64, workflowCode string) *db.WorkflowRuntimeState {
-	state, _ := findRuntimeStateByCodeWithDB(a.DB, ownerUserID, workflowCode)
+func (a *App) getRuntimeStateByCode(workflowCode string) *db.WorkflowRuntimeState {
+	state, _ := findRuntimeStateByCodeWithDB(a.DB, workflowCode)
 	return state
 }
 
-func findRuntimeStateByCodeWithDB(database *gorm.DB, ownerUserID int64, workflowCode string) (*db.WorkflowRuntimeState, error) {
+func findRuntimeStateByCodeWithDB(database *gorm.DB, workflowCode string) (*db.WorkflowRuntimeState, error) {
 	var state db.WorkflowRuntimeState
-	err := database.Where("owner_user_id = ? AND workflow_code = ?", ownerUserID, workflowCode).First(&state).Error
+	err := database.Where("workflow_code = ?", workflowCode).First(&state).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -1037,10 +747,10 @@ func findRuntimeStateByCodeWithDB(database *gorm.DB, ownerUserID int64, workflow
 }
 
 // runtimeStateMap 一次性把所有运行时状态查出来,做成 code → *state 的 map 便于查找。
-func (a *App) runtimeStateMap(ownerUserID int64) map[string]*db.WorkflowRuntimeState {
+func (a *App) runtimeStateMap() map[string]*db.WorkflowRuntimeState {
 	var states []db.WorkflowRuntimeState
 	// Find 不带条件 = 查全表所有行,回填进 states。
-	a.DB.Where("owner_user_id = ?", ownerUserID).Find(&states)
+	a.DB.Find(&states)
 	result := map[string]*db.WorkflowRuntimeState{}
 	// range 只写一个变量时拿到的是下标 i。这里存 &states[i](元素地址)而不是循环变量的地址,
 	// 才能让 map 里每个指针各自指向不同的元素。
@@ -1076,7 +786,7 @@ func (a *App) countExecutionsByDefinitionIDs(definitionIDs []int64) map[int64]in
 
 func (a *App) isLatestVersion(definition *db.WorkflowDefinition) bool {
 	var latest db.WorkflowDefinition
-	if err := familyQuery(a.DB, definition).Order("version DESC, id DESC").First(&latest).Error; err != nil {
+	if err := a.DB.Where("code = ?", definition.Code).Order("version DESC, id DESC").First(&latest).Error; err != nil {
 		return false
 	}
 	return latest.ID == definition.ID

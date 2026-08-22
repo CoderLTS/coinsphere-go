@@ -16,12 +16,7 @@
  * 早先这里限制「只有多个开始节点才能汇聚」，导致正常的 join 图在画布上根本画不出来。
  */
 import type { Graph } from '@antv/x6'
-import {
-  LOOP_NEXT_BRANCH,
-  getNodeBranches,
-  getNodeGraphKind,
-  parseDataPortId
-} from './node-registry'
+import { LOOP_NEXT_BRANCH, getNodeBranches, getNodeGraphKind } from './node-registry'
 
 const cellTypeCode = (cell: any) => String(cell?.getData?.()?.typeCode || '')
 
@@ -55,7 +50,6 @@ export const wouldIntroduceCycle = (
   graph.getNodes().forEach((node) => adjacency.set(node.id, []))
   graph.getEdges().forEach((edge) => {
     if (edge.id === skipEdgeId || edge.id === draftEdgeId) return
-    if (edge.getData()?.kind === 'data') return
     const sourceId = edge.getSourceCellId()
     const targetId = edge.getTargetCellId()
     if (!sourceId || !targetId) return
@@ -70,34 +64,6 @@ export const wouldIntroduceCycle = (
     if (visited.has(currentId)) continue
     visited.add(currentId)
     ;(adjacency.get(currentId) || []).forEach((nextId) => stack.push(nextId))
-  }
-  return false
-}
-
-export const isFlowAncestor = (
-  graph: Graph | null,
-  sourceCellId: string,
-  targetCellId: string,
-  skipEdgeId?: string | null,
-  draftEdgeId?: string | null
-) => {
-  if (!graph) return false
-  const adjacency = new Map<string, string[]>()
-  graph.getNodes().forEach((node) => adjacency.set(node.id, []))
-  graph.getEdges().forEach((edge) => {
-    if (edge.id === skipEdgeId || edge.id === draftEdgeId || edge.getData()?.kind === 'data') return
-    const sourceId = edge.getSourceCellId()
-    const targetId = edge.getTargetCellId()
-    if (sourceId && targetId) adjacency.get(sourceId)?.push(targetId)
-  })
-  const stack = [...(adjacency.get(sourceCellId) || [])]
-  const visited = new Set<string>()
-  while (stack.length) {
-    const current = stack.pop() as string
-    if (current === targetCellId) return true
-    if (visited.has(current)) continue
-    visited.add(current)
-    ;(adjacency.get(current) || []).forEach((next) => stack.push(next))
   }
   return false
 }
@@ -130,26 +96,22 @@ export const createConnectionValidator =
     const { sourceCell, targetCell, sourcePort, targetPort, edge } = args
     if (!sourceCell || !targetCell || !sourcePort || !targetPort) return false
     if (sourceCell.id === targetCell.id) return false
-    const source = parseDataPortId(sourcePort)
-    const target = parseDataPortId(targetPort)
-    if (source.kind !== target.kind || source.role !== 'out' || target.role !== 'in') return false
-
-    const graph = getGraph()
-    if (source.kind === 'data') {
-      return isFlowAncestor(graph, sourceCell.id, targetCell.id, edge?.id, getDraftEdgeId())
-    }
     if (targetPort !== 'in') return false
     if (graphKindOfCell(targetCell) === 'start') return false
     if (graphKindOfCell(sourceCell) === 'terminal') return false
 
+    const graph = getGraph()
     if (wouldIntroduceCycle(graph, sourceCell.id, targetCell.id, edge?.id, getDraftEdgeId()))
       return false
 
     const allowedPorts = outPortsOfCell(sourceCell)
     if (!allowedPorts.includes(sourcePort)) return false
 
-    // v1 顺序模型里每个控制流出口只允许一个后继。
-    if (isSourcePortOccupied(graph, sourceCell.id, sourcePort, edge?.id)) return false
+    // 分支与循环的每个出口只允许接一条边；普通节点的 out 端口可以扇出多条。
+    const singleUsePort =
+      graphKindOfCell(sourceCell) === 'branch' || graphKindOfCell(sourceCell) === 'loop'
+    if (singleUsePort && isSourcePortOccupied(graph, sourceCell.id, sourcePort, edge?.id))
+      return false
 
     return true
   }
@@ -161,20 +123,12 @@ export const validateMagnet = ({ magnet }: { magnet: Element | null }) => {
 
 /** 端口小圆点的配色：已连上统一走主色，未连上按语义给色。 */
 export const getPortDisplayColor = (portId: string, connected: boolean) => {
-  const dataPort = parseDataPortId(portId).kind === 'data'
   if (connected)
     return {
-      stroke: dataPort ? '#0f9f8f' : 'var(--theme-color, #5d87ff)',
-      fill: dataPort ? '#0f9f8f' : 'var(--theme-color, #5d87ff)',
-      label: dataPort ? '#0b7f73' : 'var(--theme-color, #5d87ff)'
+      stroke: 'var(--theme-color, #5d87ff)',
+      fill: 'var(--theme-color, #5d87ff)',
+      label: 'var(--theme-color, #5d87ff)'
     }
-  if (dataPort) {
-    return {
-      stroke: '#0f9f8f',
-      fill: 'var(--workflow-panel-bg, #fff)',
-      label: '#0b7f73'
-    }
-  }
   const palette: Record<string, { stroke: string; fill: string; label: string }> = {
     true: {
       stroke: 'var(--el-color-success, #67c23a)',

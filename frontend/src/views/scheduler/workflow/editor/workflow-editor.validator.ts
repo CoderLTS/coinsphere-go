@@ -54,13 +54,11 @@ const buildAdjacency = (graph: WorkflowDomainGraphModel) => {
     adjacency.set(node.id, [])
   })
 
-  graph.edges
-    .filter((edge) => edge.data.kind === 'flow')
-    .forEach((edge) => {
-      incoming.get(edge.target)?.push(edge)
-      outgoing.get(edge.source)?.push(edge)
-      adjacency.get(edge.source)?.push(edge.target)
-    })
+  graph.edges.forEach((edge) => {
+    incoming.get(edge.target)?.push(edge)
+    outgoing.get(edge.source)?.push(edge)
+    adjacency.get(edge.source)?.push(edge.target)
+  })
 
   return { nodeMap, incoming, outgoing, adjacency }
 }
@@ -68,8 +66,7 @@ const buildAdjacency = (graph: WorkflowDomainGraphModel) => {
 export function validateWorkflowDraft(graph: WorkflowDomainGraphModel): WorkflowEditorIssue[] {
   const issues: WorkflowEditorIssue[] = []
   const nodes = graph.nodes
-  const flowEdges = graph.edges.filter((edge) => edge.data.kind === 'flow')
-  const dataEdges = graph.edges.filter((edge) => edge.data.kind === 'data')
+  const edges = graph.edges
   const { nodeMap, incoming, outgoing, adjacency } = buildAdjacency(graph)
 
   if (!nodes.length) {
@@ -109,7 +106,7 @@ export function validateWorkflowDraft(graph: WorkflowDomainGraphModel): Workflow
     }
   })
 
-  graph.edges.forEach((edge) => {
+  edges.forEach((edge) => {
     if (!nodeMap.has(edge.source) || !nodeMap.has(edge.target)) {
       issues.push(
         createIssue({
@@ -211,18 +208,6 @@ export function validateWorkflowDraft(graph: WorkflowDomainGraphModel): Workflow
           level: 'error',
           nodeId: node.id,
           message: '结束节点不能再连出后续节点。'
-        })
-      )
-    }
-
-    const graphKind = getNodeGraphKind(node.data.typeCode)
-    if ((graphKind === 'plain' || graphKind === 'start') && nodeOutgoing.length > 1) {
-      issues.push(
-        createIssue({
-          scope: 'node',
-          level: 'error',
-          nodeId: node.id,
-          message: '顺序工作流中的普通节点最多只能有一个后继。'
         })
       )
     }
@@ -382,7 +367,7 @@ export function validateWorkflowDraft(graph: WorkflowDomainGraphModel): Workflow
       }
     }
 
-    for (const edge of flowEdges) {
+    for (const edge of edges) {
       const sourceInBody = bodySet.has(edge.source)
       const targetInBody = bodySet.has(edge.target)
       if (!sourceInBody && targetInBody && edge.source !== foreachNodeId) {
@@ -413,8 +398,6 @@ export function validateWorkflowDraft(graph: WorkflowDomainGraphModel): Workflow
   nodes
     .filter((node) => node.data.typeCode === 'foreach')
     .forEach((node) => ensureForeachBody(node.id))
-
-  validateDataEdges(dataEdges, graph, adjacency).forEach((issue) => issues.push(issue))
 
   startNodes
     .filter((node) => node.data.typeCode === 'start.event')
@@ -498,141 +481,6 @@ export function validateWorkflowDraft(graph: WorkflowDomainGraphModel): Workflow
   return dedupeIssues(issues)
 }
 
-const decodePointer = (pointer: string) => {
-  if (!pointer) return []
-  if (!pointer.startsWith('/')) return null
-  const tokens: string[] = []
-  for (const raw of pointer.slice(1).split('/')) {
-    let value = ''
-    for (let index = 0; index < raw.length; index += 1) {
-      if (raw[index] !== '~') {
-        value += raw[index]
-        continue
-      }
-      const escaped = raw[index + 1]
-      if (escaped !== '0' && escaped !== '1') return null
-      value += escaped === '0' ? '~' : '/'
-      index += 1
-    }
-    tokens.push(value)
-  }
-  return tokens
-}
-
-const schemaAtPointer = (schema: Record<string, any>, pointer: string) => {
-  const tokens = decodePointer(pointer)
-  if (tokens === null) return null
-  let current = schema || {}
-  for (const token of tokens) {
-    if (!current.type) return {}
-    if (current.type === 'object') {
-      const next = current.properties?.[token]
-      if (!next) return current.additionalProperties === false ? null : {}
-      current = next
-      continue
-    }
-    if (current.type === 'array' && current.items) {
-      current = current.items
-      continue
-    }
-    return null
-  }
-  return current
-}
-
-const schemasCompatible = (source: Record<string, any>, target: Record<string, any>): boolean => {
-  if (!source.type || !target.type) return true
-  if (source.type !== target.type && !(source.type === 'integer' && target.type === 'number')) {
-    return false
-  }
-  if (target.format === 'decimal' && source.format !== 'decimal') return false
-  return (
-    source.type !== 'array' ||
-    !source.items ||
-    !target.items ||
-    schemasCompatible(source.items, target.items)
-  )
-}
-
-const validateDataEdges = (
-  edges: WorkflowDomainEdge[],
-  graph: WorkflowDomainGraphModel,
-  adjacency: Map<string, string[]>
-) => {
-  const issues: WorkflowEditorIssue[] = []
-  const nodes = new Map(graph.nodes.map((node) => [node.id, node]))
-  const targets = new Set<string>()
-  const mappedPorts = new Set<string>()
-  const isAncestor = (source: string, target: string) => {
-    const stack = [...(adjacency.get(source) || [])]
-    const visited = new Set<string>()
-    while (stack.length) {
-      const current = stack.pop() as string
-      if (current === target) return true
-      if (visited.has(current)) continue
-      visited.add(current)
-      ;(adjacency.get(current) || []).forEach((next) => stack.push(next))
-    }
-    return false
-  }
-
-  edges.forEach((edge) => {
-    const source = nodes.get(edge.source)
-    const target = nodes.get(edge.target)
-    const fail = (message: string) =>
-      issues.push(createIssue({ scope: 'edge', level: 'error', edgeId: edge.id, message }))
-    if (!source || !target || source.id === target.id) {
-      fail('数据连线的起点或终点无效。')
-      return
-    }
-    if (!isAncestor(source.id, target.id)) {
-      fail('数据只能来自当前节点之前已经执行的节点。')
-      return
-    }
-    const sourcePort = source.ports.find(
-      (port) => port.edgeKind === 'data' && port.role === 'out' && port.portId === edge.sourcePort
-    )
-    const targetPort = target.ports.find(
-      (port) => port.edgeKind === 'data' && port.role === 'in' && port.portId === edge.targetPort
-    )
-    if (!sourcePort || !targetPort) {
-      fail('数据连线引用了不存在的输入或输出端口。')
-      return
-    }
-    const sourceSchema = schemaAtPointer(sourcePort.schema || {}, edge.data.sourcePointer)
-    const targetSchema = schemaAtPointer(targetPort.schema || {}, edge.data.targetPointer)
-    if (!sourceSchema || !targetSchema) {
-      fail('数据连线选择了无效字段。')
-      return
-    }
-    if (!schemasCompatible(sourceSchema, targetSchema)) {
-      fail('所选输出字段与输入字段类型不兼容。')
-    }
-    const targetKey = `${target.id}\u0000${targetPort.portId}\u0000${edge.data.targetPointer}`
-    if (targets.has(targetKey)) fail('同一个输入字段不能由多条数据连线写入。')
-    targets.add(targetKey)
-    mappedPorts.add(`${target.id}\u0000${targetPort.portId}`)
-  })
-
-  graph.nodes.forEach((node) => {
-    node.ports
-      .filter((port) => port.edgeKind === 'data' && port.role === 'in' && port.required)
-      .forEach((port) => {
-        if (!mappedPorts.has(`${node.id}\u0000${port.portId}`)) {
-          issues.push(
-            createIssue({
-              scope: 'node',
-              level: 'error',
-              nodeId: node.id,
-              message: `必须连接输入：${port.label || port.portId}。`
-            })
-          )
-        }
-      })
-  })
-  return issues
-}
-
 export function validateNodeFormDraft(
   node: WorkflowDomainNode | null,
   form: WorkflowNodeFormModel | null,
@@ -684,15 +532,52 @@ export function validateNodeFormDraft(
       if (analyze && agent && !agent.supportsAnalyze) {
         errors.push('该智能体的数据源不支持结构化分析，请改用自定义提示词。')
       }
+      if (!analyze && !String(config.promptTemplate || '').trim()) {
+        errors.push('请填写提示词，或改用数据源的结构化分析模板。')
+      }
+      if (agent?.requiresRefId && !String(config.refIdPath || '').trim()) {
+        errors.push('该智能体需要关联数据，请填写关联数据 id 路径。')
+      }
       break
     }
 
     case 'condition': {
+      // 多条件模式下顶层的单条件不生效，两套校验分开做。
+      const clauses = Array.isArray(config.conditions) ? config.conditions : []
+      if (clauses.length) {
+        clauses.forEach((clause: Record<string, any>, index: number) => {
+          if (!String(clause?.path || '').trim()) {
+            errors.push(`条件 ${index + 1} 必须填写字段路径。`)
+          }
+          if (!String(clause?.operator || '').trim()) {
+            errors.push(`条件 ${index + 1} 必须选择比较运算。`)
+          }
+          if (
+            String(clause?.operator || '') !== 'truthy' &&
+            !String(clause?.value ?? '').trim() &&
+            !String(clause?.valuePath ?? '').trim()
+          ) {
+            errors.push(`条件 ${index + 1} 必须填写比较值或比较值路径。`)
+          }
+        })
+        break
+      }
+      if (!String(config.path || '').trim())
+        errors.push('条件节点必须填写字段路径，或改用多条件配置。')
       if (!String(config.operator || '').trim()) errors.push('条件节点必须选择比较运算。')
+      // truthy 不需要比较值；比较值也可以改成从共享状态取（valuePath），二选一填一个即可。
+      if (
+        String(config.operator || '') !== 'truthy' &&
+        !String(config.value ?? '').trim() &&
+        !String(config.valuePath ?? '').trim()
+      ) {
+        errors.push('条件节点必须填写比较值或比较值路径。')
+      }
       break
     }
 
     case 'foreach':
+      if (!String(config.itemsPath || '').trim()) errors.push('foreach 节点必须填写数组路径。')
       break
 
     case 'notify':

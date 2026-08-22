@@ -20,22 +20,13 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"coinsphere/backend/internal/perm"
 )
 
 // baseStartProperties 所有 start.* 开始节点共有的配置项。
 var baseStartProperties = M{
-	"entryKey":    M{"type": "string", "title": "开始入口"},
-	"displayName": M{"type": "string", "title": "入口名称"},
-}
-
-func startOutputPorts() []workflowNodePortDefinition {
-	return []workflowNodePortDefinition{
-		nodePort("inputs", "运行输入", false, M{"type": "object"}),
-		nodePort("payload", "触发载荷", false, M{"type": "object"}),
-		nodePort("result", "触发信息", false, M{"type": "object"}),
-	}
+	"entryKey":      M{"type": "string", "title": "开始入口"},
+	"displayName":   M{"type": "string", "title": "入口名称"},
+	"inputBindings": M{"type": "object", "title": "默认输入绑定"},
 }
 
 // mergeProps 合并两份 schema 属性(base 打底,extra 覆盖同名键),生成新 map,不改动传入的两个。
@@ -56,7 +47,7 @@ func init() {
 	registerNode(&workflowNodeDefinition{
 		TypeCode: "start.manual", Label: "手动开始", Kind: nodeKindStart,
 		ConfigSchema: M{"type": "object", "properties": baseStartProperties, "required": []string{"entryKey"}},
-		OutputPorts:  startOutputPorts(), Execute: startNodeExecute,
+		Execute:      startNodeExecute,
 	})
 	registerNode(&workflowNodeDefinition{
 		TypeCode: "start.schedule", Label: "定时开始", Kind: nodeKindStart,
@@ -67,11 +58,11 @@ func init() {
 				"cronExpression": M{"type": "string", "title": "Cron 表达式"},
 				"value":          M{"type": "integer", "title": "间隔数值"},
 				"unit":           M{"type": "string", "enum": []string{"seconds", "minutes", "hours", "days"}, "title": "间隔单位"},
-				"runAt":          M{"type": "string", "title": "执行时间", "format": "date-time"},
+				"runAt":          M{"type": "string", "title": "执行时间"},
 			}),
 			"required": []string{"entryKey", "scheduleType"},
 		},
-		OutputPorts: startOutputPorts(), Execute: startNodeExecute,
+		Execute: startNodeExecute,
 	})
 	registerNode(&workflowNodeDefinition{
 		TypeCode: "start.event", Label: "事件开始", Kind: nodeKindStart,
@@ -82,43 +73,37 @@ func init() {
 				"filters": M{
 					"type": "array", "title": "过滤条件",
 					"items": M{"type": "object", "properties": M{
-						"path": M{
-							"type": "string", "title": "事件字段",
-							"enum": []string{"instrumentId", "venue", "market", "symbol", "baseAsset", "quoteAsset", "interval", "signalId", "accountId"},
-						},
+						"path":   M{"type": "string", "title": "字段路径"},
 						"equals": M{"type": "string", "title": "等于"},
 					}},
 				},
 			}),
 			"required": []string{"entryKey", "eventType"},
 		},
-		OutputPorts: startOutputPorts(), Execute: startNodeExecute,
+		Execute: startNodeExecute,
 	})
 	registerNode(&workflowNodeDefinition{
 		TypeCode: "start.webhook", Label: "Webhook 开始", Kind: nodeKindStart,
 		ConfigSchema: M{"type": "object", "properties": baseStartProperties, "required": []string{"entryKey"}},
-		OutputPorts:  startOutputPorts(), Execute: startNodeExecute,
+		Execute:      startNodeExecute,
 	})
 
 	registerNode(&workflowNodeDefinition{
 		TypeCode: "event.publish", Label: "发布事件",
-		InputPorts: []workflowNodePortDefinition{
-			nodePort("payload", "事件载荷", false, M{"type": "object"}),
-			nodePort("metadata", "事件元数据", false, M{"type": "object"}),
-		},
 		ConfigSchema: M{
 			"type": "object",
 			"properties": M{
 				"eventType":     M{"type": "string", "title": "事件类型"},
 				"aggregateType": M{"type": "string", "title": "聚合类型", "default": "workflow_execution"},
+				"payloadPath":   M{"type": "string", "title": "事件载荷路径", "default": "taskResult"},
+				"metadataPath":  M{"type": "string", "title": "元数据路径", "default": ""},
 			},
 			"required": []string{"eventType"},
 		},
 		Execute: eventPublishExecute,
 	})
 	registerNode(&workflowNodeDefinition{
-		TypeCode: "notify", Label: "发送通知", RequiredPermission: perm.ConfigNotificationChannelsView,
-		InputPorts: []workflowNodePortDefinition{nodePort("data", "模板数据", false, M{"type": "object"})},
+		TypeCode: "notify", Label: "发送通知",
 		ConfigSchema: M{
 			"type": "object",
 			"properties": M{
@@ -138,16 +123,14 @@ func init() {
 	})
 	registerNode(&workflowNodeDefinition{
 		TypeCode: "http.request", Label: "HTTP 请求",
-		InputPorts: []workflowNodePortDefinition{
-			nodePort("body", "请求体", false, M{}),
-			nodePort("headers", "请求头", false, M{"type": "object"}),
-		},
 		ConfigSchema: M{
 			"type": "object",
 			"properties": M{
-				"url":       M{"type": "string", "title": "请求地址"},
-				"method":    M{"type": "string", "title": "请求方法", "default": "POST", "enum": []string{"GET", "POST", "PUT"}},
-				"timeoutMs": M{"type": "integer", "title": "超时毫秒", "default": 10000},
+				"url":         M{"type": "string", "title": "请求地址"},
+				"method":      M{"type": "string", "title": "请求方法", "default": "POST", "enum": []string{"GET", "POST", "PUT"}},
+				"payloadPath": M{"type": "string", "title": "请求体路径", "default": "taskResult"},
+				"headersJson": M{"type": "string", "title": "请求头 JSON", "default": "{}"},
+				"timeoutMs":   M{"type": "integer", "title": "超时毫秒", "default": 10000},
 			},
 			"required": []string{"url"},
 		},
@@ -157,25 +140,45 @@ func init() {
 		TypeCode: "condition.branch", Label: "条件判断",
 		Kind:     nodeKindBranch,
 		Branches: []string{"true", "false"},
-		InputPorts: []workflowNodePortDefinition{
-			nodePort("value", "待判断值", true, M{}),
-			nodePort("compareTo", "比较值", false, M{}),
-		},
 		ConfigSchema: M{
 			"type": "object",
 			"properties": M{
+				"path":     M{"type": "string", "title": "字段路径"},
 				"operator": M{"type": "string", "title": "比较运算", "default": "eq", "enum": []string{"eq", "ne", "contains", "gt", "gte", "lt", "lte", "truthy"}},
 				"value":    M{"type": "string", "title": "比较值", "default": ""},
+				"valuePath": M{
+					"type": "string", "title": "比较值路径",
+					"description": "填了就取共享状态里该路径的值参与比较,优先于固定的比较值",
+				},
+				"logic": M{
+					"type": "string", "title": "多条件组合方式", "default": "and",
+					"enum": []string{"and", "or"},
+				},
+				"conditions": M{
+					"type": "array", "title": "多条件(留空则用上面的单条件)",
+					"items": M{"type": "object", "properties": M{
+						"path":      M{"type": "string", "title": "字段路径"},
+						"operator":  M{"type": "string", "title": "比较运算", "enum": []string{"eq", "ne", "contains", "gt", "gte", "lt", "lte", "truthy"}},
+						"value":     M{"type": "string", "title": "比较值"},
+						"valuePath": M{"type": "string", "title": "比较值路径"},
+					}},
+				},
 			},
+			// path/operator 不列为必填:用多条件(conditions)时顶层这两项是空的。
+			// "至少配了一种条件"改在执行期校验,见 conditionBranchExecute。
 		},
 		Execute: conditionBranchExecute,
 	})
 	registerNode(&workflowNodeDefinition{
 		TypeCode: "foreach", Label: "遍历", Kind: nodeKindLoop,
-		InputPorts: []workflowNodePortDefinition{nodePort("items", "集合", true, M{"type": "array", "items": M{}})},
 		ConfigSchema: M{
-			"type":       "object",
-			"properties": M{},
+			"type": "object",
+			"properties": M{
+				"itemsPath": M{"type": "string", "title": "数组路径"},
+				"itemKey":   M{"type": "string", "title": "元素变量名", "default": "currentItem"},
+				"indexKey":  M{"type": "string", "title": "索引变量名", "default": "currentIndex"},
+			},
+			"required": []string{"itemsPath"},
 		},
 		Execute: foreachExecute,
 	})
@@ -203,21 +206,22 @@ func startNodeExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 		"started":     true,
 		"triggerType": ctx.TriggerCtx["triggerType"],
 		"entryKey":    asString(config["entryKey"]),
-		"inputs":      ctx.State.get("inputs"),
-		"payload":     ctx.State.get("trigger.payload"),
 	}}, nil
 }
 
 // eventPublishExecute 从共享状态取载荷/元数据,发布一条领域事件。
 func eventPublishExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 	config := nodeConfig(ctx)
-	payload, _ := ctx.Inputs["payload"].(map[string]any)
+	payloadPath := cfgStr(config, "payloadPath", "taskResult")
+	payload, _ := ctx.State.get(payloadPath).(map[string]any)
 	if payload == nil {
-		payload = M{}
+		payload = M{"value": ctx.State.get(payloadPath)}
 	}
-	metadata, _ := ctx.Inputs["metadata"].(map[string]any)
-	if metadata == nil {
-		metadata = M{}
+	metadata := M{}
+	if metadataPath := cfgStr(config, "metadataPath", ""); metadataPath != "" {
+		if candidate, ok := ctx.State.get(metadataPath).(map[string]any); ok {
+			metadata = candidate
+		}
 	}
 	aggregateType := cfgStr(config, "aggregateType", "workflow_execution")
 	eventType := cfgStr(config, "eventType", "")
@@ -237,9 +241,7 @@ func notifyExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 			outboxEventID = &id
 		}
 	}
-	templateData := ctx.State.snapshot()
-	templateData["mappedInputs"] = ctx.Inputs
-	result, err := ctx.App.dispatchNotifyNode(ctx.Ctx, ctx.Execution, ctx.NodeLog, outboxEventID, config, templateData)
+	result, err := ctx.App.dispatchNotifyNode(ctx.Ctx, ctx.Execution, ctx.NodeLog, outboxEventID, config, ctx.State.snapshot())
 	if err != nil {
 		return nil, err
 	}
@@ -251,10 +253,14 @@ func notifyExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 // 失败会明确标注可否重试:网络层错误与 429/5xx 交给重试机制,4xx 属于请求本身有问题,重试也是白搭。
 func httpRequestExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 	config := nodeConfig(ctx)
-	payload := ctx.Inputs["body"]
-	headers, _ := ctx.Inputs["headers"].(map[string]any)
-	if headers == nil {
-		headers = M{}
+	payload := ctx.State.get(cfgStr(config, "payloadPath", "taskResult"))
+	headers := M{}
+	if headersText := strings.TrimSpace(asString(config["headersJson"])); headersText != "" {
+		var parsed M
+		if err := json.Unmarshal([]byte(headersText), &parsed); err != nil {
+			return nil, bizErr("Node JSON config is invalid")
+		}
+		headers = parsed
 	}
 	timeout := time.Duration(cfgInt(config, "timeoutMs", 10000)) * time.Millisecond
 	if timeout < time.Second {
@@ -308,14 +314,39 @@ func httpRequestExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 
 // conditionBranchExecute 条件判断,选出 true/false 分支;引擎只会点亮 branchKey 与所选分支相符的出边。
 //
-// 待判断值和动态比较值都由数据端口提供；配置只保存运算符和可选固定比较值。
+// 支持两种写法:
+//   - 单条件:直接用 path / operator / value(或 valuePath);
+//   - 多条件:填 conditions 数组,再用 logic(and / or)组合,此时忽略顶层单条件。
 func conditionBranchExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 	config := nodeConfig(ctx)
-	expected := config["value"]
-	if value, ok := ctx.Inputs["compareTo"]; ok {
-		expected = value
+	clauses, _ := config["conditions"].([]any)
+	matched := false
+	if len(clauses) == 0 {
+		// 单条件模式下 path 是必须的;两种模式都没配就是节点没配好,直接报错,
+		// 而不是默默走 false 分支让人以为"条件不成立"。
+		if cfgStr(config, "path", "") == "" {
+			return nil, bizErr("条件节点需要填写字段路径,或改用多条件配置")
+		}
+		matched = evalCondition(ctx, config)
+	} else if strings.EqualFold(cfgStr(config, "logic", "and"), "or") {
+		// or:任一条成立即为真。
+		for _, clauseAny := range clauses {
+			if clause, ok := clauseAny.(map[string]any); ok && evalCondition(ctx, clause) {
+				matched = true
+				break
+			}
+		}
+	} else {
+		// and(默认):全部成立才为真。
+		matched = true
+		for _, clauseAny := range clauses {
+			clause, ok := clauseAny.(map[string]any)
+			if !ok || !evalCondition(ctx, clause) {
+				matched = false
+				break
+			}
+		}
 	}
-	matched := compareValues(ctx.Inputs["value"], expected, cfgStr(config, "operator", "eq"))
 	branch := "false"
 	if matched {
 		branch = "true"
@@ -324,18 +355,29 @@ func conditionBranchExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 	return &nodeExecResult{Output: M{"matched": matched}, SelectedBranch: &branch}, nil
 }
 
+// evalCondition 求值一条比较子句:左值取自共享状态的 path;右值优先取 valuePath 指向的状态值,否则用固定的 value。
+func evalCondition(ctx *nodeExecContext, clause M) bool {
+	actual := ctx.State.get(asString(clause["path"]))
+	expected := clause["value"]
+	if valuePath := cfgStr(clause, "valuePath", ""); valuePath != "" {
+		expected = ctx.State.get(valuePath)
+	}
+	return compareValues(actual, expected, cfgStr(clause, "operator", "eq"))
+}
+
 // foreachExecute 把要遍历的数组放进 ForeachItems 返回;引擎收到后会对每个元素跑一遍循环体子图。
 // 元素/索引写进共享状态时用的变量名一并返回(ItemKey/IndexKey),交给引擎按元素设置,循环体内的节点即可引用。
 func foreachExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
-	items, _ := ctx.Inputs["items"].([]any)
+	config := nodeConfig(ctx)
+	items, _ := ctx.State.get(asString(config["itemsPath"])).([]any)
 	if items == nil {
 		items = []any{}
 	}
 	return &nodeExecResult{
 		Output:       M{"count": len(items)},
 		ForeachItems: items,
-		ItemKey:      "currentItem",
-		IndexKey:     "currentIndex",
+		ItemKey:      cfgStr(config, "itemKey", "currentItem"),
+		IndexKey:     cfgStr(config, "indexKey", "currentIndex"),
 	}, nil
 }
 

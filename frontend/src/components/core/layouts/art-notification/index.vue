@@ -317,7 +317,7 @@
 
   const handleFooterAction = async () => {
     emit('update:value', false)
-    await router.push('/workbench')
+    await router.push('/data/push')
   }
 </script>
 
