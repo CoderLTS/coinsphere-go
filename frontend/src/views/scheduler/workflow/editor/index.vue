@@ -1682,9 +1682,9 @@
 
     header {
       display: flex;
-      min-width: 80px;
       flex-direction: column;
       gap: 2px;
+      min-width: 80px;
       padding: 0 8px;
 
       span {
@@ -1692,6 +1692,7 @@
         font-weight: 700;
         color: var(--workflow-overlay-text);
       }
+
       small {
         color: var(--workflow-overlay-muted);
       }
@@ -1706,10 +1707,10 @@
       padding: 5px 8px;
       color: var(--workflow-overlay-text);
       text-align: left;
+      cursor: pointer;
       background: var(--workflow-overlay-soft);
       border: 0;
       border-radius: 5px;
-      cursor: pointer;
 
       i {
         grid-row: 1 / 3;
@@ -1718,20 +1719,24 @@
         background: #10a6a6;
         border-radius: 2px;
       }
+
       i.is-waiting_action,
       i.is-retry_waiting,
       i.is-waiting_job {
         background: #d69a2d;
       }
+
       i.is-failed,
       i.is-canceled,
       i.is-cancel_requested {
         background: #d94b55;
       }
+
       span {
         font-size: 12px;
         font-weight: 600;
       }
+
       small {
         color: var(--workflow-overlay-muted);
         white-space: nowrap;

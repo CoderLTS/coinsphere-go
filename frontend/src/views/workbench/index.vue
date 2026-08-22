@@ -293,6 +293,7 @@
     --wb-teal: #10a6a6;
     --wb-amber: #d69a2d;
     --wb-risk: #d94b55;
+
     min-height: 100%;
     padding: 24px;
     color: var(--art-gray-900);
@@ -310,8 +311,8 @@
   }
 
   .workbench__header {
-    justify-content: space-between;
     gap: 24px;
+    justify-content: space-between;
     padding-bottom: 20px;
     border-bottom: 1px solid var(--art-card-border);
 
@@ -321,6 +322,7 @@
       line-height: 34px;
       letter-spacing: 0;
     }
+
     p,
     .workbench__eyebrow {
       margin: 0;
@@ -332,6 +334,7 @@
     font-family: 'Cascadia Code', Consolas, monospace;
     font-size: 11px;
   }
+
   .workbench__actions {
     gap: 8px;
   }
@@ -345,11 +348,11 @@
   .summary-cell {
     position: relative;
     display: flex;
+    flex-direction: column;
     min-height: 112px;
     padding: 18px 20px 16px;
     color: inherit;
     text-align: left;
-    flex-direction: column;
     background: transparent;
     border: 0;
     border-right: 1px solid var(--art-card-border);
@@ -357,6 +360,7 @@
     &:last-child {
       border-right: 0;
     }
+
     &::before {
       position: absolute;
       top: 0;
@@ -366,10 +370,12 @@
       content: '';
       background: var(--art-gray-400);
     }
+
     span,
     small {
       color: var(--art-gray-600);
     }
+
     strong {
       margin: 5px 0 2px;
       font-size: 28px;
@@ -380,12 +386,15 @@
   button.summary-cell {
     cursor: pointer;
   }
+
   .summary-cell--teal::before {
     background: var(--wb-teal);
   }
+
   .summary-cell--amber::before {
     background: var(--wb-amber);
   }
+
   .summary-cell--risk::before {
     background: var(--wb-risk);
   }
@@ -395,13 +404,14 @@
     grid-template-columns: minmax(0, 1.65fr) minmax(340px, 0.75fr);
     min-height: 520px;
     margin-top: 20px;
+    overflow: hidden;
     border: 1px solid var(--art-card-border);
     border-radius: 8px;
-    overflow: hidden;
   }
 
   .workbench__rail {
     border-left: 1px solid var(--art-card-border);
+
     .workbench-panel + .workbench-panel {
       border-top: 1px solid var(--art-card-border);
     }
@@ -412,13 +422,14 @@
     padding: 18px;
     background: var(--el-bg-color);
   }
+
   .workbench-panel--workflows {
     min-height: 100%;
   }
 
   .panel-head {
-    justify-content: space-between;
     gap: 16px;
+    justify-content: space-between;
     min-height: 42px;
     margin-bottom: 12px;
 
@@ -427,6 +438,7 @@
       font-size: 16px;
       letter-spacing: 0;
     }
+
     span {
       font-size: 12px;
       color: var(--art-gray-600);
@@ -436,6 +448,7 @@
   .panel-search {
     width: 210px;
   }
+
   .workflow-list,
   .execution-list,
   .pending-list {
@@ -451,26 +464,26 @@
 
   .workflow-row__main {
     display: flex;
-    min-width: 0;
     flex: 1;
     gap: 12px;
     align-items: center;
+    min-width: 0;
     padding: 0;
     color: inherit;
     text-align: left;
+    cursor: pointer;
     background: none;
     border: 0;
-    cursor: pointer;
   }
 
   .workflow-row__mark {
     display: grid;
+    place-items: center;
     width: 38px;
     height: 38px;
     color: var(--art-gray-700);
     background: var(--art-gray-200);
     border-radius: 6px;
-    place-items: center;
 
     &.is-active {
       color: var(--wb-teal);
@@ -480,9 +493,9 @@
 
   .row-copy {
     display: flex;
-    min-width: 0;
     flex-direction: column;
     gap: 4px;
+    min-width: 0;
 
     strong,
     small {
@@ -490,6 +503,7 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+
     small {
       color: var(--art-gray-600);
     }
@@ -501,6 +515,7 @@
     font-size: 12px;
     color: var(--art-gray-600);
   }
+
   .workflow-row__buttons {
     gap: 6px;
   }
@@ -515,10 +530,10 @@
     padding: 9px 0;
     color: inherit;
     text-align: left;
+    cursor: pointer;
     background: none;
     border: 0;
     border-top: 1px solid var(--art-card-border);
-    cursor: pointer;
 
     > span:last-child {
       font-size: 12px;
@@ -532,18 +547,22 @@
     background: var(--art-gray-400);
     border-radius: 2px;
   }
+
   .execution-state.is-teal {
     background: var(--wb-teal);
   }
+
   .execution-state.is-amber {
     background: var(--wb-amber);
   }
+
   .execution-state.is-risk {
     background: var(--wb-risk);
   }
 
   .pending-list button {
     grid-template-columns: minmax(0, 1fr) auto;
+
     &:hover strong {
       color: var(--wb-amber);
     }
@@ -553,12 +572,14 @@
     .workbench__grid {
       grid-template-columns: 1fr;
     }
+
     .workbench__rail {
       display: grid;
       grid-template-columns: 1fr 1fr;
       border-top: 1px solid var(--art-card-border);
       border-left: 0;
     }
+
     .workbench__rail .workbench-panel + .workbench-panel {
       border-top: 0;
       border-left: 1px solid var(--art-card-border);
@@ -569,38 +590,49 @@
     .workbench {
       padding: 14px;
     }
+
     .workbench__header {
       align-items: flex-start;
     }
+
     .workbench__header h1 {
       font-size: 22px;
     }
+
     .workbench__summary {
       grid-template-columns: 1fr 1fr;
     }
+
     .summary-cell:nth-child(2) {
       border-right: 0;
     }
+
     .summary-cell:nth-child(n + 3) {
       border-top: 1px solid var(--art-card-border);
     }
+
     .workbench__rail {
       grid-template-columns: 1fr;
     }
+
     .workbench__rail .workbench-panel + .workbench-panel {
       border-top: 1px solid var(--art-card-border);
       border-left: 0;
     }
+
     .panel-search {
       width: 150px;
     }
+
     .workflow-row {
-      align-items: flex-start;
       flex-wrap: wrap;
+      align-items: flex-start;
     }
+
     .workflow-row__main {
       flex-basis: calc(100% - 90px);
     }
+
     .workflow-row__facts {
       order: 3;
       width: 100%;

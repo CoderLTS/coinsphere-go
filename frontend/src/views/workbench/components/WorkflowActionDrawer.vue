@@ -207,10 +207,10 @@
     padding: 8px 10px;
     color: var(--art-gray-900);
     text-align: left;
+    cursor: pointer;
     background: var(--el-fill-color-blank);
     border: 1px solid var(--art-card-border);
     border-radius: 6px;
-    cursor: pointer;
 
     &:hover,
     &.is-active {
@@ -226,9 +226,9 @@
 
   .action-drawer__copy {
     display: flex;
-    min-width: 0;
     flex-direction: column;
     gap: 4px;
+    min-width: 0;
 
     strong,
     small {
@@ -252,9 +252,9 @@
     header,
     footer {
       display: flex;
-      justify-content: space-between;
       gap: 12px;
       align-items: center;
+      justify-content: space-between;
     }
 
     header span {
