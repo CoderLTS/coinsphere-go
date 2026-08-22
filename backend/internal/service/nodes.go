@@ -178,13 +178,6 @@ func (s *runState) snapshot() M {
 	return copied
 }
 
-// snapshotJSON 在读锁内把整张表序列化成 JSON(截断到上限),给节点输入/输出快照落库用。
-func (s *runState) snapshotJSON(maxBytes int) string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return serializeSnapshot(s.data, maxBytes)
-}
-
 // 节点"图语义"分类。校验器(workflowdef.go)靠它决定一个节点的出边该怎么查,
 // 而不是把 "end" / "condition.branch" / "foreach" 这些具体类型编码写死在校验代码里。
 // 新增一种节点时只要在 registerNode 里声明 Kind(必要时加 Branches),校验器自动适配。

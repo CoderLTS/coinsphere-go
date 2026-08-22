@@ -310,17 +310,6 @@ WHERE instance.id = ? AND instance.is_enabled AND instance.archived_at IS NULL
 	return task, result.RowsAffected == 0, nil
 }
 
-func (a *App) loadStrategyTask(ctx context.Context, taskID string) (strategyTaskState, error) {
-	var task strategyTaskState
-	err := a.dbWithContext(ctx).Raw(
-		"SELECT id, status, COALESCE(failure_category, '') AS failure_category, COALESCE(error_message, '') AS error_message FROM worker_tasks WHERE id = ?", taskID,
-	).Scan(&task).Error
-	if err == nil && task.ID == "" {
-		err = errors.New("strategy task was not found")
-	}
-	return task, err
-}
-
 func strategyTaskOutput(task strategyTaskState, deduplicated bool, signal any) M {
 	return M{"taskId": task.ID, "taskStatus": task.Status, "deduplicated": deduplicated, "signal": signal}
 }
