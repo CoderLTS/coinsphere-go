@@ -1,7 +1,6 @@
 /** 工作流编辑器辅助模块：types。 */
 import type {
   WorkflowDefinitionValidationIssue,
-  WorkflowEdgeKind,
   WorkflowEdgeItem,
   WorkflowNodeDefinitionItem,
   WorkflowNodeItem
@@ -70,13 +69,9 @@ export interface WorkflowNotifyChannelOption {
 
 export interface WorkflowDomainPort {
   id: string
-  portId: string
   group: string
   role: 'in' | 'out'
-  edgeKind: WorkflowEdgeKind
   label?: string
-  required?: boolean
-  schema?: Record<string, any>
 }
 
 export interface WorkflowDomainNodeData {
@@ -104,11 +99,8 @@ export interface WorkflowDomainNode {
 }
 
 export interface WorkflowDomainEdgeData {
-  kind: WorkflowEdgeKind
   branch: string
   label: string
-  sourcePointer: string
-  targetPointer: string
 }
 
 export interface WorkflowDomainEdge {
@@ -196,11 +188,8 @@ export interface WorkflowEdgeFormModel {
   target: string
   sourcePort: string
   targetPort: string
-  kind: WorkflowEdgeKind
   branch: string
   label: string
-  sourcePointer: string
-  targetPointer: string
 }
 
 export interface WorkflowEditorDraftState {

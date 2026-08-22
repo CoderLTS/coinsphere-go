@@ -787,12 +787,12 @@ def test_realtime_signal_is_idempotent_and_expires_manual(postgres_dsn: str) -> 
         workflow = connection.execute(
             """
             INSERT INTO workflow_definitions (
-                owner_user_id, code, version, display_name, graph_json, created_by, created_at
-            ) VALUES (%s, 'worker_realtime_test', 1, 'Worker realtime test',
-                      '{"schemaVersion":2,"nodes":[],"edges":[]}', %s, CURRENT_TIMESTAMP)
+                code, version, display_name, graph_json, created_by, created_at
+            ) VALUES ('worker_realtime_test', 1, 'Worker realtime test', '{}', %s,
+                      CURRENT_TIMESTAMP)
             RETURNING id
             """,
-            (owner[0], owner[0]),
+            (owner[0],),
         ).fetchone()
         assert workflow is not None
         record = connection.execute(

@@ -72,42 +72,6 @@ export function getNodeConfigSchema(typeCode: string): Record<string, any> {
   return registry.get(typeCode)?.configSchema || {}
 }
 
-export function getNodeInputPorts(typeCode: string) {
-  return registry.get(typeCode)?.inputPorts || []
-}
-
-export function getNodeOutputPorts(typeCode: string) {
-  return registry.get(typeCode)?.outputPorts || []
-}
-
-export const DATA_INPUT_PORT_PREFIX = 'data-in:'
-export const DATA_OUTPUT_PORT_PREFIX = 'data-out:'
-
-export const toDataPortId = (role: 'in' | 'out', portId: string) =>
-  `${role === 'in' ? DATA_INPUT_PORT_PREFIX : DATA_OUTPUT_PORT_PREFIX}${portId}`
-
-export const parseDataPortId = (portId: string) => {
-  if (portId.startsWith(DATA_INPUT_PORT_PREFIX)) {
-    return {
-      kind: 'data' as const,
-      role: 'in' as const,
-      portId: portId.slice(DATA_INPUT_PORT_PREFIX.length)
-    }
-  }
-  if (portId.startsWith(DATA_OUTPUT_PORT_PREFIX)) {
-    return {
-      kind: 'data' as const,
-      role: 'out' as const,
-      portId: portId.slice(DATA_OUTPUT_PORT_PREFIX.length)
-    }
-  }
-  return {
-    kind: 'flow' as const,
-    role: portId === 'in' ? ('in' as const) : ('out' as const),
-    portId
-  }
-}
-
 export const isStartTypeCode = (typeCode: string) => getNodeGraphKind(typeCode) === 'start'
 export const isBranchTypeCode = (typeCode: string) => getNodeGraphKind(typeCode) === 'branch'
 export const isLoopTypeCode = (typeCode: string) => getNodeGraphKind(typeCode) === 'loop'

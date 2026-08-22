@@ -213,6 +213,15 @@
     "outside": {
       "title": "Outside"
     },
+    "dashboard": {
+      "title": "Dashboard",
+      "overview": "Overview"
+    },
+    "result": {
+      "title": "Result Page",
+      "success": "Success",
+      "fail": "Fail"
+    },
     "exception": {
       "title": "Exception",
       "forbidden": "403",

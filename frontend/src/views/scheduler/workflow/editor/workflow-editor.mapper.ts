@@ -14,11 +14,7 @@ import {
   LOOP_NEXT_BRANCH,
   getNodeBranches,
   getNodeGraphKind,
-  getNodeInputPorts,
-  getNodeOutputPorts,
-  hasDynamicBranches,
-  parseDataPortId,
-  toDataPortId
+  hasDynamicBranches
 } from './node-registry'
 import type {
   WorkflowDomainEdge,
@@ -229,6 +225,13 @@ export function buildDefaultNodeConfig(
     const suffix = typeCode.split('.', 2)[1] || 'manual'
     config.entryKey = String(config.entryKey || `${suffix}.default`).trim()
     config.displayName = String(config.displayName || START_LABELS[typeCode] || '开始入口').trim()
+    if (
+      !config.inputBindings ||
+      typeof config.inputBindings !== 'object' ||
+      Array.isArray(config.inputBindings)
+    ) {
+      config.inputBindings = {}
+    }
   }
 
   return config
@@ -243,86 +246,38 @@ export function buildPortsForType(
   typeCode: string,
   config?: Record<string, any>
 ): WorkflowDomainPort[] {
-  const inPort: WorkflowDomainPort = {
-    id: 'in',
-    portId: 'in',
-    group: 'in',
-    role: 'in',
-    edgeKind: 'flow'
-  }
-  const dataPorts: WorkflowDomainPort[] = [
-    ...getNodeInputPorts(typeCode).map((port, index) => ({
-      id: toDataPortId('in', port.id),
-      portId: port.id,
-      group: `data-in-${index}`,
-      role: 'in' as const,
-      edgeKind: 'data' as const,
-      label: port.label,
-      required: port.required,
-      schema: port.schema
-    })),
-    ...getNodeOutputPorts(typeCode).map((port, index) => ({
-      id: toDataPortId('out', port.id),
-      portId: port.id,
-      group: `data-out-${index}`,
-      role: 'out' as const,
-      edgeKind: 'data' as const,
-      label: port.label,
-      required: port.required,
-      schema: port.schema
-    }))
-  ]
-  const withData = (ports: WorkflowDomainPort[]) => [...ports, ...dataPorts]
+  const inPort: WorkflowDomainPort = { id: 'in', group: 'in', role: 'in' }
 
   switch (getNodeGraphKind(typeCode)) {
     case 'start':
-      return withData([{ id: 'out', portId: 'out', group: 'out', role: 'out', edgeKind: 'flow' }])
+      return [{ id: 'out', group: 'out', role: 'out' }]
 
     case 'terminal':
-      return withData([inPort])
+      return [inPort]
 
     case 'branch': {
       const branches = getNodeBranches(typeCode, config)
-      return withData([
+      return [
         inPort,
         ...branches.map((branch, index) => ({
           id: branch,
-          portId: branch,
           group: resolveBranchPortGroup(branch, index, branches.length),
           role: 'out' as const,
-          edgeKind: 'flow' as const,
           label: branch.toUpperCase()
         }))
-      ])
+      ]
     }
 
     case 'loop':
       // BODY 连循环体（每个元素跑一遍）；NEXT 连"整个循环跑完之后"继续的节点，可以不连。
-      return withData([
+      return [
         inPort,
-        {
-          id: 'body',
-          portId: 'body',
-          group: 'loop-body',
-          role: 'out',
-          edgeKind: 'flow',
-          label: 'BODY'
-        },
-        {
-          id: LOOP_NEXT_BRANCH,
-          portId: LOOP_NEXT_BRANCH,
-          group: 'loop-next',
-          role: 'out',
-          edgeKind: 'flow',
-          label: 'NEXT'
-        }
-      ])
+        { id: 'body', group: 'loop-body', role: 'out', label: 'BODY' },
+        { id: LOOP_NEXT_BRANCH, group: 'loop-next', role: 'out', label: 'NEXT' }
+      ]
 
     default:
-      return withData([
-        inPort,
-        { id: 'out', portId: 'out', group: 'out', role: 'out', edgeKind: 'flow' }
-      ])
+      return [inPort, { id: 'out', group: 'out', role: 'out' }]
   }
 }
 
@@ -418,7 +373,7 @@ const buildGenericNodeSummary = (typeCode: string, config: Record<string, any>) 
     case 'state.append':
       return truncateText(String(config.key || '配置目标数组变量'))
     case 'array.filter':
-      return '过滤已连接的数组'
+      return truncateText(String(config.itemsPath || '配置源数组路径'))
     case 'log.message':
       return truncateText(String(config.message || '配置日志内容'))
     case 'workflow.call': {
@@ -457,13 +412,22 @@ const buildNodeCollapsedSummary = (node: WorkflowDomainNode) => {
     }
 
     case 'condition': {
+      // 多条件优先展示条数，单条件展示 "路径 运算 值"（值可能来自 valuePath）。
+      const clauses = Array.isArray(config.conditions) ? config.conditions : []
+      if (clauses.length) {
+        const logic = String(config.logic || 'and').toUpperCase()
+        return `${clauses.length} 个条件 / ${logic}`
+      }
       const operator = String(config.operator || '').trim()
-      const value = String(config.value ?? '').trim()
-      return truncateText([operator, value].filter(Boolean).join(' ') || '配置分支条件')
+      const valuePath = String(config.valuePath ?? '').trim()
+      const value = valuePath ? `→ ${valuePath}` : String(config.value ?? '').trim()
+      return truncateText(
+        [config.path, operator, value].filter(Boolean).join(' ') || '配置分支条件'
+      )
     }
 
     case 'foreach':
-      return '遍历已连接的集合'
+      return truncateText(String(config.itemsPath || '遍历数组输入'))
 
     case 'notify': {
       const targets = Array.isArray(config.targets) ? config.targets.length : 0
@@ -535,33 +499,13 @@ const createDomainEdge = (
     id: string
     source: string
     target: string
-    kind?: 'flow' | 'data'
     sourcePort?: string
     targetPort?: string
     branch?: string
     label?: string
-    sourcePointer?: string
-    targetPointer?: string
   },
   nodeMap: Map<string, WorkflowDomainNode>
 ): WorkflowDomainEdge => {
-  const kind = edge.kind === 'data' ? 'data' : 'flow'
-  if (kind === 'data') {
-    return {
-      id: String(edge.id),
-      source: String(edge.source),
-      target: String(edge.target),
-      sourcePort: parseDataPortId(String(edge.sourcePort || '')).portId,
-      targetPort: parseDataPortId(String(edge.targetPort || '')).portId,
-      data: {
-        kind,
-        branch: '',
-        label: String(edge.label || ''),
-        sourcePointer: String(edge.sourcePointer || ''),
-        targetPointer: String(edge.targetPointer || '')
-      }
-    }
-  }
   const sourceType = resolveEdgeSourceType(
     nodeMap,
     String(edge.source),
@@ -578,11 +522,8 @@ const createDomainEdge = (
     sourcePort,
     targetPort: 'in',
     data: {
-      kind,
       branch,
-      label: String(edge.label || ''),
-      sourcePointer: '',
-      targetPointer: ''
+      label: String(edge.label || '')
     }
   }
 }
@@ -598,11 +539,8 @@ export function createDomainEdgeFromForm(
       target: edge.target,
       sourcePort: edge.sourcePort,
       targetPort: edge.targetPort,
-      kind: edge.kind,
       branch: edge.branch,
-      label: edge.label,
-      sourcePointer: edge.sourcePointer,
-      targetPointer: edge.targetPointer
+      label: edge.label
     },
     new Map(nodes.map((node) => [node.id, node]))
   )
@@ -662,11 +600,8 @@ export function createDefaultDomainGraph(
         sourcePort: 'out',
         targetPort: 'in',
         data: {
-          kind: 'flow',
           branch: '',
-          label: '',
-          sourcePointer: '',
-          targetPointer: ''
+          label: ''
         }
       }
     ]
@@ -690,7 +625,6 @@ export function mapServerGraphToDomain(
 export function mapDomainGraphToServer(graph: WorkflowDomainGraphModel): WorkflowGraph {
   const nodeMap = new Map(graph.nodes.map((node) => [node.id, node]))
   return {
-    schemaVersion: 2,
     nodes: graph.nodes.map((node) => ({
       id: node.id,
       type: node.data.typeCode,
@@ -701,32 +635,17 @@ export function mapDomainGraphToServer(graph: WorkflowDomainGraphModel): Workflo
         y: Math.round(node.position.y)
       }
     })),
-    edges: graph.edges.map((edge) =>
-      edge.data.kind === 'data'
-        ? {
-            id: edge.id,
-            kind: 'data',
-            source: edge.source,
-            target: edge.target,
-            sourcePort: edge.sourcePort || '',
-            targetPort: edge.targetPort || '',
-            sourcePointer: edge.data.sourcePointer || '',
-            targetPointer: edge.data.targetPointer || '',
-            label: edge.data.label || ''
-          }
-        : {
-            id: edge.id,
-            kind: 'flow',
-            source: edge.source,
-            target: edge.target,
-            branch: normalizeEdgeBranch(
-              resolveEdgeSourceType(nodeMap, edge.source, edge.sourcePort, edge.data.branch),
-              edge.sourcePort,
-              edge.data.branch
-            ),
-            label: edge.data.label || ''
-          }
-    )
+    edges: graph.edges.map((edge) => ({
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      branch: normalizeEdgeBranch(
+        resolveEdgeSourceType(nodeMap, edge.source, edge.sourcePort, edge.data.branch),
+        edge.sourcePort,
+        edge.data.branch
+      ),
+      label: edge.data.label || ''
+    }))
   }
 }
 
@@ -738,7 +657,6 @@ const createPortGroup = (options: {
   labelColor?: string
   textAnchor?: 'start' | 'end' | 'middle'
   refDx?: number
-  refDy?: number
   /**
    * 端口标签是否常显。默认只在 hover 节点时出现，避免画布糊成一片；
    * 但分支/循环节点的出口语义（TRUE/FALSE、BODY/NEXT）不看标签根本分不出来，必须常显。
@@ -777,7 +695,6 @@ const createPortGroup = (options: {
         textAnchor: options.textAnchor || 'start',
         textVerticalAnchor: 'middle',
         refX: options.refDx ?? 12,
-        refY: options.refDy ?? 0,
         style: { visibility },
         class: 'workflow-port-label'
       }
@@ -785,109 +702,89 @@ const createPortGroup = (options: {
   }
 }
 
-const buildPortGroups = (ports: WorkflowDomainPort[]) => {
-  const groups: Record<string, any> = {
-    in: createPortGroup({
-      x: 0,
-      y: '50%',
-      stroke: '#94a3b8',
-      magnet: 'passive',
-      textAnchor: 'end',
-      refDx: -12
-    }),
-    out: createPortGroup({
-      x: '100%',
-      y: '50%',
-      stroke: '#3b82f6',
-      magnet: true
-    }),
-    // 下面这些是「有语义的出口」：分支走哪条、循环体还是循环之后，
-    // 光看小圆点分不出来，所以标签常显（alwaysVisible）。
-    'branch-true': createPortGroup({
-      x: '100%',
-      y: 28,
-      stroke: '#22c55e',
-      magnet: true,
-      labelColor: '#15803d',
-      alwaysVisible: true
-    }),
-    'branch-false': createPortGroup({
-      x: '100%',
-      y: 68,
-      stroke: '#ef4444',
-      magnet: true,
-      labelColor: '#b91c1c',
-      alwaysVisible: true
-    }),
-    // 通用分支槽位：给 true/false 之外的自定义分支用，纵向依次排开。
-    'branch-slot-0': createPortGroup({
-      x: '100%',
-      y: 22,
-      stroke: '#6366f1',
-      magnet: true,
-      labelColor: '#4338ca',
-      alwaysVisible: true
-    }),
-    'branch-slot-1': createPortGroup({
-      x: '100%',
-      y: 42,
-      stroke: '#8b5cf6',
-      magnet: true,
-      labelColor: '#6d28d9',
-      alwaysVisible: true
-    }),
-    'branch-slot-2': createPortGroup({
-      x: '100%',
-      y: 62,
-      stroke: '#a855f7',
-      magnet: true,
-      labelColor: '#7e22ce',
-      alwaysVisible: true
-    }),
-    'branch-slot-3': createPortGroup({
-      x: '100%',
-      y: 82,
-      stroke: '#c026d3',
-      magnet: true,
-      labelColor: '#a21caf',
-      alwaysVisible: true
-    }),
-    'loop-body': createPortGroup({
-      x: '100%',
-      y: 28,
-      stroke: '#ca8a04',
-      magnet: true,
-      labelColor: '#a16207',
-      alwaysVisible: true
-    }),
-    'loop-next': createPortGroup({
-      x: '100%',
-      y: 68,
-      stroke: '#0ea5e9',
-      magnet: true,
-      labelColor: '#0369a1',
-      alwaysVisible: true
-    })
-  }
-  const addDataGroups = (role: 'in' | 'out') => {
-    const dataPorts = ports.filter((port) => port.edgeKind === 'data' && port.role === role)
-    dataPorts.forEach((port, index) => {
-      groups[port.group] = createPortGroup({
-        x: `${Math.round(((index + 1) / (dataPorts.length + 1)) * 100)}%`,
-        y: role === 'in' ? 0 : '100%',
-        stroke: '#0f9f8f',
-        magnet: role === 'in' ? 'passive' : true,
-        labelColor: '#0b7f73',
-        textAnchor: 'middle',
-        refDx: 0,
-        refDy: role === 'in' ? 14 : -12
-      })
-    })
-  }
-  addDataGroups('in')
-  addDataGroups('out')
-  return groups
-}
+const buildPortGroups = () => ({
+  in: createPortGroup({
+    x: 0,
+    y: '50%',
+    stroke: '#94a3b8',
+    magnet: 'passive',
+    textAnchor: 'end',
+    refDx: -12
+  }),
+  out: createPortGroup({
+    x: '100%',
+    y: '50%',
+    stroke: '#3b82f6',
+    magnet: true
+  }),
+  // 下面这些是「有语义的出口」：分支走哪条、循环体还是循环之后，
+  // 光看小圆点分不出来，所以标签常显（alwaysVisible）。
+  'branch-true': createPortGroup({
+    x: '100%',
+    y: 28,
+    stroke: '#22c55e',
+    magnet: true,
+    labelColor: '#15803d',
+    alwaysVisible: true
+  }),
+  'branch-false': createPortGroup({
+    x: '100%',
+    y: 68,
+    stroke: '#ef4444',
+    magnet: true,
+    labelColor: '#b91c1c',
+    alwaysVisible: true
+  }),
+  // 通用分支槽位：给 true/false 之外的自定义分支用，纵向依次排开。
+  'branch-slot-0': createPortGroup({
+    x: '100%',
+    y: 22,
+    stroke: '#6366f1',
+    magnet: true,
+    labelColor: '#4338ca',
+    alwaysVisible: true
+  }),
+  'branch-slot-1': createPortGroup({
+    x: '100%',
+    y: 42,
+    stroke: '#8b5cf6',
+    magnet: true,
+    labelColor: '#6d28d9',
+    alwaysVisible: true
+  }),
+  'branch-slot-2': createPortGroup({
+    x: '100%',
+    y: 62,
+    stroke: '#a855f7',
+    magnet: true,
+    labelColor: '#7e22ce',
+    alwaysVisible: true
+  }),
+  'branch-slot-3': createPortGroup({
+    x: '100%',
+    y: 82,
+    stroke: '#c026d3',
+    magnet: true,
+    labelColor: '#a21caf',
+    alwaysVisible: true
+  }),
+  'loop-body': createPortGroup({
+    x: '100%',
+    y: 28,
+    stroke: '#ca8a04',
+    magnet: true,
+    labelColor: '#a16207',
+    alwaysVisible: true
+  }),
+  'loop-next': createPortGroup({
+    x: '100%',
+    y: 68,
+    stroke: '#0ea5e9',
+    magnet: true,
+    labelColor: '#0369a1',
+    alwaysVisible: true
+  })
+})
 
 const buildStencilAttrs = (material: WorkflowMaterialItem) => ({
   body: {
@@ -982,7 +879,7 @@ export function mapDomainGraphToX6(
         }
       },
       ports: {
-        groups: buildPortGroups(node.ports),
+        groups: buildPortGroups(),
         items: node.ports.map((port) => ({
           id: port.id,
           group: port.group,
@@ -1017,26 +914,13 @@ export function mapDomainGraphToX6(
     cells.push({
       id: edge.id,
       shape: 'edge',
-      source: {
-        cell: edge.source,
-        port:
-          edge.data.kind === 'data'
-            ? toDataPortId('out', edge.sourcePort || '')
-            : edge.sourcePort || 'out'
-      },
-      target: {
-        cell: edge.target,
-        port:
-          edge.data.kind === 'data'
-            ? toDataPortId('in', edge.targetPort || '')
-            : edge.targetPort || 'in'
-      },
+      source: { cell: edge.source, port: edge.sourcePort || 'out' },
+      target: { cell: edge.target, port: edge.targetPort || 'in' },
       connector: { name: 'smooth' },
       attrs: {
         line: {
-          stroke: hasIssue ? '#ef4444' : edge.data.kind === 'data' ? '#0f9f8f' : '#94a3b8',
+          stroke: hasIssue ? '#ef4444' : '#94a3b8',
           strokeWidth: hasIssue ? 2 : 1.6,
-          strokeDasharray: edge.data.kind === 'data' ? '7 5' : '',
           targetMarker: {
             name: 'block',
             width: 12,
@@ -1046,11 +930,8 @@ export function mapDomainGraphToX6(
       },
       labels: buildEdgeLabel(edge),
       data: {
-        kind: edge.data.kind,
         branch: edge.data.branch,
-        label: edge.data.label,
-        sourcePointer: edge.data.sourcePointer,
-        targetPointer: edge.data.targetPointer
+        label: edge.data.label
       }
     })
   })
@@ -1115,11 +996,8 @@ export function mapX6GraphToDomain(
           target: edgeCell.target?.cell || '',
           sourcePort: edgeCell.source?.port,
           targetPort: edgeCell.target?.port,
-          kind: edgeCell.data?.kind || 'flow',
           branch: edgeCell.data?.branch || '',
-          label: edgeCell.data?.label || '',
-          sourcePointer: edgeCell.data?.sourcePointer || '',
-          targetPointer: edgeCell.data?.targetPointer || ''
+          label: edgeCell.data?.label || ''
         },
         nodeMap
       )
@@ -1148,11 +1026,8 @@ export function mapDomainEdgeToForm(edge: WorkflowDomainEdge | null): WorkflowEd
     target: edge.target,
     sourcePort: edge.sourcePort || '',
     targetPort: edge.targetPort || '',
-    kind: edge.data.kind,
     branch: edge.data.branch || '',
-    label: edge.data.label || '',
-    sourcePointer: edge.data.sourcePointer || '',
-    targetPointer: edge.data.targetPointer || ''
+    label: edge.data.label || ''
   }
 }
 
@@ -1180,20 +1055,6 @@ export function applyEdgeFormToDomain(
   edge: WorkflowDomainEdge,
   form: WorkflowEdgeFormModel
 ): WorkflowDomainEdge {
-  if (form.kind === 'data') {
-    return {
-      ...edge,
-      sourcePort: parseDataPortId(form.sourcePort || edge.sourcePort || '').portId,
-      targetPort: parseDataPortId(form.targetPort || edge.targetPort || '').portId,
-      data: {
-        kind: 'data',
-        branch: '',
-        label: form.label,
-        sourcePointer: form.sourcePointer,
-        targetPointer: form.targetPointer
-      }
-    }
-  }
   const sourceType = inferSourceTypeFromEdgePorts(
     form.sourcePort || edge.sourcePort,
     form.branch || edge.data.branch
@@ -1208,11 +1069,8 @@ export function applyEdgeFormToDomain(
     sourcePort,
     targetPort: 'in',
     data: {
-      kind: 'flow',
       branch: normalizeEdgeBranch(sourceType, sourcePort, form.branch || edge.data.branch),
-      label: form.label,
-      sourcePointer: '',
-      targetPointer: ''
+      label: form.label
     }
   }
 }

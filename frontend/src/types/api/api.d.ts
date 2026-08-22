@@ -654,6 +654,38 @@ declare namespace Api {
     }
   }
 
+  namespace Home {
+    interface DashboardStats {
+      newsTotal: number
+      newsToday: number
+      activeTasks: number
+    }
+
+    interface DashboardNewsItem {
+      sourceMessageId: number
+      title: string
+      summary: string
+      publishedAt: string
+    }
+
+    interface DashboardTaskItem {
+      taskId: number
+      definitionCode: string
+      taskName: string
+      isEnabled: boolean
+      runCount: number
+      lastExecutedAt: string
+      lastErrorMessage: string
+      scheduleLabel: string
+    }
+
+    interface DashboardOverview {
+      stats: DashboardStats
+      recentNews: DashboardNewsItem[]
+      tasks: DashboardTaskItem[]
+    }
+  }
+
   namespace Scheduler {
     type WorkflowStartType = 'manual' | 'schedule' | 'event' | 'webhook'
     type WorkflowTriggerType = WorkflowStartType

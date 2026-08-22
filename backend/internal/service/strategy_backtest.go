@@ -119,7 +119,7 @@ type backtestTaskState struct {
 	FailureCategory *string
 }
 
-func (a *App) ListStrategyDrafts(ctx context.Context, userID int64, page CursorPage) (CursorResult[StrategyDraftView], error) {
+func (a *App) ListStrategyDrafts(ctx context.Context, page CursorPage) (CursorResult[StrategyDraftView], error) {
 	if err := validateCursorLimit(page); err != nil {
 		return CursorResult[StrategyDraftView]{}, invalidStrategy(err.Error())
 	}
@@ -127,8 +127,7 @@ func (a *App) ListStrategyDrafts(ctx context.Context, userID int64, page CursorP
 	if err != nil {
 		return CursorResult[StrategyDraftView]{}, invalidStrategy(err.Error())
 	}
-	query := a.dbWithContext(ctx).Model(&db.StrategyDraft{}).
-		Where("created_by_user_id = ? AND archived_at IS NULL", userID)
+	query := a.dbWithContext(ctx).Model(&db.StrategyDraft{}).Where("archived_at IS NULL")
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return CursorResult[StrategyDraftView]{}, err
@@ -176,13 +175,13 @@ func (a *App) CreateStrategyDraft(ctx context.Context, userID int64, payload Str
 	return serializeStrategyDraft(row), nil
 }
 
-func (a *App) GetStrategyDraft(ctx context.Context, userID int64, rawID string) (StrategyDraftView, error) {
+func (a *App) GetStrategyDraft(ctx context.Context, rawID string) (StrategyDraftView, error) {
 	id, err := requiredStrategyUUID(rawID, "strategyId")
 	if err != nil {
 		return StrategyDraftView{}, err
 	}
 	var row db.StrategyDraft
-	if err := a.dbWithContext(ctx).Where("id = ? AND created_by_user_id = ? AND archived_at IS NULL", id, userID).Take(&row).Error; err != nil {
+	if err := a.dbWithContext(ctx).Where("id = ? AND archived_at IS NULL", id).Take(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return StrategyDraftView{}, ErrStrategyDraftMissing
 		}
@@ -191,14 +190,14 @@ func (a *App) GetStrategyDraft(ctx context.Context, userID int64, rawID string) 
 	return serializeStrategyDraft(row), nil
 }
 
-func (a *App) ArchiveStrategyDraft(ctx context.Context, userID int64, rawID string) error {
+func (a *App) ArchiveStrategyDraft(ctx context.Context, rawID string) error {
 	id, err := requiredStrategyUUID(rawID, "strategyId")
 	if err != nil {
 		return err
 	}
 	now := time.Now().UTC()
 	result := a.dbWithContext(ctx).Model(&db.StrategyDraft{}).
-		Where("id = ? AND created_by_user_id = ? AND archived_at IS NULL", id, userID).
+		Where("id = ? AND archived_at IS NULL", id).
 		Updates(map[string]any{"archived_at": now, "updated_at": now})
 	if result.Error != nil {
 		return result.Error
@@ -220,8 +219,7 @@ func (a *App) UpdateStrategyDraft(ctx context.Context, userID int64, rawID strin
 	}
 	var row db.StrategyDraft
 	err = a.dbWithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("id = ? AND created_by_user_id = ? AND archived_at IS NULL", id, userID).Take(&row).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND archived_at IS NULL", id).Take(&row).Error; err != nil {
 			return err
 		}
 		row.Name = validated.Name
@@ -265,8 +263,7 @@ func (a *App) PublishStrategy(ctx context.Context, userID int64, rawID, idempote
 		}
 
 		var draft db.StrategyDraft
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("id = ? AND created_by_user_id = ? AND archived_at IS NULL", strategyID, userID).Take(&draft).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND archived_at IS NULL", strategyID).Take(&draft).Error; err != nil {
 			return err
 		}
 		var latest int
@@ -308,7 +305,7 @@ func (a *App) PublishStrategy(ctx context.Context, userID int64, rawID, idempote
 	return serializeStrategyVersion(version), nil
 }
 
-func (a *App) ListPublishedStrategies(ctx context.Context, userID int64, page CursorPage) (CursorResult[StrategyVersionView], error) {
+func (a *App) ListPublishedStrategies(ctx context.Context, page CursorPage) (CursorResult[StrategyVersionView], error) {
 	if err := validateCursorLimit(page); err != nil {
 		return CursorResult[StrategyVersionView]{}, invalidStrategy(err.Error())
 	}
@@ -316,8 +313,7 @@ func (a *App) ListPublishedStrategies(ctx context.Context, userID int64, page Cu
 	if err != nil {
 		return CursorResult[StrategyVersionView]{}, invalidStrategy(err.Error())
 	}
-	query := a.dbWithContext(ctx).Model(&db.StrategyVersion{}).
-		Where("published_by_user_id = ? AND status = 'published'", userID)
+	query := a.dbWithContext(ctx).Model(&db.StrategyVersion{}).Where("status = 'published'")
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return CursorResult[StrategyVersionView]{}, err
@@ -344,13 +340,13 @@ func (a *App) ListPublishedStrategies(ctx context.Context, userID int64, page Cu
 	return typedCursorResult(records, page, lastKey, hasMore, total), nil
 }
 
-func (a *App) GetPublishedStrategy(ctx context.Context, userID int64, rawID string) (StrategyVersionView, error) {
+func (a *App) GetPublishedStrategy(ctx context.Context, rawID string) (StrategyVersionView, error) {
 	id, err := requiredStrategyUUID(rawID, "strategyVersionId")
 	if err != nil {
 		return StrategyVersionView{}, err
 	}
 	var row db.StrategyVersion
-	if err := a.dbWithContext(ctx).Where("id = ? AND published_by_user_id = ? AND status = 'published'", id, userID).Take(&row).Error; err != nil {
+	if err := a.dbWithContext(ctx).Where("id = ? AND status = 'published'", id).Take(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return StrategyVersionView{}, ErrStrategyVersionMissing
 		}
@@ -365,7 +361,7 @@ func (a *App) CreateBacktest(ctx context.Context, userID int64, idempotencyKey s
 		return BacktestView{}, err
 	}
 	var version db.StrategyVersion
-	if err := a.dbWithContext(ctx).Where("id = ? AND published_by_user_id = ? AND status = 'published'", versionID, userID).Take(&version).Error; err != nil {
+	if err := a.dbWithContext(ctx).Where("id = ? AND status = 'published'", versionID).Take(&version).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return BacktestView{}, ErrStrategyVersionMissing
 		}

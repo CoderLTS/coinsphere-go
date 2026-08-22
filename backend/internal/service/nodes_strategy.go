@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	"coinsphere/backend/internal/db"
 	"coinsphere/backend/internal/marketdata"
-	"coinsphere/backend/internal/perm"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -17,25 +17,20 @@ import (
 
 func init() {
 	registerNode(&workflowNodeDefinition{
-		TypeCode: "strategy.evaluate", Label: "执行策略", RequiredPermission: perm.TradingOverviewView,
-		ExecutionMode: nodeExecutionWorkerJob,
-		InputPorts: []workflowNodePortDefinition{
-			nodePort("candleOpenTime", "K 线时间", true, M{"type": "string", "format": "date-time"}),
-		},
-		OutputPorts: []workflowNodePortDefinition{
-			nodePort("result", "执行任务", false, M{"type": "object"}),
-			nodePort("taskId", "任务 ID", false, M{"type": "string"}),
-		},
+		TypeCode: "strategy.evaluate", Label: "执行策略",
 		ConfigSchema: M{"type": "object", "properties": M{
-			"strategyVersionId": M{"type": "string", "title": "策略版本", "resource": "strategy-version"},
-			"instrumentId":      M{"type": "string", "title": "币种", "resource": "market-instrument"},
-			"interval":          M{"type": "string", "title": "周期", "enum": []string{"1m", "5m", "15m", "1h", "4h", "1d"}},
-			"environment":       M{"type": "string", "title": "环境", "enum": []string{"paper", "testnet", "live"}, "default": "paper"},
-			"mode":              M{"type": "string", "title": "运行模式", "enum": []string{"signal_only", "manual", "auto"}, "default": "signal_only"},
-			"tradingAccountId":  M{"type": "string", "title": "交易账户", "resource": "trading-account"},
-			"allocationUsdt":    M{"type": "string", "format": "decimal", "title": "运行额度"},
-			"stopLossRatio":     M{"type": "string", "format": "decimal", "title": "止损比例"},
-			"parameters":        M{"type": "object", "title": "策略参数"},
+			"strategyVersionId":  M{"type": "string", "title": "策略版本"},
+			"instrumentId":       M{"type": "string", "title": "币种"},
+			"interval":           M{"type": "string", "title": "周期", "enum": []string{"1m", "5m", "15m", "1h", "4h", "1d"}},
+			"environment":        M{"type": "string", "title": "环境", "enum": []string{"paper", "testnet", "live"}, "default": "paper"},
+			"mode":               M{"type": "string", "title": "运行模式", "enum": []string{"signal_only", "manual", "auto"}, "default": "signal_only"},
+			"tradingAccountId":   M{"type": "string", "title": "交易账户"},
+			"allocationUsdt":     M{"type": "string", "title": "运行额度"},
+			"stopLossRatio":      M{"type": "string", "title": "止损比例"},
+			"parameters":         M{"type": "object", "title": "策略参数"},
+			"candleOpenTimePath": M{"type": "string", "title": "K 线时间路径", "default": "trigger.payload.openTime"},
+			"executionMode":      M{"type": "string", "title": "执行模式", "enum": []string{"sync", "async"}, "default": "sync"},
+			"timeoutSeconds":     M{"type": "integer", "title": "等待秒数", "minimum": 5, "maximum": 300, "default": 30},
 		}, "required": []string{"strategyVersionId", "instrumentId", "interval"}}, Execute: strategyEvaluateExecute,
 	})
 }
@@ -48,6 +43,7 @@ type strategyTaskState struct {
 }
 
 func strategyEvaluateExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
+	config := nodeConfig(ctx)
 	var instance db.StrategyInstance
 	err := ctx.App.dbWithContext(ctx.Ctx).Where(
 		"workflow_definition_id = ? AND workflow_node_id = ? AND is_enabled AND archived_at IS NULL",
@@ -64,9 +60,18 @@ func strategyEvaluateExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 		asString(payload["interval"]) != instance.Interval {
 		return nil, permanentErr(invalidStrategy("触发事件的币种或周期与策略节点不一致"))
 	}
-	openTime, err := parseOptionalUTCTime(asString(ctx.Inputs["candleOpenTime"]), "candleOpenTime")
+	path := cfgStr(config, "candleOpenTimePath", "trigger.payload.openTime")
+	openTime, err := parseOptionalUTCTime(asString(ctx.State.get(path)), "candleOpenTime")
 	if err != nil || openTime == nil {
-		return nil, permanentErr(invalidStrategy("candleOpenTime must be UTC RFC3339Nano"))
+		return nil, permanentErr(invalidStrategy("candleOpenTimePath must resolve to UTC RFC3339Nano"))
+	}
+	mode := cfgStr(config, "executionMode", "sync")
+	if mode != "sync" && mode != "async" {
+		return nil, permanentErr(invalidStrategy("executionMode must be sync or async"))
+	}
+	timeoutSeconds := cfgInt(config, "timeoutSeconds", 30)
+	if timeoutSeconds < 5 || timeoutSeconds > 300 {
+		return nil, permanentErr(invalidStrategy("timeoutSeconds must be between 5 and 300"))
 	}
 	task, deduplicated, err := ctx.App.enqueueStrategyEvaluation(ctx.Ctx, instance.ID, openTime.UTC())
 	if err != nil {
@@ -75,12 +80,45 @@ func strategyEvaluateExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 		}
 		return nil, retryableErr(err)
 	}
-	output := strategyTaskOutput(task, deduplicated, nil)
-	setNodeOutput(ctx, output)
-	return &nodeExecResult{Output: output, Wait: &workflowWaitRequest{
-		Kind: "worker_job", TargetType: "strategy_signal", TargetID: task.ID,
-		Request: M{"workerTaskId": task.ID},
-	}}, nil
+	if mode == "async" {
+		output := strategyTaskOutput(task, deduplicated, nil)
+		setNodeOutput(ctx, output)
+		return &nodeExecResult{Output: output}, nil
+	}
+
+	deadline := time.NewTimer(time.Duration(timeoutSeconds) * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		switch task.Status {
+		case "succeeded":
+			var signal db.StrategySignal
+			err := ctx.App.dbWithContext(ctx.Ctx).Where("id = ?", task.ID).First(&signal).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, permanentErr(fmt.Errorf("strategy task %s succeeded without a signal", task.ID))
+			}
+			if err != nil {
+				return nil, retryableErr(err)
+			}
+			output := strategyTaskOutput(task, deduplicated, serializeStrategySignal(signal))
+			setNodeOutput(ctx, output)
+			return &nodeExecResult{Output: output}, nil
+		case "failed", "canceled":
+			return nil, permanentErr(fmt.Errorf("strategy task %s", task.Status))
+		}
+		select {
+		case <-ctx.Ctx.Done():
+			return nil, ctx.Ctx.Err()
+		case <-deadline.C:
+			return nil, retryableErr(fmt.Errorf("strategy task %s timed out", task.ID))
+		case <-ticker.C:
+			task, err = ctx.App.loadStrategyTask(ctx.Ctx, task.ID)
+			if err != nil {
+				return nil, retryableErr(err)
+			}
+		}
+	}
 }
 
 func (a *App) reconcileWorkflowStrategiesWithDB(database *gorm.DB, definition *db.WorkflowDefinition) error {
@@ -108,7 +146,7 @@ func (a *App) reconcileWorkflowStrategiesWithDB(database *gorm.DB, definition *d
 			return invalidStrategy("interval is not supported")
 		}
 		var version db.StrategyVersion
-		if err := database.Where("id = ? AND published_by_user_id = ? AND status = 'published'", versionID, *definition.CreatedBy).Take(&version).Error; err != nil {
+		if err := database.Where("id = ? AND status = 'published'", versionID).Take(&version).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrStrategyVersionMissing
 			}
@@ -308,6 +346,17 @@ WHERE instance.id = ? AND instance.is_enabled AND instance.archived_at IS NULL
 		return strategyTaskState{}, false, errors.New("strategy task was not persisted")
 	}
 	return task, result.RowsAffected == 0, nil
+}
+
+func (a *App) loadStrategyTask(ctx context.Context, taskID string) (strategyTaskState, error) {
+	var task strategyTaskState
+	err := a.dbWithContext(ctx).Raw(
+		"SELECT id, status, COALESCE(failure_category, '') AS failure_category, COALESCE(error_message, '') AS error_message FROM worker_tasks WHERE id = ?", taskID,
+	).Scan(&task).Error
+	if err == nil && task.ID == "" {
+		err = errors.New("strategy task was not found")
+	}
+	return task, err
 }
 
 func strategyTaskOutput(task strategyTaskState, deduplicated bool, signal any) M {

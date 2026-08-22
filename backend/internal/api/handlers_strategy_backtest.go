@@ -17,7 +17,7 @@ func (s *Server) handleListStrategyDrafts(w http.ResponseWriter, r *http.Request
 	if !valid {
 		return
 	}
-	data, err := s.App.ListStrategyDrafts(r.Context(), principal.User.ID, page)
+	data, err := s.App.ListStrategyDrafts(r.Context(), page)
 	writeStrategyBacktestResult(w, r, data, err)
 }
 
@@ -38,7 +38,7 @@ func (s *Server) handleGetStrategyDraft(w http.ResponseWriter, r *http.Request, 
 	if !requireStrategyAdmin(w, r, principal) {
 		return
 	}
-	data, err := s.App.GetStrategyDraft(r.Context(), principal.User.ID, r.PathValue("strategyId"))
+	data, err := s.App.GetStrategyDraft(r.Context(), r.PathValue("strategyId"))
 	writeStrategyBacktestResult(w, r, data, err)
 }
 
@@ -59,7 +59,7 @@ func (s *Server) handleArchiveStrategyDraft(w http.ResponseWriter, r *http.Reque
 	if !requireStrategyAdmin(w, r, principal) {
 		return
 	}
-	err := s.App.ArchiveStrategyDraft(r.Context(), principal.User.ID, r.PathValue("strategyId"))
+	err := s.App.ArchiveStrategyDraft(r.Context(), r.PathValue("strategyId"))
 	if err != nil {
 		writeStrategyBacktestResult(w, r, nil, err)
 		return
@@ -77,17 +77,17 @@ func (s *Server) handlePublishStrategy(w http.ResponseWriter, r *http.Request, p
 	writeStrategyBacktestResult(w, r, data, err)
 }
 
-func (s *Server) handleListPublishedStrategies(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+func (s *Server) handleListPublishedStrategies(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
 	page, valid := cursorPage(w, r)
 	if !valid {
 		return
 	}
-	data, err := s.App.ListPublishedStrategies(r.Context(), principal.User.ID, page)
+	data, err := s.App.ListPublishedStrategies(r.Context(), page)
 	writeStrategyBacktestResult(w, r, data, err)
 }
 
-func (s *Server) handleGetPublishedStrategy(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	data, err := s.App.GetPublishedStrategy(r.Context(), principal.User.ID, r.PathValue("strategyVersionId"))
+func (s *Server) handleGetPublishedStrategy(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
+	data, err := s.App.GetPublishedStrategy(r.Context(), r.PathValue("strategyVersionId"))
 	writeStrategyBacktestResult(w, r, data, err)
 }
 

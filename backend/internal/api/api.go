@@ -149,10 +149,6 @@ func respond(w http.ResponseWriter, data any, err error, successMsg string) {
 			failStatus(w, http.StatusForbidden, err.Error())
 			return
 		}
-		if errors.Is(err, service.ErrNotFound) {
-			failStatus(w, http.StatusNotFound, "resource not found")
-			return
-		}
 		fail(w, err.Error())
 		return
 	}

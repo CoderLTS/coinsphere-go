@@ -15,35 +15,33 @@ import (
 	"time"
 
 	"coinsphere/backend/internal/db"
-	"coinsphere/backend/internal/perm"
 )
 
 func init() {
 	registerNode(&workflowNodeDefinition{
 		TypeCode: "assistant.agent", Label: "智能体",
-		PermissionConfigKey: "agentCode", PermissionByValue: perm.AssistantAgentRequiredPermission,
-		InputPorts: []workflowNodePortDefinition{
-			nodePort("prompt", "提示词", false, M{"type": "string"}),
-			nodePort("refId", "关联数据", false, M{"type": "integer"}),
-		},
-		OutputPorts: []workflowNodePortDefinition{
-			nodePort("result", "完整结果", false, M{"type": "object"}),
-			nodePort("content", "回复内容", false, M{"type": "string"}),
-			nodePort("reasoning", "推理内容", false, M{"type": "string"}),
-		},
 		ConfigSchema: M{
 			"type": "object",
 			"properties": M{
-				"agentCode":   M{"type": "string", "title": "智能体"},
-				"instruction": M{"type": "string", "title": "固定指令", "format": "multiline"},
+				"agentCode": M{"type": "string", "title": "智能体编码"},
+				"promptTemplate": M{
+					"type": "string", "title": "提示词",
+					"description": "支持 {{路径}} 引用共享状态,例如 {{taskResult.insertedItems.0.title}}",
+				},
 				"analyze": M{
 					"type": "boolean", "title": "使用数据源的结构化分析模板", "default": false,
-					"description": "开启后使用智能体数据源自带的分析指令",
+					"description": "开启后忽略上面的提示词,改用智能体数据源自带的分析指令(仅新闻这类支持分析的数据源可用)",
+				},
+				"refIdPath": M{
+					"type": "string", "title": "关联数据 id 路径",
+					"description": "数据源需要外部 id 时(如新闻上下文)从共享状态的这个路径取,例如 currentItem.id",
 				},
 				"modelConfigId": M{
 					"type": "integer", "title": "指定模型配置 id",
-					"resource":    "ai-model",
 					"description": "留空则用该智能体绑定的模型;都没有就用工作流创建者启用的第一个模型",
+				},
+				"outputKey": M{
+					"type": "string", "title": "结果写入共享状态的键名", "default": "agentResult",
 				},
 			},
 			"required": []string{"agentCode"},
@@ -55,6 +53,7 @@ func init() {
 // agentNodeExecute 执行一次智能体调用。
 //
 // 输出:{content, reasoning, agentCode, modelConfigId, promptTokens, completionTokens, totalTokens}。
+// 同时按 outputKey 写进共享状态,方便下游节点直接引用(比如把 content 丢给 notify 节点发出去)。
 func agentNodeExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 	config := nodeConfig(ctx)
 	agentCode := cfgStr(config, "agentCode", "")
@@ -66,15 +65,20 @@ func agentNodeExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 		return nil, err
 	}
 
+	// 数据源需要外部 id 时,从共享状态里按配置的路径取。
 	source := getAgentDataSource(agent.DataSourceType)
 	if source == nil {
 		return nil, bizErr("智能体 %s 配置了未知的数据源类型: %s", agent.Code, agent.DataSourceType)
 	}
 	var refID *int64
 	if source.RequiresRefID {
-		value := asInt64(ctx.Inputs["refId"])
+		refPath := cfgStr(config, "refIdPath", "")
+		if refPath == "" {
+			return nil, bizErr("智能体 %s 需要关联数据,请配置 refIdPath", agent.Code)
+		}
+		value := asInt64(ctx.State.get(refPath))
 		if value <= 0 {
-			return nil, bizErr("智能体 %s 需要有效的关联数据输入", agent.Code)
+			return nil, bizErr("按路径 %s 没取到有效的关联数据 id", refPath)
 		}
 		refID = &value
 	}
@@ -83,12 +87,9 @@ func agentNodeExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 		return nil, err
 	}
 
-	// analyze 走数据源自带的分析模板;否则优先使用映射输入，再使用固定指令。
+	// analyze 走数据源自带的分析模板;否则用节点上配的提示词(已由 nodeConfig 渲染过 {{路径}})。
 	analyze := isTruthy(config["analyze"]) && source.supportsAnalyze()
-	prompt := strings.TrimSpace(asString(ctx.Inputs["prompt"]))
-	if prompt == "" {
-		prompt = cfgStr(config, "instruction", "")
-	}
+	prompt := cfgStr(config, "promptTemplate", "")
 	if !analyze && prompt == "" {
 		return nil, bizErr("智能体节点需要填写提示词,或改用数据源的结构化分析模板")
 	}
@@ -120,6 +121,7 @@ func agentNodeExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 		"promptTokens": result.Usage.PromptTokens, "completionTokens": result.Usage.CompletionTokens,
 		"totalTokens": result.Usage.TotalTokens,
 	}
+	ctx.State.set(cfgStr(config, "outputKey", "agentResult"), output)
 	setNodeOutput(ctx, output)
 	return &nodeExecResult{Output: output}, nil
 }
@@ -152,7 +154,7 @@ func (a *App) resolveWorkflowAgentModel(definition *db.WorkflowDefinition, agent
 // ---------- 编辑器面板用的智能体选项 ----------
 
 // ListWorkflowAgentOptions 工作流编辑器里 assistant.agent 节点的智能体下拉选项。
-// 同时告诉前端这个智能体要不要关联数据、支不支持结构化分析。
+// 同时告诉前端这个智能体要不要 refIdPath、支不支持结构化分析,好按需显示对应输入项。
 func (a *App) ListWorkflowAgentOptions() []M {
 	var agents []db.AssistantAgent
 	a.DB.Where("is_enabled = ?", true).Order("sort ASC, id ASC").Find(&agents)

@@ -213,6 +213,15 @@
     "outside": {
       "title": "内嵌页面"
     },
+    "dashboard": {
+      "title": "仪表盘",
+      "overview": "总览"
+    },
+    "result": {
+      "title": "结果页面",
+      "success": "成功页",
+      "fail": "失败页"
+    },
     "exception": {
       "title": "异常页面",
       "forbidden": "403",

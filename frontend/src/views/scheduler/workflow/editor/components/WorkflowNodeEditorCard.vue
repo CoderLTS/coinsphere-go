@@ -54,6 +54,16 @@
               />
             </ElFormItem>
 
+            <ElFormItem label="默认输入绑定 JSON">
+              <ElInput
+                v-model="startInputBindingsJson"
+                type="textarea"
+                :rows="4"
+                placeholder='{"source":"manual"}'
+                @blur="normalizeJsonObjectField('inputBindings', startInputBindingsJson)"
+              />
+            </ElFormItem>
+
             <template v-if="localForm.typeCode === 'start.schedule'">
               <ElFormItem label="计划类型">
                 <ElSelect v-model="localForm.config.scheduleType" @change="emitModel">
@@ -92,22 +102,33 @@
                 </ElFormItem>
               </template>
 
-              <WorkflowSchemaFields
-                v-else-if="localForm.config.scheduleType === 'once'"
-                :schema="configSchema"
-                :config="localForm.config"
-                :keys="['runAt']"
-                @update="handleSchemaFieldUpdate"
-              />
+              <ElFormItem v-else-if="localForm.config.scheduleType === 'once'" label="执行时间">
+                <ElInput
+                  v-model="localForm.config.runAt"
+                  placeholder="例如 2026-04-06T10:00:00+08:00"
+                  @blur="handleTextBlur(['config', 'runAt'])"
+                />
+              </ElFormItem>
             </template>
 
             <template v-else-if="localForm.typeCode === 'start.event'">
-              <WorkflowSchemaFields
-                :schema="configSchema"
-                :config="localForm.config"
-                :keys="['eventType', 'filters']"
-                @update="handleSchemaFieldUpdate"
-              />
+              <ElFormItem label="事件类型">
+                <ElInput
+                  v-model="localForm.config.eventType"
+                  placeholder="例如 news.items.synced"
+                  @blur="handleTextBlur(['config', 'eventType'])"
+                />
+              </ElFormItem>
+
+              <ElFormItem label="过滤条件 JSON">
+                <ElInput
+                  v-model="eventFiltersJson"
+                  type="textarea"
+                  :rows="4"
+                  placeholder='[{"path":"payload.source","equals":"blockbeats"}]'
+                  @blur="normalizeJsonArrayField('filters', eventFiltersJson)"
+                />
+              </ElFormItem>
             </template>
 
             <template v-else-if="localForm.typeCode === 'start.webhook'">
@@ -147,48 +168,107 @@
               </div>
             </ElFormItem>
 
-            <WorkflowSchemaFields
-              v-if="!localForm.config.analyze"
-              :schema="configSchema"
-              :config="localForm.config"
-              :keys="['instruction']"
-              @update="handleSchemaFieldUpdate"
-            />
+            <ElFormItem v-if="!localForm.config.analyze" label="提示词">
+              <ElInput
+                v-model="localForm.config.promptTemplate"
+                type="textarea"
+                :rows="5"
+                :placeholder="promptTemplatePlaceholder"
+                @blur="handleTextBlur(['config', 'promptTemplate'])"
+              />
+            </ElFormItem>
 
-            <ElFormItem v-if="selectedAgent?.requiresRefId" label="关联数据">
+            <ElFormItem v-if="selectedAgent?.requiresRefId" label="关联数据 id 路径">
+              <ElInput
+                v-model="localForm.config.refIdPath"
+                placeholder="例如 currentItem.id"
+                @blur="handleTextBlur(['config', 'refIdPath'])"
+              />
               <div class="node-editor-card__field-hint">
-                请从已执行节点的输出连接到 refId 数据端口。
+                该智能体需要关联数据（{{ selectedAgent.dataSourceLabel }}），从共享状态的这个路径取
+                id。
               </div>
             </ElFormItem>
 
-            <ElAlert
-              v-if="!localForm.config.analyze"
-              type="info"
-              :closable="false"
-              title="需要动态提示词时，请连接 prompt 数据端口。"
-            />
-            <WorkflowSchemaFields
-              :schema="configSchema"
-              :config="localForm.config"
-              :keys="['modelConfigId']"
-              @update="handleSchemaFieldUpdate"
-            />
+            <ElFormItem label="结果写入共享状态的键名">
+              <ElInput
+                v-model="localForm.config.outputKey"
+                placeholder="默认 agentResult"
+                @blur="handleTextBlur(['config', 'outputKey'])"
+              />
+              <div class="node-editor-card__field-hint">{{ outputKeyHint }}</div>
+            </ElFormItem>
+
+            <ElFormItem label="指定模型配置 id">
+              <ElInputNumber
+                v-model="localForm.config.modelConfigId"
+                class="node-editor-card__full"
+                :min="0"
+                @change="emitModel"
+              />
+              <div class="node-editor-card__field-hint">
+                留空或 0 表示用该智能体绑定的模型；工作流按创建者的模型配置解析。
+              </div>
+            </ElFormItem>
           </template>
 
           <template v-else-if="localForm.kind === 'condition'">
-            <WorkflowSchemaFields
-              :schema="configSchema"
-              :config="localForm.config"
-              @update="handleSchemaFieldUpdate"
-            />
+            <ElFormItem label="字段路径">
+              <ElInput
+                v-model="localForm.config.path"
+                placeholder="例如 taskResult.insertedCount"
+                @blur="handleTextBlur(['config', 'path'])"
+              />
+            </ElFormItem>
+
+            <ElFormItem label="比较运算">
+              <ElSelect v-model="localForm.config.operator" @change="emitModel">
+                <ElOption label="等于" value="eq" />
+                <ElOption label="不等于" value="ne" />
+                <ElOption label="包含" value="contains" />
+                <ElOption label="大于" value="gt" />
+                <ElOption label="大于等于" value="gte" />
+                <ElOption label="小于" value="lt" />
+                <ElOption label="小于等于" value="lte" />
+                <ElOption label="Truthy" value="truthy" />
+              </ElSelect>
+            </ElFormItem>
+
+            <ElFormItem label="比较值">
+              <ElInput
+                v-model="localForm.config.value"
+                placeholder="用于与实际值比较"
+                @blur="handleTextBlur(['config', 'value'])"
+              />
+            </ElFormItem>
+
+            <ElFormItem label="比较值路径">
+              <ElInput
+                v-model="localForm.config.valuePath"
+                placeholder="选填；填了就取共享状态里该路径的值，优先于上面的固定比较值"
+                @blur="handleTextBlur(['config', 'valuePath'])"
+              />
+            </ElFormItem>
+
             <ElAlert
               type="info"
               :closable="false"
-              title="待判断值通过 value 端口连接；需要动态比较值时连接 compareTo 端口。"
+              title="需要多个条件时在下面添加；一旦填了多条件，上面的单条件就不再生效。"
+            />
+            <WorkflowSchemaFields
+              :schema="configSchema"
+              :config="localForm.config"
+              :keys="['logic', 'conditions']"
+              @update="handleSchemaFieldUpdate"
             />
           </template>
 
           <template v-else-if="localForm.kind === 'foreach'">
+            <WorkflowSchemaFields
+              :schema="configSchema"
+              :config="localForm.config"
+              @update="handleSchemaFieldUpdate"
+            />
             <ElAlert
               type="info"
               :closable="false"
@@ -496,6 +576,8 @@
   )
   const notifyMessageFormat = ref('markdown')
   const notifyTargetRows = ref<NotifyTargetRow[]>([])
+  const startInputBindingsJson = ref('{}')
+  const eventFiltersJson = ref('[]')
   const localModelSnapshot = ref('')
   const lastEmittedSnapshot = ref('')
 
@@ -507,10 +589,14 @@
   // 不再在本文件里逐个手写一遍。开始 / 任务 / 通知 / 条件有联动和自定义控件，仍走下面的定制模板。
   const configSchema = computed(() => getNodeConfigSchema(localForm.typeCode))
 
-  /** 当前选中的智能体决定是否显示关联数据提示和结构化分析开关。 */
+  /** 当前选中的智能体：决定要不要显示「关联数据 id 路径」和「结构化分析」开关。 */
   const selectedAgent = computed(
     () => props.agentOptions.find((item) => item.code === localForm.config.agentCode) || null
   )
+
+  // 这两段文案里带 {{ }}，写在模板里会被 Vue 当成插值解析，所以放到脚本里当普通字符串。
+  const promptTemplatePlaceholder = '支持 {{ 路径 }} 引用共享状态，例如 {{ currentItem.title }}'
+  const outputKeyHint = '下游节点可用 {{ 键名.content }} 引用回复正文。'
 
   const startNodeHint = computed(() => {
     if (localForm.typeCode === 'start.schedule') {
@@ -585,6 +671,23 @@
     )
   }
 
+  const syncJsonTextRefs = () => {
+    startInputBindingsJson.value = JSON.stringify(
+      localForm.config.inputBindings &&
+        typeof localForm.config.inputBindings === 'object' &&
+        !Array.isArray(localForm.config.inputBindings)
+        ? localForm.config.inputBindings
+        : {},
+      null,
+      2
+    )
+    eventFiltersJson.value = JSON.stringify(
+      Array.isArray(localForm.config.filters) ? localForm.config.filters : [],
+      null,
+      2
+    )
+  }
+
   const syncNotifyRowsToConfig = () => {
     if (localForm.kind !== 'notify') return
     localForm.config.channelTypes = [...notifyChannelTypes.value]
@@ -633,6 +736,7 @@
     localForm.kind = next.kind
     localForm.config = next.config
     syncNotifyConfigToRows()
+    syncJsonTextRefs()
     const snapshot = JSON.stringify(cloneModel(localForm))
     localModelSnapshot.value = snapshot
     lastEmittedSnapshot.value = snapshot
@@ -667,6 +771,50 @@
 
   const handleTextBlur = (path: string[]) => {
     normalizeTextAtPath(path)
+  }
+
+  const normalizeJsonObjectField = (targetKey: string, sourceValue: string) => {
+    const text = String(sourceValue || '').trim()
+    if (!text) {
+      localForm.config[targetKey] = {}
+      syncJsonTextRefs()
+      emitModel()
+      return
+    }
+    try {
+      const parsed = JSON.parse(text)
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('invalid object')
+      }
+      localForm.config[targetKey] = parsed
+    } catch {
+      syncJsonTextRefs()
+      return
+    }
+    syncJsonTextRefs()
+    emitModel()
+  }
+
+  const normalizeJsonArrayField = (targetKey: string, sourceValue: string) => {
+    const text = String(sourceValue || '').trim()
+    if (!text) {
+      localForm.config[targetKey] = []
+      syncJsonTextRefs()
+      emitModel()
+      return
+    }
+    try {
+      const parsed = JSON.parse(text)
+      if (!Array.isArray(parsed)) {
+        throw new Error('invalid array')
+      }
+      localForm.config[targetKey] = parsed
+    } catch {
+      syncJsonTextRefs()
+      return
+    }
+    syncJsonTextRefs()
+    emitModel()
   }
 
   /** schema 驱动的字段改动统一走这里写回草稿：子组件不直接改 config，改动来源单一好追。 */

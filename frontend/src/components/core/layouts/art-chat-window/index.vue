@@ -825,7 +825,7 @@
 
   const goToModelConfig = () => {
     closeChat()
-    void router.push('/workbench')
+    void router.push('/config/ai-model')
   }
 
   onMounted(() => {

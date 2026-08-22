@@ -42,16 +42,52 @@ type menuItem struct {
 // 的字段顺序完全一致。Parent 为空字符串 "" 表示顶级菜单,否则填父菜单的 Name。
 var menuItems = []menuItem{
 	{"Home", "首页", "/home", "/home/index", "ri:home-5-line", "", true, true, false},
-	{"WorkflowWorkbench", "工作流工作台", "/workbench", "/workbench/index", "ri:node-tree", "", true, false, false},
+	{"TradingCenter", "交易管理", "/trading", "/index/index", "ri:exchange-funds-line", "", false, false, false},
+	{"TradingAccounts", "交易账户", "accounts", "/trading/accounts", "ri:wallet-3-line", "TradingCenter", true, false, false},
+	{"StrategyManagement", "策略管理", "strategies", "/strategy/drafts", "ri:code-box-line", "TradingCenter", true, false, false},
+	{"SchedulerCenter", "工作流调度", "/scheduler", "/index/index", "ri:time-line", "", false, false, false},
+	{"NodeDefinitions", "节点定义", "node-definition", "/scheduler/node-definition", "ri:stack-line", "SchedulerCenter", true, false, false},
+	{"WorkflowDefinitions", "工作流定义", "definition", "/scheduler/workflow", "ri:node-tree", "SchedulerCenter", true, false, false},
+	{"WorkflowExecutions", "执行记录", "execution", "/scheduler/execution", "ri:history-line", "SchedulerCenter", true, false, false},
+	{"DataCenter", "数据管理", "/data", "/index/index", "ri:database-2-line", "", false, false, false},
+	{"NewsData", "新闻数据", "news", "/data/news", "ri:newspaper-line", "DataCenter", true, false, false},
+	{"MarketMetadata", "币种数据", "market-metadata", "/data/market-metadata", "ri:coins-line", "DataCenter", true, false, false},
+	{"MarketChart", "K 线详情", "market-chart", "/data/market-chart", "ri:stock-line", "DataCenter", false, false, true},
+	{"ConfigCenter", "配置管理", "/config", "/index/index", "ri:function-line", "", false, false, false},
+	{"ConfigOverview", "配置概览", "overview", "/config/overview", "ri:apps-2-line", "ConfigCenter", true, false, false},
+	{"AiModelConfig", "模型配置", "ai-model", "/config/ai-model", "ri:cpu-line", "ConfigCenter", true, false, false},
+	{"AssistantAgentConfig", "智能体配置", "assistant-agent", "/config/assistant-agent", "ri:robot-2-line", "ConfigCenter", true, false, false},
+	{"System", "系统管理", "/system", "/index/index", "ri:settings-3-line", "", false, false, false},
+	{"User", "用户管理", "user", "/system/user", "ri:user-3-line", "System", true, false, false},
+	{"Role", "角色管理", "role", "/system/role", "ri:team-line", "System", true, false, false},
+	{"Menus", "菜单管理", "menu", "/system/menu", "ri:menu-line", "System", true, false, false},
 	{"UserCenter", "个人中心", "/profile", "/system/user-center", "", "", true, false, true},
 }
 
 // map(字典/映射)= 一堆“键 → 值”的对应,写成 map[键类型]值类型。这里键是菜单 Name,
 // 值是 [2]string(定长为 2 的数组):第 0 个存中文、第 1 个存英文,即菜单的多语言文案。
 var menuI18n = map[string][2]string{
-	"Home":              {"首页", "Home"},
-	"WorkflowWorkbench": {"工作流工作台", "Workflow Workbench"},
-	"UserCenter":        {"个人中心", "Profile"},
+	"Home":                 {"首页", "Home"},
+	"TradingCenter":        {"交易管理", "Trading"},
+	"TradingAccounts":      {"交易账户", "Trading Accounts"},
+	"StrategyManagement":   {"策略管理", "Strategies"},
+	"SchedulerCenter":      {"工作流调度", "Workflow Scheduler"},
+	"WorkflowDefinitions":  {"工作流定义", "Workflow Definitions"},
+	"WorkflowExecutions":   {"执行记录", "Execution Records"},
+	"NodeDefinitions":      {"节点定义", "Node Definitions"},
+	"DataCenter":           {"数据管理", "Data Management"},
+	"NewsData":             {"新闻数据", "News Data"},
+	"MarketMetadata":       {"币种数据", "Instruments"},
+	"MarketChart":          {"K 线详情", "Candles"},
+	"ConfigCenter":         {"配置管理", "Configuration"},
+	"ConfigOverview":       {"配置概览", "Config Overview"},
+	"AiModelConfig":        {"模型配置", "Model Config"},
+	"AssistantAgentConfig": {"智能体配置", "Assistant Agents"},
+	"System":               {"系统管理", "System Management"},
+	"User":                 {"用户管理", "User Management"},
+	"Role":                 {"角色管理", "Role Management"},
+	"Menus":                {"菜单管理", "Menu Management"},
+	"UserCenter":           {"个人中心", "Profile"},
 }
 
 // agentItem 描述一个“内置智能体”(平台自带的 AI 助手)。注意 Starters 字段类型是 []string,
@@ -282,14 +318,7 @@ func seedMenusAndButtons(tx *gorm.DB) (map[string]*SystemMenu, map[string]*Syste
 			return nil, nil, err
 		}
 	}
-	for _, name := range []string{
-		"TradingCenter", "TradingAccounts", "StrategyManagement",
-		"DataCenter", "NewsData", "MarketMetadata", "MarketChart",
-		"ConfigCenter", "ConfigOverview", "AiModelConfig", "AssistantAgentConfig",
-		"System", "User", "Role", "Menus",
-		"PaperTrading", "StrategyCenter", "PushData", "NotifyChannels",
-		"SchedulerCenter", "WorkflowDefinitions", "WorkflowExecutions", "NodeDefinitions",
-	} {
+	for _, name := range []string{"PaperTrading", "StrategyCenter", "PushData", "NotifyChannels"} {
 		if err := tx.Model(&SystemMenu{}).Where("name = ?", name).
 			Updates(map[string]any{"is_active": false, "is_hidden": true, "updated_at": now}).Error; err != nil {
 			return nil, nil, err
@@ -358,7 +387,7 @@ func seedRoleBindings(
 	// 普通用户只看几项,游客只看首页。
 	roleMenus := map[string][]string{
 		"R_SUPER": allMenuNames,
-		"R_USER":  {"Home", "WorkflowWorkbench", "UserCenter"},
+		"R_USER":  {"Home", "TradingCenter", "TradingAccounts", "DataCenter", "MarketMetadata", "MarketChart", "ConfigCenter", "AiModelConfig", "UserCenter"},
 		"R_GUEST": {"Home"},
 	}
 	superButtons := make([]string, 0)
@@ -370,12 +399,6 @@ func seedRoleBindings(
 	roleButtons := map[string][]string{
 		"R_SUPER": superButtons,
 		"R_USER": {
-			perm.SchedulerWorkflowDefinitionsCreate, perm.SchedulerWorkflowDefinitionsUpdate,
-			perm.SchedulerWorkflowDefinitionsDelete, perm.SchedulerWorkflowDefinitionsRun,
-			perm.SchedulerWorkflowRuntimeView, perm.SchedulerWorkflowRuntimeActivate,
-			perm.SchedulerWorkflowRuntimeUpdate, perm.SchedulerWorkflowExecutionsView,
-			perm.TradingOverviewView, perm.DataMarketView,
-			perm.ConfigAiModelsView, perm.ConfigAssistantAgentsView, perm.ConfigNotificationChannelsView,
 			perm.ConfigAiModelsCreate, perm.ConfigAiModelsUpdate, perm.ConfigAiModelsDelete,
 			perm.ConfigAiModelsValidate, perm.ConfigAiModelsBindAgents,
 			perm.ConfigNotificationChannelsCreate, perm.ConfigNotificationChannelsUpdate,
@@ -514,7 +537,7 @@ func seedWorkflows(tx *gorm.DB, superRoleID int64) error {
 		// 把整张图(map)序列化成 JSON 文本,准备存进下面的 GraphJSON 字段。
 		graphJSON, _ := json.Marshal(item.Graph)
 		var definition WorkflowDefinition
-		err := tx.Where("code = ? AND version = ? AND is_builtin", item.Code, 1).First(&definition).Error
+		err := tx.Where("code = ? AND version = ?", item.Code, 1).First(&definition).Error
 		if err == gorm.ErrRecordNotFound {
 			// IsBuiltin=true 标记为内置工作流;CreatedBy 字段类型是 *int64,所以用 &creator 取地址填入。
 			definition = WorkflowDefinition{
@@ -528,8 +551,20 @@ func seedWorkflows(tx *gorm.DB, superRoleID int64) error {
 		} else if err != nil {
 			return err
 		}
-		// Built-ins are templates only. A user must clone one before activation or execution.
-		if err := tx.Where("workflow_code = ?", item.Code).Delete(&WorkflowRuntimeState{}).Error; err != nil {
+
+		// 每条工作流还需要一行“运行时状态”,记录当前激活的是哪个定义版本。
+		var state WorkflowRuntimeState
+		err = tx.Where("workflow_code = ?", item.Code).First(&state).Error
+		if err == gorm.ErrRecordNotFound {
+			// ActiveWorkflowDefinitionID/ActivatedAt/ActivatedBy 都是指针字段,用 & 取地址表示“已设值”。
+			state = WorkflowRuntimeState{
+				WorkflowCode: item.Code, ActiveWorkflowDefinitionID: &definition.ID,
+				ActivatedAt: &now, ActivatedBy: &creator, UpdatedAt: now,
+			}
+			if err := tx.Create(&state).Error; err != nil {
+				return err
+			}
+		} else if err != nil {
 			return err
 		}
 	}
@@ -538,12 +573,12 @@ func seedWorkflows(tx *gorm.DB, superRoleID int64) error {
 
 func buildMarketMetadataSyncGraph() map[string]any {
 	return map[string]any{
-		"schemaVersion": 2,
 		"nodes": []map[string]any{
 			{
 				"id": "start_manual", "type": "start.manual", "label": "手动同步",
 				"config": map[string]any{
 					"entryKey": "market.metadata.manual", "displayName": "手动同步",
+					"inputBindings": map[string]any{},
 				},
 				"position": map[string]any{"x": 120, "y": 180},
 			},
@@ -551,7 +586,7 @@ func buildMarketMetadataSyncGraph() map[string]any {
 				"id": "start_hourly", "type": "start.schedule", "label": "每小时同步",
 				"config": map[string]any{
 					"entryKey": "market.metadata.hourly", "displayName": "每小时同步",
-					"scheduleType": "interval", "value": 1, "unit": "hours",
+					"inputBindings": map[string]any{}, "scheduleType": "interval", "value": 1, "unit": "hours",
 				},
 				"position": map[string]any{"x": 120, "y": 340},
 			},
@@ -565,9 +600,9 @@ func buildMarketMetadataSyncGraph() map[string]any {
 			},
 		},
 		"edges": []map[string]any{
-			{"id": "edge_manual_sync", "kind": "flow", "source": "start_manual", "target": "sync_metadata"},
-			{"id": "edge_hourly_sync", "kind": "flow", "source": "start_hourly", "target": "sync_metadata"},
-			{"id": "edge_sync_end", "kind": "flow", "source": "sync_metadata", "target": "end_sync"},
+			{"id": "edge_manual_sync", "source": "start_manual", "target": "sync_metadata"},
+			{"id": "edge_hourly_sync", "source": "start_hourly", "target": "sync_metadata"},
+			{"id": "edge_sync_end", "source": "sync_metadata", "target": "end_sync"},
 		},
 	}
 }
@@ -576,14 +611,13 @@ func buildMarketMetadataSyncGraph() map[string]any {
 // start.event(监听 workflow.execution.failed 事件)→ notify(发告警)→ end。
 func buildAlertWorkflowFailedGraph(superRoleID int64) map[string]any {
 	return map[string]any{
-		"schemaVersion": 2,
 		"nodes": []map[string]any{
 			{
 				"id": "start_failed_event", "type": "start.event", "label": "失败事件开始",
 				"config": map[string]any{
 					"entryKey": "workflow.failed.default", "displayName": "工作流失败事件入口",
-					"eventType": "workflow.execution.failed",
-					"filters":   []any{},
+					"inputBindings": map[string]any{}, "eventType": "workflow.execution.failed",
+					"filters": []any{},
 				},
 				"position": map[string]any{"x": 180, "y": 240},
 			},
@@ -601,8 +635,8 @@ func buildAlertWorkflowFailedGraph(superRoleID int64) map[string]any {
 			{"id": "end_alert", "type": "end", "label": "结束", "config": map[string]any{}, "position": map[string]any{"x": 940, "y": 240}},
 		},
 		"edges": []map[string]any{
-			{"id": "edge_start_notify", "kind": "flow", "source": "start_failed_event", "target": "notify_workflow_failed"},
-			{"id": "edge_notify_end", "kind": "flow", "source": "notify_workflow_failed", "target": "end_alert"},
+			{"id": "edge_start_notify", "source": "start_failed_event", "target": "notify_workflow_failed"},
+			{"id": "edge_notify_end", "source": "notify_workflow_failed", "target": "end_alert"},
 		},
 	}
 }

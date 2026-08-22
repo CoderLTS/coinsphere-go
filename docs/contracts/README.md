@@ -12,7 +12,7 @@
 ## 身份与归属
 
 - 不提供公开注册 API 或页面。匿名入口只有登录、健康检查和静态资源；其他页面、HTTP API 和 WebSocket 均要求登录。
-- Binance 品种、K 线和已发布策略版本是登录用户共享的只读资源；自选、工作流定义、运行态、执行、人工待办、工作流生成的策略实例、信号、回测、节点模板和通知资源按当前用户隔离。用户资源越权统一返回 404。
+- Binance 品种、K 线和已发布策略版本是登录用户共享的只读资源；自选、工作流生成的策略实例、信号、回测、节点模板和通知资源按当前用户隔离。
 - 管理员通过独立权限管理接口维护用户和策略草稿。管理员身份不会让普通资源查询自动跨越所有者过滤。
 - 首期使用应用层所有者过滤、数据库外键和唯一约束，不引入 RLS。跨用户关联必须被拒绝。
 
@@ -30,13 +30,12 @@
 | --- | --- |
 | 身份 | `/api/v1/auth/*`、`/api/v1/me`、`/api/v1/admin/users` |
 | 首页 | `/api/v1/home/overview` |
-| 工作台 | `/api/v1/workbench` |
 | 行情 | `/api/v1/markets/symbols`、`/api/v1/markets/candles`、`/api/v1/watchlists` |
 | 策略 | `/api/v1/admin/strategies`、`/api/v1/strategies`、`/api/v1/strategy-instances` |
 | 回测 | `/api/v1/backtests` |
 | 信号 | `/api/v1/signals`、`/api/v1/signals/{signalId}/approve`、`/api/v1/signals/{signalId}/reject` |
 | 交易 | `/api/v1/trading/*`、`/api/v1/admin/trading/*` |
-| 工作流 | `/api/v1/workflows/*`、`/api/v1/workflow-executions/*`、`/api/v1/workflow-actions/*`、`/api/v1/workflow-node-templates` |
+| 工作流 | `/api/v1/workflows/*`、`/api/v1/workflow-node-templates` |
 | 通知 | `/api/v1/notification-deliveries`、`/api/v1/ws/notifications` |
 
 交易路由管理 Paper/Testnet 账户、风险限额、自动化开关/授权、全局急停及其只读投影。账户列表与详情使用 `GET /api/v1/trading/accounts` 和 `GET /api/v1/trading/accounts/{accountId}`；`PUT` 只修改名称等可变信息，市场和环境不可变。`DELETE` 是归档命令，要求账户已暂停、自动化关闭、无启用策略绑定、无未完成意图、开放订单或未清仓位，并同时提供 `Idempotency-Key` 和有效的 `X-Reauth-Token`。`trading.spot_live_manual_enabled`、`trading.spot_live_auto_enabled`、`trading.usd_m_live_manual_enabled` 和 `trading.usd_m_live_auto_enabled` 默认关闭；Spot/USD-M auto 只有在对应 manual 同时启用时才有效。USD-M Live manual/auto 账户必须保持逐仓、单向和配置的低杠杆，缺少任一对账证据时禁止执行。账户创建、风险修改、恢复、自动化切换、授权和急停命令都要求 `Idempotency-Key`；风险修改、账户恢复、启用自动化、管理员授权和解除急停还要求有效的 `X-Reauth-Token`。
@@ -48,8 +47,6 @@ WebSocket 使用 `GET /api/v1/ws/notifications`，通过固定子协议携带 Ac
 ## 首页运行态
 
 `GET /api/v1/home/overview` 聚合进程运行时长、Go 内存、goroutine、HTTP 请求/失败/并发、近 60 分钟吞吐与延迟、PostgreSQL 连接池、Worker 心跳和队列深度，以及工作流、行情同步、交易账户和告警状态。HTTP 趋势使用进程内 60 个一分钟桶，重启后清空；`/metrics` 文本接口继续保留。Worker 每 15 秒按 `realtime | backtest` lane 写入心跳和队列深度，45 秒未更新视为离线。
-
-`/home` 保留为只读运行概览。`GET /api/v1/workbench` 返回当前用户的工作流、非终态执行、人工待办和权限可见的健康摘要，供独立 `/workbench` 工作流入口一次加载；它不替代首页指标接口。
 
 ## Binance 行情
 
@@ -100,17 +97,11 @@ def on_bar(candles: Sequence[Candle], params: Mapping[str, JSONScalar]) -> Decim
 
 ## 工作流与节点
 
-工作流图固定使用 `WorkflowGraphV2`：根对象包含 `schemaVersion: 2`、节点和边。`flow` 边只表达顺序与分支，`data` 边使用 `sourcePort`、`targetPort` 和可选 RFC 6901 指针表达字段映射。节点定义声明 JSON Schema 端口、执行模式、安全策略和所需权限；保存与激活会校验端口兼容、必填输入、祖先数据来源、资源 Owner、RBAC 和安全策略。用户界面通过结构化表单和字段映射器生成配置，不把共享状态路径作为用户契约。
-
-用户工作流按 `(owner_user_id, code, version)` 唯一，定义、运行态和执行查询始终带 Owner 条件。内置定义的 Owner 为空，只能作为模板；用户必须先克隆才能激活或执行。执行状态包含 `waiting_job`、`waiting_action` 和 `cancel_requested`；每次执行最多一个活动等待。Worker 完成或人工决策后从保存的恢复节点继续，进程重启后仍以数据库记录为准。
-
-`POST /api/v1/workflow-executions` 创建执行，列表和详情使用同一路由，`/{id}/cancel` 在节点边界或心跳请求取消，`/{id}/rerun` 以原定义版本和脱敏输入创建新执行并记录来源，不支持任意节点局部重放。`GET /api/v1/workflow-actions` 返回人工待办，`/{id}/decisions` 要求 `Idempotency-Key`；高风险动作还要求 `X-Reauth-Token`。动作分发器按注册类型解码表单，只保存资源 ID 和脱敏结果。
-
 `GET/POST/PUT/DELETE /api/v1/workflow-node-templates` 管理当前用户的节点模板。模板只能引用已注册的内置执行器，保存名称、说明、图标、基础节点类型和默认配置；不授予任意 Go/Python 插件、进程或网络权限。删除模板不修改已保存工作流图中的节点快照。
 
-包含策略节点的未激活工作流不能手工执行。行情事件触发时，运行时再次校验事件中的币种和周期与实例绑定一致；每根 K 线仍产生一条有限执行记录。详情按时间返回节点日志、实际边流转、耗时、重试、脱敏输入输出和结构化错误。面向 UI 的序列化返回工作流、入口和节点展示名及中文状态，不暴露 `workflow.failed.default`、`entryKey`、`typeCode`、`workerId` 或原始敏感 JSON。
+包含策略节点的未激活工作流不能手工执行。行情事件触发时，运行时再次校验事件中的币种和周期与实例绑定一致；每根 K 线仍产生一条有限执行记录。执行列表默认只返回成功、失败和取消终态；详情按时间返回节点日志、边流转、耗时、重试和结构化错误。面向 UI 的序列化返回工作流、入口和节点展示名及中文状态，不暴露 `workflow.failed.default`、`entryKey`、`typeCode`、`workerId` 或原始 JSON。
 
-通知渠道 API 和加密资源继续保留，但渠道创建、编辑和测试从工作台配置节点进入，不提供独立通知渠道菜单。
+通知渠道 API 和加密资源继续保留，但渠道创建、编辑和测试从节点定义页及通知节点配置流程进入，不提供独立通知渠道菜单。
 
 ## Worker
 

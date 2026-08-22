@@ -13,21 +13,24 @@ func init() {
 	registerNode(&workflowNodeDefinition{
 		TypeCode: "condition.switch", Label: "多路分支",
 		Kind: nodeKindBranch,
-		InputPorts: []workflowNodePortDefinition{
-			nodePort("value", "待匹配值", true, M{}),
-		},
 		// 分支键 = cases 数组里每项的 key,再加一个兜底的 default。
 		BranchesConfigKey: "cases",
 		ExtraBranches:     []string{switchDefaultBranch},
 		ConfigSchema: M{
 			"type": "object",
 			"properties": M{
+				"path": M{
+					"type": "string", "title": "默认字段路径",
+					"description": "各个 case 没单独写 path 时用这个",
+				},
 				"cases": M{
 					"type": "array", "title": "分支列表(自上往下第一个命中的胜出)",
 					"items": M{"type": "object", "properties": M{
-						"key":      M{"type": "string", "title": "分支名(连线上显示的标识)"},
-						"operator": M{"type": "string", "title": "比较运算", "enum": []string{"eq", "ne", "contains", "gt", "gte", "lt", "lte", "truthy"}},
-						"value":    M{"type": "string", "title": "比较值"},
+						"key":       M{"type": "string", "title": "分支名(连线上显示的标识)"},
+						"path":      M{"type": "string", "title": "字段路径", "description": "留空则用上面的默认路径"},
+						"operator":  M{"type": "string", "title": "比较运算", "enum": []string{"eq", "ne", "contains", "gt", "gte", "lt", "lte", "truthy"}},
+						"value":     M{"type": "string", "title": "比较值"},
+						"valuePath": M{"type": "string", "title": "比较值路径"},
 					}},
 				},
 			},
@@ -47,6 +50,8 @@ func conditionSwitchExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 	if len(cases) == 0 {
 		return nil, bizErr("多路分支节点至少需要一个 case")
 	}
+	defaultPath := cfgStr(config, "path", "")
+
 	selected := switchDefaultBranch
 	matchedKey := ""
 	for _, itemAny := range cases {
@@ -61,7 +66,11 @@ func conditionSwitchExecute(ctx *nodeExecContext) (*nodeExecResult, error) {
 		if key == switchDefaultBranch {
 			return nil, bizErr("分支名 %s 是保留的兜底分支,请换一个名字", switchDefaultBranch)
 		}
-		if compareValues(ctx.Inputs["value"], clause["value"], cfgStr(clause, "operator", "eq")) {
+		// case 自己没写 path 就沿用节点级的默认路径。
+		if cfgStr(clause, "path", "") == "" && defaultPath != "" {
+			clause["path"] = defaultPath
+		}
+		if evalCondition(ctx, clause) {
 			selected = key
 			matchedKey = key
 			break

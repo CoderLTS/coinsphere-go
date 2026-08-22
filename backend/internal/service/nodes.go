@@ -15,15 +15,11 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"coinsphere/backend/internal/db"
-	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
 // nodeExecResult 节点执行结果。
@@ -40,16 +36,6 @@ type nodeExecResult struct {
 	ForeachItems   []any
 	ItemKey        string
 	IndexKey       string
-	Wait           *workflowWaitRequest
-}
-
-type workflowWaitRequest struct {
-	Kind       string
-	ActionType string
-	TargetType string
-	TargetID   string
-	Request    M
-	ExpiresAt  *time.Time
 }
 
 // nodeExecContext 节点执行上下文。
@@ -68,36 +54,9 @@ type nodeExecContext struct {
 	NodeLog      *db.WorkflowExecutionNode
 	Node         M
 	Graph        M
-	Inputs       M
 	State        *runState
 	TriggerCtx   M
 	PublishEvent func(eventType, aggregateType string, payload, metadata M) (int64, error)
-}
-
-// workflowNodePortDefinition is the typed data contract exposed by one node port.
-// Decimal values use JSON strings with format=decimal; secrets are never valid port data.
-type workflowNodePortDefinition struct {
-	ID       string
-	Label    string
-	Required bool
-	Schema   M
-}
-
-const (
-	nodeExecutionSync        = "sync"
-	nodeExecutionWorkerJob   = "worker_job"
-	nodeExecutionHumanAction = "human_action"
-
-	nodeSecurityStandard    = "standard"
-	nodeSecurityRestrictive = "automatic_restrictive"
-	nodeSecurityHumanReauth = "human_reauth"
-)
-
-func nodePort(id, label string, required bool, schema M) workflowNodePortDefinition {
-	if schema == nil {
-		schema = M{}
-	}
-	return workflowNodePortDefinition{ID: id, Label: label, Required: required, Schema: schema}
 }
 
 // runState 跑图全程共享的"变量表",并发安全封装。
@@ -159,14 +118,6 @@ func (s *runState) setNodeOutput(nodeID string, output M) {
 	outputs[nodeID] = output
 }
 
-func (s *runState) nodeOutput(nodeID string) (M, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	outputs, _ := s.data["nodeOutputs"].(map[string]any)
-	output, ok := outputs[nodeID].(map[string]any)
-	return output, ok
-}
-
 // snapshot 浅拷贝一份顶层键(读锁),给需要"定格当前状态"的场景(如 notify 模板渲染)用。
 func (s *runState) snapshot() M {
 	s.mu.RLock()
@@ -176,6 +127,13 @@ func (s *runState) snapshot() M {
 		copied[key] = value
 	}
 	return copied
+}
+
+// snapshotJSON 在读锁内把整张表序列化成 JSON(截断到上限),给节点输入/输出快照落库用。
+func (s *runState) snapshotJSON(maxBytes int) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return serializeSnapshot(s.data, maxBytes)
 }
 
 // 节点"图语义"分类。校验器(workflowdef.go)靠它决定一个节点的出边该怎么查,
@@ -224,21 +182,14 @@ func (s *runState) appendTo(key string, value any) []any {
 // 这套声明同时下发给前端(ListNodeDefinitions),画布按它生成端口、校验器按它查出边,
 // 两边只依赖同一份声明,不各写一遍解析逻辑。
 type workflowNodeDefinition struct {
-	TypeCode            string
-	Label               string
-	Kind                string
-	Branches            []string
-	BranchesConfigKey   string
-	ExtraBranches       []string
-	ConfigSchema        M
-	InputPorts          []workflowNodePortDefinition
-	OutputPorts         []workflowNodePortDefinition
-	ExecutionMode       string
-	SecurityPolicy      string
-	RequiredPermission  string
-	PermissionConfigKey string
-	PermissionByValue   map[string]string
-	Execute             func(ctx *nodeExecContext) (*nodeExecResult, error)
+	TypeCode          string
+	Label             string
+	Kind              string
+	Branches          []string
+	BranchesConfigKey string
+	ExtraBranches     []string
+	ConfigSchema      M
+	Execute           func(ctx *nodeExecContext) (*nodeExecResult, error)
 }
 
 // kind 取节点的图语义分类;没显式声明就按普通节点处理。
@@ -251,15 +202,6 @@ func (d *workflowNodeDefinition) kind() string {
 
 // hasDynamicBranches 分支是否要从节点配置里解析。
 func (d *workflowNodeDefinition) hasDynamicBranches() bool { return d.BranchesConfigKey != "" }
-
-func (d *workflowNodeDefinition) requiredPermission(config M) string {
-	if d.PermissionConfigKey != "" {
-		if permission := d.PermissionByValue[asString(config[d.PermissionConfigKey])]; permission != "" {
-			return permission
-		}
-	}
-	return d.RequiredPermission
-}
 
 // resolveBranches 算出某个节点实例实际应有的分支键。
 // 静态声明的直接返回 Branches;动态的从 config 里那个数组逐项取 key,去空去重,最后补上 ExtraBranches。
@@ -306,32 +248,8 @@ func registerNode(definition *workflowNodeDefinition) {
 	if definition.kind() == nodeKindBranch && !definition.hasDynamicBranches() && len(definition.Branches) < 2 {
 		panic("branch node must declare at least two branches: " + definition.TypeCode)
 	}
-	if definition.ExecutionMode == "" {
-		definition.ExecutionMode = nodeExecutionSync
-	}
-	if definition.SecurityPolicy == "" {
-		definition.SecurityPolicy = nodeSecurityStandard
-	}
-	if definition.kind() != nodeKindStart && definition.InputPorts == nil {
-		definition.InputPorts = []workflowNodePortDefinition{nodePort("input", "输入", false, M{})}
-	}
-	if definition.kind() != nodeKindTerminal && definition.OutputPorts == nil {
-		definition.OutputPorts = []workflowNodePortDefinition{nodePort("result", "结果", false, M{})}
-	}
-	assertUniqueNodePorts(definition.TypeCode, "input", definition.InputPorts)
-	assertUniqueNodePorts(definition.TypeCode, "output", definition.OutputPorts)
 	workflowNodeRegistry[definition.TypeCode] = definition
 	workflowNodeOrder = append(workflowNodeOrder, definition)
-}
-
-func assertUniqueNodePorts(typeCode, direction string, ports []workflowNodePortDefinition) {
-	seen := map[string]bool{}
-	for _, port := range ports {
-		if strings.TrimSpace(port.ID) == "" || seen[port.ID] {
-			panic("invalid " + direction + " port on workflow node: " + typeCode)
-		}
-		seen[port.ID] = true
-	}
 }
 
 // getNodeDefinition 按 typeCode 查处理器。engine.go 跑图时靠它把"节点类型"变成"要调用的函数";
@@ -356,22 +274,9 @@ func isStartNodeType(typeCode string) bool { return nodeKindOf(typeCode) == node
 
 // ListNodeDefinitions 节点定义列表(编辑器面板用),按登记顺序输出。
 // kind/branches 一并给前端:分支端口、循环后继端口这些都能按声明渲染,不用在前端再写一份类型名单。
-func (a *App) ListNodeDefinitions(principals ...*Principal) []M {
-	var principal *Principal
-	if len(principals) > 0 {
-		principal = principals[0]
-	}
+func (a *App) ListNodeDefinitions() []M {
 	result := make([]M, 0, len(workflowNodeOrder))
 	for _, definition := range workflowNodeOrder {
-		if principal != nil {
-			visible := definition.RequiredPermission == "" || principal.HasPermission(definition.RequiredPermission)
-			for _, permission := range definition.PermissionByValue {
-				visible = visible || principal.HasPermission(permission)
-			}
-			if !visible {
-				continue
-			}
-		}
 		branches := definition.Branches
 		if branches == nil {
 			branches = []string{}
@@ -380,159 +285,19 @@ func (a *App) ListNodeDefinitions(principals ...*Principal) []M {
 			"typeCode": definition.TypeCode, "label": definition.Label, "configSchema": definition.ConfigSchema,
 			"kind": definition.kind(), "branches": branches,
 			"branchesConfigKey": definition.BranchesConfigKey, "extraBranches": definition.ExtraBranches,
-			"inputPorts": serializeNodePorts(definition.InputPorts), "outputPorts": serializeNodePorts(definition.OutputPorts),
-			"executionMode": definition.ExecutionMode, "securityPolicy": definition.SecurityPolicy,
-			"requiredPermission":  definition.RequiredPermission,
-			"permissionConfigKey": definition.PermissionConfigKey, "permissionByValue": definition.PermissionByValue,
 		})
 	}
 	return result
 }
 
-func assertWorkflowNodePermissions(graph M, principal *Principal) error {
-	if principal == nil || principal.User == nil || !principal.User.IsActive {
-		return ErrPermission
-	}
-	nodes, _ := graph["nodes"].([]any)
-	for _, raw := range nodes {
-		node, _ := raw.(map[string]any)
-		definition, err := getNodeDefinition(asString(node["type"]))
-		if err != nil {
-			return err
-		}
-		permission := definition.requiredPermission(rawNodeConfig(node))
-		if permission != "" && !principal.HasPermission(permission) {
-			return ErrPermission
-		}
-	}
-	return nil
-}
-
-// requireCurrentNodePermission reloads RBAC at the execution boundary so an
-// event cannot keep using permissions that were removed after activation.
-func (a *App) requireCurrentNodePermission(ownerUserID int64, definition *workflowNodeDefinition, config M) error {
-	if definition == nil {
-		return nil
-	}
-	permission := definition.requiredPermission(config)
-	if permission == "" {
-		return nil
-	}
-	principal, err := a.buildPrincipal(ownerUserID)
-	if err != nil || !principal.HasPermission(permission) {
-		return ErrPermission
-	}
-	return nil
-}
-
-func (a *App) assertWorkflowResourcesOwned(graph M, ownerUserID int64) error {
-	nodes, _ := graph["nodes"].([]any)
-	for _, raw := range nodes {
-		node, _ := raw.(map[string]any)
-		definition, err := getNodeDefinition(asString(node["type"]))
-		if err != nil {
-			return err
-		}
-		properties, _ := definition.ConfigSchema["properties"].(map[string]any)
-		config := rawNodeConfig(node)
-		for key, rawSchema := range properties {
-			schema, _ := rawSchema.(map[string]any)
-			resource := strings.TrimSpace(asString(schema["resource"]))
-			value := config[key]
-			if resource == "" || value == nil || strings.TrimSpace(asString(value)) == "" {
-				continue
-			}
-			if err := a.requireWorkflowResourceOwned(resource, value, ownerUserID); err != nil {
-				if errors.Is(err, ErrNotFound) {
-					return notFoundErr("workflow node resource")
-				}
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (a *App) requireWorkflowResourceOwned(resource string, value any, ownerUserID int64) error {
-	if ownerUserID <= 0 {
-		return ErrPermission
-	}
-	var query *gorm.DB
-	switch resource {
-	case "strategy-draft", "strategy-version", "trading-account", "strategy-signal", "market-instrument":
-		id, err := uuid.Parse(strings.TrimSpace(asString(value)))
-		if err != nil {
-			return ErrNotFound
-		}
-		switch resource {
-		case "strategy-draft":
-			query = a.DB.Model(&db.StrategyDraft{}).Where("id = ? AND created_by_user_id = ? AND archived_at IS NULL", id, ownerUserID)
-		case "strategy-version":
-			query = a.DB.Model(&db.StrategyVersion{}).Where("id = ? AND published_by_user_id = ? AND status = ?", id, ownerUserID, "published")
-		case "trading-account":
-			query = a.DB.Model(&db.TradingAccount{}).Where("id = ? AND owner_user_id = ? AND archived_at IS NULL", id, ownerUserID)
-		case "strategy-signal":
-			query = a.DB.Model(&db.StrategySignal{}).Where("id = ? AND owner_user_id = ?", id, ownerUserID)
-		case "market-instrument":
-			query = a.DB.Model(&db.MarketInstrument{}).Where("id = ? AND status = ?", id, "trading")
-		}
-	case "ai-model", "notification-channel":
-		id := asInt64(value)
-		if id <= 0 {
-			return ErrNotFound
-		}
-		if resource == "ai-model" {
-			query = a.DB.Model(&db.SystemAiModelConfig{}).Where("id = ? AND owner_id = ?", id, ownerUserID)
-		} else {
-			query = a.DB.Model(&db.SystemNotifyChannel{}).Where("id = ? AND owner_id = ?", id, ownerUserID)
-		}
-	case "news", "assistant", "user", "role":
-		id := asInt64(value)
-		if id <= 0 {
-			return ErrNotFound
-		}
-		switch resource {
-		case "news":
-			query = a.DB.Model(&db.BlockbeatsNews{}).Where("id = ?", id)
-		case "assistant":
-			query = a.DB.Model(&db.AssistantAgent{}).Where("id = ?", id)
-		case "user":
-			query = a.DB.Model(&db.SystemUser{}).Where("id = ?", id)
-		case "role":
-			query = a.DB.Model(&db.SystemRole{}).Where("id = ?", id)
-		}
-	case "workflow-code":
-		code := strings.TrimSpace(asString(value))
-		if code == "" {
-			return ErrNotFound
-		}
-		query = a.DB.Model(&db.WorkflowDefinition{}).Where("owner_user_id = ? AND code = ?", ownerUserID, code)
-	default:
-		return bizErr("Unknown workflow resource type: %s", resource)
-	}
-	var count int64
-	if err := query.Count(&count).Error; err != nil {
-		return err
-	}
-	if count == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
-func serializeNodePorts(ports []workflowNodePortDefinition) []M {
-	items := make([]M, 0, len(ports))
-	for _, port := range ports {
-		items = append(items, M{
-			"id": port.ID, "label": port.Label, "required": port.Required, "schema": port.Schema,
-		})
-	}
-	return items
-}
-
 // ---------- 节点处理器公用小工具 ----------
 
-// nodeConfig 取节点的 config 对象，并渲染仍支持模板语义的展示文本与公共 HTTP 地址。
+// nodeConfig 取节点的 config 对象,并把里面的字符串统一做一次 {{路径}} 模板渲染。
+//
+// 渲染让所有节点配置都能引用运行时状态:http 的 url 可以写 "https://x/api/{{currentItem.id}}",
+// event.publish 的 eventType 可以按上游输出动态拼,condition 的比较值可以取另一个路径。
+// 渲染只作用于字符串(含嵌套 map / 数组里的字符串),数字、布尔原样保留;
+// 模板里引用不到的路径渲染成空串(与通知模板一致)。
 func nodeConfig(ctx *nodeExecContext) M {
 	config, _ := ctx.Node["config"].(map[string]any)
 	if len(config) == 0 {
