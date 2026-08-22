@@ -539,8 +539,9 @@ VALUES (?, 'strategy.publish', ?, 'succeeded', 1, 'backtest', ?)
 		t.Fatalf("create paper balance: %v", err)
 	}
 	workflow := db.WorkflowDefinition{
+		OwnerUserID: &owner.ID,
 		Code: "paper-" + instanceID.String(), Version: 1, DisplayName: "Paper strategy test",
-		GraphJSON: "{}", CreatedBy: &owner.ID, CreatedAt: now,
+		GraphJSON: `{"schemaVersion":2,"nodes":[],"edges":[]}`, CreatedBy: &owner.ID, CreatedAt: now,
 	}
 	if err := database.Create(&workflow).Error; err != nil {
 		t.Fatalf("create paper workflow definition: %v", err)

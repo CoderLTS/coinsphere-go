@@ -186,8 +186,9 @@ INSERT INTO market_instruments (
 		t.Fatalf("create paper account idempotency record: %v", err)
 	}
 	workflowDefinition := db.WorkflowDefinition{
+		OwnerUserID: &owner.ID,
 		Code: "m2-signal-workflow", Version: 1, DisplayName: "m2 signal workflow",
-		GraphJSON: `{"nodes":[],"edges":[]}`, CreatedBy: &owner.ID, CreatedAt: time.Now().UTC(),
+		GraphJSON: `{"schemaVersion":2,"nodes":[],"edges":[]}`, CreatedBy: &owner.ID, CreatedAt: time.Now().UTC(),
 	}
 	if err := database.Create(&workflowDefinition).Error; err != nil {
 		t.Fatalf("create signal workflow definition: %v", err)

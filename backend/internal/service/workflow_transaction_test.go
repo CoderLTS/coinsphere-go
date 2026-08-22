@@ -173,7 +173,7 @@ func runWorkflowTransactionContract(t *testing.T) {
 				<-start
 				_, err := apps[index].DecideWorkflowAction(
 					context.Background(), waitID.String(), principal,
-					WorkflowActionDecision{Decision: "rejected"}, fmt.Sprintf("reject-%d", index), "",
+					WorkflowActionDecision{Decision: "rejected"}, fmt.Sprintf("workflow-reject-%d", index), "",
 				)
 				results <- err
 			}(index)
@@ -893,5 +893,8 @@ func prepareWorkflowContractRelations(t *testing.T, database *gorm.DB) {
 	}
 	if err := database.Exec(`INSERT INTO users (id, username, is_active) VALUES (1, 'workflow-owner-1', TRUE), (2, 'workflow-owner-2', TRUE)`).Error; err != nil {
 		t.Fatalf("seed workflow contract owners: %v", err)
+	}
+	if err := database.Exec(`SELECT setval(pg_get_serial_sequence('users', 'id'), 2, TRUE)`).Error; err != nil {
+		t.Fatalf("advance workflow contract owner sequence: %v", err)
 	}
 }
