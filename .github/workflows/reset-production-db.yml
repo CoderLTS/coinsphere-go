@@ -1,0 +1,88 @@
+name: Reset production database
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "重置后要部署的版本，例如 v0.2.5-deploy.1"
+        required: true
+        type: string
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  reset-and-deploy:
+    name: Reset CoinSphere TimescaleDB and redeploy
+    runs-on: [self-hosted, Linux, X64, coinsphere-release, production]
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - name: Reset CoinSphere TimescaleDB volume
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
+            echo "版本号格式无效" >&2
+            exit 2
+          }
+
+          volume=coinsphere-go-timescale-data
+          volume_project=$(docker volume inspect --format '{{ index .Labels "com.docker.compose.project" }}' "$volume" 2>/dev/null || true)
+          volume_key=$(docker volume inspect --format '{{ index .Labels "com.docker.compose.volume" }}' "$volume" 2>/dev/null || true)
+          [[ "$volume_project" == coinsphere-go && "$volume_key" == timescale-data ]] || {
+            echo "目标卷不是 CoinSphere 独立 TimescaleDB 卷" >&2
+            exit 1
+          }
+
+          container=$(docker ps -aq --filter label=com.docker.compose.project=coinsphere-go | sed -n '1p')
+          [[ -n "$container" ]] || {
+            echo "找不到 CoinSphere Compose 容器，拒绝猜测部署目录" >&2
+            exit 1
+          }
+          deploy_dir=$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$container")
+          [[ -f "$deploy_dir/compose.yaml" && -f "$deploy_dir/.env" ]] || {
+            echo "CoinSphere 部署目录不完整" >&2
+            exit 1
+          }
+
+          running_services=$(docker ps --filter label=com.docker.compose.project=coinsphere-go \
+            --format '{{ index .Labels "com.docker.compose.service" }}')
+          if grep -qx 'executor' <<<"$running_services"; then
+            echo "Private Executor 正在运行，拒绝删除数据库卷" >&2
+            exit 1
+          fi
+
+          compose=(docker compose --project-name coinsphere-go --project-directory "$deploy_dir" \
+            --env-file "$deploy_dir/.env" -f "$deploy_dir/compose.yaml")
+          "${compose[@]}" stop timescaledb backend worker web
+          "${compose[@]}" rm -f timescaledb backend worker web
+
+          if docker ps -q --filter volume="$volume" | grep -q .; then
+            echo "数据库卷仍被容器使用，拒绝删除" >&2
+            exit 1
+          fi
+          docker volume rm "$volume"
+          if docker volume inspect "$volume" >/dev/null 2>&1; then
+            echo "数据库卷删除校验失败" >&2
+            exit 1
+          fi
+          echo "已删除 $volume；开始触发 $VERSION 部署"
+
+      - name: Trigger deployment from main
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -Eeuo pipefail
+          curl --fail-with-body --retry 5 --retry-all-errors --retry-delay 3 \
+            -X POST \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'Authorization: Bearer '"$GH_TOKEN" \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/deploy.yml/dispatches" \
+            -d '{"ref":"main","inputs":{"version":"'"$VERSION"'"}}'
