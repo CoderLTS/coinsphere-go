@@ -3700,16 +3700,6 @@ UPDATE workflow_runtime_states AS state
 SET owner_user_id = definition.owner_user_id
 FROM workflow_definitions AS definition
 WHERE definition.id = state.active_workflow_definition_id;
-UPDATE workflow_runtime_states AS state
-SET owner_user_id = definition.owner_user_id
-FROM LATERAL (
-    SELECT owner_user_id
-    FROM workflow_definitions
-    WHERE code = state.workflow_code AND owner_user_id IS NOT NULL
-    ORDER BY version DESC, id DESC
-    LIMIT 1
-) AS definition
-WHERE state.owner_user_id IS NULL;
 DELETE FROM workflow_runtime_states WHERE owner_user_id IS NULL;
 ALTER TABLE workflow_runtime_states
     ALTER COLUMN owner_user_id SET NOT NULL,
