@@ -1,20 +1,17 @@
 # CoinSphere
 
-CoinSphere 是面向个人自托管和少量受邀用户的 Binance 低频量化平台。项目采用模块化单体架构，在一套系统内提供后台管理、RBAC、工作流、行情、策略、回测、信号和受控交易能力。
+CoinSphere 正在重构为以可视化工作流为核心、由编译期插件提供业务能力的通用平台。项目保持 Vue、Go 模块化单体和 PostgreSQL/TimescaleDB 技术栈。
 
-> 当前正式验收边界是 Paper 模拟交易和离线契约。Testnet、Spot Live 与 USD-M Live 的私有运行时代码已经实现，但默认关闭，也未完成 Binance 环境晋级；部署完成不等于允许真实交易。
+> V2 P0 应用壳已开始实施。默认运行面只保留认证、RBAC、用户/角色/菜单管理和系统监控；旧领域源码与 migration 暂时保留，但不会由 Go App、公开 API 或默认 Compose 启动。目标设计见[工作流平台 V2](docs/architecture/workflow-platform-v2.md)。
 
 ## 当前能力
 
-| 能力 | 当前入口 | 状态 |
-| --- | --- | --- |
-| 登录、用户、角色、菜单 | Web | 可用，不开放公开注册 |
-| 工作流定义、任务定义、执行记录 | Web | 可用，仅负责粗粒度编排 |
-| 新闻、推送、AI 模型、智能体、通知渠道 | Web | 可用 |
-| Paper 账户、风控、持仓、订单、意图和账本 | Web | 可用，推荐的个人使用方式 |
-| Binance 品种、K 线、自选 | Web + `/api/v1` | 可用，元数据按工作流同步 |
-| 策略、回测、实时信号和人工决策 | Web + `/api/v1` | 可用，信号叠加在 K 线上展示 |
-| Testnet、Spot Live、USD-M Live | Web + `/api/v1` | 默认关闭，尚未生产放行 |
+| 能力                                 | 当前入口        | 状态                                              |
+| ------------------------------------ | --------------- | ------------------------------------------------- |
+| 登录、用户、角色、菜单               | Web             | 可用，不开放公开注册                              |
+| 系统监控                             | Web + `/api/v1` | 可用，展示 Go、HTTP、PostgreSQL 和 migration 状态 |
+| V2 工作流工作台与插件                | -               | 按 [V2 路线图](docs/roadmap/README.md)开发中      |
+| 旧工作流、新闻、策略、交易和通知接口 | -               | 已从公开运行面移除                                |
 
 详细操作见[使用手册](docs/user-guide.md)，接口语义见[公共契约](docs/contracts/README.md)。
 
@@ -24,15 +21,10 @@ CoinSphere 是面向个人自托管和少量受邀用户的 Binance 低频量化
 flowchart LR
     WEB["Vue Web"] --> APP["单实例 Go App"]
     APP --> DB["PostgreSQL / TimescaleDB"]
-    APP --> PUBLIC["Binance 公共行情 API"]
-    APP --> CHANNELS["站内 / 钉钉 / QQ / SMTP"]
-    DB --> WORKER["Python realtime / backtest Worker"]
-    DB --> EXECUTOR["Go Private Executor\nprivate profile"]
-    EXECUTOR --> PRIVATE["Binance 私有交易 API\n默认关闭"]
-    WORKER --> ARTIFACTS["本地回测产物"]
+    MIGRATE["一次性 migration"] --> DB
 ```
 
-Go App 负责 API、认证/RBAC、工作流、公共行情、信号协调、通知和 Paper 执行；Worker 在一个进程内用 realtime/backtest 两个独立槽位负责策略计算与回测；Private Executor 是唯一允许访问交易所私有接口的组件，默认不部署。所有组件通过 PostgreSQL/TimescaleDB 协作，不依赖 Redis、消息中间件或 Kubernetes。完整设计见[架构说明](docs/architecture/overview.md)。
+默认部署只包含 Web、Go App、一次性 migration 和 TimescaleDB，不依赖 Redis、消息中间件或 Kubernetes。P0 后续会建立 V2 数据基线并删除暂留的旧领域源码。
 
 ## 快速启动
 
@@ -58,7 +50,7 @@ docker compose ps
 
 浏览器打开 <http://localhost:8080>。初始超级管理员是 `coinsphere` / `coinsphere`；首次登录后立即在“用户管理”中修改密码。`COINSPHERE_AUTH__SECRET_KEY` 必须长期保持一致，变更后已有登录令牌会失效。
 
-Compose 会启动 `timescaledb`、一次性 `migrate`、`backend`、单进程双槽位 `worker` 和 `web`。停止服务不会删除数据：
+Compose 会启动 `timescaledb`、一次性 `migrate`、`backend` 和 `web`。停止服务不会删除数据：
 
 ```bash
 docker compose down
@@ -69,9 +61,9 @@ docker compose down
 ## 目录
 
 ```text
-backend/             Go App、Executor、迁移和领域模块
+backend/             Go App、migration 与暂留领域模块
 frontend/            Vue 3 + Vite Web
-worker/              Python 实时计算与回测 Worker
+worker/              待删除的旧 Python Worker，不由默认栈启动
 deploy/production/   生产 Compose 模板
 docs/                架构、契约、开发计划、质量门禁和 Runbook
 scripts/             验证、发布和部署脚本

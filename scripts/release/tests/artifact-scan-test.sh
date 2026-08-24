@@ -9,7 +9,6 @@ COMMIT=0123456789abcdef0123456789abcdef01234567
 REGISTRY=127.0.0.1:5000
 BACKEND_DIGEST=$(printf 'a%.0s' {1..64})
 WEB_DIGEST=$(printf 'b%.0s' {1..64})
-WORKER_DIGEST=$(printf 'c%.0s' {1..64})
 
 cleanup() {
   rm -rf -- "$TEST_DIR"
@@ -53,11 +52,6 @@ case "$repository" in
     component=web
     image_id=$(printf 'd%.0s' {1..64})
     ;;
-  */worker)
-    digest=$TEST_WORKER_DIGEST
-    component=worker
-    image_id=$(printf 'e%.0s' {1..64})
-    ;;
   *)
     echo "测试 Docker 收到未预期镜像: $reference" >&2
     exit 1
@@ -84,13 +78,12 @@ export TEST_VERSION=$VERSION
 export TEST_COMMIT=$COMMIT
 export TEST_BACKEND_DIGEST=$BACKEND_DIGEST
 export TEST_WEB_DIGEST=$WEB_DIGEST
-export TEST_WORKER_DIGEST=$WORKER_DIGEST
 
 create_fixture() {
   local output_dir=$1
   local mode=${2:-valid}
   "$PYTHON" - "$output_dir" "$mode" "$VERSION" "$COMMIT" "$REGISTRY" \
-    "$BACKEND_DIGEST" "$WEB_DIGEST" "$WORKER_DIGEST" <<'PY'
+    "$BACKEND_DIGEST" "$WEB_DIGEST" <<'PY'
 import gzip
 import io
 import json
@@ -102,7 +95,7 @@ from pathlib import Path
 
 
 output_dir = Path(sys.argv[1])
-mode, version, commit, registry, backend_digest, web_digest, worker_digest = sys.argv[2:]
+mode, version, commit, registry, backend_digest, web_digest = sys.argv[2:]
 packages_dir = output_dir.parent / f"{output_dir.name}-packages"
 shutil.rmtree(output_dir, ignore_errors=True)
 shutil.rmtree(packages_dir, ignore_errors=True)
@@ -120,16 +113,15 @@ windows_root = packages_dir / f"coinsphere-{version}-windows-x86"
 linux_root = packages_dir / f"coinsphere-{version}-linux-amd64"
 docker_root = packages_dir / f"coinsphere-{version}-docker"
 for root, suffix in ((windows_root, ".exe"), (linux_root, "")):
-    write(root / f"coinsphere-server{suffix}", b"binary", executable=root == linux_root)
-    write(root / f"coinsphere-migrate{suffix}", b"binary", executable=root == linux_root)
-    executor_content = (
+    server_content = (
         b"A" * 8192
         + b"\0Authorization: Bearer /modelschoicescontentHTTP\0"
         + b"Bearer choicescontentmessageHTTP\0"
         if suffix == ".exe"
         else b"binary"
     )
-    write(root / f"coinsphere-executor{suffix}", executor_content, executable=root == linux_root)
+    write(root / f"coinsphere-server{suffix}", server_content, executable=root == linux_root)
+    write(root / f"coinsphere-migrate{suffix}", b"binary", executable=root == linux_root)
     write(root / "config.yml", 'auth:\n  secret_key: "coinsphere-dev-secret"\n')
     write(root / "nginx.conf", "server { listen 80; }\n")
     write(root / "README.md", "CoinSphere package\n")
@@ -150,11 +142,6 @@ write(
     "COINSPHERE_AUTH__WEBHOOK_PEPPER=replace-with-an-independent-random-value\n"
     "COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD=replace-with-a-strong-random-password\n",
 )
-write(
-    docker_root / "executor-runtime.env.example",
-    "COINSPHERE_AUTH__ENCRYPTION_KEY=replace-with-the-backend-encryption-key\n",
-)
-
 if mode == "credential":
     key_name = "BINANCE_" + "API_KEY"
     write(linux_root / "web/settings.txt", f"{key_name}={'A1b2' * 10}\n")
@@ -172,7 +159,7 @@ elif mode == "bearer":
     write(linux_root / "web/settings.txt", "Authorization: Bearer ABCDEFGHIJKLMNOPQRSTUVWXYZ\n")
 elif mode == "binary-bearer":
     write(
-        windows_root / "coinsphere-executor.exe",
+        windows_root / "coinsphere-server.exe",
         b"\0Authorization: Bearer AbCdEfGhIjKlMnOpQrStUvWxYz\0",
     )
 elif mode == "private-key":
@@ -280,7 +267,7 @@ def create_tar(root, destination, add_link=False):
         info.uname = info.gname = ""
         info.mtime = 0
         if root == linux_root and info.name.endswith(
-            ("/coinsphere-server", "/coinsphere-migrate", "/coinsphere-executor")
+            ("/coinsphere-server", "/coinsphere-migrate")
         ):
             info.mode = 0o755
         if root == docker_root and info.name.endswith("/deploy.sh"):
@@ -360,8 +347,6 @@ manifest = {
     "backendDigest": f"{registry}/coinsphere/backend@sha256:{backend_digest}",
     "webImage": f"{registry}/coinsphere/web:{version}",
     "webDigest": f"{registry}/coinsphere/web@sha256:{web_digest}",
-    "workerImage": f"{registry}/coinsphere/worker:{version}",
-    "workerDigest": f"{registry}/coinsphere/worker@sha256:{worker_digest}",
 }
 if mode == "manifest-extra":
     manifest["unexpected"] = "blocked"
@@ -378,7 +363,6 @@ def sbom(component):
     digest = {
         "backend": backend_digest,
         "web": web_digest,
-        "worker": worker_digest,
     }[component]
     checksum_digest = "e" * 64 if mode == "sbom-digest" and component == "backend" else digest
     repository = f"{registry}/coinsphere/{component}"
@@ -413,7 +397,7 @@ def sbom(component):
     }
 
 
-for component in ("backend", "web", "worker"):
+for component in ("backend", "web"):
     path = output_dir / f"coinsphere-{version}-{component}.spdx.json"
     path.write_text(json.dumps(sbom(component)), encoding="utf-8")
 PY
@@ -426,8 +410,7 @@ PY
       "./coinsphere-$VERSION-docker.tar.gz" \
       ./release-manifest.json \
       "./coinsphere-$VERSION-backend.spdx.json" \
-      "./coinsphere-$VERSION-web.spdx.json" \
-      "./coinsphere-$VERSION-worker.spdx.json" >SHA256SUMS
+      "./coinsphere-$VERSION-web.spdx.json" >SHA256SUMS
   )
 }
 

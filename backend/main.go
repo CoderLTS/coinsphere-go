@@ -1,4 +1,4 @@
-// coinsphere Go 后端:单二进制,同一进程内运行 HTTP API 与工作流运行时。
+// CoinSphere Go 后端：V2 P0 应用壳。
 package main
 
 import (
@@ -20,8 +20,6 @@ import (
 	"coinsphere/backend/internal/api"
 	"coinsphere/backend/internal/config"
 	"coinsphere/backend/internal/db"
-	"coinsphere/backend/internal/marketdata"
-	binancemarket "coinsphere/backend/internal/marketdata/binance"
 	"coinsphere/backend/internal/migration"
 	"coinsphere/backend/internal/service"
 )
@@ -107,27 +105,6 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 		slog.Warn("内置超管仍使用默认初始密码，请登录后尽快修改")
 	}
 	slog.Info("database ready", "engine", "postgres")
-	if cfg.MarketData.Enabled {
-		source, err := binancemarket.NewPublicSource(binancemarket.SourceConfig{})
-		if err != nil {
-			return fmt.Errorf("build Binance public market source: %w", err)
-		}
-		app.MarketData, err = marketdata.NewManager(sqlDB, source, marketdata.ManagerConfig{
-			ReconcileInterval: time.Duration(cfg.MarketData.ReconcileIntervalSeconds) * time.Second,
-			BackfillPageSize:  cfg.MarketData.BackfillPageSize,
-			OnFirstClosed: func(candle marketdata.Candle) error {
-				return app.PublishMarketCandleClosed(ctx, candle)
-			},
-		})
-		if err != nil {
-			return fmt.Errorf("build market data runtime: %w", err)
-		}
-		if err := app.InitializeMarketDataAccess(ctx); err != nil {
-			return fmt.Errorf("load market data network settings: %w", err)
-		}
-	}
-
-	app.StartRuntime()
 
 	executable, _ := os.Executable()
 	baseDir := filepath.Dir(executable)
@@ -162,7 +139,7 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 		}
 	}
 
-	// 一个取消信号同时阻止新请求、新认领,并传到在途工作流及外部 I/O。
+	// 一个取消信号同时阻止新请求并传到在途外部 I/O。
 	cancel()
 	app.Hub.CloseAll()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
@@ -172,9 +149,6 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		shutdownErrs = append(shutdownErrs, fmt.Errorf("shutdown http server: %w", err))
 		_ = server.Close()
-	}
-	if err := app.StopRuntime(shutdownCtx); err != nil {
-		shutdownErrs = append(shutdownErrs, fmt.Errorf("stop runtime: %w", err))
 	}
 	if cause == nil && len(shutdownErrs) == 0 {
 		slog.Info("backend shutdown completed")

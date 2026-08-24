@@ -8,7 +8,6 @@ COMMIT=0123456789abcdef0123456789abcdef01234567
 REGISTRY=127.0.0.1:5000
 BACKEND_DIGEST=$(printf 'a%.0s' {1..64})
 WEB_DIGEST=$(printf 'b%.0s' {1..64})
-WORKER_DIGEST=$(printf 'c%.0s' {1..64})
 POSTGRES_DSN='postgresql://coinsphere:test-only-password@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic'
 
 cleanup() {
@@ -29,9 +28,7 @@ cat >"$TEST_DIR/release-manifest.json" <<EOF
   "backendImage": "$REGISTRY/coinsphere/backend:$VERSION",
   "backendDigest": "$REGISTRY/coinsphere/backend@sha256:$BACKEND_DIGEST",
   "webImage": "$REGISTRY/coinsphere/web:$VERSION",
-  "webDigest": "$REGISTRY/coinsphere/web@sha256:$WEB_DIGEST",
-  "workerImage": "$REGISTRY/coinsphere/worker:$VERSION",
-  "workerDigest": "$REGISTRY/coinsphere/worker@sha256:$WORKER_DIGEST"
+  "webDigest": "$REGISTRY/coinsphere/web@sha256:$WEB_DIGEST"
 }
 EOF
 
@@ -59,7 +56,11 @@ if [[ ${1:-} == compose && $* == *'config --services'* ]]; then
   exit 0
 fi
 if [[ ${1:-} == compose && $* == *'ps --services --status running'* ]]; then
-  printf 'coinsphere-backend\ncoinsphere-executor\ncoinsphere-timescaledb\nsub2api\n'
+  if [[ $* == *'--project-name coinsphere-go'* ]]; then
+    printf 'backend\nworker\nweb\nexecutor\n'
+  else
+    printf 'coinsphere-backend\ncoinsphere-executor\ncoinsphere-timescaledb\nsub2api\n'
+  fi
   exit 0
 fi
 exit 0
@@ -79,8 +80,7 @@ bash "$ROOT_DIR/deploy/production/deploy.sh" "$VERSION" "$TEST_DIR/release-manif
   >"$TEST_DIR/deploy.log" 2>&1
 
 if ! grep -Fxq "COINSPHERE_BACKEND_IMAGE=$REGISTRY/coinsphere/backend@sha256:$BACKEND_DIGEST" "$DEPLOY_DIR/.env" \
-  || ! grep -Fxq "COINSPHERE_WEB_IMAGE=$REGISTRY/coinsphere/web@sha256:$WEB_DIGEST" "$DEPLOY_DIR/.env" \
-  || ! grep -Fxq "COINSPHERE_WORKER_IMAGE=$REGISTRY/coinsphere/worker@sha256:$WORKER_DIGEST" "$DEPLOY_DIR/.env"; then
+  || ! grep -Fxq "COINSPHERE_WEB_IMAGE=$REGISTRY/coinsphere/web@sha256:$WEB_DIGEST" "$DEPLOY_DIR/.env"; then
   echo "自动部署必须使用 Manifest 中的不可变镜像 digest" >&2
   exit 1
 fi
@@ -112,6 +112,16 @@ fi
 if grep -Eiq '(^|[[:space:]])volume([[:space:]]|$)|sqlite|backup' "$DEPLOY_DOCKER_LOG" \
   || find "$DEPLOY_DIR" -maxdepth 1 -type f \( -iname '*sqlite*' -o -iname '*.db*' -o -iname '*backup*' \) -print -quit | grep -q .; then
   echo "生产部署不得创建或操作旧 SQLite 卷与备份" >&2
+  exit 1
+fi
+
+COINSPHERE_DEPLOY_DIR="$DEPLOY_DIR" \
+DOCKER_CONFIG="$TEST_DIR/docker-config" \
+COINSPHERE_REGISTRY=$REGISTRY \
+bash "$ROOT_DIR/deploy/production/deploy.sh" "$VERSION" "$TEST_DIR/release-manifest.json" \
+  >"$TEST_DIR/upgrade.log" 2>&1
+if ! grep -Fq "rm -f worker executor" "$DEPLOY_DOCKER_LOG"; then
+  echo "升级到 V2 拓扑后必须移除已撤下的 Worker 与 Executor 容器" >&2
   exit 1
 fi
 

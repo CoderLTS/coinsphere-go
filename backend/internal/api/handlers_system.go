@@ -62,67 +62,6 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, principal *ser
 	ok(w, s.App.BuildUserInfo(principal))
 }
 
-// ---------- 新闻数据 ----------
-
-func (s *Server) handleListNews(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	page, ok := cursorPage(w, r)
-	if !ok {
-		return
-	}
-	data, err := s.App.ListNews(page, queryStr(r, "keyword"))
-	respond(w, data, err, "")
-}
-
-func (s *Server) handleCreateNews(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	payload, err := decodeBody[service.NewsUpsertPayload](r)
-	if err != nil {
-		fail(w, err.Error())
-		return
-	}
-	data, err := s.App.CreateNews(*payload)
-	respond(w, data, err, "新闻创建成功")
-}
-
-func (s *Server) handleUpdateNews(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	newsID, err := pathInt64(r, "newsId")
-	if err != nil {
-		fail(w, err.Error())
-		return
-	}
-	payload, err := decodeBody[service.NewsUpsertPayload](r)
-	if err != nil {
-		fail(w, err.Error())
-		return
-	}
-	data, err := s.App.UpdateNews(newsID, *payload)
-	respond(w, data, err, "新闻更新成功")
-}
-
-func (s *Server) handleDeleteNews(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	newsID, err := pathInt64(r, "newsId")
-	if err != nil {
-		fail(w, err.Error())
-		return
-	}
-	respond(w, nil, s.App.DeleteNews(newsID), "新闻删除成功")
-}
-
-func (s *Server) handleListPushDeliveries(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	page, ok := cursorPage(w, r)
-	if !ok {
-		return
-	}
-	query := service.DeliveryHistoryQuery{
-		Page:                 page,
-		Keyword:              queryStr(r, "keyword"),
-		WorkflowDefinitionID: queryInt64Ptr(r, "workflowDefinitionId"),
-		ChannelType:          queryStr(r, "channelType"),
-		DeliveryStatus:       queryStr(r, "deliveryStatus"),
-	}
-	data, err := s.App.ListDeliveryHistory(principal, query)
-	respond(w, data, err, "")
-}
-
 // ---------- 系统管理 ----------
 
 func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request, principal *service.Principal) {

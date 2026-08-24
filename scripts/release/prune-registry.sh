@@ -169,7 +169,6 @@ prune_repository() {
 
 prune_repository coinsphere/backend
 prune_repository coinsphere/web
-prune_repository coinsphere/worker
 
 if $apply; then
   echo "Registry 版本保留策略执行完成"

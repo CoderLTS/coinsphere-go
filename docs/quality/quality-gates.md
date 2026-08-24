@@ -13,12 +13,12 @@
 
 ## `main` 与容器
 
-推送到 `main` 时 CI 选择全部模块：Backend 使用 Race 测试，Frontend 运行 Chromium/Firefox/WebKit 冒烟，Worker 运行全量测试，容器 Job 构建 Compose 镜像、检查代理隔离、运行健康/`/health` 冒烟，并扫描 Backend、Web、Worker 镜像的 CRITICAL 漏洞。
+推送到 `main` 时 CI 选择全部模块：Backend 使用 Race 测试，Frontend 运行 Chromium/Firefox/WebKit 冒烟，暂留 Worker 源码运行全量测试；容器 Job 构建 Compose 镜像、检查代理隔离、运行健康/`/health` 冒烟，并扫描 Backend、Web 镜像的 CRITICAL 漏洞。
 
 Security workflow 在 `main` 和每周计划任务运行 Secret、Go、Python 依赖及文件系统扫描；按变更范围的 PR 只运行适用扫描。
 
 ## 发布
 
-Release 和 Deploy 默认不触发；用户在当前任务明确授权后，Codex 可从最新 `main` 触发既有工作流并监控验证。Release 构建固定版本和 digest，生成三份 SBOM，扫描镜像和归档并校验 Manifest/SHA-256；Deploy 复用镜像构建、CRITICAL 扫描、Manifest 校验和固定 digest 部署，但跳过归档、SBOM、归档扫描、Artifact 和 GitHub Release。生产流程不得接触真实交易所密钥、自动下单、启用真实策略或解除急停。
+Release 和 Deploy 默认不触发；用户在当前任务明确授权后，Codex 可从最新 `main` 触发既有工作流并监控验证。Release 构建 Backend、Web 固定版本和 digest，生成两份 SBOM，扫描镜像和归档并校验 Manifest/SHA-256；Deploy 复用镜像构建、CRITICAL 扫描、Manifest 校验和固定 digest 部署，但跳过归档、SBOM、归档扫描、Artifact 和 GitHub Release。生产流程不得接触真实交易所密钥、自动下单、启用真实策略或解除急停。
 
 Migration 的冻结点、Up/Down 安全和备份恢复见[数据库迁移手册](../runbooks/database-migrations.md)；发布故障处理见[发布手册](../runbooks/release.md)。

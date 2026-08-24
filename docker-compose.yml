@@ -1,4 +1,4 @@
-# coinsphere-go 开发栈：Backend 与 Python Worker 共用一个内部 TimescaleDB，schema 只由一次性 migration 建立。
+# coinsphere-go V2 开发栈：Web 与 Go App 共用一个内部 TimescaleDB，schema 只由一次性 migration 建立。
 # 一键启动：docker compose up -d --build，然后访问 http://localhost:8080
 services:
   timescaledb:
@@ -15,7 +15,8 @@ services:
     networks:
       - database
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready --username=coinsphere --dbname=coinsphere"]
+      test:
+        ["CMD-SHELL", "pg_isready --username=coinsphere --dbname=coinsphere"]
       interval: 5s
       timeout: 5s
       retries: 12
@@ -26,7 +27,14 @@ services:
     depends_on:
       timescaledb:
         condition: service_healthy
-    command: ["/app/coinsphere-migrate", "-config", "/app/config.yml", "-direction", "up"]
+    command:
+      [
+        "/app/coinsphere-migrate",
+        "-config",
+        "/app/config.yml",
+        "-direction",
+        "up",
+      ]
     environment:
       COINSPHERE_DATABASE__DSN: postgresql://coinsphere:coinsphere-dev-only@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic
     networks:
@@ -57,65 +65,15 @@ services:
       - default
       - database
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:6987/health/ready >/dev/null 2>&1 || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://127.0.0.1:6987/health/ready >/dev/null 2>&1 || exit 1",
+        ]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
-
-  executor:
-    image: coinsphere-go-backend
-    container_name: coinsphere-go-executor
-    profiles: ["private"]
-    restart: unless-stopped
-    command: ["/app/coinsphere-executor", "-config", "/app/config.yml"]
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-    environment:
-      TZ: UTC
-      COINSPHERE_DATABASE__DSN: postgresql://coinsphere:coinsphere-dev-only@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic
-      COINSPHERE_AUTH__ENCRYPTION_KEY: ${COINSPHERE_AUTH__ENCRYPTION_KEY:-}
-      COINSPHERE_TRADING__TESTNET_PRIVATE_API_ENABLED: ${COINSPHERE_TRADING__TESTNET_PRIVATE_API_ENABLED:-false}
-      COINSPHERE_TRADING__SPOT_LIVE_MANUAL_ENABLED: ${COINSPHERE_TRADING__SPOT_LIVE_MANUAL_ENABLED:-false}
-      COINSPHERE_TRADING__SPOT_LIVE_AUTO_ENABLED: ${COINSPHERE_TRADING__SPOT_LIVE_AUTO_ENABLED:-false}
-      COINSPHERE_TRADING__USD_M_LIVE_MANUAL_ENABLED: ${COINSPHERE_TRADING__USD_M_LIVE_MANUAL_ENABLED:-false}
-      COINSPHERE_TRADING__USD_M_LIVE_AUTO_ENABLED: ${COINSPHERE_TRADING__USD_M_LIVE_AUTO_ENABLED:-false}
-    networks:
-      - database
-    read_only: true
-    cap_drop:
-      - ALL
-    security_opt:
-      - "no-new-privileges:true"
-
-  worker:
-    build:
-      context: ./worker
-    image: coinsphere-go-worker
-    container_name: coinsphere-go-worker
-    restart: unless-stopped
-    command: ["python", "-m", "coinsphere_worker", "run"]
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-    networks:
-      - database
-    read_only: true
-    cap_drop:
-      - ALL
-    security_opt:
-      - "no-new-privileges:true"
-    environment:
-      TZ: UTC
-      COINSPHERE_WORKER_DATABASE_DSN: postgresql://coinsphere:coinsphere-dev-only@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic
-      COINSPHERE_WORKER_ARTIFACT_DIR: /app/artifacts
-      COINSPHERE_WORKER_BACKTEST_WALL_SECONDS: "300"
-      COINSPHERE_WORKER_BACKTEST_CPU_SECONDS: "300"
-      COINSPHERE_WORKER_BACKTEST_MEMORY_BYTES: "536870912"
-      COINSPHERE_WORKER_BACKTEST_ARTIFACT_BYTES: "134217728"
-    volumes:
-      - worker-artifacts:/app/artifacts
 
   web:
     build:
@@ -132,7 +90,6 @@ volumes:
   backend-uploads:
   backend-static:
   timescale-data:
-  worker-artifacts:
 
 networks:
   database:

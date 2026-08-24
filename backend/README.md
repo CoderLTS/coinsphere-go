@@ -1,20 +1,22 @@
 # coinsphere Go 后端
 
+> V2 P0 重构中：当前 Go App 只启动认证、RBAC、系统管理和监控 API，不启动旧工作流、行情、通知或交易循环。下文其余领域说明仅描述尚待删除的暂留源码，不代表公开运行面。
+
 > 🔰 **Go 新手请先读 [`GO入门笔记.md`](./GO入门笔记.md)**:从零讲清本项目用到的 Go 语法和框架,代码里的中文注释会引用它的小节名。
 
 原 Python(FastAPI + Peewee + Redis + APScheduler)后端的 Go 重写版。Go App 在单进程内运行 HTTP API、工作流、调度、公共行情、通知和 Paper Executor；数据库 migration 与可选 Private Executor 使用同一镜像中的独立二进制。量化策略由单进程双 lane Python Worker 执行，不再依赖 Redis 或旧 orchestrator。
 
 ## 架构变化
 
-| 原 Python 版 | Go 版 |
-|---|---|
+| 原 Python 版                                    | Go 版                                                                                                 |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | api / orchestrator / worker / init 四种进程角色 | 一个 Go App 承载 API、后台循环和 Paper；独立 migration 二进制拥有 DDL；Python Worker 使用受限独立进程 |
-| Redis Stream + 消费组做执行派发 | 数据库即队列:`workflow_executions.status` + 乐观锁 `UPDATE ... WHERE status='queued'` 认领 |
-| Redis ZSet 做重试到期索引 | 直接查 `status='retry_waiting' AND next_retry_at <= now` |
-| Redis 分布式锁选 leader | 单实例,无需选主 |
-| Redis 并发租约限制同 key 并发 | 进程内信号量(`semaphore_limit_per_key`) |
-| APScheduler + pickle 任务表 | 调度循环直接按 runtime entry 的 `next_run_at` 轮询触发(Quartz 6 位 cron / interval / once) |
-| PostgreSQL 专属 | **PostgreSQL/TimescaleDB-only** 的版本化 SQL 基线 |
+| Redis Stream + 消费组做执行派发                 | 数据库即队列:`workflow_executions.status` + 乐观锁 `UPDATE ... WHERE status='queued'` 认领            |
+| Redis ZSet 做重试到期索引                       | 直接查 `status='retry_waiting' AND next_retry_at <= now`                                              |
+| Redis 分布式锁选 leader                         | 单实例,无需选主                                                                                       |
+| Redis 并发租约限制同 key 并发                   | 进程内信号量(`semaphore_limit_per_key`)                                                               |
+| APScheduler + pickle 任务表                     | 调度循环直接按 runtime entry 的 `next_run_at` 轮询触发(Quartz 6 位 cron / interval / once)            |
+| PostgreSQL 专属                                 | **PostgreSQL/TimescaleDB-only** 的版本化 SQL 基线                                                     |
 
 ## 快速开始
 
@@ -26,7 +28,7 @@ go build -o coinsphere-server.exe .
 .\coinsphere-server.exe            # 默认读取 ./config.yml，监听 :6987
 ```
 
-独立命令必须先把空 schema 应用到当前版本；服务只读校验 migration 版本，不会执行 DDL。版本缺失、落后或领先时服务明确拒绝启动。首次成功启动写入内置角色、菜单、超管 `coinsphere`/`coinsphere` 和内置工作流。
+独立命令必须先把空 schema 应用到当前版本；服务只读校验 migration 版本，不会执行 DDL。版本缺失、落后或领先时服务明确拒绝启动。首次成功启动写入内置角色、V2 基线菜单和超管 `coinsphere`/`coinsphere`。
 
 ## 版本化数据库迁移
 

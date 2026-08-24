@@ -315,8 +315,7 @@ jobs:
         run: |
           mkdir -p \
             /tmp/coinsphere-buildx-cache/backend \
-            /tmp/coinsphere-buildx-cache/frontend \
-            /tmp/coinsphere-buildx-cache/worker
+            /tmp/coinsphere-buildx-cache/frontend
           rm -rf /tmp/coinsphere-buildx-cache-next
           mkdir -p /tmp/coinsphere-buildx-cache-next
           docker compose \
@@ -328,7 +327,7 @@ jobs:
       - name: Verify image proxy isolation
         run: |
           proxy_pattern='^(HTTP_PROXY|HTTPS_PROXY|NO_PROXY|http_proxy|https_proxy|no_proxy)='
-          for image in coinsphere-go-backend:latest coinsphere-go-web:latest coinsphere-go-worker:latest; do
+          for image in coinsphere-go-backend:latest coinsphere-go-web:latest; do
             image_env=$(docker image inspect "$image" --format '{{range .Config.Env}}{{println .}}{{end}}')
             if grep -Eq "$proxy_pattern" <<<"$image_env"; then
               echo "镜像包含运行时代理变量: $image" >&2
@@ -353,21 +352,12 @@ jobs:
           format: table
           severity: CRITICAL
           exit-code: "1"
-      - name: Scan worker image
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
-        with:
-          version: v0.72.0
-          scan-type: image
-          image-ref: coinsphere-go-worker:latest
-          format: table
-          severity: CRITICAL
-          exit-code: "1"
       - name: Start Compose stack
         run: docker compose up --detach --no-build --wait --wait-timeout 180
       - name: Verify runtime proxy isolation
         run: |
           proxy_pattern='^(HTTP_PROXY|HTTPS_PROXY|NO_PROXY|http_proxy|https_proxy|no_proxy)='
-          for service in backend web worker; do
+          for service in backend web; do
             container_id=$(docker compose ps --quiet "$service")
             [[ -n $container_id ]] || { echo "未找到运行容器: $service" >&2; exit 1; }
             container_env=$(docker inspect "$container_id" --format '{{range .Config.Env}}{{println .}}{{end}}')
@@ -376,27 +366,13 @@ jobs:
               exit 1
             fi
           done
-      - name: Verify Worker A1 health contract
-        run: |
-          docker compose exec -T worker python -m coinsphere_worker health |
-            python3 -c 'import json, sys; assert json.load(sys.stdin) == {"mode": "a1-postgres", "protocolVersion": 1, "role": "quant-worker", "status": "healthy", "taskConsumer": True}'
-      - name: Smoke test health and WebSocket origin
+      - name: Smoke test health and removed legacy surface
         run: |
           curl --fail --show-error --retry 10 --retry-all-errors --retry-delay 3 http://127.0.0.1:8080/health
-          same_origin_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
-            -H 'Host: app.example' \
-            -H 'Origin: https://app.example' \
-            -H 'CF-Visitor: {"scheme":"https"}' \
-            -H 'Sec-WebSocket-Protocol: coinsphere.notifications.v1, invalid.test.token' \
-            http://127.0.0.1:8080/api/v1/ws/notifications)
-          [[ $same_origin_status == 401 ]]
-          cross_origin_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
-            -H 'Host: app.example' \
-            -H 'Origin: https://evil.example' \
-            -H 'CF-Visitor: {"scheme":"https"}' \
-            -H 'Sec-WebSocket-Protocol: coinsphere.notifications.v1, invalid.test.token' \
-            http://127.0.0.1:8080/api/v1/ws/notifications)
-          [[ $cross_origin_status == 403 ]]
+          for path in /api/v1/ws/notifications /api/v1/workflows /api/v1/markets/symbols; do
+            status=$(curl --silent --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:8080$path")
+            [[ $status == 404 ]]
+          done
       - name: Print Compose logs on failure
         if: failure()
         run: docker compose logs --no-color
