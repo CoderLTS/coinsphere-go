@@ -223,11 +223,12 @@ func seedMenusAndButtons(tx *gorm.DB) (map[string]*SystemMenu, map[string]*Syste
 			return nil, nil, err
 		}
 	}
-	activeMenuNames := make([]string, 0, len(menuItems))
-	for _, item := range menuItems {
-		activeMenuNames = append(activeMenuNames, item.Name)
-	}
-	if err := tx.Model(&SystemMenu{}).Where("is_system = ? AND name NOT IN ?", true, activeMenuNames).
+	if err := tx.Model(&SystemMenu{}).Where("name IN ?", []string{
+		"TradingCenter", "TradingAccounts", "StrategyManagement",
+		"SchedulerCenter", "NodeDefinitions", "WorkflowDefinitions", "WorkflowExecutions",
+		"DataCenter", "NewsData", "MarketMetadata", "MarketChart",
+		"ConfigCenter", "ConfigOverview", "AiModelConfig", "AssistantAgentConfig",
+	}).
 		Updates(map[string]any{"is_active": false, "is_hidden": true, "updated_at": now}).Error; err != nil {
 		return nil, nil, err
 	}
