@@ -12,10 +12,3 @@ services:
         - type=local,src=/tmp/coinsphere-buildx-cache/frontend
       cache_to:
         - type=local,dest=/tmp/coinsphere-buildx-cache-next/frontend,mode=max
-
-  worker:
-    build:
-      cache_from:
-        - type=local,src=/tmp/coinsphere-buildx-cache/worker
-      cache_to:
-        - type=local,dest=/tmp/coinsphere-buildx-cache-next/worker,mode=max

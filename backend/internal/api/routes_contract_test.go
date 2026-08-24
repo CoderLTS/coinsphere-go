@@ -6,31 +6,11 @@ import (
 	"testing"
 )
 
-func TestRoutesUseV1AndRemoveLegacyEntrypoints(t *testing.T) {
+func TestRoutesExposeOnlyV2BaselineSurface(t *testing.T) {
 	mux := http.NewServeMux()
 	server := &Server{StaticDir: t.TempDir(), UploadsDir: t.TempDir()}
 	server.registerRoutes(mux)
 
-	for _, route := range []struct {
-		method string
-		path   string
-	}{
-		{http.MethodPost, "/api/auth/login"},
-		{http.MethodGet, "/api/auth/me"},
-		{http.MethodPost, "/api/auth/register"},
-		{http.MethodPost, "/api/v1/auth/register"},
-		{http.MethodPost, "/api/auth/refresh"},
-		{http.MethodPost, "/api/v1/auth/refresh"},
-		{http.MethodPost, "/api/auth/logout"},
-		{http.MethodGet, "/ws/notifications"},
-		{http.MethodGet, "/api/data/push-deliveries"},
-		{http.MethodGet, "/api/v1/data/push-deliveries"},
-	} {
-		request := httptest.NewRequest(route.method, route.path, nil)
-		if _, pattern := mux.Handler(request); pattern != "" {
-			t.Fatalf("legacy route %s %q still has route %q", route.method, route.path, pattern)
-		}
-	}
 	for _, route := range []struct {
 		method string
 		path   string
@@ -39,83 +19,51 @@ func TestRoutesUseV1AndRemoveLegacyEntrypoints(t *testing.T) {
 		{http.MethodPost, "/api/v1/auth/logout"},
 		{http.MethodPost, "/api/v1/auth/reauth"},
 		{http.MethodGet, "/api/v1/me"},
-		{http.MethodGet, "/api/v1/ws/notifications"},
-		{http.MethodGet, "/api/v1/admin/strategies"},
-		{http.MethodPost, "/api/v1/admin/strategies/019c2f6d-7c00-7000-8000-000000000001/publish"},
-		{http.MethodGet, "/api/v1/strategies"},
-		{http.MethodPost, "/api/v1/backtests"},
-		{http.MethodPost, "/api/v1/backtests/019c2f6d-7c00-7000-8000-000000000001/cancel"},
-		{http.MethodGet, "/api/v1/strategy-instances"},
-		{http.MethodGet, "/api/v1/signals"},
-		{http.MethodPost, "/api/v1/signals/019c2f6d-7c00-7000-8000-000000000001/approve"},
-		{http.MethodPost, "/api/v1/signals/019c2f6d-7c00-7000-8000-000000000001/reject"},
-		{http.MethodGet, "/api/v1/trading/overview"},
-		{http.MethodPost, "/api/v1/trading/accounts"},
-		{http.MethodPut, "/api/v1/trading/accounts/019c2f6d-7c00-7000-8000-000000000001/risk"},
-		{http.MethodPost, "/api/v1/trading/accounts/019c2f6d-7c00-7000-8000-000000000001/automation/enable"},
-		{http.MethodPost, "/api/v1/trading/accounts/019c2f6d-7c00-7000-8000-000000000001/automation/disable"},
-		{http.MethodPost, "/api/v1/trading/accounts/019c2f6d-7c00-7000-8000-000000000001/resume"},
-		{http.MethodPut, "/api/v1/trading/accounts/019c2f6d-7c00-7000-8000-000000000001/credentials"},
-		{http.MethodPost, "/api/v1/trading/accounts/019c2f6d-7c00-7000-8000-000000000001/credentials/revoke"},
-		{http.MethodPost, "/api/v1/trading/emergency-stop"},
-		{http.MethodPost, "/api/v1/admin/trading/accounts/019c2f6d-7c00-7000-8000-000000000001/authorize"},
-		{http.MethodPost, "/api/v1/admin/trading/accounts/019c2f6d-7c00-7000-8000-000000000001/revoke"},
-		{http.MethodPost, "/api/v1/admin/trading/emergency-stop/release"},
+		{http.MethodGet, "/api/v1/home/meta"},
+		{http.MethodGet, "/api/v1/home/overview"},
+		{http.MethodGet, "/api/v1/admin/users"},
+		{http.MethodGet, "/api/v1/system/roles"},
+		{http.MethodGet, "/api/v1/system/menus"},
 	} {
 		request := httptest.NewRequest(route.method, route.path, nil)
 		if _, pattern := mux.Handler(request); pattern == "" {
-			t.Fatalf("v1 path %q has no route", route.path)
-		}
-	}
-}
-
-func TestSignalDecisionRoutesRequireAuthenticatedPost(t *testing.T) {
-	mux := http.NewServeMux()
-	server := &Server{StaticDir: t.TempDir(), UploadsDir: t.TempDir()}
-	server.registerRoutes(mux)
-
-	const signalID = "019c2f6d-7c00-7000-8000-000000000001"
-	for _, path := range []string{
-		"/api/v1/signals/" + signalID + "/approve",
-		"/api/v1/signals/" + signalID + "/reject",
-	} {
-		readResponse := httptest.NewRecorder()
-		mux.ServeHTTP(readResponse, httptest.NewRequest(http.MethodGet, path, nil))
-		if readResponse.Code != http.StatusMethodNotAllowed {
-			t.Fatalf("GET %s status = %d, want %d", path, readResponse.Code, http.StatusMethodNotAllowed)
-		}
-
-		anonymousResponse := httptest.NewRecorder()
-		mux.ServeHTTP(anonymousResponse, httptest.NewRequest(http.MethodPost, path, nil))
-		if anonymousResponse.Code != http.StatusUnauthorized {
-			t.Fatalf("anonymous POST %s status = %d, want %d", path, anonymousResponse.Code, http.StatusUnauthorized)
+			t.Fatalf("baseline route %s %q is missing", route.method, route.path)
 		}
 	}
 
-	for _, path := range []string{
-		"/api/v1/signals/" + signalID + "/approve/callback",
-		"/api/v1/signals/" + signalID + "/reject/callback",
-		"/api/v1/bots/signals/" + signalID + "/approve",
-		"/api/v1/bots/signals/" + signalID + "/reject",
+	for _, route := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPost, "/api/auth/login"},
+		{http.MethodGet, "/api/v1/ws/notifications"},
+		{http.MethodGet, "/api/v1/markets/symbols"},
+		{http.MethodGet, "/api/v1/data/news"},
+		{http.MethodGet, "/api/v1/admin/strategies"},
+		{http.MethodPost, "/api/v1/backtests"},
+		{http.MethodGet, "/api/v1/trading/overview"},
+		{http.MethodGet, "/api/v1/workflows"},
+		{http.MethodGet, "/api/v1/config/ai-models"},
+		{http.MethodGet, "/api/v1/assistant/agents"},
+		{http.MethodGet, "/api/v1/notification-deliveries"},
 	} {
-		response := httptest.NewRecorder()
-		mux.ServeHTTP(response, httptest.NewRequest(http.MethodPost, path, nil))
-		if response.Code != http.StatusNotFound {
-			t.Fatalf("callback POST %s status = %d, want %d", path, response.Code, http.StatusNotFound)
+		request := httptest.NewRequest(route.method, route.path, nil)
+		if _, pattern := mux.Handler(request); pattern != "" {
+			t.Fatalf("removed route %s %q still has route %q", route.method, route.path, pattern)
 		}
 	}
 }
 
 func TestCursorPageDefaultsAndRejectsInvalidInput(t *testing.T) {
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/data/news?keyword=btc", nil)
-	request.Pattern = "GET /api/v1/data/news"
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/items?keyword=btc", nil)
+	request.Pattern = "GET /api/v1/items"
 	page, err := queryCursorPage(request)
 	if err != nil || page.Limit != 50 {
 		t.Fatalf("default cursor page = %#v, err = %v", page, err)
 	}
 	for _, query := range []string{"?limit=0", "?limit=201", "?cursor=not-base64"} {
-		request := httptest.NewRequest(http.MethodGet, "/api/v1/data/news"+query, nil)
-		request.Pattern = "GET /api/v1/data/news"
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/items"+query, nil)
+		request.Pattern = "GET /api/v1/items"
 		if _, err := queryCursorPage(request); err == nil {
 			t.Fatalf("invalid query %q was accepted", query)
 		}

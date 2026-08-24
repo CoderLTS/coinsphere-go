@@ -67,13 +67,10 @@ jobs:
           bash scripts/release/build.sh "$VERSION" "$GITHUB_SHA" dist "$build_mode"
           backend_digest=$(jq -er '.backendDigest' dist/release-manifest.json)
           web_digest=$(jq -er '.webDigest' dist/release-manifest.json)
-          worker_digest=$(jq -er '.workerDigest' dist/release-manifest.json)
           [[ $backend_digest =~ ^127\.0\.0\.1:5000/coinsphere/backend@sha256:[0-9a-f]{64}$ ]] || exit 1
           [[ $web_digest =~ ^127\.0\.0\.1:5000/coinsphere/web@sha256:[0-9a-f]{64}$ ]] || exit 1
-          [[ $worker_digest =~ ^127\.0\.0\.1:5000/coinsphere/worker@sha256:[0-9a-f]{64}$ ]] || exit 1
           printf 'backend_digest=%s\n' "$backend_digest" >>"$GITHUB_OUTPUT"
           printf 'web_digest=%s\n' "$web_digest" >>"$GITHUB_OUTPUT"
-          printf 'worker_digest=%s\n' "$worker_digest" >>"$GITHUB_OUTPUT"
 
       - name: Generate backend SBOM
         if: inputs.deploy_only != true
@@ -92,16 +89,6 @@ jobs:
           image: registry:${{ steps.build.outputs.web_digest }}
           format: spdx-json
           output-file: dist/coinsphere-${{ inputs.version }}-web.spdx.json
-          upload-artifact: false
-          upload-release-assets: false
-
-      - name: Generate worker SBOM
-        if: inputs.deploy_only != true
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
-        with:
-          image: registry:${{ steps.build.outputs.worker_digest }}
-          format: spdx-json
-          output-file: dist/coinsphere-${{ inputs.version }}-worker.spdx.json
           upload-artifact: false
           upload-release-assets: false
 
@@ -129,19 +116,6 @@ jobs:
           exit-code: "1"
           timeout: 15m
 
-      - name: Scan worker release image
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
-        with:
-          version: v0.72.0
-          skip-setup-trivy: true
-          cache: false
-          scan-type: image
-          image-ref: ${{ steps.build.outputs.worker_digest }}
-          format: table
-          severity: CRITICAL
-          exit-code: "1"
-          timeout: 15m
-
       - name: Generate final checksums
         if: inputs.deploy_only != true
         shell: bash
@@ -153,8 +127,7 @@ jobs:
             "./coinsphere-$VERSION-docker.tar.gz" \
             ./release-manifest.json \
             "./coinsphere-$VERSION-backend.spdx.json" \
-            "./coinsphere-$VERSION-web.spdx.json" \
-            "./coinsphere-$VERSION-worker.spdx.json" >SHA256SUMS
+            "./coinsphere-$VERSION-web.spdx.json" >SHA256SUMS
 
       - name: Scan final release artifacts
         if: inputs.deploy_only != true

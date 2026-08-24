@@ -14,7 +14,8 @@ services:
     networks:
       - database
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready --username=coinsphere --dbname=coinsphere"]
+      test:
+        ["CMD-SHELL", "pg_isready --username=coinsphere --dbname=coinsphere"]
       interval: 5s
       timeout: 5s
       retries: 12
@@ -37,36 +38,15 @@ services:
       - default
       - database
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:6987/health/ready >/dev/null 2>&1 || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://127.0.0.1:6987/health/ready >/dev/null 2>&1 || exit 1",
+        ]
       interval: 15s
       timeout: 5s
       retries: 6
       start_period: 15s
-
-  worker:
-    image: ${COINSPHERE_WORKER_IMAGE:?请设置 COINSPHERE_WORKER_IMAGE}
-    restart: unless-stopped
-    command: ["python", "-m", "coinsphere_worker", "run"]
-    depends_on:
-      timescaledb:
-        condition: service_healthy
-    environment:
-      TZ: UTC
-      COINSPHERE_WORKER_DATABASE_DSN: postgresql://coinsphere:${COINSPHERE_DATABASE_PASSWORD}@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic
-      COINSPHERE_WORKER_ARTIFACT_DIR: /app/artifacts
-      COINSPHERE_WORKER_BACKTEST_WALL_SECONDS: "300"
-      COINSPHERE_WORKER_BACKTEST_CPU_SECONDS: "300"
-      COINSPHERE_WORKER_BACKTEST_MEMORY_BYTES: "536870912"
-      COINSPHERE_WORKER_BACKTEST_ARTIFACT_BYTES: "134217728"
-    volumes:
-      - worker-artifacts:/app/artifacts
-    networks:
-      - database
-    read_only: true
-    cap_drop:
-      - ALL
-    security_opt:
-      - "no-new-privileges:true"
 
   web:
     image: ${COINSPHERE_WEB_IMAGE:?请设置 COINSPHERE_WEB_IMAGE}
@@ -77,27 +57,6 @@ services:
     ports:
       - "${COINSPHERE_WEB_BIND:-127.0.0.1}:${COINSPHERE_WEB_PORT:-8080}:80"
 
-  executor:
-    image: ${COINSPHERE_BACKEND_IMAGE:?请设置 COINSPHERE_BACKEND_IMAGE}
-    profiles: ["private"]
-    restart: unless-stopped
-    command: ["/app/coinsphere-executor", "-config", "/app/config.yml"]
-    depends_on:
-      timescaledb:
-        condition: service_healthy
-    env_file:
-      - path: executor-runtime.env
-        required: false
-    environment:
-      COINSPHERE_DATABASE__DSN: postgresql://coinsphere:${COINSPHERE_DATABASE_PASSWORD}@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic
-    networks:
-      - database
-    read_only: true
-    cap_drop:
-      - ALL
-    security_opt:
-      - "no-new-privileges:true"
-
 volumes:
   backend-uploads:
     name: coinsphere-go-backend-uploads
@@ -105,9 +64,6 @@ volumes:
     name: coinsphere-go-backend-static
   timescale-data:
     name: coinsphere-go-timescale-data
-  worker-artifacts:
-    name: coinsphere-go-worker-artifacts
-
 networks:
   database:
     internal: true

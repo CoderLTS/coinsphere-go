@@ -1,6 +1,5 @@
 // 本文件负责“首次启动写入种子数据(seed data)”:数据库刚建好、表还是空的时候,往里塞入
-// 系统必须的初始记录——内置角色、超级管理员账号、前端菜单、多语言文案、内置智能体、
-// 内置通知渠道、内置工作流。所有写入都做成“幂等”:重复运行不会产生重复数据(已存在就
+// 系统必须的初始记录——内置角色、超级管理员账号、前端菜单和多语言文案。所有写入都做成“幂等”:重复运行不会产生重复数据(已存在就
 // 跳过或更新),所以每次启动都能安全地调用一次。
 // 本文件大量使用 GORM(把 Go 结构体当数据库表来读写),见 GO入门笔记『框架:GORM』。
 
@@ -27,7 +26,7 @@ type roleItem struct{ Code, Title, Description string }
 // 这叫“位置写法”。内置角色 = 系统自带的三种身份:超级管理员(全权)、普通用户、游客。
 var roleItems = []roleItem{
 	{"R_SUPER", "超级管理员", "拥有系统全部管理权限"},
-	{"R_USER", "普通用户", "默认登录用户,可维护自己的模型与通知配置"},
+	{"R_USER", "普通用户", "仅访问获授权的共享结果"},
 	{"R_GUEST", "游客", "仅允许匿名访问首页"},
 }
 
@@ -42,21 +41,6 @@ type menuItem struct {
 // 的字段顺序完全一致。Parent 为空字符串 "" 表示顶级菜单,否则填父菜单的 Name。
 var menuItems = []menuItem{
 	{"Home", "首页", "/home", "/home/index", "ri:home-5-line", "", true, true, false},
-	{"TradingCenter", "交易管理", "/trading", "/index/index", "ri:exchange-funds-line", "", false, false, false},
-	{"TradingAccounts", "交易账户", "accounts", "/trading/accounts", "ri:wallet-3-line", "TradingCenter", true, false, false},
-	{"StrategyManagement", "策略管理", "strategies", "/strategy/drafts", "ri:code-box-line", "TradingCenter", true, false, false},
-	{"SchedulerCenter", "工作流调度", "/scheduler", "/index/index", "ri:time-line", "", false, false, false},
-	{"NodeDefinitions", "节点定义", "node-definition", "/scheduler/node-definition", "ri:stack-line", "SchedulerCenter", true, false, false},
-	{"WorkflowDefinitions", "工作流定义", "definition", "/scheduler/workflow", "ri:node-tree", "SchedulerCenter", true, false, false},
-	{"WorkflowExecutions", "执行记录", "execution", "/scheduler/execution", "ri:history-line", "SchedulerCenter", true, false, false},
-	{"DataCenter", "数据管理", "/data", "/index/index", "ri:database-2-line", "", false, false, false},
-	{"NewsData", "新闻数据", "news", "/data/news", "ri:newspaper-line", "DataCenter", true, false, false},
-	{"MarketMetadata", "币种数据", "market-metadata", "/data/market-metadata", "ri:coins-line", "DataCenter", true, false, false},
-	{"MarketChart", "K 线详情", "market-chart", "/data/market-chart", "ri:stock-line", "DataCenter", false, false, true},
-	{"ConfigCenter", "配置管理", "/config", "/index/index", "ri:function-line", "", false, false, false},
-	{"ConfigOverview", "配置概览", "overview", "/config/overview", "ri:apps-2-line", "ConfigCenter", true, false, false},
-	{"AiModelConfig", "模型配置", "ai-model", "/config/ai-model", "ri:cpu-line", "ConfigCenter", true, false, false},
-	{"AssistantAgentConfig", "智能体配置", "assistant-agent", "/config/assistant-agent", "ri:robot-2-line", "ConfigCenter", true, false, false},
 	{"System", "系统管理", "/system", "/index/index", "ri:settings-3-line", "", false, false, false},
 	{"User", "用户管理", "user", "/system/user", "ri:user-3-line", "System", true, false, false},
 	{"Role", "角色管理", "role", "/system/role", "ri:team-line", "System", true, false, false},
@@ -67,27 +51,12 @@ var menuItems = []menuItem{
 // map(字典/映射)= 一堆“键 → 值”的对应,写成 map[键类型]值类型。这里键是菜单 Name,
 // 值是 [2]string(定长为 2 的数组):第 0 个存中文、第 1 个存英文,即菜单的多语言文案。
 var menuI18n = map[string][2]string{
-	"Home":                 {"首页", "Home"},
-	"TradingCenter":        {"交易管理", "Trading"},
-	"TradingAccounts":      {"交易账户", "Trading Accounts"},
-	"StrategyManagement":   {"策略管理", "Strategies"},
-	"SchedulerCenter":      {"工作流调度", "Workflow Scheduler"},
-	"WorkflowDefinitions":  {"工作流定义", "Workflow Definitions"},
-	"WorkflowExecutions":   {"执行记录", "Execution Records"},
-	"NodeDefinitions":      {"节点定义", "Node Definitions"},
-	"DataCenter":           {"数据管理", "Data Management"},
-	"NewsData":             {"新闻数据", "News Data"},
-	"MarketMetadata":       {"币种数据", "Instruments"},
-	"MarketChart":          {"K 线详情", "Candles"},
-	"ConfigCenter":         {"配置管理", "Configuration"},
-	"ConfigOverview":       {"配置概览", "Config Overview"},
-	"AiModelConfig":        {"模型配置", "Model Config"},
-	"AssistantAgentConfig": {"智能体配置", "Assistant Agents"},
-	"System":               {"系统管理", "System Management"},
-	"User":                 {"用户管理", "User Management"},
-	"Role":                 {"角色管理", "Role Management"},
-	"Menus":                {"菜单管理", "Menu Management"},
-	"UserCenter":           {"个人中心", "Profile"},
+	"Home":       {"首页", "Home"},
+	"System":     {"系统管理", "System Management"},
+	"User":       {"用户管理", "User Management"},
+	"Role":       {"角色管理", "Role Management"},
+	"Menus":      {"菜单管理", "Menu Management"},
+	"UserCenter": {"个人中心", "Profile"},
 }
 
 // agentItem 描述一个“内置智能体”(平台自带的 AI 助手)。注意 Starters 字段类型是 []string,
@@ -120,7 +89,7 @@ var agentItems = []agentItem{
 	},
 }
 
-// Seed 写入内置角色、用户、菜单、i18n、智能体、渠道与内置工作流。幂等。
+// Seed 写入内置角色、用户、菜单与 i18n。幂等。
 func Seed(ctx context.Context, gdb *gorm.DB, hasher *security.PasswordHasher, adminPassword string) error {
 	// 入参里的 *gorm.DB、*security.PasswordHasher 都是“指针”(*类型 表示指向该类型的指针),
 	// 传指针可避免复制、并共享同一个数据库连接。函数只返回一个 error:nil 表示成功。
@@ -139,9 +108,6 @@ func Seed(ctx context.Context, gdb *gorm.DB, hasher *security.PasswordHasher, ad
 		if err != nil {
 			return err
 		}
-		if err := seedAgents(tx); err != nil {
-			return err
-		}
 		menus, buttons, err := seedMenusAndButtons(tx)
 		if err != nil {
 			return err
@@ -150,12 +116,6 @@ func Seed(ctx context.Context, gdb *gorm.DB, hasher *security.PasswordHasher, ad
 			return err
 		}
 		if err := seedI18n(tx, menus, buttons); err != nil {
-			return err
-		}
-		if err := seedBuiltinChannel(tx); err != nil {
-			return err
-		}
-		if err := seedWorkflows(tx, roles["R_SUPER"].ID); err != nil {
 			return err
 		}
 		return nil
@@ -318,11 +278,13 @@ func seedMenusAndButtons(tx *gorm.DB) (map[string]*SystemMenu, map[string]*Syste
 			return nil, nil, err
 		}
 	}
-	for _, name := range []string{"PaperTrading", "StrategyCenter", "PushData", "NotifyChannels"} {
-		if err := tx.Model(&SystemMenu{}).Where("name = ?", name).
-			Updates(map[string]any{"is_active": false, "is_hidden": true, "updated_at": now}).Error; err != nil {
-			return nil, nil, err
-		}
+	activeMenuNames := make([]string, 0, len(menuItems))
+	for _, item := range menuItems {
+		activeMenuNames = append(activeMenuNames, item.Name)
+	}
+	if err := tx.Model(&SystemMenu{}).Where("is_system = ? AND name NOT IN ?", true, activeMenuNames).
+		Updates(map[string]any{"is_active": false, "is_hidden": true, "updated_at": now}).Error; err != nil {
+		return nil, nil, err
 	}
 
 	buttonMap := map[string]*SystemMenuButton{}
@@ -387,7 +349,7 @@ func seedRoleBindings(
 	// 普通用户只看几项,游客只看首页。
 	roleMenus := map[string][]string{
 		"R_SUPER": allMenuNames,
-		"R_USER":  {"Home", "TradingCenter", "TradingAccounts", "DataCenter", "MarketMetadata", "MarketChart", "ConfigCenter", "AiModelConfig", "UserCenter"},
+		"R_USER":  {"Home", "UserCenter"},
 		"R_GUEST": {"Home"},
 	}
 	superButtons := make([]string, 0)
@@ -398,12 +360,7 @@ func seedRoleBindings(
 	}
 	roleButtons := map[string][]string{
 		"R_SUPER": superButtons,
-		"R_USER": {
-			perm.ConfigAiModelsCreate, perm.ConfigAiModelsUpdate, perm.ConfigAiModelsDelete,
-			perm.ConfigAiModelsValidate, perm.ConfigAiModelsBindAgents,
-			perm.ConfigNotificationChannelsCreate, perm.ConfigNotificationChannelsUpdate,
-			perm.ConfigNotificationChannelsDelete, perm.ConfigNotificationChannelsTest,
-		},
+		"R_USER":  {},
 		"R_GUEST": {},
 	}
 

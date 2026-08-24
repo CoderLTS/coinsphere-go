@@ -83,7 +83,6 @@ trap 'rm -rf "$work_dir"' EXIT
 
 backend_image="$REGISTRY/coinsphere/backend:$VERSION"
 web_image="$REGISTRY/coinsphere/web:$VERSION"
-worker_image="$REGISTRY/coinsphere/worker:$VERSION"
 sha_tag="sha-${COMMIT_SHA:0:12}"
 proxy_build_args=(
   --build-arg HTTP_PROXY
@@ -122,12 +121,6 @@ run_buildx --load \
   --build-arg "VITE_VERSION=$VERSION" \
   -t "$web_image" -t "$REGISTRY/coinsphere/web:$sha_tag" \
   "$ROOT_DIR/frontend"
-run_buildx --load \
-  --label "org.opencontainers.image.version=$VERSION" \
-  --label "org.opencontainers.image.revision=$COMMIT_SHA" \
-  -t "$worker_image" -t "$REGISTRY/coinsphere/worker:$sha_tag" \
-  "$ROOT_DIR/worker"
-
 if [[ $BUILD_MODE == release ]]; then
 run_buildx \
   --build-arg TARGETOS=linux --build-arg TARGETARCH=amd64 --build-arg "GOPROXY=$GO_PROXY" \
@@ -146,10 +139,8 @@ mkdir -p "$work_dir/packages/$windows_name/web" "$work_dir/packages/$linux_name/
 
 install -m 0755 "$work_dir/windows/coinsphere-server" "$work_dir/packages/$windows_name/coinsphere-server.exe"
 install -m 0755 "$work_dir/windows/coinsphere-migrate" "$work_dir/packages/$windows_name/coinsphere-migrate.exe"
-install -m 0755 "$work_dir/windows/coinsphere-executor" "$work_dir/packages/$windows_name/coinsphere-executor.exe"
 install -m 0755 "$work_dir/linux/coinsphere-server" "$work_dir/packages/$linux_name/coinsphere-server"
 install -m 0755 "$work_dir/linux/coinsphere-migrate" "$work_dir/packages/$linux_name/coinsphere-migrate"
-install -m 0755 "$work_dir/linux/coinsphere-executor" "$work_dir/packages/$linux_name/coinsphere-executor"
 for package_name in "$windows_name" "$linux_name"; do
   install -m 0644 "$ROOT_DIR/backend/config.yml" "$work_dir/packages/$package_name/config.yml"
   install -m 0644 "$ROOT_DIR/frontend/nginx.conf" "$work_dir/packages/$package_name/nginx.conf"
@@ -159,7 +150,6 @@ done
 install -m 0644 "$ROOT_DIR/deploy/production/compose.yaml" "$work_dir/packages/$docker_name/compose.yaml"
 install -m 0755 "$ROOT_DIR/deploy/production/deploy.sh" "$work_dir/packages/$docker_name/deploy.sh"
 install -m 0644 "$ROOT_DIR/deploy/production/runtime.env.example" "$work_dir/packages/$docker_name/runtime.env.example"
-install -m 0644 "$ROOT_DIR/deploy/production/executor-runtime.env.example" "$work_dir/packages/$docker_name/executor-runtime.env.example"
 install -m 0644 "$ROOT_DIR/deploy/production/README.md" "$work_dir/packages/$docker_name/README.md"
 
 (cd "$work_dir/packages" && zip -X -qr "$OUTPUT_DIR/$windows_name.zip" "$windows_name")
@@ -175,12 +165,8 @@ docker push "$backend_image"
 docker push "$REGISTRY/coinsphere/backend:$sha_tag"
 docker push "$web_image"
 docker push "$REGISTRY/coinsphere/web:$sha_tag"
-docker push "$worker_image"
-docker push "$REGISTRY/coinsphere/worker:$sha_tag"
-
 backend_digest=$(docker image inspect "$backend_image" --format '{{range .RepoDigests}}{{println .}}{{end}}' | grep -F "$REGISTRY/coinsphere/backend@" | head -n 1)
 web_digest=$(docker image inspect "$web_image" --format '{{range .RepoDigests}}{{println .}}{{end}}' | grep -F "$REGISTRY/coinsphere/web@" | head -n 1)
-worker_digest=$(docker image inspect "$worker_image" --format '{{range .RepoDigests}}{{println .}}{{end}}' | grep -F "$REGISTRY/coinsphere/worker@" | head -n 1)
 cat >"$OUTPUT_DIR/release-manifest.json" <<EOF
 {
   "version": "$VERSION",
@@ -188,9 +174,7 @@ cat >"$OUTPUT_DIR/release-manifest.json" <<EOF
   "backendImage": "$backend_image",
   "backendDigest": "$backend_digest",
   "webImage": "$web_image",
-  "webDigest": "$web_digest",
-  "workerImage": "$worker_image",
-  "workerDigest": "$worker_digest"
+  "webDigest": "$web_digest"
 }
 EOF
 

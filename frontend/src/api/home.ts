@@ -16,45 +16,13 @@ export interface HomeOverview {
   }
   database: {
     status: 'healthy' | 'unavailable' | string
+    schemaVersion: number
     maxOpenConnections: number
     openConnections: number
     inUse: number
     idle: number
     waitCount: number
   }
-  workers: Array<{
-    lane: 'realtime' | 'backtest' | string
-    status: 'online' | 'offline' | string
-    workerId: string
-    lastHeartbeatAt: string
-    queuedCount: number
-    activeCount: number
-  }>
-  workflow: {
-    activeDefinitions: number
-    runningCount: number
-    failedCount: number
-    successCount: number
-  }
-  market: {
-    status: string
-    lastSyncAt: string
-    nextSyncAt: string
-    instrumentCount: number
-  }
-  trading: {
-    accountCount: number
-    activeAccountCount: number
-    pausedAccountCount: number
-    emergencyStopped: boolean
-  }
-  alerts: Array<{
-    severity: string
-    title: string
-    description: string
-    count?: number
-    path?: string
-  }>
 }
 
 export function fetchHomeOverview() {

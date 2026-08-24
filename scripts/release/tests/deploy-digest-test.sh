@@ -8,7 +8,6 @@ COMMIT=0123456789abcdef0123456789abcdef01234567
 REGISTRY=127.0.0.1:5000
 BACKEND_DIGEST=$(printf 'a%.0s' {1..64})
 WEB_DIGEST=$(printf 'b%.0s' {1..64})
-WORKER_DIGEST=$(printf 'c%.0s' {1..64})
 POSTGRES_DSN='postgresql://coinsphere:test-only-password@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic'
 
 cleanup() {
@@ -29,9 +28,7 @@ cat >"$TEST_DIR/release-manifest.json" <<EOF
   "backendImage": "$REGISTRY/coinsphere/backend:$VERSION",
   "backendDigest": "$REGISTRY/coinsphere/backend@sha256:$BACKEND_DIGEST",
   "webImage": "$REGISTRY/coinsphere/web:$VERSION",
-  "webDigest": "$REGISTRY/coinsphere/web@sha256:$WEB_DIGEST",
-  "workerImage": "$REGISTRY/coinsphere/worker:$VERSION",
-  "workerDigest": "$REGISTRY/coinsphere/worker@sha256:$WORKER_DIGEST"
+  "webDigest": "$REGISTRY/coinsphere/web@sha256:$WEB_DIGEST"
 }
 EOF
 
@@ -79,8 +76,7 @@ bash "$ROOT_DIR/deploy/production/deploy.sh" "$VERSION" "$TEST_DIR/release-manif
   >"$TEST_DIR/deploy.log" 2>&1
 
 if ! grep -Fxq "COINSPHERE_BACKEND_IMAGE=$REGISTRY/coinsphere/backend@sha256:$BACKEND_DIGEST" "$DEPLOY_DIR/.env" \
-  || ! grep -Fxq "COINSPHERE_WEB_IMAGE=$REGISTRY/coinsphere/web@sha256:$WEB_DIGEST" "$DEPLOY_DIR/.env" \
-  || ! grep -Fxq "COINSPHERE_WORKER_IMAGE=$REGISTRY/coinsphere/worker@sha256:$WORKER_DIGEST" "$DEPLOY_DIR/.env"; then
+  || ! grep -Fxq "COINSPHERE_WEB_IMAGE=$REGISTRY/coinsphere/web@sha256:$WEB_DIGEST" "$DEPLOY_DIR/.env"; then
   echo "自动部署必须使用 Manifest 中的不可变镜像 digest" >&2
   exit 1
 fi

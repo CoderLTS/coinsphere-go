@@ -10,7 +10,7 @@ import (
 	"coinsphere/backend/internal/service"
 )
 
-func TestMarketRoutesRequireAuthentication(t *testing.T) {
+func TestMarketRoutesAreNotRegistered(t *testing.T) {
 	mux := http.NewServeMux()
 	server := &Server{StaticDir: t.TempDir(), UploadsDir: t.TempDir()}
 	server.registerRoutes(mux)
@@ -22,11 +22,9 @@ func TestMarketRoutesRequireAuthentication(t *testing.T) {
 		{http.MethodPost, "/api/v1/markets/metadata-sync/proxy-check"},
 		{http.MethodDelete, "/api/v1/watchlists/019c2f6d-7c00-7000-8000-000000000001"},
 	} {
-		recorder := httptest.NewRecorder()
 		request := httptest.NewRequest(route.method, route.path, nil)
-		mux.ServeHTTP(recorder, request)
-		if recorder.Code != http.StatusUnauthorized || recorder.Header().Get("Content-Type") != "application/problem+json" {
-			t.Fatalf("%s %s = %d %q", route.method, route.path, recorder.Code, recorder.Header().Get("Content-Type"))
+		if _, pattern := mux.Handler(request); pattern != "" {
+			t.Fatalf("removed market route %s %s still has route %q", route.method, route.path, pattern)
 		}
 	}
 }

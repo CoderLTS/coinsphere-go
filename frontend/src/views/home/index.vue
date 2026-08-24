@@ -65,48 +65,9 @@
               ><dt>等待次数</dt><dd>{{ overview.database.waitCount }}</dd></div
             ></dl
           ></article
-        ><article
-          ><header
-            ><span>工作流</span
-            ><ElTag :type="overview.workflow.failedCount ? 'warning' : 'success'" effect="plain">{{
-              overview.workflow.failedCount ? '有失败' : '正常'
-            }}</ElTag></header
-          ><dl
-            ><div
-              ><dt>激活定义</dt><dd>{{ overview.workflow.activeDefinitions }}</dd></div
-            ><div
-              ><dt>运行中</dt><dd>{{ overview.workflow.runningCount }}</dd></div
-            ><div
-              ><dt>成功记录</dt><dd>{{ overview.workflow.successCount }}</dd></div
-            ><div
-              ><dt>失败记录</dt><dd>{{ overview.workflow.failedCount }}</dd></div
-            ></dl
-          ></article
-        ><article
-          ><header
-            ><span>交易与行情</span
-            ><ElTag
-              :type="overview.trading.emergencyStopped ? 'danger' : 'success'"
-              effect="plain"
-              >{{ overview.trading.emergencyStopped ? '急停' : '可用' }}</ElTag
-            ></header
-          ><dl
-            ><div
-              ><dt>交易账户</dt
-              ><dd
-                >{{ overview.trading.activeAccountCount }} / {{ overview.trading.accountCount }}</dd
-              ></div
-            ><div
-              ><dt>暂停账户</dt><dd>{{ overview.trading.pausedAccountCount }}</dd></div
-            ><div
-              ><dt>USDT 币种</dt><dd>{{ overview.market.instrumentCount }}</dd></div
-            ><div
-              ><dt>行情同步</dt><dd>{{ marketStatusLabel }}</dd></div
-            ></dl
-          ></article
         ></section
       >
-      <section class="main-grid"
+      <section
         ><article class="trend-panel"
           ><header class="panel-head"
             ><div><strong>HTTP 近 60 分钟</strong><span>请求量、失败量与平均延迟</span></div
@@ -115,53 +76,7 @@
               ><span><i class="latency"></i>延迟</span></div
             ></header
           ><div ref="chartHost" class="trend-chart"></div></article
-        ><aside class="worker-panel"
-          ><header class="panel-head"
-            ><div><strong>Worker 与队列</strong><span>45 秒无心跳即离线</span></div></header
-          ><div v-for="worker in overview.workers" :key="worker.lane" class="worker-row"
-            ><div class="worker-state"
-              ><i :class="worker.status === 'online' ? 'online' : 'offline'"></i
-              ><div
-                ><strong>{{ worker.lane === 'realtime' ? '实时策略' : '回测任务' }}</strong
-                ><span
-                  >{{ worker.status === 'online' ? '在线' : '离线' }} ·
-                  {{ formatTime(worker.lastHeartbeatAt) }}</span
-                ></div
-              ></div
-            ><div class="queue-facts"
-              ><div
-                ><span>排队</span><strong>{{ worker.queuedCount }}</strong></div
-              ><div
-                ><span>执行</span><strong>{{ worker.activeCount }}</strong></div
-              ></div
-            ></div
-          ></aside
-        ></section
-      >
-      <section class="alerts-panel"
-        ><header class="panel-head"
-          ><div
-            ><strong>待处理告警</strong
-            ><span>{{
-              overview.alerts.length ? `${overview.alerts.length} 项需要检查` : '当前没有待处理项'
-            }}</span></div
-          ></header
-        ><div v-if="overview.alerts.length" class="alert-list"
-          ><button
-            v-for="item in overview.alerts"
-            :key="`${item.title}-${item.path}`"
-            type="button"
-            @click="item.path && router.push(item.path)"
-            ><span class="alert-level" :class="`is-${item.severity}`"></span
-            ><div
-              ><strong
-                >{{ item.title }}<em v-if="item.count">{{ item.count }}</em></strong
-              ><small>{{ item.description }}</small></div
-            ><ArtSvgIcon v-if="item.path" icon="ri:arrow-right-s-line" /></button></div
-        ><div v-else class="empty-alert"
-          ><ArtSvgIcon icon="ri:checkbox-circle-line" />运行状态正常</div
-        ></section
-      >
+      ></section>
     </template>
   </div>
 </template>
@@ -172,7 +87,6 @@
   import { fetchHomeOverview, type HomeOverview } from '@/api/home'
 
   defineOptions({ name: 'HomePage' })
-  const router = useRouter()
   const loading = ref(false)
   const overview = ref<HomeOverview | null>(null)
   const refreshedAt = ref('')
@@ -181,17 +95,10 @@
   let timer: number | null = null
   let resizeObserver: ResizeObserver | null = null
   const overallTone = computed(() =>
-    !overview.value ||
-    overview.value.database.status !== 'healthy' ||
-    overview.value.trading.emergencyStopped ||
-    overview.value.workers.some((item) => item.status !== 'online')
-      ? 'danger'
-      : overview.value.alerts.length
-        ? 'warning'
-        : 'success'
+    !overview.value || overview.value.database.status !== 'healthy' ? 'danger' : 'success'
   )
   const overallLabel = computed(
-    () => ({ success: '运行正常', warning: '需要关注', danger: '存在中断' })[overallTone.value]
+    () => ({ success: '运行正常', danger: '存在中断' })[overallTone.value]
   )
   const headlineMetrics = computed(() =>
     overview.value
@@ -202,32 +109,22 @@
             caption: `失败 ${overview.value.http.requestsFailed}`
           },
           {
-            label: '工作流运行',
-            value: overview.value.workflow.runningCount,
-            caption: `激活 ${overview.value.workflow.activeDefinitions}`
+            label: 'Migration',
+            value: `v${overview.value.database.schemaVersion}`,
+            caption: '数据库结构版本'
           },
           {
-            label: '队列任务',
-            value: overview.value.workers.reduce((sum, item) => sum + item.queuedCount, 0),
-            caption: `执行中 ${overview.value.workers.reduce((sum, item) => sum + item.activeCount, 0)}`
+            label: '数据库连接',
+            value: overview.value.database.openConnections,
+            caption: `使用中 ${overview.value.database.inUse}`
           },
           {
-            label: '交易账户',
-            value: overview.value.trading.accountCount,
-            caption: `暂停 ${overview.value.trading.pausedAccountCount}`
+            label: 'Goroutine',
+            value: overview.value.process.goroutines,
+            caption: `请求中 ${overview.value.http.requestsInFlight}`
           }
         ]
       : []
-  )
-  const marketStatusLabel = computed(
-    () =>
-      ({
-        success: '正常',
-        failed: '失败',
-        running: '同步中',
-        queued: '等待同步',
-        not_synced: '未同步'
-      })[overview.value?.market.status || ''] || '未知'
   )
   const formatBytes = (value: number) =>
     value >= 1024 ** 3
@@ -243,8 +140,6 @@
         ? `${hours} 小时 ${minutes} 分`
         : `${minutes} 分钟`
   }
-  const formatTime = (value: string) =>
-    value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '无心跳'
   const renderChart = () => {
     if (!overview.value || !chartHost.value) return
     chart ||= echarts.init(chartHost.value)
@@ -358,18 +253,14 @@
   .status-strip,
   .runtime-grid article header,
   .panel-head,
-  .worker-row,
-  .worker-state,
-  .legend,
-  .alert-list button {
+  .legend {
     display: flex;
     align-items: center;
   }
 
   .console-head,
   .runtime-grid article header,
-  .panel-head,
-  .worker-row {
+  .panel-head {
     gap: 14px;
     justify-content: space-between;
   }
@@ -385,7 +276,7 @@
     font-size: 12px;
     font-weight: 600;
     color: var(--el-color-primary);
-    letter-spacing: 0.08em;
+    letter-spacing: 0;
   }
 
   h1 {
@@ -421,10 +312,6 @@
 
   .overall.is-success > span {
     background: var(--el-color-success);
-  }
-
-  .overall.is-warning > span {
-    background: var(--el-color-warning);
   }
 
   .overall.is-danger > span {
@@ -464,14 +351,12 @@
 
   .runtime-grid {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
   }
 
   .runtime-grid article,
-  .trend-panel,
-  .worker-panel,
-  .alerts-panel {
+  .trend-panel {
     background: var(--el-fill-color-blank);
     border: 1px solid var(--el-border-color-light);
   }
@@ -505,12 +390,6 @@
     margin: 0;
     font-weight: 600;
     text-align: right;
-  }
-
-  .main-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 360px;
-    gap: 12px;
   }
 
   .panel-head {
@@ -556,128 +435,9 @@
     height: 310px;
   }
 
-  .worker-row {
-    padding: 18px 16px;
-    border-bottom: 1px solid var(--el-border-color-lighter);
-  }
-
-  .worker-row:last-child {
-    border-bottom: 0;
-  }
-
-  .worker-state {
-    gap: 9px;
-  }
-
-  .worker-state i {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-  }
-
-  .worker-state i.online {
-    background: var(--el-color-success);
-    box-shadow: 0 0 0 4px var(--el-color-success-light-9);
-  }
-
-  .worker-state i.offline {
-    background: var(--el-color-danger);
-    box-shadow: 0 0 0 4px var(--el-color-danger-light-9);
-  }
-
-  .worker-state span {
-    display: block;
-    margin-top: 4px;
-    font-size: 11px;
-    color: var(--el-text-color-secondary);
-  }
-
-  .queue-facts {
-    display: grid;
-    grid-template-columns: repeat(2, 54px);
-    text-align: right;
-  }
-
-  .queue-facts span {
-    font-size: 11px;
-    color: var(--el-text-color-secondary);
-  }
-
-  .queue-facts strong {
-    display: block;
-    margin-top: 3px;
-    font-size: 18px;
-  }
-
-  .alert-list button {
-    gap: 12px;
-    width: 100%;
-    padding: 12px 16px;
-    color: inherit;
-    text-align: left;
-    cursor: pointer;
-    background: transparent;
-    border: 0;
-    border-bottom: 1px solid var(--el-border-color-lighter);
-  }
-
-  .alert-list button:hover {
-    background: var(--el-fill-color-light);
-  }
-
-  .alert-list button > div {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .alert-list strong,
-  .alert-list small {
-    display: block;
-  }
-
-  .alert-list small {
-    margin-top: 4px;
-    color: var(--el-text-color-secondary);
-  }
-
-  .alert-list em {
-    padding: 1px 6px;
-    margin-left: 6px;
-    font-size: 11px;
-    font-style: normal;
-    color: var(--el-color-danger);
-    background: var(--el-color-danger-light-9);
-    border-radius: 8px;
-  }
-
-  .alert-level {
-    width: 4px;
-    height: 34px;
-    background: var(--el-color-warning);
-    border-radius: 2px;
-  }
-
-  .alert-level.is-danger {
-    background: var(--el-color-danger);
-  }
-
-  .empty-alert {
-    padding: 24px 16px;
-    color: var(--el-color-success);
-    text-align: center;
-  }
-
-  .empty-alert svg {
-    margin-right: 6px;
-  }
-
   @media (max-width: 1100px) {
     .runtime-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .main-grid {
-      grid-template-columns: 1fr;
     }
 
     .status-strip {

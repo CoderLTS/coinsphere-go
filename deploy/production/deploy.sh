@@ -55,7 +55,6 @@ fi
 
 BACKEND_IMAGE=$REGISTRY/coinsphere/backend:$VERSION
 WEB_IMAGE=$REGISTRY/coinsphere/web:$VERSION
-WORKER_IMAGE=$REGISTRY/coinsphere/worker:$VERSION
 if [[ -n $MANIFEST_FILE ]]; then
   command -v jq >/dev/null || { echo "缺少命令: jq" >&2; exit 3; }
   if [[ ! -f $MANIFEST_FILE || -L $MANIFEST_FILE ]]; then
@@ -63,23 +62,20 @@ if [[ -n $MANIFEST_FILE ]]; then
     exit 2
   fi
   if ! manifest_images=$(jq -er --arg version "$VERSION" \
-    --arg backend "$REGISTRY/coinsphere/backend" --arg web "$REGISTRY/coinsphere/web" \
-    --arg worker "$REGISTRY/coinsphere/worker" '
+    --arg backend "$REGISTRY/coinsphere/backend" --arg web "$REGISTRY/coinsphere/web" '
     def digest($repository):
       type == "string"
       and startswith($repository + "@sha256:")
       and (ltrimstr($repository + "@sha256:") | test("^[0-9a-f]{64}$"));
     if type == "object"
-      and (keys == ["backendDigest", "backendImage", "commit", "version", "webDigest", "webImage", "workerDigest", "workerImage"])
+      and (keys == ["backendDigest", "backendImage", "commit", "version", "webDigest", "webImage"])
       and .version == $version
       and (.commit | type == "string" and test("^[0-9a-f]{40}$"))
       and .backendImage == ($backend + ":" + $version)
       and .webImage == ($web + ":" + $version)
-      and .workerImage == ($worker + ":" + $version)
       and (.backendDigest | digest($backend))
       and (.webDigest | digest($web))
-      and (.workerDigest | digest($worker))
-    then .backendDigest, .webDigest, .workerDigest
+    then .backendDigest, .webDigest
     else error("invalid release manifest")
     end
   ' "$MANIFEST_FILE" 2>/dev/null); then
@@ -89,7 +85,6 @@ if [[ -n $MANIFEST_FILE ]]; then
   mapfile -t release_images <<<"$manifest_images"
   BACKEND_IMAGE=${release_images[0]}
   WEB_IMAGE=${release_images[1]}
-  WORKER_IMAGE=${release_images[2]}
 fi
 
 if [[ -f $DOCKER_CONFIG_FILE ]]; then
@@ -146,7 +141,6 @@ if [[ $SOURCE_DIR != "$DEPLOY_DIR" ]]; then
   install -m 0644 "$SOURCE_DIR/compose.yaml" "$DEPLOY_DIR/compose.yaml"
   install -m 0755 "$SOURCE_DIR/deploy.sh" "$DEPLOY_DIR/deploy.sh"
   install -m 0644 "$SOURCE_DIR/runtime.env.example" "$DEPLOY_DIR/runtime.env.example"
-  install -m 0644 "$SOURCE_DIR/executor-runtime.env.example" "$DEPLOY_DIR/executor-runtime.env.example"
 fi
 
 database_password=${COINSPHERE_DATABASE_PASSWORD:-}
@@ -166,7 +160,6 @@ cat >"$next_env" <<EOF
 COINSPHERE_VERSION=$VERSION
 COINSPHERE_BACKEND_IMAGE=$BACKEND_IMAGE
 COINSPHERE_WEB_IMAGE=$WEB_IMAGE
-COINSPHERE_WORKER_IMAGE=$WORKER_IMAGE
 COINSPHERE_WEB_BIND=$WEB_BIND
 COINSPHERE_WEB_PORT=$WEB_PORT
 EOF
@@ -258,8 +251,7 @@ if $legacy_available && ((${#legacy_services[@]} > 0)); then
   legacy_removed=true
 fi
 
-compose_with "$next_env" "$DEPLOY_DIR/compose.yaml" up -d --wait --wait-timeout 180 timescaledb backend worker web
-compose_with "$next_env" "$DEPLOY_DIR/compose.yaml" exec -T worker python -m coinsphere_worker health
+compose_with "$next_env" "$DEPLOY_DIR/compose.yaml" up -d --wait --wait-timeout 180 timescaledb backend web
 curl --fail --show-error --retry 10 --retry-all-errors --retry-delay 3 \
   "http://127.0.0.1:$WEB_PORT/health" >/dev/null
 

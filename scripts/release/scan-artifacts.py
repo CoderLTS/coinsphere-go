@@ -191,10 +191,9 @@ def sensitive_path(path, kind, version):
     basename = parts[-1]
     if kind == "docker" and parts in (
         [f"coinsphere-{version}-docker".casefold(), "runtime.env.example"],
-        [f"coinsphere-{version}-docker".casefold(), "executor-runtime.env.example"],
     ):
         return None
-    if basename in {"runtime.env.example", "executor-runtime.env.example"}:
+    if basename == "runtime.env.example":
         return "运行时 env"
     if (
         basename.startswith(".env")
@@ -261,7 +260,6 @@ def check_archive_inventory(kind, files, directories, version):
             f"{root}/compose.yaml",
             f"{root}/deploy.sh",
             f"{root}/runtime.env.example",
-            f"{root}/executor-runtime.env.example",
         }
         if files != expected or any(directory != root for directory in directories):
             raise ScanError("Docker 归档内部文件清单不匹配")
@@ -270,7 +268,6 @@ def check_archive_inventory(kind, files, directories, version):
     executable_suffix = ".exe" if kind == "windows-x86" else ""
     fixed = {
         f"{root}/README.md",
-        f"{root}/coinsphere-executor{executable_suffix}",
         f"{root}/coinsphere-migrate{executable_suffix}",
         f"{root}/coinsphere-server{executable_suffix}",
         f"{root}/config.yml",
@@ -444,7 +441,7 @@ def scan_zip(path, kind, version):
             if (
                 kind == "linux-amd64"
                 and normalized.endswith(
-                    ("/coinsphere-server", "/coinsphere-migrate", "/coinsphere-executor")
+                    ("/coinsphere-server", "/coinsphere-migrate")
                 )
                 and not mode & 0o111
             ):
@@ -632,7 +629,7 @@ def scan_tar(path, kind, version):
                 if (
                     kind == "linux-amd64"
                     and normalized.endswith(
-                        ("/coinsphere-server", "/coinsphere-migrate", "/coinsphere-executor")
+                        ("/coinsphere-server", "/coinsphere-migrate")
                     )
                     and not member.mode & 0o111
                 ):
@@ -783,8 +780,6 @@ def verify_manifest(path, version, commit, registry):
         "backendDigest",
         "webImage",
         "webDigest",
-        "workerImage",
-        "workerDigest",
     }
     if not isinstance(manifest, dict) or set(manifest) != expected_keys:
         raise ScanError("release-manifest.json 字段清单不匹配")
@@ -792,7 +787,7 @@ def verify_manifest(path, version, commit, registry):
         raise ScanError("release-manifest.json 字段必须是非空字符串")
     if manifest["version"] != version or manifest["commit"] != commit:
         raise ScanError("release-manifest.json 版本或 Commit 不匹配")
-    for component in ("backend", "web", "worker"):
+    for component in ("backend", "web"):
         image_key = f"{component}Image"
         digest_key = f"{component}Digest"
         expected_image = f"{registry}/coinsphere/{component}:{version}"
@@ -912,7 +907,6 @@ def main():
         "release-manifest.json",
         f"coinsphere-{version}-backend.spdx.json",
         f"coinsphere-{version}-web.spdx.json",
-        f"coinsphere-{version}-worker.spdx.json",
     ]
     expected_names = [*payload_names, "SHA256SUMS"]
     verify_inventory(output_dir, expected_names)
@@ -924,9 +918,6 @@ def main():
         output_dir / f"coinsphere-{version}-backend.spdx.json", "backend", manifest
     )
     verify_sbom(output_dir / f"coinsphere-{version}-web.spdx.json", "web", manifest)
-    verify_sbom(
-        output_dir / f"coinsphere-{version}-worker.spdx.json", "worker", manifest
-    )
     scan_zip(
         output_dir / f"coinsphere-{version}-windows-x86.zip", "windows-x86", version
     )
