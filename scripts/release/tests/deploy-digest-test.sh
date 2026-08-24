@@ -56,7 +56,11 @@ if [[ ${1:-} == compose && $* == *'config --services'* ]]; then
   exit 0
 fi
 if [[ ${1:-} == compose && $* == *'ps --services --status running'* ]]; then
-  printf 'coinsphere-backend\ncoinsphere-executor\ncoinsphere-timescaledb\nsub2api\n'
+  if [[ $* == *'--project-name coinsphere-go'* ]]; then
+    printf 'backend\nworker\nweb\nexecutor\n'
+  else
+    printf 'coinsphere-backend\ncoinsphere-executor\ncoinsphere-timescaledb\nsub2api\n'
+  fi
   exit 0
 fi
 exit 0
@@ -108,6 +112,16 @@ fi
 if grep -Eiq '(^|[[:space:]])volume([[:space:]]|$)|sqlite|backup' "$DEPLOY_DOCKER_LOG" \
   || find "$DEPLOY_DIR" -maxdepth 1 -type f \( -iname '*sqlite*' -o -iname '*.db*' -o -iname '*backup*' \) -print -quit | grep -q .; then
   echo "生产部署不得创建或操作旧 SQLite 卷与备份" >&2
+  exit 1
+fi
+
+COINSPHERE_DEPLOY_DIR="$DEPLOY_DIR" \
+DOCKER_CONFIG="$TEST_DIR/docker-config" \
+COINSPHERE_REGISTRY=$REGISTRY \
+bash "$ROOT_DIR/deploy/production/deploy.sh" "$VERSION" "$TEST_DIR/release-manifest.json" \
+  >"$TEST_DIR/upgrade.log" 2>&1
+if ! grep -Fq "rm -f worker executor" "$DEPLOY_DOCKER_LOG"; then
+  echo "升级到 V2 拓扑后必须移除已撤下的 Worker 与 Executor 容器" >&2
   exit 1
 fi
 

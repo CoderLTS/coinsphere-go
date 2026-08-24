@@ -202,10 +202,15 @@ if [[ -n $STACK_ROOT ]]; then
 fi
 
 previous_services=()
+obsolete_services=()
 if $had_previous; then
   while IFS= read -r service; do
     case "$service" in
-      backend|worker|web|executor) previous_services+=("$service") ;;
+      backend|web) previous_services+=("$service") ;;
+      worker|executor)
+        previous_services+=("$service")
+        obsolete_services+=("$service")
+        ;;
     esac
   done < <(compose_with "$previous_env" "$previous_compose" ps --services --status running)
 fi
@@ -254,6 +259,9 @@ fi
 compose_with "$next_env" "$DEPLOY_DIR/compose.yaml" up -d --wait --wait-timeout 180 timescaledb backend web
 curl --fail --show-error --retry 10 --retry-all-errors --retry-delay 3 \
   "http://127.0.0.1:$WEB_PORT/health" >/dev/null
+if ((${#obsolete_services[@]} > 0)); then
+  compose_with "$previous_env" "$previous_compose" rm -f "${obsolete_services[@]}"
+fi
 
 install -m 0600 "$next_env" "$DEPLOY_DIR/.env"
 trap - ERR INT TERM
