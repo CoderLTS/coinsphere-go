@@ -111,6 +111,7 @@ var ButtonSpecs = map[string][]ButtonSpec{
 		{"view", SchedulerWorkflowExecutionsView, "查看执行记录"},
 	},
 	"NodeDefinitions": {
+		{"view_channel", ConfigNotificationChannelsView, "查看通知渠道"},
 		{"create_channel", ConfigNotificationChannelsCreate, "新增通知渠道"},
 		{"update_channel", ConfigNotificationChannelsUpdate, "编辑通知渠道"},
 		{"delete_channel", ConfigNotificationChannelsDelete, "删除通知渠道"},
