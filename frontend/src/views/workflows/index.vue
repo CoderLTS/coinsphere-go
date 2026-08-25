@@ -16,6 +16,11 @@
         </span>
       </div>
       <div class="revision-track__actions">
+        <ElBadge :value="humanTasks.length" :hidden="!humanTasks.length">
+          <ElButton title="人工任务" circle @click="openHumanTasks">
+            <ArtSvgIcon icon="ri:task-line" />
+          </ElButton>
+        </ElBadge>
         <ElButton
           v-if="selectedWorkflow && manualTrigger"
           type="success"
@@ -43,12 +48,24 @@
         <ElButton
           v-if="selectedWorkflow"
           :disabled="selectedWorkflow.status === 'archived' || dirty || readOnly"
-          :title="selectedWorkflow.status === 'running' ? '暂停' : '启动'"
+          :title="
+            selectedWorkflow.status === 'running'
+              ? '暂停'
+              : selectedWorkflow.status === 'needs_attention'
+                ? '标记已处理'
+                : '启动'
+          "
           circle
           @click="toggleLifecycle"
         >
           <ArtSvgIcon
-            :icon="selectedWorkflow.status === 'running' ? 'ri:pause-line' : 'ri:play-line'"
+            :icon="
+              selectedWorkflow.status === 'running'
+                ? 'ri:pause-line'
+                : selectedWorkflow.status === 'needs_attention'
+                  ? 'ri:check-line'
+                  : 'ri:play-line'
+            "
           />
         </ElButton>
         <ElButton
@@ -391,6 +408,36 @@
               <div>
                 <strong>批次 #{{ selectedBatch.id }}</strong>
                 <span :data-status="selectedBatch.status">{{ selectedBatch.status }}</span>
+                <ElButton
+                  v-if="['queued', 'running', 'waiting', 'retrying'].includes(selectedBatch.status)"
+                  title="取消批次"
+                  circle
+                  size="small"
+                  :loading="batchActionLoading"
+                  @click="runBatchAction('cancel')"
+                >
+                  <ArtSvgIcon icon="ri:stop-circle-line" />
+                </ElButton>
+                <ElButton
+                  v-if="selectedBatch.status === 'failed'"
+                  title="重试批次"
+                  circle
+                  size="small"
+                  :loading="batchActionLoading"
+                  @click="runBatchAction('retry')"
+                >
+                  <ArtSvgIcon icon="ri:restart-line" />
+                </ElButton>
+                <ElButton
+                  v-if="['succeeded', 'failed', 'cancelled'].includes(selectedBatch.status)"
+                  title="诊断重放"
+                  circle
+                  size="small"
+                  :loading="batchActionLoading"
+                  @click="runBatchAction('replay')"
+                >
+                  <ArtSvgIcon icon="ri:history-line" />
+                </ElButton>
               </div>
               <small>
                 R{{ selectedBatch.revisionId }} · {{ selectedBatch.triggerType }} ·
@@ -405,9 +452,24 @@
                   <small>{{ run.nodeType }}@{{ run.nodeVersion }}</small>
                 </div>
                 <code>{{ run.executionPool }}</code>
-                <span>尝试 {{ run.attempt }}</span>
+                <span
+                  >尝试 {{ run.attempt
+                  }}<template v-if="run.loopIteration"> · L{{ run.loopIteration }}</template></span
+                >
                 <time>{{ formatDuration(run.durationMs) }}</time>
-                <em v-if="run.errorCategory">{{ run.errorCategory }}</em>
+                <span class="batch-path__node-result">
+                  <em v-if="run.errorCategory">{{ run.errorCategory }}</em>
+                  <ElButton
+                    v-if="resultPageForNode(run.nodeType)"
+                    title="查看插件结果"
+                    text
+                    circle
+                    size="small"
+                    @click="openPluginResult(run)"
+                  >
+                    <ArtSvgIcon icon="ri:bar-chart-box-line" />
+                  </ElButton>
+                </span>
               </li>
             </ol>
             <div v-if="selectedBatch.artifacts.length" class="batch-path__artifacts">
@@ -441,6 +503,10 @@
           <ElSelect v-model="createForm.templateKey">
             <ElOption label="手工触发" value="blank" />
             <ElOption label="UTC 定时触发" value="scheduled" />
+            <ElOption label="CloudEvent 事件触发" value="event" />
+            <ElOption label="标准故障处理" value="failure-handler" />
+            <ElOption label="Connector Webhook" value="connector-webhook" />
+            <ElOption label="Connector WebSocket" value="connector-websocket" />
           </ElSelect>
         </ElFormItem>
       </ElForm>
@@ -456,22 +522,68 @@
         </ElButton>
       </template>
     </ElDialog>
+
+    <ElDialog v-model="humanTasksVisible" title="人工任务" width="min(620px, 92vw)">
+      <div v-loading="humanTasksLoading" class="human-task-list">
+        <article v-for="task in humanTasks" :key="task.id">
+          <div>
+            <strong>{{ task.prompt }}</strong>
+            <small>{{ task.businessKey }} · {{ formatTime(task.expiresAt) }}</small>
+          </div>
+          <code>#{{ task.batchId }} / {{ task.nodeInstanceId }}</code>
+          <div class="human-task-list__actions">
+            <ElButton
+              size="small"
+              :loading="decidingTaskId === task.id"
+              @click="decideTask(task.id, 'reject')"
+              >拒绝</ElButton
+            >
+            <ElButton
+              type="primary"
+              size="small"
+              :loading="decidingTaskId === task.id"
+              @click="decideTask(task.id, 'approve')"
+              >批准</ElButton
+            >
+          </div>
+        </article>
+        <div v-if="!humanTasks.length" class="activity-dock__empty">没有待处理任务</div>
+      </div>
+    </ElDialog>
+
+    <ElDialog
+      v-model="pluginResultVisible"
+      title="插件结果"
+      width="min(680px, 92vw)"
+      destroy-on-close
+    >
+      <component
+        :is="pluginResultComponent"
+        v-if="pluginResultComponent && pluginResultContext"
+        :result="pluginResultContext"
+      />
+    </ElDialog>
   </div>
 </template>
 
 <script setup lang="ts">
   import { Graph, Shape } from '@antv/x6'
   import { ElMessage, ElMessageBox } from 'element-plus'
+  import type { Component } from 'vue'
+  import { registeredFrontendPlugins } from '@/plugins'
   import WorkflowSchemaFields from '@/views/scheduler/workflow/editor/components/WorkflowSchemaFields.vue'
   import {
+    applyWorkflowBatchAction,
     applyWorkflowLifecycle,
     createWorkflowBatch,
     createWorkflow,
     downloadWorkflowArtifact,
+    decideWorkflowHumanTask,
     fetchWorkflow,
     fetchWorkflowActivity,
     fetchWorkflowArtifactManifest,
     fetchWorkflowBatch,
+    fetchWorkflowHumanTasks,
     fetchWorkflowNodeDefinitions,
     fetchWorkflowRevision,
     fetchWorkflowRevisions,
@@ -482,14 +594,17 @@
     type WorkflowGraphNode,
     type WorkflowInputBinding,
     type WorkflowItem,
+    type WorkflowHumanTask,
     type WorkflowNodeDefinition,
     type WorkflowBindingKind,
     type WorkflowActivity,
     type WorkflowArtifact,
     type WorkflowBatchDetail,
+    type WorkflowNodeRun,
     type WorkflowRevision,
     type WorkflowSecretChange
   } from '@/api/workflows'
+  import { useUserStore } from '@/store/modules/user'
 
   const canvasRef = ref<HTMLDivElement>()
   const graphInstance = shallowRef<Graph>()
@@ -511,14 +626,33 @@
   const saving = ref(false)
   const creating = ref(false)
   const runningBatch = ref(false)
+  const batchActionLoading = ref(false)
+  const humanTasks = ref<WorkflowHumanTask[]>([])
+  const humanTasksVisible = ref(false)
+  const humanTasksLoading = ref(false)
+  const decidingTaskId = ref<number>()
+  const pluginResultVisible = ref(false)
+  const pluginResultComponent = shallowRef<Component>()
+  const pluginResultContext = shallowRef<{
+    batch: WorkflowBatchDetail
+    nodeRun: WorkflowNodeRun
+  }>()
   const dirty = ref(false)
   const applyingGraph = ref(false)
   const createDialogVisible = ref(false)
-  let activityTimer: ReturnType<typeof setInterval> | undefined
+  const userStore = useUserStore()
+  let activitySocket: WebSocket | undefined
+  let activityReconnectTimer: ReturnType<typeof setTimeout> | undefined
   const createForm = reactive<{
     name: string
     description: string
-    templateKey: 'blank' | 'scheduled'
+    templateKey:
+      | 'blank'
+      | 'scheduled'
+      | 'event'
+      | 'failure-handler'
+      | 'connector-webhook'
+      | 'connector-websocket'
   }>({ name: '', description: '', templateKey: 'blank' })
   const secretDrafts = reactive<Record<string, string>>({})
   const secretRemovals = reactive<Record<string, boolean>>({})
@@ -612,6 +746,29 @@
     if (value < 1024) return `${value} B`
     if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`
     return `${(value / (1024 * 1024)).toFixed(1)} MiB`
+  }
+
+  const resultPageForNode = (nodeType: string) => {
+    if (nodeType.startsWith('official.connector.'))
+      return { pluginId: 'official.connector', pageKey: 'connections' }
+    if (nodeType === 'official.ai.model_call') return { pluginId: 'official.ai', pageKey: 'calls' }
+  }
+
+  const openPluginResult = async (nodeRun: WorkflowNodeRun) => {
+    if (!selectedBatch.value) return
+    const target = resultPageForNode(nodeRun.nodeType)
+    const registration = registeredFrontendPlugins.find((plugin) => plugin.id === target?.pluginId)
+    if (!target || !registration) return
+    try {
+      const module = await registration.load()
+      const page = module.resultPages[target.pageKey]
+      if (!page) throw new Error('result page is unavailable')
+      pluginResultComponent.value = (await page()).default
+      pluginResultContext.value = { batch: selectedBatch.value, nodeRun }
+      pluginResultVisible.value = true
+    } catch {
+      ElMessage.error('插件结果页加载失败')
+    }
   }
   const schemaProperties = (schema: Record<string, unknown>) => {
     const properties = (schema.properties || {}) as Record<string, Record<string, unknown>>
@@ -787,12 +944,14 @@
     try {
       const page = await fetchWorkflowActivity(workflowId, reset ? 0 : activityCursor.value)
       if (selectedWorkflow.value?.id !== workflowId) return
-      activities.value = reset
-        ? page.items
-        : [...activities.value, ...page.items].filter(
-            (item, index, all) =>
-              all.findIndex((candidate) => candidate.cursor === item.cursor) === index
-          )
+      activities.value = (
+        reset
+          ? page.items
+          : [...activities.value, ...page.items].filter(
+              (item, index, all) =>
+                all.findIndex((candidate) => candidate.cursor === item.cursor) === index
+            )
+      ).slice(-200)
       activityCursor.value = page.nextCursor
       const latestBatchId = [...page.items].reverse().find((item) => item.batchId)?.batchId
       if (latestBatchId && (reset || !selectedBatch.value)) {
@@ -808,8 +967,50 @@
     }
   }
 
+  const disconnectActivitySocket = () => {
+    if (activityReconnectTimer) clearTimeout(activityReconnectTimer)
+    activityReconnectTimer = undefined
+    const socket = activitySocket
+    activitySocket = undefined
+    socket?.close(1000, 'workflow changed')
+  }
+
+  const connectActivitySocket = () => {
+    disconnectActivitySocket()
+    const workflowId = selectedWorkflow.value?.id
+    if (!workflowId || !userStore.accessToken) return
+    const url = new URL(`/api/v1/workflows/${workflowId}/activity/ws`, window.location.origin)
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+    url.searchParams.set('after', String(activityCursor.value))
+    const socket = new WebSocket(url, ['coinsphere.workflow-activity.v1', userStore.accessToken])
+    activitySocket = socket
+    socket.onmessage = (message) => {
+      if (activitySocket !== socket || selectedWorkflow.value?.id !== workflowId) return
+      try {
+        const item = JSON.parse(message.data) as WorkflowActivity
+        if (!Number.isSafeInteger(item.cursor) || item.cursor <= activityCursor.value) return
+        activities.value.push(item)
+        if (activities.value.length > 200) activities.value.splice(0, activities.value.length - 200)
+        activityCursor.value = item.cursor
+        if (item.status === 'waiting') void refreshHumanTasks()
+      } catch {
+        socket.close(1003, 'invalid activity payload')
+      }
+    }
+    socket.onclose = () => {
+      if (activitySocket !== socket || selectedWorkflow.value?.id !== workflowId) return
+      activitySocket = undefined
+      activityReconnectTimer = setTimeout(async () => {
+        if (selectedWorkflow.value?.id !== workflowId) return
+        await refreshActivity()
+        connectActivitySocket()
+      }, 1500)
+    }
+  }
+
   const selectWorkflow = async (workflow: WorkflowItem) => {
     if (dirty.value && !(await confirmDiscard())) return
+    disconnectActivitySocket()
     loading.value = true
     activities.value = []
     activityCursor.value = 0
@@ -823,6 +1024,7 @@
       revisions.value = revisionList.items
       await loadWorkflowRevision(detail.id, detail.activeRevisionId)
       await refreshActivity(true)
+      connectActivitySocket()
     } finally {
       loading.value = false
     }
@@ -1048,7 +1250,11 @@
 
   const toggleLifecycle = async () => {
     if (!selectedWorkflow.value) return
-    const action = selectedWorkflow.value.status === 'running' ? 'pause' : 'start'
+    const action =
+      selectedWorkflow.value.status === 'running' ||
+      selectedWorkflow.value.status === 'needs_attention'
+        ? 'pause'
+        : 'start'
     selectedWorkflow.value = await applyWorkflowLifecycle(selectedWorkflow.value.id, action)
     workflows.value = workflows.value.map((item) =>
       item.id === selectedWorkflow.value?.id ? { ...item, ...selectedWorkflow.value } : item
@@ -1064,6 +1270,49 @@
       await refreshActivity(true)
     } finally {
       runningBatch.value = false
+    }
+  }
+
+  const runBatchAction = async (action: 'cancel' | 'retry' | 'replay') => {
+    if (!selectedBatch.value) return
+    batchActionLoading.value = true
+    try {
+      const batch = await applyWorkflowBatchAction(selectedBatch.value.id, action)
+      await Promise.all([loadBatch(batch.id), refreshActivity()])
+      ElMessage.success(
+        action === 'cancel'
+          ? '已请求取消'
+          : action === 'retry'
+            ? '批次已重新入队'
+            : `诊断批次 #${batch.id} 已入队`
+      )
+    } finally {
+      batchActionLoading.value = false
+    }
+  }
+
+  const refreshHumanTasks = async () => {
+    humanTasksLoading.value = true
+    try {
+      humanTasks.value = (await fetchWorkflowHumanTasks()).items
+    } finally {
+      humanTasksLoading.value = false
+    }
+  }
+
+  const openHumanTasks = async () => {
+    humanTasksVisible.value = true
+    await refreshHumanTasks()
+  }
+
+  const decideTask = async (taskId: number, action: 'approve' | 'reject') => {
+    decidingTaskId.value = taskId
+    try {
+      await decideWorkflowHumanTask(taskId, action)
+      await Promise.all([refreshHumanTasks(), refreshActivity()])
+      ElMessage.success(action === 'approve' ? '任务已批准' : '任务已拒绝')
+    } finally {
+      decidingTaskId.value = undefined
     }
   }
 
@@ -1127,14 +1376,15 @@
   onMounted(async () => {
     if (!window.matchMedia('(max-width: 900px)').matches) initializeCanvas()
     try {
-      const [workflowList, nodeList] = await Promise.all([
+      const [workflowList, nodeList, taskList] = await Promise.all([
         fetchWorkflows(),
-        fetchWorkflowNodeDefinitions()
+        fetchWorkflowNodeDefinitions(),
+        fetchWorkflowHumanTasks()
       ])
       workflows.value = workflowList.items
       definitions.value = nodeList.items
+      humanTasks.value = taskList.items
       if (workflows.value[0]) await selectWorkflow(workflows.value[0])
-      activityTimer = setInterval(() => void refreshActivity(), 2000)
     } finally {
       loading.value = false
     }
@@ -1142,7 +1392,7 @@
 
   onBeforeUnmount(() => {
     graphInstance.value?.dispose()
-    if (activityTimer) clearInterval(activityTimer)
+    disconnectActivitySocket()
   })
   onBeforeRouteLeave(async () => !dirty.value || (await confirmDiscard()))
 </script>
@@ -1330,6 +1580,7 @@
   }
 
   [data-status='retrying'],
+  [data-status='waiting'],
   [data-status='needs_attention'] {
     background: var(--amber);
   }
@@ -1417,6 +1668,37 @@
     border-top: 1px solid #edf0f2;
   }
 
+  .human-task-list article {
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) minmax(120px, auto) auto;
+    gap: 16px;
+    align-items: center;
+    min-height: 58px;
+    border-top: 1px solid #e5e9ed;
+  }
+
+  .human-task-list article:first-child {
+    border-top: 0;
+  }
+
+  .human-task-list strong,
+  .human-task-list small {
+    display: block;
+  }
+
+  .human-task-list small,
+  .human-task-list code {
+    margin-top: 4px;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 11px;
+    color: #75828d;
+  }
+
+  .human-task-list__actions {
+    display: flex;
+    gap: 8px;
+  }
+
   .batch-path__nodes strong,
   .batch-path__nodes small {
     display: block;
@@ -1443,6 +1725,14 @@
     color: var(--red);
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .batch-path__node-result {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    justify-content: flex-end;
+    min-width: 0;
   }
 
   .batch-path__artifacts {
@@ -1914,6 +2204,14 @@
     .workbench-grid,
     .activity-dock {
       display: none;
+    }
+  }
+
+  @media (max-width: 620px) {
+    .human-task-list article {
+      grid-template-columns: 1fr;
+      gap: 8px;
+      padding: 12px 0;
     }
   }
 </style>

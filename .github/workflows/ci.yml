@@ -150,6 +150,11 @@ jobs:
       - name: Test with race detector
         if: needs.changes.outputs.full == 'true'
         run: go test -race -count=1 ./...
+      - name: P2 event stream reference capacity
+        run: |
+          lscpu
+          free -h
+          COINSPHERE_P2_CAPACITY=1 go test -count=1 -run '^TestWorkflowEventStreamCapacity$' -timeout 8m ./internal/service
       - name: Build
         run: go build ./...
       - name: Test SDK contract plugin

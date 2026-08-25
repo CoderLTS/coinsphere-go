@@ -23,6 +23,7 @@ import (
 	"coinsphere/backend/internal/migration"
 	"coinsphere/backend/internal/pluginregistry"
 	"coinsphere/backend/internal/service"
+	"coinsphere/backend/plugin/official"
 	"coinsphere/backend/plugin/sdk"
 )
 
@@ -95,6 +96,9 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	}
 
 	plugins := sdk.NewRegistry()
+	if err := official.RegisterAll(plugins, cfg.Workflow.HTTPAllowedHosts); err != nil {
+		return fmt.Errorf("register official plugins: %w", err)
+	}
 	if err := pluginregistry.RegisterAll(plugins); err != nil {
 		return fmt.Errorf("register plugins: %w", err)
 	}

@@ -1,15 +1,97 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"coinsphere/backend/internal/service"
+	cloudevents "github.com/cloudevents/sdk-go/v2"
 )
 
 const maxWorkflowRequestBytes = 2 << 20
+const maxWorkflowEventRequestBytes = 1 << 20
+const maxWorkflowHumanDecisionBytes = 64 << 10
+
+func (s *Server) handlePublishWorkflowWebhook(w http.ResponseWriter, r *http.Request) {
+	workflowID, err := pathInt64(r, "workflowId")
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	secret, secretOK := singleWorkflowSecretHeader(r)
+	eventID, eventIDOK := singleWorkflowHeader(r, "Idempotency-Key")
+	partitionKey, partitionOK := singleWorkflowHeader(r, "X-CoinSphere-Partition-Key")
+	if !secretOK || !eventIDOK || !partitionOK {
+		writeProblem(w, r, http.StatusBadRequest, "webhook requires one secret, idempotency key, and partition key header")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxWorkflowEventRequestBytes)
+	payload, err := decodeBody[map[string]any](r)
+	if err != nil || payload == nil {
+		writeProblem(w, r, http.StatusBadRequest, "webhook body must be a JSON object no larger than 1 MiB")
+		return
+	}
+	data, err := s.App.PublishWorkflowWebhook(r.Context(), workflowID, secret, eventID, partitionKey, *payload)
+	respond(w, data, err, "")
+}
+
+func singleWorkflowHeader(r *http.Request, name string) (string, bool) {
+	values := r.Header.Values(name)
+	if len(values) != 1 {
+		return "", false
+	}
+	value := strings.TrimSpace(values[0])
+	return value, value != ""
+}
+
+func singleWorkflowSecretHeader(r *http.Request) (string, bool) {
+	values := r.Header.Values("X-CoinSphere-Webhook-Secret")
+	if len(values) != 1 || strings.TrimSpace(values[0]) == "" {
+		return "", false
+	}
+	return values[0], true
+}
+
+func (s *Server) handlePublishWorkflowEvent(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	raw, err := decodeBody[json.RawMessage](r)
+	if err != nil || len(*raw) > 1<<20 {
+		writeProblem(w, r, http.StatusBadRequest, "CloudEvent must be a JSON object no larger than 1 MiB")
+		return
+	}
+	var event cloudevents.Event
+	if json.Unmarshal(*raw, &event) != nil {
+		writeProblem(w, r, http.StatusBadRequest, "CloudEvent is invalid")
+		return
+	}
+	data, err := s.App.PublishWorkflowEvent(r.Context(), event)
+	respond(w, data, err, "")
+}
+
+func (s *Server) handleListWorkflowHumanTasks(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
+	data, err := s.App.ListWorkflowHumanTasks(r.Context(), queryStr(r, "status"))
+	respond(w, M{"items": data}, err, "")
+}
+
+func (s *Server) handleDecideWorkflowHumanTask(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	taskID, err := pathInt64(r, "taskId")
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxWorkflowHumanDecisionBytes)
+	payload, err := decodeBody[service.WorkflowHumanTaskDecision](r)
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	data, err := s.App.DecideWorkflowHumanTask(r.Context(), taskID, *payload, principal)
+	respond(w, data, err, "")
+}
 
 func (s *Server) handleListWorkflowTemplates(w http.ResponseWriter, _ *http.Request, _ *service.Principal) {
 	ok(w, M{"items": s.App.ListWorkflowTemplates()})

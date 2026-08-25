@@ -200,6 +200,10 @@ type ExecutionBatch struct {
 	RevisionID            int64  `gorm:"column:revision_id"`
 	TriggerType           string `gorm:"column:trigger_type;size:16"`
 	TriggerKey            string `gorm:"column:trigger_key;size:128"`
+	EventRecordID         *int64 `gorm:"column:event_record_id"`
+	PartitionKey          string `gorm:"column:partition_key;size:256"`
+	Diagnostic            bool
+	OriginalBatchID       *int64 `gorm:"column:original_batch_id"`
 	Status                string `gorm:"size:16"`
 	CurrentNodeInstanceID string `gorm:"column:current_node_instance_id;size:128"`
 	NotBefore             time.Time
@@ -216,6 +220,50 @@ type ExecutionBatch struct {
 }
 
 func (ExecutionBatch) TableName() string { return "execution_batches" }
+
+type WorkflowEventRecord struct {
+	ID              int64 `gorm:"primaryKey;autoIncrement"`
+	Source          string
+	EventID         string `gorm:"column:event_id"`
+	SpecVersion     string
+	EventType       string
+	Subject         string
+	EventTime       time.Time
+	DataContentType string
+	PartitionKey    string
+	EventJSON       string `gorm:"type:jsonb"`
+	ReceivedAt      time.Time
+}
+
+func (WorkflowEventRecord) TableName() string { return "workflow_event_records" }
+
+type WorkflowEventDelivery struct {
+	ID            int64 `gorm:"primaryKey;autoIncrement"`
+	EventRecordID int64
+	WorkflowID    int64
+	RevisionID    int64
+	BatchID       int64
+	CreatedAt     time.Time
+}
+
+func (WorkflowEventDelivery) TableName() string { return "workflow_event_deliveries" }
+
+type WorkflowEventOutbox struct {
+	ID                int64 `gorm:"primaryKey;autoIncrement"`
+	Source            string
+	EventID           string
+	EventJSON         string `gorm:"type:jsonb"`
+	Status            string
+	AttemptCount      int
+	MaxAttempts       int
+	AvailableAt       time.Time
+	PublishedAt       *time.Time
+	LastErrorCategory *string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+func (WorkflowEventOutbox) TableName() string { return "workflow_event_outbox" }
 
 type WorkflowNodeRun struct {
 	ID             int64 `gorm:"primaryKey;autoIncrement"`
@@ -297,3 +345,22 @@ type WorkflowArtifactRef struct {
 }
 
 func (WorkflowArtifactRef) TableName() string { return "workflow_artifact_refs" }
+
+type WorkflowHumanTask struct {
+	ID             int64 `gorm:"primaryKey;autoIncrement"`
+	WorkflowID     int64
+	BatchID        int64
+	NodeInstanceID string
+	TaskType       string
+	BusinessKey    string
+	Prompt         string
+	Status         string
+	ExpiresAt      time.Time
+	DecisionJSON   string `gorm:"type:jsonb"`
+	DecidedBy      *int64
+	CreatedAt      time.Time
+	DecidedAt      *time.Time
+	UpdatedAt      time.Time
+}
+
+func (WorkflowHumanTask) TableName() string { return "workflow_human_tasks" }

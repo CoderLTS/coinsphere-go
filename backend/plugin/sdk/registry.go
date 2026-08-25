@@ -45,6 +45,7 @@ type registeredNode struct {
 	pluginID string
 	desc     NodeDescriptor
 	action   ActionHandler
+	trigger  TriggerHandler
 }
 
 func NewRegistry() *Registry {
@@ -109,6 +110,14 @@ func (r *Registry) Action(nodeType string) (NodeDescriptor, ActionHandler, bool)
 	return node.desc, node.action, true
 }
 
+func (r *Registry) Trigger(nodeType string) (NodeDescriptor, TriggerHandler, bool) {
+	node, ok := r.nodes[nodeType]
+	if !ok || node.trigger == nil {
+		return NodeDescriptor{}, nil, false
+	}
+	return node.desc, node.trigger, true
+}
+
 func (r *Registry) ResultPage(pluginID, pageKey string) (ResultPageDescriptor, bool) {
 	page, ok := r.resultPages[pluginID+"/"+pageKey]
 	return page, ok
@@ -170,7 +179,7 @@ func (c *registrationCollector) Trigger(desc NodeDescriptor, handler TriggerHand
 	if desc.Kind != NodeKindTrigger {
 		return fmt.Errorf("trigger node %q must use kind %q", desc.Type, NodeKindTrigger)
 	}
-	return c.addNode("triggers", registeredNode{pluginID: c.plugin.ID, desc: desc})
+	return c.addNode("triggers", registeredNode{pluginID: c.plugin.ID, desc: desc, trigger: handler})
 }
 
 func (c *registrationCollector) addNode(contribution string, node registeredNode) error {

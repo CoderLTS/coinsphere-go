@@ -15,14 +15,20 @@ import (
 )
 
 const (
-	WorkflowModeBatch        = "batch"
-	WorkflowStatusPaused     = "paused"
-	WorkflowStatusRunning    = "running"
-	WorkflowStatusAttention  = "needs_attention"
-	WorkflowStatusArchived   = "archived"
-	WorkflowTemplateBlank    = "blank"
-	WorkflowTemplateSchedule = "scheduled"
-	maxWorkflowGraphBytes    = 1 << 20
+	WorkflowModeBatch         = "batch"
+	WorkflowModeEvent         = "event"
+	WorkflowModeStream        = "stream"
+	WorkflowStatusPaused      = "paused"
+	WorkflowStatusRunning     = "running"
+	WorkflowStatusAttention   = "needs_attention"
+	WorkflowStatusArchived    = "archived"
+	WorkflowTemplateBlank     = "blank"
+	WorkflowTemplateSchedule  = "scheduled"
+	WorkflowTemplateEvent     = "event"
+	WorkflowTemplateFailure   = "failure-handler"
+	WorkflowTemplateWebhook   = "connector-webhook"
+	WorkflowTemplateWebSocket = "connector-websocket"
+	maxWorkflowGraphBytes     = 1 << 20
 )
 
 const blankWorkflowGraph = `{
@@ -44,6 +50,50 @@ const scheduledWorkflowGraph = `{
   ],
   "edges": [
     {"edgeId":"schedule-to-end","sourceNodeInstanceId":"schedule-trigger","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}
+  ]
+}`
+
+const eventWorkflowGraph = `{
+  "schemaVersion": 1,
+  "nodes": [
+    {"nodeInstanceId":"event-trigger","nodeType":"core.event","nodeVersion":"1.0.0","config":{"types":["example.event"]},"position":{"x":160,"y":220}},
+    {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":520,"y":220}}
+  ],
+  "edges": [
+    {"edgeId":"event-to-end","sourceNodeInstanceId":"event-trigger","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}
+  ]
+}`
+
+const failureWorkflowGraph = `{
+  "schemaVersion": 1,
+  "nodes": [
+    {"nodeInstanceId":"failure-trigger","nodeType":"core.event","nodeVersion":"1.0.0","config":{"types":["io.coinsphere.workflow.batch.failed"],"source":"urn:coinsphere:workflow-core"},"position":{"x":160,"y":220}},
+    {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":520,"y":220}}
+  ],
+  "edges": [
+    {"edgeId":"failure-to-end","sourceNodeInstanceId":"failure-trigger","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}
+  ]
+}`
+
+const webhookWorkflowGraph = `{
+  "schemaVersion": 1,
+  "nodes": [
+    {"nodeInstanceId":"webhook-trigger","nodeType":"official.connector.webhook","nodeVersion":"1.0.0","config":{"eventType":"example.webhook"},"position":{"x":160,"y":220}},
+    {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":520,"y":220}}
+  ],
+  "edges": [
+    {"edgeId":"webhook-to-end","sourceNodeInstanceId":"webhook-trigger","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}
+  ]
+}`
+
+const webSocketWorkflowGraph = `{
+  "schemaVersion": 1,
+  "nodes": [
+    {"nodeInstanceId":"websocket-trigger","nodeType":"official.connector.websocket","nodeVersion":"1.0.0","config":{"url":"wss://stream.example.com/events","eventType":"example.event","idField":"id","partitionField":"partitionKey","useAuthorization":false},"position":{"x":160,"y":220}},
+    {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":520,"y":220}}
+  ],
+  "edges": [
+    {"edgeId":"websocket-to-end","sourceNodeInstanceId":"websocket-trigger","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}
   ]
 }`
 
@@ -112,6 +162,10 @@ func (a *App) ListWorkflowTemplates() []WorkflowTemplate {
 	return []WorkflowTemplate{
 		{Key: WorkflowTemplateBlank, Name: "Blank batch workflow", Mode: WorkflowModeBatch, Description: "Manual trigger connected to an end node."},
 		{Key: WorkflowTemplateSchedule, Name: "Scheduled batch workflow", Mode: WorkflowModeBatch, Description: "UTC interval trigger connected to an end node."},
+		{Key: WorkflowTemplateEvent, Name: "Event workflow", Mode: WorkflowModeEvent, Description: "CloudEvent trigger connected to an end node."},
+		{Key: WorkflowTemplateFailure, Name: "Failure handler", Mode: WorkflowModeEvent, Description: "Standard workflow failure trigger connected to an end node."},
+		{Key: WorkflowTemplateWebhook, Name: "Connector webhook", Mode: WorkflowModeBatch, Description: "Authenticated webhook trigger connected to an end node."},
+		{Key: WorkflowTemplateWebSocket, Name: "Connector WebSocket", Mode: WorkflowModeStream, Description: "Public WebSocket stream trigger connected to an end node."},
 	}
 }
 
@@ -128,7 +182,9 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 	if utf8.RuneCountInString(description) > 500 {
 		return WorkflowDetail{}, errors.New("workflow description must not exceed 500 characters")
 	}
-	if templateKey != WorkflowTemplateBlank && templateKey != WorkflowTemplateSchedule {
+	if templateKey != WorkflowTemplateBlank && templateKey != WorkflowTemplateSchedule &&
+		templateKey != WorkflowTemplateEvent && templateKey != WorkflowTemplateFailure &&
+		templateKey != WorkflowTemplateWebhook && templateKey != WorkflowTemplateWebSocket {
 		return WorkflowDetail{}, fmt.Errorf("unknown workflow template %q", templateKey)
 	}
 	if principal == nil || principal.User == nil || principal.User.ID <= 0 {
@@ -137,6 +193,14 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 	templateGraph := blankWorkflowGraph
 	if templateKey == WorkflowTemplateSchedule {
 		templateGraph = scheduledWorkflowGraph
+	} else if templateKey == WorkflowTemplateEvent {
+		templateGraph = eventWorkflowGraph
+	} else if templateKey == WorkflowTemplateFailure {
+		templateGraph = failureWorkflowGraph
+	} else if templateKey == WorkflowTemplateWebhook {
+		templateGraph = webhookWorkflowGraph
+	} else if templateKey == WorkflowTemplateWebSocket {
+		templateGraph = webSocketWorkflowGraph
 	}
 	graph, err := a.validateWorkflowGraph(json.RawMessage(templateGraph))
 	if err != nil {
@@ -145,7 +209,7 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 
 	now := time.Now().UTC()
 	workflow := db.Workflow{
-		Name: name, Description: description, Mode: WorkflowModeBatch, Status: WorkflowStatusPaused,
+		Name: name, Description: description, Mode: workflowModeForTrigger(graph.nodes[graph.mainTriggerID].NodeType), Status: WorkflowStatusPaused,
 		MainTriggerNodeID: graph.mainTriggerID, RetentionDays: 30, CreatedBy: principal.User.ID,
 		CreatedAt: now, UpdatedAt: now,
 	}
@@ -269,7 +333,8 @@ func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payloa
 			return err
 		}
 		if err := tx.Model(&db.Workflow{}).Where("id = ?", workflowID).Updates(map[string]any{
-			"active_revision_id": revision.ID, "main_trigger_node_id": graph.mainTriggerID, "updated_at": now,
+			"active_revision_id": revision.ID, "main_trigger_node_id": graph.mainTriggerID,
+			"mode": workflowModeForTrigger(graph.nodes[graph.mainTriggerID].NodeType), "updated_at": now,
 		}).Error; err != nil {
 			return errors.New("activate workflow revision failed")
 		}
@@ -353,7 +418,7 @@ func (a *App) ApplyWorkflowLifecycle(ctx context.Context, workflowID int64, payl
 		if err != nil {
 			return err
 		}
-		if action == "start" && (workflow.Mode != WorkflowModeBatch || workflow.ActiveRevisionID == nil) {
+		if action == "start" && workflow.ActiveRevisionID == nil {
 			return fmt.Errorf("%w: workflow is not startable", ErrConflict)
 		}
 		now := time.Now().UTC()
@@ -364,9 +429,16 @@ func (a *App) ApplyWorkflowLifecycle(ctx context.Context, workflowID int64, payl
 			if err := tx.First(&revision, *workflow.ActiveRevisionID).Error; err != nil {
 				return errors.New("load active workflow revision failed")
 			}
+			validated, err := a.validateWorkflowGraph(json.RawMessage(revision.GraphJSON))
+			if err != nil {
+				return fmt.Errorf("%w: active workflow revision is invalid", ErrConflict)
+			}
+			if err := ensureWorkflowRevisionSecrets(tx, workflow.ID, revision.ID, validated); err != nil {
+				return err
+			}
 			runtimeUpdates = map[string]any{"updated_at": now, "next_scheduled_at": nil}
 			var graph workflowGraph
-			if json.Unmarshal([]byte(revision.GraphJSON), &graph) == nil {
+			if json.Unmarshal([]byte(validated.graphJSON), &graph) == nil {
 				for _, node := range graph.Nodes {
 					if node.NodeInstanceID == revision.MainTriggerNodeID && node.NodeType == "core.schedule" {
 						interval, err := scheduleInterval(node.Config)
@@ -378,7 +450,7 @@ func (a *App) ApplyWorkflowLifecycle(ctx context.Context, workflowID int64, payl
 				}
 			}
 		} else if action == "pause" {
-			runtimeUpdates = map[string]any{"updated_at": now, "next_scheduled_at": nil}
+			runtimeUpdates = map[string]any{"health_summary": "idle", "updated_at": now, "next_scheduled_at": nil}
 		}
 		if next == WorkflowStatusArchived {
 			updates["archived_at"] = now
@@ -396,6 +468,9 @@ func (a *App) ApplyWorkflowLifecycle(ctx context.Context, workflowID int64, payl
 	if err != nil {
 		return WorkflowDetail{}, err
 	}
+	if action == "pause" || action == "archive" {
+		a.stopWorkflowTrigger(workflowID)
+	}
 	return a.GetWorkflow(ctx, workflowID)
 }
 
@@ -406,7 +481,7 @@ func nextWorkflowStatus(current, action string) (string, error) {
 			return WorkflowStatusRunning, nil
 		}
 	case "pause":
-		if current == WorkflowStatusRunning {
+		if current == WorkflowStatusRunning || current == WorkflowStatusAttention {
 			return WorkflowStatusPaused, nil
 		}
 	case "archive":
@@ -451,4 +526,15 @@ func formatWorkflowTime(value time.Time) string { return value.UTC().Format(time
 func validWorkflowStatus(status string) bool {
 	return status == WorkflowStatusPaused || status == WorkflowStatusRunning ||
 		status == WorkflowStatusAttention || status == WorkflowStatusArchived
+}
+
+func workflowModeForTrigger(nodeType string) string {
+	switch nodeType {
+	case "core.manual", "core.schedule", "official.connector.webhook":
+		return WorkflowModeBatch
+	case "core.event":
+		return WorkflowModeEvent
+	default:
+		return WorkflowModeStream
+	}
 }

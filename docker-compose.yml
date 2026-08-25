@@ -55,6 +55,7 @@ services:
       COINSPHERE_DATABASE__DSN: postgresql://coinsphere:coinsphere-dev-only@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic
       # 必填：未设置则 compose 直接报错。生成随机值：openssl rand -hex 32
       COINSPHERE_AUTH__SECRET_KEY: ${COINSPHERE_AUTH__SECRET_KEY:?请设置 COINSPHERE_AUTH__SECRET_KEY(.env 或环境变量,如 openssl rand -hex 32)}
+      COINSPHERE_WORKFLOW__HTTP_ALLOWED_HOSTS: ${COINSPHERE_WORKFLOW__HTTP_ALLOWED_HOSTS:-[]}
       # COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD: ${COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD:-}
       # COINSPHERE_AUTH__ENCRYPTION_KEY: ${COINSPHERE_AUTH__ENCRYPTION_KEY:-}
       # COINSPHERE_AUTH__WEBHOOK_PEPPER: ${COINSPHERE_AUTH__WEBHOOK_PEPPER:-}

@@ -29,6 +29,7 @@ type validatedWorkflowGraph struct {
 	nodeVersionsJSON string
 	mainTriggerID    string
 	nodes            map[string]workflowGraphNode
+	nodeTypes        map[string]string
 	descriptors      map[string]sdk.NodeDescriptor
 	requiredSecrets  map[workflowSecretKey]bool
 }
@@ -68,6 +69,22 @@ type workflowInputBinding struct {
 	Expression     string          `json:"expression,omitempty"`
 }
 
+type workflowLoopConfig struct {
+	MaxIterations  int           `json:"maxIterations"`
+	TimeoutSeconds int           `json:"timeoutSeconds"`
+	ExitCondition  string        `json:"exitCondition"`
+	Body           workflowGraph `json:"body"`
+}
+
+type validatedWorkflowLoop struct {
+	config          workflowLoopConfig
+	itemID          string
+	endID           string
+	nodes           map[string]workflowGraphNode
+	descriptors     map[string]sdk.NodeDescriptor
+	requiredSecrets map[workflowSecretKey]bool
+}
+
 func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph, error) {
 	if len(raw) == 0 || len(raw) > maxWorkflowGraphBytes {
 		return validatedWorkflowGraph{}, fmt.Errorf("workflow graph must contain 1 to %d bytes", maxWorkflowGraphBytes)
@@ -93,6 +110,7 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 
 	descriptorCatalog := a.workflowNodeDescriptors()
 	nodes := make(map[string]workflowGraphNode, len(graph.Nodes))
+	nodeTypes := make(map[string]string, len(graph.Nodes))
 	descriptors := make(map[string]sdk.NodeDescriptor, len(graph.Nodes))
 	versions := make(map[string]map[string]string, len(graph.Nodes))
 	requiredSecrets := make(map[workflowSecretKey]bool)
@@ -108,10 +126,10 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 		if desc.Version != node.NodeVersion {
 			return validatedWorkflowGraph{}, fmt.Errorf("node %q requires nodeVersion %s", node.NodeInstanceID, desc.Version)
 		}
+		if node.NodeType == "core.loop_item" || node.NodeType == "core.loop_end" {
+			return validatedWorkflowGraph{}, fmt.Errorf("node %q is only valid inside core.loop", node.NodeInstanceID)
+		}
 		if desc.Kind == sdk.NodeKindTrigger {
-			if node.NodeType != "core.manual" && node.NodeType != "core.schedule" {
-				return validatedWorkflowGraph{}, fmt.Errorf("trigger node %q is not enabled for batch workflows", node.NodeType)
-			}
 			if triggerID != "" {
 				return validatedWorkflowGraph{}, errors.New("workflow graph must contain exactly one main trigger")
 			}
@@ -138,11 +156,38 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 			return validatedWorkflowGraph{}, fmt.Errorf("node %q config does not match its JSON Schema", node.NodeInstanceID)
 		}
 		nodes[node.NodeInstanceID] = node
+		nodeTypes[node.NodeInstanceID] = node.NodeType
 		descriptors[node.NodeInstanceID] = desc
 		versions[node.NodeInstanceID] = map[string]string{"nodeType": node.NodeType, "nodeVersion": node.NodeVersion}
 	}
 	if triggerID == "" {
 		return validatedWorkflowGraph{}, errors.New("workflow graph must contain exactly one main trigger")
+	}
+	for _, node := range graph.Nodes {
+		if node.NodeType != "core.loop" {
+			continue
+		}
+		loop, err := validateWorkflowLoop(node, descriptorCatalog)
+		if err != nil {
+			return validatedWorkflowGraph{}, fmt.Errorf("node %q: %w", node.NodeInstanceID, err)
+		}
+		for bodyID, bodyNode := range loop.nodes {
+			compositeID, err := workflowLoopNodeID(node.NodeInstanceID, bodyID)
+			if err != nil {
+				return validatedWorkflowGraph{}, fmt.Errorf("node %q: %w", node.NodeInstanceID, err)
+			}
+			if _, exists := nodeTypes[compositeID]; exists {
+				return validatedWorkflowGraph{}, fmt.Errorf("node %q loop body id %q conflicts with another node", node.NodeInstanceID, bodyID)
+			}
+			nodeTypes[compositeID] = bodyNode.NodeType
+			descriptors[compositeID] = loop.descriptors[bodyID]
+			versions[compositeID] = map[string]string{"nodeType": bodyNode.NodeType, "nodeVersion": bodyNode.NodeVersion}
+			for key := range loop.requiredSecrets {
+				if key.nodeInstanceID == bodyID {
+					requiredSecrets[workflowSecretKey{compositeID, key.field}] = true
+				}
+			}
+		}
 	}
 
 	adjacency, reverse, err := validateWorkflowEdges(graph.Edges, nodes, descriptors, triggerID)
@@ -166,8 +211,109 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 	}
 	return validatedWorkflowGraph{
 		graphJSON: string(canonical), nodeVersionsJSON: string(nodeVersions), mainTriggerID: triggerID,
-		nodes: nodes, descriptors: descriptors, requiredSecrets: requiredSecrets,
+		nodes: nodes, nodeTypes: nodeTypes, descriptors: descriptors, requiredSecrets: requiredSecrets,
 	}, nil
+}
+
+func validateWorkflowLoop(node workflowGraphNode, catalog map[string]sdk.NodeDescriptor) (validatedWorkflowLoop, error) {
+	var config workflowLoopConfig
+	decoder := json.NewDecoder(bytes.NewReader(node.Config))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&config) != nil || config.MaxIterations < 1 || config.MaxIterations > 100 ||
+		config.TimeoutSeconds < 1 || config.TimeoutSeconds > 86400 {
+		return validatedWorkflowLoop{}, errors.New("loop config is invalid")
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return validatedWorkflowLoop{}, errors.New("loop config must contain exactly one JSON object")
+	}
+	ast, err := compileWorkflowCEL(config.ExitCondition)
+	if err != nil || ast.OutputType().TypeName() != "bool" {
+		return validatedWorkflowLoop{}, errors.New("exitCondition must compile to Boolean CEL")
+	}
+	if config.Body.SchemaVersion != 1 || len(config.Body.Nodes) < 2 || len(config.Body.Nodes) > maxWorkflowNodes || len(config.Body.Edges) > maxWorkflowEdges {
+		return validatedWorkflowLoop{}, errors.New("loop body must be a schema version 1 DAG with valid size limits")
+	}
+
+	nodes := make(map[string]workflowGraphNode, len(config.Body.Nodes))
+	descriptors := make(map[string]sdk.NodeDescriptor, len(config.Body.Nodes))
+	requiredSecrets := make(map[workflowSecretKey]bool)
+	itemID, endID := "", ""
+	for _, bodyNode := range config.Body.Nodes {
+		if !workflowNodeIDPattern.MatchString(bodyNode.NodeInstanceID) || nodes[bodyNode.NodeInstanceID].NodeInstanceID != "" {
+			return validatedWorkflowLoop{}, fmt.Errorf("invalid or duplicate body nodeInstanceId %q", bodyNode.NodeInstanceID)
+		}
+		desc, ok := catalog[bodyNode.NodeType]
+		if !ok || desc.Version != bodyNode.NodeVersion {
+			return validatedWorkflowLoop{}, fmt.Errorf("body node %q has an unknown type or version", bodyNode.NodeInstanceID)
+		}
+		if desc.Kind == sdk.NodeKindTrigger || bodyNode.NodeType == "core.loop" || bodyNode.NodeType == "core.end" || desc.SideEffect == sdk.SideEffectHumanAction {
+			return validatedWorkflowLoop{}, fmt.Errorf("body node %q is not supported inside a loop", bodyNode.NodeInstanceID)
+		}
+		if bodyNode.NodeType == "core.loop_item" {
+			if itemID != "" {
+				return validatedWorkflowLoop{}, errors.New("loop body must contain exactly one core.loop_item")
+			}
+			itemID = bodyNode.NodeInstanceID
+		}
+		if bodyNode.NodeType == "core.loop_end" {
+			if endID != "" {
+				return validatedWorkflowLoop{}, errors.New("loop body must contain exactly one core.loop_end")
+			}
+			endID = bodyNode.NodeInstanceID
+		}
+		if bodyNode.Position == nil {
+			return validatedWorkflowLoop{}, fmt.Errorf("body node %q position is required", bodyNode.NodeInstanceID)
+		}
+		values, err := decodeJSONObject(bodyNode.Config)
+		if err != nil {
+			return validatedWorkflowLoop{}, fmt.Errorf("body node %q config must be a JSON object", bodyNode.NodeInstanceID)
+		}
+		secretFields, secretRequired := workflowSecretFields(desc.ConfigSchema)
+		for field := range secretFields {
+			if _, exists := values[field]; exists {
+				return validatedWorkflowLoop{}, fmt.Errorf("body node %q secret field %q must not be stored in graph config", bodyNode.NodeInstanceID, field)
+			}
+			if secretRequired[field] {
+				requiredSecrets[workflowSecretKey{bodyNode.NodeInstanceID, field}] = true
+			}
+		}
+		ordinarySchema, err := ordinaryWorkflowConfigSchema(desc.ConfigSchema, secretFields)
+		if err != nil || validateWorkflowSchemaValue(ordinarySchema, values) != nil {
+			return validatedWorkflowLoop{}, fmt.Errorf("body node %q config does not match its JSON Schema", bodyNode.NodeInstanceID)
+		}
+		nodes[bodyNode.NodeInstanceID] = bodyNode
+		descriptors[bodyNode.NodeInstanceID] = desc
+	}
+	if itemID == "" || endID == "" {
+		return validatedWorkflowLoop{}, errors.New("loop body must contain exactly one core.loop_item and one core.loop_end")
+	}
+	adjacency, reverse, err := validateWorkflowEdges(config.Body.Edges, nodes, descriptors, itemID)
+	if err != nil {
+		return validatedWorkflowLoop{}, err
+	}
+	if err := validateWorkflowTopology(nodes, adjacency, reverse, itemID); err != nil {
+		return validatedWorkflowLoop{}, err
+	}
+	for id, next := range adjacency {
+		if len(next) == 0 && id != endID {
+			return validatedWorkflowLoop{}, fmt.Errorf("body node %q must lead to core.loop_end", id)
+		}
+	}
+	if err := validateWorkflowBindings(nodes, descriptors, adjacency); err != nil {
+		return validatedWorkflowLoop{}, err
+	}
+	return validatedWorkflowLoop{
+		config: config, itemID: itemID, endID: endID, nodes: nodes,
+		descriptors: descriptors, requiredSecrets: requiredSecrets,
+	}, nil
+}
+
+func workflowLoopNodeID(loopID, bodyID string) (string, error) {
+	id := loopID + "." + bodyID
+	if !workflowNodeIDPattern.MatchString(id) {
+		return "", fmt.Errorf("loop body node id %q is too long", bodyID)
+	}
+	return id, nil
 }
 
 func validateWorkflowEdges(edges []workflowGraphEdge, nodes map[string]workflowGraphNode, descriptors map[string]sdk.NodeDescriptor, triggerID string) (map[string][]string, map[string][]string, error) {
