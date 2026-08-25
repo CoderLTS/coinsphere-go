@@ -36,7 +36,7 @@ func TestPluginDataLifecycle(t *testing.T) {
 	config.RuntimeParams["search_path"] = testSchema
 	database := stdlib.OpenDB(*config)
 	defer database.Close()
-	pluginID := "official.lifecycle" + fmt.Sprintf("%d", time.Now().UnixNano())
+	pluginID := "official.contract-test"
 	pluginSchema, err := migration.PluginSchemaName(pluginID)
 	if err != nil {
 		t.Fatal(err)
@@ -55,7 +55,7 @@ func TestPluginDataLifecycle(t *testing.T) {
 
 	_, layout := writeRepository(t, "module coinsphere/backend\n\ngo 1.26.6\n")
 	installer := New(Options{Layout: layout, DB: database, CoreVersion: "2.0.0", SDKMajor: 1})
-	if _, err := installer.Install(context.Background(), writePlugin(t, pluginID, "1.0.0"), false); err != nil {
+	if _, err := installer.Install(context.Background(), contractPluginRoot(t), false); err != nil {
 		t.Fatalf("Install: %v", err)
 	}
 	if _, err := database.Exec(`INSERT INTO plugin_references (plugin_id, reference_type, reference_id) VALUES ($1, 'workflow', 'wf-1')`, pluginID); err != nil {

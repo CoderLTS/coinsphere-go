@@ -30,6 +30,9 @@ func TestRenderRegistriesAreDeterministic(t *testing.T) {
 	if !strings.Contains(string(frontend), `import("./installed/official_alpha/frontend/main.ts")`) {
 		t.Fatalf("frontend registry has unexpected import path:\n%s", frontend)
 	}
+	if !strings.Contains(string(frontend), "Promise<FrontendPluginModule>") {
+		t.Fatalf("frontend registry does not enforce the plugin module contract:\n%s", frontend)
+	}
 }
 
 func TestRenderFrontendRejectsDirectoryCollision(t *testing.T) {

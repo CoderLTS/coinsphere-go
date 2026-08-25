@@ -6,7 +6,7 @@
 - 关联决策：[ADR-0002：编译期插件驱动的工作流平台](decisions/0002-compile-time-plugin-workflow-platform.md)
 - 交付顺序：[V2 开发路线图](../roadmap/README.md)
 
-> 本文描述 V2 目标架构。P0 应用壳已开始实施，其余代码、接口和操作仍以[架构概览](overview.md)、[公共契约](../contracts/README.md)和[使用手册](../user-guide.md)为准。各阶段达到退出条件后，再把对应契约和用户文档切换为已实现状态。
+> 本文描述 V2 目标架构。P0 基线与插件 SDK 已完成，其余代码、接口和操作仍以[架构概览](overview.md)、[公共契约](../contracts/README.md)和[使用手册](../user-guide.md)为准。各阶段达到退出条件后，再把对应契约和用户文档切换为已实现状态。
 
 ## 1. 目标与边界
 

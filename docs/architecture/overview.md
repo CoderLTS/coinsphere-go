@@ -1,104 +1,77 @@
 # CoinSphere 架构概览
 
-## 产品边界
+## 当前边界
 
-CoinSphere 是个人自托管的 Binance 低频量化平台。系统以可视化工作流为主要操作入口，覆盖行情元数据、K 线订阅与补数、策略计算、信号展示、通知和 Paper 执行。
+CoinSphere 正在重建为工作流优先、编译期插件驱动的个人自托管平台。当前完成 V2 P0：认证、RBAC、用户/角色/菜单管理、系统监控、核心 migration 和可信本地插件 SDK 可用；工作流运行、事件流、Quant、回测和 Paper 仍按[路线图](../roadmap/README.md)继续开发。
 
-- 只支持 PostgreSQL/TimescaleDB、Binance Spot 与 USD-M、交易所原生周期和闭合 K 线。
-- 不开放注册；RBAC 控制页面和 API，用户资源按 Owner 隔离。
-- 价格、数量、金额和费率使用 Decimal，领域时间统一使用 UTC。
-- Testnet/Live 默认关闭；部署、启用策略或执行工作流都不等于放行真实交易。
+- 只支持 PostgreSQL/TimescaleDB，领域时间统一使用 UTC。
+- 价格、数量、金额和费率使用 Decimal；账务值禁止使用 `float64`。
+- 不提供旧数据、旧接口、多数据库、Python Worker 或 Private Executor 兼容层。
+- Testnet/Live 不属于当前阶段，任何部署都不会自动启用真实交易。
 
 ## 运行拓扑
 
 ```mermaid
 flowchart LR
-    WEB["Vue Web"] --> APP["Go App"]
-    APP <--> DB["PostgreSQL / TimescaleDB"]
-    WORKER["Python Worker\nrealtime + backtest"] <--> DB
-    APP --> PUBLIC["Binance 公共 API"]
-    APP --> CHANNELS["站内 / 钉钉 / QQ / SMTP"]
-    PRIVATE["Private Executor\nprivate profile"] <--> DB
-    PRIVATE --> BINANCE["Binance 私有 API"]
-    WORKER --> ARTIFACTS["回测产物卷"]
+    WEB["Vue Web"] --> APP["单实例 Go App"]
+    APP --> DB["PostgreSQL / TimescaleDB"]
+    MIGRATE["一次性 migration"] --> DB
+    SOURCE["可信本地插件源码"] --> CLI["Plugin CLI"]
+    CLI --> BUILD["Go / Vue 静态注册表与镜像"]
+    CLI --> DB
 ```
 
-生产由一个独立的 `coinsphere-go` Compose 项目运行 Web、Go App、Python Worker 和 TimescaleDB。它不加入其他应用的 Compose 项目，也不依赖 Redis、消息中间件或 Kubernetes。Private Executor 只有在单独放行后才通过 `private` profile 启动。
+默认 Compose 只运行 Web、Go App、一次性 migration 和 TimescaleDB。系统不依赖 Redis、消息代理、Kubernetes、动态插件进程或运行时目录扫描。
 
 ## 组件职责
 
-### Web
+### Vue Web
 
-Vue Web 提供工作流工作台、X6 工作流编辑器、执行回放、行情元数据、K 线与信号图表、策略、账户和系统管理页面。页面沿用同一应用外壳和 RBAC 菜单，不维护第二套导航或状态模型。
+Web 提供登录、系统监控、用户、角色和菜单管理。前端插件入口由生成的 `frontend/src/plugins/registry.generated.ts` 静态导入；P0 的契约插件只用于自动化测试，不进入生产菜单。
 
 ### Go App
 
-Go App 是单一后端进程，包含：
+Go App 是单一后端进程，负责：
 
-- HTTP/WebSocket API、认证、RBAC 和审计。
-- 工作流定义、触发、调度、执行状态与 Outbox 分发。
-- Binance 公共元数据、K 线实时订阅和历史补数。
-- 通知渠道、信号协调和 Paper Executor。
+- Access Token 认证、RBAC、统一 Problem Details 和审计。
+- 系统管理、健康检查、HTTP 指标与数据库就绪检查。
+- 启动时加载编译进二进制的插件注册表。
+- 暴露 SDK 的 Action、Trigger、作用域路由和结果页描述符契约。
 
-Go App 可以访问 Binance 公共接口，但不能调用私有交易接口。Paper 意图在 App 内执行；Testnet/Live 意图只能由 Private Executor 处理。
-
-### Python Worker
-
-Worker 单进程运行两个固定槽位：
-
-- `realtime` 处理闭合 K 线触发的策略任务。
-- `backtest` 在受限子进程中处理回测任务。
-
-两个槽位共享 PostgreSQL 任务协议，但互不占用执行能力。Worker 不持有通知或交易凭据，不调用交易所私有接口。
+当前没有工作流执行器调用插件 Action，也没有共享结果视图把 `ResultScope` 暴露给普通用户；这些分别由 P1 和 P4 交付。
 
 ### PostgreSQL / TimescaleDB
 
-数据库是唯一持久事实源：
+数据库当前保存认证、RBAC、菜单、i18n、审计、插件安装状态和插件引用。核心 schema 使用 Goose 账本；每个插件拥有 `plugin_<id>` schema 和独立 `schema_migrations` 账本。
 
-- 工作流定义、执行、节点状态、调度和订阅意图。
-- 行情品种、Ticker、K 线和用户自选。
-- 策略版本、实例、任务、回测、信号和产物索引。
-- 用户、权限、通知、Outbox、Paper/Private 交易事实和投影。
+应用启动只校验 migration 版本。核心 DDL 由一次性 migration 命令执行，插件 DDL 由生命周期 CLI 在维护窗口执行。
 
-TimescaleDB 管理 K 线 hypertable、压缩与保留策略。服务启动只校验 migration 版本，DDL 只由独立 migration 命令执行。
+## 插件静态边界
 
-## 工作流模型
+插件是参与主 Go 进程和主 Vite 前端编译的完全可信本地源码，不是安全沙箱。
 
 ```mermaid
 flowchart LR
-    TRIGGER["手工 / 定时 / 领域事件"] --> FLOW["工作流执行"]
-    FLOW --> MARKET["元数据 / 订阅 / 补数"]
-    FLOW --> STRATEGY["策略计算"]
-    STRATEGY --> SIGNAL["持久信号"]
-    SIGNAL --> NOTIFY["通知节点"]
-    MARKET --> EVENT["market.candle.closed"]
-    EVENT --> FLOW
+    VALIDATE["validate"] --> INSTALL["install / upgrade"]
+    INSTALL --> MIGRATION["独立 schema migration"]
+    INSTALL --> REGISTRY["生成 Go / Vue 注册表"]
+    REGISTRY --> REBUILD["构建 Backend / Web 镜像"]
+    REBUILD --> RECORD["记录安装版本"]
 ```
 
-工作流负责粗粒度编排：
-
-- `market.metadata.sync` 读取全局同步范围、Binance REST 地址和可选出站代理并实时同步元数据；代理同时作用于公共 REST 与 WebSocket。
-- `market.candles.subscribe` 保存激活工作流的订阅意图。
-- `market.candles.backfill` 执行指定 UTC 窗口补数。
-- `strategy.evaluate` 以同步或异步方式创建幂等策略任务。
-- `notify` 统一使用站内、钉钉、QQ 和 SMTP 渠道。
-
-闭合 K 线发布 `market.candle.closed`，策略成功发布 `strategy.signal.created`。逐 K 线写入、Worker 执行循环和交易执行不进入工作流引擎，避免把高频状态机塞进画布。
-
-## 关键数据流
-
-1. 元数据工作流由每小时调度或用户手工触发，按全局市场和报价资产范围同步 Binance 品种。
-2. 行情管理器合并自选、启用策略实例和激活工作流订阅，实时保存闭合 K 线并发布事件。
-3. 工作流的策略节点用固定幂等键创建 Worker 任务；Worker 写入信号和 Outbox 事件。
-4. Web 按品种、周期和策略查询 K 线与信号，展示目标仓位线及 BUY/SELL/FLAT 标记。
-5. Paper 信号可产生持久交易意图；Go App 在执行前重新检查急停、账户、授权、风控和行情新鲜度。
+- `coinsphere-plugin.json` 固定插件 ID、SemVer、Core/SDK 约束、源码入口、migration 和贡献类型。
+- SDK 注册 Action/Trigger、JSON Schema、作用域 API 和结果页；重复插件 ID、节点类型、路由或结果页会被拒绝。
+- `WorkflowScope`、`ResultScope` 和 `SystemScope` 由核心注入，插件路由不得自行从查询参数恢复授权范围。
+- 安装或升级失败会恢复源码输入、生成文件和已执行的插件 migration；命令不启动候选镜像。
+- 卸载在有活动引用时拒绝并保留插件 schema；`purge-data` 仅在已卸载、无任何引用且确认文本匹配时删除数据。
+- 同一 checkout 的维护命令当前要求串行执行；出现多维护端并发需求时再增加跨进程锁。
 
 ## 安全边界
 
-- 工作流、AI 和通用 HTTP 节点不得调用 Binance 私有接口或创建交易命令。
-- Private Executor 是唯一可解密交易凭据和发送私有请求的组件。
-- 新交易能力默认关闭；缺少完整风控、匹配对账和用户放行时保持禁用。
-- 日志不记录密钥、令牌、DSN、原始外部载荷或个人数据。
-- 数据库、上传文件和回测产物使用独立持久卷；部署回滚不自动执行 migration Down。
+- 匿名 HTTP 入口只有登录、健康检查和静态资源；其他已注册 API 要求登录及对应权限。
+- 插件仅接受本地可信源码；项目不下载插件、不校验远程签名、不热加载共享库。
+- 日志不得记录密钥、令牌、DSN、原始载荷或个人数据。
+- AI、工作流和通用 HTTP 节点不得调用交易所私有接口或绕过风控。
+- 真实交易所凭据不得进入代码、测试、CI、Issue、PR 或 AI 上下文。
 
-当前架构决策见 [ADR-0001](decisions/0001-workflow-modular-monolith.md)，接口语义见[公共契约](../contracts/README.md)。
+目标架构见[工作流平台 V2](workflow-platform-v2.md)，当前决策见 [ADR-0002](decisions/0002-compile-time-plugin-workflow-platform.md)，接口语义见[公共契约](../contracts/README.md)。

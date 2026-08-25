@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -14,6 +15,7 @@ import (
 const jsonSchema202012 = "https://json-schema.org/draft/2020-12/schema"
 
 var contributionKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$`)
+var windowsAbsolutePathPattern = regexp.MustCompile(`^[A-Za-z]:/`)
 
 type PluginDescriptor struct {
 	ID          string
@@ -35,18 +37,19 @@ type Registry struct {
 	plugins     map[string]PluginDescriptor
 	nodes       map[string]registeredNode
 	resultPages map[string]ResultPageDescriptor
-	routes      map[string]RouteDescriptor
+	routes      map[string]ScopedRouteHandler
 }
 
 type registeredNode struct {
 	pluginID string
 	desc     NodeDescriptor
+	action   ActionHandler
 }
 
 func NewRegistry() *Registry {
 	return &Registry{
 		plugins: make(map[string]PluginDescriptor), nodes: make(map[string]registeredNode),
-		resultPages: make(map[string]ResultPageDescriptor), routes: make(map[string]RouteDescriptor),
+		resultPages: make(map[string]ResultPageDescriptor), routes: make(map[string]ScopedRouteHandler),
 	}
 }
 
@@ -97,6 +100,24 @@ func (r *Registry) RegisterPlugin(plugin PluginDescriptor, register RegisterFunc
 	return nil
 }
 
+func (r *Registry) Action(nodeType string) (NodeDescriptor, ActionHandler, bool) {
+	node, ok := r.nodes[nodeType]
+	if !ok || node.action == nil {
+		return NodeDescriptor{}, nil, false
+	}
+	return node.desc, node.action, true
+}
+
+func (r *Registry) ResultPage(pluginID, pageKey string) (ResultPageDescriptor, bool) {
+	page, ok := r.resultPages[pluginID+"/"+pageKey]
+	return page, ok
+}
+
+func (r *Registry) Route(pluginID string, desc RouteDescriptor) (ScopedRouteHandler, bool) {
+	handler, ok := r.routes[routeKey(pluginID, desc)]
+	return handler, ok
+}
+
 func (r *Registry) Plugins() []PluginDescriptor {
 	plugins := make([]PluginDescriptor, 0, len(r.plugins))
 	for _, plugin := range r.plugins {
@@ -113,7 +134,7 @@ type registrationCollector struct {
 	used        map[string]bool
 	nodes       []registeredNode
 	resultPages map[string]ResultPageDescriptor
-	routes      map[string]RouteDescriptor
+	routes      map[string]ScopedRouteHandler
 }
 
 func (c *registrationCollector) Action(desc NodeDescriptor, handler ActionHandler) error {
@@ -123,7 +144,7 @@ func (c *registrationCollector) Action(desc NodeDescriptor, handler ActionHandle
 	if desc.Kind != NodeKindAction {
 		return fmt.Errorf("action node %q must use kind %q", desc.Type, NodeKindAction)
 	}
-	return c.addNode("nodes", desc)
+	return c.addNode("nodes", registeredNode{pluginID: c.plugin.ID, desc: desc, action: handler})
 }
 
 func (c *registrationCollector) Trigger(desc NodeDescriptor, handler TriggerHandler) error {
@@ -133,20 +154,20 @@ func (c *registrationCollector) Trigger(desc NodeDescriptor, handler TriggerHand
 	if desc.Kind != NodeKindTrigger {
 		return fmt.Errorf("trigger node %q must use kind %q", desc.Type, NodeKindTrigger)
 	}
-	return c.addNode("triggers", desc)
+	return c.addNode("triggers", registeredNode{pluginID: c.plugin.ID, desc: desc})
 }
 
-func (c *registrationCollector) addNode(contribution string, desc NodeDescriptor) error {
-	if err := validateNodeDescriptor(desc); err != nil {
+func (c *registrationCollector) addNode(contribution string, node registeredNode) error {
+	if err := validateNodeDescriptor(node.desc); err != nil {
 		return err
 	}
 	for _, existing := range c.nodes {
-		if existing.desc.Type == desc.Type {
-			return fmt.Errorf("duplicate node type %q", desc.Type)
+		if existing.desc.Type == node.desc.Type {
+			return fmt.Errorf("duplicate node type %q", node.desc.Type)
 		}
 	}
 	c.markUsed(contribution)
-	c.nodes = append(c.nodes, registeredNode{pluginID: c.plugin.ID, desc: desc})
+	c.nodes = append(c.nodes, node)
 	return nil
 }
 
@@ -154,8 +175,19 @@ func (c *registrationCollector) ResultPage(desc ResultPageDescriptor) error {
 	if !contributionKeyPattern.MatchString(desc.PageKey) || strings.TrimSpace(desc.Title) == "" || strings.TrimSpace(desc.ComponentEntry) == "" {
 		return errors.New("result page requires a valid page key, title, and component entry")
 	}
+	componentEntry := path.Clean(desc.ComponentEntry)
+	if strings.Contains(desc.ComponentEntry, `\`) || path.IsAbs(componentEntry) || windowsAbsolutePathPattern.MatchString(componentEntry) || componentEntry == "." || componentEntry == ".." || strings.HasPrefix(componentEntry, "../") {
+		return errors.New("result page component entry must stay inside the plugin root")
+	}
 	if err := validateSchema("scopeSchema", desc.ScopeSchema, true); err != nil {
 		return err
+	}
+	actions := make(map[string]bool, len(desc.Actions))
+	for _, action := range desc.Actions {
+		if !contributionKeyPattern.MatchString(action) || actions[action] {
+			return fmt.Errorf("result page %q has an invalid or duplicate action %q", desc.PageKey, action)
+		}
+		actions[action] = true
 	}
 	if c.resultPages == nil {
 		c.resultPages = make(map[string]ResultPageDescriptor)
@@ -181,16 +213,20 @@ func (c *registrationCollector) Route(desc RouteDescriptor, handler ScopedRouteH
 		return errors.New("route handler is required")
 	}
 	if c.routes == nil {
-		c.routes = make(map[string]RouteDescriptor)
+		c.routes = make(map[string]ScopedRouteHandler)
 	}
 	desc.Method = method
-	key := c.plugin.ID + "/" + string(desc.Scope) + "/" + method + " " + desc.Pattern
+	key := routeKey(c.plugin.ID, desc)
 	if _, exists := c.routes[key]; exists {
 		return fmt.Errorf("duplicate plugin route %q", key)
 	}
 	c.markUsed("apiRoutes")
-	c.routes[key] = desc
+	c.routes[key] = handler
 	return nil
+}
+
+func routeKey(pluginID string, desc RouteDescriptor) string {
+	return pluginID + "/" + string(desc.Scope) + "/" + strings.ToUpper(strings.TrimSpace(desc.Method)) + " " + desc.Pattern
 }
 
 func (c *registrationCollector) markUsed(contribution string) {

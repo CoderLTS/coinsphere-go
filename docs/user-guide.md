@@ -1,54 +1,24 @@
 # CoinSphere 使用手册
 
-本文面向 CoinSphere 的个人自托管用户和系统管理员，说明从安装到日常使用、备份、升级与排障的完整流程。开发和接口细节分别见[本地开发手册](runbooks/development.md)与[公共契约](contracts/README.md)。
-
-> 当前建议只使用 Paper。Testnet、Spot Live 和 USD-M Live 虽已有后端能力，但默认关闭，当前也没有 Binance 环境晋级证据；本文不提供真实交易放行教程。
+本文面向当前 V2 P0 版本的个人自托管用户和管理员。当前可用能力是登录、RBAC、系统管理、系统监控和可信本地插件维护；工作流、Quant、回测与 Paper 尚未交付。
 
 ## 1. 使用范围
 
-CoinSphere 适合以下场景：
+- 只支持 PostgreSQL/TimescaleDB。
+- 不开放公开注册；首次启动创建内置超级管理员。
+- 默认部署不包含 Python Worker、Private Executor、Redis 或消息代理。
+- 当前版本不会连接 Binance 私有 API，不提供 Testnet/Live 放行或真实交易。
 
-- 在个人服务器或电脑上运行单实例量化平台。
-- 用 Paper 验证行情、策略、信号、风控和执行链路。
-- 为少量受邀用户提供隔离的账户、工作流、回测和通知资源。
-- 用可视化工作流编排定时任务、事件、智能体和通知。
+## 2. Docker Compose 安装
 
-项目不提供公开注册，也不面向高频交易、多交易所套利、多实例集群或恶意策略代码托管。当前仅支持 PostgreSQL/TimescaleDB。
-
-## 2. 部署方式
-
-| 方式 | 适用场景 | 入口 |
-| --- | --- | --- |
-| Docker Compose | 首次体验、个人长期运行 | `http://localhost:8080` |
-| 本地开发 | 修改 Go、Vue 或 Python 代码 | Web `:3006`、Backend `:6987` |
-| 生产部署 | 已维护 Linux 主机和本机镜像仓库 | 独立 CoinSphere Compose，参照发布 Runbook |
-
-首次使用推荐 Docker Compose。生产部署不会自动允许私有交易，详细边界见[发布与回滚](runbooks/release.md)。
-
-## 3. Docker Compose 安装
-
-### 3.1 前置条件
-
-- Docker Engine 或 Docker Desktop，支持 `docker compose` v2。
-- 至少能拉取 Docker Hub 镜像；公共行情功能还需要访问 Binance 公共 API。
-- 建议预留 4 GB 内存和足够的数据库、上传文件及回测产物空间。
-- 生产或长期运行时，应有独立备份位置，不要只保留 Docker Volume。
-
-先检查环境：
-
-```bash
-docker version
-docker compose version
-```
-
-### 3.2 设置签名密钥
-
-签名密钥用于认证令牌，必须使用随机值。不要把实际值提交到仓库、工单或聊天记录。
+需要 Docker Engine 或 Docker Desktop，并支持 Compose v2。先生成并长期保存至少 32 字节随机签名密钥。
 
 Linux/macOS：
 
 ```bash
 export COINSPHERE_AUTH__SECRET_KEY="$(openssl rand -hex 32)"
+docker compose up -d --build
+docker compose ps
 ```
 
 PowerShell：
@@ -57,381 +27,116 @@ PowerShell：
 $bytes = New-Object byte[] 32
 [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
 $env:COINSPHERE_AUTH__SECRET_KEY = [BitConverter]::ToString($bytes).Replace('-', '').ToLowerInvariant()
-```
-
-长期运行时把密钥放入宿主机 Secret 管理或仓库忽略的 `.env`，并限制读取权限。重启时继续使用同一个值；轮换该值会让已有登录令牌全部失效。
-
-### 3.3 启动
-
-在仓库根目录执行：
-
-```bash
 docker compose up -d --build
 docker compose ps
 ```
 
-正常情况下：
+Compose 依次启动 `timescaledb`、一次性 `migrate`、`backend` 和 `web`。浏览器打开 <http://localhost:8080>。
 
-- `timescaledb` 处于 `healthy`。
-- `migrate` 成功退出，退出码为 `0`。
-- `backend`、`worker` 和 `web` 正在运行；`executor` 仅属于默认关闭的 `private` profile。
-- 浏览器访问 <http://localhost:8080> 能看到登录页。
-
-端口冲突时，启动前设置 `COINSPHERE_WEB_PORT`：
+停止服务不会删除数据：
 
 ```bash
-export COINSPHERE_WEB_PORT=18080
-docker compose up -d
-```
-
-PowerShell 使用 `$env:COINSPHERE_WEB_PORT = '18080'`。修改后入口为 <http://localhost:18080>。
-
-### 3.4 查看日志和停止
-
-```bash
-docker compose logs --tail=200 backend
-docker compose logs --tail=200 worker
-docker compose logs -f web backend
 docker compose down
 ```
 
-`docker compose down` 只停止并移除容器和网络，命名卷中的数据仍保留。不要执行 `docker compose down -v`，除非明确要永久删除数据库、上传文件和回测产物且已经验证备份。
+不要把 `down -v` 当作停止或升级命令；它会删除 CoinSphere 数据卷。
 
-## 4. 首次登录与安全初始化
+## 3. 首次登录
 
-### 4.1 登录
+初始超级管理员为 `coinsphere` / `coinsphere`。首次登录后立即在用户管理中修改密码，并完成以下检查：
 
-Compose 初次启动会创建超级管理员：
+1. 首页显示 Backend 和 PostgreSQL 正常。
+2. 用户、角色和菜单管理页可打开。
+3. 普通角色只获得需要的菜单和按钮权限。
+4. 重启后原 `COINSPHERE_AUTH__SECRET_KEY` 仍保持一致。
 
-```text
-用户名：coinsphere
-密码：coinsphere
-```
+系统不提供匿名注册。Access Token 只保存在当前前端会话内；退出登录会撤销当前令牌。
 
-默认密码只用于首次种子创建。登录后进入“系统管理 > 用户管理”，编辑 `coinsphere` 用户并设置至少 12 位的唯一密码。编辑已有用户时，“新密码”留空表示保持不变。
+## 4. 当前页面
 
-没有公开注册入口。需要新增用户时，由管理员在“用户管理”中创建并分配角色。
+| 页面 | 用途 |
+| --- | --- |
+| 首页 | 查看 Go 进程、HTTP、PostgreSQL、migration 和插件版本状态 |
+| 用户管理 | 创建、停用和维护本地用户 |
+| 角色管理 | 创建角色并分配菜单、按钮权限 |
+| 菜单管理 | 维护后台导航与权限码 |
 
-### 4.2 忘记管理员密码
+旧行情、新闻、策略、工作流、通知和交易页面不属于当前运行面。数据库中也没有对应旧表或兼容数据。
 
-若仍有另一名管理员，直接在“用户管理”中重置。完全无法登录时，在能安全连接数据库的环境中使用一次性 CLI；密码只从交互式标准输入读取，不要放进命令行参数：
+## 5. 插件维护
+
+插件会参与主 Go 进程和主 Vue 前端编译，只安装已经审查过的本地可信源码。维护前停止应用并备份数据库。
+
+在 `backend` 目录先执行只读校验：
 
 ```powershell
-cd backend
-$env:COINSPHERE_DATABASE__DSN = 'postgresql://<user>:<password>@<host>:5432/<database>?sslmode=require'
-go run ./cmd/admin -config ./config.yml -username coinsphere
+go run ./cmd/coinsphere plugin validate D:\plugins\connector
 ```
 
-CLI 要求密码至少 12 个字符，并要求输入两次确认。不要把生产 DSN 写入脚本、README、截图或终端共享记录。
+校验通过后，在维护窗口使用：
 
-### 4.3 首次安全清单
+```powershell
+go run ./cmd/coinsphere plugin install --config ./config.yml --backend-root . D:\plugins\connector
+go run ./cmd/coinsphere plugin upgrade --config ./config.yml --backend-root . D:\plugins\connector
+go run ./cmd/coinsphere plugin uninstall --config ./config.yml --backend-root . official.connector
+go run ./cmd/coinsphere plugin purge-data --config ./config.yml --backend-root . --confirm "PURGE official.connector" official.connector
+```
 
-- 修改默认管理员密码，并为日常使用创建非超级管理员账号。
-- 保持 Testnet/Live 私有能力开关为 `false`。
-- 确认全局急停状态符合预期；首次检查时建议保持急停开启。
-- 只绑定本人需要的角色和菜单权限。
-- 配置 HTTPS 反向代理后再通过公网访问，不要直接暴露数据库或 Backend 端口。
-- 备份签名密钥和数据库，但将密钥与数据库备份分开保管。
+- `install`/`upgrade` 执行插件 migration、生成注册表并构建 Backend/Web 镜像，但不启动候选镜像。
+- 同 major 升级必须保留所有旧 migration 字节不变；major 升级当前拒绝。
+- 有活动工作流、修订或结果视图引用时不能卸载。
+- 卸载保留插件 schema；`purge-data` 只有在无任何活动或历史引用时才删除 schema。
+- 同一 checkout 一次只运行一个插件维护命令。
 
-## 5. 页面、角色与数据范围
+仓库内 `plugins/contract-test` 仅用于 SDK 自动化验收，不应安装到生产环境，也不会出现在生产菜单。
 
-### 5.1 主要页面
+## 6. 数据、备份与升级
 
-| 菜单 | 用途 |
-| --- | --- |
-| 首页 | 查看应用、数据库、Worker、队列、工作流、行情和交易健康状态 |
-| 交易管理 / 交易账户 | 管理账户、风控、凭据、余额、持仓、订单、意图和账本 |
-| 交易管理 / 策略管理 | 编辑和发布单文件 Python 策略，查看版本、工作流绑定、实例、信号和回测 |
-| 工作流调度 / 节点定义 | 查看内置节点，维护个人节点模板和通知渠道 |
-| 工作流调度 / 工作流定义 | 编辑画布、校验、激活、停用和手工执行允许的工作流 |
-| 工作流调度 / 执行记录 | 查看已结束执行的节点日志、边流转、耗时、重试和结构化错误 |
-| 数据管理 / 新闻数据 | 管理新闻数据 |
-| 数据管理 / 币种数据 | 同步并查看 Binance Spot/USD-M 的 USDT 币种；点击币种查看 K 线详情 |
-| 配置管理 / 配置概览 | 查看模型数量、启用状态、智能体绑定和最近校验状态 |
-| 配置管理 / 模型配置、智能体配置 | 配置模型连接和智能体模板 |
-| 用户 / 角色 / 菜单管理 | 管理账号、RBAC 和前端菜单 |
-| 个人中心 | 查看当前用户资料 |
+持久数据位于 TimescaleDB 卷和上传目录。升级前至少保存：
 
-菜单是否可见由角色权限决定；策略草稿和权限继续由管理员维护，系统管理页面及其权限保持不变。
+- PostgreSQL 一致性备份及恢复命令。
+- 上传目录备份。
+- 当前应用版本、Compose 配置和镜像 digest。
+- `COINSPHERE_AUTH__SECRET_KEY` 的安全离线副本。
 
-### 5.2 数据隔离
+升级使用最新固定版本镜像先运行 migration，再启动 Backend/Web。应用启动只校验 schema，不自动建表。失败时停止候选版本并按[发布 Runbook](runbooks/release.md)恢复匹配的应用镜像；不要手工改 migration 账本或自动执行 Down。
 
-- Binance 品种、K 线和管理员发布的策略版本是登录用户共享的只读资源。
-- 自选、工作流及其策略实例、节点模板、回测、信号、交易账户、订单和通知按所有者隔离。
-- 管理员身份不会让普通资源接口自动跨用户返回数据；跨用户管理使用专门的管理员接口。
+正式 Paper 观察尚未开始，因此 migration 历史尚未冻结。任何开发数据重置都必须按[数据库迁移 Runbook](runbooks/database-migrations.md)确认目标和备份，不得触及生产或需要保留的证据。
 
-## 6. Paper 模拟交易
-
-Paper 是当前推荐且正式验收的交易环境。它不会向 Binance 私有接口发送订单，但仍按完整的账户、风控、意图、订单和账本链路运行。
-
-### 6.1 创建账户
-
-1. 进入“交易管理 > 交易账户”。
-2. 点击新增账户按钮。
-3. 填写账户名称，环境选择 `Paper`，市场选择 `Spot` 或 `USD-M`。
-4. 设置初始余额和 Paper 手续费率。
-5. 选择允许交易的品种。
-6. 填写全部风险上限并提交。
-
-风险字段包括总名义价值、单品种名义价值、单订单名义价值、单日最大亏损、最大回撤、最大行情年龄；USD-M 还涉及杠杆和保证金相关约束。金额和费率在系统内以十进制字符串处理，时间统一按 UTC 记录。
-
-创建账户不等于启用自动化。新账户、风控变化、对账异常或急停都可能让账户保持暂停。
-
-### 6.2 配置和修改风控
-
-1. 在左侧账户列表选择目标账户。
-2. 在风险区检查每项限制，点击编辑。
-3. 输入当前登录密码完成复验。
-4. 保存后确认页面显示的新限制和账户状态。
-
-所有显式风险上限都应填写。不要通过放大限额来掩盖行情过期、对账差异或仓位归属问题。风控变更可能撤销已有自动化放行，需要重新检查并手工恢复。
-
-### 6.3 恢复暂停账户
-
-只有暂停原因已经处理、风险完整且状态一致时才恢复：
-
-1. 查看账户标题下方的暂停原因和对账摘要。
-2. 检查余额、持仓、开放订单及交易意图是否符合预期。
-3. 点击恢复账户，输入当前密码复验并确认。
-4. 刷新页面，确认账户变为活动状态。
-
-恢复只解除当前暂停，不会自动激活工作流或开启自动化。持续对账再次发现差异时会重新暂停。
-
-### 6.4 自动化开关与授权
-
-账户页面提供 Owner 自动化开关和管理员授权。自动执行需要同时满足账户活动、完整风控、无全局急停、状态一致，以及对应的用户与管理员放行。任何一项缺失都应保持禁用。
-
-Paper 可用于验证这条授权链，但首次使用建议保持自动化关闭，先检查人工信号和意图是否符合预期。
-
-### 6.5 查看执行结果
-
-账户详情包含以下视图：
-
-- 余额：权益、可用余额、已实现和未实现盈亏。
-- 持仓：品种、数量、开仓价、最新价及 USD-M 风险字段。
-- 订单：方向、类型、数量、均价、状态和确定性 `clientOrderId`。
-- 交易意图：模式、目标仓位、执行状态和阻断原因。
-- 权威账本：成交、手续费、资金费等追加事实。
-- 对账摘要：远端/本地状态、风险快照和最近对账结果。
-
-故障排查时先看“交易意图”的阻断原因，再看账户暂停原因和对账摘要；不要仅凭策略信号判断订单已经执行。
-
-### 6.6 归档账户
-
-归档不会删除账户、订单、成交、账本或审计事实。只有账户已暂停、自动化关闭、没有启用的工作流策略绑定、未完成意图、开放订单和未清仓位时才能归档；操作前需要输入当前密码复验。市场和环境创建后不可修改。
-
-### 6.7 全局急停
-
-全局急停会阻止新增风险，只允许系统定义的减仓、平仓或保护动作。触发急停后：
-
-1. 记录触发原因和当前账户状态。
-2. 检查全部账户、未完成意图、订单与持仓。
-3. 修复根因并完成必要对账。
-4. 由管理员输入当前密码复验后解除急停。
-5. 逐个恢复账户和授权，不要把解除急停当作批量恢复。
-
-部署、重启、代码合并和对账成功都不应自动解除急停。
-
-## 7. 行情、策略、回测与信号
-
-币种数据固定同步 Binance Spot 和 USD-M 的 USDT 市场。K 线不再作为独立菜单，点击币种后进入详情并选择周期查看。
-
-当前 API 能力包括：
-
-- 同步和查询 Binance Spot、USD-M 的 USDT 品种与闭合 K 线。
-- 管理用户自选。
-- 由管理员使用 Python 源码编辑器和 JSON 参数 Schema 创建策略草稿、校验并发布不可变版本；策略本身不绑定币种或周期。
-- 在回测请求中选择已发布版本、币种和周期，查询运行状态与结果。
-- 在工作流策略节点中配置版本、币种、周期、环境、账户、额度、止损和参数；实例由工作流激活和停用统一管理。
-- 启动实时计算，查询信号并进行人工批准或拒绝。
-- 通过 WebSocket 接收通知和状态变化。
-
-使用 API 时仍需先登录并遵循所有者隔离、RBAC、幂等键和密码复验要求。交易相关写操作不要根据路由名自行猜测请求体；直接采用契约中记录的字段、状态机和错误码。
-
-## 8. 工作流
-
-工作流用于粗粒度业务编排，例如同步行情元数据、订阅或补齐 K 线、计算策略、响应领域事件、调用智能体和发送通知。
-
-### 8.1 创建和激活
-
-1. 进入“节点定义”查看内置节点的能力和配置字段；需要复用配置时，可基于内置执行器创建个人节点模板。
-2. 进入“工作流定义”，新建工作流。
-3. 在画布放置开始、行情、策略、智能体、控制、通知等节点和结束节点。
-4. 配置每个节点及连线，使用工具栏校验。
-5. 校验通过后保存为定义版本。
-6. 在版本列表中激活目标版本。含策略节点的工作流会在同一事务创建或复用策略实例、建立 K 线订阅并启用运行入口。
-7. 对手工入口执行一次测试，并在“执行记录”查看完整节点轨迹。
-
-编辑已使用的流程时创建新版本；激活新版本前保留可回退的旧版本。当前激活版本和已有执行记录的版本会受到删除保护。停用工作流会关闭对应策略实例和订阅；含策略节点但未激活的工作流不能手工运行。
-
-### 8.2 运行边界
-
-- 工作流不得调用 Binance 私有接口、保存交易凭据、创建交易命令或绕过风控。
-- 通用 HTTP 节点只访问经过允许的公网服务，不把令牌或原始敏感载荷写入日志。
-- 策略节点只负责运行绑定和等待 Worker 任务；逐 K 线计算循环仍由行情模块和 Worker 执行。
-- 每根 K 线或其他事件触发都会产生独立的有限执行记录；执行记录默认展示已结束的成功、失败和取消记录，并使用名称、中文状态和结构化错误，不展示内部编码或原始 JSON。
-
-## 9. 通知节点与渠道
-
-系统支持站内、钉钉、QQ 和 SMTP 渠道。站内渠道由系统内置；外部渠道需要用户提供对应平台配置。
-
-配置流程：
-
-1. 进入“工作流调度 > 节点定义”的通知渠道区，或在工作流中编辑通知节点。
-2. 新增渠道并选择类型。
-3. 填写该类型要求的地址、凭据或收件配置。
-4. 保存后执行测试，确认目标端收到消息。
-5. 测试成功后再启用，并在通知节点或智能体中引用。
-
-渠道配置按用户隔离。令牌、Webhook Secret、SMTP 密码等只填入受控配置表单，不要写入工作流文本、代码、日志或截图。停用渠道前检查仍在使用它的工作流。
-
-## 10. AI 模型与智能体
-
-### 10.1 配置模型
-
-1. 进入“配置管理 > 模型配置”。
-2. 新增模型，选择供应商类型或预设。
-3. 填写供应商名称、模型标识、Base URL 和凭据。
-4. 保存并启用模型。
-5. 需要时将模型绑定为智能体使用的模型。
-
-Base URL 是外部信任边界，只配置可信的 HTTPS 服务。模型凭据不得进入提示词、工作流状态、日志或版本库。
-
-### 10.2 配置智能体
-
-1. 进入“智能体配置”，新增或编辑模板。
-2. 设置名称、系统提示词、头像和数据源约束。
-3. 绑定已启用模型并保存。
-4. 在工作流智能体节点中选择该智能体，配置输入与输出路径。
-5. 用非敏感测试数据验证结果，再用于正式工作流。
-
-智能体只能生成分析或编排结果，不能直接获得交易所私有访问权，也不能绕过信号审批、账户风控或 Executor。
-
-## 11. 用户、角色与菜单
-
-### 11.1 用户
-
-管理员在“用户管理”中创建、编辑、启停用户并分配角色。停用用户前确认其工作流、通知和量化任务的归属及后续处理方式。
-
-### 11.2 角色
-
-角色同时控制菜单和按钮级权限。采用最小权限原则：日常账号只授予实际使用的页面与动作，超级管理员只用于系统维护。
-
-### 11.3 菜单
-
-菜单管理决定前端导航结构，但隐藏菜单不等于 API 授权。真正的访问控制仍由后端 RBAC 执行；不要把菜单可见性当作安全边界。
-
-## 12. 数据、备份与恢复
-
-Compose 默认持久化：
-
-| Volume | 内容 |
-| --- | --- |
-| `timescale-data` | PostgreSQL/TimescaleDB 数据 |
-| `backend-uploads` | 用户上传文件 |
-| `backend-static` | 后端静态文件 |
-| `worker-artifacts` | 回测冻结产物 |
-
-实际 Volume 名可能带 Compose 项目前缀，可用 `docker volume ls` 和 `docker compose config --volumes` 确认。
-
-数据库应使用 PostgreSQL 原生工具执行一致性备份，并同时备份上传文件和 Worker 产物。一个可恢复的备份集合至少包含：
-
-- 数据库备份及其 PostgreSQL/TimescaleDB 版本信息。
-- `backend-uploads` 和 `worker-artifacts` 中对应文件。
-- 不与数据放在一起的运行配置和密钥备份。
-- 备份时间、应用 Commit 或镜像 digest、migration 版本。
-
-恢复必须先在隔离环境演练：恢复数据库和文件，使用目标版本运行 migration 校验，再检查 `/health/ready`、登录、工作流记录、Paper 账户和回测产物。不要在未验证备份时删除旧 Volume。数据库 migration 的 Up/Down 规则见[迁移手册](runbooks/database-migrations.md)。
-
-## 13. 升级与部署
-
-### 13.1 个人 Compose 升级
-
-1. 记录当前 Commit，备份数据库、上传文件和回测产物。
-2. 阅读目标版本的 migration 和变更说明。
-3. 拉取已审查的代码。
-4. 使用原有签名密钥执行 `docker compose up -d --build`。
-5. 确认 `migrate` 成功、所有长期服务正常、健康检查通过。
-6. 登录并检查首页、工作流和 Paper 账户状态。
-
-不要用 `down -v` 作为升级步骤。migration 失败时停止候选服务，保留数据库和文件，按 Runbook 判断前滚修复或回滚应用；不要自行删除 schema 或交易事件。
-
-### 13.2 生产部署
-
-生产 Deploy 是手工触发的“构建镜像 -> 扫描镜像 -> 固定 digest 部署”流程，不要求每次创建 GitHub Release。只有需要发布版本包、Release 页面和版本标签时才运行 Release 流程。
-
-具体触发条件、Runner、Manifest、健康检查和回滚命令统一维护在[发布与回滚](runbooks/release.md)，本文不复制生产路径和服务器配置。
-
-## 14. 健康检查与排障
-
-### 14.1 健康端点
-
-通过 Web 入口检查：
+## 7. 健康检查与排障
 
 ```bash
-curl -fsS http://localhost:8080/health/live
-curl -fsS http://localhost:8080/health/ready
-curl -fsS http://localhost:8080/metrics
+curl --fail http://127.0.0.1:8080/health/live
+curl --fail http://127.0.0.1:8080/health/ready
+docker compose ps
+docker compose logs --tail=200 migrate backend web
 ```
-
-- `/health/live`：进程可以响应。
-- `/health/ready`：Backend 能在预算内连接 PostgreSQL。
-- `/health`：兼容的就绪检查。
-- `/metrics`：固定、无标签的进程指标。
-
-检查 Worker：
-
-```bash
-docker compose exec -T worker python -m coinsphere_worker health
-```
-
-### 14.2 常见问题
 
 | 现象 | 优先检查 |
 | --- | --- |
-| Compose 提示缺少签名密钥 | 当前 shell 是否设置 `COINSPHERE_AUTH__SECRET_KEY` |
-| `migrate` 失败 | `timescaledb` 健康、迁移日志、数据库是否被旧版本占用 |
-| Web 打不开 | `web` 端口映射、端口冲突、`backend` 是否 healthy |
-| 登录后立即失效 | 重启时是否更换了签名密钥、浏览器时间是否异常 |
-| 行情没有更新 | Binance 公共网络、Backend 日志、自选或策略订阅范围 |
-| 回测一直等待 | `worker` 健康、backtest lane 任务租约、数据库和产物目录空间 |
-| 实时信号不生成 | `worker` 健康、闭合 K 线、工作流激活状态、策略实例绑定和输入数据 |
-| Paper 意图被阻断 | 全局急停、账户暂停、风控、行情年龄、授权和阻断原因 |
-| 通知失败 | 渠道启用状态、测试结果、外部网络和供应商配置 |
+| Compose 提示缺少签名密钥 | 当前环境是否提供稳定的 `COINSPHERE_AUTH__SECRET_KEY` |
+| `migrate` 失败 | TimescaleDB 健康、核心版本、目标数据库是否包含旧 schema |
+| Backend 不 ready | PostgreSQL 网络、凭据、migration 是否落后或超前 |
+| Web 打不开 | Web 端口、Backend 健康和反向代理配置 |
+| 登录立即失效 | 签名密钥是否变化、浏览器时间是否异常 |
+| 插件安装失败 | manifest、Core/SDK 版本、migration、Go/Vue 构建输出 |
+| 插件无法卸载 | CLI 输出的活动引用，先在拥有模块解除引用 |
 
-诊断时使用：
+日志和截图必须移除 DSN、Token、密码、原始载荷和个人数据。
 
-```bash
-docker compose ps
-docker compose logs --tail=200 migrate backend worker web
-docker system df
-```
+## 8. 安全边界
 
-日志和错误截图必须先移除 DSN、令牌、凭据、原始外部载荷和个人数据。
+- 不把真实 API Key、Secret、令牌、DSN 或生产配置提交到代码、日志、Issue、PR、CI 或 AI 上下文。
+- 不安装不可信、远程下载或未经审查的插件源码。
+- AI、工作流和通用 HTTP 节点不得调用交易所私有接口或绕过风控。
+- 完成 P0 不会自动创建 Testnet/Live 阶段，也不会启用 Paper 或真实交易。
 
-## 15. 默认关闭的私有交易能力
+## 9. 文档索引
 
-以下开关默认均为 `false`：
-
-```text
-COINSPHERE_TRADING__TESTNET_PRIVATE_API_ENABLED
-COINSPHERE_TRADING__SPOT_LIVE_MANUAL_ENABLED
-COINSPHERE_TRADING__SPOT_LIVE_AUTO_ENABLED
-COINSPHERE_TRADING__USD_M_LIVE_MANUAL_ENABLED
-COINSPHERE_TRADING__USD_M_LIVE_AUTO_ENABLED
-```
-
-私有能力还要求独立安全的 `COINSPHERE_AUTH__ENCRYPTION_KEY`。Live auto 必须同时启用对应 manual，并满足管理员授权、Owner 放行、完整风控和持续匹配对账；USD-M 还要求逐仓、单向、受限杠杆和强平距离证据。
-
-这些是必要条件，不是当前启用建议。CI、Codex、自动部署和工作流不得提供真实凭据、打开上述开关、发起私有请求或解除急停。晋级顺序和证据要求以[开发计划](roadmap/README.md)、[架构说明](architecture/overview.md)和[发布 Runbook](runbooks/release.md)为准。
-
-## 16. 文档索引
-
-- [README](../README.md)：项目定位和快速启动
-- [架构说明](architecture/overview.md)：组件职责、数据归属和关键数据流
-- [公共契约](contracts/README.md)：API、幂等、复验和交易状态语义
-- [开发计划](roadmap/README.md)：能力顺序、完成标准和晋级门禁
-- [质量门禁](quality/quality-gates.md)：本地与 CI 验收标准
-- [本地开发](runbooks/development.md)：开发命令和运行时诊断
-- [数据库迁移](runbooks/database-migrations.md)：迁移、校验和回滚
-- [发布与回滚](runbooks/release.md)：构建、扫描、固定 digest 部署和回滚
+- [架构概览](architecture/overview.md)
+- [公共契约](contracts/README.md)
+- [V2 路线图](roadmap/README.md)
+- [质量门禁](quality/quality-gates.md)
+- [本地开发](runbooks/development.md)
+- [数据库迁移](runbooks/database-migrations.md)
+- [发布与回滚](runbooks/release.md)

@@ -41,7 +41,7 @@ jobs:
           else
             while IFS= read -r file; do
               case "$file" in
-                backend/go.mod|backend/go.sum)
+                backend/go.mod|backend/go.sum|plugins/*/backend/go.mod|plugins/*/backend/go.sum)
                   go=true
                   filesystem=true
                   ;;
@@ -84,9 +84,13 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: backend/go.mod
-          cache-dependency-path: backend/go.sum
+          cache-dependency-path: |
+            backend/go.sum
+            plugins/contract-test/backend/go.sum
       - name: Govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+        run: |
+          go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+          (cd ../plugins/contract-test/backend && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...)
 
   filesystem:
     name: Dependency and filesystem scan

@@ -47,6 +47,21 @@ func TestInstallUpgradeAndUninstall(t *testing.T) {
 	assertFileContains(t, filepath.Join(backend, "internal", "pluginregistry", "registry.generated.go"), "func RegisterAll(registry *sdk.Registry) error")
 }
 
+func TestContractPluginInstallsStaticInputs(t *testing.T) {
+	backend, layout := writeRepository(t, "module coinsphere/backend\n\ngo 1.26.6\n")
+	installer := New(Options{Layout: layout, CoreVersion: "2.0.0", SDKMajor: 1})
+	if _, err := installer.Install(context.Background(), contractPluginRoot(t), false); err != nil {
+		t.Fatalf("Install contract plugin: %v", err)
+	}
+	assertFileContains(t, filepath.Join(backend, "internal", "pluginregistry", "registry.generated.go"), `"coinsphere/plugin-contract-test"`)
+	if _, err := os.Stat(filepath.Join(layout.FrontendRoot, "src", "plugins", "installed", "official_contract_test", "frontend", "ResultPage.vue")); err != nil {
+		t.Fatalf("contract result page was not installed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(backend, "plugin", "installed", "official_contract_test", "migrations", "00001_contract_runs.sql")); err != nil {
+		t.Fatalf("contract migration was not installed: %v", err)
+	}
+}
+
 func TestInstallRestoresSourceInputsAfterBuildInputFailure(t *testing.T) {
 	backend, layout := writeRepository(t, "module coinsphere/backend\n\ngo 1.26.6\n")
 	if err := os.WriteFile(filepath.Join(backend, "go.mod"), []byte("not a go.mod"), 0o600); err != nil {
@@ -152,6 +167,15 @@ func writeRepository(t *testing.T, goMod string) (string, Layout) {
 	return backend, layout
 }
 
+func contractPluginRoot(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", "..", "..", "plugins", "contract-test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
 func writePlugin(t *testing.T, id, pluginVersion string) string {
 	t.Helper()
 	root := t.TempDir()
@@ -167,7 +191,7 @@ func writePlugin(t *testing.T, id, pluginVersion string) string {
 	if err := os.WriteFile(filepath.Join(root, "backend", "register.go"), []byte("package plugin\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "ui", "components", "index.ts"), []byte("export default {}\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "ui", "components", "index.ts"), []byte("export const resultPages = {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	writeMigration(t, root, "00001_init.sql", "SELECT 1;")

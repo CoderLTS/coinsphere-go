@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -59,6 +60,60 @@ func TestRegistryRejectsUndeclaredAndInvalidContributions(t *testing.T) {
 				t.Fatal("failed registration changed registry")
 			}
 		})
+	}
+}
+
+func TestRegistryRejectsUnsafeResultPageEntry(t *testing.T) {
+	for _, entry := range []string{"../Result.vue", "C:/Result.vue"} {
+		registry := NewRegistry()
+		err := registry.RegisterPlugin(PluginDescriptor{
+			ID: "official.test", Name: "Test", Version: "1.0.0", Contributes: []string{"resultPages"},
+		}, func(registrar Registrar) error {
+			return registrar.ResultPage(ResultPageDescriptor{
+				PageKey: "result", Title: "Result", ComponentEntry: entry, ScopeSchema: objectSchema,
+			})
+		})
+		if err == nil {
+			t.Fatalf("unsafe result component entry %q was accepted", entry)
+		}
+	}
+}
+
+func TestRegistryExposesRegisteredActionRouteAndResultPage(t *testing.T) {
+	registry := NewRegistry()
+	routeCalled := false
+	err := registry.RegisterPlugin(PluginDescriptor{
+		ID: "official.test", Name: "Test", Version: "1.0.0",
+		Contributes: []string{"nodes", "apiRoutes", "resultPages"},
+	}, func(registrar Registrar) error {
+		if err := registrar.Action(testNode("official.test.action"), testAction{}); err != nil {
+			return err
+		}
+		if err := registrar.Route(RouteDescriptor{Method: "get", Pattern: "/result", Scope: ScopeResult}, func(http.ResponseWriter, *http.Request, RouteScope) {
+			routeCalled = true
+		}); err != nil {
+			return err
+		}
+		return registrar.ResultPage(ResultPageDescriptor{
+			PageKey: "result", Title: "Result", ComponentEntry: "./Result.vue", ScopeSchema: objectSchema,
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := registry.Action("official.test.action"); !ok {
+		t.Fatal("registered action is unavailable")
+	}
+	handler, ok := registry.Route("official.test", RouteDescriptor{Method: "GET", Pattern: "/result", Scope: ScopeResult})
+	if !ok {
+		t.Fatal("registered route is unavailable")
+	}
+	handler(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/result", nil), ResultScope{})
+	if !routeCalled {
+		t.Fatal("registered route handler was not called")
+	}
+	if _, ok := registry.ResultPage("official.test", "result"); !ok {
+		t.Fatal("registered result page is unavailable")
 	}
 }
 
