@@ -9,16 +9,18 @@ import (
 
 	"coinsphere/backend/internal/config"
 	"coinsphere/backend/internal/security"
+	"coinsphere/backend/plugin/sdk"
 	"gorm.io/gorm"
 )
 
 var ErrPermission = errors.New("permission denied")
 
 type App struct {
-	DB     *gorm.DB
-	Cfg    *config.AppConfig
-	Hasher *security.PasswordHasher
-	Tokens *security.TokenManager
+	DB      *gorm.DB
+	Cfg     *config.AppConfig
+	Hasher  *security.PasswordHasher
+	Tokens  *security.TokenManager
+	Plugins *sdk.Registry
 
 	authStateMu         sync.Mutex
 	reauthTokens        map[string]reauthTokenRecord
@@ -26,13 +28,14 @@ type App struct {
 	dummyHash           string
 }
 
-func NewApp(gdb *gorm.DB, cfg *config.AppConfig) *App {
+func NewApp(gdb *gorm.DB, cfg *config.AppConfig, plugins *sdk.Registry) *App {
 	hasher := security.NewPasswordHasher(cfg.Auth.PasswordIterations)
 	return &App{
 		DB:                  gdb,
 		Cfg:                 cfg,
 		Hasher:              hasher,
 		Tokens:              security.NewTokenManager(cfg.Auth.SecretKey, cfg.Auth.AccessTokenTTLMinutes),
+		Plugins:             plugins,
 		dummyHash:           hasher.HashPassword(security.RandomToken()),
 		reauthTokens:        map[string]reauthTokenRecord{},
 		revokedAccessTokens: map[string]time.Time{},
