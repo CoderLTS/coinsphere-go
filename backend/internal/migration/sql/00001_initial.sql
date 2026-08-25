@@ -148,6 +148,7 @@ LOCK TABLE
     audit_records
 IN ACCESS EXCLUSIVE MODE;
 
+-- +goose StatementBegin
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM roles LIMIT 1)
@@ -164,6 +165,7 @@ BEGIN
     END IF;
 END
 $$;
+-- +goose StatementEnd
 
 DROP TABLE audit_records;
 DROP TABLE i18n_texts;
