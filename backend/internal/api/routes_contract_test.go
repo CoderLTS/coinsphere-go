@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -21,6 +22,14 @@ func TestRoutesExposeOnlyV2BaselineSurface(t *testing.T) {
 		{http.MethodGet, "/api/v1/me"},
 		{http.MethodGet, "/api/v1/home/meta"},
 		{http.MethodGet, "/api/v1/home/overview"},
+		{http.MethodGet, "/api/v1/workflows/templates"},
+		{http.MethodGet, "/api/v1/workflows"},
+		{http.MethodPost, "/api/v1/workflows"},
+		{http.MethodGet, "/api/v1/workflows/1"},
+		{http.MethodGet, "/api/v1/workflows/1/revisions"},
+		{http.MethodPost, "/api/v1/workflows/1/revisions"},
+		{http.MethodGet, "/api/v1/workflows/1/revisions/1"},
+		{http.MethodPost, "/api/v1/workflows/1/lifecycle"},
 		{http.MethodGet, "/api/v1/admin/users"},
 		{http.MethodGet, "/api/v1/system/roles"},
 		{http.MethodGet, "/api/v1/system/menus"},
@@ -42,7 +51,6 @@ func TestRoutesExposeOnlyV2BaselineSurface(t *testing.T) {
 		{http.MethodGet, "/api/v1/admin/strategies"},
 		{http.MethodPost, "/api/v1/backtests"},
 		{http.MethodGet, "/api/v1/trading/overview"},
-		{http.MethodGet, "/api/v1/workflows"},
 		{http.MethodGet, "/api/v1/config/ai-models"},
 		{http.MethodGet, "/api/v1/assistant/agents"},
 		{http.MethodGet, "/api/v1/notification-deliveries"},
@@ -50,6 +58,17 @@ func TestRoutesExposeOnlyV2BaselineSurface(t *testing.T) {
 		request := httptest.NewRequest(route.method, route.path, nil)
 		if _, pattern := mux.Handler(request); pattern != "" {
 			t.Fatalf("removed route %s %q still has route %q", route.method, route.path, pattern)
+		}
+	}
+}
+
+func TestDecodeBodyRejectsUnknownAndTrailingFields(t *testing.T) {
+	for _, body := range []string{`{"name":"test","unknown":true}`, `{"name":"test"}{"name":"again"}`} {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/items", strings.NewReader(body))
+		if _, err := decodeBody[struct {
+			Name string `json:"name"`
+		}](request); err == nil {
+			t.Fatalf("invalid body %q was accepted", body)
 		}
 	}
 }

@@ -337,7 +337,9 @@ jobs:
       - name: Smoke test health and removed legacy surface
         run: |
           curl --fail --show-error --retry 10 --retry-all-errors --retry-delay 3 http://127.0.0.1:8080/health
-          for path in /api/v1/ws/notifications /api/v1/workflows /api/v1/markets/symbols; do
+          status=$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/api/v1/workflows)
+          [[ $status == 401 ]]
+          for path in /api/v1/ws/notifications /api/v1/markets/symbols; do
             status=$(curl --silent --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:8080$path")
             [[ $status == 404 ]]
           done

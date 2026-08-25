@@ -62,6 +62,16 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		respond(w, data, err, "")
 	}))
 
+	// P1-A workflow lifecycle. The editor and execution APIs arrive in later P1 slices.
+	mux.HandleFunc("GET /api/v1/workflows/templates", s.requireRole("R_SUPER", s.handleListWorkflowTemplates))
+	mux.HandleFunc("GET /api/v1/workflows", s.requireRole("R_SUPER", s.handleListWorkflows))
+	mux.HandleFunc("POST /api/v1/workflows", s.requireRole("R_SUPER", s.handleCreateWorkflow))
+	mux.HandleFunc("GET /api/v1/workflows/{workflowId}", s.requireRole("R_SUPER", s.handleGetWorkflow))
+	mux.HandleFunc("GET /api/v1/workflows/{workflowId}/revisions", s.requireRole("R_SUPER", s.handleListWorkflowRevisions))
+	mux.HandleFunc("POST /api/v1/workflows/{workflowId}/revisions", s.requireRole("R_SUPER", s.handleSaveWorkflowRevision))
+	mux.HandleFunc("GET /api/v1/workflows/{workflowId}/revisions/{revisionId}", s.requireRole("R_SUPER", s.handleGetWorkflowRevision))
+	mux.HandleFunc("POST /api/v1/workflows/{workflowId}/lifecycle", s.requireRole("R_SUPER", s.handleWorkflowLifecycle))
+
 	// 系统管理。
 	mux.HandleFunc("GET /api/v1/admin/users", s.requirePermission(perm.SystemUsersView, s.handleListUsers))
 	mux.HandleFunc("POST /api/v1/admin/users", s.requirePermission(perm.SystemUsersCreate, s.handleCreateUser))

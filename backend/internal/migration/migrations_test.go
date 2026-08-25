@@ -17,7 +17,7 @@ import (
 )
 
 const postgresDSNEnv = "COINSPHERE_TEST_POSTGRES_DSN"
-const latestMigrationVersion = 2
+const latestMigrationVersion = 3
 
 var postgresSchemaSequence atomic.Uint64
 
@@ -35,7 +35,7 @@ func TestInitialMigrationLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply initial migration: %v", err)
 	}
-	if len(results) != 2 || results[len(results)-1].Version != latestMigrationVersion || results[len(results)-1].Direction != "up" {
+	if len(results) != 3 || results[len(results)-1].Version != latestMigrationVersion || results[len(results)-1].Direction != "up" {
 		t.Fatalf("migration results = %#v", results)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err != nil {
@@ -61,8 +61,8 @@ func TestInitialMigrationDownRejectsData(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply initial migration: %v", err)
 	}
-	if _, err := runner.Down(context.Background(), 1); err != nil {
-		t.Fatalf("roll back plugin lifecycle migration: %v", err)
+	if _, err := runner.Down(context.Background(), 2); err != nil {
+		t.Fatalf("roll back workflow and plugin lifecycle migrations: %v", err)
 	}
 	if _, err := database.Exec(`INSERT INTO roles (code) VALUES ('rollback-guard')`); err != nil {
 		t.Fatalf("insert rollback guard: %v", err)
@@ -82,11 +82,53 @@ func TestPluginLifecycleMigrationDownRejectsData(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
+	if _, err := runner.Down(context.Background(), 1); err != nil {
+		t.Fatalf("roll back workflow lifecycle migration: %v", err)
+	}
 	if _, err := database.Exec(`INSERT INTO plugin_installations (plugin_id, version, schema_name, source_path) VALUES ('official.test', '1.0.0', 'plugin_official_test', 'installed/official_test')`); err != nil {
 		t.Fatalf("insert plugin installation: %v", err)
 	}
 	if _, err := runner.Down(context.Background(), 1); err == nil {
 		t.Fatal("rollback removed plugin lifecycle data")
+	}
+	current, _, err := runner.Versions(context.Background())
+	if err != nil || current != 2 {
+		t.Fatalf("failed rollback changed migration version: current=%d err=%v", current, err)
+	}
+}
+
+func TestWorkflowLifecycleMigrationDownRejectsData(t *testing.T) {
+	database := openPostgresSchema(t)
+	runner, _ := New(database)
+	if _, err := runner.Up(context.Background(), 0); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+	tx, err := database.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var userID, workflowID, revisionID int64
+	if err = tx.QueryRow(`INSERT INTO users (username) VALUES ('workflow-owner') RETURNING id`).Scan(&userID); err == nil {
+		err = tx.QueryRow(`INSERT INTO workflows (name, main_trigger_node_id, created_by) VALUES ('test', 'manual-trigger', $1) RETURNING id`, userID).Scan(&workflowID)
+	}
+	if err == nil {
+		err = tx.QueryRow(`INSERT INTO workflow_revisions (workflow_id, revision_number, graph_json, node_versions, main_trigger_node_id, created_by) VALUES ($1, 1, '{"nodes":[],"edges":[]}', '{}', 'manual-trigger', $2) RETURNING id`, workflowID, userID).Scan(&revisionID)
+	}
+	if err == nil {
+		_, err = tx.Exec(`UPDATE workflows SET active_revision_id = $1 WHERE id = $2`, revisionID, workflowID)
+	}
+	if err == nil {
+		_, err = tx.Exec(`INSERT INTO workflow_runtimes (workflow_id) VALUES ($1)`, workflowID)
+	}
+	if err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.Down(context.Background(), 1); err == nil {
+		t.Fatal("rollback removed workflow lifecycle data")
 	}
 	current, _, err := runner.Versions(context.Background())
 	if err != nil || current != latestMigrationVersion {
@@ -146,6 +188,7 @@ func TestInitialMigrationConstraintsAndIndexes(t *testing.T) {
 		"idx_roles_code", "idx_users_username", "ux_user_role", "idx_menus_name",
 		"idx_menu_buttons_permission_code", "ux_role_menu", "ux_role_button", "ux_i18n_biz",
 		"ix_audit_records_created_at", "ux_plugin_references_identity", "ix_plugin_references_active",
+		"ix_workflows_status_updated", "ux_workflow_revision_number", "ix_workflow_revisions_created",
 	})
 }
 
@@ -155,7 +198,7 @@ func TestValidateCurrentRejectsDatabaseAhead(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply initial migration: %v", err)
 	}
-	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES (3, TRUE)`); err != nil {
+	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES (4, TRUE)`); err != nil {
 		t.Fatalf("record newer migration: %v", err)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err == nil {
@@ -168,6 +211,7 @@ func assertCurrentTables(t *testing.T, database *sql.DB) {
 	want := []string{
 		"audit_records", "i18n_texts", "menu_buttons", "menus", "role_menu_buttons",
 		"plugin_installations", "plugin_references", "role_menus", "roles", "schema_migrations", "user_roles", "users",
+		"workflow_revisions", "workflow_runtimes", "workflows",
 	}
 	rows, err := database.Query(`
 SELECT table_name

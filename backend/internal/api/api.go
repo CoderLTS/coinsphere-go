@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -149,6 +150,14 @@ func respond(w http.ResponseWriter, data any, err error, successMsg string) {
 			failStatus(w, http.StatusForbidden, err.Error())
 			return
 		}
+		if errors.Is(err, service.ErrNotFound) {
+			failStatus(w, http.StatusNotFound, err.Error())
+			return
+		}
+		if errors.Is(err, service.ErrConflict) {
+			failStatus(w, http.StatusConflict, err.Error())
+			return
+		}
 		fail(w, err.Error())
 		return
 	}
@@ -171,9 +180,13 @@ func decodeBody[T any](r *http.Request) (*T, error) {
 		return &payload, nil
 	}
 	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
 	// if err := f(); err != nil {} 是常见写法:调用、接住 err、当场判断,err 只在这个 if 内可见。
 	if err := decoder.Decode(&payload); err != nil {
 		return nil, errors.New("请求体解析失败: " + err.Error())
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return nil, errors.New("请求体只能包含一个 JSON 对象")
 	}
 	return &payload, nil
 }
@@ -292,6 +305,16 @@ func (s *Server) requireAuth(next authedHandler) http.HandlerFunc {
 func (s *Server) requirePermission(code string, next authedHandler) http.HandlerFunc {
 	return s.requireAuth(func(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
 		if !principal.HasPermission(code) {
+			writeProblem(w, r, http.StatusForbidden, "permission denied")
+			return
+		}
+		next(w, r, principal)
+	})
+}
+
+func (s *Server) requireRole(code string, next authedHandler) http.HandlerFunc {
+	return s.requireAuth(func(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+		if !principal.HasRole(code) {
 			writeProblem(w, r, http.StatusForbidden, "permission denied")
 			return
 		}

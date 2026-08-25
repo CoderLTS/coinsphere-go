@@ -2,7 +2,7 @@
 
 ## 当前基线
 
-CoinSphere 只支持 PostgreSQL/TimescaleDB。`backend/internal/migration/sql/00001_initial.sql` 是正式 Paper 观察前重建的 V2 空库基线；它只创建认证、RBAC、菜单、i18n、审计所需表和 TimescaleDB 扩展，不创建行情 hypertable。`00002_plugin_lifecycle.sql` 追加插件安装记录和活动引用保护。
+CoinSphere 只支持 PostgreSQL/TimescaleDB。`00001_initial.sql` 创建认证、RBAC、菜单、i18n、审计和 TimescaleDB 扩展；`00002_plugin_lifecycle.sql` 追加插件安装记录和引用保护；`00003_workflow_lifecycle.sql` 追加工作流、不可变修订和运行实例。当前不创建行情 hypertable。
 
 服务启动只读校验核心版本，核心 DDL 只由 `coinsphere-migrate` 执行。每个插件使用 `plugin_<规范化插件 ID>` schema 和自己的 `schema_migrations` 账本，由插件生命周期命令在维护窗口执行。项目不提供旧表、旧接口或旧数据转换器；生产 DSN 和数据库密码只通过服务器配置注入。
 
@@ -32,11 +32,11 @@ go run ./cmd/migrate -config ./config.yml -direction down -steps 1
 
 ## 变更规则
 
-- P0 基线确认部署后，后续核心 schema 从 `00002_*.sql` 开始追加，不再改写 `00001_initial.sql`。
+- P0 基线确认后，核心 schema 只追加递增版本，不再改写已合并 migration。
 - 每个 migration 包含 `-- +goose Up` 和 `-- +goose Down`，默认在事务中执行。
 - 插件 migration 使用独立递增版本；兼容升级只能追加高版本，卸载和应用回滚不执行插件 Down。
 - 金融时间使用 `TIMESTAMPTZ`；价格、数量、金额和费率使用 `NUMERIC(38,18)`。
-- `Down` 必须保护持久数据；V2 基线只允许在九张业务表全部为空时回滚。
+- `Down` 必须保护持久数据；插件和工作流 migration 只在所属表为空时允许回滚。
 - 无法无损回滚时恢复已验证备份，不提供伪可逆 SQL。
 - 禁止应用启动自动建表、手工修改 migration 账本或用删除业务行修复版本差异。
 

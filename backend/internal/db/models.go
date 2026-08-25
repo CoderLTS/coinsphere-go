@@ -139,3 +139,42 @@ type AuditRecord struct {
 }
 
 func (AuditRecord) TableName() string { return "audit_records" }
+
+type Workflow struct {
+	ID                int64  `gorm:"primaryKey;autoIncrement"`
+	Name              string `gorm:"size:120"`
+	Description       string `gorm:"size:500"`
+	Mode              string `gorm:"size:16"`
+	Status            string `gorm:"size:32"`
+	ActiveRevisionID  *int64 `gorm:"column:active_revision_id"`
+	MainTriggerNodeID string `gorm:"column:main_trigger_node_id;size:128"`
+	RetentionDays     int    `gorm:"column:retention_days"`
+	CreatedBy         int64  `gorm:"column:created_by"`
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	ArchivedAt        *time.Time
+}
+
+func (Workflow) TableName() string { return "workflows" }
+
+type WorkflowRevision struct {
+	ID                int64  `gorm:"primaryKey;autoIncrement"`
+	WorkflowID        int64  `gorm:"column:workflow_id"`
+	RevisionNumber    int64  `gorm:"column:revision_number"`
+	GraphJSON         string `gorm:"column:graph_json;type:jsonb"`
+	NodeVersions      string `gorm:"column:node_versions;type:jsonb"`
+	MainTriggerNodeID string `gorm:"column:main_trigger_node_id;size:128"`
+	CreatedBy         int64  `gorm:"column:created_by"`
+	CreatedAt         time.Time
+}
+
+func (WorkflowRevision) TableName() string { return "workflow_revisions" }
+
+type WorkflowRuntime struct {
+	WorkflowID     int64  `gorm:"column:workflow_id;primaryKey"`
+	ActivityCursor int64  `gorm:"column:activity_cursor"`
+	HealthSummary  string `gorm:"column:health_summary;size:32"`
+	UpdatedAt      time.Time
+}
+
+func (WorkflowRuntime) TableName() string { return "workflow_runtimes" }

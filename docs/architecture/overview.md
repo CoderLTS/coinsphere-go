@@ -2,7 +2,7 @@
 
 ## 当前边界
 
-CoinSphere 正在重建为工作流优先、编译期插件驱动的个人自托管平台。当前完成 V2 P0：认证、RBAC、用户/角色/菜单管理、系统监控、核心 migration 和可信本地插件 SDK 可用；工作流运行、事件流、Quant、回测和 Paper 仍按[路线图](../roadmap/README.md)继续开发。
+CoinSphere 正在重建为工作流优先、编译期插件驱动的个人自托管平台。V2 P0 已完成；P1-A 已建立工作流、不可变修订、单运行实例和 start/pause/archive API。画布、批次执行、事件流、Quant、回测和 Paper 仍按[路线图](../roadmap/README.md)继续开发。
 
 - 只支持 PostgreSQL/TimescaleDB，领域时间统一使用 UTC。
 - 价格、数量、金额和费率使用 Decimal；账务值禁止使用 `float64`。
@@ -27,7 +27,7 @@ flowchart LR
 
 ### Vue Web
 
-Web 提供登录、系统监控、用户、角色和菜单管理。前端插件入口由生成的 `frontend/src/plugins/registry.generated.ts` 静态导入；P0 的契约插件只用于自动化测试，不进入生产菜单。
+Web 提供登录、系统监控、用户、角色和菜单管理。工作流 P1-A 当前只提供 API，尚无生产工作台页面。前端插件入口由生成的 `frontend/src/plugins/registry.generated.ts` 静态导入；P0 的契约插件只用于自动化测试，不进入生产菜单。
 
 ### Go App
 
@@ -37,12 +37,13 @@ Go App 是单一后端进程，负责：
 - 系统管理、健康检查、HTTP 指标与数据库就绪检查。
 - 启动时加载编译进二进制的插件注册表。
 - 暴露 SDK 的 Action、Trigger、作用域路由和结果页描述符契约。
+- 由超级管理员创建 blank 批处理工作流、保存不可变修订并执行 start/pause/archive。
 
-当前没有工作流执行器调用插件 Action，也没有共享结果视图把 `ResultScope` 暴露给普通用户；这些分别由 P1 和 P4 交付。
+当前生命周期中的 `running` 只表示工作流已允许接受后续 batch 触发；P1-C 执行器尚未调度节点或调用插件 Action。共享结果视图在 P4 交付。
 
 ### PostgreSQL / TimescaleDB
 
-数据库当前保存认证、RBAC、菜单、i18n、审计、插件安装状态和插件引用。核心 schema 使用 Goose 账本；每个插件拥有 `plugin_<id>` schema 和独立 `schema_migrations` 账本。
+数据库当前保存认证、RBAC、菜单、i18n、审计、插件安装状态和引用，以及 `workflows`、`workflow_revisions`、`workflow_runtimes`。修订更新/删除由数据库拒绝，活动修订通过同工作流复合外键约束，首次修订和活动指针在一个事务提交。
 
 应用启动只校验 migration 版本。核心 DDL 由一次性 migration 命令执行，插件 DDL 由生命周期 CLI 在维护窗口执行。
 
