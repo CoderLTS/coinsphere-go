@@ -412,7 +412,7 @@ func TestWorkflowEventsPreserveIdentityPartitionOrderAndOutbox(t *testing.T) {
 	if err != nil || !ok || crossPartition.PartitionKey != "account-b" {
 		t.Fatalf("cross-partition claim = %#v, ok=%t, err=%v", crossPartition, ok, err)
 	}
-	if _, err := database.Exec(`UPDATE execution_batches SET status = 'waiting' WHERE id = $1`, firstClaim.ID); err != nil {
+	if _, err := database.Exec(`UPDATE execution_batches SET status = 'waiting', lease_token = NULL, lease_expires_at = NULL WHERE id = $1`, firstClaim.ID); err != nil {
 		t.Fatal(err)
 	}
 	releasedPartition, ok, err := app.claimWorkflowBatch(context.Background(), time.Now().UTC())

@@ -138,6 +138,9 @@ func (a *App) DecideWorkflowHumanTask(ctx context.Context, taskID int64, payload
 	if action != "approve" && action != "reject" {
 		return WorkflowHumanTaskView{}, errors.New("human task action must be approve or reject")
 	}
+	if payload.Data == nil {
+		payload.Data = map[string]any{}
+	}
 	decision, err := json.Marshal(payload.Data)
 	if err != nil || len(decision) > 64<<10 {
 		return WorkflowHumanTaskView{}, errors.New("human task decision exceeds the 64 KiB limit")
