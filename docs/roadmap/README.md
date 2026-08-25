@@ -7,7 +7,7 @@
 
 本文只维护稳定的能力顺序、交付边界和退出条件。当前分支、Issue、PR、完成状态、验证命令和验收证据以 GitHub 为准，不在本文维护进度百分比。
 
-> P0 已完成并由自动化契约插件通过退出验收。P1-P4 尚未达到阶段退出条件的能力仍以[架构概览](../architecture/overview.md)、[公共契约](../contracts/README.md)和[使用手册](../user-guide.md)为准。
+> P0 已完成并由自动化契约插件通过退出验收，P1 批处理工作室已形成当前稳定能力。P2-P4 尚未达到阶段退出条件的能力仍以[架构概览](../architecture/overview.md)、[公共契约](../contracts/README.md)和[使用手册](../user-guide.md)为准；阶段验收证据保存在 GitHub。
 
 ## 目标路径
 

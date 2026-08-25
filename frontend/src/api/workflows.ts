@@ -114,6 +114,55 @@ export interface WorkflowBatch {
   errorCategory?: string
 }
 
+export interface WorkflowNodeRun {
+  id: number
+  nodeInstanceId: string
+  nodeType: string
+  nodeVersion: string
+  executionPool: 'stream' | 'compute'
+  attempt: number
+  loopIteration: number
+  operationKey: string
+  status: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'skipped'
+  errorCategory?: string
+  startedAt: string
+  completedAt?: string
+  durationMs?: number
+}
+
+export interface WorkflowActivity {
+  cursor: number
+  workflowId: number
+  batchId?: number
+  nodeRunId?: number
+  eventType: string
+  status?: string
+  summary: string
+  errorCategory?: string
+  occurredAt: string
+}
+
+export interface WorkflowArtifact {
+  sha256: string
+  nodeInstanceId?: string
+  mediaType: string
+  encoding: 'gzip'
+  sizeBytes: number
+  storedSizeBytes: number
+  downloadUrl: string
+  verified?: boolean
+}
+
+export interface WorkflowBatchDetail extends WorkflowBatch {
+  nodeRuns: WorkflowNodeRun[]
+  activities: WorkflowActivity[]
+  artifacts: WorkflowArtifact[]
+}
+
+interface WorkflowActivityPage extends ItemList<WorkflowActivity> {
+  nextCursor: number
+}
+
 interface ItemList<T> {
   items: T[]
 }
@@ -165,3 +214,19 @@ export const applyWorkflowLifecycle = (workflowId: number, action: 'start' | 'pa
 
 export const createWorkflowBatch = (workflowId: number) =>
   request.post<WorkflowBatch>({ url: `/api/v1/workflows/${workflowId}/batches` })
+
+export const fetchWorkflowActivity = (workflowId: number, after = 0, limit = 100) =>
+  request.get<WorkflowActivityPage>({
+    url: `/api/v1/workflows/${workflowId}/activity`,
+    params: { after, limit },
+    showErrorMessage: after === 0
+  })
+
+export const fetchWorkflowBatch = (batchId: number) =>
+  request.get<WorkflowBatchDetail>({ url: `/api/v1/batches/${batchId}` })
+
+export const fetchWorkflowArtifactManifest = (sha256: string) =>
+  request.get<WorkflowArtifact>({ url: `/api/v1/artifacts/${sha256}/manifest` })
+
+export const downloadWorkflowArtifact = (url: string) =>
+  request.request<Blob>({ url, method: 'GET', responseType: 'blob', rawResponse: true })

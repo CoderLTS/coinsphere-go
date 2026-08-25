@@ -85,10 +85,21 @@
         <span>R{{ activeRevision?.revisionNumber || '-' }}</span>
       </div>
       <div v-else class="mobile-activity__empty">暂无工作流</div>
-      <ol v-if="revisions.length" class="mobile-activity__revisions">
-        <li v-for="revision in revisions" :key="revision.id">
-          <span>R{{ revision.revisionNumber }}</span>
-          <time>{{ formatTime(revision.createdAt) }}</time>
+      <ol v-if="recentActivities.length" class="mobile-activity__events">
+        <li v-for="activity in recentActivities.slice(0, 20)" :key="activity.cursor">
+          <button type="button" @click="activity.batchId && loadBatch(activity.batchId)">
+            <span :data-status="activity.status"></span>
+            <strong>{{ activity.summary }}</strong>
+            <time>{{ formatTime(activity.occurredAt) }}</time>
+          </button>
+        </li>
+      </ol>
+      <div v-else-if="selectedWorkflow" class="mobile-activity__empty">暂无运行活动</div>
+      <ol v-if="selectedBatch" class="mobile-activity__nodes">
+        <li v-for="run in selectedBatch.nodeRuns" :key="run.id">
+          <span :data-status="run.status"></span>
+          <strong>{{ run.nodeInstanceId }}</strong>
+          <small>尝试 {{ run.attempt }} · {{ formatDuration(run.durationMs) }}</small>
         </li>
       </ol>
     </section>
@@ -335,6 +346,89 @@
       </aside>
     </main>
 
+    <section class="activity-dock">
+      <header class="activity-dock__header">
+        <div>
+          <ArtSvgIcon icon="ri:pulse-line" />
+          <strong>运行活动</strong>
+          <span v-if="selectedWorkflow">游标 {{ activityCursor }}</span>
+        </div>
+        <ElButton
+          title="刷新活动"
+          text
+          circle
+          :loading="activityLoading"
+          :disabled="!selectedWorkflow"
+          @click="refreshActivity(true)"
+        >
+          <ArtSvgIcon icon="ri:refresh-line" />
+        </ElButton>
+      </header>
+      <div class="activity-dock__body">
+        <nav class="activity-feed" aria-label="工作流活动">
+          <button
+            v-for="activity in recentActivities"
+            :key="activity.cursor"
+            type="button"
+            :class="{ 'is-active': activity.batchId === selectedBatch?.id }"
+            @click="activity.batchId && loadBatch(activity.batchId)"
+          >
+            <span class="activity-feed__rail" :data-status="activity.status"></span>
+            <span class="activity-feed__copy">
+              <strong>{{ activity.summary }}</strong>
+              <small>
+                #{{ activity.batchId || '-' }} · {{ formatTime(activity.occurredAt) }}
+              </small>
+            </span>
+            <code>{{ activity.cursor }}</code>
+          </button>
+          <div v-if="!recentActivities.length" class="activity-dock__empty">暂无运行活动</div>
+        </nav>
+
+        <div class="batch-path">
+          <template v-if="selectedBatch">
+            <div class="batch-path__summary">
+              <div>
+                <strong>批次 #{{ selectedBatch.id }}</strong>
+                <span :data-status="selectedBatch.status">{{ selectedBatch.status }}</span>
+              </div>
+              <small>
+                R{{ selectedBatch.revisionId }} · {{ selectedBatch.triggerType }} ·
+                {{ formatDuration(batchDuration) }}
+              </small>
+            </div>
+            <ol class="batch-path__nodes">
+              <li v-for="run in selectedBatch.nodeRuns" :key="run.id">
+                <span class="batch-path__state" :data-status="run.status"></span>
+                <div>
+                  <strong>{{ run.nodeInstanceId }}</strong>
+                  <small>{{ run.nodeType }}@{{ run.nodeVersion }}</small>
+                </div>
+                <code>{{ run.executionPool }}</code>
+                <span>尝试 {{ run.attempt }}</span>
+                <time>{{ formatDuration(run.durationMs) }}</time>
+                <em v-if="run.errorCategory">{{ run.errorCategory }}</em>
+              </li>
+            </ol>
+            <div v-if="selectedBatch.artifacts.length" class="batch-path__artifacts">
+              <button
+                v-for="artifact in selectedBatch.artifacts"
+                :key="`${artifact.nodeInstanceId}:${artifact.sha256}`"
+                type="button"
+                :title="`下载并校验 ${artifact.sha256}`"
+                @click="downloadArtifact(artifact)"
+              >
+                <ArtSvgIcon icon="ri:download-2-line" />
+                <span>{{ artifact.nodeInstanceId }} · {{ formatBytes(artifact.sizeBytes) }}</span>
+                <code>{{ artifact.sha256.slice(0, 12) }}</code>
+              </button>
+            </div>
+          </template>
+          <div v-else class="activity-dock__empty">选择一条批次活动查看节点路径</div>
+        </div>
+      </div>
+    </section>
+
     <ElDialog v-model="createDialogVisible" title="创建工作流" width="420px">
       <ElForm label-position="top">
         <ElFormItem label="名称">
@@ -373,7 +467,11 @@
     applyWorkflowLifecycle,
     createWorkflowBatch,
     createWorkflow,
+    downloadWorkflowArtifact,
     fetchWorkflow,
+    fetchWorkflowActivity,
+    fetchWorkflowArtifactManifest,
+    fetchWorkflowBatch,
     fetchWorkflowNodeDefinitions,
     fetchWorkflowRevision,
     fetchWorkflowRevisions,
@@ -386,6 +484,9 @@
     type WorkflowItem,
     type WorkflowNodeDefinition,
     type WorkflowBindingKind,
+    type WorkflowActivity,
+    type WorkflowArtifact,
+    type WorkflowBatchDetail,
     type WorkflowRevision,
     type WorkflowSecretChange
   } from '@/api/workflows'
@@ -397,6 +498,10 @@
   const revisions = ref<WorkflowRevision[]>([])
   const selectedWorkflow = ref<WorkflowDetail>()
   const activeRevision = ref<WorkflowRevision>()
+  const activities = ref<WorkflowActivity[]>([])
+  const activityCursor = ref(0)
+  const activityLoading = ref(false)
+  const selectedBatch = ref<WorkflowBatchDetail>()
   const viewRevisionId = ref<number>()
   const selectedNodeId = ref('')
   const selectedEdgeId = ref('')
@@ -409,6 +514,7 @@
   const dirty = ref(false)
   const applyingGraph = ref(false)
   const createDialogVisible = ref(false)
+  let activityTimer: ReturnType<typeof setInterval> | undefined
   const createForm = reactive<{
     name: string
     description: string
@@ -431,6 +537,14 @@
       : workflows.value
   })
   const availableDefinitions = computed(() => definitions.value.filter((item) => item.available))
+  const recentActivities = computed(() => [...activities.value].reverse())
+  const batchDuration = computed(() => {
+    if (!selectedBatch.value?.startedAt) return undefined
+    const end = selectedBatch.value.completedAt
+      ? new Date(selectedBatch.value.completedAt).getTime()
+      : Date.now()
+    return Math.max(end - new Date(selectedBatch.value.startedAt).getTime(), 0)
+  })
   const selectedNode = computed(() =>
     graph.value.nodes.find((node) => node.nodeInstanceId === selectedNodeId.value)
   )
@@ -489,6 +603,16 @@
     new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(
       new Date(value)
     )
+  const formatDuration = (value?: number) => {
+    if (value === undefined) return '进行中'
+    if (value < 1000) return `${value} ms`
+    return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)} s`
+  }
+  const formatBytes = (value: number) => {
+    if (value < 1024) return `${value} B`
+    if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`
+    return `${(value / (1024 * 1024)).toFixed(1)} MiB`
+  }
   const schemaProperties = (schema: Record<string, unknown>) => {
     const properties = (schema.properties || {}) as Record<string, Record<string, unknown>>
     return Object.entries(properties).map(([name, property]) => ({
@@ -651,9 +775,45 @@
     requestAnimationFrame(fit)
   }
 
+  const loadBatch = async (batchId: number) => {
+    const batch = await fetchWorkflowBatch(batchId)
+    if (batch.workflowId === selectedWorkflow.value?.id) selectedBatch.value = batch
+  }
+
+  const refreshActivity = async (reset = false) => {
+    const workflowId = selectedWorkflow.value?.id
+    if (!workflowId || activityLoading.value) return
+    activityLoading.value = true
+    try {
+      const page = await fetchWorkflowActivity(workflowId, reset ? 0 : activityCursor.value)
+      if (selectedWorkflow.value?.id !== workflowId) return
+      activities.value = reset
+        ? page.items
+        : [...activities.value, ...page.items].filter(
+            (item, index, all) =>
+              all.findIndex((candidate) => candidate.cursor === item.cursor) === index
+          )
+      activityCursor.value = page.nextCursor
+      const latestBatchId = [...page.items].reverse().find((item) => item.batchId)?.batchId
+      if (latestBatchId && (reset || !selectedBatch.value)) {
+        await loadBatch(latestBatchId)
+      } else if (
+        selectedBatch.value &&
+        page.items.some((item) => item.batchId === selectedBatch.value?.id)
+      ) {
+        await loadBatch(selectedBatch.value.id)
+      }
+    } finally {
+      activityLoading.value = false
+    }
+  }
+
   const selectWorkflow = async (workflow: WorkflowItem) => {
     if (dirty.value && !(await confirmDiscard())) return
     loading.value = true
+    activities.value = []
+    activityCursor.value = 0
+    selectedBatch.value = undefined
     try {
       const [detail, revisionList] = await Promise.all([
         fetchWorkflow(workflow.id),
@@ -662,6 +822,7 @@
       selectedWorkflow.value = detail
       revisions.value = revisionList.items
       await loadWorkflowRevision(detail.id, detail.activeRevisionId)
+      await refreshActivity(true)
     } finally {
       loading.value = false
     }
@@ -900,9 +1061,30 @@
     try {
       const batch = await createWorkflowBatch(selectedWorkflow.value.id)
       ElMessage.success(`批次 #${batch.id} 已进入队列`)
+      await refreshActivity(true)
     } finally {
       runningBatch.value = false
     }
+  }
+
+  const downloadArtifact = async (artifact: WorkflowArtifact) => {
+    const manifest = await fetchWorkflowArtifactManifest(artifact.sha256)
+    const blob = await downloadWorkflowArtifact(artifact.downloadUrl)
+    const digest = Array.from(
+      new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer()))
+    )
+      .map((value) => value.toString(16).padStart(2, '0'))
+      .join('')
+    if (!manifest.verified || digest !== artifact.sha256) {
+      ElMessage.error('制品校验失败')
+      return
+    }
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${artifact.sha256}.${artifact.mediaType === 'application/json' ? 'json' : 'bin'}`
+    link.click()
+    URL.revokeObjectURL(url)
   }
 
   const archiveWorkflow = async () => {
@@ -952,12 +1134,16 @@
       workflows.value = workflowList.items
       definitions.value = nodeList.items
       if (workflows.value[0]) await selectWorkflow(workflows.value[0])
+      activityTimer = setInterval(() => void refreshActivity(), 2000)
     } finally {
       loading.value = false
     }
   })
 
-  onBeforeUnmount(() => graphInstance.value?.dispose())
+  onBeforeUnmount(() => {
+    graphInstance.value?.dispose()
+    if (activityTimer) clearInterval(activityTimer)
+  })
   onBeforeRouteLeave(async () => !dirty.value || (await confirmDiscard()))
 </script>
 
@@ -1060,7 +1246,232 @@
   .workbench-grid {
     display: grid;
     grid-template-columns: 260px minmax(420px, 1fr) 330px;
-    height: calc(100% - 72px);
+    height: calc(100% - 294px);
+  }
+
+  .activity-dock {
+    height: 222px;
+    background: #fff;
+    border-top: 1px solid #cfd5db;
+  }
+
+  .activity-dock__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 36px;
+    padding: 0 12px;
+    border-bottom: 1px solid #e1e5e9;
+  }
+
+  .activity-dock__header > div {
+    display: flex;
+    gap: 7px;
+    align-items: center;
+  }
+
+  .activity-dock__header strong {
+    font-size: 12px;
+  }
+
+  .activity-dock__header span {
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 10px;
+    color: #778490;
+  }
+
+  .activity-dock__body {
+    display: grid;
+    grid-template-columns: minmax(300px, 36%) minmax(0, 1fr);
+    height: 185px;
+    min-height: 0;
+  }
+
+  .activity-feed,
+  .batch-path {
+    min-width: 0;
+    overflow: auto;
+  }
+
+  .activity-feed {
+    border-right: 1px solid #d8dde2;
+  }
+
+  .activity-feed > button {
+    display: grid;
+    grid-template-columns: 4px minmax(0, 1fr) auto;
+    gap: 9px;
+    align-items: center;
+    width: 100%;
+    min-height: 46px;
+    padding: 6px 10px 6px 0;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid #edf0f2;
+  }
+
+  .activity-feed > button:hover,
+  .activity-feed > button.is-active {
+    background: #f3f7f6;
+  }
+
+  .activity-feed__rail {
+    width: 4px;
+    height: 100%;
+    background: #98a4ae;
+  }
+
+  [data-status='running'],
+  [data-status='succeeded'] {
+    background: var(--green);
+  }
+
+  [data-status='retrying'],
+  [data-status='needs_attention'] {
+    background: var(--amber);
+  }
+
+  [data-status='failed'],
+  [data-status='cancelled'] {
+    background: var(--red);
+  }
+
+  .activity-feed__copy {
+    min-width: 0;
+  }
+
+  .activity-feed strong,
+  .activity-feed small {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .activity-feed strong {
+    font-size: 12px;
+  }
+
+  .activity-feed small,
+  .activity-feed code,
+  .batch-path small,
+  .batch-path code,
+  .batch-path time {
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 10px;
+    color: #75828d;
+  }
+
+  .batch-path {
+    padding: 9px 12px;
+  }
+
+  .batch-path__summary,
+  .batch-path__summary > div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .batch-path__summary > div {
+    gap: 8px;
+  }
+
+  .batch-path__summary strong {
+    font-size: 12px;
+  }
+
+  .batch-path__summary span {
+    padding-left: 8px;
+    font-size: 10px;
+    color: #64717c;
+    background: transparent;
+    border-left: 3px solid #98a4ae;
+  }
+
+  .batch-path__summary span[data-status='succeeded'] {
+    border-left-color: var(--green);
+  }
+
+  .batch-path__summary span[data-status='failed'],
+  .batch-path__summary span[data-status='cancelled'] {
+    border-left-color: var(--red);
+  }
+
+  .batch-path__nodes,
+  .batch-path__artifacts {
+    padding: 0;
+    margin: 8px 0 0;
+    list-style: none;
+  }
+
+  .batch-path__nodes li {
+    display: grid;
+    grid-template-columns: 7px minmax(150px, 1fr) 62px 62px 62px minmax(80px, auto);
+    gap: 8px;
+    align-items: center;
+    min-height: 34px;
+    border-top: 1px solid #edf0f2;
+  }
+
+  .batch-path__nodes strong,
+  .batch-path__nodes small {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .batch-path__nodes strong {
+    font-size: 11px;
+  }
+
+  .batch-path__state {
+    width: 7px;
+    height: 7px;
+    background: #98a4ae;
+    border-radius: 50%;
+  }
+
+  .batch-path__nodes em {
+    overflow: hidden;
+    font-size: 10px;
+    font-style: normal;
+    color: var(--red);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .batch-path__artifacts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .batch-path__artifacts button {
+    display: grid;
+    grid-template-columns: 16px auto auto;
+    gap: 6px;
+    align-items: center;
+    min-height: 28px;
+    padding: 3px 7px;
+    color: inherit;
+    cursor: pointer;
+    background: #f4f6f8;
+    border: 1px solid #d8dde2;
+    border-radius: 4px;
+  }
+
+  .activity-dock__empty {
+    display: grid;
+    place-items: center;
+    min-height: 100%;
+    padding: 18px;
+    font-size: 12px;
+    color: #7d8994;
   }
 
   .workflow-rail,
@@ -1438,26 +1849,70 @@
       color: #7d8994;
     }
 
-    .mobile-activity__revisions {
+    .mobile-activity__events,
+    .mobile-activity__nodes {
       padding: 0;
       margin: 18px 0 0;
       list-style: none;
       border-top: 1px solid #e1e5e9;
     }
 
-    .mobile-activity__revisions li {
-      display: flex;
-      justify-content: space-between;
-      padding: 12px 0;
+    .mobile-activity__events button,
+    .mobile-activity__nodes li {
+      display: grid;
+      grid-template-columns: 7px minmax(0, 1fr) auto;
+      gap: 9px;
+      align-items: center;
+      width: 100%;
+      min-height: 44px;
+      padding: 9px 0;
       font-size: 13px;
+      color: inherit;
+      text-align: left;
+      background: transparent;
+      border: 0;
       border-bottom: 1px solid #e8ebee;
     }
 
-    .mobile-activity__revisions time {
+    .mobile-activity__events button > span,
+    .mobile-activity__nodes li > span {
+      width: 7px;
+      height: 7px;
+      background: #98a4ae;
+      border-radius: 50%;
+    }
+
+    .mobile-activity__events span[data-status='running'],
+    .mobile-activity__events span[data-status='succeeded'],
+    .mobile-activity__nodes span[data-status='running'],
+    .mobile-activity__nodes span[data-status='succeeded'] {
+      background: var(--green);
+    }
+
+    .mobile-activity__events span[data-status='retrying'],
+    .mobile-activity__nodes span[data-status='retrying'] {
+      background: var(--amber);
+    }
+
+    .mobile-activity__events span[data-status='failed'],
+    .mobile-activity__events span[data-status='cancelled'],
+    .mobile-activity__nodes span[data-status='failed'],
+    .mobile-activity__nodes span[data-status='cancelled'] {
+      background: var(--red);
+    }
+
+    .mobile-activity__events time,
+    .mobile-activity__nodes small {
+      font-size: 10px;
       color: #73808c;
     }
 
-    .workbench-grid {
+    .mobile-activity__nodes strong {
+      overflow-wrap: anywhere;
+    }
+
+    .workbench-grid,
+    .activity-dock {
       display: none;
     }
   }

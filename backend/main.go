@@ -98,7 +98,10 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	if err := pluginregistry.RegisterAll(plugins); err != nil {
 		return fmt.Errorf("register plugins: %w", err)
 	}
+	executable, _ := os.Executable()
+	baseDir := filepath.Dir(executable)
 	app := service.NewApp(gdb, cfg, plugins)
+	app.ArtifactRoot = filepath.Join(baseDir, "volumes", "artifacts")
 	if err := db.Seed(ctx, gdb, app.Hasher, cfg.Auth.BootstrapAdminPassword); err != nil {
 		return fmt.Errorf("seed database: %w", err)
 	}
@@ -109,8 +112,6 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	batchEngineErr := make(chan error, 1)
 	go func() { batchEngineErr <- app.RunBatchEngine(ctx) }()
 
-	executable, _ := os.Executable()
-	baseDir := filepath.Dir(executable)
 	mux := api.NewServer(app, filepath.Join(baseDir, "volumes", "static"), filepath.Join(baseDir, "volumes", "uploads"))
 	server := &http.Server{
 		Addr:              fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),

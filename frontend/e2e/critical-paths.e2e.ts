@@ -129,6 +129,59 @@ const workflowRevision = {
   secretFields: {}
 }
 
+const workflowActivity = {
+  cursor: 9,
+  workflowId: 7,
+  batchId: 21,
+  eventType: 'batch.succeeded',
+  status: 'succeeded',
+  summary: '批次执行成功',
+  occurredAt: createdAt
+}
+
+const workflowBatchDetail = {
+  id: 21,
+  workflowId: 7,
+  revisionId: 11,
+  triggerType: 'manual',
+  status: 'succeeded',
+  triggeredAt: createdAt,
+  startedAt: createdAt,
+  completedAt: createdAt,
+  nodeRuns: [
+    {
+      id: 31,
+      nodeInstanceId: 'manual-trigger',
+      nodeType: 'core.manual',
+      nodeVersion: '1.0.0',
+      executionPool: 'stream',
+      attempt: 1,
+      loopIteration: 0,
+      operationKey: 'a'.repeat(64),
+      status: 'succeeded',
+      startedAt: createdAt,
+      completedAt: createdAt,
+      durationMs: 4
+    },
+    {
+      id: 32,
+      nodeInstanceId: 'end',
+      nodeType: 'core.end',
+      nodeVersion: '1.0.0',
+      executionPool: 'stream',
+      attempt: 1,
+      loopIteration: 0,
+      operationKey: 'b'.repeat(64),
+      status: 'succeeded',
+      startedAt: createdAt,
+      completedAt: createdAt,
+      durationMs: 2
+    }
+  ],
+  activities: [workflowActivity],
+  artifacts: []
+}
+
 const nodeDefinitions = ['core.manual', 'core.constant', 'core.end'].map((type) => ({
   type,
   version: '1.0.0',
@@ -216,7 +269,7 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
     const path = new URL(request.url()).pathname
     const method = request.method()
 
-    if (path.startsWith('/api/v1/workflows')) {
+    if (path.startsWith('/api/v1/workflows') || path.startsWith('/api/v1/batches')) {
       schedulerApiCalls.push(`${method} ${path}`)
     }
     if (path.startsWith('/api/v1/auth/')) {
@@ -289,6 +342,14 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
     }
     if (method === 'GET' && path === '/api/v1/workflows/7/revisions/11') {
       await fulfillApi(route, workflowRevision)
+      return
+    }
+    if (method === 'GET' && path === '/api/v1/workflows/7/activity') {
+      await fulfillApi(route, { items: [workflowActivity], nextCursor: 9 })
+      return
+    }
+    if (method === 'GET' && path === '/api/v1/batches/21') {
+      await fulfillApi(route, workflowBatchDetail)
       return
     }
     if (method === 'POST' && path === '/api/v1/workflows/7/batches') {
@@ -438,6 +499,13 @@ test('超级管理员可以使用 Schema 工作流工作台且移动端只读', 
     page.locator('.node-catalog').getByText('core.manual@1.0.0', { exact: true })
   ).toBeVisible()
   await expect(page.getByText('Node inspector', { exact: true })).toBeVisible()
+  await expect(page.getByText('运行活动', { exact: true })).toBeVisible()
+  await expect(
+    page.locator('.activity-dock').getByText('批次执行成功', { exact: true })
+  ).toBeVisible()
+  await expect(
+    page.locator('.batch-path').getByText('manual-trigger', { exact: true })
+  ).toBeVisible()
   await page.getByRole('button', { name: '立即运行', exact: true }).click()
   await expect(page.getByText('批次 #21 已进入队列', { exact: true })).toBeVisible()
 
@@ -447,6 +515,9 @@ test('超级管理员可以使用 Schema 工作流工作台且移动端只读', 
   await expect(
     page.locator('.mobile-activity__summary').getByText('R1', { exact: true })
   ).toBeVisible()
+  await expect(
+    page.locator('.mobile-activity').getByText('批次执行成功', { exact: true })
+  ).toBeVisible()
 
   expect(backend.schedulerApiCalls).toEqual(
     expect.arrayContaining([
@@ -455,6 +526,8 @@ test('超级管理员可以使用 Schema 工作流工作台且移动端只读', 
       'GET /api/v1/workflows/7',
       'GET /api/v1/workflows/7/revisions',
       'GET /api/v1/workflows/7/revisions/11',
+      'GET /api/v1/workflows/7/activity',
+      'GET /api/v1/batches/21',
       'POST /api/v1/workflows/7/batches'
     ])
   )

@@ -17,7 +17,7 @@ import (
 )
 
 const postgresDSNEnv = "COINSPHERE_TEST_POSTGRES_DSN"
-const latestMigrationVersion = 5
+const latestMigrationVersion = 6
 
 var postgresSchemaSequence atomic.Uint64
 
@@ -35,7 +35,7 @@ func TestInitialMigrationLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply initial migration: %v", err)
 	}
-	if len(results) != 5 || results[len(results)-1].Version != latestMigrationVersion || results[len(results)-1].Direction != "up" {
+	if len(results) != 6 || results[len(results)-1].Version != latestMigrationVersion || results[len(results)-1].Direction != "up" {
 		t.Fatalf("migration results = %#v", results)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err != nil {
@@ -211,6 +211,25 @@ func TestWorkflowBatchMigrationDownRejectsBatches(t *testing.T) {
 	}
 }
 
+func TestWorkflowHistoryMigrationDownRejectsArtifacts(t *testing.T) {
+	database := openPostgresSchema(t)
+	runner, _ := New(database)
+	if _, err := runner.Up(context.Background(), 0); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+	digest := strings.Repeat("a", 64)
+	if _, err := database.Exec(`INSERT INTO workflow_artifacts (sha256, media_type, encoding, size_bytes, stored_size_bytes, storage_key) VALUES ($1, 'application/json', 'gzip', 2, 22, $2)`, digest, "aa/"+digest+".gz"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.Down(context.Background(), 1); err == nil {
+		t.Fatal("rollback removed workflow artifacts")
+	}
+	current, _, err := runner.Versions(context.Background())
+	if err != nil || current != latestMigrationVersion {
+		t.Fatalf("failed rollback changed migration version: current=%d err=%v", current, err)
+	}
+}
+
 func TestPluginMigrationUsesIndependentSchemaAndLedger(t *testing.T) {
 	database := openPostgresSchema(t)
 	pluginID := fmt.Sprintf("official.test%d", postgresSchemaSequence.Add(1))
@@ -267,6 +286,7 @@ func TestInitialMigrationConstraintsAndIndexes(t *testing.T) {
 		"ix_workflow_secret_bindings_workflow",
 		"ix_execution_batches_queue", "ix_execution_batches_workflow", "ix_execution_batches_lease",
 		"ix_workflow_node_runs_batch", "ix_workflow_node_runs_operation", "ix_workflow_checkpoints_batch",
+		"ix_workflow_activities_cursor", "ix_workflow_activities_batch", "ix_workflow_artifact_refs_sha",
 	})
 }
 
@@ -276,7 +296,7 @@ func TestValidateCurrentRejectsDatabaseAhead(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply initial migration: %v", err)
 	}
-	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES (6, TRUE)`); err != nil {
+	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES (7, TRUE)`); err != nil {
 		t.Fatalf("record newer migration: %v", err)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err == nil {
@@ -291,6 +311,7 @@ func assertCurrentTables(t *testing.T, database *sql.DB) {
 		"plugin_installations", "plugin_references", "role_menus", "roles", "schema_migrations", "user_roles", "users",
 		"workflow_revisions", "workflow_runtimes", "workflow_secret_bindings", "workflows",
 		"execution_batches", "workflow_node_runs", "workflow_checkpoints", "workflow_node_states",
+		"workflow_activities", "workflow_artifacts", "workflow_artifact_refs",
 	}
 	rows, err := database.Query(`
 SELECT table_name

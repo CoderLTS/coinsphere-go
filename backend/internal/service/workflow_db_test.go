@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -407,6 +408,74 @@ func TestWorkflowBatchProcessInterruptionRequeuesCurrentNode(t *testing.T) {
 	}
 }
 
+func TestWorkflowHistoryArtifactsAndRetention(t *testing.T) {
+	app, database, ownerID := openWorkflowTestApp(t)
+	principal := &Principal{User: &db.SystemUser{ID: ownerID}}
+	graph := strings.Replace(testPluginWorkflowGraph, `"kind":"cel","expression":"event.type + ':'"`, `"kind":"literal","value":"artifact"`, 1)
+	workflow, err := app.CreateWorkflow(context.Background(), WorkflowCreatePayload{Name: "History"}, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := "artifact-secret"
+	_, err = app.SaveWorkflowRevision(context.Background(), workflow.ID, WorkflowRevisionSavePayload{
+		ExpectedActiveRevisionID: workflow.ActiveRevisionID, Graph: jsonMessage(graph),
+		SecretChanges: []WorkflowSecretChange{{NodeInstanceID: "transform", Field: "token", Value: &secret}},
+	}, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.ApplyWorkflowLifecycle(context.Background(), workflow.ID, WorkflowLifecyclePayload{Action: "start"}); err != nil {
+		t.Fatal(err)
+	}
+	batch, err := app.CreateWorkflowBatch(context.Background(), workflow.ID, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, ok, err := app.claimWorkflowBatch(context.Background(), time.Now().UTC())
+	if err != nil || !ok {
+		t.Fatalf("claim ok=%t err=%v", ok, err)
+	}
+	app.executeWorkflowBatch(context.Background(), claimed)
+	detail, err := app.GetWorkflowBatchDetail(context.Background(), batch.ID)
+	if err != nil || detail.Status != BatchStatusSucceeded || len(detail.NodeRuns) != 3 || len(detail.Activities) != 9 || len(detail.Artifacts) != 1 {
+		t.Fatalf("batch detail = %#v, err = %v", detail, err)
+	}
+	artifact := detail.Artifacts[0]
+	manifest, err := app.GetWorkflowArtifactManifest(context.Background(), artifact.SHA256, true)
+	if err != nil || !manifest.Verified || manifest.SizeBytes != int64(len(`{"rows":[1,2,3]}`)) {
+		t.Fatalf("artifact manifest = %#v, err = %v", manifest, err)
+	}
+	reader, _, err := app.OpenWorkflowArtifact(context.Background(), artifact.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, readErr := io.ReadAll(reader)
+	closeErr := reader.Close()
+	if readErr != nil || closeErr != nil || string(content) != `{"rows":[1,2,3]}` {
+		t.Fatalf("artifact content = %q, read=%v close=%v", content, readErr, closeErr)
+	}
+	items, next, err := app.ListWorkflowActivities(context.Background(), workflow.ID, 0, 200)
+	if err != nil || len(items) != len(detail.Activities) || next <= 0 {
+		t.Fatalf("activity items=%d next=%d err=%v", len(items), next, err)
+	}
+	old := time.Now().UTC().Add(-48 * time.Hour)
+	if _, err := database.Exec(`UPDATE workflows SET retention_days = 1 WHERE id = $1`, workflow.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`UPDATE execution_batches SET completed_at = $1 WHERE id = $2`, old, batch.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.cleanupWorkflowHistory(context.Background(), time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.GetWorkflowBatch(context.Background(), batch.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("retained batch err = %v", err)
+	}
+	if _, err := app.GetWorkflowArtifactManifest(context.Background(), artifact.SHA256, false); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("retained artifact err = %v", err)
+	}
+}
+
 func waitForWorkflowNodeRun(t *testing.T, database *sql.DB, batchID int64, nodeID string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
@@ -474,5 +543,6 @@ func openWorkflowTestApp(t *testing.T) (*App, *sql.DB, int64) {
 	}
 	app.DB = gdb
 	app.Cipher = cipher
+	app.ArtifactRoot = t.TempDir()
 	return app, database, ownerID
 }

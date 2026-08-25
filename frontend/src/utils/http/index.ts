@@ -21,6 +21,7 @@ let unauthorizedTimer: NodeJS.Timeout | null = null
 interface ExtendedAxiosRequestConfig extends AxiosRequestConfig {
   showErrorMessage?: boolean
   showSuccessMessage?: boolean
+  rawResponse?: boolean
 }
 
 const { VITE_API_URL, VITE_WITH_CREDENTIALS } = import.meta.env
@@ -68,6 +69,7 @@ axiosInstance.interceptors.request.use(
 /** 响应拦截器 */
 axiosInstance.interceptors.response.use(
   (response: AxiosResponse<BaseResponse>) => {
+    if (response.config.responseType === 'blob') return response
     const { code, msg } = response.data
     if (code === ApiStatus.success) return response
     throw createHttpError(msg || $t('httpMsg.requestFailed'), code)
@@ -144,6 +146,8 @@ async function request<T = any>(config: ExtendedAxiosRequestConfig): Promise<T> 
 
   try {
     const res = await axiosInstance.request<BaseResponse<T>>(config)
+
+    if (config.rawResponse) return res.data as T
 
     // 显示成功消息
     if (config.showSuccessMessage && res.data.msg) {

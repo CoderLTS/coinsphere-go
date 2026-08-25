@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"reflect"
 	"sort"
@@ -202,6 +201,10 @@ func (a *App) RunBatchEngine(ctx context.Context) error {
 	if err := a.recoverExpiredBatches(ctx); err != nil {
 		return err
 	}
+	if err := a.cleanupWorkflowHistory(ctx, time.Now().UTC()); err != nil {
+		slog.Error("workflow history cleanup failed", "error_category", "history_retention")
+	}
+	nextCleanup := time.Now().UTC().Add(24 * time.Hour)
 	ticker := time.NewTicker(batchPollInterval)
 	defer ticker.Stop()
 	for {
@@ -209,6 +212,12 @@ func (a *App) RunBatchEngine(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case now := <-ticker.C:
+			if !now.Before(nextCleanup) {
+				if err := a.cleanupWorkflowHistory(ctx, now.UTC()); err != nil {
+					slog.Error("workflow history cleanup failed", "error_category", "history_retention")
+				}
+				nextCleanup = now.UTC().Add(24 * time.Hour)
+			}
 			if err := a.enqueueScheduledBatches(ctx, now.UTC()); err != nil {
 				slog.Error("workflow schedule scan failed", "error_category", "batch_schedule")
 			}
@@ -443,13 +452,10 @@ func (a *App) executeWorkflowNode(ctx context.Context, batch db.ExecutionBatch, 
 		NodeInstanceID: node.NodeInstanceID, OperationKey: operationKey,
 		Input: mustJSON(input), Config: append(json.RawMessage(nil), node.Config...),
 		Secrets: workflowSecretReader{app: a, revisionID: revision.ID, nodeInstanceID: node.NodeInstanceID},
-		State:   state, Artifacts: unavailableArtifactStore{},
+		State:   state, Artifacts: workflowArtifactStore{app: a},
 		Logger: slog.Default().With("event_category", "workflow_node", "node_type", node.NodeType),
 	}
 	result, category, executeErr := a.callWorkflowNode(ctx, batch, node, request)
-	if executeErr == nil && len(result.Artifacts) > 0 {
-		category, executeErr = "artifact_unavailable", errors.New("workflow artifacts are unavailable before P1-D")
-	}
 	var output map[string]any
 	if executeErr == nil {
 		if len(result.Output) == 0 {
@@ -467,7 +473,7 @@ func (a *App) executeWorkflowNode(ctx context.Context, batch db.ExecutionBatch, 
 		a.finishWorkflowNodeRun(run.ID, status, category, startedAt)
 		return workflowNodeOutcome{attempt: attempt, category: category, err: executeErr}
 	}
-	if err := a.commitWorkflowNodeSuccess(ctx, run, batch, revision, node, operationKey, result.Output, state.pending, startedAt); err != nil {
+	if err := a.commitWorkflowNodeSuccess(ctx, run, batch, revision, node, operationKey, result.Output, state.pending, result.Artifacts, startedAt); err != nil {
 		a.finishWorkflowNodeRun(run.ID, BatchStatusFailed, "checkpoint", startedAt)
 		return workflowNodeOutcome{attempt: attempt, category: "checkpoint", err: err}
 	}
@@ -501,10 +507,18 @@ func (a *App) callWorkflowNode(ctx context.Context, batch db.ExecutionBatch, nod
 	}
 }
 
-func (a *App) commitWorkflowNodeSuccess(ctx context.Context, run db.WorkflowNodeRun, batch db.ExecutionBatch, revision db.WorkflowRevision, node workflowGraphNode, operationKey string, output, state json.RawMessage, startedAt time.Time) error {
+func (a *App) commitWorkflowNodeSuccess(ctx context.Context, run db.WorkflowNodeRun, batch db.ExecutionBatch, revision db.WorkflowRevision, node workflowGraphNode, operationKey string, output, state json.RawMessage, artifacts []sdk.Artifact, startedAt time.Time) error {
 	return a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := time.Now().UTC()
 		duration := max(now.Sub(startedAt).Milliseconds(), 0)
+		manifests, err := loadWorkflowArtifactManifests(tx, artifacts)
+		if err != nil {
+			return err
+		}
+		artifactsJSON, err := marshalWorkflowArtifactManifests(manifests)
+		if err != nil {
+			return errors.New("encode workflow artifact manifest failed")
+		}
 		if err := tx.Model(&db.WorkflowNodeRun{}).Where("id = ? AND status = ?", run.ID, BatchStatusRunning).
 			Updates(map[string]any{"status": BatchStatusSucceeded, "completed_at": now, "duration_ms": duration}).Error; err != nil {
 			return errors.New("finish workflow node run failed")
@@ -512,10 +526,13 @@ func (a *App) commitWorkflowNodeSuccess(ctx context.Context, run db.WorkflowNode
 		checkpoint := db.WorkflowCheckpoint{
 			BatchID: batch.ID, WorkflowID: batch.WorkflowID, RevisionID: revision.ID,
 			NodeInstanceID: node.NodeInstanceID, OperationKey: operationKey,
-			OutputJSON: string(output), ArtifactsJSON: "[]", CreatedAt: now,
+			OutputJSON: string(output), ArtifactsJSON: artifactsJSON, CreatedAt: now,
 		}
 		if err := tx.Create(&checkpoint).Error; err != nil {
 			return errors.New("create workflow checkpoint failed")
+		}
+		if err := createWorkflowArtifactRefs(tx, checkpoint.ID, manifests); err != nil {
+			return err
 		}
 		if len(state) > 0 {
 			nodeState := db.WorkflowNodeState{
@@ -941,14 +958,4 @@ func (r workflowSecretReader) Read(ctx context.Context, field string) ([]byte, e
 		return nil, errors.New("decrypt workflow secret failed")
 	}
 	return []byte(plain), nil
-}
-
-type unavailableArtifactStore struct{}
-
-func (unavailableArtifactStore) Put(context.Context, string, io.Reader) (sdk.Artifact, error) {
-	return sdk.Artifact{}, errors.New("workflow artifact storage is unavailable before P1-D")
-}
-
-func (unavailableArtifactStore) Open(context.Context, string) (io.ReadCloser, error) {
-	return nil, errors.New("workflow artifact storage is unavailable before P1-D")
 }
