@@ -3,15 +3,6 @@ import { expect, test, type Page, type Route } from '@playwright/test'
 
 type AccessMode = 'guest' | 'authenticated'
 
-interface WorkflowPayload {
-  displayName: string
-  description: string
-  graph: {
-    nodes: Array<{ id: string; type: string }>
-    edges: Array<{ id: string; source: string; target: string }>
-  }
-}
-
 const createdAt = '2026-08-01T00:00:00Z'
 const accessToken = `header.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.signature`
 
@@ -58,27 +49,10 @@ const homeMenu = {
   }
 }
 
-const nodeDefinitions = [
-  {
-    typeCode: 'start.manual',
-    label: '手动开始',
-    configSchema: { type: 'object', properties: {} },
-    kind: 'start'
-  },
-  {
-    typeCode: 'end',
-    label: '结束',
-    configSchema: { type: 'object', properties: {} },
-    kind: 'terminal'
-  }
-]
-
 function userInfo(accessMode: AccessMode) {
   const authenticated = accessMode === 'authenticated'
   return {
-    permissions: authenticated
-      ? ['scheduler.workflow_definitions.create', 'scheduler.workflow_definitions.update']
-      : [],
+    permissions: [],
     roleCodes: [authenticated ? 'R_SUPER' : 'R_GUEST'],
     userId: authenticated ? 1 : 0,
     username: authenticated ? 'e2e-user' : 'guest',
@@ -100,8 +74,6 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
   const unexpectedApiCalls: string[] = []
   const authApiCalls: string[] = []
   const schedulerApiCalls: string[] = []
-  let createdPayload: WorkflowPayload | null = null
-  let createdDefinition: Record<string, unknown> | null = null
 
   await page.route('**/*', async (route) => {
     const url = new URL(route.request().url())
@@ -179,65 +151,32 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
       await fulfillApi(route, [homeMenu])
       return
     }
-    if (method === 'GET' && path === '/api/v1/workflows/node-definitions') {
-      await fulfillApi(route, nodeDefinitions)
+    if (method === 'GET' && path === '/api/v1/home/overview') {
+      await fulfillApi(route, {
+        process: {
+          uptimeSeconds: 60,
+          goMemoryAllocBytes: 0,
+          goMemorySysBytes: 0,
+          goroutines: 1
+        },
+        http: {
+          requestsTotal: 0,
+          requestsFailed: 0,
+          requestsInFlight: 0,
+          trend: []
+        },
+        database: {
+          status: 'healthy',
+          schemaVersion: 1,
+          maxOpenConnections: 1,
+          openConnections: 1,
+          inUse: 0,
+          idle: 1,
+          waitCount: 0
+        }
+      })
       return
     }
-    if (method === 'GET' && path === '/api/v1/workflows/agent-options') {
-      await fulfillApi(route, [])
-      return
-    }
-    if (method === 'GET' && path === '/api/v1/strategy-instances') {
-      await fulfillApi(route, { records: [], nextCursor: '', hasMore: false, total: 0 })
-      return
-    }
-    if (method === 'GET' && (path === '/api/v1/strategies' || path === '/api/v1/markets/symbols')) {
-      await fulfillApi(route, { records: [], nextCursor: '', hasMore: false, total: 0 })
-      return
-    }
-    if (
-      method === 'GET' &&
-      [
-        '/api/v1/trading/accounts',
-        '/api/v1/workflow-node-templates',
-        '/api/v1/notification-channels',
-        '/api/v1/workflows'
-      ].includes(path)
-    ) {
-      await fulfillApi(route, [])
-      return
-    }
-    if (method === 'POST' && path === '/api/v1/workflows/validate') {
-      await fulfillApi(route, { valid: true, issues: [] })
-      return
-    }
-    if (method === 'POST' && path === '/api/v1/workflows') {
-      createdPayload = request.postDataJSON() as WorkflowPayload
-      createdDefinition = {
-        id: 42,
-        code: 'e2e-workflow',
-        version: 1,
-        ...createdPayload,
-        isLatest: true,
-        isBuiltin: false,
-        isActive: false,
-        isWorkflowActive: false,
-        activeDefinitionId: null,
-        activeVersion: null,
-        executionCount: 0,
-        createdBy: 1,
-        createdAt
-      }
-      await fulfillApi(route, createdDefinition)
-      return
-    }
-    if (method === 'GET' && path === '/api/v1/workflows/42') {
-      if (createdDefinition) {
-        await fulfillApi(route, createdDefinition)
-        return
-      }
-    }
-
     unexpectedApiCalls.push(`${method} ${path}`)
     await route.fulfill({
       status: 501,
@@ -249,10 +188,7 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
   return {
     unexpectedApiCalls,
     authApiCalls,
-    schedulerApiCalls,
-    get createdPayload() {
-      return createdPayload
-    }
+    schedulerApiCalls
   }
 }
 
@@ -328,51 +264,14 @@ test('匿名访问工作流编辑器时被登录边界拦截', async ({ page }) 
   expect(backend.unexpectedApiCalls).toEqual([])
 })
 
-test('授权用户可以填写基础信息并保存默认工作流', async ({ page }) => {
+test('授权用户访问已撤下工作流路径时回退首页', async ({ page }) => {
   const backend = await installBackendMocks(page, 'authenticated')
 
   await loginAsTestUser(page, '/scheduler/workflow/create')
 
-  await expect(page.getByText('新建工作流定义', { exact: true })).toBeVisible()
-  await page.getByLabel('工作流名称').fill('浏览器门禁工作流')
-  await page.getByLabel('工作流说明').fill('验证工作流编辑器关键保存路径')
-  await page.getByRole('button', { name: '应用', exact: true }).click()
-  await expect(page.getByText('未保存', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: '保存定义', exact: true }).click()
-
-  const detailResponse = page.waitForResponse(
-    (response) =>
-      response.request().method() === 'GET' &&
-      new URL(response.url()).pathname === '/api/v1/workflows/42'
-  )
-  await page.getByRole('button', { name: '离开', exact: true }).click()
-  await detailResponse
-
-  await expect(page).toHaveURL(/\/scheduler\/workflow\/42\/edit$/)
-  await expect(
-    page.getByRole('navigation', { name: 'breadcrumb' }).getByText('编辑工作流定义', {
-      exact: true
-    })
-  ).toBeVisible()
-  await expect(page.getByText('已同步', { exact: true })).toBeVisible()
-
-  const payload = backend.createdPayload
-  expect(payload).not.toBeNull()
-  expect(payload).toMatchObject({
-    displayName: '浏览器门禁工作流',
-    description: '验证工作流编辑器关键保存路径'
-  })
-  expect(payload?.graph.nodes.map((node) => node.type)).toEqual(['start.manual', 'end'])
-  expect(payload?.graph.edges).toHaveLength(1)
-  expect(backend.schedulerApiCalls).toEqual(
-    expect.arrayContaining([
-      'GET /api/v1/workflows/node-definitions',
-      'GET /api/v1/workflows/agent-options',
-      'POST /api/v1/workflows/validate',
-      'POST /api/v1/workflows',
-      'GET /api/v1/workflows/42'
-    ])
-  )
+  await expect(page.getByRole('heading', { name: '系统总览', exact: true })).toBeVisible()
+  await expect(page.getByText('新建工作流定义', { exact: true })).toHaveCount(0)
+  expect(backend.schedulerApiCalls).toEqual([])
   expect(backend.authApiCalls).toEqual(['POST /api/v1/auth/login'])
   expect(backend.unexpectedApiCalls).toEqual([])
 })
