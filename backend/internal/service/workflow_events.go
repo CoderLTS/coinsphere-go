@@ -90,7 +90,13 @@ func (a *App) PublishWorkflowWebhook(ctx context.Context, workflowID int64, secr
 		eventTime := time.Now().UTC()
 		var existing db.WorkflowEventRecord
 		if err := tx.Where("source = ? AND event_id = ?", source, eventID).First(&existing).Error; err == nil {
-			eventTime = existing.EventTime.UTC()
+			var persisted struct {
+				Time time.Time `json:"time"`
+			}
+			if json.Unmarshal([]byte(existing.EventJSON), &persisted) != nil || persisted.Time.IsZero() {
+				return errors.New("load existing webhook event failed")
+			}
+			eventTime = persisted.Time.UTC()
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return errors.New("load existing webhook event failed")
 		}
