@@ -32,7 +32,7 @@ export function fetchHomeOverview() {
 }
 
 export function fetchHomeMeta() {
-  return request.get<{ service: string; version: string }>({
+  return request.get<{ service: string; version: string; sdkMajor: number; pluginCount: number }>({
     url: '/api/v1/home/meta'
   })
 }
