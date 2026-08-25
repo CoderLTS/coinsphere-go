@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/shopspring/decimal"
 )
 
 var objectSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object"}`)
@@ -15,6 +17,16 @@ type testAction struct{}
 
 func (testAction) Execute(context.Context, ActionRequest) (ActionResult, error) {
 	return ActionResult{}, nil
+}
+
+type testStrategy struct{ id string }
+
+func (s testStrategy) Descriptor() StrategyDescriptor {
+	return StrategyDescriptor{ID: s.id, Version: "1.0.0", Name: "Test", ParameterSchema: objectSchema, MinimumLookback: 1}
+}
+
+func (testStrategy) Evaluate(context.Context, EvaluateRequest) (decimal.Decimal, error) {
+	return decimal.Zero, nil
 }
 
 func TestRegistryRejectsCrossPluginNodeConflictWithoutPartialRegistration(t *testing.T) {
@@ -87,7 +99,7 @@ func TestRegistryExposesRegisteredActionRouteAndResultPage(t *testing.T) {
 	routeCalled := false
 	err := registry.RegisterPlugin(PluginDescriptor{
 		ID: "official.test", Name: "Test", Version: "1.0.0",
-		Contributes: []string{"nodes", "apiRoutes", "resultPages"},
+		Contributes: []string{"nodes", "strategies", "apiRoutes", "resultPages"},
 	}, func(registrar Registrar) error {
 		if err := registrar.Action(testNode("official.test.action"), testAction{}); err != nil {
 			return err
@@ -95,6 +107,9 @@ func TestRegistryExposesRegisteredActionRouteAndResultPage(t *testing.T) {
 		if err := registrar.Route(RouteDescriptor{Method: "get", Pattern: "/result", Scope: ScopeResult}, func(http.ResponseWriter, *http.Request, RouteScope) {
 			routeCalled = true
 		}); err != nil {
+			return err
+		}
+		if err := registrar.Strategy(testStrategy{id: "official.test.strategy"}); err != nil {
 			return err
 		}
 		return registrar.ResultPage(ResultPageDescriptor{
@@ -117,6 +132,13 @@ func TestRegistryExposesRegisteredActionRouteAndResultPage(t *testing.T) {
 	}
 	if _, ok := registry.ResultPage("official.test", "result"); !ok {
 		t.Fatal("registered result page is unavailable")
+	}
+	if desc, _, ok := registry.Strategy("official.test.strategy"); !ok || desc.MinimumLookback != 1 {
+		t.Fatal("registered strategy is unavailable")
+	}
+	routes := registry.Routes()
+	if len(routes) != 1 || routes[0].PluginID != "official.test" || routes[0].Descriptor.Pattern != "/result" {
+		t.Fatalf("registered route catalog = %#v", routes)
 	}
 	nodes := registry.Nodes()
 	if len(nodes) != 1 || nodes[0].Type != "official.test.action" {

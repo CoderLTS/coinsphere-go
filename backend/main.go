@@ -99,6 +99,9 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	if err := official.RegisterAll(plugins, cfg.Workflow.HTTPAllowedHosts); err != nil {
 		return fmt.Errorf("register official plugins: %w", err)
 	}
+	if err := official.RegisterQuant(plugins, gdb); err != nil {
+		return fmt.Errorf("register Quant plugin: %w", err)
+	}
 	if err := pluginregistry.RegisterAll(plugins); err != nil {
 		return fmt.Errorf("register plugins: %w", err)
 	}

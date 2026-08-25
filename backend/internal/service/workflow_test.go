@@ -194,6 +194,12 @@ func TestWorkflowGraphValidationAndLifecycle(t *testing.T) {
 	if _, _, _, err := validateWorkflowCloudEvent(event); err == nil {
 		t.Fatal("non-UTC CloudEvent time was accepted")
 	}
+	event.SetTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	event.SetSubject("binance:spot:BTCUSDT:1h")
+	if !workflowEventTriggerMatches(json.RawMessage(`{"types":["test.event"],"source":"urn:test","subject":"binance:spot:BTCUSDT:1h"}`), event) ||
+		workflowEventTriggerMatches(json.RawMessage(`{"types":["test.event"],"subject":"binance:spot:ETHUSDT:1h"}`), event) {
+		t.Fatal("event subject filter did not select the exact stream")
+	}
 }
 
 func workflowTestApp(t *testing.T) *App {

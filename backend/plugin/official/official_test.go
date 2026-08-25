@@ -39,6 +39,24 @@ func TestOfficialPluginRegistration(t *testing.T) {
 	if _, ok := registry.ResultPage(aiPluginID, "calls"); !ok {
 		t.Fatal("AI result page was not registered")
 	}
+	if err := RegisterQuant(registry, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := registry.Trigger("official.quant.binance_candles"); !ok {
+		t.Fatal("Quant candle trigger was not registered")
+	}
+	if _, _, ok := registry.Action("official.quant.backtest"); !ok {
+		t.Fatal("Quant backtest action was not registered")
+	}
+	if _, _, ok := registry.Strategy(smaStrategyID); !ok {
+		t.Fatal("Quant strategy was not registered")
+	}
+	if _, ok := registry.ResultPage(quantPluginID, "quant"); !ok {
+		t.Fatal("Quant result page was not registered")
+	}
+	if routes := registry.Routes(); len(routes) != 4 || routes[0].PluginID != quantPluginID {
+		t.Fatalf("Quant routes = %#v", routes)
+	}
 }
 
 func TestOfficialNetworkPolicy(t *testing.T) {

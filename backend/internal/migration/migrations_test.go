@@ -17,7 +17,7 @@ import (
 )
 
 const postgresDSNEnv = "COINSPHERE_TEST_POSTGRES_DSN"
-const latestMigrationVersion = 7
+const latestMigrationVersion = 8
 
 var postgresSchemaSequence atomic.Uint64
 
@@ -35,7 +35,7 @@ func TestInitialMigrationLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply initial migration: %v", err)
 	}
-	if len(results) != 7 || results[len(results)-1].Version != latestMigrationVersion || results[len(results)-1].Direction != "up" {
+	if len(results) != latestMigrationVersion || results[len(results)-1].Version != latestMigrationVersion || results[len(results)-1].Direction != "up" {
 		t.Fatalf("migration results = %#v", results)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err != nil {
@@ -43,6 +43,7 @@ func TestInitialMigrationLifecycle(t *testing.T) {
 	}
 	assertCurrentTables(t, database)
 	assertTimescaleExtension(t, database)
+	assertQuantSchema(t, database)
 
 	if results, err = runner.Up(context.Background(), 0); err != nil || len(results) != 0 {
 		t.Fatalf("repeat migration results=%#v err=%v", results, err)
@@ -233,7 +234,7 @@ func TestWorkflowHistoryMigrationDownRejectsArtifacts(t *testing.T) {
 func TestWorkflowEventMigrationDownRejectsEvents(t *testing.T) {
 	database := openPostgresSchema(t)
 	runner, _ := New(database)
-	if _, err := runner.Up(context.Background(), latestMigrationVersion); err != nil {
+	if _, err := runner.Up(context.Background(), 7); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
 	if _, err := database.Exec(`INSERT INTO workflow_event_records
@@ -244,6 +245,26 @@ func TestWorkflowEventMigrationDownRejectsEvents(t *testing.T) {
 	}
 	if _, err := runner.Down(context.Background(), 1); err == nil {
 		t.Fatal("rollback removed workflow event data")
+	}
+	current, _, err := runner.Versions(context.Background())
+	if err != nil || current != 7 {
+		t.Fatalf("failed rollback changed migration version: current=%d err=%v", current, err)
+	}
+}
+
+func TestQuantMigrationDownRejectsMarketData(t *testing.T) {
+	database := openPostgresSchema(t)
+	runner, _ := New(database)
+	if _, err := runner.Up(context.Background(), latestMigrationVersion); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO plugin_quant.instruments
+        (market, symbol, base_asset, quote_asset, status, price_tick, quantity_step, min_quantity)
+        VALUES ('spot', 'BTCUSDT', 'BTC', 'USDT', 'TRADING', 0.01, 0.00001, 0.00001)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.Down(context.Background(), 1); err == nil {
+		t.Fatal("rollback removed Quant data")
 	}
 	current, _, err := runner.Versions(context.Background())
 	if err != nil || current != latestMigrationVersion {
@@ -294,6 +315,8 @@ func TestInitialMigrationConstraintsAndIndexes(t *testing.T) {
 		`INSERT INTO users (username) VALUES ('')`,
 		`INSERT INTO audit_records (request_id, action, resource_path, outcome, status_code) VALUES ('bad id', 'test', '/', 'success', 200)`,
 		`INSERT INTO audit_records (request_id, action, resource_path, outcome, status_code) VALUES ('valid-id', 'test', '/', 'unknown', 200)`,
+		`INSERT INTO plugin_quant.instruments (market, symbol, base_asset, quote_asset, status, price_tick, quantity_step, min_quantity) VALUES ('live', 'BTCUSDT', 'BTC', 'USDT', 'TRADING', 0.01, 0.001, 0.001)`,
+		`INSERT INTO plugin_quant.candles (market, instrument, interval, open_time, close_time, open, high, low, close, volume, source_event_id) VALUES ('spot', 'BTCUSDT', '1h', '2026-01-01T00:00:00Z', '2026-01-01T00:59:59Z', 100, 90, 80, 95, 1, 'invalid-price')`,
 	} {
 		if _, err := database.Exec(statement); err == nil {
 			t.Fatalf("constraint accepted invalid statement: %s", statement)
@@ -321,7 +344,7 @@ func TestValidateCurrentRejectsDatabaseAhead(t *testing.T) {
 	if _, err := runner.Up(context.Background(), 0); err != nil {
 		t.Fatalf("apply initial migration: %v", err)
 	}
-	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES (8, TRUE)`); err != nil {
+	if _, err := database.Exec(`INSERT INTO schema_migrations (version_id, is_applied) VALUES ($1, TRUE)`, latestMigrationVersion+1); err != nil {
 		t.Fatalf("record newer migration: %v", err)
 	}
 	if err := runner.ValidateCurrent(context.Background()); err == nil {
@@ -381,6 +404,29 @@ SELECT
 	}
 }
 
+func assertQuantSchema(t *testing.T, database *sql.DB) {
+	t.Helper()
+	for _, table := range []string{"instruments", "candles", "backtests"} {
+		var exists bool
+		if err := database.QueryRow(`SELECT to_regclass($1) IS NOT NULL`, "plugin_quant."+table).Scan(&exists); err != nil || !exists {
+			t.Fatalf("Quant table plugin_quant.%s exists=%t err=%v", table, exists, err)
+		}
+	}
+	var hypertable bool
+	if err := database.QueryRow(`SELECT EXISTS (
+        SELECT 1 FROM timescaledb_information.hypertables
+        WHERE hypertable_schema = 'plugin_quant' AND hypertable_name = 'candles'
+    )`).Scan(&hypertable); err != nil || !hypertable {
+		t.Fatalf("Quant candles hypertable=%t err=%v", hypertable, err)
+	}
+	for _, index := range []string{"ix_quant_candles_lookup", "ix_quant_backtests_created", "ix_quant_backtests_scope"} {
+		var count int
+		if err := database.QueryRow(`SELECT COUNT(*) FROM pg_indexes WHERE schemaname = 'plugin_quant' AND indexname = $1`, index).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("Quant index %s count=%d err=%v", index, count, err)
+		}
+	}
+}
+
 func assertIndexes(t *testing.T, database *sql.DB, names []string) {
 	t.Helper()
 	for _, name := range names {
@@ -412,8 +458,20 @@ func openPostgresSchema(t *testing.T) *sql.DB {
 		_ = admin.Close()
 		t.Fatalf("ping PostgreSQL test database: %v", err)
 	}
+	lock, err := admin.Conn(context.Background())
+	if err != nil {
+		_ = admin.Close()
+		t.Fatalf("reserve PostgreSQL test connection: %v", err)
+	}
+	if _, err := lock.ExecContext(context.Background(), "SELECT pg_advisory_lock(671908427)"); err != nil {
+		_ = lock.Close()
+		_ = admin.Close()
+		t.Fatalf("lock shared plugin test schema: %v", err)
+	}
 	schema := fmt.Sprintf("migration_test_%d_%d_%d", os.Getpid(), time.Now().UnixNano(), postgresSchemaSequence.Add(1))
 	if _, err := admin.Exec("CREATE SCHEMA " + pgx.Identifier{schema}.Sanitize()); err != nil {
+		_, _ = lock.ExecContext(context.Background(), "SELECT pg_advisory_unlock(671908427)")
+		_ = lock.Close()
 		_ = admin.Close()
 		t.Fatalf("create PostgreSQL test schema: %v", err)
 	}
@@ -424,12 +482,17 @@ func openPostgresSchema(t *testing.T) *sql.DB {
 	if err := database.Ping(); err != nil {
 		_ = database.Close()
 		_, _ = admin.Exec("DROP SCHEMA " + pgx.Identifier{schema}.Sanitize() + " CASCADE")
+		_, _ = lock.ExecContext(context.Background(), "SELECT pg_advisory_unlock(671908427)")
+		_ = lock.Close()
 		_ = admin.Close()
 		t.Fatalf("ping PostgreSQL test schema: %v", err)
 	}
 	t.Cleanup(func() {
 		_ = database.Close()
+		_, _ = admin.Exec("DROP SCHEMA IF EXISTS plugin_quant CASCADE")
 		_, _ = admin.Exec("DROP SCHEMA " + pgx.Identifier{schema}.Sanitize() + " CASCADE")
+		_, _ = lock.ExecContext(context.Background(), "SELECT pg_advisory_unlock(671908427)")
+		_ = lock.Close()
 		_ = admin.Close()
 	})
 	return database

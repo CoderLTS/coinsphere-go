@@ -1,6 +1,6 @@
 # CoinSphere Go 后端
 
-当前后端提供认证、RBAC、系统管理、监控、可信插件生命周期，以及 P1-A/P1-B 工作流修订、Schema 图校验、密钥绑定和生命周期 API。批次执行、Quant、Paper、Testnet/Live、Private Executor 和 Python Worker 不属于当前运行面。
+当前后端提供认证、RBAC、系统管理、监控、可信插件生命周期、完整工作流执行，以及 Binance 公共行情、可信 Go 策略和回测。Paper、Testnet/Live、Private Executor 和 Python Worker 不属于当前运行面。
 
 ## 启动
 
@@ -23,9 +23,12 @@ go run .
 - `i18n_texts`、`audit_records`
 - `plugin_installations`、`plugin_references`
 - `workflows`、`workflow_revisions`、`workflow_secret_bindings`、`workflow_runtimes`
+- `execution_batches`、`workflow_node_runs`、`workflow_checkpoints`、`workflow_node_states`
+- `workflow_event_records`、`workflow_event_deliveries`、`workflow_event_outbox`、`workflow_human_tasks`
+- `plugin_quant.instruments`、`plugin_quant.candles` hypertable、`plugin_quant.backtests`
 - Goose 管理的 `schema_migrations`
 
-基线启用 TimescaleDB 扩展，但不创建 hypertable。项目不提供旧数据库转换或兼容路径；重置和回滚步骤见[数据库迁移手册](../docs/runbooks/database-migrations.md)。
+基线启用 TimescaleDB，并为 Quant 闭合 K 线创建 hypertable。项目不提供旧数据库转换或兼容路径；重置和回滚步骤见[数据库迁移手册](../docs/runbooks/database-migrations.md)。
 
 ## 命令
 

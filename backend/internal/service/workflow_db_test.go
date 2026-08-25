@@ -17,6 +17,7 @@ import (
 	"coinsphere/backend/internal/db"
 	"coinsphere/backend/internal/migration"
 	"coinsphere/backend/internal/security"
+	"coinsphere/backend/plugin/official"
 	"coinsphere/backend/plugin/sdk"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/jackc/pgx/v5"
@@ -147,6 +148,27 @@ func TestWorkflowRevisionAndLifecycleTransaction(t *testing.T) {
 		ExpectedActiveRevisionID: detail.ActiveRevisionID, Graph: jsonMessage(blankWorkflowGraph),
 	}, principal); !errors.Is(err, ErrConflict) {
 		t.Fatalf("archived save error = %v", err)
+	}
+}
+
+func TestQuantWorkflowTemplatesCreateAndValidate(t *testing.T) {
+	app, _, ownerID := openWorkflowTestApp(t)
+	principal := &Principal{User: &db.SystemUser{ID: ownerID}}
+	for _, template := range []struct {
+		key  string
+		mode string
+	}{
+		{WorkflowTemplateQuantData, WorkflowModeStream},
+		{WorkflowTemplateQuantLive, WorkflowModeEvent},
+		{WorkflowTemplateBacktest, WorkflowModeBatch},
+	} {
+		workflow, err := app.CreateWorkflow(context.Background(), WorkflowCreatePayload{Name: template.key, TemplateKey: template.key}, principal)
+		if err != nil || workflow.Mode != template.mode {
+			t.Fatalf("template %s workflow=%#v err=%v", template.key, workflow, err)
+		}
+		if _, err := app.GetWorkflowRevision(context.Background(), workflow.ID, workflow.ActiveRevisionID); err != nil {
+			t.Fatalf("template %s revision: %v", template.key, err)
+		}
 	}
 }
 
@@ -611,6 +633,19 @@ func TestWorkflowDiagnosticReplayReusesSideEffectCheckpoint(t *testing.T) {
 func TestWorkflowTriggerBackpressureAndRestartRecovery(t *testing.T) {
 	app, database, ownerID := openWorkflowTestApp(t)
 	principal := &Principal{User: &db.SystemUser{ID: ownerID}}
+	eventWorkflow, err := app.CreateWorkflow(context.Background(), WorkflowCreatePayload{Name: "Stream events", TemplateKey: WorkflowTemplateEvent}, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventGraph := strings.Replace(eventWorkflowGraph, `"example.event"`, `"test.stream"`, 1)
+	if _, err := app.SaveWorkflowRevision(context.Background(), eventWorkflow.ID, WorkflowRevisionSavePayload{
+		ExpectedActiveRevisionID: eventWorkflow.ActiveRevisionID, Graph: jsonMessage(eventGraph),
+	}, principal); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.ApplyWorkflowLifecycle(context.Background(), eventWorkflow.ID, WorkflowLifecyclePayload{Action: "start"}); err != nil {
+		t.Fatal(err)
+	}
 	trigger := &workflowBackpressureTrigger{started: make(chan int32, 2), emitted: make(chan string, 4)}
 	register := func(target *App) {
 		if err := target.Plugins.RegisterPlugin(sdk.PluginDescriptor{
@@ -683,6 +718,16 @@ func TestWorkflowTriggerBackpressureAndRestartRecovery(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("trigger did not resume after backlog release")
+	}
+	var streamDeliveries, eventDeliveries int64
+	if err := database.QueryRow(`SELECT COUNT(*) FROM workflow_event_deliveries WHERE workflow_id = $1`, workflow.ID).Scan(&streamDeliveries); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRow(`SELECT COUNT(*) FROM workflow_event_deliveries WHERE workflow_id = $1`, eventWorkflow.ID).Scan(&eventDeliveries); err != nil {
+		t.Fatal(err)
+	}
+	if streamDeliveries != 2 || eventDeliveries != 2 {
+		t.Fatalf("trigger deliveries stream=%d event=%d", streamDeliveries, eventDeliveries)
 	}
 	if _, err := app.ApplyWorkflowLifecycle(context.Background(), workflow.ID, WorkflowLifecyclePayload{Action: "pause"}); err != nil {
 		t.Fatal(err)
@@ -1172,8 +1217,20 @@ func openWorkflowTestApp(t *testing.T) (*App, *sql.DB, int64) {
 		t.Fatal(err)
 	}
 	admin := stdlib.OpenDB(*config)
+	lock, err := admin.Conn(context.Background())
+	if err != nil {
+		_ = admin.Close()
+		t.Fatal(err)
+	}
+	if _, err := lock.ExecContext(context.Background(), "SELECT pg_advisory_lock(671908427)"); err != nil {
+		_ = lock.Close()
+		_ = admin.Close()
+		t.Fatal(err)
+	}
 	schema := fmt.Sprintf("workflow_service_test_%d_%d_%d", os.Getpid(), time.Now().UnixNano(), workflowSchemaSequence.Add(1))
 	if _, err := admin.Exec("CREATE SCHEMA " + pgx.Identifier{schema}.Sanitize()); err != nil {
+		_, _ = lock.ExecContext(context.Background(), "SELECT pg_advisory_unlock(671908427)")
+		_ = lock.Close()
 		_ = admin.Close()
 		t.Fatal(err)
 	}
@@ -1185,7 +1242,10 @@ func openWorkflowTestApp(t *testing.T) (*App, *sql.DB, int64) {
 	database := stdlib.OpenDB(*testConfig)
 	t.Cleanup(func() {
 		_ = database.Close()
+		_, _ = admin.Exec("DROP SCHEMA IF EXISTS plugin_quant CASCADE")
 		_, _ = admin.Exec("DROP SCHEMA " + pgx.Identifier{schema}.Sanitize() + " CASCADE")
+		_, _ = lock.ExecContext(context.Background(), "SELECT pg_advisory_unlock(671908427)")
+		_ = lock.Close()
 		_ = admin.Close()
 	})
 	runner, err := migration.New(database)
@@ -1209,6 +1269,9 @@ func openWorkflowTestApp(t *testing.T) (*App, *sql.DB, int64) {
 		t.Fatal(err)
 	}
 	app.DB = gdb
+	if err := official.RegisterQuant(app.Plugins, gdb); err != nil {
+		t.Fatal(err)
+	}
 	app.Cipher = cipher
 	app.ArtifactRoot = t.TempDir()
 	return app, database, ownerID

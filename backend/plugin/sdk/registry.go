@@ -30,6 +30,7 @@ type RegisterFunc func(Registrar) error
 type Registrar interface {
 	Action(NodeDescriptor, ActionHandler) error
 	Trigger(NodeDescriptor, TriggerHandler) error
+	Strategy(Strategy) error
 	ResultPage(ResultPageDescriptor) error
 	Route(RouteDescriptor, ScopedRouteHandler) error
 }
@@ -37,6 +38,7 @@ type Registrar interface {
 type Registry struct {
 	plugins     map[string]PluginDescriptor
 	nodes       map[string]registeredNode
+	strategies  map[string]registeredStrategy
 	resultPages map[string]ResultPageDescriptor
 	routes      map[string]ScopedRouteHandler
 }
@@ -48,9 +50,16 @@ type registeredNode struct {
 	trigger  TriggerHandler
 }
 
+type registeredStrategy struct {
+	pluginID string
+	desc     StrategyDescriptor
+	strategy Strategy
+}
+
 func NewRegistry() *Registry {
 	return &Registry{
 		plugins: make(map[string]PluginDescriptor), nodes: make(map[string]registeredNode),
+		strategies:  make(map[string]registeredStrategy),
 		resultPages: make(map[string]ResultPageDescriptor), routes: make(map[string]ScopedRouteHandler),
 	}
 }
@@ -78,6 +87,11 @@ func (r *Registry) RegisterPlugin(plugin PluginDescriptor, register RegisterFunc
 			return fmt.Errorf("node type %q conflicts between plugins %q and %q", node.desc.Type, previous.pluginID, plugin.ID)
 		}
 	}
+	for _, strategy := range collector.strategies {
+		if previous, exists := r.strategies[strategy.desc.ID]; exists {
+			return fmt.Errorf("strategy %q conflicts between plugins %q and %q", strategy.desc.ID, previous.pluginID, plugin.ID)
+		}
+	}
 	for key := range collector.resultPages {
 		if _, exists := r.resultPages[key]; exists {
 			return fmt.Errorf("duplicate result page %q", key)
@@ -92,6 +106,9 @@ func (r *Registry) RegisterPlugin(plugin PluginDescriptor, register RegisterFunc
 	r.plugins[plugin.ID] = plugin
 	for _, node := range collector.nodes {
 		r.nodes[node.desc.Type] = node
+	}
+	for _, strategy := range collector.strategies {
+		r.strategies[strategy.desc.ID] = strategy
 	}
 	for key, page := range collector.resultPages {
 		r.resultPages[key] = page
@@ -118,6 +135,25 @@ func (r *Registry) Trigger(nodeType string) (NodeDescriptor, TriggerHandler, boo
 	return node.desc, node.trigger, true
 }
 
+func (r *Registry) Strategy(strategyID string) (StrategyDescriptor, Strategy, bool) {
+	strategy, ok := r.strategies[strategyID]
+	if !ok {
+		return StrategyDescriptor{}, nil, false
+	}
+	return strategy.desc, strategy.strategy, true
+}
+
+func (r *Registry) Strategies() []StrategyDescriptor {
+	strategies := make([]StrategyDescriptor, 0, len(r.strategies))
+	for _, strategy := range r.strategies {
+		desc := strategy.desc
+		desc.ParameterSchema = append(json.RawMessage(nil), desc.ParameterSchema...)
+		strategies = append(strategies, desc)
+	}
+	sort.Slice(strategies, func(i, j int) bool { return strategies[i].ID < strategies[j].ID })
+	return strategies
+}
+
 func (r *Registry) ResultPage(pluginID, pageKey string) (ResultPageDescriptor, bool) {
 	page, ok := r.resultPages[pluginID+"/"+pageKey]
 	return page, ok
@@ -126,6 +162,31 @@ func (r *Registry) ResultPage(pluginID, pageKey string) (ResultPageDescriptor, b
 func (r *Registry) Route(pluginID string, desc RouteDescriptor) (ScopedRouteHandler, bool) {
 	handler, ok := r.routes[routeKey(pluginID, desc)]
 	return handler, ok
+}
+
+func (r *Registry) Routes() []RegisteredRoute {
+	routes := make([]RegisteredRoute, 0, len(r.routes))
+	for _, plugin := range r.Plugins() {
+		prefix := plugin.ID + "/"
+		for key, handler := range r.routes {
+			if !strings.HasPrefix(key, prefix) {
+				continue
+			}
+			rest := strings.TrimPrefix(key, prefix)
+			parts := strings.SplitN(rest, "/", 2)
+			methodPattern := strings.SplitN(parts[1], " ", 2)
+			routes = append(routes, RegisteredRoute{
+				PluginID:   plugin.ID,
+				Descriptor: RouteDescriptor{Scope: ScopeKind(parts[0]), Method: methodPattern[0], Pattern: methodPattern[1]},
+				Handler:    handler,
+			})
+		}
+	}
+	sort.Slice(routes, func(i, j int) bool {
+		left, right := routes[i], routes[j]
+		return left.PluginID+left.Descriptor.Method+left.Descriptor.Pattern < right.PluginID+right.Descriptor.Method+right.Descriptor.Pattern
+	})
+	return routes
 }
 
 func (r *Registry) Plugins() []PluginDescriptor {
@@ -158,6 +219,7 @@ type registrationCollector struct {
 	declared    map[string]bool
 	used        map[string]bool
 	nodes       []registeredNode
+	strategies  []registeredStrategy
 	resultPages map[string]ResultPageDescriptor
 	routes      map[string]ScopedRouteHandler
 }
@@ -180,6 +242,33 @@ func (c *registrationCollector) Trigger(desc NodeDescriptor, handler TriggerHand
 		return fmt.Errorf("trigger node %q must use kind %q", desc.Type, NodeKindTrigger)
 	}
 	return c.addNode("triggers", registeredNode{pluginID: c.plugin.ID, desc: desc, trigger: handler})
+}
+
+func (c *registrationCollector) Strategy(strategy Strategy) error {
+	if strategy == nil {
+		return errors.New("strategy is required")
+	}
+	desc := strategy.Descriptor()
+	if !contributionKeyPattern.MatchString(desc.ID) || !strings.Contains(desc.ID, ".") {
+		return errors.New("strategy id must be a dotted lowercase key")
+	}
+	if _, err := semver.StrictNewVersion(desc.Version); err != nil {
+		return fmt.Errorf("strategy %q version must be strict SemVer", desc.ID)
+	}
+	if strings.TrimSpace(desc.Name) == "" || desc.MinimumLookback < 1 {
+		return fmt.Errorf("strategy %q requires a name and positive minimum lookback", desc.ID)
+	}
+	if err := validateSchema("parameterSchema", desc.ParameterSchema, true); err != nil {
+		return fmt.Errorf("strategy %q: %w", desc.ID, err)
+	}
+	for _, existing := range c.strategies {
+		if existing.desc.ID == desc.ID {
+			return fmt.Errorf("duplicate strategy %q", desc.ID)
+		}
+	}
+	c.markUsed("strategies")
+	c.strategies = append(c.strategies, registeredStrategy{pluginID: c.plugin.ID, desc: desc, strategy: strategy})
+	return nil
 }
 
 func (c *registrationCollector) addNode(contribution string, node registeredNode) error {

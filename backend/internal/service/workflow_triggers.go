@@ -11,6 +11,7 @@ import (
 	"coinsphere/backend/internal/db"
 	"coinsphere/backend/plugin/sdk"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -29,7 +30,7 @@ func (e workflowTriggerEmitter) Emit(ctx context.Context, event cloudevents.Even
 	ticker := time.NewTicker(batchPollInterval)
 	defer ticker.Stop()
 	for {
-		_, err := e.app.persistWorkflowEvent(ctx, event, e.workflowID)
+		err := e.app.publishWorkflowTriggerEvent(ctx, event, e.workflowID)
 		if err == nil {
 			return nil
 		}
@@ -42,6 +43,16 @@ func (e workflowTriggerEmitter) Emit(ctx context.Context, event cloudevents.Even
 		case <-ticker.C:
 		}
 	}
+}
+
+func (a *App) publishWorkflowTriggerEvent(ctx context.Context, event cloudevents.Event, workflowID int64) error {
+	return a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		record, err := a.persistWorkflowEventTx(tx, event, workflowID)
+		if err != nil {
+			return err
+		}
+		return a.deliverWorkflowEventTx(tx, record, event, 0, time.Now().UTC())
+	})
 }
 
 type workflowTriggerState struct {

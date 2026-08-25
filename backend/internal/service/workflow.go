@@ -28,6 +28,9 @@ const (
 	WorkflowTemplateFailure   = "failure-handler"
 	WorkflowTemplateWebhook   = "connector-webhook"
 	WorkflowTemplateWebSocket = "connector-websocket"
+	WorkflowTemplateQuantData = "quant-market-data"
+	WorkflowTemplateQuantLive = "quant-strategy"
+	WorkflowTemplateBacktest  = "quant-backtest"
 	maxWorkflowGraphBytes     = 1 << 20
 )
 
@@ -94,6 +97,43 @@ const webSocketWorkflowGraph = `{
   ],
   "edges": [
     {"edgeId":"websocket-to-end","sourceNodeInstanceId":"websocket-trigger","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}
+  ]
+}`
+
+const quantMarketDataWorkflowGraph = `{
+  "schemaVersion": 1,
+  "nodes": [
+    {"nodeInstanceId":"market-stream","nodeType":"official.quant.binance_candles","nodeVersion":"1.0.0","config":{"market":"spot","instrument":"BTCUSDT","interval":"1h"},"position":{"x":140,"y":220}},
+    {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":520,"y":220}}
+  ],
+  "edges": [
+    {"edgeId":"market-to-end","sourceNodeInstanceId":"market-stream","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}
+  ]
+}`
+
+const quantStrategyWorkflowGraph = `{
+  "schemaVersion": 1,
+  "nodes": [
+    {"nodeInstanceId":"candle-event","nodeType":"core.event","nodeVersion":"1.0.0","config":{"types":["market.candle.closed"],"source":"urn:coinsphere:plugin:official.quant","subject":"binance:spot:BTCUSDT:1h"},"position":{"x":100,"y":220}},
+    {"nodeInstanceId":"strategy","nodeType":"official.quant.evaluate","nodeVersion":"1.0.0","config":{"strategyId":"official.quant.sma-crossover","market":"spot","instrument":"BTCUSDT","interval":"1h","parameters":{"fastPeriod":3,"slowPeriod":5}},"inputBindings":{"eventTime":{"kind":"cel","expression":"event.time"}},"position":{"x":400,"y":220}},
+    {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":700,"y":220}}
+  ],
+  "edges": [
+    {"edgeId":"event-to-strategy","sourceNodeInstanceId":"candle-event","sourcePort":"out","targetNodeInstanceId":"strategy","targetPort":"in"},
+    {"edgeId":"strategy-to-end","sourceNodeInstanceId":"strategy","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}
+  ]
+}`
+
+const quantBacktestWorkflowGraph = `{
+  "schemaVersion": 1,
+  "nodes": [
+    {"nodeInstanceId":"manual-trigger","nodeType":"core.manual","nodeVersion":"1.0.0","config":{},"position":{"x":100,"y":220}},
+    {"nodeInstanceId":"backtest","nodeType":"official.quant.backtest","nodeVersion":"1.0.0","config":{"strategyId":"official.quant.sma-crossover","market":"spot","instrument":"BTCUSDT","interval":"1h","startTime":"2026-01-01T00:00:00Z","endTime":"2026-02-01T00:00:00Z","initialCapital":"10000","feeRate":"0.001","slippageRate":"0.0005","parameters":{"fastPeriod":3,"slowPeriod":5}},"position":{"x":400,"y":220}},
+    {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":700,"y":220}}
+  ],
+  "edges": [
+    {"edgeId":"manual-to-backtest","sourceNodeInstanceId":"manual-trigger","sourcePort":"out","targetNodeInstanceId":"backtest","targetPort":"in"},
+    {"edgeId":"backtest-to-end","sourceNodeInstanceId":"backtest","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}
   ]
 }`
 
@@ -166,6 +206,9 @@ func (a *App) ListWorkflowTemplates() []WorkflowTemplate {
 		{Key: WorkflowTemplateFailure, Name: "Failure handler", Mode: WorkflowModeEvent, Description: "Standard workflow failure trigger connected to an end node."},
 		{Key: WorkflowTemplateWebhook, Name: "Connector webhook", Mode: WorkflowModeBatch, Description: "Authenticated webhook trigger connected to an end node."},
 		{Key: WorkflowTemplateWebSocket, Name: "Connector WebSocket", Mode: WorkflowModeStream, Description: "Public WebSocket stream trigger connected to an end node."},
+		{Key: WorkflowTemplateQuantData, Name: "Shared Binance market data", Mode: WorkflowModeStream, Description: "Shared public closed-candle collection for Spot or USD-M."},
+		{Key: WorkflowTemplateQuantLive, Name: "Live strategy evaluation", Mode: WorkflowModeEvent, Description: "Evaluate a trusted Go strategy for each matching closed candle."},
+		{Key: WorkflowTemplateBacktest, Name: "Strategy backtest", Mode: WorkflowModeBatch, Description: "Run a deterministic closed-candle backtest in the compute pool."},
 	}
 }
 
@@ -184,7 +227,9 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 	}
 	if templateKey != WorkflowTemplateBlank && templateKey != WorkflowTemplateSchedule &&
 		templateKey != WorkflowTemplateEvent && templateKey != WorkflowTemplateFailure &&
-		templateKey != WorkflowTemplateWebhook && templateKey != WorkflowTemplateWebSocket {
+		templateKey != WorkflowTemplateWebhook && templateKey != WorkflowTemplateWebSocket &&
+		templateKey != WorkflowTemplateQuantData && templateKey != WorkflowTemplateQuantLive &&
+		templateKey != WorkflowTemplateBacktest {
 		return WorkflowDetail{}, fmt.Errorf("unknown workflow template %q", templateKey)
 	}
 	if principal == nil || principal.User == nil || principal.User.ID <= 0 {
@@ -201,6 +246,12 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 		templateGraph = webhookWorkflowGraph
 	} else if templateKey == WorkflowTemplateWebSocket {
 		templateGraph = webSocketWorkflowGraph
+	} else if templateKey == WorkflowTemplateQuantData {
+		templateGraph = quantMarketDataWorkflowGraph
+	} else if templateKey == WorkflowTemplateQuantLive {
+		templateGraph = quantStrategyWorkflowGraph
+	} else if templateKey == WorkflowTemplateBacktest {
+		templateGraph = quantBacktestWorkflowGraph
 	}
 	graph, err := a.validateWorkflowGraph(json.RawMessage(templateGraph))
 	if err != nil {
