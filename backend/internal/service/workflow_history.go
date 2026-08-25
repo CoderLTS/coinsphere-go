@@ -213,7 +213,7 @@ func (a *App) cleanupWorkflowHistory(ctx context.Context, now time.Time) error {
 SELECT eb.id FROM execution_batches eb
 JOIN workflows w ON w.id = eb.workflow_id
 WHERE eb.status IN ('succeeded','failed','cancelled')
-  AND eb.completed_at < ? - make_interval(days => w.retention_days)`
+  AND eb.completed_at < CAST(? AS TIMESTAMPTZ) - make_interval(days => w.retention_days)`
 		var candidateDigests []string
 		if err := tx.Raw(`SELECT DISTINCT r.artifact_sha256 FROM workflow_artifact_refs r JOIN workflow_checkpoints c ON c.id = r.checkpoint_id WHERE c.batch_id IN (`+eligible+`)`, now).Scan(&candidateDigests).Error; err != nil {
 			return err
