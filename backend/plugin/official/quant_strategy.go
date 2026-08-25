@@ -66,13 +66,17 @@ func candleCloseAverage(candles []sdk.Candle) decimal.Decimal {
 }
 
 func validateStrategyParameters(desc sdk.StrategyDescriptor, parameters json.RawMessage) error {
-	var value any
-	if json.Unmarshal(parameters, &value) != nil {
+	value, err := jsonschema.UnmarshalJSON(bytes.NewReader(parameters))
+	if err != nil {
 		return errors.New("strategy parameters must be valid JSON")
+	}
+	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(desc.ParameterSchema))
+	if err != nil {
+		return errors.New("strategy parameter schema is invalid")
 	}
 	compiler := jsonschema.NewCompiler()
 	compiler.DefaultDraft(jsonschema.Draft2020)
-	if err := compiler.AddResource("parameters.json", desc.ParameterSchema); err != nil {
+	if err := compiler.AddResource("parameters.json", document); err != nil {
 		return errors.New("strategy parameter schema is invalid")
 	}
 	schema, err := compiler.Compile("parameters.json")

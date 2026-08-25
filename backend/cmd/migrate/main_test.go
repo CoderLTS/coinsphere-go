@@ -71,8 +71,20 @@ func migrationCommandDatabase(t *testing.T) (string, *sql.DB) {
 		t.Fatalf("parse PostgreSQL test DSN: %v", err)
 	}
 	admin := stdlib.OpenDB(*config)
+	lock, err := admin.Conn(context.Background())
+	if err != nil {
+		_ = admin.Close()
+		t.Fatalf("reserve migration command connection: %v", err)
+	}
+	if _, err := lock.ExecContext(context.Background(), "SELECT pg_advisory_lock(671908427)"); err != nil {
+		_ = lock.Close()
+		_ = admin.Close()
+		t.Fatalf("lock shared Quant test schema: %v", err)
+	}
 	schema := fmt.Sprintf("migrate_command_test_%d_%d", os.Getpid(), time.Now().UnixNano())
 	if _, err := admin.Exec("CREATE SCHEMA " + pgx.Identifier{schema}.Sanitize()); err != nil {
+		_, _ = lock.ExecContext(context.Background(), "SELECT pg_advisory_unlock(671908427)")
+		_ = lock.Close()
 		_ = admin.Close()
 		t.Fatalf("create migration command schema: %v", err)
 	}
@@ -85,12 +97,17 @@ func migrationCommandDatabase(t *testing.T) (string, *sql.DB) {
 	if err := database.Ping(); err != nil {
 		_ = database.Close()
 		_, _ = admin.Exec("DROP SCHEMA " + pgx.Identifier{schema}.Sanitize() + " CASCADE")
+		_, _ = lock.ExecContext(context.Background(), "SELECT pg_advisory_unlock(671908427)")
+		_ = lock.Close()
 		_ = admin.Close()
 		t.Fatalf("ping migration command schema: %v", err)
 	}
 	t.Cleanup(func() {
 		_ = database.Close()
+		_, _ = admin.Exec("DROP SCHEMA IF EXISTS plugin_quant CASCADE")
 		_, _ = admin.Exec("DROP SCHEMA " + pgx.Identifier{schema}.Sanitize() + " CASCADE")
+		_, _ = lock.ExecContext(context.Background(), "SELECT pg_advisory_unlock(671908427)")
+		_ = lock.Close()
 		_ = admin.Close()
 	})
 	return postgresURLWithSearchPath(t, dsn, schema), database

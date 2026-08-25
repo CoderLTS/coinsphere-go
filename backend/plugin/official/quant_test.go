@@ -18,6 +18,12 @@ func TestSMAStrategyIsDeterministicAndHonorsCancellation(t *testing.T) {
 		Market: "spot", Instrument: "BTCUSDT", Interval: "1h", Candles: candles[1:6],
 		Parameters: json.RawMessage(`{"fastPeriod":2,"slowPeriod":5}`), EvaluatedAt: candles[5].CloseTime,
 	}
+	if err := validateStrategyParameters(strategy.Descriptor(), request.Parameters); err != nil {
+		t.Fatalf("integer strategy parameters were rejected: %v", err)
+	}
+	if err := validateStrategyParameters(strategy.Descriptor(), json.RawMessage(`{"fastPeriod":2.5,"slowPeriod":5}`)); err == nil {
+		t.Fatal("fractional strategy period was accepted")
+	}
 	live, err := strategy.Evaluate(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)

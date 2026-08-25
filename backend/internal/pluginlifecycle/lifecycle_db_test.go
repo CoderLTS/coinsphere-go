@@ -24,10 +24,22 @@ func TestPluginDataLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	admin := stdlib.OpenDB(*config)
-	defer admin.Close()
+	lock, err := admin.Conn(context.Background())
+	if err != nil {
+		_ = admin.Close()
+		t.Fatal(err)
+	}
+	if _, err := lock.ExecContext(context.Background(), "SELECT pg_advisory_lock(671908427)"); err != nil {
+		_ = lock.Close()
+		_ = admin.Close()
+		t.Fatal(err)
+	}
 	suffix := fmt.Sprintf("%d_%d", os.Getpid(), time.Now().UnixNano())
 	testSchema := "plugin_lifecycle_test_" + suffix
 	if _, err := admin.Exec("CREATE SCHEMA " + pgx.Identifier{testSchema}.Sanitize()); err != nil {
+		_, _ = lock.ExecContext(context.Background(), "SELECT pg_advisory_unlock(671908427)")
+		_ = lock.Close()
+		_ = admin.Close()
 		t.Fatal(err)
 	}
 	if config.RuntimeParams == nil {
@@ -35,15 +47,19 @@ func TestPluginDataLifecycle(t *testing.T) {
 	}
 	config.RuntimeParams["search_path"] = testSchema
 	database := stdlib.OpenDB(*config)
-	defer database.Close()
 	pluginID := "official.contract-test"
 	pluginSchema, err := migration.PluginSchemaName(pluginID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		_ = database.Close()
 		_, _ = admin.Exec("DROP SCHEMA " + pgx.Identifier{pluginSchema}.Sanitize() + " CASCADE")
+		_, _ = admin.Exec("DROP SCHEMA IF EXISTS plugin_quant CASCADE")
 		_, _ = admin.Exec("DROP SCHEMA " + pgx.Identifier{testSchema}.Sanitize() + " CASCADE")
+		_, _ = lock.ExecContext(context.Background(), "SELECT pg_advisory_unlock(671908427)")
+		_ = lock.Close()
+		_ = admin.Close()
 	})
 	core, err := migration.New(database)
 	if err != nil {
