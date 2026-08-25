@@ -13,7 +13,6 @@ import (
 	"unicode/utf8"
 
 	"coinsphere/backend/internal/db"
-	semver "github.com/Masterminds/semver/v3"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -405,8 +404,8 @@ func validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph, error) 
 			return validatedWorkflowGraph{}, fmt.Errorf("invalid or duplicate nodeInstanceId %q", node.NodeInstanceID)
 		}
 		seen[node.NodeInstanceID] = true
-		if _, err := semver.StrictNewVersion(node.NodeVersion); err != nil {
-			return validatedWorkflowGraph{}, fmt.Errorf("node %q requires a strict SemVer nodeVersion", node.NodeInstanceID)
+		if node.NodeVersion != "1.0.0" {
+			return validatedWorkflowGraph{}, fmt.Errorf("node %q requires supported nodeVersion 1.0.0", node.NodeInstanceID)
 		}
 		var config map[string]any
 		if len(node.Config) == 0 || json.Unmarshal(node.Config, &config) != nil || config == nil {
