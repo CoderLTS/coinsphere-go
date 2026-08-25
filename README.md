@@ -2,7 +2,7 @@
 
 CoinSphere 正在重构为以可视化工作流为核心、由编译期插件提供业务能力的通用平台。项目保持 Vue、Go 模块化单体和 PostgreSQL/TimescaleDB 技术栈。
 
-> V2 P0 已完成认证、RBAC、用户/角色/菜单管理、系统监控和可信本地插件 SDK。旧领域源码、旧 migration 和 Python Worker 已移除；目标设计见[工作流平台 V2](docs/architecture/workflow-platform-v2.md)。
+> V2 已完成 P0，并开始交付 P1。当前可通过超级管理员 API 创建最小批处理工作流、保存不可变修订并执行 start/pause/archive；画布和批次执行仍按[路线图](docs/roadmap/README.md)开发。
 
 ## 当前能力
 
@@ -11,7 +11,8 @@ CoinSphere 正在重构为以可视化工作流为核心、由编译期插件提
 | 登录、用户、角色、菜单               | Web             | 可用，不开放公开注册                              |
 | 系统监控                             | Web + `/api/v1` | 可用，展示 Go、HTTP、PostgreSQL 和 migration 状态 |
 | 本地插件校验、安装、升级和卸载       | CLI             | 可用，编译期静态注册                              |
-| V2 工作流工作台                      | -               | 按 [V2 路线图](docs/roadmap/README.md)开发中      |
+| 工作流、修订和生命周期 API           | `/api/v1`       | 超级管理员可用；当前仅支持最小 blank 批处理图     |
+| V2 工作流工作台和批次执行            | -               | 按 [V2 路线图](docs/roadmap/README.md)开发中      |
 | 旧工作流、新闻、策略、交易和通知接口 | -               | 已从公开运行面移除                                |
 
 详细操作见[使用手册](docs/user-guide.md)，接口语义见[公共契约](docs/contracts/README.md)。
@@ -25,7 +26,7 @@ flowchart LR
     MIGRATE["一次性 migration"] --> DB
 ```
 
-默认部署只包含 Web、Go App、一次性 migration 和 TimescaleDB，不依赖 Redis、消息中间件或 Kubernetes。空库基线只建立认证、RBAC、菜单、i18n、审计表和 TimescaleDB 扩展。
+默认部署只包含 Web、Go App、一次性 migration 和 TimescaleDB，不依赖 Redis、消息中间件或 Kubernetes。核心 schema 当前保存认证、RBAC、菜单、审计、插件生命周期以及工作流修订和运行实例。
 
 ## 快速启动
 

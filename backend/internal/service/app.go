@@ -13,7 +13,11 @@ import (
 	"gorm.io/gorm"
 )
 
-var ErrPermission = errors.New("permission denied")
+var (
+	ErrPermission = errors.New("permission denied")
+	ErrNotFound   = errors.New("not found")
+	ErrConflict   = errors.New("conflict")
+)
 
 type App struct {
 	DB      *gorm.DB

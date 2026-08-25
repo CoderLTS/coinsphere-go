@@ -14,9 +14,25 @@
 - 不提供公开注册。`POST /api/v1/auth/login` 是唯一匿名身份 API。
 - `POST /api/v1/auth/logout`、`POST /api/v1/auth/reauth` 和 `GET /api/v1/me` 要求有效 Access Token。
 - `POST /api/v1/auth/reauth` 返回绑定当前用户与当前会话、五分钟失效且只能使用一次的不透明 Token。
-- 当前业务 API 只有 `/api/v1/home/*`、`/api/v1/admin/users` 和 `/api/v1/system/*`；角色和菜单写操作按权限码控制。
+- 当前业务 API 包含 `/api/v1/home/*`、`/api/v1/admin/users`、`/api/v1/system/*` 和工作流 P1-A 路由；工作流路由只允许 `R_SUPER`。
 - `/health/live` 只报告进程存活；`/health/ready` 和 `/health` 在一秒预算内检查 PostgreSQL；`/metrics` 要求登录。
-- 旧行情、策略、回测、信号、通知、交易和工作流路由已移除，不提供别名或兼容响应。
+- 旧行情、策略、回测、信号、通知和交易路由已移除，不提供别名或兼容响应。
+
+## 工作流 P1-A
+
+| 路由                                                        | 语义                                   |
+| ----------------------------------------------------------- | -------------------------------------- |
+| `GET /api/v1/workflows/templates`                           | 列出当前可创建的模板；目前只有 `blank` |
+| `GET/POST /api/v1/workflows`                                | 列表，或从模板创建工作流及初始修订     |
+| `GET /api/v1/workflows/{workflowId}`                        | 读取元数据、活动修订和唯一运行实例摘要 |
+| `GET/POST /api/v1/workflows/{workflowId}/revisions`         | 列表，或保存新不可变修订               |
+| `GET /api/v1/workflows/{workflowId}/revisions/{revisionId}` | 读取固定修订                           |
+| `POST /api/v1/workflows/{workflowId}/lifecycle`             | 执行 `start`、`pause` 或 `archive`     |
+
+- 创建只接受 `batch` blank 模板：`core.manual` 的 `out` 端口连接 `core.end` 的 `in` 端口。图 `schemaVersion` 固定为 `1`，请求体和图对象拒绝未知字段。
+- 保存请求必须提供当前 `expectedActiveRevisionId`。服务锁定工作流，校验完整图，写入递增修订并原子切换活动指针；并发旧指针返回 `409 Conflict`，失败校验不创建修订。
+- 修订保存后不可更新或删除。归档工作流只读且不能重新启动；`archive` 只允许从 `paused` 或 `needs_attention` 执行。
+- `start` 当前只改变生命周期状态，不创建执行批次或调用插件 Action；这些能力由 P1-C 交付。
 
 ## 插件清单
 
@@ -58,4 +74,4 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 
 ## 尚未实现
 
-P1-P4 的工作流、事件流、Connector/AI、Quant、回测、信号、Paper、Notification 和共享结果视图当前均不可用。Testnet/Live、私有交易 API、插件市场、签名、沙箱、热加载和多实例集群不属于当前 P0 合同。
+工作流画布、完整图/Schema/CEL 校验、密钥绑定、批次执行、事件流、Connector/AI、Quant、回测、信号、Paper、Notification 和共享结果视图当前均不可用。Testnet/Live、私有交易 API、插件市场、签名、沙箱、热加载和多实例集群不属于 V2 当前合同。

@@ -186,6 +186,54 @@ WHERE request_id = $1
 		t.Fatalf("valid login response = status:%d token:%t decode:%v", validLoginResponse.StatusCode, loginEnvelope.Data.AccessToken != "", decodeErr)
 	}
 
+	createWorkflowRequest, err := http.NewRequest(http.MethodPost,
+		fmt.Sprintf("http://127.0.0.1:%d/api/v1/workflows", port),
+		strings.NewReader(`{"name":"Lifecycle workflow","templateKey":"blank"}`))
+	if err != nil {
+		t.Fatalf("build workflow request: %v", err)
+	}
+	createWorkflowRequest.Header.Set("Authorization", "Bearer "+loginEnvelope.Data.AccessToken)
+	createWorkflowRequest.Header.Set("Content-Type", "application/json")
+	createWorkflowResponse, err := client.Do(createWorkflowRequest)
+	if err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+	var workflowEnvelope struct {
+		Data struct {
+			ID               int64  `json:"id"`
+			Status           string `json:"status"`
+			ActiveRevisionID int64  `json:"activeRevisionId"`
+		} `json:"data"`
+	}
+	decodeErr = json.NewDecoder(createWorkflowResponse.Body).Decode(&workflowEnvelope)
+	_ = createWorkflowResponse.Body.Close()
+	if decodeErr != nil || createWorkflowResponse.StatusCode != http.StatusOK || workflowEnvelope.Data.ID <= 0 || workflowEnvelope.Data.Status != "paused" || workflowEnvelope.Data.ActiveRevisionID <= 0 {
+		t.Fatalf("create workflow response = status:%d data:%#v decode:%v", createWorkflowResponse.StatusCode, workflowEnvelope.Data, decodeErr)
+	}
+
+	startWorkflowRequest, err := http.NewRequest(http.MethodPost,
+		fmt.Sprintf("http://127.0.0.1:%d/api/v1/workflows/%d/lifecycle", port, workflowEnvelope.Data.ID),
+		strings.NewReader(`{"action":"start"}`))
+	if err != nil {
+		t.Fatalf("build start workflow request: %v", err)
+	}
+	startWorkflowRequest.Header.Set("Authorization", "Bearer "+loginEnvelope.Data.AccessToken)
+	startWorkflowRequest.Header.Set("Content-Type", "application/json")
+	startWorkflowResponse, err := client.Do(startWorkflowRequest)
+	if err != nil {
+		t.Fatalf("start workflow: %v", err)
+	}
+	var startedEnvelope struct {
+		Data struct {
+			Status string `json:"status"`
+		} `json:"data"`
+	}
+	decodeErr = json.NewDecoder(startWorkflowResponse.Body).Decode(&startedEnvelope)
+	_ = startWorkflowResponse.Body.Close()
+	if decodeErr != nil || startWorkflowResponse.StatusCode != http.StatusOK || startedEnvelope.Data.Status != "running" {
+		t.Fatalf("start workflow response = status:%d data:%#v decode:%v", startWorkflowResponse.StatusCode, startedEnvelope.Data, decodeErr)
+	}
+
 	metricsRequest, err := http.NewRequest(http.MethodGet, metricsURL, nil)
 	if err != nil {
 		t.Fatalf("build metrics request: %v", err)
