@@ -165,6 +165,12 @@ type RouteDescriptor struct {
 	Scope   ScopeKind
 }
 
+type RegisteredRoute struct {
+	PluginID   string
+	Descriptor RouteDescriptor
+	Handler    ScopedRouteHandler
+}
+
 type Candle struct {
 	OpenTime  time.Time
 	CloseTime time.Time
@@ -178,11 +184,21 @@ type Candle struct {
 type EvaluateRequest struct {
 	Market      string
 	Instrument  string
+	Interval    string
 	Candles     []Candle
 	Parameters  json.RawMessage
 	EvaluatedAt time.Time
 }
 
+type StrategyDescriptor struct {
+	ID              string
+	Version         string
+	Name            string
+	ParameterSchema json.RawMessage
+	MinimumLookback int
+}
+
 type Strategy interface {
+	Descriptor() StrategyDescriptor
 	Evaluate(context.Context, EvaluateRequest) (decimal.Decimal, error)
 }

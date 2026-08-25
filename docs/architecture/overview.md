@@ -2,7 +2,7 @@
 
 ## 当前边界
 
-CoinSphere 正在重建为工作流优先、编译期插件驱动的个人自托管平台。V2 P0-P2 已完成；当前具备不可变修订、Schema 工作台、批次/事件/连续流、检查点恢复、人工等待、结构化 Loop、诊断重放、实时活动、Connector/AI 与内容寻址制品。Quant、回测和 Paper 仍按[路线图](../roadmap/README.md)继续开发。
+CoinSphere 正在重建为工作流优先、编译期插件驱动的个人自托管平台。V2 P0-P3 已完成；当前具备不可变修订、Schema 工作台、批次/事件/连续流、检查点恢复、人工等待、结构化 Loop、诊断重放、实时活动、Connector/AI、Binance 公共行情、可信 Go 策略、回测与内容寻址制品。Paper、通知和共享结果仍按[路线图](../roadmap/README.md)继续开发。
 
 - 只支持 PostgreSQL/TimescaleDB，领域时间统一使用 UTC。
 - 价格、数量、金额和费率使用 Decimal；账务值禁止使用 `float64`。
@@ -44,12 +44,13 @@ Go App 是单一后端进程，负责：
 - 管理持久人工任务、结构化 Loop、标准失败事件和固定输入/修订的诊断重放。
 - 提供单调游标活动、WebSocket 增量、批次完整节点路径和经过 SHA-256 校验的 gzip 制品下载，并按工作流保留期清理终态历史。
 - 内置 Connector/AI 只通过精确域名白名单和公网 DNS 校验访问外部接口；环境代理不参与拨号。
+- 内置 Quant 合并相同公共行情订阅，使用 UTC/Decimal 保存闭合 K 线，并让实时评估与回测调用同一可信 Go 策略。
 
 `running` 表示工作流允许手工/定时批次入队、事件投递或连续流 Trigger 运行；`pause` 取消 Trigger 但不强制终止当前 Action，Action 完成后批次从检查点续跑。Trigger 异常退出会进入 `needs_attention`，避免无界重启。共享结果视图在 P4 交付。
 
 ### PostgreSQL / TimescaleDB
 
-数据库当前保存认证、RBAC、菜单、i18n、审计、插件安装状态和引用，以及工作流、修订、密钥、运行实例、CloudEvent、投递、Outbox、批次、人工任务、NodeRun、Checkpoint、活动游标、制品清单和节点状态。修订、密钥绑定和未过期 Checkpoint 不可变；批次固定事件与修订，等待批次释放分区，过期租约由单实例执行器恢复。制品正文按 SHA-256 分片保存在 Backend 专用持久卷，数据库只保存受控元数据和引用。
+数据库当前保存认证、RBAC、菜单、i18n、审计、插件安装状态和引用，以及工作流、修订、密钥、运行实例、CloudEvent、投递、Outbox、批次、人工任务、NodeRun、Checkpoint、活动游标、制品清单和节点状态。`plugin_quant` schema 保存品种、闭合 K 线 hypertable 和回测摘要，金融值使用 `NUMERIC(38,18)`。修订、密钥绑定和未过期 Checkpoint 不可变；批次固定事件与修订，等待批次释放分区，过期租约由单实例执行器恢复。制品正文和完整回测明细按 SHA-256 分片保存在 Backend 专用持久卷。
 
 应用启动只校验 migration 版本。核心 DDL 由一次性 migration 命令执行，插件 DDL 由生命周期 CLI 在维护窗口执行。
 

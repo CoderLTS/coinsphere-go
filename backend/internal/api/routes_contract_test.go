@@ -5,11 +5,22 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"coinsphere/backend/internal/service"
+	"coinsphere/backend/plugin/sdk"
 )
 
 func TestRoutesExposeOnlyV2BaselineSurface(t *testing.T) {
 	mux := http.NewServeMux()
-	server := &Server{StaticDir: t.TempDir(), UploadsDir: t.TempDir()}
+	plugins := sdk.NewRegistry()
+	if err := plugins.RegisterPlugin(sdk.PluginDescriptor{
+		ID: "official.route-test", Name: "Route test", Version: "1.0.0", Contributes: []string{"apiRoutes"},
+	}, func(registrar sdk.Registrar) error {
+		return registrar.Route(sdk.RouteDescriptor{Method: http.MethodGet, Pattern: "/items", Scope: sdk.ScopeSystem}, func(http.ResponseWriter, *http.Request, sdk.RouteScope) {})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{App: &service.App{Plugins: plugins}, StaticDir: t.TempDir(), UploadsDir: t.TempDir()}
 	server.registerRoutes(mux)
 
 	for _, route := range []struct {
@@ -43,6 +54,7 @@ func TestRoutesExposeOnlyV2BaselineSurface(t *testing.T) {
 		{http.MethodPost, "/api/v1/batches/1"},
 		{http.MethodGet, "/api/v1/artifacts/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/manifest"},
 		{http.MethodGet, "/api/v1/artifacts/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/download"},
+		{http.MethodGet, "/api/v1/plugins/official.route-test/items"},
 		{http.MethodGet, "/api/v1/admin/users"},
 		{http.MethodGet, "/api/v1/system/roles"},
 		{http.MethodGet, "/api/v1/system/menus"},

@@ -308,8 +308,20 @@ func writeLifecycleConfig(t *testing.T, port int) (string, *sql.DB) {
 		_ = admin.Close()
 		t.Fatalf("ping lifecycle PostgreSQL database: %v", err)
 	}
+	lock, err := admin.Conn(context.Background())
+	if err != nil {
+		_ = admin.Close()
+		t.Fatalf("reserve lifecycle PostgreSQL connection: %v", err)
+	}
+	if _, err := lock.ExecContext(context.Background(), "SELECT pg_advisory_lock(671908427)"); err != nil {
+		_ = lock.Close()
+		_ = admin.Close()
+		t.Fatalf("lock shared Quant test schema: %v", err)
+	}
 	schema := fmt.Sprintf("main_lifecycle_test_%d_%d_%d", os.Getpid(), time.Now().UnixNano(), lifecycleSchemaSequence.Add(1))
 	if _, err := admin.Exec("CREATE SCHEMA " + pgx.Identifier{schema}.Sanitize()); err != nil {
+		_, _ = lock.ExecContext(context.Background(), "SELECT pg_advisory_unlock(671908427)")
+		_ = lock.Close()
 		_ = admin.Close()
 		t.Fatalf("create lifecycle PostgreSQL schema: %v", err)
 	}
@@ -322,12 +334,17 @@ func writeLifecycleConfig(t *testing.T, port int) (string, *sql.DB) {
 	if err := database.Ping(); err != nil {
 		_ = database.Close()
 		_, _ = admin.Exec("DROP SCHEMA " + pgx.Identifier{schema}.Sanitize() + " CASCADE")
+		_, _ = lock.ExecContext(context.Background(), "SELECT pg_advisory_unlock(671908427)")
+		_ = lock.Close()
 		_ = admin.Close()
 		t.Fatalf("ping lifecycle PostgreSQL schema: %v", err)
 	}
 	t.Cleanup(func() {
 		_ = database.Close()
+		_, _ = admin.Exec("DROP SCHEMA IF EXISTS plugin_quant CASCADE")
 		_, _ = admin.Exec("DROP SCHEMA " + pgx.Identifier{schema}.Sanitize() + " CASCADE")
+		_, _ = lock.ExecContext(context.Background(), "SELECT pg_advisory_unlock(671908427)")
+		_ = lock.Close()
 		_ = admin.Close()
 	})
 	runner, err := migration.New(database)

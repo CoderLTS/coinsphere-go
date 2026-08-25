@@ -507,6 +507,9 @@
             <ElOption label="标准故障处理" value="failure-handler" />
             <ElOption label="Connector Webhook" value="connector-webhook" />
             <ElOption label="Connector WebSocket" value="connector-websocket" />
+            <ElOption label="Binance 共享行情" value="quant-market-data" />
+            <ElOption label="实时策略评估" value="quant-strategy" />
+            <ElOption label="策略回测" value="quant-backtest" />
           </ElSelect>
         </ElFormItem>
       </ElForm>
@@ -653,6 +656,9 @@
       | 'failure-handler'
       | 'connector-webhook'
       | 'connector-websocket'
+      | 'quant-market-data'
+      | 'quant-strategy'
+      | 'quant-backtest'
   }>({ name: '', description: '', templateKey: 'blank' })
   const secretDrafts = reactive<Record<string, string>>({})
   const secretRemovals = reactive<Record<string, boolean>>({})
@@ -752,6 +758,8 @@
     if (nodeType.startsWith('official.connector.'))
       return { pluginId: 'official.connector', pageKey: 'connections' }
     if (nodeType === 'official.ai.model_call') return { pluginId: 'official.ai', pageKey: 'calls' }
+    if (nodeType.startsWith('official.quant.'))
+      return { pluginId: 'official.quant', pageKey: 'quant' }
   }
 
   const openPluginResult = async (nodeRun: WorkflowNodeRun) => {

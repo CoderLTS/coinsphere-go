@@ -83,8 +83,8 @@ func coreWorkflowNodeDescriptors() []sdk.NodeDescriptor {
 		},
 		{
 			Type: "core.event", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
-			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"types":{"type":"array","title":"Event types","items":{"type":"string","minLength":1,"maxLength":255},"minItems":1,"uniqueItems":true},"source":{"type":"string","title":"Source","maxLength":500}},"required":["types"],"additionalProperties":false}`),
-			UISchema:     json.RawMessage(`{"ui:order":["types","source"]}`), InputSchema: empty,
+			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"types":{"type":"array","title":"Event types","items":{"type":"string","minLength":1,"maxLength":255},"minItems":1,"uniqueItems":true},"source":{"type":"string","title":"Source","maxLength":500},"subject":{"type":"string","title":"Subject","maxLength":500}},"required":["types"],"additionalProperties":false}`),
+			UISchema:     json.RawMessage(`{"ui:order":["types","source","subject"]}`), InputSchema: empty,
 			OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object"}`),
 			Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
 		},
@@ -166,6 +166,12 @@ func workflowNodeTitle(nodeType string) string {
 		return "Loop item"
 	case "core.loop_end":
 		return "Loop end"
+	case "official.quant.binance_candles":
+		return "Binance closed candles"
+	case "official.quant.evaluate":
+		return "Quant strategy evaluation"
+	case "official.quant.backtest":
+		return "Quant strategy backtest"
 	default:
 		return nodeType
 	}
@@ -191,6 +197,12 @@ func workflowNodeDescription(nodeType string) string {
 		return "Provides the current iteration and carried value inside a loop."
 	case "core.loop_end":
 		return "Returns the carried value from one loop iteration."
+	case "official.quant.binance_candles":
+		return "Collects and publishes closed Binance Spot or USD-M candles."
+	case "official.quant.evaluate":
+		return "Evaluates a compiled Go strategy against closed candles."
+	case "official.quant.backtest":
+		return "Runs a deterministic next-open backtest over stored candles."
 	default:
 		return "Compiled plugin node."
 	}

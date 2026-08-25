@@ -254,13 +254,17 @@ func (a *App) deliverWorkflowEventTx(tx *gorm.DB, record db.WorkflowEventRecord,
 
 func workflowEventTriggerMatches(raw json.RawMessage, event cloudevents.Event) bool {
 	var config struct {
-		Types  []string `json:"types"`
-		Source string   `json:"source"`
+		Types   []string `json:"types"`
+		Source  string   `json:"source"`
+		Subject string   `json:"subject"`
 	}
 	if json.Unmarshal(raw, &config) != nil || len(config.Types) == 0 {
 		return false
 	}
 	if config.Source != "" && config.Source != event.Source() {
+		return false
+	}
+	if config.Subject != "" && config.Subject != event.Subject() {
 		return false
 	}
 	for _, eventType := range config.Types {

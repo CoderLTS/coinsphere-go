@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"coinsphere/backend/internal/perm"
 	"coinsphere/backend/internal/service"
+	"coinsphere/backend/plugin/sdk"
 )
 
 // registerRoutes 把每个 URL 登记到路由表 mux。理解一行就理解全部:
@@ -84,6 +86,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/batches/{batchId}", s.requireRole("R_SUPER", s.handleWorkflowBatchAction))
 	mux.HandleFunc("GET /api/v1/artifacts/{sha256}/manifest", s.requireRole("R_SUPER", s.handleGetWorkflowArtifactManifest))
 	mux.HandleFunc("GET /api/v1/artifacts/{sha256}/download", s.requireRole("R_SUPER", s.handleDownloadWorkflowArtifact))
+	s.registerSystemPluginRoutes(mux)
 
 	// 系统管理。
 	mux.HandleFunc("GET /api/v1/admin/users", s.requirePermission(perm.SystemUsersView, s.handleListUsers))
@@ -105,6 +108,25 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/system/menu-buttons", s.requirePermission(perm.SystemMenusCreate, s.handleCreateMenuButton))
 	mux.HandleFunc("PUT /api/v1/system/menu-buttons/{buttonId}", s.requirePermission(perm.SystemMenusUpdate, s.handleUpdateMenuButton))
 	mux.HandleFunc("DELETE /api/v1/system/menu-buttons/{buttonId}", s.requirePermission(perm.SystemMenusDelete, s.handleDeleteMenuButton))
+}
+
+func (s *Server) registerSystemPluginRoutes(mux *http.ServeMux) {
+	if s.App == nil || s.App.Plugins == nil {
+		return
+	}
+	for _, route := range s.App.Plugins.Routes() {
+		if route.Descriptor.Scope != sdk.ScopeSystem {
+			continue
+		}
+		registered := route
+		pattern := registered.Descriptor.Method + " /api/v1/plugins/" + registered.PluginID + registered.Descriptor.Pattern
+		mux.HandleFunc(pattern, s.requireRole("R_SUPER", func(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+			registered.Handler(w, r, sdk.SystemScope{
+				PluginID: registered.PluginID, UserID: principal.User.ID,
+				RoleCodes: slices.Clone(principal.RoleCodes),
+			})
+		}))
+	}
 }
 
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {

@@ -218,6 +218,9 @@ export const createWorkflow = (params: {
     | 'failure-handler'
     | 'connector-webhook'
     | 'connector-websocket'
+    | 'quant-market-data'
+    | 'quant-strategy'
+    | 'quant-backtest'
 }) => request.post<WorkflowDetail>({ url: '/api/v1/workflows', params })
 
 export const saveWorkflowRevision = (

@@ -14,11 +14,11 @@
 - 不提供公开注册。`POST /api/v1/auth/login` 是唯一匿名身份 API。
 - `POST /api/v1/auth/logout`、`POST /api/v1/auth/reauth` 和 `GET /api/v1/me` 要求有效 Access Token。
 - `POST /api/v1/auth/reauth` 返回绑定当前用户与当前会话、五分钟失效且只能使用一次的不透明 Token。
-- 当前业务 API 包含 `/api/v1/home/*`、`/api/v1/admin/users`、`/api/v1/system/*` 和工作流 P1-P2 路由；除匿名 Webhook 外，工作流路由只允许 `R_SUPER`。
+- 当前业务 API 包含 `/api/v1/home/*`、`/api/v1/admin/users`、`/api/v1/system/*`、工作流路由和 Quant 系统插件路由；除匿名 Webhook 外，工作流与 Quant 路由只允许 `R_SUPER`。
 - `/health/live` 只报告进程存活；`/health/ready` 和 `/health` 在一秒预算内检查 PostgreSQL；`/metrics` 要求登录。
 - 旧行情、策略、回测、信号、通知和交易路由已移除，不提供别名或兼容响应。
 
-## 工作流 P1-P2
+## 工作流 P1-P3
 
 | 路由                                                        | 语义                                   |
 | ----------------------------------------------------------- | -------------------------------------- |
@@ -41,7 +41,7 @@
 | `GET /api/v1/artifacts/{sha256}/manifest`                   | 读取并校验制品清单                     |
 | `GET /api/v1/artifacts/{sha256}/download`                   | 下载解压后的制品正文                   |
 
-- 创建接受 `blank`、`scheduled`、`event`、`failure-handler`、`connector-webhook` 或 `connector-websocket` 模板。定时配置只接受 UTC `everySeconds` 60 至 86400，不提供 Cron DSL。图 `schemaVersion` 固定为 `1`，节点保存 `nodeInstanceId`、精确节点版本、普通配置、结构化输入映射和位置；边保存两端端口及可选 Boolean CEL 条件。
+- 创建接受批次、事件、Connector 和 Quant 模板。事件 Trigger 按类型及可选精确 source/subject 过滤；定时配置只接受 UTC `everySeconds` 60 至 86400，不提供 Cron DSL。图 `schemaVersion` 固定为 `1`，节点保存 `nodeInstanceId`、精确节点版本、普通配置、结构化输入映射和位置；边保存两端端口及可选 Boolean CEL 条件。
 - 输入映射只接受 `field`、`literal`、`cel`。字段来源使用上游 `nodeInstanceId` 和字段路径数组；保存校验端口、可达性、DAG、JSON Schema、字段类型和 CEL，并拒绝 Decimal CEL 算术。图级后向边始终拒绝；`core.loop` 只运行内嵌无环子图，并强制 1 至 100 次上限、绝对超时和 Boolean CEL 退出条件。每轮 NodeRun、Checkpoint 与操作键都包含迭代号，人工等待节点不能嵌入 Loop。
 - 保存请求必须提供当前 `expectedActiveRevisionId`。服务锁定工作流，校验完整图，写入递增修订、修订级密钥绑定并原子切换活动指针；并发旧指针返回 `409 Conflict`，失败校验不创建修订。
 - `secretChanges` 只允许替换或移除节点 Config Schema 声明的顶层 `x-coinsphere-secret` 字段。密钥按修订、节点实例和字段独立加密；响应只返回 `secretFields[nodeInstanceId][field]=true`，图、修订响应和节点目录永不返回密钥值。
@@ -88,6 +88,10 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 
 内置 `official.connector` 提供 HTTP Action、Webhook Trigger、WebSocket Trigger 和运行诊断结果页；`official.ai` 提供 OpenAI-compatible 结构化模型调用和结果页。两者只访问 `workflow.http_allowed_hosts` 的精确公共域名，禁用环境代理，拨号前后解析并拒绝非公网 IP。Binance 只允许明确列出的公共 GET/公共 WebSocket，授权、私有或未知端点一律拒绝。AI 节点只接收/返回 JSON 对象，不能控制工作流生命周期或交易。
 
+内置 `official.quant` 提供 `binance_candles` Trigger、`evaluate`/`backtest` Action、可信 SMA crossover 策略和移动可用结果页。行情只使用 Binance Spot/USD-M 公共接口，按 `market + instrument + interval` 合并订阅并发布 `market.candle.closed`；重复 REST/WebSocket 数据由 K 线键和 CloudEvent `(source,id)` 去重。策略只接收升序、连续、UTC 闭合 K 线和已校验参数，返回 `-1` 至 `1` 的 Decimal 目标；实时与回测调用同一 `Evaluate`。回测在下一根 K 线开盘成交，摘要写入 `plugin_quant.backtests`，完整明细写入内容寻址制品。
+
+`GET /api/v1/plugins/official.quant/{instruments|candles|strategies|backtests}` 是 `SystemScope` 只读路由，只允许超级管理员。金融值均返回十进制字符串；`before` 时间必须为 UTC，查询只接受声明的键和有界 `limit`。
+
 匿名 Webhook 要求 `X-CoinSphere-Webhook-Secret`、`Idempotency-Key` 和 `X-CoinSphere-Partition-Key` 各出现一次，正文必须是不超过 1 MiB 的 JSON 对象。错误 Secret、非运行工作流和非 Webhook 主触发器统一返回不可发现响应。
 
 ## 生命周期与数据
@@ -98,8 +102,8 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 - `plugin uninstall` 有活动引用时拒绝；成功后移除静态源码和注册并保留插件 schema。
 - `plugin purge-data` 要求插件已卸载、无任何活动或历史引用，并精确提供 `PURGE <plugin-id>`；schema 和安装记录在同一事务删除。
 
-核心 migration 使用 `schema_migrations`。插件使用独立 `plugin_<规范化 ID>` schema 和 `<schema>.schema_migrations`；卸载不执行 Down。正式 Paper 观察开始前 migration 历史尚未冻结，但任何破坏性整理都必须重跑空库和保护测试。
+核心及随应用发布的内置 Quant migration 使用 `schema_migrations`；Quant 数据仍由独立 `plugin_quant` schema 拥有。通过 CLI 安装的插件使用独立 `plugin_<规范化 ID>` schema 和 `<schema>.schema_migrations`，卸载不执行 Down。正式 Paper 观察开始前 migration 历史尚未冻结，但任何破坏性整理都必须重跑空库和保护测试。
 
 ## 尚未实现
 
-Quant、回测、信号、Paper、Notification 和共享结果视图当前均不可用。Testnet/Live、私有交易 API、插件市场、签名、沙箱、热加载和多实例集群不属于 V2 当前合同。
+信号、Paper、Notification 和共享结果视图当前均不可用。Testnet/Live、私有交易 API、插件市场、签名、沙箱、热加载和多实例集群不属于 V2 当前合同。

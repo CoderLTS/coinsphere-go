@@ -1,6 +1,6 @@
 # CoinSphere 使用手册
 
-本文面向当前 V2 个人自托管用户和管理员。当前可用能力是登录、RBAC、系统管理、系统监控、可信本地插件维护，以及超级管理员批次/事件/连续流工作台、活动历史、人工任务、诊断重放、Connector/AI 和制品；Quant、回测与 Paper 尚未交付。
+本文面向当前 V2 个人自托管用户和管理员。当前可用能力是登录、RBAC、系统管理、系统监控、可信本地插件维护，以及超级管理员批次/事件/连续流工作台、活动历史、人工任务、诊断重放、Connector/AI、Binance 公共行情、可信 Go 策略、回测和制品；Paper、通知与共享结果尚未交付。
 
 ## 1. 使用范围
 
@@ -66,7 +66,7 @@ docker compose down
 
 ## 5. 工作流工作台
 
-只有超级管理员可以访问“工作流工作台”和 `/api/v1/workflows`。`blank`/`scheduled` 创建手工或 UTC 定时批次，`event`/`failure-handler` 消费 CloudEvent，`connector-webhook`/`connector-websocket` 提供外部事件入口。模板都会原子创建一个 `paused` 工作流、初始不可变修订和唯一运行实例。桌面端左侧选择工作流和节点，中间连接 X6 画布，右侧按节点 JSON Schema/UI Schema 编辑配置、上游字段映射、CEL 和密钥；顶部显式保存、启动、暂停、归档或立即运行手工工作流。
+只有超级管理员可以访问“工作流工作台”和 `/api/v1/workflows`。`blank`/`scheduled` 创建手工或 UTC 定时批次，`event`/`failure-handler` 消费 CloudEvent，`connector-webhook`/`connector-websocket` 提供外部事件入口；`quant-market-data`、`quant-strategy` 和 `quant-backtest` 分别创建共享行情、实时策略评估和回测工作流。模板都会原子创建一个 `paused` 工作流、初始不可变修订和唯一运行实例。桌面端左侧选择工作流和节点，中间连接 X6 画布，右侧按节点 JSON Schema/UI Schema 编辑配置、上游字段映射、CEL 和密钥；顶部显式保存、启动、暂停、归档或立即运行手工工作流。
 
 保存完整校验通过后才创建新修订。密钥输入只表示替换，留空保持原值；系统只显示是否已配置。切换到历史修订时工作台只读。移动端不显示编辑控件，只提供工作流状态、最近活动和所选批次节点路径。
 
@@ -95,6 +95,12 @@ COINSPHERE_WORKFLOW__HTTP_ALLOWED_HOSTS='[api.example.com,models.example.com]'
 不支持通配符、IP、自动包含子域或私网目标。环境代理不会被使用，DNS 解析中出现任一非公网地址都会拒绝。Binance 域名只开放明确的公共 GET/公共 WebSocket；不得配置授权请求、私有端点或真实交易密钥。AI 节点使用节点本地 API Key，要求 OpenAI-compatible JSON 响应，输入和输出都必须是对象。
 
 具体请求、图格式和冲突语义见[公共契约](contracts/README.md)。工作台不要求管理员编辑原始 JSON。
+
+### 5.3 Quant 与回测
+
+Quant 只连接 Binance Spot 和 USD-M 公共 REST/WebSocket。先创建并启动 `quant-market-data`，选择市场、品种和固定周期；同一 `market + instrument + interval` 的订阅共享连接，断线后 REST 补数，数据库与 CloudEvent 身份共同去重。月线不属于当前固定周期集合。
+
+`quant-strategy` 消费 `market.candle.closed` 并调用已编译的 SMA crossover Go 策略。`quant-backtest` 读取已落库的闭合 K 线，在下一根 K 线开盘成交并应用 Decimal 手续费和滑点；日期必须是 UTC。运行结果中的 Quant 页面可查看品种、K 线、策略和回测摘要，并下载后校验完整明细 SHA-256。当前不提供在线策略源码、信号审批、Paper、Testnet、Live 或交易所私有凭据。
 
 ## 6. 插件维护
 
@@ -165,7 +171,7 @@ docker compose logs --tail=200 migrate backend web
 - 不把真实 API Key、Secret、令牌、DSN 或生产配置提交到代码、日志、Issue、PR、CI 或 AI 上下文。
 - 不安装不可信、远程下载或未经审查的插件源码。
 - AI、工作流和通用 HTTP 节点不得调用交易所私有接口或绕过风控。
-- 完成 P2 不会自动创建 Testnet/Live 阶段，也不会启用 Paper 或真实交易。
+- 完成 P3 不会自动创建 Testnet/Live 阶段，也不会启用 Paper 或真实交易。
 
 ## 10. 文档索引
 
