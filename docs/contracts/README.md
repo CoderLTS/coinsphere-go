@@ -14,11 +14,11 @@
 - 不提供公开注册。`POST /api/v1/auth/login` 是唯一匿名身份 API。
 - `POST /api/v1/auth/logout`、`POST /api/v1/auth/reauth` 和 `GET /api/v1/me` 要求有效 Access Token。
 - `POST /api/v1/auth/reauth` 返回绑定当前用户与当前会话、五分钟失效且只能使用一次的不透明 Token。
-- 当前业务 API 包含 `/api/v1/home/*`、`/api/v1/admin/users`、`/api/v1/system/*` 和工作流 P1-A/P1-B/P1-C 路由；工作流路由只允许 `R_SUPER`。
+- 当前业务 API 包含 `/api/v1/home/*`、`/api/v1/admin/users`、`/api/v1/system/*` 和工作流 P1 路由；工作流路由只允许 `R_SUPER`。
 - `/health/live` 只报告进程存活；`/health/ready` 和 `/health` 在一秒预算内检查 PostgreSQL；`/metrics` 要求登录。
 - 旧行情、策略、回测、信号、通知和交易路由已移除，不提供别名或兼容响应。
 
-## 工作流 P1-A/P1-B/P1-C
+## 工作流 P1
 
 | 路由                                                        | 语义                                   |
 | ----------------------------------------------------------- | -------------------------------------- |
@@ -30,7 +30,11 @@
 | `GET /api/v1/workflows/{workflowId}/revisions/{revisionId}` | 读取固定修订                           |
 | `POST /api/v1/workflows/{workflowId}/lifecycle`             | 执行 `start`、`pause` 或 `archive`     |
 | `GET/POST /api/v1/workflows/{workflowId}/batches`           | 最近批次摘要，或创建手工批次           |
-| `GET/POST /api/v1/batches/{batchId}`                        | 读取批次摘要，或执行 `cancel`/`retry`  |
+| `GET /api/v1/workflows/{workflowId}/activity`               | 按单调游标读取持久活动                  |
+| `GET /api/v1/batches/{batchId}`                             | 读取批次、节点路径、活动和制品引用     |
+| `POST /api/v1/batches/{batchId}`                            | 执行 `cancel` 或 `retry`                |
+| `GET /api/v1/artifacts/{sha256}/manifest`                   | 读取并校验制品清单                      |
+| `GET /api/v1/artifacts/{sha256}/download`                   | 下载解压后的制品正文                    |
 
 - 创建接受 `batch` 的 `blank` 或 `scheduled` 模板，分别由 `core.manual` 或 `core.schedule` 连接 `core.end`。定时配置只接受 UTC `everySeconds` 60 至 86400，不提供 Cron DSL。图 `schemaVersion` 固定为 `1`，节点保存 `nodeInstanceId`、精确节点版本、普通配置、结构化输入映射和位置；边保存两端端口及可选 Boolean CEL 条件。
 - 输入映射只接受 `field`、`literal`、`cel`。字段来源使用上游 `nodeInstanceId` 和字段路径数组；保存校验端口、可达性、DAG、JSON Schema、字段类型和 CEL，并拒绝 Decimal CEL 算术。
@@ -41,7 +45,10 @@
 - 批次创建时固定活动修订。单实例执行器使用 PostgreSQL 持久队列、每工作流并发/积压上限和有界 `stream`/`compute` 池；过期租约重启后重新排队。
 - 每个成功节点原子提交终态 NodeRun、输出 Checkpoint 和缓冲状态。失败只重试当前节点，默认最多三次并线性退避；操作键固定为 `sha256(batchId + ":" + nodeInstanceId + ":0)`。取消通过 `context.Context` 协作传递，取消请求后不再调度下游节点。
 - 核心执行 `core.manual`、`core.schedule`、`core.constant`、`core.end`，其他 Action 从编译期插件注册表调用；执行前后分别校验输入/输出 Schema，修订密钥通过节点范围 `SecretReader` 解密。
-- 当前批次查询只返回最近 100 条摘要。节点路径、活动游标、日志和内容寻址制品由 P1-D 交付；P1-C 中 `ArtifactStore` 明确返回不可用。
+- 批次列表返回最近 100 条摘要；批次详情按执行顺序返回 NodeRun、受控活动摘要和制品引用。活动查询首次返回最近记录，后续使用 `after` 单调游标增量读取，单页上限 200。
+- 活动由数据库在批次和 NodeRun 状态转换时原子追加，只包含事件类型、状态、受控中文摘要和错误类别，不保存原始错误、输入、输出或密钥。
+- `ArtifactStore` 将最多 1 GiB 的正文用标准库 gzip 压缩并按未压缩正文 SHA-256 寻址。Checkpoint 原子引用清单；Manifest 在服务端重新计算大小和摘要，Web 下载后再次校验摘要。
+- 终态批次、NodeRun、Checkpoint、批次活动和未被其他检查点引用的制品按工作流 `retentionDays` 清理，默认 30 天。制品数据库记录提交后再删除正文；失败最多留下无引用文件，不丢失仍被引用的正文。
 
 ## 插件清单
 
@@ -59,7 +66,7 @@
 
 Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、执行池、副作用等级和状态模式。需要校验的 Schema 必须声明 JSON Schema 2020-12。
 
-`ActionRequest` 包含固定工作流/修订、节点实例 ID、稳定操作键、已解析输入和配置，以及 SecretReader、StateStore、ArtifactStore 和结构化 Logger。`ActionResult` 只返回 JSON 输出和制品引用。P0 注册并可在契约测试上下文执行 Action；工作流运行时从 P1 开始接入。
+`ActionRequest` 包含固定工作流/修订、节点实例 ID、稳定操作键、已解析输入和配置，以及 SecretReader、StateStore、ArtifactStore 和结构化 Logger。`ActionResult` 只返回 JSON 输出和制品引用。P0 注册并可在契约测试上下文执行 Action；P1 工作流运行时已经接入全部上下文。
 
 插件作用域路由必须声明一种上下文：
 
@@ -83,4 +90,4 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 
 ## 尚未实现
 
-完整活动历史与制品、事件流、Connector/AI、Quant、回测、信号、Paper、Notification 和共享结果视图当前均不可用。Testnet/Live、私有交易 API、插件市场、签名、沙箱、热加载和多实例集群不属于 V2 当前合同。
+事件流、Connector/AI、Quant、回测、信号、Paper、Notification 和共享结果视图当前均不可用。Testnet/Live、私有交易 API、插件市场、签名、沙箱、热加载和多实例集群不属于 V2 当前合同。

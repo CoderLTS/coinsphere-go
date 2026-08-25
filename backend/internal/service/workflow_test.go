@@ -60,7 +60,15 @@ func (a *workflowTestAction) Execute(ctx context.Context, request sdk.ActionRequ
 	if _, err := request.Secrets.Read(ctx, "token"); err != nil {
 		return sdk.ActionResult{}, err
 	}
-	return sdk.ActionResult{Output: append(json.RawMessage(nil), request.Input...)}, nil
+	var artifacts []sdk.Artifact
+	if label == "artifact" {
+		artifact, err := request.Artifacts.Put(ctx, "application/json", strings.NewReader(`{"rows":[1,2,3]}`))
+		if err != nil {
+			return sdk.ActionResult{}, err
+		}
+		artifacts = append(artifacts, artifact)
+	}
+	return sdk.ActionResult{Output: append(json.RawMessage(nil), request.Input...), Artifacts: artifacts}, nil
 }
 
 const testPluginWorkflowGraph = `{

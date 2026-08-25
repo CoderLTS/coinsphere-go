@@ -261,3 +261,39 @@ type WorkflowNodeState struct {
 }
 
 func (WorkflowNodeState) TableName() string { return "workflow_node_states" }
+
+type WorkflowActivity struct {
+	Cursor        int64 `gorm:"primaryKey;autoIncrement"`
+	WorkflowID    int64
+	BatchID       *int64
+	NodeRunID     *int64
+	EventType     string
+	Status        *string
+	Summary       string
+	ErrorCategory *string
+	OccurredAt    time.Time
+}
+
+func (WorkflowActivity) TableName() string { return "workflow_activities" }
+
+type WorkflowArtifact struct {
+	SHA256          string `gorm:"primaryKey;size:64"`
+	MediaType       string
+	Encoding        string
+	SizeBytes       int64
+	StoredSizeBytes int64
+	StorageKey      string
+	CreatedAt       time.Time
+}
+
+func (WorkflowArtifact) TableName() string { return "workflow_artifacts" }
+
+type WorkflowArtifactRef struct {
+	CheckpointID   int64 `gorm:"primaryKey"`
+	ArtifactSHA256 string
+	Ordinal        int `gorm:"primaryKey"`
+	MediaType      string
+	SizeBytes      int64
+}
+
+func (WorkflowArtifactRef) TableName() string { return "workflow_artifact_refs" }

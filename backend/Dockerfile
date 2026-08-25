@@ -28,7 +28,7 @@ COPY --from=build /out/coinsphere-server /app/coinsphere-server
 COPY --from=build /out/coinsphere-migrate /app/coinsphere-migrate
 COPY --from=build /out/coinsphere /app/coinsphere
 COPY config.yml /app/config.yml
-RUN mkdir -p /app/volumes/static /app/volumes/uploads \
+RUN mkdir -p /app/volumes/static /app/volumes/uploads /app/volumes/artifacts \
     && chown -R app /app
 USER app
 EXPOSE 6987

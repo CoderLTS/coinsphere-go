@@ -5,7 +5,7 @@
 生产默认使用独立 Compose 项目 `coinsphere-go`：
 
 - `timescaledb`：CoinSphere 独立 PostgreSQL/TimescaleDB 和持久卷。
-- `backend`：认证、RBAC、系统管理和监控 API。
+- `backend`：认证、RBAC、工作流执行、系统管理和监控 API，以及独立上传、静态资源和制品卷。
 - `web`：唯一对外 Web 入口。
 
 Migration 由目标 Backend 镜像中的 `coinsphere-migrate` 在启动服务前一次性执行，不是常驻服务。Python Worker、Worker 卷和 Private Executor 不属于 V2 部署拓扑。
@@ -41,7 +41,7 @@ bash deploy/production/deploy.sh vX.Y.Z /path/to/release-manifest.json
 
 ## 首次独立部署
 
-首次独立部署创建新的 `coinsphere-go-timescale-data` 卷并在空库应用当前 migration。后续部署只执行 Up，不自动重置数据库、执行 Down 或删除数据卷；V2 破坏性基线必须按独立 migration PR 和数据库 Runbook 执行。
+首次独立部署创建 `coinsphere-go-timescale-data`、`coinsphere-go-backend-artifacts`、上传和静态资源卷，并在空库应用当前 migration。后续部署只执行 Up，不自动重置数据库、执行 Down 或删除数据卷；V2 破坏性基线必须按独立 migration PR 和数据库 Runbook 执行。数据库和制品卷必须使用同一恢复点备份，避免保留引用指向缺失正文。
 
 部署成功后确认：
 
@@ -58,7 +58,7 @@ curl -fsS http://127.0.0.1:8080/health
 - 镜像、Manifest 或扫描失败发生在停服务前，不改变运行环境。
 - 首次独立部署失败时，脚本停止候选项目并恢复此前实际运行的旧 CoinSphere 服务。
 - 后续部署失败时，脚本恢复上一份独立 Compose、固定 digest 和 `.env`。
-- 回滚不执行 migration Down、不修改版本表、不删除数据库卷。
+- 回滚不执行 migration Down、不修改版本表，也不删除数据库、上传或制品卷。
 
 若上一应用版本与当前 schema 不兼容，保持服务停止并使用已验证备份恢复；禁止手工伪造 migration 版本或删除交易事实。
 

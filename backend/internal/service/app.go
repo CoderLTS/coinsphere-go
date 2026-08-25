@@ -21,12 +21,13 @@ var (
 )
 
 type App struct {
-	DB      *gorm.DB
-	Cfg     *config.AppConfig
-	Hasher  *security.PasswordHasher
-	Tokens  *security.TokenManager
-	Cipher  *security.SecretCipher
-	Plugins *sdk.Registry
+	DB           *gorm.DB
+	Cfg          *config.AppConfig
+	Hasher       *security.PasswordHasher
+	Tokens       *security.TokenManager
+	Cipher       *security.SecretCipher
+	Plugins      *sdk.Registry
+	ArtifactRoot string
 
 	authStateMu         sync.Mutex
 	reauthTokens        map[string]reauthTokenRecord

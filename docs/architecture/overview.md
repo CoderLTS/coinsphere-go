@@ -2,7 +2,7 @@
 
 ## 当前边界
 
-CoinSphere 正在重建为工作流优先、编译期插件驱动的个人自托管平台。V2 P0 和 P1-A/P1-B/P1-C 已完成；当前具备工作流、不可变修订、Schema 工作台、批次队列、检查点恢复和手工/UTC 定时触发。完整活动与制品、事件流、Quant、回测和 Paper 仍按[路线图](../roadmap/README.md)继续开发。
+CoinSphere 正在重建为工作流优先、编译期插件驱动的个人自托管平台。V2 P0 和 P1 批处理工作室已完成；当前具备不可变修订、Schema 工作台、批次队列、检查点恢复、手工/UTC 定时触发、持久活动与内容寻址制品。事件流、Quant、回测和 Paper 仍按[路线图](../roadmap/README.md)继续开发。
 
 - 只支持 PostgreSQL/TimescaleDB，领域时间统一使用 UTC。
 - 价格、数量、金额和费率使用 Decimal；账务值禁止使用 `float64`。
@@ -39,12 +39,13 @@ Go App 是单一后端进程，负责：
 - 暴露 SDK 的 Action、Trigger、作用域路由和结果页描述符契约。
 - 向超级管理员提供节点 Schema 目录、工作流图校验、不可变修订、生命周期和批次操作。
 - 从 PostgreSQL 有界队列领取固定修订批次，在 `stream`/`compute` 池执行核心或插件 Action，并原子保存 NodeRun、Checkpoint 和节点状态。
+- 提供单调游标活动、批次完整节点路径和经过 SHA-256 校验的 gzip 制品下载，并按工作流保留期清理终态历史。
 
 `running` 表示工作流允许手工或定时批次入队和领取；`pause` 不强制终止当前节点，节点完成后批次从检查点续跑。共享结果视图在 P4 交付。
 
 ### PostgreSQL / TimescaleDB
 
-数据库当前保存认证、RBAC、菜单、i18n、审计、插件安装状态和引用，以及工作流、修订、密钥、运行实例、批次、NodeRun、Checkpoint 和节点状态。修订、密钥绑定和 Checkpoint 不可变；批次固定修订，过期租约由单实例执行器恢复。
+数据库当前保存认证、RBAC、菜单、i18n、审计、插件安装状态和引用，以及工作流、修订、密钥、运行实例、批次、NodeRun、Checkpoint、活动游标、制品清单和节点状态。修订、密钥绑定和未过期 Checkpoint 不可变；批次固定修订，过期租约由单实例执行器恢复。制品正文按 SHA-256 分片保存在 Backend 专用持久卷，数据库只保存受控元数据和引用。
 
 应用启动只校验 migration 版本。核心 DDL 由一次性 migration 命令执行，插件 DDL 由生命周期 CLI 在维护窗口执行。
 
