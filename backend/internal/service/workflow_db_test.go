@@ -1274,9 +1274,6 @@ func openWorkflowTestApp(t *testing.T) (*App, *sql.DB, int64) {
 	if err := official.RegisterQuant(app.Plugins, gdb); err != nil {
 		t.Fatal(err)
 	}
-	if err := official.RegisterNotification(app.Plugins, gdb); err != nil {
-		t.Fatal(err)
-	}
 	app.Cipher = cipher
 	app.ArtifactRoot = t.TempDir()
 	return app, database, ownerID

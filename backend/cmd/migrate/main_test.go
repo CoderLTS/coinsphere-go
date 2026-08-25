@@ -105,6 +105,7 @@ func migrationCommandDatabase(t *testing.T) (string, *sql.DB) {
 	t.Cleanup(func() {
 		_ = database.Close()
 		_, _ = admin.Exec("DROP SCHEMA IF EXISTS plugin_quant CASCADE")
+		_, _ = admin.Exec("DROP SCHEMA IF EXISTS plugin_notification CASCADE")
 		_, _ = admin.Exec("DROP SCHEMA " + pgx.Identifier{schema}.Sanitize() + " CASCADE")
 		_, _ = lock.ExecContext(context.Background(), "SELECT pg_advisory_unlock(671908427)")
 		_ = lock.Close()
