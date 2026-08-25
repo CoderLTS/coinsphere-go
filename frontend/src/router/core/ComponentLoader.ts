@@ -14,8 +14,14 @@ export class ComponentLoader {
   private modules: Record<string, () => Promise<any>>
 
   constructor() {
-    // 动态导入 views 目录下所有 .vue 组件
-    this.modules = import.meta.glob('../../views/**/*.vue')
+    this.modules = {
+      '../../views/home/index.vue': () => import('../../views/home/index.vue'),
+      '../../views/system/user/index.vue': () => import('../../views/system/user/index.vue'),
+      '../../views/system/role/index.vue': () => import('../../views/system/role/index.vue'),
+      '../../views/system/menu/index.vue': () => import('../../views/system/menu/index.vue'),
+      '../../views/system/user-center/index.vue': () =>
+        import('../../views/system/user-center/index.vue')
+    }
   }
 
   /**
