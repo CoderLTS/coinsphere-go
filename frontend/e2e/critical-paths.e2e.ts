@@ -431,7 +431,9 @@ test('超级管理员可以使用 Schema 工作流工作台且移动端只读', 
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(page.locator('.mobile-activity')).toBeVisible()
   await expect(page.locator('.workbench-grid')).toBeHidden()
-  await expect(page.getByText('R1', { exact: true }).last()).toBeVisible()
+  await expect(
+    page.locator('.mobile-activity__summary').getByText('R1', { exact: true })
+  ).toBeVisible()
 
   expect(backend.schedulerApiCalls).toEqual(
     expect.arrayContaining([
