@@ -170,6 +170,17 @@ type WorkflowRevision struct {
 
 func (WorkflowRevision) TableName() string { return "workflow_revisions" }
 
+type WorkflowSecretBinding struct {
+	RevisionID     int64  `gorm:"column:revision_id;primaryKey"`
+	WorkflowID     int64  `gorm:"column:workflow_id"`
+	NodeInstanceID string `gorm:"column:node_instance_id;size:128;primaryKey"`
+	FieldName      string `gorm:"column:field_name;size:128;primaryKey"`
+	EncryptedValue string `gorm:"column:encrypted_value;type:text"`
+	CreatedAt      time.Time
+}
+
+func (WorkflowSecretBinding) TableName() string { return "workflow_secret_bindings" }
+
 type WorkflowRuntime struct {
 	WorkflowID     int64  `gorm:"column:workflow_id;primaryKey"`
 	ActivityCursor int64  `gorm:"column:activity_cursor"`

@@ -12,6 +12,10 @@ func (s *Server) handleListWorkflowTemplates(w http.ResponseWriter, _ *http.Requ
 	ok(w, M{"items": s.App.ListWorkflowTemplates()})
 }
 
+func (s *Server) handleListWorkflowNodeDefinitions(w http.ResponseWriter, _ *http.Request, _ *service.Principal) {
+	ok(w, M{"items": s.App.ListWorkflowNodeDefinitions()})
+}
+
 func (s *Server) handleListWorkflows(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
 	items, err := s.App.ListWorkflows(r.Context(), queryStr(r, "status"))
 	respond(w, M{"items": items}, err, "")

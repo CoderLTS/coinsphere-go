@@ -49,6 +49,9 @@ func TestRegistryRejectsUndeclaredAndInvalidContributions(t *testing.T) {
 			desc.ConfigSchema = json.RawMessage(`{"type":"object"}`)
 			return registrar.Action(desc, testAction{})
 		},
+		"reserved core node": func(registrar Registrar) error {
+			return registrar.Action(testNode("core.invalid"), testAction{})
+		},
 		"plugin error": func(Registrar) error { return errors.New("registration stopped") },
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -114,6 +117,14 @@ func TestRegistryExposesRegisteredActionRouteAndResultPage(t *testing.T) {
 	}
 	if _, ok := registry.ResultPage("official.test", "result"); !ok {
 		t.Fatal("registered result page is unavailable")
+	}
+	nodes := registry.Nodes()
+	if len(nodes) != 1 || nodes[0].Type != "official.test.action" {
+		t.Fatalf("registered node catalog = %#v", nodes)
+	}
+	nodes[0].ConfigSchema[0] = '['
+	if registry.Nodes()[0].ConfigSchema[0] == '[' {
+		t.Fatal("node catalog leaked mutable schema storage")
 	}
 }
 

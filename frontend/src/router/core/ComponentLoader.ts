@@ -16,6 +16,7 @@ export class ComponentLoader {
   constructor() {
     this.modules = {
       '../../views/home/index.vue': () => import('../../views/home/index.vue'),
+      '../../views/workflows/index.vue': () => import('../../views/workflows/index.vue'),
       '../../views/system/user/index.vue': () => import('../../views/system/user/index.vue'),
       '../../views/system/role/index.vue': () => import('../../views/system/role/index.vue'),
       '../../views/system/menu/index.vue': () => import('../../views/system/menu/index.vue'),

@@ -49,6 +49,123 @@ const homeMenu = {
   }
 }
 
+const workflowMenu = {
+  id: 2,
+  parentId: null,
+  path: '/workflows',
+  name: 'Workflows',
+  component: '/workflows/index',
+  updatedAt: createdAt,
+  meta: {
+    title: '工作流工作台',
+    i18nKey: '',
+    i18nTexts: { zh: '工作流工作台', en: 'Workflow Workbench' },
+    keepAlive: true,
+    isHide: false,
+    isHideTab: false,
+    isFullPage: false,
+    isIframe: false,
+    fixedTab: false,
+    isEnable: true,
+    sort: 20,
+    roles: ['R_SUPER']
+  }
+}
+
+const workflow = {
+  id: 7,
+  name: '批处理示例',
+  description: 'E2E workflow',
+  mode: 'batch',
+  status: 'paused',
+  activeRevisionId: 11,
+  mainTriggerNodeId: 'manual-trigger',
+  retentionDays: 30,
+  createdBy: 1,
+  createdAt,
+  updatedAt: createdAt,
+  runtime: { activityCursor: 0, healthSummary: 'idle', updatedAt: createdAt }
+}
+
+const workflowRevision = {
+  id: 11,
+  workflowId: 7,
+  revisionNumber: 1,
+  graph: {
+    schemaVersion: 1,
+    nodes: [
+      {
+        nodeInstanceId: 'manual-trigger',
+        nodeType: 'core.manual',
+        nodeVersion: '1.0.0',
+        config: {},
+        position: { x: 160, y: 220 }
+      },
+      {
+        nodeInstanceId: 'end',
+        nodeType: 'core.end',
+        nodeVersion: '1.0.0',
+        config: {},
+        position: { x: 520, y: 220 }
+      }
+    ],
+    edges: [
+      {
+        edgeId: 'manual-to-end',
+        sourceNodeInstanceId: 'manual-trigger',
+        sourcePort: 'out',
+        targetNodeInstanceId: 'end',
+        targetPort: 'in'
+      }
+    ]
+  },
+  nodeVersions: {
+    'manual-trigger': { nodeType: 'core.manual', nodeVersion: '1.0.0' },
+    end: { nodeType: 'core.end', nodeVersion: '1.0.0' }
+  },
+  mainTriggerNodeId: 'manual-trigger',
+  createdBy: 1,
+  createdAt,
+  secretFields: {}
+}
+
+const nodeDefinitions = ['core.manual', 'core.constant', 'core.end'].map((type) => ({
+  type,
+  version: '1.0.0',
+  title: { 'core.manual': 'Manual trigger', 'core.constant': 'Constant', 'core.end': 'End' }[type],
+  description: 'E2E node',
+  kind: type === 'core.manual' ? 'trigger' : 'action',
+  configSchema:
+    type === 'core.constant'
+      ? {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          properties: { value: { type: 'string', title: 'Value' } },
+          required: ['value'],
+          additionalProperties: false
+        }
+      : {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          additionalProperties: false
+        },
+  uiSchema: {},
+  inputSchema: {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    type: 'object',
+    additionalProperties: false
+  },
+  outputSchema: {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    type: 'object',
+    additionalProperties: false
+  },
+  inputPorts: type === 'core.manual' ? [] : ['in'],
+  outputPorts: type === 'core.end' ? [] : ['out'],
+  secretFields: [],
+  available: true
+}))
+
 function userInfo(accessMode: AccessMode) {
   const authenticated = accessMode === 'authenticated'
   return {
@@ -148,7 +265,30 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
       return
     }
     if (method === 'GET' && path === '/api/v1/system/menus') {
-      await fulfillApi(route, [homeMenu])
+      await fulfillApi(
+        route,
+        accessMode === 'authenticated' ? [homeMenu, workflowMenu] : [homeMenu]
+      )
+      return
+    }
+    if (method === 'GET' && path === '/api/v1/workflows') {
+      await fulfillApi(route, { items: [workflow] })
+      return
+    }
+    if (method === 'GET' && path === '/api/v1/workflows/node-definitions') {
+      await fulfillApi(route, { items: nodeDefinitions })
+      return
+    }
+    if (method === 'GET' && path === '/api/v1/workflows/7') {
+      await fulfillApi(route, workflow)
+      return
+    }
+    if (method === 'GET' && path === '/api/v1/workflows/7/revisions') {
+      await fulfillApi(route, { items: [workflowRevision] })
+      return
+    }
+    if (method === 'GET' && path === '/api/v1/workflows/7/revisions/11') {
+      await fulfillApi(route, workflowRevision)
       return
     }
     if (method === 'GET' && path === '/api/v1/home/overview') {
@@ -273,5 +413,36 @@ test('授权用户访问已撤下工作流路径时回退首页', async ({ page 
   await expect(page.getByText('新建工作流定义', { exact: true })).toHaveCount(0)
   expect(backend.schedulerApiCalls).toEqual([])
   expect(backend.authApiCalls).toEqual(['POST /api/v1/auth/login'])
+  expect(backend.unexpectedApiCalls).toEqual([])
+})
+
+test('超级管理员可以使用 Schema 工作流工作台且移动端只读', async ({ page }) => {
+  const backend = await installBackendMocks(page, 'authenticated')
+
+  await loginAsTestUser(page, '/workflows')
+
+  await expect(page.getByRole('heading', { name: '批处理示例', exact: true })).toBeVisible()
+  await expect(page.getByText('节点目录', { exact: true })).toBeVisible()
+  await expect(
+    page.locator('.node-catalog').getByText('core.manual@1.0.0', { exact: true })
+  ).toBeVisible()
+  await expect(page.getByText('Node inspector', { exact: true })).toBeVisible()
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(page.locator('.mobile-activity')).toBeVisible()
+  await expect(page.locator('.workbench-grid')).toBeHidden()
+  await expect(
+    page.locator('.mobile-activity__summary').getByText('R1', { exact: true })
+  ).toBeVisible()
+
+  expect(backend.schedulerApiCalls).toEqual(
+    expect.arrayContaining([
+      'GET /api/v1/workflows',
+      'GET /api/v1/workflows/node-definitions',
+      'GET /api/v1/workflows/7',
+      'GET /api/v1/workflows/7/revisions',
+      'GET /api/v1/workflows/7/revisions/11'
+    ])
+  )
   expect(backend.unexpectedApiCalls).toEqual([])
 })

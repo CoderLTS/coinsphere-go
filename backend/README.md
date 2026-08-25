@@ -1,6 +1,6 @@
 # CoinSphere Go 后端
 
-当前后端提供认证、RBAC、系统管理、监控、可信插件生命周期，以及 P1-A 工作流/修订/运行实例和生命周期 API。画布、批次执行、Quant、Paper、Testnet/Live、Private Executor 和 Python Worker 不属于当前运行面。
+当前后端提供认证、RBAC、系统管理、监控、可信插件生命周期，以及 P1-A/P1-B 工作流修订、Schema 图校验、密钥绑定和生命周期 API。批次执行、Quant、Paper、Testnet/Live、Private Executor 和 Python Worker 不属于当前运行面。
 
 ## 启动
 
@@ -22,7 +22,7 @@ go run .
 - `menus`、`menu_buttons`、`role_menus`、`role_menu_buttons`
 - `i18n_texts`、`audit_records`
 - `plugin_installations`、`plugin_references`
-- `workflows`、`workflow_revisions`、`workflow_runtimes`
+- `workflows`、`workflow_revisions`、`workflow_secret_bindings`、`workflow_runtimes`
 - Goose 管理的 `schema_migrations`
 
 基线启用 TimescaleDB 扩展，但不创建 hypertable。项目不提供旧数据库转换或兼容路径；重置和回滚步骤见[数据库迁移手册](../docs/runbooks/database-migrations.md)。
@@ -65,7 +65,7 @@ internal/pluginbuild Go/Vue 静态注册表渲染器
 internal/pluginregistry 编译进应用的 Go 插件注册表
 internal/perm        基线权限码与菜单映射
 internal/security    密码哈希、访问令牌和认证随机值
-internal/service     认证、系统管理、工作流生命周期、监控和审计服务
+internal/service     认证、系统管理、工作流图与生命周期、监控和审计服务
 plugin/manifest      严格插件清单、兼容性和源码路径校验
 plugin/sdk           插件节点、处理器、作用域和注册协议
 version              Core 与 SDK 兼容版本
