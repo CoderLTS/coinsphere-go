@@ -10,11 +10,19 @@ on:
         required: false
         type: boolean
         default: false
+      reset_database:
+        required: false
+        type: string
+        default: ""
   workflow_dispatch:
     inputs:
       version:
         description: "版本号，例如 v0.1.0"
         required: true
+        type: string
+      reset_database:
+        description: "通常留空；V2 基线重置须输入 RESET coinsphere-go-timescale-data"
+        required: false
         type: string
 
 permissions:
@@ -40,10 +48,20 @@ jobs:
 
       - name: Validate release source and version
         shell: bash
+        env:
+          DEPLOY_ONLY: ${{ inputs.deploy_only }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          RESET_DATABASE: ${{ inputs.reset_database }}
         run: |
           set -Eeuo pipefail
           [[ "$GITHUB_REF" == "refs/heads/main" ]] || { echo "只能从 main 手工发布或部署" >&2; exit 1; }
           [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || { echo "版本号必须符合 vX.Y.Z 格式" >&2; exit 1; }
+          if [[ -n "$RESET_DATABASE" ]]; then
+            [[ "$DEPLOY_ONLY" != true ]] || { echo "仅正式 Release 可以重置 V2 基线" >&2; exit 1; }
+            [[ "$GITHUB_ACTOR" == "$REPOSITORY_OWNER" ]] || { echo "仅仓库所有者可以重置 V2 基线" >&2; exit 1; }
+            [[ "$VERSION" == v0.3.0 ]] || { echo "V2 基线重置只允许用于 v0.3.0 freeze Release" >&2; exit 1; }
+            [[ "$RESET_DATABASE" == 'RESET coinsphere-go-timescale-data' ]] || { echo "数据库重置确认文本不匹配" >&2; exit 1; }
+          fi
           for attempt in 1 2 3; do
             git fetch --quiet origin main --tags && break
             [[ "$attempt" -lt 3 ]] || exit 1
@@ -160,7 +178,14 @@ jobs:
 
       - name: Deploy independent CoinSphere Compose
         shell: bash
-        run: bash deploy/production/deploy.sh "$VERSION" dist/release-manifest.json
+        env:
+          RESET_DATABASE: ${{ inputs.reset_database }}
+        run: |
+          if [[ -n "$RESET_DATABASE" ]]; then
+            bash scripts/release/reset-v2-baseline.sh "$VERSION" dist/release-manifest.json "$RESET_DATABASE"
+          else
+            bash deploy/production/deploy.sh "$VERSION" dist/release-manifest.json
+          fi
 
       - name: Publish GitHub Release
         if: inputs.deploy_only != true

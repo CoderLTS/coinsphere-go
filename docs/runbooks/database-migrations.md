@@ -30,6 +30,8 @@ go run ./cmd/migrate -config ./config.yml -direction down -steps 1
 
 满足条件后，停止 CoinSphere Backend/Web，定向重建 CoinSphere 自有数据库或数据卷，再由目标镜像执行 `coinsphere-migrate -direction up`。禁止手工改写 `schema_migrations` 来伪装重置。
 
+`v0.3.0` freeze Release 需要执行一次 V2 基线重置，必须由仓库所有者在 `Release and deploy` 的 `reset_database` 输入框精确填写 `RESET coinsphere-go-timescale-data`。工作流在停止独立 Compose 后，将数据库、制品、上传和静态资源卷保存到服务器部署目录下的 `backups/<UTC 时间>.<随机后缀>/`，验证归档与 `SHA256SUMS` 后只删除 `coinsphere-go-timescale-data`。候选部署失败时再次验证备份并自动恢复同一组卷和原应用版本；自动恢复失败则保持备份并停止继续操作，按发布 Runbook 人工恢复。留空时保持普通 Up 部署，不接触数据卷；其他版本拒绝使用该一次性入口。
+
 ## 变更规则
 
 - P4 发布标签的目标提交是正式 Paper 观察前的 migration freeze 记录；从该提交开始，核心与内置插件 migration 只追加递增版本，已有文件必须保持字节不变。
@@ -56,6 +58,6 @@ COINSPHERE_TEST_POSTGRES_DSN='postgres://coinsphere:test-only@127.0.0.1:5432/coi
 
 ## 发布与回滚
 
-本基线不能对旧 version 4 数据库执行原地 Up。部署前必须按上面的授权流程重置 CoinSphere 自有数据库；否则 migration runner 会因数据库领先二进制而停止。
+本基线不能对旧 version 4 数据库执行原地 Up。部署前必须按上面的授权流程重置 CoinSphere 自有数据库；旧账本与当前迁移文件不一致时，migration runner 也会在缺失的 V2 表上停止。
 
 应用回滚不自动执行 Down。若需要回滚到重置前版本，停止当前应用并恢复重置前已验证备份及与其匹配的应用镜像。不得把旧应用指向 V2 基线，也不得把 V2 应用指向旧 schema。
