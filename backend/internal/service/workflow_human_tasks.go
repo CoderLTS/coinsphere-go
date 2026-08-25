@@ -37,6 +37,7 @@ type WorkflowHumanTaskDecision struct {
 
 func (a *App) workflowHumanApproval(ctx context.Context, batch db.ExecutionBatch, node workflowGraphNode, input json.RawMessage) (sdk.ActionResult, error) {
 	var config struct {
+		DecisionMode  string `json:"decisionMode"`
 		TaskType      string `json:"taskType"`
 		Prompt        string `json:"prompt"`
 		ExpiresSecond int    `json:"expiresSeconds"`
@@ -49,6 +50,14 @@ func (a *App) workflowHumanApproval(ctx context.Context, batch db.ExecutionBatch
 		return sdk.ActionResult{}, errors.New("human approval configuration is invalid")
 	}
 	now := time.Now().UTC()
+	if config.DecisionMode == "auto" {
+		return sdk.ActionResult{Output: mustJSON(map[string]any{
+			"taskId": 0, "status": "approved", "decidedAt": formatWorkflowTime(now),
+		})}, nil
+	}
+	if config.DecisionMode != "" && config.DecisionMode != "human" {
+		return sdk.ActionResult{}, errors.New("human approval decision mode is invalid")
+	}
 	var task db.WorkflowHumanTask
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		businessKey := strings.TrimSpace(values.BusinessKey)

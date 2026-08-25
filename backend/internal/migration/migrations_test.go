@@ -17,7 +17,7 @@ import (
 )
 
 const postgresDSNEnv = "COINSPHERE_TEST_POSTGRES_DSN"
-const latestMigrationVersion = 8
+const latestMigrationVersion = 9
 
 var postgresSchemaSequence atomic.Uint64
 
@@ -44,6 +44,7 @@ func TestInitialMigrationLifecycle(t *testing.T) {
 	assertCurrentTables(t, database)
 	assertTimescaleExtension(t, database)
 	assertQuantSchema(t, database)
+	assertNotificationSchema(t, database)
 
 	if results, err = runner.Up(context.Background(), 0); err != nil || len(results) != 0 {
 		t.Fatalf("repeat migration results=%#v err=%v", results, err)
@@ -255,7 +256,7 @@ func TestWorkflowEventMigrationDownRejectsEvents(t *testing.T) {
 func TestQuantMigrationDownRejectsMarketData(t *testing.T) {
 	database := openPostgresSchema(t)
 	runner, _ := New(database)
-	if _, err := runner.Up(context.Background(), latestMigrationVersion); err != nil {
+	if _, err := runner.Up(context.Background(), 8); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
 	if _, err := database.Exec(`INSERT INTO plugin_quant.instruments
@@ -265,6 +266,26 @@ func TestQuantMigrationDownRejectsMarketData(t *testing.T) {
 	}
 	if _, err := runner.Down(context.Background(), 1); err == nil {
 		t.Fatal("rollback removed Quant data")
+	}
+	current, _, err := runner.Versions(context.Background())
+	if err != nil || current != 8 {
+		t.Fatalf("failed rollback changed migration version: current=%d err=%v", current, err)
+	}
+}
+
+func TestPaperMigrationDownRejectsData(t *testing.T) {
+	database := openPostgresSchema(t)
+	runner, _ := New(database)
+	if _, err := runner.Up(context.Background(), latestMigrationVersion); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO plugin_notification.deliveries
+        (operation_key, workflow_id, revision_id, node_instance_id, channel, subject_key, title, message, status, delivered_at)
+        VALUES ('rollback-guard', 1, 1, 'notify', 'in_app', 'guard', 'Guard', 'Keep this fact', 'delivered', CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.Down(context.Background(), 1); err == nil {
+		t.Fatal("rollback removed Paper-era data")
 	}
 	current, _, err := runner.Versions(context.Background())
 	if err != nil || current != latestMigrationVersion {
@@ -335,6 +356,7 @@ func TestInitialMigrationConstraintsAndIndexes(t *testing.T) {
 		"ix_execution_batches_partition", "ix_workflow_event_deliveries_workflow",
 		"ix_workflow_event_outbox_pending", "ux_workflow_human_task_pending_business",
 		"ix_workflow_human_tasks_status",
+		"ix_result_views_status", "ix_result_view_user_grants_user", "ix_result_view_role_grants_role",
 	})
 }
 
@@ -361,6 +383,7 @@ func assertCurrentTables(t *testing.T, database *sql.DB) {
 		"execution_batches", "workflow_node_runs", "workflow_checkpoints", "workflow_node_states",
 		"workflow_activities", "workflow_artifacts", "workflow_artifact_refs",
 		"workflow_event_records", "workflow_event_deliveries", "workflow_event_outbox", "workflow_human_tasks",
+		"result_views", "result_view_user_grants", "result_view_role_grants",
 	}
 	rows, err := database.Query(`
 SELECT table_name
@@ -406,7 +429,10 @@ SELECT
 
 func assertQuantSchema(t *testing.T, database *sql.DB) {
 	t.Helper()
-	for _, table := range []string{"instruments", "candles", "backtests"} {
+	for _, table := range []string{
+		"instruments", "candles", "backtests", "signals", "paper_accounts", "paper_orders",
+		"paper_fills", "paper_fees", "paper_ledger_entries", "paper_positions",
+	} {
 		var exists bool
 		if err := database.QueryRow(`SELECT to_regclass($1) IS NOT NULL`, "plugin_quant."+table).Scan(&exists); err != nil || !exists {
 			t.Fatalf("Quant table plugin_quant.%s exists=%t err=%v", table, exists, err)
@@ -419,11 +445,26 @@ func assertQuantSchema(t *testing.T, database *sql.DB) {
     )`).Scan(&hypertable); err != nil || !hypertable {
 		t.Fatalf("Quant candles hypertable=%t err=%v", hypertable, err)
 	}
-	for _, index := range []string{"ix_quant_candles_lookup", "ix_quant_backtests_created", "ix_quant_backtests_scope"} {
+	for _, index := range []string{
+		"ix_quant_candles_lookup", "ix_quant_backtests_created", "ix_quant_backtests_scope",
+		"ux_quant_signal_pending_business", "ix_quant_signals_scope", "ux_quant_paper_account_node",
+		"ix_quant_paper_orders_account", "ix_quant_paper_ledger_account",
+	} {
 		var count int
 		if err := database.QueryRow(`SELECT COUNT(*) FROM pg_indexes WHERE schemaname = 'plugin_quant' AND indexname = $1`, index).Scan(&count); err != nil || count != 1 {
 			t.Fatalf("Quant index %s count=%d err=%v", index, count, err)
 		}
+	}
+}
+
+func assertNotificationSchema(t *testing.T, database *sql.DB) {
+	t.Helper()
+	var table, index bool
+	if err := database.QueryRow(`SELECT
+        to_regclass('plugin_notification.deliveries') IS NOT NULL,
+        EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'plugin_notification' AND indexname = 'ix_notification_deliveries_status')
+    `).Scan(&table, &index); err != nil || !table || !index {
+		t.Fatalf("Notification schema table=%t index=%t err=%v", table, index, err)
 	}
 }
 
@@ -490,6 +531,7 @@ func openPostgresSchema(t *testing.T) *sql.DB {
 	t.Cleanup(func() {
 		_ = database.Close()
 		_, _ = admin.Exec("DROP SCHEMA IF EXISTS plugin_quant CASCADE")
+		_, _ = admin.Exec("DROP SCHEMA IF EXISTS plugin_notification CASCADE")
 		_, _ = admin.Exec("DROP SCHEMA " + pgx.Identifier{schema}.Sanitize() + " CASCADE")
 		_, _ = lock.ExecContext(context.Background(), "SELECT pg_advisory_unlock(671908427)")
 		_ = lock.Close()

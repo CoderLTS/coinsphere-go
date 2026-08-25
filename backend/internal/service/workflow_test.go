@@ -208,6 +208,9 @@ func workflowTestApp(t *testing.T) *App {
 	if err := official.RegisterAll(registry, nil); err != nil {
 		t.Fatal(err)
 	}
+	if err := official.RegisterNotification(registry, nil); err != nil {
+		t.Fatal(err)
+	}
 	err := registry.RegisterPlugin(sdk.PluginDescriptor{
 		ID: "official.test", Name: "Test", Version: "1.0.0", Contributes: []string{"nodes"},
 	}, func(registrar sdk.Registrar) error {

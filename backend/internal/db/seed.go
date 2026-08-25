@@ -42,6 +42,7 @@ type menuItem struct {
 var menuItems = []menuItem{
 	{"Home", "首页", "/home", "/home/index", "ri:home-5-line", "", true, true, false},
 	{"Workflows", "工作流工作台", "/workflows", "/workflows/index", "ri:flow-chart", "", true, false, false},
+	{"Results", "共享结果", "/results", "/results/index", "ri:file-chart-line", "", true, false, false},
 	{"System", "系统管理", "/system", "/index/index", "ri:settings-3-line", "", false, false, false},
 	{"User", "用户管理", "user", "/system/user", "ri:user-3-line", "System", true, false, false},
 	{"Role", "角色管理", "role", "/system/role", "ri:team-line", "System", true, false, false},
@@ -54,6 +55,7 @@ var menuItems = []menuItem{
 var menuI18n = map[string][2]string{
 	"Home":       {"首页", "Home"},
 	"Workflows":  {"工作流工作台", "Workflow Workbench"},
+	"Results":    {"共享结果", "Shared Results"},
 	"System":     {"系统管理", "System Management"},
 	"User":       {"用户管理", "User Management"},
 	"Role":       {"角色管理", "Role Management"},
@@ -287,7 +289,7 @@ func seedRoleBindings(
 	// 普通用户只看几项,游客只看首页。
 	roleMenus := map[string][]string{
 		"R_SUPER": allMenuNames,
-		"R_USER":  {"Home", "UserCenter"},
+		"R_USER":  {"Home", "Results", "UserCenter"},
 		"R_GUEST": {"Home"},
 	}
 	superButtons := make([]string, 0)
@@ -298,7 +300,7 @@ func seedRoleBindings(
 	}
 	roleButtons := map[string][]string{
 		"R_SUPER": superButtons,
-		"R_USER":  {},
+		"R_USER":  {perm.ResultViewsApprove, perm.ResultViewsReject, perm.ResultViewsExport},
 		"R_GUEST": {},
 	}
 

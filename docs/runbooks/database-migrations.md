@@ -2,7 +2,7 @@
 
 ## 当前基线
 
-CoinSphere 只支持 PostgreSQL/TimescaleDB。`00001` 至 `00007` 创建认证、插件生命周期和完整工作流运行基线；`00008_quant_market_backtests.sql` 创建内置 Quant 的 `plugin_quant` schema、品种、闭合 K 线 hypertable 和回测摘要。Quant 完整明细保存在内容寻址制品卷。
+CoinSphere 只支持 PostgreSQL/TimescaleDB。`00001` 至 `00007` 创建认证、插件生命周期和完整工作流运行基线；`00008_quant_market_backtests.sql` 创建 Quant 公共行情与回测；`00009_paper_results_notifications.sql` 创建 ResultView 授权、Quant 信号/Paper 事实与投影，以及 Notification 投递。
 
 服务启动只读校验核心版本，核心 DDL 只由 `coinsphere-migrate` 执行。内置 Quant 随应用版本迁移；通过插件 CLI 安装的插件使用 `plugin_<规范化插件 ID>` schema 和自己的 `schema_migrations` 账本。项目不提供旧表、旧接口或旧数据转换器；生产 DSN 和数据库密码只通过服务器配置注入。
 
@@ -32,7 +32,7 @@ go run ./cmd/migrate -config ./config.yml -direction down -steps 1
 
 ## 变更规则
 
-- P0 基线确认后，核心 schema 只追加递增版本，不再改写已合并 migration。
+- P4 发布标签的目标提交是正式 Paper 观察前的 migration freeze 记录；从该提交开始，核心与内置插件 migration 只追加递增版本，已有文件必须保持字节不变。
 - 每个 migration 包含 `-- +goose Up` 和 `-- +goose Down`，默认在事务中执行。
 - 插件 migration 使用独立递增版本；兼容升级只能追加高版本，卸载和应用回滚不执行插件 Down。
 - 金融时间使用 `TIMESTAMPTZ`；价格、数量、金额和费率使用 `NUMERIC(38,18)`。
@@ -40,6 +40,7 @@ go run ./cmd/migrate -config ./config.yml -direction down -steps 1
 - `00006` 只有在活动、制品和制品引用均为空时允许 Down；回滚恢复 P1-C 的 Checkpoint 和终态 NodeRun 全不可变规则。
 - `00007` 只有在事件、投递、Outbox、人工任务和诊断批次均为空时允许 Down；回滚恢复 P1 的批次与 NodeRun 状态约束。
 - `00008` 只有在 Quant 品种、K 线和回测摘要均为空时允许 Down；应用回滚不得自动删除 `plugin_quant`。
+- `00009` 只有在 ResultView、信号、Paper 账户/事实/投影和 Notification 投递全部为空时允许 Down；存在任一记录时必须恢复备份，不能删除事实来迁就旧应用。
 - 无法无损回滚时恢复已验证备份，不提供伪可逆 SQL。
 - 禁止应用启动自动建表、手工修改 migration 账本或用删除业务行修复版本差异。
 
@@ -51,7 +52,7 @@ COINSPHERE_TEST_POSTGRES_DSN='postgres://coinsphere:test-only@127.0.0.1:5432/coi
   go test -count=1 ./internal/migration ./internal/db ./internal/service ./cmd/migrate
 ```
 
-最小验收范围是空库 Up、重复 Up、空库 Down、重新 Up、精确表集合、关键约束/索引、Quant hypertable、数据库超前拒绝和非空库 Down 保护。
+最小验收范围是空库 Up、重复 Up、空库 Down、重新 Up、精确表集合、关键约束/索引、Quant hypertable、数据库超前拒绝、非空库 Down 保护和 Paper 账本重建。恢复演练见 [Paper 恢复与观察](paper-recovery.md)。
 
 ## 发布与回滚
 

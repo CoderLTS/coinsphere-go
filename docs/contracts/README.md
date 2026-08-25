@@ -14,11 +14,11 @@
 - 不提供公开注册。`POST /api/v1/auth/login` 是唯一匿名身份 API。
 - `POST /api/v1/auth/logout`、`POST /api/v1/auth/reauth` 和 `GET /api/v1/me` 要求有效 Access Token。
 - `POST /api/v1/auth/reauth` 返回绑定当前用户与当前会话、五分钟失效且只能使用一次的不透明 Token。
-- 当前业务 API 包含 `/api/v1/home/*`、`/api/v1/admin/users`、`/api/v1/system/*`、工作流路由和 Quant 系统插件路由；除匿名 Webhook 外，工作流与 Quant 路由只允许 `R_SUPER`。
+- 当前业务 API 包含 `/api/v1/home/*`、`/api/v1/admin/users`、`/api/v1/system/*`、工作流路由、ResultView 路由和系统插件路由；除匿名 Webhook 和获授权 ResultView 外，工作流与系统插件路由只允许 `R_SUPER`。
 - `/health/live` 只报告进程存活；`/health/ready` 和 `/health` 在一秒预算内检查 PostgreSQL；`/metrics` 要求登录。
 - 旧行情、策略、回测、信号、通知和交易路由已移除，不提供别名或兼容响应。
 
-## 工作流 P1-P3
+## 工作流 P1-P4
 
 | 路由                                                        | 语义                                   |
 | ----------------------------------------------------------- | -------------------------------------- |
@@ -40,6 +40,13 @@
 | `POST /api/v1/batches/{batchId}`                            | 执行 `cancel`、`retry` 或 `replay`     |
 | `GET /api/v1/artifacts/{sha256}/manifest`                   | 读取并校验制品清单                     |
 | `GET /api/v1/artifacts/{sha256}/download`                   | 下载解压后的制品正文                   |
+| `GET/POST /api/v1/result-views`                             | 列出获授权视图，或由管理员创建固定视图 |
+| `GET /api/v1/result-views/{viewId}`                         | 读取授权视图的公开描述                 |
+| `PUT /api/v1/result-views/{viewId}/grants`                  | 管理员原子替换用户与角色授权           |
+| `POST /api/v1/result-views/{viewId}/revoke`                 | 管理员不可逆撤销共享视图               |
+| `GET /api/v1/result-views/{viewId}/batches`                 | 读取固定工作流的脱敏批次摘要           |
+| `POST /api/v1/result-views/{viewId}/batches/{batchId}/{action}` | 按白名单重试或取消范围内批次        |
+| `POST /api/v1/result-views/{viewId}/workflow/pause`         | 按白名单暂停固定工作流                 |
 
 - 创建接受批次、事件、Connector 和 Quant 模板。事件 Trigger 按类型及可选精确 source/subject 过滤；定时配置只接受 UTC `everySeconds` 60 至 86400，不提供 Cron DSL。图 `schemaVersion` 固定为 `1`，节点保存 `nodeInstanceId`、精确节点版本、普通配置、结构化输入映射和位置；边保存两端端口及可选 Boolean CEL 条件。
 - 输入映射只接受 `field`、`literal`、`cel`。字段来源使用上游 `nodeInstanceId` 和字段路径数组；保存校验端口、可达性、DAG、JSON Schema、字段类型和 CEL，并拒绝 Decimal CEL 算术。图级后向边始终拒绝；`core.loop` 只运行内嵌无环子图，并强制 1 至 100 次上限、绝对超时和 Boolean CEL 退出条件。每轮 NodeRun、Checkpoint 与操作键都包含迭代号，人工等待节点不能嵌入 Loop。
@@ -51,7 +58,7 @@
 - 批次创建时固定事件与活动修订。单实例执行器使用 PostgreSQL 持久队列、每工作流并发/积压上限和有界 `stream`/`compute` 池；同工作流同分区按入队顺序领取，不同分区可并行，过期租约重启后重新排队。进入 `waiting` 的人工任务保存上下文并释放执行池和分区占用。
 - 每个成功节点原子提交终态 NodeRun、输出 Checkpoint 和缓冲状态。失败只重试当前节点，默认最多三次并线性退避；操作键固定为 `sha256(batchId + ":" + nodeInstanceId + ":" + loopIteration)`。取消通过 `context.Context` 协作传递，取消请求后不再调度下游节点。最终失败用 Outbox 发布 `io.coinsphere.workflow.batch.failed`。
 - 核心执行 `core.manual`、`core.schedule`、`core.event`、`core.constant`、`core.human_approval`、`core.loop` 和 `core.end`，其他 Action/Trigger 从编译期插件注册表调用；执行前后分别校验输入/输出 Schema，修订密钥通过节点范围 `SecretReader` 解密。启动前必须已配置活动修订的全部必需密钥。
-- `core.human_approval` 产生 `pending` 任务；相同工作流、节点和业务键的新任务会把旧任务置为 `superseded`。`approved`、`rejected`、`expired` 和 `superseded` 都只能提交一次并恢复原批次，决定正文最多 64 KiB。
+- `core.human_approval` 默认产生 `pending` 任务；显式 `auto` 模式直接输出自动批准。相同工作流、节点和业务键的新任务会把旧任务置为 `superseded`。`approved`、`rejected`、`expired` 和 `superseded` 都只能提交一次并恢复原批次，决定正文最多 64 KiB。
 - 终态批次可创建固定原事件与修订的诊断重放。`notification`、`human_action` 和 `paper` 副作用不再次执行，而是复用原 Checkpoint 和制品；缺少原 Checkpoint 时重放失败。
 - 批次列表返回最近 100 条摘要；批次详情按执行顺序返回 NodeRun、受控活动摘要和制品引用。活动查询首次返回最近记录，后续使用 `after` 单调游标增量读取，单页上限 200。
 - 活动由数据库在批次、NodeRun 和人工任务状态转换时原子追加，只包含事件类型、状态、受控中文摘要和错误类别，不保存原始错误、输入、输出或密钥。活动 WebSocket 要求同源 `Origin`，使用 `coinsphere.workflow-activity.v1` 与 Access Token 两个子协议值认证，并从 `after` 游标补齐；WebSocket 不是真实事实源。
@@ -79,18 +86,22 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 插件作用域路由必须声明一种上下文：
 
 - `WorkflowScope`：当前工作流和节点范围，仅供工作流管理面。
-- `ResultScope`：固定视图、插件、页面、服务端过滤器、操作白名单和当前用户。
+- `ResultScope`：固定视图、插件、页面、服务端 scope/filter、操作白名单和当前用户；普通响应不返回固定 scope/filter 或源 workflow ID。
 - `SystemScope`：插件安装状态和系统级健康范围。
 
-插件不得从查询参数扩大核心注入的范围。P0 契约测试证明 `ResultScope` 固定过滤器覆盖不可信查询参数；生产共享视图和授权存储在 P4 实现。
+插件不得从查询参数扩大核心注入的范围。不存在、未授权或已撤销 ResultView 统一返回 `404`；操作先解析 active 视图，再检查白名单、RBAC 和领域状态。
 
-结果页描述符包含插件内唯一 `pageKey`、标题、前端组件入口、范围 Schema、操作白名单和移动端能力。Vue 生成注册表把每个插件入口约束为 `FrontendPluginModule`；测试契约插件不加入生产菜单。
+结果页描述符包含插件内唯一 `pageKey`、标题、前端组件入口、范围/过滤器 Schema、操作白名单和移动端能力。Vue 生成注册表把每个插件入口约束为 `FrontendPluginModule`；测试契约插件不加入生产菜单。
 
 内置 `official.connector` 提供 HTTP Action、Webhook Trigger、WebSocket Trigger 和运行诊断结果页；`official.ai` 提供 OpenAI-compatible 结构化模型调用和结果页。两者只访问 `workflow.http_allowed_hosts` 的精确公共域名，禁用环境代理，拨号前后解析并拒绝非公网 IP。Binance 只允许明确列出的公共 GET/公共 WebSocket，授权、私有或未知端点一律拒绝。AI 节点只接收/返回 JSON 对象，不能控制工作流生命周期或交易。
 
-内置 `official.quant` 提供 `binance_candles` Trigger、`evaluate`/`backtest` Action、可信 SMA crossover 策略和移动可用结果页。行情只使用 Binance Spot/USD-M 公共接口，按 `market + instrument + interval` 合并订阅并发布 `market.candle.closed`；重复 REST/WebSocket 数据由 K 线键和 CloudEvent `(source,id)` 去重。策略只接收升序、连续、UTC 闭合 K 线和已校验参数，返回 `-1` 至 `1` 的 Decimal 目标；实时与回测调用同一 `Evaluate`。回测在下一根 K 线开盘成交，摘要写入 `plugin_quant.backtests`，完整明细写入内容寻址制品。
+内置 `official.quant` 提供 `binance_candles` Trigger、`evaluate`/`backtest`/`signal`/`paper_execute` Action、可信 SMA crossover 策略和移动可用结果页。行情只使用 Binance Spot/USD-M 公共接口，按 `market + instrument + interval` 合并订阅并发布 `market.candle.closed`；重复 REST/WebSocket 数据由 K 线键和 CloudEvent `(source,id)` 去重。策略只接收升序、连续、UTC 闭合 K 线和已校验参数，返回 `-1` 至 `1` 的 Decimal 目标；实时、回测与 Paper 调用同一 `Evaluate`。
 
-`GET /api/v1/plugins/official.quant/{instruments|candles|strategies|backtests}` 是 `SystemScope` 只读路由，只允许超级管理员。金融值均返回十进制字符串；`before` 时间必须为 UTC，查询只接受声明的键和有界 `limit`。
+Paper 账户按 `workflowId + paper nodeInstanceId` 唯一。默认人工审批；自动模式只有在最大总名义价值、单品种名义价值、单次操作名义价值、最大日亏损和最大回撤全部显式配置时有效。批准后重新读取 Binance 公共报价，并在一个数据库事务中检查信号/任务状态、报价新鲜度、品种状态、数量步进、账户状态及五项风险限制。拒绝不会创建账户或账本；成功执行写入不可变订单、成交、费用和账本事实，再更新账户与持仓投影。操作键和唯一约束保证节点重试、进程重启及 Outbox 重投不重复成交或投递。
+
+内置 `official.notification` 提供 `in_app` Action 和投递结果页。站内投递只保存受控标题、正文和业务键，以操作键幂等；诊断重放复用原 Checkpoint，不再次产生 notification、human_action 或 paper 副作用。
+
+`GET /api/v1/plugins/official.quant/{instruments|candles|strategies|backtests|signals|paper-accounts}`、Paper 账户重建和 Notification 系统查询是 `SystemScope` 路由，只允许超级管理员。ResultView 插件路由只接受核心注入的固定范围，查询参数不能扩大范围。金融值均返回十进制字符串。
 
 匿名 Webhook 要求 `X-CoinSphere-Webhook-Secret`、`Idempotency-Key` 和 `X-CoinSphere-Partition-Key` 各出现一次，正文必须是不超过 1 MiB 的 JSON 对象。错误 Secret、非运行工作流和非 Webhook 主触发器统一返回不可发现响应。
 
@@ -102,8 +113,8 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 - `plugin uninstall` 有活动引用时拒绝；成功后移除静态源码和注册并保留插件 schema。
 - `plugin purge-data` 要求插件已卸载、无任何活动或历史引用，并精确提供 `PURGE <plugin-id>`；schema 和安装记录在同一事务删除。
 
-核心及随应用发布的内置 Quant migration 使用 `schema_migrations`；Quant 数据仍由独立 `plugin_quant` schema 拥有。通过 CLI 安装的插件使用独立 `plugin_<规范化 ID>` schema 和 `<schema>.schema_migrations`，卸载不执行 Down。正式 Paper 观察开始前 migration 历史尚未冻结，但任何破坏性整理都必须重跑空库和保护测试。
+核心及随应用发布的内置 Quant/Notification migration 使用 `schema_migrations`；领域数据仍由 `plugin_quant` 和 `plugin_notification` schema 拥有。通过 CLI 安装的插件使用独立 `plugin_<规范化 ID>` schema 和 `<schema>.schema_migrations`，卸载不执行 Down。P4 发布标签记录 migration freeze 提交；冻结后已有 migration 字节不变，只能追加更高版本。
 
 ## 尚未实现
 
-信号、Paper、Notification 和共享结果视图当前均不可用。Testnet/Live、私有交易 API、插件市场、签名、沙箱、热加载和多实例集群不属于 V2 当前合同。
+Testnet/Live、私有交易 API、插件市场、签名、沙箱、热加载和多实例集群不属于 V2 当前合同。P4 合并、发布或部署不构成任何真实交易放行。

@@ -1,6 +1,6 @@
 # CoinSphere 使用手册
 
-本文面向当前 V2 个人自托管用户和管理员。当前可用能力是登录、RBAC、系统管理、系统监控、可信本地插件维护，以及超级管理员批次/事件/连续流工作台、活动历史、人工任务、诊断重放、Connector/AI、Binance 公共行情、可信 Go 策略、回测和制品；Paper、通知与共享结果尚未交付。
+本文面向当前 V2 个人自托管用户和管理员。当前可用能力是登录、RBAC、系统管理、系统监控、可信本地插件维护，以及工作流、Connector/AI、Binance 公共行情、可信 Go 策略、回测、Paper、站内通知和固定范围共享结果。
 
 ## 1. 使用范围
 
@@ -61,6 +61,7 @@ docker compose down
 | 角色管理     | 创建角色并分配菜单、按钮权限                             |
 | 菜单管理     | 维护后台导航与权限码                                     |
 | 工作流工作台 | 创建批次、事件或连续流工作流，编辑修订并观察执行         |
+| 共享结果     | 查看授权的 Paper/通知结果，执行白名单内审批与批次操作    |
 
 旧行情、新闻、策略、通知和交易页面不属于当前 Web 运行面。旧 `/scheduler/workflow/*` 路径和旧图格式不恢复；新工作台固定使用 `/workflows`。
 
@@ -100,7 +101,17 @@ COINSPHERE_WORKFLOW__HTTP_ALLOWED_HOSTS='[api.example.com,models.example.com]'
 
 Quant 只连接 Binance Spot 和 USD-M 公共 REST/WebSocket。先创建并启动 `quant-market-data`，选择市场、品种和固定周期；同一 `market + instrument + interval` 的订阅共享连接，断线后 REST 补数，数据库与 CloudEvent 身份共同去重。月线不属于当前固定周期集合。
 
-`quant-strategy` 消费 `market.candle.closed` 并调用已编译的 SMA crossover Go 策略。`quant-backtest` 读取已落库的闭合 K 线，在下一根 K 线开盘成交并应用 Decimal 手续费和滑点；日期必须是 UTC。运行结果中的 Quant 页面可查看品种、K 线、策略和回测摘要，并下载后校验完整明细 SHA-256。当前不提供在线策略源码、信号审批、Paper、Testnet、Live 或交易所私有凭据。
+`quant-strategy` 消费 `market.candle.closed` 并调用已编译的 SMA crossover Go 策略。`quant-backtest` 读取已落库的闭合 K 线，在下一根 K 线开盘成交并应用 Decimal 手续费和滑点；日期必须是 UTC。运行结果中的 Quant 页面可查看品种、K 线、策略和回测摘要，并下载后校验完整明细 SHA-256。
+
+### 5.4 Paper、通知与共享结果
+
+选择 `quant-paper` 会在一个事务内创建暂停状态的共享行情工作流和 Paper 策略工作流。先确认市场、品种、周期和五项风险限制，再分别启动两个工作流。默认 `core.human_approval` 和 `paper_execute` 都使用 `human`；自动模式必须同时显式改为 `auto`，且不能删除任一风险上限。
+
+Paper 链路为“闭合 K 线 → 可信策略 → 信号 → 人工/自动决策 → 新鲜公共报价与风险复核 → Paper 账本 → 站内通知”。账户按工作流和 Paper 节点实例隔离。风险拒绝不创建账户、订单或部分账本；成交、费用和账本使用 Decimal 字符串与 UTC 时间，不连接 Binance 私有接口。
+
+超级管理员在“共享结果”创建视图时选择工作流及对应信号、Paper 或通知节点，固定市场/品种/状态过滤器，并选择允许操作与授权用户/角色。普通用户只能看到 active 且获授权的视图；响应不包含固定 scope/filter 或源 workflow ID。批准、拒绝、重试、取消、暂停和导出同时受视图白名单、角色按钮权限和当前领域状态限制。
+
+Paper 页面展示账户、持仓、最近脱敏批次和信号；移动端使用纵向信号队列。管理员可从系统 Quant 路由执行账户投影重建。具体恢复步骤与证据项见 [Paper 恢复与观察](runbooks/paper-recovery.md)。当前仍不提供在线策略源码、Testnet、Live、交易所私有凭据或真实下单。
 
 ## 6. 插件维护
 
@@ -141,7 +152,7 @@ go run ./cmd/coinsphere plugin purge-data --config ./config.yml --backend-root .
 
 升级使用最新固定版本镜像先运行 migration，再启动 Backend/Web。应用启动只校验 schema，不自动建表。失败时停止候选版本并按[发布 Runbook](runbooks/release.md)恢复匹配的应用镜像；不要手工改 migration 账本或自动执行 Down。
 
-正式 Paper 观察尚未开始，因此 migration 历史尚未冻结。任何开发数据重置都必须按[数据库迁移 Runbook](runbooks/database-migrations.md)确认目标和备份，不得触及生产或需要保留的证据。
+P4 发布标签记录 migration freeze 提交；从该提交开始，已有 migration 只能保持字节不变并追加新版本。任何数据重置都必须按[数据库迁移 Runbook](runbooks/database-migrations.md)确认目标、备份和是否已有 Paper 观察证据。
 
 ## 8. 健康检查与排障
 
@@ -163,6 +174,8 @@ docker compose logs --tail=200 migrate backend web
 | 插件无法卸载             | CLI 输出的活动引用，先在拥有模块解除引用                |
 | 工作流返回 `409`         | 修订指针过期、状态冲突、事件内容冲突或积压达到上限      |
 | 连续流变为“需处理”       | Trigger 配置、域名白名单、DNS、凭据或远端握手状态       |
+| Paper 信号被拒绝         | 结果页拒绝原因、报价时效、数量步进、账户状态及五项上限  |
+| Paper 投影不一致         | 先保留事实和备份，再按 Paper 恢复 Runbook 执行重建      |
 
 日志和截图必须移除 DSN、Token、密码、原始载荷和个人数据。
 
@@ -171,7 +184,7 @@ docker compose logs --tail=200 migrate backend web
 - 不把真实 API Key、Secret、令牌、DSN 或生产配置提交到代码、日志、Issue、PR、CI 或 AI 上下文。
 - 不安装不可信、远程下载或未经审查的插件源码。
 - AI、工作流和通用 HTTP 节点不得调用交易所私有接口或绕过风控。
-- 完成 P3 不会自动创建 Testnet/Live 阶段，也不会启用 Paper 或真实交易。
+- 完成或部署 P4 不会自动创建 Testnet/Live 阶段，也不会启用任何真实交易。
 
 ## 10. 文档索引
 
@@ -181,4 +194,5 @@ docker compose logs --tail=200 migrate backend web
 - [质量门禁](quality/quality-gates.md)
 - [本地开发](runbooks/development.md)
 - [数据库迁移](runbooks/database-migrations.md)
+- [Paper 恢复与观察](runbooks/paper-recovery.md)
 - [发布与回滚](runbooks/release.md)

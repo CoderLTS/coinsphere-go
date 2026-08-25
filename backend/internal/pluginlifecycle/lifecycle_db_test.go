@@ -56,6 +56,7 @@ func TestPluginDataLifecycle(t *testing.T) {
 		_ = database.Close()
 		_, _ = admin.Exec("DROP SCHEMA " + pgx.Identifier{pluginSchema}.Sanitize() + " CASCADE")
 		_, _ = admin.Exec("DROP SCHEMA IF EXISTS plugin_quant CASCADE")
+		_, _ = admin.Exec("DROP SCHEMA IF EXISTS plugin_notification CASCADE")
 		_, _ = admin.Exec("DROP SCHEMA " + pgx.Identifier{testSchema}.Sanitize() + " CASCADE")
 		_, _ = lock.ExecContext(context.Background(), "SELECT pg_advisory_unlock(671908427)")
 		_ = lock.Close()

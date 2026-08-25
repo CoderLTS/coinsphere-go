@@ -364,3 +364,35 @@ type WorkflowHumanTask struct {
 }
 
 func (WorkflowHumanTask) TableName() string { return "workflow_human_tasks" }
+
+type ResultView struct {
+	ID             int64 `gorm:"primaryKey;autoIncrement"`
+	Name           string
+	PluginID       string
+	PageKey        string
+	ScopeJSON      string `gorm:"type:jsonb"`
+	FiltersJSON    string `gorm:"type:jsonb"`
+	AllowedActions string `gorm:"type:jsonb"`
+	Status         string
+	CreatedBy      int64
+	CreatedAt      time.Time
+	RevokedAt      *time.Time
+}
+
+func (ResultView) TableName() string { return "result_views" }
+
+type ResultViewUserGrant struct {
+	ViewID    int64 `gorm:"primaryKey"`
+	UserID    int64 `gorm:"primaryKey"`
+	CreatedAt time.Time
+}
+
+func (ResultViewUserGrant) TableName() string { return "result_view_user_grants" }
+
+type ResultViewRoleGrant struct {
+	ViewID    int64 `gorm:"primaryKey"`
+	RoleID    int64 `gorm:"primaryKey"`
+	CreatedAt time.Time
+}
+
+func (ResultViewRoleGrant) TableName() string { return "result_view_role_grants" }

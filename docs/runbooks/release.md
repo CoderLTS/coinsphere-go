@@ -25,11 +25,12 @@ CoinSphere 不再部署到 sub2api 或其他应用的 Compose 项目。发布只
 ## 发布流程
 
 1. 目标 PR 合并到最新 `main`，CI 和最终只读复审通过。
-2. 在 GitHub Actions 手工运行 `Release and deploy`，输入未使用的 `vX.Y.Z`。
-3. 工作流构建 Backend/Web 固定 digest，生成 SBOM 和校验文件，并完成 CRITICAL 扫描。
-4. `deploy/production/deploy.sh` 拉取镜像，启动独立 TimescaleDB，执行目标镜像内 migration。
-5. 首次迁移时，脚本只停止并移除旧共享 Compose 中实际运行的 CoinSphere 服务，然后启动独立项目。
-6. 脚本检查 TimescaleDB、Backend、Web 和 `/health`；全部通过后保存新的 `.env`。
+2. 涉及 Paper 时，按[数据库迁移手册](database-migrations.md)保存一致备份，并在发布记录中把目标 commit 记为 migration freeze 提交。
+3. 在 GitHub Actions 手工运行 `Release and deploy`，输入未使用的 `vX.Y.Z`。
+4. 工作流构建 Backend/Web 固定 digest，生成 SBOM 和校验文件，并完成 CRITICAL 扫描。
+5. `deploy/production/deploy.sh` 拉取镜像，启动独立 TimescaleDB，执行目标镜像内 migration。
+6. 首次迁移时，脚本只停止并移除旧共享 Compose 中实际运行的 CoinSphere 服务，然后启动独立项目。
+7. 脚本检查 TimescaleDB、Backend、Web 和 `/health`；全部通过后保存新的 `.env`。
 
 直接在已扫描 Manifest 上手工执行同一部署器：
 
@@ -65,3 +66,5 @@ curl -fsS http://127.0.0.1:8080/health
 ## 安全边界
 
 V2 部署不包含 Testnet、Live 或交易所私有接口。发布、CI、Codex 和工作流不得提供真实交易凭据、自动下单、打开交易开关或解除急停。
+
+部署后的 Paper 重启、积压与账本验证按 [Paper 恢复与观察](paper-recovery.md)执行；发布成功不自动开始正式 Paper 观察。

@@ -1,0 +1,56 @@
+# Paper 恢复与观察
+
+本手册只适用于 Paper，不授权 Testnet、Live、交易所私有接口或真实凭据。生产演练必须先取得当前任务授权，并确认数据库、制品卷和应用镜像属于同一可恢复点。
+
+## 自动化基线
+
+P4 合并前至少保留以下通过记录：
+
+```bash
+cd backend
+go test -count=1 ./internal/migration ./internal/service ./plugin/official
+```
+
+PostgreSQL 测试覆盖空库/升级/Down 保护、等待与积压恢复、Paper 操作键幂等、风险拒绝不产生部分事实、Notification 重投和账本重建。本机没有 PostgreSQL 时不得把跳过结果写成已完成，使用 CI TimescaleDB Job 作为证据。
+
+## 演练前记录
+
+1. 记录 UTC 时间、环境、发布标签、完整 commit、数据库 migration 版本和镜像 digest。
+2. 确认只有 Paper 工作流，不存在真实交易插件、私有交易 API 或真实密钥。
+3. 创建数据库与 Backend 制品卷的一致备份，并实际验证恢复命令可读取。
+4. 记录目标 Paper 工作流、账户 ID、待处理批次/任务数量，以及各事实表的总数和不同 `operation_key` 数量。证据不得包含原始载荷、Token、DSN 或个人数据。
+
+## 重启与积压
+
+1. 让一个 Paper 批次停在人工等待，并保留至少一个排队批次。
+2. 只重启 CoinSphere Backend；不要执行 Compose `down`，不要操作共享服务。
+3. 验证等待任务仍为 `pending`、排队批次仍可领取、同分区顺序未改变。
+4. 批准或拒绝任务，确认原批次从 Checkpoint 继续，而不是重新产生信号、成交或通知。
+5. 对失败批次执行一次白名单重试，对活动批次执行取消，再暂停固定工作流；记录预期的 `409` 状态冲突和成功结果。
+
+## 账本重建
+
+先保存账户及持仓投影快照，再由超级管理员调用：
+
+```bash
+curl --fail-with-body -X POST \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  "https://<host>/api/v1/plugins/official.quant/paper-accounts/<accountId>/rebuild"
+```
+
+重建只删除并重算可变持仓投影，再从初始余额、不可变成交和账本事实恢复现金、权益、峰值及日初权益。重建后比较：
+
+- 订单、成交、费用和账本行数及操作键完全不变。
+- 账户现金等于初始余额加账本金额总和。
+- 持仓数量等于成交数量变化总和，权益等于现金加持仓按最后事实价格计值。
+- 第二次重建得到同一投影。
+
+不一致时立即暂停工作流，保留数据库和日志证据；不得修改事实表、伪造 migration 版本或执行 Down。
+
+## 插件升级
+
+在非生产恢复副本上执行同 major 插件升级演练：旧 migration 字节必须不变，新版本只能追加；活动 ResultView 引用时卸载必须被拒绝。升级后重复读取固定结果视图并重建一个 Paper 账户。重大版本升级当前必须拒绝，不以状态转换或自动启动工作流代替人工迁移方案。
+
+## 观察门禁
+
+使用 [Paper 观察证据模板](../templates/paper-observation-evidence.md)记录 CI、发布、恢复、账本和视觉验收链接。只有用户确认这些证据满足要求后才能开始正式 Paper 观察；P4 发布和部署本身不构成观察、Testnet 或 Live 放行。
