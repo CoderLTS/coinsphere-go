@@ -453,7 +453,7 @@ func (q *quantRuntime) fetchQuantPublicQuote(ctx context.Context, config quantSe
 	}
 	price, err := decimal.NewFromString(payload.Price)
 	if err != nil || price.Sign() <= 0 {
-		return quantPublicQuote{}, errors.New("Binance public quote is invalid")
+		return quantPublicQuote{}, errors.New("binance public quote is invalid")
 	}
 	return quantPublicQuote{Price: price, Retrieved: time.Now().UTC()}, nil
 }
@@ -477,7 +477,7 @@ func verifyQuantPaperDecision(tx *gorm.DB, mode string, signal quantSignal, task
 	if err := tx.Table("workflow_human_tasks").Where("id = ?", taskID).First(&task).Error; err != nil ||
 		task.WorkflowID != signal.WorkflowID || task.BusinessKey != signal.BusinessKey ||
 		task.TaskType != "paper_signal" || task.Status != decision {
-		return errors.New("Quant Paper human task is stale or outside the signal scope")
+		return errors.New("quant Paper human task is stale or outside the signal scope")
 	}
 	return nil
 }
@@ -592,18 +592,6 @@ func quantDerivedOperationKey(operationKey, suffix string) string {
 func quantUTCDate(value time.Time) time.Time {
 	value = value.UTC()
 	return time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, time.UTC)
-}
-
-func quantScopeInt64(raw json.RawMessage, field string) (int64, error) {
-	var value map[string]json.RawMessage
-	if json.Unmarshal(raw, &value) != nil {
-		return 0, errors.New("Quant result scope is invalid")
-	}
-	var number int64
-	if json.Unmarshal(value[field], &number) != nil || number <= 0 {
-		return 0, errors.New("Quant result scope is invalid")
-	}
-	return number, nil
 }
 
 func quantPathInt64(value string) (int64, error) {

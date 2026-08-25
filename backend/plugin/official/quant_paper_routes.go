@@ -299,7 +299,7 @@ func (q *quantRuntime) rebuildQuantPaperAccount(ctx context.Context, accountID i
 	return q.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var account quantPaperAccount
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&account, accountID).Error; err != nil {
-			return errors.New("Quant Paper account is unavailable")
+			return errors.New("quant Paper account is unavailable")
 		}
 		var rows []struct {
 			Market, Instrument   string

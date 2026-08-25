@@ -295,7 +295,7 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 	if templateKey == WorkflowTemplatePaper {
 		marketGraph, err = a.validateWorkflowGraph(json.RawMessage(quantMarketDataWorkflowGraph))
 		if err != nil {
-			return WorkflowDetail{}, errors.New("Paper market data template is invalid")
+			return WorkflowDetail{}, errors.New("paper market data template is invalid")
 		}
 	}
 	err = a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
