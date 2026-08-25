@@ -5,8 +5,8 @@
 ## Pull Request
 
 - Ready PR 的 base 必须是 `main`；依赖未合并代码的 stacked PR 保持 Draft。
-- `changes` 按路径选择 Backend、Frontend 和发布脚本检查，并拒绝 Ready PR 指向非 `main`。
-- Backend 变更运行 `go mod tidy -diff`、`gofmt`、`go vet`、Staticcheck、全量测试和构建；Frontend 变更运行锁定依赖安装、ESLint、Stylelint、单元测试、类型检查/构建和 Chromium 冒烟；发布脚本变更运行 Bash 语法、ShellCheck 和脚本测试。
+- `changes` 按 Backend、Frontend、插件和发布脚本路径选择检查，并拒绝 Ready PR 指向非 `main`。
+- Backend 变更运行 `go mod tidy -diff`、`gofmt`、`go vet`、Staticcheck、全量测试和构建；测试插件 Backend 同步执行 module 整理、Vet、Staticcheck 和契约测试。Frontend 变更运行锁定依赖安装、ESLint、Stylelint、单元测试、类型检查/构建和 Chromium 冒烟；发布脚本变更运行 Bash 语法、ShellCheck 和脚本测试。
 - `.github/workflows/ci.yml` 变更会选择全部模块。依赖或锁文件变化时，Security workflow 选择对应漏洞/文件系统扫描。
 - Secret scan 每个 PR 都运行。金融、凭据、迁移、并发、恢复或外部协议变更必须在本切片补充覆盖边界行为的测试，并在 PR 记录命令和结果。
 - 纯文档/治理变更只做相对链接、YAML 解析、`git diff --check` 和只读引用复审；这些检查目前由本地或审查执行，不宣称由 CI 自动完成。
@@ -15,7 +15,7 @@
 
 推送到 `main` 时 CI 选择全部模块：Backend 使用 Race 测试，Frontend 运行 Chromium/Firefox/WebKit 冒烟；容器 Job 构建 Compose 镜像、检查代理隔离、运行健康/`/health` 冒烟，并扫描 Backend、Web 镜像的 CRITICAL 漏洞。
 
-Security workflow 在 `main` 和每周计划任务运行 Secret、Go 依赖及文件系统扫描；按变更范围的 PR 只运行适用扫描。
+Security workflow 在 `main` 和每周计划任务运行 Secret、主 Go module、测试插件 Go module 及文件系统扫描；按变更范围的 PR 只运行适用扫描。
 
 ## 发布
 

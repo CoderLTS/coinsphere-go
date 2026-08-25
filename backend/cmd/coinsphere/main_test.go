@@ -51,7 +51,7 @@ func writePlugin(t *testing.T, id, pluginVersion, constraint string) string {
 	if err := os.WriteFile(filepath.Join(root, "backend", "go.mod"), []byte("module "+module+"\n\ngo 1.26.6\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "frontend", "index.ts"), []byte("export default {}\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "frontend", "index.ts"), []byte("export const resultPages = {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "migrations", "00001_init.sql"), []byte("-- +goose Up\nSELECT 1;\n-- +goose Down\nSELECT 1;\n"), 0o600); err != nil {

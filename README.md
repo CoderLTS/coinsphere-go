@@ -2,7 +2,7 @@
 
 CoinSphere 正在重构为以可视化工作流为核心、由编译期插件提供业务能力的通用平台。项目保持 Vue、Go 模块化单体和 PostgreSQL/TimescaleDB 技术栈。
 
-> V2 P0 基线只保留认证、RBAC、用户/角色/菜单管理和系统监控。旧领域源码、旧 migration 和 Python Worker 已移除；目标设计见[工作流平台 V2](docs/architecture/workflow-platform-v2.md)。
+> V2 P0 已完成认证、RBAC、用户/角色/菜单管理、系统监控和可信本地插件 SDK。旧领域源码、旧 migration 和 Python Worker 已移除；目标设计见[工作流平台 V2](docs/architecture/workflow-platform-v2.md)。
 
 ## 当前能力
 
@@ -10,7 +10,8 @@ CoinSphere 正在重构为以可视化工作流为核心、由编译期插件提
 | ------------------------------------ | --------------- | ------------------------------------------------- |
 | 登录、用户、角色、菜单               | Web             | 可用，不开放公开注册                              |
 | 系统监控                             | Web + `/api/v1` | 可用，展示 Go、HTTP、PostgreSQL 和 migration 状态 |
-| V2 工作流工作台与插件                | -               | 按 [V2 路线图](docs/roadmap/README.md)开发中      |
+| 本地插件校验、安装、升级和卸载       | CLI             | 可用，编译期静态注册                              |
+| V2 工作流工作台                      | -               | 按 [V2 路线图](docs/roadmap/README.md)开发中      |
 | 旧工作流、新闻、策略、交易和通知接口 | -               | 已从公开运行面移除                                |
 
 详细操作见[使用手册](docs/user-guide.md)，接口语义见[公共契约](docs/contracts/README.md)。
@@ -63,6 +64,7 @@ docker compose down
 ```text
 backend/             Go App、V2 基线 migration 与系统管理模块
 frontend/            Vue 3 + Vite Web
+plugins/             测试插件与后续官方插件源码
 deploy/production/   生产 Compose 模板
 docs/                架构、契约、开发计划、质量门禁和 Runbook
 scripts/             验证、发布和部署脚本
@@ -84,9 +86,9 @@ scripts/             验证、发布和部署脚本
 
 ## 文档
 
-- [使用手册](docs/user-guide.md)：安装、页面操作、Paper、备份、升级和排障
+- [使用手册](docs/user-guide.md)：安装、系统管理、插件、备份、升级和排障
 - [架构说明](docs/architecture/overview.md)：系统边界、组件职责和关键数据流
-- [公共契约](docs/contracts/README.md)：`/api/v1` 接口和交易安全语义
+- [公共契约](docs/contracts/README.md)：`/api/v1`、插件 SDK 和生命周期语义
 - [开发计划](docs/roadmap/README.md)：能力顺序、完成标准和晋级门禁
 - [质量门禁](docs/quality/quality-gates.md)：测试与验收要求
 - [发布与回滚](docs/runbooks/release.md)：手工发布、固定 digest 部署和回滚

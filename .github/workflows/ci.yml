@@ -71,6 +71,12 @@ jobs:
               case "$file" in
                 backend/*) backend=true ;;
                 frontend/*) frontend=true ;;
+                plugins/*/backend/*) backend=true ;;
+                plugins/*/frontend/*) frontend=true ;;
+                plugins/*/coinsphere-plugin.json|plugins/*/migrations/*)
+                  backend=true
+                  frontend=true
+                  ;;
                 scripts/release/*|deploy/production/*|.github/workflows/deploy.yml|.github/workflows/release.yml) release=true ;;
                 .github/workflows/ci.yml)
                   backend=true
@@ -118,19 +124,26 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: backend/go.mod
-          cache-dependency-path: backend/go.sum
+          cache-dependency-path: |
+            backend/go.sum
+            plugins/contract-test/backend/go.sum
       - name: Check module files
-        run: go mod tidy -diff
+        run: |
+          go mod tidy -diff
+          (cd ../plugins/contract-test/backend && go mod tidy -diff)
       - name: Check formatting
         run: |
-          unformatted="$(gofmt -l .)"
+          unformatted="$(gofmt -l . ../plugins/contract-test/backend)"
           test -z "$unformatted" || { printf '%s\n' "$unformatted"; exit 1; }
       - name: Vet
-        run: go vet ./...
+        run: |
+          go vet ./...
+          (cd ../plugins/contract-test/backend && go vet ./...)
       - name: Staticcheck
         run: |
           go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
           staticcheck ./...
+          (cd ../plugins/contract-test/backend && staticcheck ./...)
       - name: Tests
         if: needs.changes.outputs.full != 'true'
         run: go test -count=1 ./...
@@ -139,6 +152,9 @@ jobs:
         run: go test -race -count=1 ./...
       - name: Build
         run: go build ./...
+      - name: Test SDK contract plugin
+        working-directory: plugins/contract-test/backend
+        run: go test -count=1 ./...
 
   frontend:
     name: Vue frontend
