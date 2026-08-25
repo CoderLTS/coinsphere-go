@@ -2,7 +2,7 @@
 
 ## 当前基线
 
-CoinSphere 只支持 PostgreSQL/TimescaleDB。`00001_initial.sql` 创建认证、RBAC、菜单、i18n、审计和 TimescaleDB 扩展；`00002_plugin_lifecycle.sql` 追加插件安装记录和引用保护；`00003_workflow_lifecycle.sql` 追加工作流、不可变修订和运行实例。当前不创建行情 hypertable。
+CoinSphere 只支持 PostgreSQL/TimescaleDB。`00001_initial.sql` 创建认证、RBAC、菜单、i18n、审计和 TimescaleDB 扩展；`00002_plugin_lifecycle.sql` 追加插件安装记录和引用保护；`00003_workflow_lifecycle.sql` 追加工作流、不可变修订和运行实例；`00004_workflow_schema_workbench.sql` 保存修订级密钥绑定；`00005_workflow_batch_execution.sql` 追加批次、节点尝试、不可变检查点和节点状态。当前不创建行情 hypertable。
 
 服务启动只读校验核心版本，核心 DDL 只由 `coinsphere-migrate` 执行。每个插件使用 `plugin_<规范化插件 ID>` schema 和自己的 `schema_migrations` 账本，由插件生命周期命令在维护窗口执行。项目不提供旧表、旧接口或旧数据转换器；生产 DSN 和数据库密码只通过服务器配置注入。
 

@@ -352,7 +352,7 @@ func (a *App) executeWorkflowBatch(parent context.Context, batch db.ExecutionBat
 			if cancelled {
 				a.cancelWorkflowBatch(batch.ID)
 			} else {
-				a.requeuePausedBatch(batch.ID)
+				a.requeueWorkflowBatch(batch.ID)
 			}
 			return
 		}
@@ -375,7 +375,12 @@ func (a *App) executeWorkflowBatch(parent context.Context, batch db.ExecutionBat
 		outcome := a.executeWorkflowNode(ctx, batch, revision, graph, node, input)
 		if outcome.err != nil {
 			if errors.Is(outcome.err, context.Canceled) || ctx.Err() != nil {
-				a.cancelWorkflowBatch(batch.ID)
+				cancelled, _ := a.batchShouldStop(ctx, batch.ID, batch.WorkflowID)
+				if cancelled {
+					a.cancelWorkflowBatch(batch.ID)
+				} else {
+					a.requeueWorkflowBatch(batch.ID)
+				}
 				return
 			}
 			if outcome.attempt < batchMaxAttempts {
@@ -734,7 +739,7 @@ func (a *App) finishWorkflowBatch(batchID int64, status, category string) {
 	_ = a.DB.Model(&db.ExecutionBatch{}).Where("id = ?", batchID).Updates(updates).Error
 }
 
-func (a *App) requeuePausedBatch(batchID int64) {
+func (a *App) requeueWorkflowBatch(batchID int64) {
 	now := time.Now().UTC()
 	_ = a.DB.Model(&db.ExecutionBatch{}).Where("id = ?", batchID).Updates(map[string]any{
 		"status": BatchStatusQueued, "not_before": now, "lease_token": nil,
@@ -743,17 +748,15 @@ func (a *App) requeuePausedBatch(batchID int64) {
 }
 
 func (a *App) batchShouldStop(ctx context.Context, batchID, workflowID int64) (cancelled, paused bool) {
-	if ctx.Err() != nil {
-		return true, false
-	}
 	var row struct {
 		Status            string
 		CancelRequestedAt *time.Time
 	}
 	if err := a.DB.Raw(`SELECT w.status, eb.cancel_requested_at FROM workflows w JOIN execution_batches eb ON eb.workflow_id = w.id WHERE eb.id = ? AND w.id = ?`, batchID, workflowID).Scan(&row).Error; err != nil {
-		return true, false
+		return false, true
 	}
-	return row.CancelRequestedAt != nil, row.Status != WorkflowStatusRunning
+	cancelled = row.CancelRequestedAt != nil
+	return cancelled, !cancelled && (ctx.Err() != nil || row.Status != WorkflowStatusRunning)
 }
 
 func (a *App) renewBatchLease(ctx context.Context, batchID int64, token string, done <-chan struct{}) {

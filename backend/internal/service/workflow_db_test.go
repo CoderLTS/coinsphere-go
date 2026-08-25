@@ -352,6 +352,61 @@ func TestWorkflowBatchCancellationAndScheduleDeduplication(t *testing.T) {
 	}
 }
 
+func TestWorkflowBatchProcessInterruptionRequeuesCurrentNode(t *testing.T) {
+	app, database, ownerID := openWorkflowTestApp(t)
+	principal := &Principal{User: &db.SystemUser{ID: ownerID}}
+	graph := strings.Replace(testPluginWorkflowGraph, `"kind":"cel","expression":"event.type + ':'"`, `"kind":"literal","value":"interrupt"`, 1)
+	workflow, err := app.CreateWorkflow(context.Background(), WorkflowCreatePayload{Name: "Interrupted"}, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := "interrupt-secret"
+	_, err = app.SaveWorkflowRevision(context.Background(), workflow.ID, WorkflowRevisionSavePayload{
+		ExpectedActiveRevisionID: workflow.ActiveRevisionID, Graph: jsonMessage(graph),
+		SecretChanges: []WorkflowSecretChange{{NodeInstanceID: "transform", Field: "token", Value: &secret}},
+	}, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.ApplyWorkflowLifecycle(context.Background(), workflow.ID, WorkflowLifecyclePayload{Action: "start"}); err != nil {
+		t.Fatal(err)
+	}
+	batch, err := app.CreateWorkflowBatch(context.Background(), workflow.ID, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, ok, err := app.claimWorkflowBatch(context.Background(), time.Now().UTC())
+	if err != nil || !ok {
+		t.Fatalf("claim ok=%t err=%v", ok, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		app.executeWorkflowBatch(ctx, claimed)
+		close(done)
+	}()
+	waitForWorkflowNodeRun(t, database, batch.ID, "transform")
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("workflow batch did not stop after process interruption")
+	}
+	interrupted, _ := app.GetWorkflowBatch(context.Background(), batch.ID)
+	if interrupted.Status != BatchStatusQueued || interrupted.CompletedAt != "" {
+		t.Fatalf("interrupted batch = %#v", interrupted)
+	}
+	claimed, ok, err = app.claimWorkflowBatch(context.Background(), time.Now().UTC())
+	if err != nil || !ok {
+		t.Fatalf("resume claim ok=%t err=%v", ok, err)
+	}
+	app.executeWorkflowBatch(context.Background(), claimed)
+	resumed, _ := app.GetWorkflowBatch(context.Background(), batch.ID)
+	if resumed.Status != BatchStatusSucceeded {
+		t.Fatalf("resumed status = %q", resumed.Status)
+	}
+}
+
 func waitForWorkflowNodeRun(t *testing.T, database *sql.DB, batchID int64, nodeID string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)

@@ -98,7 +98,7 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	if err := pluginregistry.RegisterAll(plugins); err != nil {
 		return fmt.Errorf("register plugins: %w", err)
 	}
-	app := service.NewApp(gdb.WithContext(ctx), cfg, plugins)
+	app := service.NewApp(gdb, cfg, plugins)
 	if err := db.Seed(ctx, gdb, app.Hasher, cfg.Auth.BootstrapAdminPassword); err != nil {
 		return fmt.Errorf("seed database: %w", err)
 	}

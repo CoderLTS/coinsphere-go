@@ -26,6 +26,19 @@ func (a *workflowTestAction) Execute(ctx context.Context, request sdk.ActionRequ
 		<-ctx.Done()
 		return sdk.ActionResult{}, ctx.Err()
 	}
+	if label == "interrupt" {
+		a.mu.Lock()
+		if a.attempts == nil {
+			a.attempts = map[string]int{}
+		}
+		a.attempts[request.OperationKey]++
+		attempt := a.attempts[request.OperationKey]
+		a.mu.Unlock()
+		if attempt == 1 {
+			<-ctx.Done()
+			return sdk.ActionResult{}, ctx.Err()
+		}
+	}
 	if label == "retry" {
 		a.mu.Lock()
 		if a.attempts == nil {
