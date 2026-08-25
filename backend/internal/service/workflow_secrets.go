@@ -64,16 +64,13 @@ func (a *App) persistWorkflowSecrets(tx *gorm.DB, workflowID, previousRevisionID
 	if err := tx.Where("workflow_id = ? AND id = ?", workflowID, previousRevisionID).First(&previousRevision).Error; err != nil {
 		return errors.New("load active workflow revision failed")
 	}
-	var previousGraph workflowGraph
-	if json.Unmarshal([]byte(previousRevision.GraphJSON), &previousGraph) != nil {
+	previousGraph, err := a.validateWorkflowGraph(json.RawMessage(previousRevision.GraphJSON))
+	if err != nil {
 		return errors.New("active workflow revision graph is invalid")
 	}
-	previousTypes := make(map[string]string, len(previousGraph.Nodes))
-	for _, node := range previousGraph.Nodes {
-		previousTypes[node.NodeInstanceID] = node.NodeType
-	}
-	for nodeID, node := range graph.nodes {
-		if previousType := previousTypes[nodeID]; previousType != "" && previousType != node.NodeType {
+	previousTypes := previousGraph.nodeTypes
+	for nodeID, nodeType := range graph.nodeTypes {
+		if previousType := previousTypes[nodeID]; previousType != "" && previousType != nodeType {
 			return fmt.Errorf("%w: node %q cannot change type without a new nodeInstanceId", ErrConflict, nodeID)
 		}
 	}
@@ -87,7 +84,7 @@ func (a *App) persistWorkflowSecrets(tx *gorm.DB, workflowID, previousRevisionID
 		key := workflowSecretKey{binding.NodeInstanceID, binding.FieldName}
 		desc, nodeExists := graph.descriptors[key.nodeInstanceID]
 		fields, _ := workflowSecretFields(desc.ConfigSchema)
-		if nodeExists && previousTypes[key.nodeInstanceID] == graph.nodes[key.nodeInstanceID].NodeType {
+		if nodeExists && previousTypes[key.nodeInstanceID] == graph.nodeTypes[key.nodeInstanceID] {
 			if _, fieldExists := fields[key.field]; fieldExists {
 				values[key] = binding.EncryptedValue
 			}
@@ -129,6 +126,26 @@ func (a *App) persistWorkflowSecrets(tx *gorm.DB, workflowID, previousRevisionID
 		}
 		if err := tx.Create(&binding).Error; err != nil {
 			return errors.New("create workflow secret binding failed")
+		}
+	}
+	return nil
+}
+
+func ensureWorkflowRevisionSecrets(tx *gorm.DB, workflowID, revisionID int64, graph validatedWorkflowGraph) error {
+	if len(graph.requiredSecrets) == 0 {
+		return nil
+	}
+	var bindings []db.WorkflowSecretBinding
+	if err := tx.Where("workflow_id = ? AND revision_id = ?", workflowID, revisionID).Find(&bindings).Error; err != nil {
+		return errors.New("load workflow secret bindings failed")
+	}
+	configured := make(map[workflowSecretKey]bool, len(bindings))
+	for _, binding := range bindings {
+		configured[workflowSecretKey{binding.NodeInstanceID, binding.FieldName}] = true
+	}
+	for key := range graph.requiredSecrets {
+		if !configured[key] {
+			return fmt.Errorf("%w: node %q requires secret field %q", ErrConflict, key.nodeInstanceID, key.field)
 		}
 	}
 	return nil

@@ -14,15 +14,19 @@
 - 不提供公开注册。`POST /api/v1/auth/login` 是唯一匿名身份 API。
 - `POST /api/v1/auth/logout`、`POST /api/v1/auth/reauth` 和 `GET /api/v1/me` 要求有效 Access Token。
 - `POST /api/v1/auth/reauth` 返回绑定当前用户与当前会话、五分钟失效且只能使用一次的不透明 Token。
-- 当前业务 API 包含 `/api/v1/home/*`、`/api/v1/admin/users`、`/api/v1/system/*` 和工作流 P1 路由；工作流路由只允许 `R_SUPER`。
+- 当前业务 API 包含 `/api/v1/home/*`、`/api/v1/admin/users`、`/api/v1/system/*` 和工作流 P1-P2 路由；除匿名 Webhook 外，工作流路由只允许 `R_SUPER`。
 - `/health/live` 只报告进程存活；`/health/ready` 和 `/health` 在一秒预算内检查 PostgreSQL；`/metrics` 要求登录。
 - 旧行情、策略、回测、信号、通知和交易路由已移除，不提供别名或兼容响应。
 
-## 工作流 P1
+## 工作流 P1-P2
 
 | 路由                                                        | 语义                                   |
 | ----------------------------------------------------------- | -------------------------------------- |
-| `GET /api/v1/workflows/templates`                           | 列出当前可创建的模板；目前只有 `blank` |
+| `GET /api/v1/workflows/templates`                           | 列出当前可创建的批次、事件和连续流模板 |
+| `POST /api/v1/events`                                       | 发布 CloudEvents 1.0 结构化 JSON       |
+| `POST /api/v1/webhooks/{workflowId}`                        | 通过工作流 Secret 发布 Webhook 事件    |
+| `GET /api/v1/human-tasks`                                   | 查询待处理人工任务                     |
+| `POST /api/v1/human-tasks/{taskId}`                         | 一次性批准或拒绝人工任务               |
 | `GET /api/v1/workflows/node-definitions`                    | 列出核心与编译期插件节点 Schema        |
 | `GET/POST /api/v1/workflows`                                | 列表，或从模板创建工作流及初始修订     |
 | `GET /api/v1/workflows/{workflowId}`                        | 读取元数据、活动修订和唯一运行实例摘要 |
@@ -30,23 +34,27 @@
 | `GET /api/v1/workflows/{workflowId}/revisions/{revisionId}` | 读取固定修订                           |
 | `POST /api/v1/workflows/{workflowId}/lifecycle`             | 执行 `start`、`pause` 或 `archive`     |
 | `GET/POST /api/v1/workflows/{workflowId}/batches`           | 最近批次摘要，或创建手工批次           |
-| `GET /api/v1/workflows/{workflowId}/activity`               | 按单调游标读取持久活动                  |
+| `GET /api/v1/workflows/{workflowId}/activity`               | 按单调游标读取持久活动                 |
+| `GET /api/v1/workflows/{workflowId}/activity/ws`            | 游标补齐后推送活动增量                 |
 | `GET /api/v1/batches/{batchId}`                             | 读取批次、节点路径、活动和制品引用     |
-| `POST /api/v1/batches/{batchId}`                            | 执行 `cancel` 或 `retry`                |
-| `GET /api/v1/artifacts/{sha256}/manifest`                   | 读取并校验制品清单                      |
-| `GET /api/v1/artifacts/{sha256}/download`                   | 下载解压后的制品正文                    |
+| `POST /api/v1/batches/{batchId}`                            | 执行 `cancel`、`retry` 或 `replay`     |
+| `GET /api/v1/artifacts/{sha256}/manifest`                   | 读取并校验制品清单                     |
+| `GET /api/v1/artifacts/{sha256}/download`                   | 下载解压后的制品正文                   |
 
-- 创建接受 `batch` 的 `blank` 或 `scheduled` 模板，分别由 `core.manual` 或 `core.schedule` 连接 `core.end`。定时配置只接受 UTC `everySeconds` 60 至 86400，不提供 Cron DSL。图 `schemaVersion` 固定为 `1`，节点保存 `nodeInstanceId`、精确节点版本、普通配置、结构化输入映射和位置；边保存两端端口及可选 Boolean CEL 条件。
-- 输入映射只接受 `field`、`literal`、`cel`。字段来源使用上游 `nodeInstanceId` 和字段路径数组；保存校验端口、可达性、DAG、JSON Schema、字段类型和 CEL，并拒绝 Decimal CEL 算术。
+- 创建接受 `blank`、`scheduled`、`event`、`failure-handler`、`connector-webhook` 或 `connector-websocket` 模板。定时配置只接受 UTC `everySeconds` 60 至 86400，不提供 Cron DSL。图 `schemaVersion` 固定为 `1`，节点保存 `nodeInstanceId`、精确节点版本、普通配置、结构化输入映射和位置；边保存两端端口及可选 Boolean CEL 条件。
+- 输入映射只接受 `field`、`literal`、`cel`。字段来源使用上游 `nodeInstanceId` 和字段路径数组；保存校验端口、可达性、DAG、JSON Schema、字段类型和 CEL，并拒绝 Decimal CEL 算术。图级后向边始终拒绝；`core.loop` 只运行内嵌无环子图，并强制 1 至 100 次上限、绝对超时和 Boolean CEL 退出条件。每轮 NodeRun、Checkpoint 与操作键都包含迭代号，人工等待节点不能嵌入 Loop。
 - 保存请求必须提供当前 `expectedActiveRevisionId`。服务锁定工作流，校验完整图，写入递增修订、修订级密钥绑定并原子切换活动指针；并发旧指针返回 `409 Conflict`，失败校验不创建修订。
 - `secretChanges` 只允许替换或移除节点 Config Schema 声明的顶层 `x-coinsphere-secret` 字段。密钥按修订、节点实例和字段独立加密；响应只返回 `secretFields[nodeInstanceId][field]=true`，图、修订响应和节点目录永不返回密钥值。
-- 修订保存后不可更新或删除。归档工作流只读且不能重新启动；`archive` 只允许从 `paused` 或 `needs_attention` 执行。
-- `start` 允许批次队列领取工作；`pause` 停止领取新批次，当前节点返回后保存检查点并重新排队。手工触发只适用于 `core.manual`，`core.schedule` 按 UTC 固定间隔去重入队。
-- 批次创建时固定活动修订。单实例执行器使用 PostgreSQL 持久队列、每工作流并发/积压上限和有界 `stream`/`compute` 池；过期租约重启后重新排队。
-- 每个成功节点原子提交终态 NodeRun、输出 Checkpoint 和缓冲状态。失败只重试当前节点，默认最多三次并线性退避；操作键固定为 `sha256(batchId + ":" + nodeInstanceId + ":0)`。取消通过 `context.Context` 协作传递，取消请求后不再调度下游节点。
-- 核心执行 `core.manual`、`core.schedule`、`core.constant`、`core.end`，其他 Action 从编译期插件注册表调用；执行前后分别校验输入/输出 Schema，修订密钥通过节点范围 `SecretReader` 解密。
+- 修订保存后不可更新或删除。归档工作流只读且不能重新启动；`needs_attention` 经人工处理后先回到 `paused`，`archive` 只允许从 `paused` 或 `needs_attention` 执行。
+- `start` 允许批次队列领取工作并启动连续流 Trigger；`pause` 停止领取新批次、取消 Trigger，当前 Action 返回后保存检查点并重新排队。手工触发只适用于 `core.manual`，`core.schedule` 按 UTC 固定间隔去重入队。TriggerHandler 必须响应取消和 Emitter 背压；异常退出把工作流置为 `needs_attention`，进程重启会从数据库扫描仍在运行的连续流。
+- CloudEvent 要求 1.0、UTC 时间、对象 `data` 和 1 至 256 字节 `partitionkey`。`(source,id)` 全局唯一；相同内容重试返回原事件，不同内容返回 `409`。事件、投递和批次在同一事务提交，Outbox 持久重试内部失败事件。
+- 批次创建时固定事件与活动修订。单实例执行器使用 PostgreSQL 持久队列、每工作流并发/积压上限和有界 `stream`/`compute` 池；同工作流同分区按入队顺序领取，不同分区可并行，过期租约重启后重新排队。进入 `waiting` 的人工任务保存上下文并释放执行池和分区占用。
+- 每个成功节点原子提交终态 NodeRun、输出 Checkpoint 和缓冲状态。失败只重试当前节点，默认最多三次并线性退避；操作键固定为 `sha256(batchId + ":" + nodeInstanceId + ":" + loopIteration)`。取消通过 `context.Context` 协作传递，取消请求后不再调度下游节点。最终失败用 Outbox 发布 `io.coinsphere.workflow.batch.failed`。
+- 核心执行 `core.manual`、`core.schedule`、`core.event`、`core.constant`、`core.human_approval`、`core.loop` 和 `core.end`，其他 Action/Trigger 从编译期插件注册表调用；执行前后分别校验输入/输出 Schema，修订密钥通过节点范围 `SecretReader` 解密。启动前必须已配置活动修订的全部必需密钥。
+- `core.human_approval` 产生 `pending` 任务；相同工作流、节点和业务键的新任务会把旧任务置为 `superseded`。`approved`、`rejected`、`expired` 和 `superseded` 都只能提交一次并恢复原批次，决定正文最多 64 KiB。
+- 终态批次可创建固定原事件与修订的诊断重放。`notification`、`human_action` 和 `paper` 副作用不再次执行，而是复用原 Checkpoint 和制品；缺少原 Checkpoint 时重放失败。
 - 批次列表返回最近 100 条摘要；批次详情按执行顺序返回 NodeRun、受控活动摘要和制品引用。活动查询首次返回最近记录，后续使用 `after` 单调游标增量读取，单页上限 200。
-- 活动由数据库在批次和 NodeRun 状态转换时原子追加，只包含事件类型、状态、受控中文摘要和错误类别，不保存原始错误、输入、输出或密钥。
+- 活动由数据库在批次、NodeRun 和人工任务状态转换时原子追加，只包含事件类型、状态、受控中文摘要和错误类别，不保存原始错误、输入、输出或密钥。活动 WebSocket 要求同源 `Origin`，使用 `coinsphere.workflow-activity.v1` 与 Access Token 两个子协议值认证，并从 `after` 游标补齐；WebSocket 不是真实事实源。
 - `ArtifactStore` 将最多 1 GiB 的正文用标准库 gzip 压缩并按未压缩正文 SHA-256 寻址。Checkpoint 原子引用清单；Manifest 在服务端重新计算大小和摘要，Web 下载后再次校验摘要。
 - 终态批次、NodeRun、Checkpoint、批次活动和未被其他检查点引用的制品按工作流 `retentionDays` 清理，默认 30 天。制品数据库记录提交后再删除正文；失败最多留下无引用文件，不丢失仍被引用的正文。
 
@@ -78,6 +86,10 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 
 结果页描述符包含插件内唯一 `pageKey`、标题、前端组件入口、范围 Schema、操作白名单和移动端能力。Vue 生成注册表把每个插件入口约束为 `FrontendPluginModule`；测试契约插件不加入生产菜单。
 
+内置 `official.connector` 提供 HTTP Action、Webhook Trigger、WebSocket Trigger 和运行诊断结果页；`official.ai` 提供 OpenAI-compatible 结构化模型调用和结果页。两者只访问 `workflow.http_allowed_hosts` 的精确公共域名，禁用环境代理，拨号前后解析并拒绝非公网 IP。Binance 只允许明确列出的公共 GET/公共 WebSocket，授权、私有或未知端点一律拒绝。AI 节点只接收/返回 JSON 对象，不能控制工作流生命周期或交易。
+
+匿名 Webhook 要求 `X-CoinSphere-Webhook-Secret`、`Idempotency-Key` 和 `X-CoinSphere-Partition-Key` 各出现一次，正文必须是不超过 1 MiB 的 JSON 对象。错误 Secret、非运行工作流和非 Webhook 主触发器统一返回不可发现响应。
+
 ## 生命周期与数据
 
 - `plugin install` 校验源码、执行插件 migration、复制源码、生成 Go/Vue 注册表、更新 Go module 并构建 Backend/Web 镜像。
@@ -90,4 +102,4 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 
 ## 尚未实现
 
-事件流、Connector/AI、Quant、回测、信号、Paper、Notification 和共享结果视图当前均不可用。Testnet/Live、私有交易 API、插件市场、签名、沙箱、热加载和多实例集群不属于 V2 当前合同。
+Quant、回测、信号、Paper、Notification 和共享结果视图当前均不可用。Testnet/Live、私有交易 API、插件市场、签名、沙箱、热加载和多实例集群不属于 V2 当前合同。

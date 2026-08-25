@@ -37,6 +37,9 @@ type App struct {
 	batchCancelMu       sync.Mutex
 	batchCancels        map[int64]context.CancelFunc
 	batchWG             sync.WaitGroup
+	triggerMu           sync.Mutex
+	triggerRuns         map[int64]workflowTriggerRun
+	triggerWG           sync.WaitGroup
 	streamSlots         chan struct{}
 	computeSlots        chan struct{}
 }
@@ -55,6 +58,7 @@ func NewApp(gdb *gorm.DB, cfg *config.AppConfig, plugins *sdk.Registry) *App {
 		reauthTokens:        map[string]reauthTokenRecord{},
 		revokedAccessTokens: map[string]time.Time{},
 		batchCancels:        map[int64]context.CancelFunc{},
+		triggerRuns:         map[int64]workflowTriggerRun{},
 		streamSlots:         make(chan struct{}, 4),
 		computeSlots:        make(chan struct{}, 1),
 	}

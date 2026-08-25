@@ -10,6 +10,8 @@
 
 `runtime.env`、`.env` 和真实 Secret 只保存在服务器。首次部署会生成独立数据库密码并写入权限为 `0600` 的 `.env`；后续部署复用该密码和数据卷。
 
+`COINSPHERE_WORKFLOW__HTTP_ALLOWED_HOSTS` 使用 YAML/JSON 数组保存 Connector 与 AI 可访问的精确公共域名，例如 `[api.example.com]`。默认 `[]` 拒绝全部外部目标；不接受通配符、IP、子域继承或私网地址。
+
 ```bash
 cp runtime.env.example runtime.env
 chmod 600 runtime.env

@@ -38,7 +38,7 @@ func (a *App) ListWorkflowNodeDefinitions() []WorkflowNodeDefinitionView {
 	items := make([]WorkflowNodeDefinitionView, 0, len(descriptors))
 	for _, desc := range descriptors {
 		inputPorts, outputPorts := workflowPorts(desc)
-		available := desc.Kind == sdk.NodeKindAction || desc.Type == "core.manual" || desc.Type == "core.schedule"
+		available := desc.Type != "core.loop_item" && desc.Type != "core.loop_end"
 		items = append(items, WorkflowNodeDefinitionView{
 			Type: desc.Type, Version: desc.Version, Title: workflowNodeTitle(desc.Type),
 			Description: workflowNodeDescription(desc.Type), Kind: desc.Kind,
@@ -66,6 +66,7 @@ func (a *App) workflowNodeDescriptors() map[string]sdk.NodeDescriptor {
 
 func coreWorkflowNodeDescriptors() []sdk.NodeDescriptor {
 	empty := json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false}`)
+	valueInput := json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"value":{"type":"object","title":"Value","x-coinsphere-field-source":true}},"additionalProperties":false}`)
 	return []sdk.NodeDescriptor{
 		{
 			Type: "core.manual", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
@@ -81,6 +82,13 @@ func coreWorkflowNodeDescriptors() []sdk.NodeDescriptor {
 			Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
 		},
 		{
+			Type: "core.event", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
+			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"types":{"type":"array","title":"Event types","items":{"type":"string","minLength":1,"maxLength":255},"minItems":1,"uniqueItems":true},"source":{"type":"string","title":"Source","maxLength":500}},"required":["types"],"additionalProperties":false}`),
+			UISchema:     json.RawMessage(`{"ui:order":["types","source"]}`), InputSchema: empty,
+			OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object"}`),
+			Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
+		},
+		{
 			Type: "core.constant", Version: "1.0.0", Kind: sdk.NodeKindAction,
 			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"value":{"type":"string","title":"Value","description":"Value emitted by this node."}},"required":["value"],"additionalProperties":false}`),
 			UISchema:     json.RawMessage(`{"ui:order":["value"],"value":{"ui:widget":"textarea"}}`), InputSchema: empty,
@@ -93,6 +101,35 @@ func coreWorkflowNodeDescriptors() []sdk.NodeDescriptor {
 			InputSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"result":{"type":"string","title":"Result","x-coinsphere-field-source":true}},"additionalProperties":false}`),
 			OutputSchema: empty, Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
 		},
+		{
+			Type: "core.human_approval", Version: "1.0.0", Kind: sdk.NodeKindAction,
+			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"taskType":{"type":"string","title":"Task type","minLength":1,"maxLength":64,"default":"approval"},"prompt":{"type":"string","title":"Prompt","maxLength":500,"default":"Review this workflow action."},"expiresSeconds":{"type":"integer","title":"Expires after (seconds)","minimum":60,"maximum":604800,"default":86400}},"required":["taskType","prompt","expiresSeconds"],"additionalProperties":false}`),
+			UISchema:     json.RawMessage(`{"ui:order":["taskType","prompt","expiresSeconds"]}`),
+			InputSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"businessKey":{"type":"string","title":"Business key","minLength":1,"maxLength":256,"x-coinsphere-field-source":true}},"required":["businessKey"],"additionalProperties":false}`),
+			OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"taskId":{"type":"integer"},"status":{"type":"string","enum":["approved","rejected","expired","superseded"]},"decidedAt":{"type":"string","format":"date-time"}},"required":["taskId","status","decidedAt"],"additionalProperties":false}`),
+			Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectHumanAction, State: sdk.StateStateless,
+		},
+		{
+			Type: "core.loop", Version: "1.0.0", Kind: sdk.NodeKindAction,
+			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"maxIterations":{"type":"integer","title":"Maximum iterations","minimum":1,"maximum":100,"default":10},"timeoutSeconds":{"type":"integer","title":"Absolute timeout (seconds)","minimum":1,"maximum":86400,"default":60},"exitCondition":{"type":"string","title":"Boolean exit condition","minLength":1,"maxLength":4096,"default":"input.iteration >= 1"},"body":{"type":"object","title":"Embedded DAG","default":{"schemaVersion":1,"nodes":[{"nodeInstanceId":"item","nodeType":"core.loop_item","nodeVersion":"1.0.0","config":{},"position":{"x":80,"y":80}},{"nodeInstanceId":"done","nodeType":"core.loop_end","nodeVersion":"1.0.0","config":{},"position":{"x":360,"y":80}}],"edges":[{"edgeId":"item-done","sourceNodeInstanceId":"item","sourcePort":"out","targetNodeInstanceId":"done","targetPort":"in"}]}}},"required":["maxIterations","timeoutSeconds","exitCondition","body"],"additionalProperties":false}`),
+			UISchema:     json.RawMessage(`{"ui:order":["maxIterations","timeoutSeconds","exitCondition","body"],"exitCondition":{"ui:widget":"textarea"}}`),
+			InputSchema:  valueInput,
+			OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"iterations":{"type":"integer"},"exited":{"type":"boolean"},"value":{"type":"object"}},"required":["iterations","exited","value"],"additionalProperties":false}`),
+			Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
+		},
+		{
+			Type: "core.loop_item", Version: "1.0.0", Kind: sdk.NodeKindAction,
+			ConfigSchema: empty, UISchema: json.RawMessage(`{"ui:order":[]}`),
+			InputSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"iteration":{"type":"integer"},"value":{"type":"object"}},"additionalProperties":false}`),
+			OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"iteration":{"type":"integer"},"value":{"type":"object"}},"required":["iteration","value"],"additionalProperties":false}`),
+			Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
+		},
+		{
+			Type: "core.loop_end", Version: "1.0.0", Kind: sdk.NodeKindAction,
+			ConfigSchema: empty, UISchema: json.RawMessage(`{"ui:order":[]}`), InputSchema: valueInput,
+			OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"value":{"type":"object"}},"required":["value"],"additionalProperties":false}`),
+			Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
+		},
 	}
 }
 
@@ -100,7 +137,10 @@ func workflowPorts(desc sdk.NodeDescriptor) ([]string, []string) {
 	if desc.Kind == sdk.NodeKindTrigger {
 		return []string{}, []string{"out"}
 	}
-	if desc.Type == "core.end" {
+	if desc.Type == "core.loop_item" {
+		return []string{}, []string{"out"}
+	}
+	if desc.Type == "core.end" || desc.Type == "core.loop_end" {
 		return []string{"in"}, []string{}
 	}
 	return []string{"in"}, []string{"out"}
@@ -112,10 +152,20 @@ func workflowNodeTitle(nodeType string) string {
 		return "Manual trigger"
 	case "core.schedule":
 		return "Schedule trigger"
+	case "core.event":
+		return "Event trigger"
 	case "core.constant":
 		return "Constant"
 	case "core.end":
 		return "End"
+	case "core.human_approval":
+		return "Human approval"
+	case "core.loop":
+		return "Loop"
+	case "core.loop_item":
+		return "Loop item"
+	case "core.loop_end":
+		return "Loop end"
 	default:
 		return nodeType
 	}
@@ -127,10 +177,20 @@ func workflowNodeDescription(nodeType string) string {
 		return "Starts one batch on demand."
 	case "core.schedule":
 		return "Starts one batch at a fixed UTC interval."
+	case "core.event":
+		return "Starts one batch for each matching CloudEvent."
 	case "core.constant":
 		return "Emits a configured text value."
 	case "core.end":
 		return "Marks the end of a branch."
+	case "core.human_approval":
+		return "Persists an approval task and releases execution capacity while waiting."
+	case "core.loop":
+		return "Runs an embedded acyclic graph with a fixed iteration and absolute time limit."
+	case "core.loop_item":
+		return "Provides the current iteration and carried value inside a loop."
+	case "core.loop_end":
+		return "Returns the carried value from one loop iteration."
 	default:
 		return "Compiled plugin node."
 	}

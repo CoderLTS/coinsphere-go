@@ -6,3 +6,9 @@
 
 export * from './echarts'
 export * from './registry.generated'
+export * from './official'
+
+import { officialFrontendPlugins } from './official'
+import { frontendPlugins } from './registry.generated'
+
+export const registeredFrontendPlugins = [...officialFrontendPlugins, ...frontendPlugins]

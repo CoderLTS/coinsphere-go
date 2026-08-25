@@ -183,11 +183,10 @@ func NewSecretCipher(secretKey string) (*SecretCipher, error) {
 // Encrypt / Decrypt 用 Fernet 做对称加密:同一把密钥既能加密也能解密,
 // 用来把 API Key、通知渠道密钥等敏感配置以密文形式存库。密钥由 secret_key 的 SHA256 派生,和 Python 版保持一致。
 func (c *SecretCipher) Encrypt(plain string) string {
-	normalized := strings.TrimSpace(plain)
-	if normalized == "" {
+	if strings.TrimSpace(plain) == "" {
 		return ""
 	}
-	token, err := fernet.EncryptAndSign([]byte(normalized), c.key)
+	token, err := fernet.EncryptAndSign([]byte(plain), c.key)
 	if err != nil {
 		return ""
 	}

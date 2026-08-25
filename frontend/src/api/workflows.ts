@@ -104,14 +104,17 @@ export interface WorkflowBatch {
   id: number
   workflowId: number
   revisionId: number
-  triggerType: 'manual' | 'schedule'
-  status: 'queued' | 'running' | 'retrying' | 'succeeded' | 'failed' | 'cancelled'
+  triggerType: 'manual' | 'schedule' | 'event' | 'stream' | 'webhook' | 'failure'
+  status: 'queued' | 'running' | 'waiting' | 'retrying' | 'succeeded' | 'failed' | 'cancelled'
   currentNodeInstanceId?: string
   triggeredAt: string
   startedAt?: string
   completedAt?: string
   cancelRequestedAt?: string
   errorCategory?: string
+  partitionKey?: string
+  diagnostic: boolean
+  originalBatchId?: number
 }
 
 export interface WorkflowNodeRun {
@@ -123,7 +126,7 @@ export interface WorkflowNodeRun {
   attempt: number
   loopIteration: number
   operationKey: string
-  status: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'skipped'
+  status: 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'skipped'
   errorCategory?: string
   startedAt: string
   completedAt?: string
@@ -157,6 +160,20 @@ export interface WorkflowBatchDetail extends WorkflowBatch {
   nodeRuns: WorkflowNodeRun[]
   activities: WorkflowActivity[]
   artifacts: WorkflowArtifact[]
+}
+
+export interface WorkflowHumanTask {
+  id: number
+  workflowId: number
+  batchId: number
+  nodeInstanceId: string
+  taskType: string
+  businessKey: string
+  prompt: string
+  status: 'pending' | 'approved' | 'rejected' | 'expired' | 'superseded'
+  expiresAt: string
+  createdAt: string
+  decidedAt?: string
 }
 
 interface WorkflowActivityPage extends ItemList<WorkflowActivity> {
@@ -194,7 +211,13 @@ export const fetchWorkflowNodeDefinitions = () =>
 export const createWorkflow = (params: {
   name: string
   description: string
-  templateKey: 'blank' | 'scheduled'
+  templateKey:
+    | 'blank'
+    | 'scheduled'
+    | 'event'
+    | 'failure-handler'
+    | 'connector-webhook'
+    | 'connector-websocket'
 }) => request.post<WorkflowDetail>({ url: '/api/v1/workflows', params })
 
 export const saveWorkflowRevision = (
@@ -214,6 +237,21 @@ export const applyWorkflowLifecycle = (workflowId: number, action: 'start' | 'pa
 
 export const createWorkflowBatch = (workflowId: number) =>
   request.post<WorkflowBatch>({ url: `/api/v1/workflows/${workflowId}/batches` })
+
+export const applyWorkflowBatchAction = (batchId: number, action: 'cancel' | 'retry' | 'replay') =>
+  request.post<WorkflowBatch>({ url: `/api/v1/batches/${batchId}`, params: { action } })
+
+export const fetchWorkflowHumanTasks = (status = 'pending') =>
+  request.get<ItemList<WorkflowHumanTask>>({
+    url: '/api/v1/human-tasks',
+    params: status ? { status } : {}
+  })
+
+export const decideWorkflowHumanTask = (taskId: number, action: 'approve' | 'reject') =>
+  request.post<WorkflowHumanTask>({
+    url: `/api/v1/human-tasks/${taskId}`,
+    params: { action, data: {} }
+  })
 
 export const fetchWorkflowActivity = (workflowId: number, after = 0, limit = 100) =>
   request.get<WorkflowActivityPage>({

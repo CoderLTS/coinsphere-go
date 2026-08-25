@@ -17,5 +17,9 @@ auth:
   password_iterations: 390000
   login_rate_limit_per_minute: 10
 
+workflow:
+  # Exact public domain names that Connector and AI nodes may access.
+  http_allowed_hosts: []
+
 log:
   level: info

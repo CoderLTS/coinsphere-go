@@ -7,6 +7,7 @@ require (
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/cloudevents/sdk-go/v2 v2.16.2
 	github.com/fernet/fernet-go v0.0.0-20240119011108-303da6aec611
+	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/pressly/goose/v3 v3.27.3
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3

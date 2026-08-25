@@ -2,7 +2,7 @@
 
 CoinSphere 正在重构为以可视化工作流为核心、由编译期插件提供业务能力的通用平台。项目保持 Vue、Go 模块化单体和 PostgreSQL/TimescaleDB 技术栈。
 
-> V2 已完成 P0 和 P1 批处理工作室。超级管理员可以在 Schema 工作台创建、保存、运行和排障批处理工作流；事件流、Quant、回测与 Paper 继续按[路线图](docs/roadmap/README.md)开发。
+> V2 已完成 P0-P2 工作流平台。超级管理员可以在 Schema 工作台创建、保存、运行和排障批次、事件与连续流工作流，并使用人工任务、Loop、Connector/AI、诊断重放和实时活动；Quant、回测与 Paper 继续按[路线图](docs/roadmap/README.md)开发。
 
 ## 当前能力
 
@@ -11,8 +11,9 @@ CoinSphere 正在重构为以可视化工作流为核心、由编译期插件提
 | 登录、用户、角色、菜单               | Web             | 可用，不开放公开注册                              |
 | 系统监控                             | Web + `/api/v1` | 可用，展示 Go、HTTP、PostgreSQL 和 migration 状态 |
 | 本地插件校验、安装、升级和卸载       | CLI             | 可用，编译期静态注册                              |
-| 工作流、修订、批次和活动 API         | `/api/v1`       | 超级管理员可用；当前启用 batch 模式               |
-| Schema 工作台、检查点和历史制品      | Web             | 可用；移动端提供只读活动视图                      |
+| 工作流、修订、事件、批次和活动 API   | `/api/v1`       | 超级管理员可用；Webhook 使用独立 Secret           |
+| Schema 工作台、人工任务和历史制品    | Web             | 可用；移动端提供只读活动视图                      |
+| Connector、AI 与连续流               | 工作流节点      | 默认外部域名白名单为空，不含交易私有接口          |
 | 旧工作流、新闻、策略、交易和通知接口 | -               | 已从公开运行面移除                                |
 
 详细操作见[使用手册](docs/user-guide.md)，接口语义见[公共契约](docs/contracts/README.md)。

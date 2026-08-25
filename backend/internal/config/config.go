@@ -42,10 +42,15 @@ type LogConfig struct {
 	Level string `yaml:"level"`
 }
 
+type WorkflowConfig struct {
+	HTTPAllowedHosts []string `yaml:"http_allowed_hosts"`
+}
+
 type AppConfig struct {
 	Database DatabaseConfig `yaml:"database"`
 	Server   ServerConfig   `yaml:"server"`
 	Auth     AuthConfig     `yaml:"auth"`
+	Workflow WorkflowConfig `yaml:"workflow"`
 	Log      LogConfig      `yaml:"log"`
 }
 

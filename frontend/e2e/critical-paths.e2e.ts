@@ -332,6 +332,10 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
       await fulfillApi(route, { items: nodeDefinitions })
       return
     }
+    if (method === 'GET' && path === '/api/v1/human-tasks') {
+      await fulfillApi(route, { items: [] })
+      return
+    }
     if (method === 'GET' && path === '/api/v1/workflows/7') {
       await fulfillApi(route, workflow)
       return

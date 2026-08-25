@@ -62,8 +62,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		respond(w, data, err, "")
 	}))
 
-	// P1 workflow revisions and Schema-driven workbench.
+	// P2 workflow execution, events, and Schema-driven workbench.
+	mux.HandleFunc("POST /api/v1/webhooks/{workflowId}", s.handlePublishWorkflowWebhook)
 	mux.HandleFunc("GET /api/v1/workflows/templates", s.requireRole("R_SUPER", s.handleListWorkflowTemplates))
+	mux.HandleFunc("POST /api/v1/events", s.requireRole("R_SUPER", s.handlePublishWorkflowEvent))
+	mux.HandleFunc("GET /api/v1/human-tasks", s.requireRole("R_SUPER", s.handleListWorkflowHumanTasks))
+	mux.HandleFunc("POST /api/v1/human-tasks/{taskId}", s.requireRole("R_SUPER", s.handleDecideWorkflowHumanTask))
 	mux.HandleFunc("GET /api/v1/workflows/node-definitions", s.requireRole("R_SUPER", s.handleListWorkflowNodeDefinitions))
 	mux.HandleFunc("GET /api/v1/workflows", s.requireRole("R_SUPER", s.handleListWorkflows))
 	mux.HandleFunc("POST /api/v1/workflows", s.requireRole("R_SUPER", s.handleCreateWorkflow))
@@ -75,6 +79,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/workflows/{workflowId}/batches", s.requireRole("R_SUPER", s.handleListWorkflowBatches))
 	mux.HandleFunc("POST /api/v1/workflows/{workflowId}/batches", s.requireRole("R_SUPER", s.handleCreateWorkflowBatch))
 	mux.HandleFunc("GET /api/v1/workflows/{workflowId}/activity", s.requireRole("R_SUPER", s.handleListWorkflowActivity))
+	mux.HandleFunc("GET /api/v1/workflows/{workflowId}/activity/ws", s.handleWorkflowActivityWebSocket)
 	mux.HandleFunc("GET /api/v1/batches/{batchId}", s.requireRole("R_SUPER", s.handleGetWorkflowBatch))
 	mux.HandleFunc("POST /api/v1/batches/{batchId}", s.requireRole("R_SUPER", s.handleWorkflowBatchAction))
 	mux.HandleFunc("GET /api/v1/artifacts/{sha256}/manifest", s.requireRole("R_SUPER", s.handleGetWorkflowArtifactManifest))
