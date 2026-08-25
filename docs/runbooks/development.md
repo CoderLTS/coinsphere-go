@@ -34,6 +34,18 @@ Pop-Location
 
 需要数据库的 Go 测试使用仅供测试的 PostgreSQL DSN 和随机隔离 schema；不要连接生产数据库或固定外部表。迁移命令和回滚见[数据库迁移手册](./database-migrations.md)。
 
+## 插件清单校验
+
+P0-B 可以只读检查一个或多个本地插件源码目录：
+
+```powershell
+Push-Location .\backend
+go run ./cmd/coinsphere plugin validate D:\plugins\connector D:\plugins\quant
+Pop-Location
+```
+
+命令严格解析每个 `coinsphere-plugin.json`，校验 Core/SDK 版本、插件目录边界、后端 `go.mod` 模块名、重复插件 ID，以及 Go/Vue 静态注册表能否确定性生成。它不会复制源码、执行 migration、更新依赖、写入注册表或重建 Compose；安装与升级流程在 P0-C 交付。
+
 ## 运行时诊断
 
 启动 Backend 后检查：

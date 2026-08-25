@@ -21,7 +21,9 @@ import (
 	"coinsphere/backend/internal/config"
 	"coinsphere/backend/internal/db"
 	"coinsphere/backend/internal/migration"
+	"coinsphere/backend/internal/pluginregistry"
 	"coinsphere/backend/internal/service"
+	"coinsphere/backend/plugin/sdk"
 )
 
 const (
@@ -92,7 +94,11 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 		return fmt.Errorf("validate database schema: %w", err)
 	}
 
-	app := service.NewApp(gdb.WithContext(ctx), cfg)
+	plugins := sdk.NewRegistry()
+	if err := pluginregistry.RegisterAll(plugins); err != nil {
+		return fmt.Errorf("register plugins: %w", err)
+	}
+	app := service.NewApp(gdb.WithContext(ctx), cfg, plugins)
 	if err := db.Seed(ctx, gdb, app.Hasher, cfg.Auth.BootstrapAdminPassword); err != nil {
 		return fmt.Errorf("seed database: %w", err)
 	}

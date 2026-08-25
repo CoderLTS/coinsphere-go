@@ -5,3 +5,4 @@
  */
 
 export * from './echarts'
+export * from './registry.generated'

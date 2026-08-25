@@ -3,10 +3,15 @@ package service
 import (
 	"context"
 	"time"
+
+	"coinsphere/backend/version"
 )
 
 func (a *App) GetHomeMeta() M {
-	return M{"service": "coinsphere", "version": "5.0.0"}
+	return M{
+		"service": "coinsphere", "version": version.Core,
+		"sdkMajor": version.SDKMajor, "pluginCount": len(a.Plugins.Plugins()),
+	}
 }
 
 func (a *App) GetHomeOverview(ctx context.Context) (M, error) {
