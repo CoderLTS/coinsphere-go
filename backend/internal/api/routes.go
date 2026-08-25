@@ -3,6 +3,7 @@ package api
 // import:标准库(net/http、os、path/filepath)在上,本项目内部包(perm 权限码、service 业务逻辑)在下。
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -86,7 +87,16 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/batches/{batchId}", s.requireRole("R_SUPER", s.handleWorkflowBatchAction))
 	mux.HandleFunc("GET /api/v1/artifacts/{sha256}/manifest", s.requireRole("R_SUPER", s.handleGetWorkflowArtifactManifest))
 	mux.HandleFunc("GET /api/v1/artifacts/{sha256}/download", s.requireRole("R_SUPER", s.handleDownloadWorkflowArtifact))
+	mux.HandleFunc("GET /api/v1/result-views", s.requirePermission(perm.ResultViewsAccess, s.handleListResultViews))
+	mux.HandleFunc("POST /api/v1/result-views", s.requireRole("R_SUPER", s.handleCreateResultView))
+	mux.HandleFunc("GET /api/v1/result-views/{viewId}", s.requirePermission(perm.ResultViewsAccess, s.handleGetResultView))
+	mux.HandleFunc("PUT /api/v1/result-views/{viewId}/grants", s.requireRole("R_SUPER", s.handleReplaceResultViewGrants))
+	mux.HandleFunc("POST /api/v1/result-views/{viewId}/revoke", s.requireRole("R_SUPER", s.handleRevokeResultView))
+	mux.HandleFunc("GET /api/v1/result-views/{viewId}/batches", s.requireAuth(s.handleListResultViewBatches))
+	mux.HandleFunc("POST /api/v1/result-views/{viewId}/batches/{batchId}/{action}", s.requireAuth(s.handleResultViewBatchAction))
+	mux.HandleFunc("POST /api/v1/result-views/{viewId}/workflow/pause", s.requireAuth(s.handleResultViewWorkflowPause))
 	s.registerSystemPluginRoutes(mux)
+	s.registerResultPluginRoutes(mux)
 
 	// 系统管理。
 	mux.HandleFunc("GET /api/v1/admin/users", s.requirePermission(perm.SystemUsersView, s.handleListUsers))
@@ -108,6 +118,53 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/system/menu-buttons", s.requirePermission(perm.SystemMenusCreate, s.handleCreateMenuButton))
 	mux.HandleFunc("PUT /api/v1/system/menu-buttons/{buttonId}", s.requirePermission(perm.SystemMenusUpdate, s.handleUpdateMenuButton))
 	mux.HandleFunc("DELETE /api/v1/system/menu-buttons/{buttonId}", s.requirePermission(perm.SystemMenusDelete, s.handleDeleteMenuButton))
+}
+
+func (s *Server) registerResultPluginRoutes(mux *http.ServeMux) {
+	if s.App == nil || s.App.Plugins == nil {
+		return
+	}
+	for _, route := range s.App.Plugins.Routes() {
+		if route.Descriptor.Scope != sdk.ScopeResult {
+			continue
+		}
+		registered := route
+		pattern := registered.Descriptor.Method + " /api/v1/result-views/{viewId}/plugins/" + registered.PluginID + registered.Descriptor.Pattern
+		mux.HandleFunc(pattern, s.requireAuth(func(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+			viewID, err := pathInt64(r, "viewId")
+			if err != nil {
+				writeProblem(w, r, http.StatusNotFound, service.ErrNotFound.Error())
+				return
+			}
+			scope, err := s.App.ResolveResultScope(r.Context(), viewID, registered.Descriptor.Action, principal)
+			if err != nil || scope.PluginID != registered.PluginID {
+				respond(w, nil, fmt.Errorf("%w: result view", service.ErrNotFound), "")
+				return
+			}
+			if !authorizeResultAction(w, r, principal, registered.Descriptor.Action) {
+				return
+			}
+			registered.Handler(w, r, scope)
+		}))
+	}
+}
+
+var resultActionPermissions = map[string]string{
+	"approve": perm.ResultViewsApprove, "reject": perm.ResultViewsReject,
+	"retry": perm.ResultViewsRetry, "cancel": perm.ResultViewsCancel,
+	"pause": perm.ResultViewsPause, "export": perm.ResultViewsExport,
+}
+
+func authorizeResultAction(w http.ResponseWriter, r *http.Request, principal *service.Principal, action string) bool {
+	if action == "" {
+		return true
+	}
+	permission, known := resultActionPermissions[action]
+	if known && (principal.HasRole("R_SUPER") || principal.HasPermission(permission)) {
+		return true
+	}
+	writeProblem(w, r, http.StatusForbidden, service.ErrPermission.Error())
+	return false
 }
 
 func (s *Server) registerSystemPluginRoutes(mux *http.ServeMux) {

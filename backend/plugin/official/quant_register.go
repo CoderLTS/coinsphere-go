@@ -1,6 +1,7 @@
 package official
 
 import (
+	"context"
 	"encoding/json"
 
 	"coinsphere/backend/plugin/sdk"
@@ -18,6 +19,7 @@ type quantRuntime struct {
 	client   *safeHTTPClient
 	registry *sdk.Registry
 	hub      *quantCandleHub
+	quote    func(context.Context, quantSeriesConfig) (quantPublicQuote, error)
 }
 
 func RegisterQuant(registry *sdk.Registry, database *gorm.DB) error {
@@ -29,6 +31,7 @@ func RegisterQuant(registry *sdk.Registry, database *gorm.DB) error {
 	}
 	runtime := &quantRuntime{db: database, client: client, registry: registry}
 	runtime.hub = newQuantCandleHub(runtime)
+	runtime.quote = runtime.fetchQuantPublicQuote
 	return registry.RegisterPlugin(sdk.PluginDescriptor{
 		ID: quantPluginID, Name: "CoinSphere Quant", Version: "1.0.0",
 		Contributes: []string{"nodes", "triggers", "strategies", "apiRoutes", "resultPages"},
@@ -67,6 +70,9 @@ func (q *quantRuntime) register(registrar sdk.Registrar) error {
 	}, quantBacktestAction{runtime: q}); err != nil {
 		return err
 	}
+	if err := q.registerPaper(registrar); err != nil {
+		return err
+	}
 	for _, route := range []struct {
 		desc    sdk.RouteDescriptor
 		handler sdk.ScopedRouteHandler
@@ -75,13 +81,28 @@ func (q *quantRuntime) register(registrar sdk.Registrar) error {
 		{sdk.RouteDescriptor{Method: "GET", Pattern: "/candles", Scope: sdk.ScopeSystem}, q.handleQuantCandles},
 		{sdk.RouteDescriptor{Method: "GET", Pattern: "/strategies", Scope: sdk.ScopeSystem}, q.handleQuantStrategies},
 		{sdk.RouteDescriptor{Method: "GET", Pattern: "/backtests", Scope: sdk.ScopeSystem}, q.handleQuantBacktests},
+		{sdk.RouteDescriptor{Method: "GET", Pattern: "/signals", Scope: sdk.ScopeSystem}, q.handleQuantSignals},
+		{sdk.RouteDescriptor{Method: "GET", Pattern: "/paper-accounts", Scope: sdk.ScopeSystem}, q.handleQuantPaperAccounts},
+		{sdk.RouteDescriptor{Method: "POST", Pattern: "/paper-accounts/{accountId}/rebuild", Scope: sdk.ScopeSystem}, q.handleQuantPaperAccountRebuild},
+		{sdk.RouteDescriptor{Method: "GET", Pattern: "/paper", Scope: sdk.ScopeResult}, q.handleQuantPaperResult},
+		{sdk.RouteDescriptor{Method: "POST", Pattern: "/signals/{signalId}/approve", Scope: sdk.ScopeResult, Action: "approve"}, q.handleQuantSignalApprove},
+		{sdk.RouteDescriptor{Method: "POST", Pattern: "/signals/{signalId}/reject", Scope: sdk.ScopeResult, Action: "reject"}, q.handleQuantSignalReject},
+		{sdk.RouteDescriptor{Method: "GET", Pattern: "/paper/export", Scope: sdk.ScopeResult, Action: "export"}, q.handleQuantPaperExport},
 	} {
 		if err := registrar.Route(route.desc, route.handler); err != nil {
 			return err
 		}
 	}
-	return registrar.ResultPage(sdk.ResultPageDescriptor{
+	if err := registrar.ResultPage(sdk.ResultPageDescriptor{
 		PageKey: "quant", Title: "Quant results", ComponentEntry: "./official/quant/ResultPage.vue",
 		ScopeSchema: emptyObjectSchema, Mobile: true,
+	}); err != nil {
+		return err
+	}
+	return registrar.ResultPage(sdk.ResultPageDescriptor{
+		PageKey: "paper", Title: "Paper results", ComponentEntry: "./official/quant/PaperResultPage.vue",
+		ScopeSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"workflowId":{"type":"integer","minimum":1},"signalNodeInstanceId":{"type":"string","minLength":1,"maxLength":128},"paperNodeInstanceId":{"type":"string","minLength":1,"maxLength":128}},"required":["workflowId","signalNodeInstanceId","paperNodeInstanceId"],"additionalProperties":false}`),
+		FilterSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"market":{"type":"string","enum":["spot","usdm"]},"instrument":{"type":"string","pattern":"^[A-Z0-9]{2,32}$"},"status":{"type":"string","enum":["pending","superseded","approved","rejected","executed"]}},"additionalProperties":false}`),
+		Actions:      []string{"approve", "reject", "retry", "cancel", "pause", "export"}, Mobile: true,
 	})
 }

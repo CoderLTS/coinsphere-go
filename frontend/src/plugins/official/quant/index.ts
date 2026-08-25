@@ -1,3 +1,4 @@
 export const resultPages = {
-  quant: () => import('./ResultPage.vue')
+  quant: () => import('./ResultPage.vue'),
+  paper: () => import('./PaperResultPage.vue')
 }

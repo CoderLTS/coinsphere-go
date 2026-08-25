@@ -102,6 +102,9 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	if err := official.RegisterQuant(plugins, gdb); err != nil {
 		return fmt.Errorf("register Quant plugin: %w", err)
 	}
+	if err := official.RegisterNotification(plugins, gdb); err != nil {
+		return fmt.Errorf("register Notification plugin: %w", err)
+	}
 	if err := pluginregistry.RegisterAll(plugins); err != nil {
 		return fmt.Errorf("register plugins: %w", err)
 	}

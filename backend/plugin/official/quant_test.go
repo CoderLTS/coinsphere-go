@@ -89,6 +89,43 @@ func TestQuantBacktestRejectsInsufficientLookbackAndGaps(t *testing.T) {
 	}
 }
 
+func TestQuantPaperRequiresEveryRiskLimit(t *testing.T) {
+	config := map[string]any{
+		"decisionMode": "auto", "market": "spot", "instrument": "BTCUSDT", "interval": "1h",
+		"initialBalance": "10000", "feeRate": "0.001", "maxTotalNotional": "10000",
+		"maxInstrumentNotional": "10000", "maxOperationNotional": "2500",
+		"maxDailyLoss": "500", "maxDrawdown": "0.1", "maxQuoteAgeSeconds": 10,
+	}
+	for _, field := range []string{
+		"maxTotalNotional", "maxInstrumentNotional", "maxOperationNotional", "maxDailyLoss", "maxDrawdown",
+	} {
+		value := map[string]any{}
+		for key, item := range config {
+			value[key] = item
+		}
+		delete(value, field)
+		if _, err := parseQuantPaperConfig(mustMarshal(value)); err == nil {
+			t.Fatalf("automatic Paper accepted missing %s", field)
+		}
+	}
+	if _, err := parseQuantPaperConfig(mustMarshal(config)); err != nil {
+		t.Fatalf("complete automatic Paper limits: %v", err)
+	}
+}
+
+func TestQuantPositionAverage(t *testing.T) {
+	average := quantPositionAverage(decimal.NewFromInt(2), decimal.NewFromInt(100), decimal.NewFromInt(1), decimal.NewFromInt(130))
+	if !average.Equal(decimal.NewFromInt(110)) {
+		t.Fatalf("increased position average = %s", average)
+	}
+	if reduced := quantPositionAverage(decimal.NewFromInt(3), average, decimal.NewFromInt(-1), decimal.NewFromInt(140)); !reduced.Equal(average) {
+		t.Fatalf("reduced position average = %s", reduced)
+	}
+	if reversed := quantPositionAverage(decimal.NewFromInt(2), average, decimal.NewFromInt(-3), decimal.NewFromInt(90)); !reversed.Equal(decimal.NewFromInt(90)) {
+		t.Fatalf("reversed position average = %s", reversed)
+	}
+}
+
 func TestParseBinanceKlinePreservesUTCDecimals(t *testing.T) {
 	config := quantSeriesConfig{Market: "usdm", Instrument: "BTCUSDT", Interval: "1m"}
 	candle, err := parseQuantKline(config, json.RawMessage(`[1767225600000,"100.01","102.03","99.99","101.25","12.345",1767225659999]`))

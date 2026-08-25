@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"coinsphere/backend/internal/db"
+	"coinsphere/backend/internal/perm"
 	"coinsphere/backend/internal/service"
 	"coinsphere/backend/plugin/sdk"
 )
@@ -54,6 +56,14 @@ func TestRoutesExposeOnlyV2BaselineSurface(t *testing.T) {
 		{http.MethodPost, "/api/v1/batches/1"},
 		{http.MethodGet, "/api/v1/artifacts/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/manifest"},
 		{http.MethodGet, "/api/v1/artifacts/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/download"},
+		{http.MethodGet, "/api/v1/result-views"},
+		{http.MethodPost, "/api/v1/result-views"},
+		{http.MethodGet, "/api/v1/result-views/1"},
+		{http.MethodPut, "/api/v1/result-views/1/grants"},
+		{http.MethodPost, "/api/v1/result-views/1/revoke"},
+		{http.MethodGet, "/api/v1/result-views/1/batches"},
+		{http.MethodPost, "/api/v1/result-views/1/batches/1/retry"},
+		{http.MethodPost, "/api/v1/result-views/1/workflow/pause"},
 		{http.MethodGet, "/api/v1/plugins/official.route-test/items"},
 		{http.MethodGet, "/api/v1/admin/users"},
 		{http.MethodGet, "/api/v1/system/roles"},
@@ -83,6 +93,21 @@ func TestRoutesExposeOnlyV2BaselineSurface(t *testing.T) {
 		request := httptest.NewRequest(route.method, route.path, nil)
 		if _, pattern := mux.Handler(request); pattern != "" {
 			t.Fatalf("removed route %s %q still has route %q", route.method, route.path, pattern)
+		}
+	}
+}
+
+func TestResultActionAuthorizationRejectsOrdinaryUserOperations(t *testing.T) {
+	principal := &service.Principal{
+		User:            &db.SystemUser{ID: 1},
+		RoleCodes:       []string{"R_USER"},
+		PermissionCodes: map[string]bool{perm.ResultViewsAccess: true},
+	}
+	for _, action := range []string{"retry", "cancel", "pause", "unknown"} {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/result-views/1/"+action, nil)
+		response := httptest.NewRecorder()
+		if authorizeResultAction(response, request, principal, action) || response.Code != http.StatusForbidden {
+			t.Fatalf("ordinary user action %q status = %d", action, response.Code)
 		}
 	}
 }

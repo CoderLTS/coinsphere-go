@@ -115,6 +115,7 @@ type ResultPageDescriptor struct {
 	Title          string
 	ComponentEntry string
 	ScopeSchema    json.RawMessage
+	FilterSchema   json.RawMessage
 	Actions        []string
 	Mobile         bool
 }
@@ -141,13 +142,19 @@ type ResultScope struct {
 	ViewID         string
 	PluginID       string
 	PageKey        string
+	Scope          json.RawMessage
 	Filters        json.RawMessage
 	AllowedActions []string
 	UserID         int64
 	RoleCodes      []string
+	HumanTasks     HumanTaskService
 }
 
 func (ResultScope) routeScope() {}
+
+type HumanTaskService interface {
+	Decide(context.Context, int64, string, int64) error
+}
 
 type SystemScope struct {
 	PluginID  string
@@ -163,6 +170,7 @@ type RouteDescriptor struct {
 	Method  string
 	Pattern string
 	Scope   ScopeKind
+	Action  string
 }
 
 type RegisteredRoute struct {

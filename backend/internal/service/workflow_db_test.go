@@ -161,6 +161,7 @@ func TestQuantWorkflowTemplatesCreateAndValidate(t *testing.T) {
 		{WorkflowTemplateQuantData, WorkflowModeStream},
 		{WorkflowTemplateQuantLive, WorkflowModeEvent},
 		{WorkflowTemplateBacktest, WorkflowModeBatch},
+		{WorkflowTemplatePaper, WorkflowModeEvent},
 	} {
 		workflow, err := app.CreateWorkflow(context.Background(), WorkflowCreatePayload{Name: template.key, TemplateKey: template.key}, principal)
 		if err != nil || workflow.Mode != template.mode {
@@ -1243,6 +1244,7 @@ func openWorkflowTestApp(t *testing.T) (*App, *sql.DB, int64) {
 	t.Cleanup(func() {
 		_ = database.Close()
 		_, _ = admin.Exec("DROP SCHEMA IF EXISTS plugin_quant CASCADE")
+		_, _ = admin.Exec("DROP SCHEMA IF EXISTS plugin_notification CASCADE")
 		_, _ = admin.Exec("DROP SCHEMA " + pgx.Identifier{schema}.Sanitize() + " CASCADE")
 		_, _ = lock.ExecContext(context.Background(), "SELECT pg_advisory_unlock(671908427)")
 		_ = lock.Close()
@@ -1270,6 +1272,9 @@ func openWorkflowTestApp(t *testing.T) (*App, *sql.DB, int64) {
 	}
 	app.DB = gdb
 	if err := official.RegisterQuant(app.Plugins, gdb); err != nil {
+		t.Fatal(err)
+	}
+	if err := official.RegisterNotification(app.Plugins, gdb); err != nil {
 		t.Fatal(err)
 	}
 	app.Cipher = cipher

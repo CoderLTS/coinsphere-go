@@ -17,11 +17,18 @@ const (
 	SystemMenusCreate            = "system.menus.create"
 	SystemMenusUpdate            = "system.menus.update"
 	SystemMenusDelete            = "system.menus.delete"
+	ResultViewsAccess            = "result.views.access"
+	ResultViewsApprove           = "result.views.approve"
+	ResultViewsReject            = "result.views.reject"
+	ResultViewsRetry             = "result.views.retry"
+	ResultViewsCancel            = "result.views.cancel"
+	ResultViewsPause             = "result.views.pause"
+	ResultViewsExport            = "result.views.export"
 )
 
 var MenuPermissionCodes = map[string]string{
 	"Home": HomeView, "System": "", "User": SystemUsersView,
-	"Role": SystemRolesView, "Menus": SystemMenusView, "UserCenter": "",
+	"Role": SystemRolesView, "Menus": SystemMenusView, "Results": ResultViewsAccess, "UserCenter": "",
 }
 
 type ButtonSpec struct {
@@ -46,5 +53,13 @@ var ButtonSpecs = map[string][]ButtonSpec{
 		{"create", SystemMenusCreate, "新增"},
 		{"update", SystemMenusUpdate, "编辑"},
 		{"delete", SystemMenusDelete, "删除"},
+	},
+	"Results": {
+		{"approve", ResultViewsApprove, "批准"},
+		{"reject", ResultViewsReject, "拒绝"},
+		{"retry", ResultViewsRetry, "重试"},
+		{"cancel", ResultViewsCancel, "取消"},
+		{"pause", ResultViewsPause, "暂停"},
+		{"export", ResultViewsExport, "导出"},
 	},
 }

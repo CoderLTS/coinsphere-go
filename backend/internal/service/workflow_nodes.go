@@ -103,8 +103,8 @@ func coreWorkflowNodeDescriptors() []sdk.NodeDescriptor {
 		},
 		{
 			Type: "core.human_approval", Version: "1.0.0", Kind: sdk.NodeKindAction,
-			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"taskType":{"type":"string","title":"Task type","minLength":1,"maxLength":64,"default":"approval"},"prompt":{"type":"string","title":"Prompt","maxLength":500,"default":"Review this workflow action."},"expiresSeconds":{"type":"integer","title":"Expires after (seconds)","minimum":60,"maximum":604800,"default":86400}},"required":["taskType","prompt","expiresSeconds"],"additionalProperties":false}`),
-			UISchema:     json.RawMessage(`{"ui:order":["taskType","prompt","expiresSeconds"]}`),
+			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"decisionMode":{"type":"string","title":"Decision mode","enum":["human","auto"],"default":"human"},"taskType":{"type":"string","title":"Task type","minLength":1,"maxLength":64,"default":"approval"},"prompt":{"type":"string","title":"Prompt","maxLength":500,"default":"Review this workflow action."},"expiresSeconds":{"type":"integer","title":"Expires after (seconds)","minimum":60,"maximum":604800,"default":86400}},"required":["taskType","prompt","expiresSeconds"],"additionalProperties":false}`),
+			UISchema:     json.RawMessage(`{"ui:order":["decisionMode","taskType","prompt","expiresSeconds"]}`),
 			InputSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"businessKey":{"type":"string","title":"Business key","minLength":1,"maxLength":256,"x-coinsphere-field-source":true}},"required":["businessKey"],"additionalProperties":false}`),
 			OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"taskId":{"type":"integer"},"status":{"type":"string","enum":["approved","rejected","expired","superseded"]},"decidedAt":{"type":"string","format":"date-time"}},"required":["taskId","status","decidedAt"],"additionalProperties":false}`),
 			Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectHumanAction, State: sdk.StateStateless,
@@ -172,6 +172,12 @@ func workflowNodeTitle(nodeType string) string {
 		return "Quant strategy evaluation"
 	case "official.quant.backtest":
 		return "Quant strategy backtest"
+	case "official.quant.signal":
+		return "Quant signal"
+	case "official.quant.paper_execute":
+		return "Paper execution"
+	case "official.notification.in_app":
+		return "In-app notification"
 	default:
 		return nodeType
 	}
@@ -203,6 +209,12 @@ func workflowNodeDescription(nodeType string) string {
 		return "Evaluates a compiled Go strategy against closed candles."
 	case "official.quant.backtest":
 		return "Runs a deterministic next-open backtest over stored candles."
+	case "official.quant.signal":
+		return "Persists a replaceable strategy signal fact."
+	case "official.quant.paper_execute":
+		return "Revalidates a public quote and applies the complete Paper risk gate atomically."
+	case "official.notification.in_app":
+		return "Persists one idempotent in-app notification delivery."
 	default:
 		return "Compiled plugin node."
 	}

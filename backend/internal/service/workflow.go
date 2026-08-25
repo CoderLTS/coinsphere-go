@@ -31,6 +31,7 @@ const (
 	WorkflowTemplateQuantData = "quant-market-data"
 	WorkflowTemplateQuantLive = "quant-strategy"
 	WorkflowTemplateBacktest  = "quant-backtest"
+	WorkflowTemplatePaper     = "quant-paper"
 	maxWorkflowGraphBytes     = 1 << 20
 )
 
@@ -70,11 +71,13 @@ const eventWorkflowGraph = `{
 const failureWorkflowGraph = `{
   "schemaVersion": 1,
   "nodes": [
-    {"nodeInstanceId":"failure-trigger","nodeType":"core.event","nodeVersion":"1.0.0","config":{"types":["io.coinsphere.workflow.batch.failed"],"source":"urn:coinsphere:workflow-core"},"position":{"x":160,"y":220}},
-    {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":520,"y":220}}
+    {"nodeInstanceId":"failure-trigger","nodeType":"core.event","nodeVersion":"1.0.0","config":{"types":["io.coinsphere.workflow.batch.failed"],"source":"urn:coinsphere:workflow-core"},"position":{"x":100,"y":220}},
+    {"nodeInstanceId":"notify","nodeType":"official.notification.in_app","nodeVersion":"1.0.0","config":{"title":"工作流执行失败"},"inputBindings":{"subjectKey":{"kind":"cel","expression":"event.id"},"message":{"kind":"literal","value":"工作流批次执行失败，请在工作台查看受控错误分类。"}},"position":{"x":400,"y":220}},
+    {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":700,"y":220}}
   ],
   "edges": [
-    {"edgeId":"failure-to-end","sourceNodeInstanceId":"failure-trigger","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}
+    {"edgeId":"failure-to-notify","sourceNodeInstanceId":"failure-trigger","sourcePort":"out","targetNodeInstanceId":"notify","targetPort":"in"},
+    {"edgeId":"notify-to-end","sourceNodeInstanceId":"notify","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}
   ]
 }`
 
@@ -134,6 +137,27 @@ const quantBacktestWorkflowGraph = `{
   "edges": [
     {"edgeId":"manual-to-backtest","sourceNodeInstanceId":"manual-trigger","sourcePort":"out","targetNodeInstanceId":"backtest","targetPort":"in"},
     {"edgeId":"backtest-to-end","sourceNodeInstanceId":"backtest","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}
+  ]
+}`
+
+const quantPaperWorkflowGraph = `{
+  "schemaVersion": 1,
+  "nodes": [
+    {"nodeInstanceId":"candle-event","nodeType":"core.event","nodeVersion":"1.0.0","config":{"types":["market.candle.closed"],"source":"urn:coinsphere:plugin:official.quant","subject":"binance:spot:BTCUSDT:1h"},"position":{"x":80,"y":220}},
+    {"nodeInstanceId":"strategy","nodeType":"official.quant.evaluate","nodeVersion":"1.0.0","config":{"strategyId":"official.quant.sma-crossover","market":"spot","instrument":"BTCUSDT","interval":"1h","parameters":{"fastPeriod":3,"slowPeriod":5}},"inputBindings":{"eventTime":{"kind":"cel","expression":"event.time"}},"position":{"x":320,"y":220}},
+    {"nodeInstanceId":"signal","nodeType":"official.quant.signal","nodeVersion":"1.0.0","config":{"market":"spot","instrument":"BTCUSDT","interval":"1h"},"inputBindings":{"strategyId":{"kind":"field","nodeInstanceId":"strategy","fieldPath":["strategyId"]},"strategyVersion":{"kind":"field","nodeInstanceId":"strategy","fieldPath":["strategyVersion"]},"target":{"kind":"field","nodeInstanceId":"strategy","fieldPath":["target"]},"evaluatedAt":{"kind":"field","nodeInstanceId":"strategy","fieldPath":["evaluatedAt"]},"businessKey":{"kind":"cel","expression":"event.subject"}},"position":{"x":560,"y":220}},
+    {"nodeInstanceId":"approve","nodeType":"core.human_approval","nodeVersion":"1.0.0","config":{"decisionMode":"human","taskType":"paper_signal","prompt":"审批 Paper 策略信号","expiresSeconds":86400},"inputBindings":{"businessKey":{"kind":"field","nodeInstanceId":"signal","fieldPath":["businessKey"]}},"position":{"x":800,"y":220}},
+    {"nodeInstanceId":"paper","nodeType":"official.quant.paper_execute","nodeVersion":"1.0.0","config":{"decisionMode":"human","market":"spot","instrument":"BTCUSDT","interval":"1h","initialBalance":"10000","feeRate":"0.001","maxTotalNotional":"10000","maxInstrumentNotional":"10000","maxOperationNotional":"2500","maxDailyLoss":"500","maxDrawdown":"0.1","maxQuoteAgeSeconds":10},"inputBindings":{"signalId":{"kind":"field","nodeInstanceId":"signal","fieldPath":["signalId"]},"decisionTaskId":{"kind":"field","nodeInstanceId":"approve","fieldPath":["taskId"]},"decisionStatus":{"kind":"field","nodeInstanceId":"approve","fieldPath":["status"]}},"position":{"x":1040,"y":220}},
+    {"nodeInstanceId":"notify","nodeType":"official.notification.in_app","nodeVersion":"1.0.0","config":{"title":"Paper 信号已处理"},"inputBindings":{"subjectKey":{"kind":"field","nodeInstanceId":"signal","fieldPath":["businessKey"]},"message":{"kind":"literal","value":"Paper 信号已完成风险检查与执行处理。"}},"position":{"x":1280,"y":220}},
+    {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":1520,"y":220}}
+  ],
+  "edges": [
+    {"edgeId":"event-to-strategy","sourceNodeInstanceId":"candle-event","sourcePort":"out","targetNodeInstanceId":"strategy","targetPort":"in"},
+    {"edgeId":"strategy-to-signal","sourceNodeInstanceId":"strategy","sourcePort":"out","targetNodeInstanceId":"signal","targetPort":"in"},
+    {"edgeId":"signal-to-approve","sourceNodeInstanceId":"signal","sourcePort":"out","targetNodeInstanceId":"approve","targetPort":"in"},
+    {"edgeId":"approve-to-paper","sourceNodeInstanceId":"approve","sourcePort":"out","targetNodeInstanceId":"paper","targetPort":"in"},
+    {"edgeId":"paper-to-notify","sourceNodeInstanceId":"paper","sourcePort":"out","targetNodeInstanceId":"notify","targetPort":"in"},
+    {"edgeId":"notify-to-end","sourceNodeInstanceId":"notify","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}
   ]
 }`
 
@@ -209,6 +233,7 @@ func (a *App) ListWorkflowTemplates() []WorkflowTemplate {
 		{Key: WorkflowTemplateQuantData, Name: "Shared Binance market data", Mode: WorkflowModeStream, Description: "Shared public closed-candle collection for Spot or USD-M."},
 		{Key: WorkflowTemplateQuantLive, Name: "Live strategy evaluation", Mode: WorkflowModeEvent, Description: "Evaluate a trusted Go strategy for each matching closed candle."},
 		{Key: WorkflowTemplateBacktest, Name: "Strategy backtest", Mode: WorkflowModeBatch, Description: "Run a deterministic closed-candle backtest in the compute pool."},
+		{Key: WorkflowTemplatePaper, Name: "Paper strategy pair", Mode: WorkflowModeEvent, Description: "Create shared market data and an approval-first Paper strategy workflow."},
 	}
 }
 
@@ -229,7 +254,7 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 		templateKey != WorkflowTemplateEvent && templateKey != WorkflowTemplateFailure &&
 		templateKey != WorkflowTemplateWebhook && templateKey != WorkflowTemplateWebSocket &&
 		templateKey != WorkflowTemplateQuantData && templateKey != WorkflowTemplateQuantLive &&
-		templateKey != WorkflowTemplateBacktest {
+		templateKey != WorkflowTemplateBacktest && templateKey != WorkflowTemplatePaper {
 		return WorkflowDetail{}, fmt.Errorf("unknown workflow template %q", templateKey)
 	}
 	if principal == nil || principal.User == nil || principal.User.ID <= 0 {
@@ -252,6 +277,8 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 		templateGraph = quantStrategyWorkflowGraph
 	} else if templateKey == WorkflowTemplateBacktest {
 		templateGraph = quantBacktestWorkflowGraph
+	} else if templateKey == WorkflowTemplatePaper {
+		templateGraph = quantPaperWorkflowGraph
 	}
 	graph, err := a.validateWorkflowGraph(json.RawMessage(templateGraph))
 	if err != nil {
@@ -264,34 +291,54 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 		MainTriggerNodeID: graph.mainTriggerID, RetentionDays: 30, CreatedBy: principal.User.ID,
 		CreatedAt: now, UpdatedAt: now,
 	}
+	var marketGraph validatedWorkflowGraph
+	if templateKey == WorkflowTemplatePaper {
+		marketGraph, err = a.validateWorkflowGraph(json.RawMessage(quantMarketDataWorkflowGraph))
+		if err != nil {
+			return WorkflowDetail{}, errors.New("Paper market data template is invalid")
+		}
+	}
 	err = a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&workflow).Error; err != nil {
-			return errors.New("create workflow failed")
+		if templateKey == WorkflowTemplatePaper {
+			if _, err := createWorkflowRecord(tx, name+" Market Data", "Paper shared public market data", marketGraph, principal.User.ID, now); err != nil {
+				return err
+			}
 		}
-		revision := db.WorkflowRevision{
-			WorkflowID: workflow.ID, RevisionNumber: 1, GraphJSON: graph.graphJSON,
-			NodeVersions: graph.nodeVersionsJSON, MainTriggerNodeID: graph.mainTriggerID,
-			CreatedBy: principal.User.ID, CreatedAt: now,
-		}
-		if err := tx.Create(&revision).Error; err != nil {
-			return errors.New("create initial workflow revision failed")
-		}
-		workflow.ActiveRevisionID = &revision.ID
-		if err := tx.Model(&db.Workflow{}).Where("id = ?", workflow.ID).Update("active_revision_id", revision.ID).Error; err != nil {
-			return errors.New("activate initial workflow revision failed")
-		}
-		if err := tx.Create(&db.WorkflowRuntime{
-			WorkflowID: workflow.ID, ActivityCursor: 0, HealthSummary: "idle",
-			MaxConcurrentBatches: 2, BacklogLimit: 100, UpdatedAt: now,
-		}).Error; err != nil {
-			return errors.New("create workflow runtime failed")
-		}
-		return nil
+		var createErr error
+		workflow, createErr = createWorkflowRecord(tx, name, description, graph, principal.User.ID, now)
+		return createErr
 	})
 	if err != nil {
 		return WorkflowDetail{}, err
 	}
 	return a.GetWorkflow(ctx, workflow.ID)
+}
+
+func createWorkflowRecord(tx *gorm.DB, name, description string, graph validatedWorkflowGraph, userID int64, now time.Time) (db.Workflow, error) {
+	workflow := db.Workflow{
+		Name: name, Description: description, Mode: workflowModeForTrigger(graph.nodes[graph.mainTriggerID].NodeType), Status: WorkflowStatusPaused,
+		MainTriggerNodeID: graph.mainTriggerID, RetentionDays: 30, CreatedBy: userID, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := tx.Create(&workflow).Error; err != nil {
+		return db.Workflow{}, errors.New("create workflow failed")
+	}
+	revision := db.WorkflowRevision{
+		WorkflowID: workflow.ID, RevisionNumber: 1, GraphJSON: graph.graphJSON,
+		NodeVersions: graph.nodeVersionsJSON, MainTriggerNodeID: graph.mainTriggerID, CreatedBy: userID, CreatedAt: now,
+	}
+	if err := tx.Create(&revision).Error; err != nil {
+		return db.Workflow{}, errors.New("create initial workflow revision failed")
+	}
+	workflow.ActiveRevisionID = &revision.ID
+	if err := tx.Model(&db.Workflow{}).Where("id = ?", workflow.ID).Update("active_revision_id", revision.ID).Error; err != nil {
+		return db.Workflow{}, errors.New("activate initial workflow revision failed")
+	}
+	if err := tx.Create(&db.WorkflowRuntime{
+		WorkflowID: workflow.ID, ActivityCursor: 0, HealthSummary: "idle", MaxConcurrentBatches: 2, BacklogLimit: 100, UpdatedAt: now,
+	}).Error; err != nil {
+		return db.Workflow{}, errors.New("create workflow runtime failed")
+	}
+	return workflow, nil
 }
 
 func (a *App) ListWorkflows(ctx context.Context, status string) ([]WorkflowView, error) {

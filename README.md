@@ -2,7 +2,7 @@
 
 CoinSphere 正在重构为以可视化工作流为核心、由编译期插件提供业务能力的通用平台。项目保持 Vue、Go 模块化单体和 PostgreSQL/TimescaleDB 技术栈。
 
-> V2 已完成 P0-P3。超级管理员可以在 Schema 工作台运行批次、事件与连续流工作流，并使用 Connector/AI、Binance 公共行情、可信 Go 策略和确定性回测；Paper、通知与共享结果继续按[路线图](docs/roadmap/README.md)开发。
+> V2 已交付 P0-P4 代码基线。超级管理员可以运行批次、事件与连续流工作流，并使用 Connector/AI、Binance 公共行情、可信 Go 策略、回测、Paper 和通知；普通用户通过固定范围共享结果完成观察与授权操作。
 
 ## 当前能力
 
@@ -14,8 +14,9 @@ CoinSphere 正在重构为以可视化工作流为核心、由编译期插件提
 | 工作流、修订、事件、批次和活动 API   | `/api/v1`       | 超级管理员可用；Webhook 使用独立 Secret           |
 | Schema 工作台、人工任务和历史制品    | Web             | 可用；移动端提供只读活动视图                      |
 | Connector、AI 与连续流               | 工作流节点      | 默认外部域名白名单为空，不含交易私有接口          |
-| Quant 公共行情、策略与回测            | 工作流 + 结果页 | 支持 Binance Spot/USD-M，不含 Paper 或真实交易    |
-| 旧工作流、新闻、策略、交易和通知接口 | -               | 已从公开运行面移除                                |
+| Quant 公共行情、策略、回测与 Paper     | 工作流 + 结果页 | 支持 Binance Spot/USD-M 公共接口，不含真实交易    |
+| Notification 与共享结果               | 工作流 + 结果页 | 站内幂等投递、固定范围授权与移动端审批            |
+| 旧工作流、新闻、策略、交易和通知接口  | -               | 已从公开运行面移除                                |
 
 详细操作见[使用手册](docs/user-guide.md)，接口语义见[公共契约](docs/contracts/README.md)。
 
@@ -95,6 +96,7 @@ scripts/             验证、发布和部署脚本
 - [开发计划](docs/roadmap/README.md)：能力顺序、完成标准和晋级门禁
 - [质量门禁](docs/quality/quality-gates.md)：测试与验收要求
 - [发布与回滚](docs/runbooks/release.md)：手工发布、固定 digest 部署和回滚
+- [Paper 恢复与观察](docs/runbooks/paper-recovery.md)：重启、积压、账本重建与观察证据
 
 ## 安全边界
 

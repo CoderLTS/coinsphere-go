@@ -510,6 +510,7 @@
             <ElOption label="Binance 共享行情" value="quant-market-data" />
             <ElOption label="实时策略评估" value="quant-strategy" />
             <ElOption label="策略回测" value="quant-backtest" />
+            <ElOption label="Paper 策略闭环" value="quant-paper" />
           </ElSelect>
         </ElFormItem>
       </ElForm>
@@ -659,6 +660,7 @@
       | 'quant-market-data'
       | 'quant-strategy'
       | 'quant-backtest'
+      | 'quant-paper'
   }>({ name: '', description: '', templateKey: 'blank' })
   const secretDrafts = reactive<Record<string, string>>({})
   const secretRemovals = reactive<Record<string, boolean>>({})

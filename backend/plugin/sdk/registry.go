@@ -40,7 +40,7 @@ type Registry struct {
 	nodes       map[string]registeredNode
 	strategies  map[string]registeredStrategy
 	resultPages map[string]ResultPageDescriptor
-	routes      map[string]ScopedRouteHandler
+	routes      map[string]registeredRoute
 }
 
 type registeredNode struct {
@@ -56,11 +56,16 @@ type registeredStrategy struct {
 	strategy Strategy
 }
 
+type registeredRoute struct {
+	desc    RouteDescriptor
+	handler ScopedRouteHandler
+}
+
 func NewRegistry() *Registry {
 	return &Registry{
 		plugins: make(map[string]PluginDescriptor), nodes: make(map[string]registeredNode),
 		strategies:  make(map[string]registeredStrategy),
-		resultPages: make(map[string]ResultPageDescriptor), routes: make(map[string]ScopedRouteHandler),
+		resultPages: make(map[string]ResultPageDescriptor), routes: make(map[string]registeredRoute),
 	}
 }
 
@@ -160,15 +165,15 @@ func (r *Registry) ResultPage(pluginID, pageKey string) (ResultPageDescriptor, b
 }
 
 func (r *Registry) Route(pluginID string, desc RouteDescriptor) (ScopedRouteHandler, bool) {
-	handler, ok := r.routes[routeKey(pluginID, desc)]
-	return handler, ok
+	route, ok := r.routes[routeKey(pluginID, desc)]
+	return route.handler, ok
 }
 
 func (r *Registry) Routes() []RegisteredRoute {
 	routes := make([]RegisteredRoute, 0, len(r.routes))
 	for _, plugin := range r.Plugins() {
 		prefix := plugin.ID + "/"
-		for key, handler := range r.routes {
+		for key, route := range r.routes {
 			if !strings.HasPrefix(key, prefix) {
 				continue
 			}
@@ -177,8 +182,8 @@ func (r *Registry) Routes() []RegisteredRoute {
 			methodPattern := strings.SplitN(parts[1], " ", 2)
 			routes = append(routes, RegisteredRoute{
 				PluginID:   plugin.ID,
-				Descriptor: RouteDescriptor{Scope: ScopeKind(parts[0]), Method: methodPattern[0], Pattern: methodPattern[1]},
-				Handler:    handler,
+				Descriptor: RouteDescriptor{Scope: ScopeKind(parts[0]), Method: methodPattern[0], Pattern: methodPattern[1], Action: route.desc.Action},
+				Handler:    route.handler,
 			})
 		}
 	}
@@ -221,7 +226,7 @@ type registrationCollector struct {
 	nodes       []registeredNode
 	strategies  []registeredStrategy
 	resultPages map[string]ResultPageDescriptor
-	routes      map[string]ScopedRouteHandler
+	routes      map[string]registeredRoute
 }
 
 func (c *registrationCollector) Action(desc NodeDescriptor, handler ActionHandler) error {
@@ -299,6 +304,12 @@ func (c *registrationCollector) ResultPage(desc ResultPageDescriptor) error {
 	if err := validateSchema("scopeSchema", desc.ScopeSchema, true); err != nil {
 		return err
 	}
+	if len(desc.FilterSchema) == 0 {
+		desc.FilterSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false}`)
+	}
+	if err := validateSchema("filterSchema", desc.FilterSchema, true); err != nil {
+		return err
+	}
 	actions := make(map[string]bool, len(desc.Actions))
 	for _, action := range desc.Actions {
 		if !contributionKeyPattern.MatchString(action) || actions[action] {
@@ -326,11 +337,15 @@ func (c *registrationCollector) Route(desc RouteDescriptor, handler ScopedRouteH
 	if desc.Scope != ScopeWorkflow && desc.Scope != ScopeResult && desc.Scope != ScopeSystem {
 		return fmt.Errorf("route %s %s has invalid scope %q", method, desc.Pattern, desc.Scope)
 	}
+	desc.Action = strings.TrimSpace(desc.Action)
+	if desc.Action != "" && (!contributionKeyPattern.MatchString(desc.Action) || desc.Scope != ScopeResult) {
+		return fmt.Errorf("route %s %s has invalid result action %q", method, desc.Pattern, desc.Action)
+	}
 	if handler == nil {
 		return errors.New("route handler is required")
 	}
 	if c.routes == nil {
-		c.routes = make(map[string]ScopedRouteHandler)
+		c.routes = make(map[string]registeredRoute)
 	}
 	desc.Method = method
 	key := routeKey(c.plugin.ID, desc)
@@ -338,7 +353,7 @@ func (c *registrationCollector) Route(desc RouteDescriptor, handler ScopedRouteH
 		return fmt.Errorf("duplicate plugin route %q", key)
 	}
 	c.markUsed("apiRoutes")
-	c.routes[key] = handler
+	c.routes[key] = registeredRoute{desc: desc, handler: handler}
 	return nil
 }
 

@@ -48,14 +48,41 @@ func TestOfficialPluginRegistration(t *testing.T) {
 	if _, _, ok := registry.Action("official.quant.backtest"); !ok {
 		t.Fatal("Quant backtest action was not registered")
 	}
+	if _, _, ok := registry.Action("official.quant.signal"); !ok {
+		t.Fatal("Quant signal action was not registered")
+	}
+	if _, _, ok := registry.Action("official.quant.paper_execute"); !ok {
+		t.Fatal("Quant Paper action was not registered")
+	}
 	if _, _, ok := registry.Strategy(smaStrategyID); !ok {
 		t.Fatal("Quant strategy was not registered")
 	}
 	if _, ok := registry.ResultPage(quantPluginID, "quant"); !ok {
 		t.Fatal("Quant result page was not registered")
 	}
-	if routes := registry.Routes(); len(routes) != 4 || routes[0].PluginID != quantPluginID {
-		t.Fatalf("Quant routes = %#v", routes)
+	if _, ok := registry.ResultPage(quantPluginID, "paper"); !ok {
+		t.Fatal("Quant Paper result page was not registered")
+	}
+	if err := RegisterNotification(registry, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := registry.Action("official.notification.in_app"); !ok {
+		t.Fatal("Notification action was not registered")
+	}
+	if _, ok := registry.ResultPage(notificationPluginID, "deliveries"); !ok {
+		t.Fatal("Notification result page was not registered")
+	}
+	quantRoutes, notificationRoutes := 0, 0
+	for _, route := range registry.Routes() {
+		switch route.PluginID {
+		case quantPluginID:
+			quantRoutes++
+		case notificationPluginID:
+			notificationRoutes++
+		}
+	}
+	if quantRoutes != 11 || notificationRoutes != 2 {
+		t.Fatalf("route counts: Quant=%d Notification=%d", quantRoutes, notificationRoutes)
 	}
 }
 
