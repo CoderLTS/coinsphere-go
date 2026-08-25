@@ -151,6 +151,275 @@ func TestWorkflowRevisionSecretsAreVersionedAndHidden(t *testing.T) {
 	}
 }
 
+func TestWorkflowBatchFixesRevisionAndResumesFromCheckpoint(t *testing.T) {
+	app, database, ownerID := openWorkflowTestApp(t)
+	principal := &Principal{User: &db.SystemUser{ID: ownerID}}
+	workflow, err := app.CreateWorkflow(context.Background(), WorkflowCreatePayload{Name: "Batch"}, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := "batch-secret"
+	revision, err := app.SaveWorkflowRevision(context.Background(), workflow.ID, WorkflowRevisionSavePayload{
+		ExpectedActiveRevisionID: workflow.ActiveRevisionID, Graph: jsonMessage(testPluginWorkflowGraph),
+		SecretChanges: []WorkflowSecretChange{{NodeInstanceID: "transform", Field: "token", Value: &secret}},
+	}, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.ApplyWorkflowLifecycle(context.Background(), workflow.ID, WorkflowLifecyclePayload{Action: "start"}); err != nil {
+		t.Fatal(err)
+	}
+	batch, err := app.CreateWorkflowBatch(context.Background(), workflow.ID, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newRevision, err := app.SaveWorkflowRevision(context.Background(), workflow.ID, WorkflowRevisionSavePayload{
+		ExpectedActiveRevisionID: revision.ID, Graph: jsonMessage(testPluginWorkflowGraph),
+	}, principal)
+	if err != nil || newRevision.ID == revision.ID {
+		t.Fatalf("new revision = %#v, err = %v", newRevision, err)
+	}
+	claimed, ok, err := app.claimWorkflowBatch(context.Background(), time.Now().UTC())
+	if err != nil || !ok || claimed.ID != batch.ID || claimed.RevisionID != revision.ID {
+		t.Fatalf("claimed batch = %#v, ok = %t, err = %v", claimed, ok, err)
+	}
+	app.executeWorkflowBatch(context.Background(), claimed)
+	finished, err := app.GetWorkflowBatch(context.Background(), batch.ID)
+	if err != nil || finished.Status != BatchStatusSucceeded || finished.RevisionID != revision.ID {
+		t.Fatalf("finished batch = %#v, err = %v", finished, err)
+	}
+	var checkpoints int64
+	if err := database.QueryRow(`SELECT COUNT(*) FROM workflow_checkpoints WHERE batch_id = $1 AND revision_id = $2`, batch.ID, revision.ID).Scan(&checkpoints); err != nil || checkpoints != 3 {
+		t.Fatalf("checkpoints = %d, err = %v", checkpoints, err)
+	}
+}
+
+func TestWorkflowBatchRetryKeepsOperationKeyAndStateAtomic(t *testing.T) {
+	app, database, ownerID := openWorkflowTestApp(t)
+	principal := &Principal{User: &db.SystemUser{ID: ownerID}}
+	workflow, err := app.CreateWorkflow(context.Background(), WorkflowCreatePayload{Name: "Retry"}, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retryGraph := strings.Replace(testPluginWorkflowGraph, `"kind":"cel","expression":"event.type + ':'"`, `"kind":"literal","value":"retry"`, 1)
+	secret := "retry-secret"
+	revision, err := app.SaveWorkflowRevision(context.Background(), workflow.ID, WorkflowRevisionSavePayload{
+		ExpectedActiveRevisionID: workflow.ActiveRevisionID, Graph: jsonMessage(retryGraph),
+		SecretChanges: []WorkflowSecretChange{{NodeInstanceID: "transform", Field: "token", Value: &secret}},
+	}, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.ApplyWorkflowLifecycle(context.Background(), workflow.ID, WorkflowLifecyclePayload{Action: "start"}); err != nil {
+		t.Fatal(err)
+	}
+	batch, err := app.CreateWorkflowBatch(context.Background(), workflow.ID, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, ok, err := app.claimWorkflowBatch(context.Background(), time.Now().UTC())
+	if err != nil || !ok {
+		t.Fatalf("first claim ok=%t err=%v", ok, err)
+	}
+	app.executeWorkflowBatch(context.Background(), claimed)
+	first, _ := app.GetWorkflowBatch(context.Background(), batch.ID)
+	if first.Status != BatchStatusRetrying {
+		t.Fatalf("first status = %q", first.Status)
+	}
+	if _, err := database.Exec(`UPDATE execution_batches SET not_before = CURRENT_TIMESTAMP WHERE id = $1`, batch.ID); err != nil {
+		t.Fatal(err)
+	}
+	claimed, ok, err = app.claimWorkflowBatch(context.Background(), time.Now().UTC())
+	if err != nil || !ok {
+		t.Fatalf("retry claim ok=%t err=%v", ok, err)
+	}
+	app.executeWorkflowBatch(context.Background(), claimed)
+	finished, _ := app.GetWorkflowBatch(context.Background(), batch.ID)
+	if finished.Status != BatchStatusSucceeded {
+		t.Fatalf("retry status = %q", finished.Status)
+	}
+	var triggerRuns, transformRuns, operationKeys int64
+	if err := database.QueryRow(`SELECT COUNT(*) FROM workflow_node_runs WHERE batch_id = $1 AND node_instance_id = 'manual'`, batch.ID).Scan(&triggerRuns); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRow(`SELECT COUNT(*), COUNT(DISTINCT operation_key) FROM workflow_node_runs WHERE batch_id = $1 AND node_instance_id = 'transform'`, batch.ID).Scan(&transformRuns, &operationKeys); err != nil {
+		t.Fatal(err)
+	}
+	if triggerRuns != 1 || transformRuns != 2 || operationKeys != 1 {
+		t.Fatalf("runs trigger=%d transform=%d operationKeys=%d", triggerRuns, transformRuns, operationKeys)
+	}
+	var checkpointRevision int64
+	if err := database.QueryRow(`SELECT revision_id FROM workflow_checkpoints WHERE batch_id = $1 AND node_instance_id = 'transform'`, batch.ID).Scan(&checkpointRevision); err != nil || checkpointRevision != revision.ID {
+		t.Fatalf("checkpoint revision = %d, err = %v", checkpointRevision, err)
+	}
+
+	invalidGraph := strings.Replace(testPluginWorkflowGraph, `"kind":"cel","expression":"event.type + ':'"`, `"kind":"literal","value":"invalid"`, 1)
+	invalidWorkflow, err := app.CreateWorkflow(context.Background(), WorkflowCreatePayload{Name: "Atomic state"}, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = app.SaveWorkflowRevision(context.Background(), invalidWorkflow.ID, WorkflowRevisionSavePayload{
+		ExpectedActiveRevisionID: invalidWorkflow.ActiveRevisionID, Graph: jsonMessage(invalidGraph),
+		SecretChanges: []WorkflowSecretChange{{NodeInstanceID: "transform", Field: "token", Value: &secret}},
+	}, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.ApplyWorkflowLifecycle(context.Background(), invalidWorkflow.ID, WorkflowLifecyclePayload{Action: "start"}); err != nil {
+		t.Fatal(err)
+	}
+	invalidBatch, err := app.CreateWorkflowBatch(context.Background(), invalidWorkflow.ID, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, ok, err = app.claimWorkflowBatch(context.Background(), time.Now().UTC())
+	if err != nil || !ok || claimed.ID != invalidBatch.ID {
+		t.Fatalf("invalid claim = %#v, ok=%t err=%v", claimed, ok, err)
+	}
+	app.executeWorkflowBatch(context.Background(), claimed)
+	var states int64
+	if err := database.QueryRow(`SELECT COUNT(*) FROM workflow_node_states WHERE workflow_id = $1`, invalidWorkflow.ID).Scan(&states); err != nil || states != 0 {
+		t.Fatalf("uncheckpointed states = %d, err = %v", states, err)
+	}
+}
+
+func TestWorkflowBatchCancellationAndScheduleDeduplication(t *testing.T) {
+	app, database, ownerID := openWorkflowTestApp(t)
+	principal := &Principal{User: &db.SystemUser{ID: ownerID}}
+	waitGraph := strings.Replace(testPluginWorkflowGraph, `"kind":"cel","expression":"event.type + ':'"`, `"kind":"literal","value":"wait"`, 1)
+	workflow, err := app.CreateWorkflow(context.Background(), WorkflowCreatePayload{Name: "Cancel"}, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := "cancel-secret"
+	_, err = app.SaveWorkflowRevision(context.Background(), workflow.ID, WorkflowRevisionSavePayload{
+		ExpectedActiveRevisionID: workflow.ActiveRevisionID, Graph: jsonMessage(waitGraph),
+		SecretChanges: []WorkflowSecretChange{{NodeInstanceID: "transform", Field: "token", Value: &secret}},
+	}, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.ApplyWorkflowLifecycle(context.Background(), workflow.ID, WorkflowLifecyclePayload{Action: "start"}); err != nil {
+		t.Fatal(err)
+	}
+	batch, err := app.CreateWorkflowBatch(context.Background(), workflow.ID, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, ok, err := app.claimWorkflowBatch(context.Background(), time.Now().UTC())
+	if err != nil || !ok {
+		t.Fatalf("claim ok=%t err=%v", ok, err)
+	}
+	done := make(chan struct{})
+	go func() {
+		app.executeWorkflowBatch(context.Background(), claimed)
+		close(done)
+	}()
+	waitForWorkflowNodeRun(t, database, batch.ID, "transform")
+	if _, err := app.ApplyWorkflowBatchAction(context.Background(), batch.ID, WorkflowBatchActionPayload{Action: "cancel"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("workflow batch did not respond to cancellation")
+	}
+	cancelled, _ := app.GetWorkflowBatch(context.Background(), batch.ID)
+	if cancelled.Status != BatchStatusCancelled {
+		t.Fatalf("cancelled status = %q", cancelled.Status)
+	}
+
+	scheduled, err := app.CreateWorkflow(context.Background(), WorkflowCreatePayload{Name: "Schedule", TemplateKey: WorkflowTemplateSchedule}, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.ApplyWorkflowLifecycle(context.Background(), scheduled.ID, WorkflowLifecyclePayload{Action: "start"}); err != nil {
+		t.Fatal(err)
+	}
+	due := time.Now().UTC().Add(-time.Second)
+	if _, err := database.Exec(`UPDATE workflow_runtimes SET next_scheduled_at = $1 WHERE workflow_id = $2`, due, scheduled.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.enqueueScheduledBatches(context.Background(), time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.enqueueScheduledBatches(context.Background(), time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	var scheduledCount int64
+	if err := database.QueryRow(`SELECT COUNT(*) FROM execution_batches WHERE workflow_id = $1 AND trigger_type = 'schedule'`, scheduled.ID).Scan(&scheduledCount); err != nil || scheduledCount != 1 {
+		t.Fatalf("scheduled batches = %d, err = %v", scheduledCount, err)
+	}
+}
+
+func TestWorkflowBatchProcessInterruptionRequeuesCurrentNode(t *testing.T) {
+	app, database, ownerID := openWorkflowTestApp(t)
+	principal := &Principal{User: &db.SystemUser{ID: ownerID}}
+	graph := strings.Replace(testPluginWorkflowGraph, `"kind":"cel","expression":"event.type + ':'"`, `"kind":"literal","value":"interrupt"`, 1)
+	workflow, err := app.CreateWorkflow(context.Background(), WorkflowCreatePayload{Name: "Interrupted"}, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := "interrupt-secret"
+	_, err = app.SaveWorkflowRevision(context.Background(), workflow.ID, WorkflowRevisionSavePayload{
+		ExpectedActiveRevisionID: workflow.ActiveRevisionID, Graph: jsonMessage(graph),
+		SecretChanges: []WorkflowSecretChange{{NodeInstanceID: "transform", Field: "token", Value: &secret}},
+	}, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.ApplyWorkflowLifecycle(context.Background(), workflow.ID, WorkflowLifecyclePayload{Action: "start"}); err != nil {
+		t.Fatal(err)
+	}
+	batch, err := app.CreateWorkflowBatch(context.Background(), workflow.ID, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, ok, err := app.claimWorkflowBatch(context.Background(), time.Now().UTC())
+	if err != nil || !ok {
+		t.Fatalf("claim ok=%t err=%v", ok, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		app.executeWorkflowBatch(ctx, claimed)
+		close(done)
+	}()
+	waitForWorkflowNodeRun(t, database, batch.ID, "transform")
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("workflow batch did not stop after process interruption")
+	}
+	interrupted, _ := app.GetWorkflowBatch(context.Background(), batch.ID)
+	if interrupted.Status != BatchStatusQueued || interrupted.CompletedAt != "" {
+		t.Fatalf("interrupted batch = %#v", interrupted)
+	}
+	claimed, ok, err = app.claimWorkflowBatch(context.Background(), time.Now().UTC())
+	if err != nil || !ok {
+		t.Fatalf("resume claim ok=%t err=%v", ok, err)
+	}
+	app.executeWorkflowBatch(context.Background(), claimed)
+	resumed, _ := app.GetWorkflowBatch(context.Background(), batch.ID)
+	if resumed.Status != BatchStatusSucceeded {
+		t.Fatalf("resumed status = %q", resumed.Status)
+	}
+}
+
+func waitForWorkflowNodeRun(t *testing.T, database *sql.DB, batchID int64, nodeID string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		var count int64
+		if err := database.QueryRow(`SELECT COUNT(*) FROM workflow_node_runs WHERE batch_id = $1 AND node_instance_id = $2 AND status = 'running'`, batchID, nodeID).Scan(&count); err == nil && count == 1 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("workflow node did not start")
+}
+
 func jsonMessage(value string) []byte { return []byte(value) }
 
 func openWorkflowTestApp(t *testing.T) (*App, *sql.DB, int64) {

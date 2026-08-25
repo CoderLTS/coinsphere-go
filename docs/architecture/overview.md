@@ -2,7 +2,7 @@
 
 ## 当前边界
 
-CoinSphere 正在重建为工作流优先、编译期插件驱动的个人自托管平台。V2 P0、P1-A 和 P1-B 已完成；当前具备工作流、不可变修订、单运行实例、Schema 工作台和 start/pause/archive API。批次执行、事件流、Quant、回测和 Paper 仍按[路线图](../roadmap/README.md)继续开发。
+CoinSphere 正在重建为工作流优先、编译期插件驱动的个人自托管平台。V2 P0 和 P1-A/P1-B/P1-C 已完成；当前具备工作流、不可变修订、Schema 工作台、批次队列、检查点恢复和手工/UTC 定时触发。完整活动与制品、事件流、Quant、回测和 Paper 仍按[路线图](../roadmap/README.md)继续开发。
 
 - 只支持 PostgreSQL/TimescaleDB，领域时间统一使用 UTC。
 - 价格、数量、金额和费率使用 Decimal；账务值禁止使用 `float64`。
@@ -37,13 +37,14 @@ Go App 是单一后端进程，负责：
 - 系统管理、健康检查、HTTP 指标与数据库就绪检查。
 - 启动时加载编译进二进制的插件注册表。
 - 暴露 SDK 的 Action、Trigger、作用域路由和结果页描述符契约。
-- 向超级管理员提供节点 Schema 目录、工作流图校验、不可变修订和 start/pause/archive。
+- 向超级管理员提供节点 Schema 目录、工作流图校验、不可变修订、生命周期和批次操作。
+- 从 PostgreSQL 有界队列领取固定修订批次，在 `stream`/`compute` 池执行核心或插件 Action，并原子保存 NodeRun、Checkpoint 和节点状态。
 
-当前生命周期中的 `running` 只表示工作流已允许接受后续 batch 触发；P1-C 执行器尚未调度节点或调用插件 Action。共享结果视图在 P4 交付。
+`running` 表示工作流允许手工或定时批次入队和领取；`pause` 不强制终止当前节点，节点完成后批次从检查点续跑。共享结果视图在 P4 交付。
 
 ### PostgreSQL / TimescaleDB
 
-数据库当前保存认证、RBAC、菜单、i18n、审计、插件安装状态和引用，以及 `workflows`、`workflow_revisions`、`workflow_secret_bindings`、`workflow_runtimes`。修订和密钥绑定不可变，活动修订通过同工作流复合外键约束，修订、密钥绑定和活动指针在一个事务提交。
+数据库当前保存认证、RBAC、菜单、i18n、审计、插件安装状态和引用，以及工作流、修订、密钥、运行实例、批次、NodeRun、Checkpoint 和节点状态。修订、密钥绑定和 Checkpoint 不可变；批次固定修订，过期租约由单实例执行器恢复。
 
 应用启动只校验 migration 版本。核心 DDL 由一次性 migration 命令执行，插件 DDL 由生命周期 CLI 在维护窗口执行。
 

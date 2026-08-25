@@ -182,10 +182,82 @@ type WorkflowSecretBinding struct {
 func (WorkflowSecretBinding) TableName() string { return "workflow_secret_bindings" }
 
 type WorkflowRuntime struct {
-	WorkflowID     int64  `gorm:"column:workflow_id;primaryKey"`
-	ActivityCursor int64  `gorm:"column:activity_cursor"`
-	HealthSummary  string `gorm:"column:health_summary;size:32"`
-	UpdatedAt      time.Time
+	WorkflowID           int64  `gorm:"column:workflow_id;primaryKey"`
+	ActivityCursor       int64  `gorm:"column:activity_cursor"`
+	HealthSummary        string `gorm:"column:health_summary;size:32"`
+	MaxConcurrentBatches int    `gorm:"column:max_concurrent_batches"`
+	BacklogLimit         int    `gorm:"column:backlog_limit"`
+	NextScheduledAt      *time.Time
+	LastScheduledAt      *time.Time
+	UpdatedAt            time.Time
 }
 
 func (WorkflowRuntime) TableName() string { return "workflow_runtimes" }
+
+type ExecutionBatch struct {
+	ID                    int64  `gorm:"primaryKey;autoIncrement"`
+	WorkflowID            int64  `gorm:"column:workflow_id"`
+	RevisionID            int64  `gorm:"column:revision_id"`
+	TriggerType           string `gorm:"column:trigger_type;size:16"`
+	TriggerKey            string `gorm:"column:trigger_key;size:128"`
+	Status                string `gorm:"size:16"`
+	CurrentNodeInstanceID string `gorm:"column:current_node_instance_id;size:128"`
+	NotBefore             time.Time
+	LeaseToken            *string `gorm:"column:lease_token;size:64"`
+	LeaseExpiresAt        *time.Time
+	CancelRequestedAt     *time.Time
+	TriggeredAt           time.Time
+	StartedAt             *time.Time
+	CompletedAt           *time.Time
+	CreatedBy             *int64 `gorm:"column:created_by"`
+	ErrorCategory         *string
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
+}
+
+func (ExecutionBatch) TableName() string { return "execution_batches" }
+
+type WorkflowNodeRun struct {
+	ID             int64 `gorm:"primaryKey;autoIncrement"`
+	BatchID        int64 `gorm:"column:batch_id"`
+	NodeInstanceID string
+	NodeType       string
+	NodeVersion    string
+	ExecutionPool  string
+	Attempt        int
+	LoopIteration  int
+	OperationKey   string
+	Status         string
+	ErrorCategory  *string
+	StartedAt      time.Time
+	CompletedAt    *time.Time
+	DurationMS     *int64 `gorm:"column:duration_ms"`
+}
+
+func (WorkflowNodeRun) TableName() string { return "workflow_node_runs" }
+
+type WorkflowCheckpoint struct {
+	ID             int64 `gorm:"primaryKey;autoIncrement"`
+	BatchID        int64 `gorm:"column:batch_id"`
+	WorkflowID     int64 `gorm:"column:workflow_id"`
+	RevisionID     int64 `gorm:"column:revision_id"`
+	NodeInstanceID string
+	LoopIteration  int
+	OperationKey   string
+	OutputJSON     string `gorm:"column:output_json;type:jsonb"`
+	ArtifactsJSON  string `gorm:"column:artifacts_json;type:jsonb"`
+	CreatedAt      time.Time
+}
+
+func (WorkflowCheckpoint) TableName() string { return "workflow_checkpoints" }
+
+type WorkflowNodeState struct {
+	WorkflowID     int64  `gorm:"column:workflow_id;primaryKey"`
+	NodeInstanceID string `gorm:"column:node_instance_id;primaryKey"`
+	NodeType       string
+	RevisionID     int64
+	StateJSON      string `gorm:"column:state_json;type:jsonb"`
+	UpdatedAt      time.Time
+}
+
+func (WorkflowNodeState) TableName() string { return "workflow_node_states" }

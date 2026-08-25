@@ -2,6 +2,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -31,6 +32,12 @@ type App struct {
 	reauthTokens        map[string]reauthTokenRecord
 	revokedAccessTokens map[string]time.Time
 	dummyHash           string
+	batchClaimMu        sync.Mutex
+	batchCancelMu       sync.Mutex
+	batchCancels        map[int64]context.CancelFunc
+	batchWG             sync.WaitGroup
+	streamSlots         chan struct{}
+	computeSlots        chan struct{}
 }
 
 func NewApp(gdb *gorm.DB, cfg *config.AppConfig, plugins *sdk.Registry) *App {
@@ -46,6 +53,9 @@ func NewApp(gdb *gorm.DB, cfg *config.AppConfig, plugins *sdk.Registry) *App {
 		dummyHash:           hasher.HashPassword(security.RandomToken()),
 		reauthTokens:        map[string]reauthTokenRecord{},
 		revokedAccessTokens: map[string]time.Time{},
+		batchCancels:        map[int64]context.CancelFunc{},
+		streamSlots:         make(chan struct{}, 4),
+		computeSlots:        make(chan struct{}, 1),
 	}
 }
 

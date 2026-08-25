@@ -14,11 +14,11 @@
 - 不提供公开注册。`POST /api/v1/auth/login` 是唯一匿名身份 API。
 - `POST /api/v1/auth/logout`、`POST /api/v1/auth/reauth` 和 `GET /api/v1/me` 要求有效 Access Token。
 - `POST /api/v1/auth/reauth` 返回绑定当前用户与当前会话、五分钟失效且只能使用一次的不透明 Token。
-- 当前业务 API 包含 `/api/v1/home/*`、`/api/v1/admin/users`、`/api/v1/system/*` 和工作流 P1-A/P1-B 路由；工作流路由只允许 `R_SUPER`。
+- 当前业务 API 包含 `/api/v1/home/*`、`/api/v1/admin/users`、`/api/v1/system/*` 和工作流 P1-A/P1-B/P1-C 路由；工作流路由只允许 `R_SUPER`。
 - `/health/live` 只报告进程存活；`/health/ready` 和 `/health` 在一秒预算内检查 PostgreSQL；`/metrics` 要求登录。
 - 旧行情、策略、回测、信号、通知和交易路由已移除，不提供别名或兼容响应。
 
-## 工作流 P1-A/P1-B
+## 工作流 P1-A/P1-B/P1-C
 
 | 路由                                                        | 语义                                   |
 | ----------------------------------------------------------- | -------------------------------------- |
@@ -29,13 +29,19 @@
 | `GET/POST /api/v1/workflows/{workflowId}/revisions`         | 列表，或保存新不可变修订               |
 | `GET /api/v1/workflows/{workflowId}/revisions/{revisionId}` | 读取固定修订                           |
 | `POST /api/v1/workflows/{workflowId}/lifecycle`             | 执行 `start`、`pause` 或 `archive`     |
+| `GET/POST /api/v1/workflows/{workflowId}/batches`           | 最近批次摘要，或创建手工批次           |
+| `GET/POST /api/v1/batches/{batchId}`                        | 读取批次摘要，或执行 `cancel`/`retry`  |
 
-- 创建只接受 `batch` blank 模板：`core.manual` 的 `out` 端口连接 `core.end` 的 `in` 端口。图 `schemaVersion` 固定为 `1`，节点保存 `nodeInstanceId`、精确节点版本、普通配置、结构化输入映射和位置；边保存两端端口及可选 Boolean CEL 条件。
+- 创建接受 `batch` 的 `blank` 或 `scheduled` 模板，分别由 `core.manual` 或 `core.schedule` 连接 `core.end`。定时配置只接受 UTC `everySeconds` 60 至 86400，不提供 Cron DSL。图 `schemaVersion` 固定为 `1`，节点保存 `nodeInstanceId`、精确节点版本、普通配置、结构化输入映射和位置；边保存两端端口及可选 Boolean CEL 条件。
 - 输入映射只接受 `field`、`literal`、`cel`。字段来源使用上游 `nodeInstanceId` 和字段路径数组；保存校验端口、可达性、DAG、JSON Schema、字段类型和 CEL，并拒绝 Decimal CEL 算术。
 - 保存请求必须提供当前 `expectedActiveRevisionId`。服务锁定工作流，校验完整图，写入递增修订、修订级密钥绑定并原子切换活动指针；并发旧指针返回 `409 Conflict`，失败校验不创建修订。
 - `secretChanges` 只允许替换或移除节点 Config Schema 声明的顶层 `x-coinsphere-secret` 字段。密钥按修订、节点实例和字段独立加密；响应只返回 `secretFields[nodeInstanceId][field]=true`，图、修订响应和节点目录永不返回密钥值。
 - 修订保存后不可更新或删除。归档工作流只读且不能重新启动；`archive` 只允许从 `paused` 或 `needs_attention` 执行。
-- `start` 当前只改变生命周期状态，不创建执行批次或调用插件 Action；这些能力由 P1-C 交付。
+- `start` 允许批次队列领取工作；`pause` 停止领取新批次，当前节点返回后保存检查点并重新排队。手工触发只适用于 `core.manual`，`core.schedule` 按 UTC 固定间隔去重入队。
+- 批次创建时固定活动修订。单实例执行器使用 PostgreSQL 持久队列、每工作流并发/积压上限和有界 `stream`/`compute` 池；过期租约重启后重新排队。
+- 每个成功节点原子提交终态 NodeRun、输出 Checkpoint 和缓冲状态。失败只重试当前节点，默认最多三次并线性退避；操作键固定为 `sha256(batchId + ":" + nodeInstanceId + ":0)`。取消通过 `context.Context` 协作传递，取消请求后不再调度下游节点。
+- 核心执行 `core.manual`、`core.schedule`、`core.constant`、`core.end`，其他 Action 从编译期插件注册表调用；执行前后分别校验输入/输出 Schema，修订密钥通过节点范围 `SecretReader` 解密。
+- 当前批次查询只返回最近 100 条摘要。节点路径、活动游标、日志和内容寻址制品由 P1-D 交付；P1-C 中 `ArtifactStore` 明确返回不可用。
 
 ## 插件清单
 
@@ -77,4 +83,4 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 
 ## 尚未实现
 
-批次执行、检查点、历史制品、事件流、Connector/AI、Quant、回测、信号、Paper、Notification 和共享结果视图当前均不可用。Testnet/Live、私有交易 API、插件市场、签名、沙箱、热加载和多实例集群不属于 V2 当前合同。
+完整活动历史与制品、事件流、Connector/AI、Quant、回测、信号、Paper、Notification 和共享结果视图当前均不可用。Testnet/Live、私有交易 API、插件市场、签名、沙箱、热加载和多实例集群不属于 V2 当前合同。

@@ -5,15 +5,62 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"coinsphere/backend/plugin/sdk"
 )
 
-type workflowTestAction struct{}
+type workflowTestAction struct {
+	mu       sync.Mutex
+	attempts map[string]int
+}
 
-func (workflowTestAction) Execute(context.Context, sdk.ActionRequest) (sdk.ActionResult, error) {
-	return sdk.ActionResult{}, nil
+func (a *workflowTestAction) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
+	var input map[string]any
+	if json.Unmarshal(request.Input, &input) != nil {
+		return sdk.ActionResult{}, errors.New("invalid input")
+	}
+	label, _ := input["label"].(string)
+	if label == "wait" {
+		<-ctx.Done()
+		return sdk.ActionResult{}, ctx.Err()
+	}
+	if label == "interrupt" {
+		a.mu.Lock()
+		if a.attempts == nil {
+			a.attempts = map[string]int{}
+		}
+		a.attempts[request.OperationKey]++
+		attempt := a.attempts[request.OperationKey]
+		a.mu.Unlock()
+		if attempt == 1 {
+			<-ctx.Done()
+			return sdk.ActionResult{}, ctx.Err()
+		}
+	}
+	if label == "retry" {
+		a.mu.Lock()
+		if a.attempts == nil {
+			a.attempts = map[string]int{}
+		}
+		a.attempts[request.OperationKey]++
+		attempt := a.attempts[request.OperationKey]
+		a.mu.Unlock()
+		if attempt == 1 {
+			return sdk.ActionResult{}, errors.New("retryable test failure")
+		}
+	}
+	if label == "invalid" {
+		if err := request.State.Save(ctx, json.RawMessage(`{"saved":true}`)); err != nil {
+			return sdk.ActionResult{}, err
+		}
+		return sdk.ActionResult{Output: json.RawMessage(`{"invalid":true}`)}, nil
+	}
+	if _, err := request.Secrets.Read(ctx, "token"); err != nil {
+		return sdk.ActionResult{}, err
+	}
+	return sdk.ActionResult{Output: append(json.RawMessage(nil), request.Input...)}, nil
 }
 
 const testPluginWorkflowGraph = `{
@@ -34,6 +81,12 @@ func TestWorkflowGraphValidationAndLifecycle(t *testing.T) {
 	graph, err := app.validateWorkflowGraph(json.RawMessage(blankWorkflowGraph))
 	if err != nil || graph.mainTriggerID != "manual-trigger" || !json.Valid([]byte(graph.nodeVersionsJSON)) {
 		t.Fatalf("blank graph = %#v, err = %v", graph, err)
+	}
+	if graph, err := app.validateWorkflowGraph(json.RawMessage(scheduledWorkflowGraph)); err != nil || graph.mainTriggerID != "schedule-trigger" {
+		t.Fatalf("scheduled graph = %#v, err = %v", graph, err)
+	}
+	if value, err := evaluateWorkflowCEL("event.type + ':'", map[string]string{"type": "manual"}, map[string]any{}); err != nil || value != "manual:" {
+		t.Fatalf("runtime CEL value = %#v, err = %v", value, err)
 	}
 
 	validated, err := app.validateWorkflowGraph(json.RawMessage(testPluginWorkflowGraph))
@@ -101,11 +154,14 @@ func workflowTestApp(t *testing.T) *App {
 			UISchema:     json.RawMessage(`{}`),
 			InputSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"price":{"type":"string","x-coinsphere-decimal":true},"label":{"type":"string"}},"required":["price","label"],"additionalProperties":false}`),
 			OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"price":{"type":"string","x-coinsphere-decimal":true},"label":{"type":"string"}},"required":["price","label"],"additionalProperties":false}`),
-			Pool:         sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
-		}, workflowTestAction{})
+			Pool:         sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StatePersistent,
+		}, &workflowTestAction{})
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &App{Plugins: registry}
+	return &App{
+		Plugins: registry, batchCancels: map[int64]context.CancelFunc{},
+		streamSlots: make(chan struct{}, 4), computeSlots: make(chan struct{}, 1),
+	}
 }

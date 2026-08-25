@@ -72,6 +72,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/workflows/{workflowId}/revisions", s.requireRole("R_SUPER", s.handleSaveWorkflowRevision))
 	mux.HandleFunc("GET /api/v1/workflows/{workflowId}/revisions/{revisionId}", s.requireRole("R_SUPER", s.handleGetWorkflowRevision))
 	mux.HandleFunc("POST /api/v1/workflows/{workflowId}/lifecycle", s.requireRole("R_SUPER", s.handleWorkflowLifecycle))
+	mux.HandleFunc("GET /api/v1/workflows/{workflowId}/batches", s.requireRole("R_SUPER", s.handleListWorkflowBatches))
+	mux.HandleFunc("POST /api/v1/workflows/{workflowId}/batches", s.requireRole("R_SUPER", s.handleCreateWorkflowBatch))
+	mux.HandleFunc("GET /api/v1/batches/{batchId}", s.requireRole("R_SUPER", s.handleGetWorkflowBatch))
+	mux.HandleFunc("POST /api/v1/batches/{batchId}", s.requireRole("R_SUPER", s.handleWorkflowBatchAction))
 
 	// 系统管理。
 	mux.HandleFunc("GET /api/v1/admin/users", s.requirePermission(perm.SystemUsersView, s.handleListUsers))

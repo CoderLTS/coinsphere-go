@@ -38,7 +38,7 @@ func (a *App) ListWorkflowNodeDefinitions() []WorkflowNodeDefinitionView {
 	items := make([]WorkflowNodeDefinitionView, 0, len(descriptors))
 	for _, desc := range descriptors {
 		inputPorts, outputPorts := workflowPorts(desc)
-		available := desc.Kind == sdk.NodeKindAction || desc.Type == "core.manual"
+		available := desc.Kind == sdk.NodeKindAction || desc.Type == "core.manual" || desc.Type == "core.schedule"
 		items = append(items, WorkflowNodeDefinitionView{
 			Type: desc.Type, Version: desc.Version, Title: workflowNodeTitle(desc.Type),
 			Description: workflowNodeDescription(desc.Type), Kind: desc.Kind,
@@ -74,6 +74,13 @@ func coreWorkflowNodeDescriptors() []sdk.NodeDescriptor {
 			Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
 		},
 		{
+			Type: "core.schedule", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
+			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"everySeconds":{"type":"integer","title":"Interval (seconds)","minimum":60,"maximum":86400,"default":3600}},"required":["everySeconds"],"additionalProperties":false}`),
+			UISchema:     json.RawMessage(`{"ui:order":["everySeconds"]}`), InputSchema: empty,
+			OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"triggeredAt":{"type":"string","format":"date-time"}},"required":["triggeredAt"],"additionalProperties":false}`),
+			Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
+		},
+		{
 			Type: "core.constant", Version: "1.0.0", Kind: sdk.NodeKindAction,
 			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"value":{"type":"string","title":"Value","description":"Value emitted by this node."}},"required":["value"],"additionalProperties":false}`),
 			UISchema:     json.RawMessage(`{"ui:order":["value"],"value":{"ui:widget":"textarea"}}`), InputSchema: empty,
@@ -103,6 +110,8 @@ func workflowNodeTitle(nodeType string) string {
 	switch nodeType {
 	case "core.manual":
 		return "Manual trigger"
+	case "core.schedule":
+		return "Schedule trigger"
 	case "core.constant":
 		return "Constant"
 	case "core.end":
@@ -116,6 +125,8 @@ func workflowNodeDescription(nodeType string) string {
 	switch nodeType {
 	case "core.manual":
 		return "Starts one batch on demand."
+	case "core.schedule":
+		return "Starts one batch at a fixed UTC interval."
 	case "core.constant":
 		return "Emits a configured text value."
 	case "core.end":
