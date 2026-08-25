@@ -16,6 +16,16 @@
         </span>
       </div>
       <div class="revision-track__actions">
+        <ElButton
+          v-if="selectedWorkflow && manualTrigger"
+          type="success"
+          :loading="runningBatch"
+          :disabled="selectedWorkflow.status !== 'running' || dirty || readOnly"
+          @click="runNow"
+        >
+          <ArtSvgIcon icon="ri:rocket-2-line" />
+          立即运行
+        </ElButton>
         <ElSelect
           v-if="revisions.length"
           v-model="viewRevisionId"
@@ -333,6 +343,12 @@
         <ElFormItem label="描述">
           <ElInput v-model="createForm.description" type="textarea" :rows="3" maxlength="500" />
         </ElFormItem>
+        <ElFormItem label="触发方式">
+          <ElSelect v-model="createForm.templateKey">
+            <ElOption label="手工触发" value="blank" />
+            <ElOption label="UTC 定时触发" value="scheduled" />
+          </ElSelect>
+        </ElFormItem>
       </ElForm>
       <template #footer>
         <ElButton @click="createDialogVisible = false">取消</ElButton>
@@ -355,6 +371,7 @@
   import WorkflowSchemaFields from '@/views/scheduler/workflow/editor/components/WorkflowSchemaFields.vue'
   import {
     applyWorkflowLifecycle,
+    createWorkflowBatch,
     createWorkflow,
     fetchWorkflow,
     fetchWorkflowNodeDefinitions,
@@ -388,10 +405,15 @@
   const loading = ref(true)
   const saving = ref(false)
   const creating = ref(false)
+  const runningBatch = ref(false)
   const dirty = ref(false)
   const applyingGraph = ref(false)
   const createDialogVisible = ref(false)
-  const createForm = reactive({ name: '', description: '' })
+  const createForm = reactive<{
+    name: string
+    description: string
+    templateKey: 'blank' | 'scheduled'
+  }>({ name: '', description: '', templateKey: 'blank' })
   const secretDrafts = reactive<Record<string, string>>({})
   const secretRemovals = reactive<Record<string, boolean>>({})
   const bindingKinds = [
@@ -417,6 +439,13 @@
   )
   const selectedEdge = computed(() =>
     graph.value.edges.find((edge) => edge.edgeId === selectedEdgeId.value)
+  )
+  const manualTrigger = computed(() =>
+    activeRevision.value?.graph.nodes.some(
+      (node) =>
+        node.nodeInstanceId === activeRevision.value?.mainTriggerNodeId &&
+        node.nodeType === 'core.manual'
+    )
   )
   const readOnly = computed(
     () =>
@@ -865,6 +894,17 @@
     )
   }
 
+  const runNow = async () => {
+    if (!selectedWorkflow.value) return
+    runningBatch.value = true
+    try {
+      const batch = await createWorkflowBatch(selectedWorkflow.value.id)
+      ElMessage.success(`批次 #${batch.id} 已进入队列`)
+    } finally {
+      runningBatch.value = false
+    }
+  }
+
   const archiveWorkflow = async () => {
     if (!selectedWorkflow.value) return
     try {
@@ -888,11 +928,12 @@
       const created = await createWorkflow({
         name: createForm.name.trim(),
         description: createForm.description.trim(),
-        templateKey: 'blank'
+        templateKey: createForm.templateKey
       })
       createDialogVisible.value = false
       createForm.name = ''
       createForm.description = ''
+      createForm.templateKey = 'blank'
       const list = await fetchWorkflows()
       workflows.value = list.items
       await selectWorkflow(created)

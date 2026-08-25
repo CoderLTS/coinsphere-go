@@ -106,6 +106,8 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 		slog.Warn("内置超管仍使用默认初始密码，请登录后尽快修改")
 	}
 	slog.Info("database ready", "engine", "postgres")
+	batchEngineErr := make(chan error, 1)
+	go func() { batchEngineErr <- app.RunBatchEngine(ctx) }()
 
 	executable, _ := os.Executable()
 	baseDir := filepath.Dir(executable)
@@ -131,12 +133,18 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	}()
 
 	var cause error
+	batchEngineStopped := false
 	select {
 	case <-ctx.Done():
 		slog.Info("backend shutdown started")
 	case err := <-serveErr:
 		if err != nil {
 			cause = fmt.Errorf("http server: %w", err)
+		}
+	case err := <-batchEngineErr:
+		batchEngineStopped = true
+		if err != nil {
+			cause = fmt.Errorf("workflow batch engine: %w", err)
 		}
 	}
 
@@ -149,6 +157,19 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		shutdownErrs = append(shutdownErrs, fmt.Errorf("shutdown http server: %w", err))
 		_ = server.Close()
+	}
+	if !batchEngineStopped {
+		select {
+		case err := <-batchEngineErr:
+			if err != nil {
+				shutdownErrs = append(shutdownErrs, fmt.Errorf("stop workflow batch engine: %w", err))
+			}
+		case <-shutdownCtx.Done():
+			shutdownErrs = append(shutdownErrs, errors.New("stop workflow batch engine: timeout"))
+		}
+	}
+	if err := app.WaitForWorkflowBatches(shutdownCtx); err != nil {
+		shutdownErrs = append(shutdownErrs, errors.New("stop workflow batches: timeout"))
 	}
 	if cause == nil && len(shutdownErrs) == 0 {
 		slog.Info("backend shutdown completed")

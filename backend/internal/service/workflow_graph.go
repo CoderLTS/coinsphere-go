@@ -109,7 +109,7 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 			return validatedWorkflowGraph{}, fmt.Errorf("node %q requires nodeVersion %s", node.NodeInstanceID, desc.Version)
 		}
 		if desc.Kind == sdk.NodeKindTrigger {
-			if node.NodeType != "core.manual" {
+			if node.NodeType != "core.manual" && node.NodeType != "core.schedule" {
 				return validatedWorkflowGraph{}, fmt.Errorf("trigger node %q is not enabled for batch workflows", node.NodeType)
 			}
 			if triggerID != "" {
@@ -328,10 +328,7 @@ func compileWorkflowCEL(expression string) (*cel.Ast, error) {
 	if len(expression) == 0 || len(expression) > maxWorkflowCELBytes {
 		return nil, fmt.Errorf("CEL expression must contain 1 to %d bytes", maxWorkflowCELBytes)
 	}
-	env, err := cel.NewEnv(
-		cel.Variable("event", cel.MapType(cel.StringType, cel.StringType)),
-		cel.Variable("input", cel.MapType(cel.StringType, cel.DynType)),
-	)
+	env, err := workflowCELEnvironment()
 	if err != nil {
 		return nil, err
 	}
@@ -340,6 +337,13 @@ func compileWorkflowCEL(expression string) (*cel.Ast, error) {
 		return nil, issues.Err()
 	}
 	return ast, nil
+}
+
+func workflowCELEnvironment() (*cel.Env, error) {
+	return cel.NewEnv(
+		cel.Variable("event", cel.MapType(cel.StringType, cel.StringType)),
+		cel.Variable("input", cel.MapType(cel.StringType, cel.DynType)),
+	)
 }
 
 func workflowCELExpr(ast *cel.Ast) (*exprpb.Expr, error) {

@@ -15,13 +15,14 @@ import (
 )
 
 const (
-	WorkflowModeBatch       = "batch"
-	WorkflowStatusPaused    = "paused"
-	WorkflowStatusRunning   = "running"
-	WorkflowStatusAttention = "needs_attention"
-	WorkflowStatusArchived  = "archived"
-	WorkflowTemplateBlank   = "blank"
-	maxWorkflowGraphBytes   = 1 << 20
+	WorkflowModeBatch        = "batch"
+	WorkflowStatusPaused     = "paused"
+	WorkflowStatusRunning    = "running"
+	WorkflowStatusAttention  = "needs_attention"
+	WorkflowStatusArchived   = "archived"
+	WorkflowTemplateBlank    = "blank"
+	WorkflowTemplateSchedule = "scheduled"
+	maxWorkflowGraphBytes    = 1 << 20
 )
 
 const blankWorkflowGraph = `{
@@ -32,6 +33,17 @@ const blankWorkflowGraph = `{
   ],
   "edges": [
     {"edgeId":"manual-to-end","sourceNodeInstanceId":"manual-trigger","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}
+  ]
+}`
+
+const scheduledWorkflowGraph = `{
+  "schemaVersion": 1,
+  "nodes": [
+    {"nodeInstanceId":"schedule-trigger","nodeType":"core.schedule","nodeVersion":"1.0.0","config":{"everySeconds":3600},"position":{"x":160,"y":220}},
+    {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":520,"y":220}}
+  ],
+  "edges": [
+    {"edgeId":"schedule-to-end","sourceNodeInstanceId":"schedule-trigger","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}
   ]
 }`
 
@@ -97,10 +109,10 @@ type WorkflowRevisionView struct {
 }
 
 func (a *App) ListWorkflowTemplates() []WorkflowTemplate {
-	return []WorkflowTemplate{{
-		Key: WorkflowTemplateBlank, Name: "Blank batch workflow", Mode: WorkflowModeBatch,
-		Description: "Manual trigger connected to an end node.",
-	}}
+	return []WorkflowTemplate{
+		{Key: WorkflowTemplateBlank, Name: "Blank batch workflow", Mode: WorkflowModeBatch, Description: "Manual trigger connected to an end node."},
+		{Key: WorkflowTemplateSchedule, Name: "Scheduled batch workflow", Mode: WorkflowModeBatch, Description: "UTC interval trigger connected to an end node."},
+	}
 }
 
 func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload, principal *Principal) (WorkflowDetail, error) {
@@ -116,15 +128,19 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 	if utf8.RuneCountInString(description) > 500 {
 		return WorkflowDetail{}, errors.New("workflow description must not exceed 500 characters")
 	}
-	if templateKey != WorkflowTemplateBlank {
+	if templateKey != WorkflowTemplateBlank && templateKey != WorkflowTemplateSchedule {
 		return WorkflowDetail{}, fmt.Errorf("unknown workflow template %q", templateKey)
 	}
 	if principal == nil || principal.User == nil || principal.User.ID <= 0 {
 		return WorkflowDetail{}, ErrPermission
 	}
-	graph, err := a.validateWorkflowGraph(json.RawMessage(blankWorkflowGraph))
+	templateGraph := blankWorkflowGraph
+	if templateKey == WorkflowTemplateSchedule {
+		templateGraph = scheduledWorkflowGraph
+	}
+	graph, err := a.validateWorkflowGraph(json.RawMessage(templateGraph))
 	if err != nil {
-		return WorkflowDetail{}, errors.New("blank workflow template is invalid")
+		return WorkflowDetail{}, errors.New("workflow template is invalid")
 	}
 
 	now := time.Now().UTC()
@@ -150,7 +166,8 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 			return errors.New("activate initial workflow revision failed")
 		}
 		if err := tx.Create(&db.WorkflowRuntime{
-			WorkflowID: workflow.ID, ActivityCursor: 0, HealthSummary: "idle", UpdatedAt: now,
+			WorkflowID: workflow.ID, ActivityCursor: 0, HealthSummary: "idle",
+			MaxConcurrentBatches: 2, BacklogLimit: 100, UpdatedAt: now,
 		}).Error; err != nil {
 			return errors.New("create workflow runtime failed")
 		}
@@ -256,6 +273,22 @@ func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payloa
 		}).Error; err != nil {
 			return errors.New("activate workflow revision failed")
 		}
+		if workflow.Status == WorkflowStatusRunning {
+			nextScheduledAt := any(nil)
+			trigger := graph.nodes[graph.mainTriggerID]
+			if trigger.NodeType == "core.schedule" {
+				interval, err := scheduleInterval(trigger.Config)
+				if err != nil {
+					return errors.New("schedule config is invalid")
+				}
+				nextScheduledAt = now.Add(interval)
+			}
+			if err := tx.Model(&db.WorkflowRuntime{}).Where("workflow_id = ?", workflowID).Updates(map[string]any{
+				"next_scheduled_at": nextScheduledAt, "updated_at": now,
+			}).Error; err != nil {
+				return errors.New("update workflow runtime schedule failed")
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -325,11 +358,38 @@ func (a *App) ApplyWorkflowLifecycle(ctx context.Context, workflowID int64, payl
 		}
 		now := time.Now().UTC()
 		updates := map[string]any{"status": next, "updated_at": now}
+		var runtimeUpdates map[string]any
+		if action == "start" {
+			var revision db.WorkflowRevision
+			if err := tx.First(&revision, *workflow.ActiveRevisionID).Error; err != nil {
+				return errors.New("load active workflow revision failed")
+			}
+			runtimeUpdates = map[string]any{"updated_at": now, "next_scheduled_at": nil}
+			var graph workflowGraph
+			if json.Unmarshal([]byte(revision.GraphJSON), &graph) == nil {
+				for _, node := range graph.Nodes {
+					if node.NodeInstanceID == revision.MainTriggerNodeID && node.NodeType == "core.schedule" {
+						interval, err := scheduleInterval(node.Config)
+						if err != nil {
+							return fmt.Errorf("%w: schedule config is invalid", ErrConflict)
+						}
+						runtimeUpdates["next_scheduled_at"] = now.Add(interval)
+					}
+				}
+			}
+		} else if action == "pause" {
+			runtimeUpdates = map[string]any{"updated_at": now, "next_scheduled_at": nil}
+		}
 		if next == WorkflowStatusArchived {
 			updates["archived_at"] = now
 		}
 		if err := tx.Model(&db.Workflow{}).Where("id = ?", workflowID).Updates(updates).Error; err != nil {
 			return errors.New("update workflow lifecycle failed")
+		}
+		if runtimeUpdates != nil {
+			if err := tx.Model(&db.WorkflowRuntime{}).Where("workflow_id = ?", workflowID).Updates(runtimeUpdates).Error; err != nil {
+				return errors.New("update workflow runtime schedule failed")
+			}
 		}
 		return nil
 	})

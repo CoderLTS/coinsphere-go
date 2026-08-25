@@ -100,6 +100,20 @@ export interface WorkflowSecretChange {
   remove?: boolean
 }
 
+export interface WorkflowBatch {
+  id: number
+  workflowId: number
+  revisionId: number
+  triggerType: 'manual' | 'schedule'
+  status: 'queued' | 'running' | 'retrying' | 'succeeded' | 'failed' | 'cancelled'
+  currentNodeInstanceId?: string
+  triggeredAt: string
+  startedAt?: string
+  completedAt?: string
+  cancelRequestedAt?: string
+  errorCategory?: string
+}
+
 interface ItemList<T> {
   items: T[]
 }
@@ -131,7 +145,7 @@ export const fetchWorkflowNodeDefinitions = () =>
 export const createWorkflow = (params: {
   name: string
   description: string
-  templateKey: 'blank'
+  templateKey: 'blank' | 'scheduled'
 }) => request.post<WorkflowDetail>({ url: '/api/v1/workflows', params })
 
 export const saveWorkflowRevision = (
@@ -148,3 +162,6 @@ export const applyWorkflowLifecycle = (workflowId: number, action: 'start' | 'pa
     url: `/api/v1/workflows/${workflowId}/lifecycle`,
     params: { action }
   })
+
+export const createWorkflowBatch = (workflowId: number) =>
+  request.post<WorkflowBatch>({ url: `/api/v1/workflows/${workflowId}/batches` })

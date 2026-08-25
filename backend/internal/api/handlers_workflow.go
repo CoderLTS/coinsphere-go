@@ -98,3 +98,49 @@ func (s *Server) handleWorkflowLifecycle(w http.ResponseWriter, r *http.Request,
 	data, err := s.App.ApplyWorkflowLifecycle(r.Context(), workflowID, *payload)
 	respond(w, data, err, "")
 }
+
+func (s *Server) handleListWorkflowBatches(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
+	workflowID, err := pathInt64(r, "workflowId")
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	items, err := s.App.ListWorkflowBatches(r.Context(), workflowID)
+	respond(w, M{"items": items}, err, "")
+}
+
+func (s *Server) handleCreateWorkflowBatch(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+	workflowID, err := pathInt64(r, "workflowId")
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	data, err := s.App.CreateWorkflowBatch(r.Context(), workflowID, principal)
+	respond(w, data, err, "")
+}
+
+func (s *Server) handleGetWorkflowBatch(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
+	batchID, err := pathInt64(r, "batchId")
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	data, err := s.App.GetWorkflowBatch(r.Context(), batchID)
+	respond(w, data, err, "")
+}
+
+func (s *Server) handleWorkflowBatchAction(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
+	batchID, err := pathInt64(r, "batchId")
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxWorkflowRequestBytes)
+	payload, err := decodeBody[service.WorkflowBatchActionPayload](r)
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	data, err := s.App.ApplyWorkflowBatchAction(r.Context(), batchID, *payload)
+	respond(w, data, err, "")
+}

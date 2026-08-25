@@ -77,7 +77,7 @@ const workflow = {
   name: '批处理示例',
   description: 'E2E workflow',
   mode: 'batch',
-  status: 'paused',
+  status: 'running',
   activeRevisionId: 11,
   mainTriggerNodeId: 'manual-trigger',
   retentionDays: 30,
@@ -291,6 +291,17 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
       await fulfillApi(route, workflowRevision)
       return
     }
+    if (method === 'POST' && path === '/api/v1/workflows/7/batches') {
+      await fulfillApi(route, {
+        id: 21,
+        workflowId: 7,
+        revisionId: 11,
+        triggerType: 'manual',
+        status: 'queued',
+        triggeredAt: createdAt
+      })
+      return
+    }
     if (method === 'GET' && path === '/api/v1/home/overview') {
       await fulfillApi(route, {
         process: {
@@ -427,6 +438,8 @@ test('超级管理员可以使用 Schema 工作流工作台且移动端只读', 
     page.locator('.node-catalog').getByText('core.manual@1.0.0', { exact: true })
   ).toBeVisible()
   await expect(page.getByText('Node inspector', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '立即运行', exact: true }).click()
+  await expect(page.getByText('批次 #21 已进入队列', { exact: true })).toBeVisible()
 
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(page.locator('.mobile-activity')).toBeVisible()
@@ -441,7 +454,8 @@ test('超级管理员可以使用 Schema 工作流工作台且移动端只读', 
       'GET /api/v1/workflows/node-definitions',
       'GET /api/v1/workflows/7',
       'GET /api/v1/workflows/7/revisions',
-      'GET /api/v1/workflows/7/revisions/11'
+      'GET /api/v1/workflows/7/revisions/11',
+      'POST /api/v1/workflows/7/batches'
     ])
   )
   expect(backend.unexpectedApiCalls).toEqual([])
