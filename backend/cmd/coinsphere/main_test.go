@@ -54,6 +54,9 @@ func writePlugin(t *testing.T, id, pluginVersion, constraint string) string {
 	if err := os.WriteFile(filepath.Join(root, "frontend", "index.ts"), []byte("export default {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "migrations", "00001_init.sql"), []byte("-- +goose Up\nSELECT 1;\n-- +goose Down\nSELECT 1;\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	content := fmt.Sprintf(`{
   "schemaVersion": 1,
   "id": %q,
