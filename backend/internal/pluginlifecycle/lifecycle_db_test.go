@@ -77,6 +77,12 @@ func TestPluginDataLifecycle(t *testing.T) {
 	if err := installer.PurgeData(context.Background(), pluginID, "PURGE wrong"); err == nil {
 		t.Fatal("purge accepted the wrong confirmation")
 	}
+	if err := installer.PurgeData(context.Background(), pluginID, "PURGE "+pluginID); err == nil {
+		t.Fatal("purge accepted a retained reference")
+	}
+	if _, err := database.Exec(`DELETE FROM plugin_references WHERE plugin_id = $1`, pluginID); err != nil {
+		t.Fatal(err)
+	}
 	if err := installer.PurgeData(context.Background(), pluginID, "PURGE "+pluginID); err != nil {
 		t.Fatalf("PurgeData: %v", err)
 	}

@@ -268,7 +268,7 @@ func (i Installer) Uninstall(ctx context.Context, pluginID string) (returnErr er
 		return fmt.Errorf("plugin %q is not installed", pluginID)
 	}
 	if i.options.DB != nil {
-		refs, err := activeReferences(ctx, i.options.DB, pluginID)
+		refs, err := pluginReferences(ctx, i.options.DB, pluginID, true)
 		if err != nil {
 			return err
 		}
@@ -340,8 +340,13 @@ func (i Installer) PurgeData(ctx context.Context, pluginID, confirmation string)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	tx, err := i.options.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	var status string
-	if err := i.options.DB.QueryRowContext(ctx, `SELECT status FROM plugin_installations WHERE plugin_id = $1`, pluginID).Scan(&status); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT status FROM plugin_installations WHERE plugin_id = $1 FOR UPDATE`, pluginID).Scan(&status); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("plugin %q has no installation record", pluginID)
 		}
@@ -350,22 +355,17 @@ func (i Installer) PurgeData(ctx context.Context, pluginID, confirmation string)
 	if status != "uninstalled" {
 		return errors.New("uninstall the plugin before purge-data")
 	}
-	refs, err := activeReferences(ctx, i.options.DB, pluginID)
+	refs, err := pluginReferences(ctx, tx, pluginID, false)
 	if err != nil {
 		return err
 	}
 	if len(refs) != 0 {
-		return fmt.Errorf("plugin %q has active references: %s", pluginID, strings.Join(refs, ", "))
+		return fmt.Errorf("plugin %q has references: %s", pluginID, strings.Join(refs, ", "))
 	}
 	schema, err := migration.PluginSchemaName(pluginID)
 	if err != nil {
 		return err
 	}
-	tx, err := i.options.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `DROP SCHEMA IF EXISTS "`+schema+`" CASCADE`); err != nil {
 		return fmt.Errorf("drop plugin schema: %w", err)
 	}
@@ -688,20 +688,8 @@ func markUninstalled(ctx context.Context, db *sql.DB, pluginID string) error {
 	if status != "installed" {
 		return fmt.Errorf("plugin %q installation status is %s", pluginID, status)
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT reference_type || ':' || reference_id FROM plugin_references WHERE plugin_id = $1 AND active ORDER BY reference_type, reference_id`, pluginID)
+	references, err := pluginReferences(ctx, tx, pluginID, true)
 	if err != nil {
-		return err
-	}
-	var references []string
-	for rows.Next() {
-		var reference string
-		if err := rows.Scan(&reference); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		references = append(references, reference)
-	}
-	if err := rows.Close(); err != nil {
 		return err
 	}
 	if len(references) != 0 {
@@ -713,8 +701,17 @@ func markUninstalled(ctx context.Context, db *sql.DB, pluginID string) error {
 	return tx.Commit()
 }
 
-func activeReferences(ctx context.Context, db *sql.DB, pluginID string) ([]string, error) {
-	rows, err := db.QueryContext(ctx, `SELECT reference_type || ':' || reference_id FROM plugin_references WHERE plugin_id = $1 AND active ORDER BY reference_type, reference_id`, pluginID)
+type referenceQuerier interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func pluginReferences(ctx context.Context, db referenceQuerier, pluginID string, activeOnly bool) ([]string, error) {
+	query := `SELECT reference_type || ':' || reference_id FROM plugin_references WHERE plugin_id = $1`
+	if activeOnly {
+		query += ` AND active`
+	}
+	query += ` ORDER BY reference_type, reference_id`
+	rows, err := db.QueryContext(ctx, query, pluginID)
 	if err != nil {
 		return nil, fmt.Errorf("list plugin references: %w", err)
 	}
