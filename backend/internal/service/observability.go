@@ -18,9 +18,8 @@ type AuditRecordInput struct {
 }
 
 // RecordAudit 在业务动作完成后使用独立短事务持久化结果，失败不改变已提交的业务语义。
-// ponytail: 旧管理命令暂不做同事务审计；监管或交易命令需要时在对应领域事务内写审计。
 func (a *App) RecordAudit(ctx context.Context, input AuditRecordInput) error {
-	return a.dbWithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return tx.Create(&db.AuditRecord{
 			RequestID: input.RequestID, ActorUserID: input.ActorUserID,
 			Action: input.Action, ResourcePath: input.ResourcePath,
@@ -31,11 +30,7 @@ func (a *App) RecordAudit(ctx context.Context, input AuditRecordInput) error {
 
 // DatabaseReady 只验证现有连接池能否访问 PostgreSQL，不执行 DDL 或业务查询。
 func (a *App) DatabaseReady(ctx context.Context) error {
-	database := a.database
-	if database == nil {
-		database = a.DB
-	}
-	sqlDB, err := database.DB()
+	sqlDB, err := a.DB.DB()
 	if err != nil {
 		return err
 	}

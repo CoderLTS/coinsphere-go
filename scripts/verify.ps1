@@ -71,17 +71,6 @@ try {
     Pop-Location
 }
 
-Write-Host '==> Verify Python worker'
-Push-Location (Join-Path $repoRoot 'worker')
-try {
-    Invoke-Native 'uv' @('sync', '--locked', '--all-groups')
-    Invoke-Native 'uv' @('run', '--frozen', 'ruff', 'check', '.')
-    Invoke-Native 'uv' @('run', '--frozen', 'mypy', 'coinsphere_worker', 'tests')
-    Invoke-Native 'uv' @('run', '--frozen', 'pytest')
-} finally {
-    Pop-Location
-}
-
 $docker = Get-Command docker -ErrorAction SilentlyContinue
 if ($docker) {
     Write-Host '==> Verify Docker Compose'

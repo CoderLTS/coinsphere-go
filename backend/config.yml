@@ -1,29 +1,9 @@
-# coinsphere Go 后端配置。
-# 数据库只支持 PostgreSQL/TimescaleDB。DSN 必须由本地环境或部署环境注入。
-# 任意配置可用环境变量覆盖:COINSPHERE_<段>__<键>,如 COINSPHERE_DATABASE__DSN=postgresql://...
-
+# CoinSphere Go backend configuration. PostgreSQL DSN must be injected by the environment.
 database:
   dsn: ""
   max_open_conns: 40
   max_idle_conns: 10
   conn_max_idle_time_seconds: 300
-
-market_data:
-  enabled: true
-  reconcile_interval_seconds: 10
-  backfill_page_size: 300
-
-trading:
-  # 私有 Testnet 能力默认关闭；启用后 Executor 才会解密凭据、对账并执行已放行意图。
-  testnet_private_api_enabled: false
-  # Spot Live manual remains unavailable until both the API and Executor use this explicit switch.
-  spot_live_manual_enabled: false
-  # Spot Live auto also requires the manual switch and all persisted release gates.
-  spot_live_auto_enabled: false
-  # USD-M Live manual is isolated from Spot and remains disabled until explicitly released.
-  usd_m_live_manual_enabled: false
-  # USD-M Live auto also requires the manual switch and all persisted release gates.
-  usd_m_live_auto_enabled: false
 
 server:
   host: 0.0.0.0
@@ -31,37 +11,11 @@ server:
   public_base_url: "http://127.0.0.1:6987"
 
 auth:
-  # ⚠️ 必改:保持此默认值或留空,程序会拒绝启动(见评审 #1)。生成随机值:openssl rand -hex 32
-  #    本地开发想临时用默认值,设环境变量 COINSPHERE_ALLOW_INSECURE_SECRET=1 放行。
+  # Must be replaced in every non-local environment.
   secret_key: "coinsphere-dev-secret"
-  # 可选:以下留空则回落到 secret_key(向后兼容)。做密钥分离时各配独立随机值(见评审 #3)。
-  # encryption_key: ""              # 敏感配置(API Key 等)的加密密钥
-  # webhook_pepper: ""              # webhook 密钥哈希的 pepper
-  # bootstrap_admin_password: ""    # 内置超管初始密码,留空默认 coinsphere(见评审 #2)
-  # login_rate_limit_per_minute: 10 # 每 IP 每分钟登录上限(见评审 #6)
   access_token_ttl_minutes: 15
   password_iterations: 390000
-
-workflow:
-  # HTTP 请求节点只能访问这里列出的精确域名；不支持通配符、端口或 IP，空列表表示禁止外呼。
-  http_allowed_hosts: []
-  executor_concurrency: 4
-  heartbeat_interval_seconds: 10
-  execution_stale_timeout_seconds: 900
-  poll_interval_ms: 1000
-  outbox_poll_interval_ms: 1000
-  outbox_batch_size: 100
-  outbox_lease_seconds: 30
-  execution_retention_days: 30
-  retention_delete_batch_size: 1000
-  max_input_snapshot_bytes: 65536
-  max_output_snapshot_bytes: 131072
-  schedule_reconcile_interval_seconds: 30
-  stale_recovery_interval_seconds: 15
-  backlog_limit_per_key: 1000
-  semaphore_limit_per_key: 1
-  max_attempts: 4
-  retry_backoff_seconds: [30, 120, 600]
+  login_rate_limit_per_minute: 10
 
 log:
   level: info

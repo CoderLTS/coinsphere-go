@@ -29,15 +29,6 @@ echo '==> 验证 Vue 前端'
   pnpm build
 )
 
-echo '==> 验证 Python Worker'
-(
-  cd "$repo_root/worker"
-  uv sync --locked --all-groups
-  uv run --frozen ruff check .
-  uv run --frozen mypy coinsphere_worker tests
-  uv run --frozen pytest
-)
-
 if command -v docker >/dev/null 2>&1; then
   echo '==> 验证 Docker Compose'
   (

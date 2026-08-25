@@ -1,50 +1,8 @@
-// Package perm 全局权限码常量与内置菜单/按钮权限映射。
+// Package perm owns the permissions exposed by the V2 application baseline.
 package perm
 
-// 权限码常量。
-// 一组常量用 const ( ... ) 打包声明。这里是显式的字符串常量(不是用 iota 自增的整数枚举),
-// 值本身就是权限码字符串;前后端都靠比对这个字符串来判断"能不能进某菜单 / 点某按钮"。
 const (
-	HomeView            = "home.view"
-	TradingOverviewView = "trading.overview.view"
-
-	SchedulerWorkflowDefinitionsView   = "scheduler.workflow_definitions.view"
-	SchedulerWorkflowDefinitionsCreate = "scheduler.workflow_definitions.create"
-	SchedulerWorkflowDefinitionsUpdate = "scheduler.workflow_definitions.update"
-	SchedulerWorkflowDefinitionsDelete = "scheduler.workflow_definitions.delete"
-	SchedulerWorkflowDefinitionsRun    = "scheduler.workflow_definitions.run"
-
-	SchedulerWorkflowRuntimeView     = "scheduler.workflow_runtime.view"
-	SchedulerWorkflowRuntimeActivate = "scheduler.workflow_runtime.activate"
-	SchedulerWorkflowRuntimeUpdate   = "scheduler.workflow_runtime.update"
-
-	SchedulerWorkflowExecutionsView = "scheduler.workflow_executions.view"
-
-	DataNewsView           = "data.news.view"
-	DataNewsCreate         = "data.news.create"
-	DataNewsUpdate         = "data.news.update"
-	DataNewsDelete         = "data.news.delete"
-	DataNewsAnalyze        = "data.news.analyze"
-	DataPushDeliveriesView = "data.push_deliveries.view"
-	DataMarketView         = "data.market.view"
-	DataMarketManage       = "data.market.manage"
-
-	ConfigOverviewView               = "config.overview.view"
-	ConfigAiModelsView               = "config.ai_models.view"
-	ConfigAiModelsCreate             = "config.ai_models.create"
-	ConfigAiModelsUpdate             = "config.ai_models.update"
-	ConfigAiModelsDelete             = "config.ai_models.delete"
-	ConfigAiModelsValidate           = "config.ai_models.validate"
-	ConfigAiModelsBindAgents         = "config.ai_models.bind_agents"
-	ConfigAssistantAgentsView        = "config.assistant_agents.view"
-	ConfigAssistantAgentsCreate      = "config.assistant_agents.create"
-	ConfigAssistantAgentsUpdate      = "config.assistant_agents.update"
-	ConfigAssistantAgentsDelete      = "config.assistant_agents.delete"
-	ConfigNotificationChannelsView   = "config.notification_channels.view"
-	ConfigNotificationChannelsCreate = "config.notification_channels.create"
-	ConfigNotificationChannelsUpdate = "config.notification_channels.update"
-	ConfigNotificationChannelsDelete = "config.notification_channels.delete"
-	ConfigNotificationChannelsTest   = "config.notification_channels.test"
+	HomeView = "home.view"
 
 	SystemUsersView              = "system.users.view"
 	SystemUsersCreate            = "system.users.create"
@@ -61,83 +19,18 @@ const (
 	SystemMenusDelete            = "system.menus.delete"
 )
 
-// MenuPermissionCodes 菜单名 -> 权限码(空串表示无权限码)。
-// map[string]string 是"字符串→字符串"的字典(见 GO入门笔记『map』):键是前端菜单名,值是进入它所需的权限码。
 var MenuPermissionCodes = map[string]string{
-	"Home":                 HomeView,
-	"TradingCenter":        "",
-	"TradingAccounts":      TradingOverviewView,
-	"StrategyManagement":   TradingOverviewView,
-	"SchedulerCenter":      "",
-	"WorkflowDefinitions":  SchedulerWorkflowDefinitionsView,
-	"WorkflowExecutions":   SchedulerWorkflowExecutionsView,
-	"NodeDefinitions":      SchedulerWorkflowDefinitionsView,
-	"DataCenter":           "",
-	"NewsData":             DataNewsView,
-	"MarketMetadata":       DataMarketView,
-	"MarketChart":          DataMarketView,
-	"ConfigCenter":         "",
-	"ConfigOverview":       ConfigOverviewView,
-	"AiModelConfig":        ConfigAiModelsView,
-	"AssistantAgentConfig": ConfigAssistantAgentsView,
-	"System":               "",
-	"User":                 SystemUsersView,
-	"Role":                 SystemRolesView,
-	"Menus":                SystemMenusView,
-	"UserCenter":           "",
+	"Home": HomeView, "System": "", "User": SystemUsersView,
+	"Role": SystemRolesView, "Menus": SystemMenusView, "UserCenter": "",
 }
 
-// ButtonSpec 按钮定义:action -> 权限码。
 type ButtonSpec struct {
 	Action string
 	Code   string
 	Title  string
 }
 
-// ButtonSpecs 菜单名 -> 有序按钮列表(顺序决定 sort)。
-// 值类型是 []ButtonSpec(ButtonSpec 切片):一个菜单下有多个按钮;切片有序,声明顺序就是显示/排序顺序。
 var ButtonSpecs = map[string][]ButtonSpec{
-	"WorkflowDefinitions": {
-		// 每个 {..., ..., ...} 是一个 ButtonSpec 字面量,按字段声明顺序对应 Action / Code / Title 三个字段。
-		{"create", SchedulerWorkflowDefinitionsCreate, "新建工作流定义"},
-		{"update", SchedulerWorkflowDefinitionsUpdate, "编辑工作流定义"},
-		{"delete", SchedulerWorkflowDefinitionsDelete, "删除版本"},
-		{"run", SchedulerWorkflowDefinitionsRun, "手动运行"},
-		{"runtime", SchedulerWorkflowRuntimeView, "查看运行态"},
-		{"activate", SchedulerWorkflowRuntimeActivate, "激活版本"},
-		{"update_runtime", SchedulerWorkflowRuntimeUpdate, "更新入口状态"},
-	},
-	"WorkflowExecutions": {
-		{"view", SchedulerWorkflowExecutionsView, "查看执行记录"},
-	},
-	"NodeDefinitions": {
-		{"view_channel", ConfigNotificationChannelsView, "查看通知渠道"},
-		{"create_channel", ConfigNotificationChannelsCreate, "新增通知渠道"},
-		{"update_channel", ConfigNotificationChannelsUpdate, "编辑通知渠道"},
-		{"delete_channel", ConfigNotificationChannelsDelete, "删除通知渠道"},
-		{"test_channel", ConfigNotificationChannelsTest, "测试通知渠道"},
-	},
-	"NewsData": {
-		{"create", DataNewsCreate, "新增"},
-		{"update", DataNewsUpdate, "编辑"},
-		{"delete", DataNewsDelete, "删除"},
-		{"analyze", DataNewsAnalyze, "AI 分析"},
-	},
-	"MarketMetadata": {
-		{"manage", DataMarketManage, "管理同步设置"},
-	},
-	"AiModelConfig": {
-		{"create", ConfigAiModelsCreate, "新增"},
-		{"update", ConfigAiModelsUpdate, "编辑"},
-		{"delete", ConfigAiModelsDelete, "删除"},
-		{"validate", ConfigAiModelsValidate, "校验"},
-		{"bind_agents", ConfigAiModelsBindAgents, "绑定智能体"},
-	},
-	"AssistantAgentConfig": {
-		{"create", ConfigAssistantAgentsCreate, "新增"},
-		{"update", ConfigAssistantAgentsUpdate, "编辑"},
-		{"delete", ConfigAssistantAgentsDelete, "删除"},
-	},
 	"User": {
 		{"create", SystemUsersCreate, "新增"},
 		{"update", SystemUsersUpdate, "编辑"},
@@ -154,9 +47,4 @@ var ButtonSpecs = map[string][]ButtonSpec{
 		{"update", SystemMenusUpdate, "编辑"},
 		{"delete", SystemMenusDelete, "删除"},
 	},
-}
-
-// AssistantAgentRequiredPermission 智能体编码 -> 使用所需权限。
-var AssistantAgentRequiredPermission = map[string]string{
-	"news_analysis": DataNewsAnalyze,
 }

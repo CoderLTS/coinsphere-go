@@ -92,12 +92,7 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 		return fmt.Errorf("validate database schema: %w", err)
 	}
 
-	hostname, _ := os.Hostname()
-	workerID := fmt.Sprintf("%s:%d", hostname, os.Getpid())
-	app, err := service.NewApp(ctx, gdb, cfg, workerID)
-	if err != nil {
-		return fmt.Errorf("build app: %w", err)
-	}
+	app := service.NewApp(gdb.WithContext(ctx), cfg)
 	if err := db.Seed(ctx, gdb, app.Hasher, cfg.Auth.BootstrapAdminPassword); err != nil {
 		return fmt.Errorf("seed database: %w", err)
 	}
@@ -141,7 +136,6 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 
 	// 一个取消信号同时阻止新请求并传到在途外部 I/O。
 	cancel()
-	app.Hub.CloseAll()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer shutdownCancel()
 

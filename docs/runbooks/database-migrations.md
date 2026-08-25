@@ -2,9 +2,9 @@
 
 ## 当前基线
 
-CoinSphere 只支持 PostgreSQL/TimescaleDB。`backend/internal/migration/sql/00001_initial.sql` 是空库基线，后续变更按版本追加；不提供旧系统、多数据库或未登记 schema 的兼容升级路径。
+CoinSphere 只支持 PostgreSQL/TimescaleDB。`backend/internal/migration/sql/00001_initial.sql` 是正式 Paper 观察前重建的 V2 空库基线；它只创建认证、RBAC、菜单、i18n、审计所需表和 TimescaleDB 扩展，不创建行情 hypertable。
 
-服务启动只读校验版本，DDL 只由 `coinsphere-migrate` 执行。生产 DSN 和数据库密码只通过服务器配置注入。
+服务启动只读校验版本，DDL 只由 `coinsphere-migrate` 执行。项目不提供旧表、旧接口或旧数据转换器；生产 DSN 和数据库密码只通过服务器配置注入。
 
 ## 命令
 
@@ -17,25 +17,29 @@ go run ./cmd/migrate -config ./config.yml -direction up
 go run ./cmd/migrate -config ./config.yml -direction down -steps 1
 ```
 
-镜像内命令为 `/app/coinsphere-migrate`。`up` 可重复执行；数据库版本领先二进制时拒绝运行。开发 Compose 由一次性 `migrate` 服务先建 schema，再启动 Backend 和 Worker。
+镜像内命令为 `/app/coinsphere-migrate`。`up` 可重复执行；数据库版本落后或领先当前二进制时，应用拒绝启动。开发 Compose 由一次性 `migrate` 服务先建 schema，再启动 Backend。
+
+## V2 基线重置
+
+此流程会永久删除当前 CoinSphere 数据库内容，必须同时满足：
+
+1. 已确认数据库没有需要保留的 Paper 晋级证据或其他业务数据。
+2. 已创建并验证可恢复的数据库备份。
+3. 用户对目标环境和目标 CoinSphere 数据卷给出明确重置授权。
+4. 已只读确认目标 Compose 项目、数据库服务和数据卷，不影响共享服务。
+
+满足条件后，停止 CoinSphere Backend/Web，定向重建 CoinSphere 自有数据库或数据卷，再由目标镜像执行 `coinsphere-migrate -direction up`。禁止手工改写 `schema_migrations` 来伪装重置。
 
 ## 变更规则
 
-- 当前初始化重置完成后，后续 schema 变更从 `00002_*.sql` 开始追加，不再改写 `00001_initial.sql`。
+- P0 基线确认部署后，后续核心 schema 从 `00002_*.sql` 开始追加，不再改写 `00001_initial.sql`。
 - 每个 migration 包含 `-- +goose Up` 和 `-- +goose Down`，默认在事务中执行。
-- 金融时间使用 `TIMESTAMPTZ`，价格、数量、金额和费率使用 `NUMERIC(38,18)`。
-- `Down` 必须保护持久数据；无法无损回滚时依赖备份，不提供伪可逆 SQL。
-- 禁止应用启动自动建表、手工修改 `schema_migrations` 或用删除业务数据修复版本差异。
-
-## `00004_workflow_console` 注意事项
-
-`00004_workflow_console.sql` 是正式 Paper 观察前的一次性工作流控制台切换。Up 会先在事务内确认交易意图、订单、成交、账本和持仓事实均为空；Paper 账户创建时自动生成且金额仍等于初始本金、盈亏/费用/资金费均为零的初始余额快照可以保留通过，其他余额变化均拒绝迁移。通过保护后会清理旧策略草稿、版本、回测、信号、策略实例，以及包含策略节点的用户工作流定义和执行历史，再迁移纯策略定义、工作流运行绑定、节点模板、Worker 心跳和 USDT-only 行情设置。交易账户和审计/金融事实不因该迁移被删除。
-
-Down 只允许在新策略、策略版本、实例、回测、节点模板和 Worker 心跳数据全部为空时执行。生产回滚保留当前 schema 并恢复已验证备份，不自动执行 Down。
+- 金融时间使用 `TIMESTAMPTZ`；价格、数量、金额和费率使用 `NUMERIC(38,18)`。
+- `Down` 必须保护持久数据；V2 基线只允许在九张业务表全部为空时回滚。
+- 无法无损回滚时恢复已验证备份，不提供伪可逆 SQL。
+- 禁止应用启动自动建表、手工修改 migration 账本或用删除业务行修复版本差异。
 
 ## 验证
-
-迁移变更至少执行：
 
 ```bash
 cd backend
@@ -43,8 +47,10 @@ COINSPHERE_TEST_POSTGRES_DSN='postgres://coinsphere:test-only@127.0.0.1:5432/coi
   go test -count=1 ./internal/migration ./internal/db ./internal/service ./cmd/migrate
 ```
 
-最小验收范围是空库 Up、重复 Up、空库 Down、重新 Up、关键约束/索引、Timescale 生命周期、`00004` 金融事实 Up 保护和非空库 Down 保护。
+最小验收范围是空库 Up、重复 Up、空库 Down、重新 Up、精确表集合、关键约束/索引、TimescaleDB 扩展且无 hypertable、数据库超前拒绝和非空库 Down 保护。
 
 ## 发布与回滚
 
-生产独立 Compose 首次创建新的 TimescaleDB 卷并执行版本 1，不改写旧共享数据库。后续发布先完成备份，再由目标 Backend 镜像执行 Up。应用回滚保留当前 schema，不自动执行 Down；需要恢复数据库时只使用已验证备份。
+本基线不能对旧 version 4 数据库执行原地 Up。部署前必须按上面的授权流程重置 CoinSphere 自有数据库；否则 migration runner 会因数据库领先二进制而停止。
+
+应用回滚不自动执行 Down。若需要回滚到重置前版本，停止当前应用并恢复重置前已验证备份及与其匹配的应用镜像。不得把旧应用指向 V2 基线，也不得把 V2 应用指向旧 schema。

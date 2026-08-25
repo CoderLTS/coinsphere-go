@@ -18,7 +18,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       go: ${{ steps.scope.outputs.go }}
-      python: ${{ steps.scope.outputs.python }}
       filesystem: ${{ steps.scope.outputs.filesystem }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -34,22 +33,16 @@ jobs:
         run: |
           set -Eeuo pipefail
           go=false
-          python=false
           filesystem=false
 
           if [[ "$EVENT_NAME" != "pull_request" ]]; then
             go=true
-            python=true
             filesystem=true
           else
             while IFS= read -r file; do
               case "$file" in
                 backend/go.mod|backend/go.sum)
                   go=true
-                  filesystem=true
-                  ;;
-                worker/pyproject.toml|worker/uv.lock)
-                  python=true
                   filesystem=true
                   ;;
                 frontend/package.json|frontend/pnpm-lock.yaml|docker-compose.yml|*/Dockerfile|*/Dockerfile.*|.github/workflows/*.yml)
@@ -61,7 +54,6 @@ jobs:
 
           {
             echo "go=$go"
-            echo "python=$python"
             echo "filesystem=$filesystem"
           } >>"$GITHUB_OUTPUT"
 
@@ -95,25 +87,6 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: Govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
-
-  python-dependencies:
-    name: Python dependency scan
-    needs: dependency-changes
-    if: needs.dependency-changes.outputs.python == 'true'
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: worker
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
-        with:
-          enable-cache: true
-          cache-dependency-glob: worker/uv.lock
-      - name: Export runtime dependencies
-        run: uv export --frozen --no-dev --no-emit-project --format requirements-txt --output-file /tmp/worker-requirements.txt
-      - name: Pip audit
-        run: uvx --from pip-audit==2.9.0 pip-audit --requirement /tmp/worker-requirements.txt
 
   filesystem:
     name: Dependency and filesystem scan
