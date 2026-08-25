@@ -1,28 +1,74 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
+
+	"coinsphere/backend/plugin/sdk"
 )
 
-func TestBlankWorkflowGraphAndLifecycle(t *testing.T) {
-	graph, err := validateWorkflowGraph(json.RawMessage(blankWorkflowGraph))
+type workflowTestAction struct{}
+
+func (workflowTestAction) Execute(context.Context, sdk.ActionRequest) (sdk.ActionResult, error) {
+	return sdk.ActionResult{}, nil
+}
+
+const testPluginWorkflowGraph = `{
+  "schemaVersion":1,
+  "nodes":[
+    {"nodeInstanceId":"manual","nodeType":"core.manual","nodeVersion":"1.0.0","config":{},"position":{"x":80,"y":120}},
+    {"nodeInstanceId":"transform","nodeType":"official.test.transform","nodeVersion":"1.0.0","config":{},"inputBindings":{"price":{"kind":"literal","value":"1.25"},"label":{"kind":"cel","expression":"event.type + ':'"}},"position":{"x":360,"y":120}},
+    {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"inputBindings":{"result":{"kind":"field","nodeInstanceId":"transform","fieldPath":["label"]}},"position":{"x":640,"y":120}}
+  ],
+  "edges":[
+    {"edgeId":"manual-transform","sourceNodeInstanceId":"manual","sourcePort":"out","targetNodeInstanceId":"transform","targetPort":"in"},
+    {"edgeId":"transform-end","sourceNodeInstanceId":"transform","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in","condition":"event.type == 'manual'"}
+  ]
+}`
+
+func TestWorkflowGraphValidationAndLifecycle(t *testing.T) {
+	app := workflowTestApp(t)
+	graph, err := app.validateWorkflowGraph(json.RawMessage(blankWorkflowGraph))
 	if err != nil || graph.mainTriggerID != "manual-trigger" || !json.Valid([]byte(graph.nodeVersionsJSON)) {
 		t.Fatalf("blank graph = %#v, err = %v", graph, err)
 	}
+
+	validated, err := app.validateWorkflowGraph(json.RawMessage(testPluginWorkflowGraph))
+	if err != nil || !validated.requiredSecrets[workflowSecretKey{"transform", "token"}] {
+		t.Fatalf("plugin graph required secrets = %#v, err = %v", validated.requiredSecrets, err)
+	}
+	secret := "test-only-secret"
+	if _, err := validateWorkflowSecretChanges(validated, []WorkflowSecretChange{{NodeInstanceID: "transform", Field: "token", Value: &secret}}); err != nil {
+		t.Fatalf("valid secret change: %v", err)
+	}
+	ordinaryArithmeticCondition := strings.Replace(testPluginWorkflowGraph, `event.type == 'manual'`, `event.type + ':' == 'manual:'`, 1)
+	if _, err := app.validateWorkflowGraph(json.RawMessage(ordinaryArithmeticCondition)); err != nil {
+		t.Fatalf("ordinary CEL arithmetic was rejected: %v", err)
+	}
+
 	for name, raw := range map[string]string{
-		"malformed":           `{`,
-		"unknown node":        strings.Replace(blankWorkflowGraph, "core.end", "official.unknown", 1),
-		"duplicate trigger":   strings.Replace(blankWorkflowGraph, "core.end", "core.manual", 1),
-		"missing edge":        strings.Replace(blankWorkflowGraph, `"edges": [`, `"edges": [null,`, 1),
-		"unknown field":       strings.Replace(blankWorkflowGraph, `"schemaVersion": 1,`, `"schemaVersion": 1,"unknown":true,`, 1),
-		"core config":         strings.Replace(blankWorkflowGraph, `"config":{}`, `"config":{"unknown":true}`, 1),
-		"unsupported version": strings.Replace(blankWorkflowGraph, `"nodeVersion":"1.0.0"`, `"nodeVersion":"2.0.0"`, 1),
+		"malformed":            `{`,
+		"unknown node":         strings.Replace(blankWorkflowGraph, "core.end", "official.unknown", 1),
+		"duplicate trigger":    strings.Replace(blankWorkflowGraph, "core.end", "core.manual", 1),
+		"unknown field":        strings.Replace(blankWorkflowGraph, `"schemaVersion": 1,`, `"schemaVersion": 1,"unknown":true,`, 1),
+		"core config":          strings.Replace(blankWorkflowGraph, `"config":{}`, `"config":{"unknown":true}`, 1),
+		"unsupported version":  strings.Replace(blankWorkflowGraph, `"nodeVersion":"1.0.0"`, `"nodeVersion":"2.0.0"`, 1),
+		"invalid port":         strings.Replace(blankWorkflowGraph, `"sourcePort":"out"`, `"sourcePort":"missing"`, 1),
+		"unreachable":          strings.Replace(blankWorkflowGraph, `"nodes": [`, `"nodes": [{"nodeInstanceId":"orphan","nodeType":"core.constant","nodeVersion":"1.0.0","config":{"value":"x"},"position":{"x":0,"y":0}},`, 1),
+		"bad condition":        strings.Replace(blankWorkflowGraph, `"targetPort":"in"`, `"targetPort":"in","condition":"1"`, 1),
+		"secret in config":     strings.Replace(testPluginWorkflowGraph, `"config":{}`, `"config":{"token":"leak"}`, 1),
+		"bad field path":       strings.Replace(testPluginWorkflowGraph, `"fieldPath":["label"]`, `"fieldPath":["missing"]`, 1),
+		"decimal arithmetic":   strings.Replace(testPluginWorkflowGraph, `"kind":"literal","value":"1.25"`, `"kind":"cel","expression":"'1' + '2'"`, 1),
+		"decimal edge math":    strings.Replace(testPluginWorkflowGraph, `event.type == 'manual'`, `input.price + '1' == '2'`, 1),
+		"decimal index math":   strings.Replace(testPluginWorkflowGraph, `event.type == 'manual'`, `input['price'] + '1' == '2'`, 1),
+		"decimal wrapped math": strings.Replace(testPluginWorkflowGraph, `event.type == 'manual'`, `string(input.price) + '1' == '2'`, 1),
+		"decimal dynamic math": strings.Replace(testPluginWorkflowGraph, `event.type == 'manual'`, `input[event.type] + '1' == '2'`, 1),
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := validateWorkflowGraph(json.RawMessage(raw)); err == nil {
+			if _, err := app.validateWorkflowGraph(json.RawMessage(raw)); err == nil {
 				t.Fatal("invalid graph was accepted")
 			}
 		})
@@ -41,4 +87,25 @@ func TestBlankWorkflowGraphAndLifecycle(t *testing.T) {
 	if _, err := nextWorkflowStatus(status, "start"); !errors.Is(err, ErrConflict) {
 		t.Fatalf("archived start error = %v", err)
 	}
+}
+
+func workflowTestApp(t *testing.T) *App {
+	t.Helper()
+	registry := sdk.NewRegistry()
+	err := registry.RegisterPlugin(sdk.PluginDescriptor{
+		ID: "official.test", Name: "Test", Version: "1.0.0", Contributes: []string{"nodes"},
+	}, func(registrar sdk.Registrar) error {
+		return registrar.Action(sdk.NodeDescriptor{
+			Type: "official.test.transform", Version: "1.0.0", Kind: sdk.NodeKindAction,
+			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"token":{"type":"string","x-coinsphere-secret":true}},"required":["token"],"additionalProperties":false}`),
+			UISchema:     json.RawMessage(`{}`),
+			InputSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"price":{"type":"string","x-coinsphere-decimal":true},"label":{"type":"string"}},"required":["price","label"],"additionalProperties":false}`),
+			OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"price":{"type":"string","x-coinsphere-decimal":true},"label":{"type":"string"}},"required":["price","label"],"additionalProperties":false}`),
+			Pool:         sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
+		}, workflowTestAction{})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &App{Plugins: registry}
 }

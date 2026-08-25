@@ -1,13 +1,10 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -26,8 +23,6 @@ const (
 	WorkflowTemplateBlank   = "blank"
 	maxWorkflowGraphBytes   = 1 << 20
 )
-
-var workflowNodeIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 const blankWorkflowGraph = `{
   "schemaVersion": 1,
@@ -54,8 +49,9 @@ type WorkflowCreatePayload struct {
 }
 
 type WorkflowRevisionSavePayload struct {
-	ExpectedActiveRevisionID int64           `json:"expectedActiveRevisionId"`
-	Graph                    json.RawMessage `json:"graph"`
+	ExpectedActiveRevisionID int64                  `json:"expectedActiveRevisionId"`
+	Graph                    json.RawMessage        `json:"graph"`
+	SecretChanges            []WorkflowSecretChange `json:"secretChanges,omitempty"`
 }
 
 type WorkflowLifecyclePayload struct {
@@ -89,39 +85,15 @@ type WorkflowDetail struct {
 }
 
 type WorkflowRevisionView struct {
-	ID                int64           `json:"id"`
-	WorkflowID        int64           `json:"workflowId"`
-	RevisionNumber    int64           `json:"revisionNumber"`
-	Graph             json.RawMessage `json:"graph"`
-	NodeVersions      json.RawMessage `json:"nodeVersions"`
-	MainTriggerNodeID string          `json:"mainTriggerNodeId"`
-	CreatedBy         int64           `json:"createdBy"`
-	CreatedAt         string          `json:"createdAt"`
-}
-
-type validatedWorkflowGraph struct {
-	graphJSON        string
-	nodeVersionsJSON string
-	mainTriggerID    string
-}
-
-type workflowGraphNode struct {
-	NodeInstanceID string          `json:"nodeInstanceId"`
-	NodeType       string          `json:"nodeType"`
-	NodeVersion    string          `json:"nodeVersion"`
-	Config         json.RawMessage `json:"config"`
-	Position       *struct {
-		X float64 `json:"x"`
-		Y float64 `json:"y"`
-	} `json:"position"`
-}
-
-type workflowGraphEdge struct {
-	EdgeID               string `json:"edgeId"`
-	SourceNodeInstanceID string `json:"sourceNodeInstanceId"`
-	SourcePort           string `json:"sourcePort"`
-	TargetNodeInstanceID string `json:"targetNodeInstanceId"`
-	TargetPort           string `json:"targetPort"`
+	ID                int64                      `json:"id"`
+	WorkflowID        int64                      `json:"workflowId"`
+	RevisionNumber    int64                      `json:"revisionNumber"`
+	Graph             json.RawMessage            `json:"graph"`
+	NodeVersions      json.RawMessage            `json:"nodeVersions"`
+	MainTriggerNodeID string                     `json:"mainTriggerNodeId"`
+	CreatedBy         int64                      `json:"createdBy"`
+	CreatedAt         string                     `json:"createdAt"`
+	SecretFields      map[string]map[string]bool `json:"secretFields"`
 }
 
 func (a *App) ListWorkflowTemplates() []WorkflowTemplate {
@@ -150,7 +122,7 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 	if principal == nil || principal.User == nil || principal.User.ID <= 0 {
 		return WorkflowDetail{}, ErrPermission
 	}
-	graph, err := validateWorkflowGraph(json.RawMessage(blankWorkflowGraph))
+	graph, err := a.validateWorkflowGraph(json.RawMessage(blankWorkflowGraph))
 	if err != nil {
 		return WorkflowDetail{}, errors.New("blank workflow template is invalid")
 	}
@@ -238,7 +210,11 @@ func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payloa
 	if principal == nil || principal.User == nil || principal.User.ID <= 0 {
 		return WorkflowRevisionView{}, ErrPermission
 	}
-	graph, err := validateWorkflowGraph(payload.Graph)
+	graph, err := a.validateWorkflowGraph(payload.Graph)
+	if err != nil {
+		return WorkflowRevisionView{}, err
+	}
+	secretChanges, err := validateWorkflowSecretChanges(graph, payload.SecretChanges)
 	if err != nil {
 		return WorkflowRevisionView{}, err
 	}
@@ -272,6 +248,9 @@ func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payloa
 		if err := tx.Create(&revision).Error; err != nil {
 			return errors.New("create workflow revision failed")
 		}
+		if err := a.persistWorkflowSecrets(tx, workflowID, *workflow.ActiveRevisionID, revision, graph, secretChanges, now); err != nil {
+			return err
+		}
 		if err := tx.Model(&db.Workflow{}).Where("id = ?", workflowID).Updates(map[string]any{
 			"active_revision_id": revision.ID, "main_trigger_node_id": graph.mainTriggerID, "updated_at": now,
 		}).Error; err != nil {
@@ -282,7 +261,11 @@ func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payloa
 	if err != nil {
 		return WorkflowRevisionView{}, err
 	}
-	return workflowRevisionView(revision), nil
+	views := []WorkflowRevisionView{workflowRevisionView(revision)}
+	if err := a.attachWorkflowRevisionSecrets(ctx, workflowID, views); err != nil {
+		return WorkflowRevisionView{}, err
+	}
+	return views[0], nil
 }
 
 func (a *App) ListWorkflowRevisions(ctx context.Context, workflowID int64) ([]WorkflowRevisionView, error) {
@@ -302,6 +285,9 @@ func (a *App) ListWorkflowRevisions(ctx context.Context, workflowID int64) ([]Wo
 	for _, revision := range revisions {
 		items = append(items, workflowRevisionView(revision))
 	}
+	if err := a.attachWorkflowRevisionSecrets(ctx, workflowID, items); err != nil {
+		return nil, err
+	}
 	return items, nil
 }
 
@@ -313,7 +299,11 @@ func (a *App) GetWorkflowRevision(ctx context.Context, workflowID, revisionID in
 		}
 		return WorkflowRevisionView{}, errors.New("load workflow revision failed")
 	}
-	return workflowRevisionView(revision), nil
+	views := []WorkflowRevisionView{workflowRevisionView(revision)}
+	if err := a.attachWorkflowRevisionSecrets(ctx, workflowID, views); err != nil {
+		return WorkflowRevisionView{}, err
+	}
+	return views[0], nil
 }
 
 func (a *App) ApplyWorkflowLifecycle(ctx context.Context, workflowID int64, payload WorkflowLifecyclePayload) (WorkflowDetail, error) {
@@ -369,90 +359,6 @@ func nextWorkflowStatus(current, action string) (string, error) {
 	return "", fmt.Errorf("%w: cannot %s workflow from %s", ErrConflict, action, current)
 }
 
-func validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph, error) {
-	if len(raw) == 0 || len(raw) > maxWorkflowGraphBytes {
-		return validatedWorkflowGraph{}, fmt.Errorf("workflow graph must contain 1 to %d bytes", maxWorkflowGraphBytes)
-	}
-	var graph struct {
-		SchemaVersion int                 `json:"schemaVersion"`
-		Nodes         []workflowGraphNode `json:"nodes"`
-		Edges         []workflowGraphEdge `json:"edges"`
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&graph); err != nil {
-		return validatedWorkflowGraph{}, errors.New("workflow graph must be a JSON object")
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return validatedWorkflowGraph{}, errors.New("workflow graph must contain exactly one JSON object")
-	}
-	if graph.SchemaVersion != 1 {
-		return validatedWorkflowGraph{}, errors.New("workflow graph schemaVersion must be 1")
-	}
-	if len(graph.Nodes) != 2 {
-		return validatedWorkflowGraph{}, errors.New("P1-A workflow graph requires one manual trigger and one end node")
-	}
-	if len(graph.Edges) != 1 {
-		return validatedWorkflowGraph{}, errors.New("P1-A workflow graph requires one trigger-to-end edge")
-	}
-
-	seen := make(map[string]bool, len(graph.Nodes))
-	versions := make(map[string]map[string]string, len(graph.Nodes))
-	triggerID, endID := "", ""
-	for _, node := range graph.Nodes {
-		if !workflowNodeIDPattern.MatchString(node.NodeInstanceID) || seen[node.NodeInstanceID] {
-			return validatedWorkflowGraph{}, fmt.Errorf("invalid or duplicate nodeInstanceId %q", node.NodeInstanceID)
-		}
-		seen[node.NodeInstanceID] = true
-		if node.NodeVersion != "1.0.0" {
-			return validatedWorkflowGraph{}, fmt.Errorf("node %q requires supported nodeVersion 1.0.0", node.NodeInstanceID)
-		}
-		var config map[string]any
-		if len(node.Config) == 0 || json.Unmarshal(node.Config, &config) != nil || config == nil {
-			return validatedWorkflowGraph{}, fmt.Errorf("node %q config must be a JSON object", node.NodeInstanceID)
-		}
-		if len(config) != 0 {
-			return validatedWorkflowGraph{}, fmt.Errorf("P1-A core node %q config must be empty", node.NodeInstanceID)
-		}
-		if node.Position == nil {
-			return validatedWorkflowGraph{}, fmt.Errorf("node %q position is required", node.NodeInstanceID)
-		}
-		switch node.NodeType {
-		case "core.manual":
-			if triggerID != "" {
-				return validatedWorkflowGraph{}, errors.New("workflow graph must contain exactly one main trigger")
-			}
-			triggerID = node.NodeInstanceID
-		case "core.end":
-			if endID != "" {
-				return validatedWorkflowGraph{}, errors.New("P1-A workflow graph requires exactly one end node")
-			}
-			endID = node.NodeInstanceID
-		default:
-			return validatedWorkflowGraph{}, fmt.Errorf("node type %q is not available until P1-B", node.NodeType)
-		}
-		versions[node.NodeInstanceID] = map[string]string{"nodeType": node.NodeType, "nodeVersion": node.NodeVersion}
-	}
-	if triggerID == "" || endID == "" {
-		return validatedWorkflowGraph{}, errors.New("workflow graph must contain one manual trigger and one end node")
-	}
-	edge := graph.Edges[0]
-	if !workflowNodeIDPattern.MatchString(edge.EdgeID) || edge.SourceNodeInstanceID != triggerID || edge.TargetNodeInstanceID != endID || edge.SourcePort != "out" || edge.TargetPort != "in" {
-		return validatedWorkflowGraph{}, errors.New("P1-A workflow edge must connect the manual trigger out port to the end in port")
-	}
-	canonical, err := json.Marshal(graph)
-	if err != nil {
-		return validatedWorkflowGraph{}, errors.New("encode workflow graph failed")
-	}
-	nodeVersions, err := json.Marshal(versions)
-	if err != nil {
-		return validatedWorkflowGraph{}, errors.New("encode workflow node versions failed")
-	}
-	return validatedWorkflowGraph{
-		graphJSON: string(canonical), nodeVersionsJSON: string(nodeVersions), mainTriggerID: triggerID,
-	}, nil
-}
-
 func workflowView(workflow db.Workflow) WorkflowView {
 	activeRevisionID := int64(0)
 	if workflow.ActiveRevisionID != nil {
@@ -476,7 +382,7 @@ func workflowRevisionView(revision db.WorkflowRevision) WorkflowRevisionView {
 		ID: revision.ID, WorkflowID: revision.WorkflowID, RevisionNumber: revision.RevisionNumber,
 		Graph: json.RawMessage(revision.GraphJSON), NodeVersions: json.RawMessage(revision.NodeVersions),
 		MainTriggerNodeID: revision.MainTriggerNodeID, CreatedBy: revision.CreatedBy,
-		CreatedAt: formatWorkflowTime(revision.CreatedAt),
+		CreatedAt: formatWorkflowTime(revision.CreatedAt), SecretFields: map[string]map[string]bool{},
 	}
 }
 

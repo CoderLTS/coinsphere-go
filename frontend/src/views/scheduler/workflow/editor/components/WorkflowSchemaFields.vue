@@ -98,6 +98,8 @@
     schema: Record<string, any>
     /** 节点当前配置（只读展示，改动一律通过 update 事件回传）。 */
     config: Record<string, any>
+    /** 独立 UI Schema：控制字段顺序、控件、占位符和简单条件显示。 */
+    uiSchema?: Record<string, any>
     /** 只渲染这几个字段；留空表示渲染 schema 里的全部字段。 */
     keys?: string[]
   }
@@ -110,7 +112,26 @@
   const emit = defineEmits<Emits>()
 
   const fields = computed(() => {
+    const order = Array.isArray(props.uiSchema?.['ui:order']) ? props.uiSchema['ui:order'] : []
+    const rank = new Map(order.map((key: string, index: number) => [key, index]))
     const built = buildSchemaFields(props.schema?.properties || {})
+      .map((field) => {
+        const ui = props.uiSchema?.[field.key] || {}
+        return {
+          ...field,
+          multiline: ui['ui:widget'] === 'textarea' || field.multiline,
+          placeholder: String(ui['ui:placeholder'] || field.placeholder)
+        }
+      })
+      .filter((field) => {
+        const condition = props.uiSchema?.[field.key]?.['ui:condition']
+        return !condition || props.config?.[condition.field] === condition.equals
+      })
+      .sort(
+        (left, right) =>
+          (rank.get(left.key) ?? Number.MAX_SAFE_INTEGER) -
+          (rank.get(right.key) ?? Number.MAX_SAFE_INTEGER)
+      )
     const optionMap = props.schema?.properties?.entryKey?.enumByWorkflowCode
     if (!optionMap || typeof optionMap !== 'object') return built
     const options = optionMap[String(props.config?.workflowCode || '')]
@@ -247,7 +268,7 @@
     padding: 10px 12px;
     background: var(--el-fill-color-lighter, #f8fafc);
     border: 1px solid var(--el-border-color-lighter, #e2e8f0);
-    border-radius: 10px;
+    border-radius: 6px;
   }
 
   .schema-fields__row-head {

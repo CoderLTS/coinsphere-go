@@ -14,6 +14,7 @@ import (
 
 	"coinsphere/backend/internal/db"
 	"coinsphere/backend/internal/migration"
+	"coinsphere/backend/internal/security"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"gorm.io/driver/postgres"
@@ -106,6 +107,50 @@ func TestWorkflowRevisionAndLifecycleTransaction(t *testing.T) {
 	}
 }
 
+func TestWorkflowRevisionSecretsAreVersionedAndHidden(t *testing.T) {
+	app, database, ownerID := openWorkflowTestApp(t)
+	principal := &Principal{User: &db.SystemUser{ID: ownerID}}
+	workflow, err := app.CreateWorkflow(context.Background(), WorkflowCreatePayload{Name: "Secrets"}, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := "integration-secret"
+	revision2, err := app.SaveWorkflowRevision(context.Background(), workflow.ID, WorkflowRevisionSavePayload{
+		ExpectedActiveRevisionID: workflow.ActiveRevisionID, Graph: jsonMessage(testPluginWorkflowGraph),
+		SecretChanges: []WorkflowSecretChange{{NodeInstanceID: "transform", Field: "token", Value: &plain}},
+	}, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !revision2.SecretFields["transform"]["token"] || strings.Contains(string(revision2.Graph), plain) {
+		t.Fatalf("revision exposed or omitted secret status: %#v", revision2)
+	}
+	var encrypted string
+	if err := database.QueryRow(`SELECT encrypted_value FROM workflow_secret_bindings WHERE revision_id = $1`, revision2.ID).Scan(&encrypted); err != nil || encrypted == "" || encrypted == plain {
+		t.Fatalf("encrypted value = %q, err = %v", encrypted, err)
+	}
+
+	revision3, err := app.SaveWorkflowRevision(context.Background(), workflow.ID, WorkflowRevisionSavePayload{
+		ExpectedActiveRevisionID: revision2.ID, Graph: jsonMessage(testPluginWorkflowGraph),
+	}, principal)
+	if err != nil || !revision3.SecretFields["transform"]["token"] {
+		t.Fatalf("carried secret = %#v, err = %v", revision3.SecretFields, err)
+	}
+	if _, err := app.SaveWorkflowRevision(context.Background(), workflow.ID, WorkflowRevisionSavePayload{
+		ExpectedActiveRevisionID: revision3.ID, Graph: jsonMessage(testPluginWorkflowGraph),
+		SecretChanges: []WorkflowSecretChange{{NodeInstanceID: "transform", Field: "token", Remove: true}},
+	}, principal); err == nil {
+		t.Fatal("required secret was removed")
+	}
+	detail, err := app.GetWorkflow(context.Background(), workflow.ID)
+	if err != nil || detail.ActiveRevisionID != revision3.ID {
+		t.Fatalf("failed secret save changed active revision: %#v, err = %v", detail, err)
+	}
+	if _, err := database.Exec(`UPDATE workflow_secret_bindings SET encrypted_value = 'changed' WHERE revision_id = $1`, revision3.ID); err == nil {
+		t.Fatal("database updated an immutable secret binding")
+	}
+}
+
 func jsonMessage(value string) []byte { return []byte(value) }
 
 func openWorkflowTestApp(t *testing.T) (*App, *sql.DB, int64) {
@@ -153,5 +198,12 @@ func openWorkflowTestApp(t *testing.T) (*App, *sql.DB, int64) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &App{DB: gdb}, database, ownerID
+	app := workflowTestApp(t)
+	cipher, err := security.NewSecretCipher("workflow-test-secret-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.DB = gdb
+	app.Cipher = cipher
+	return app, database, ownerID
 }

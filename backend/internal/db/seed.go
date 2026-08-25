@@ -41,6 +41,7 @@ type menuItem struct {
 // 的字段顺序完全一致。Parent 为空字符串 "" 表示顶级菜单,否则填父菜单的 Name。
 var menuItems = []menuItem{
 	{"Home", "首页", "/home", "/home/index", "ri:home-5-line", "", true, true, false},
+	{"Workflows", "工作流工作台", "/workflows", "/workflows/index", "ri:flow-chart", "", true, false, false},
 	{"System", "系统管理", "/system", "/index/index", "ri:settings-3-line", "", false, false, false},
 	{"User", "用户管理", "user", "/system/user", "ri:user-3-line", "System", true, false, false},
 	{"Role", "角色管理", "role", "/system/role", "ri:team-line", "System", true, false, false},
@@ -52,6 +53,7 @@ var menuItems = []menuItem{
 // 值是 [2]string(定长为 2 的数组):第 0 个存中文、第 1 个存英文,即菜单的多语言文案。
 var menuI18n = map[string][2]string{
 	"Home":       {"首页", "Home"},
+	"Workflows":  {"工作流工作台", "Workflow Workbench"},
 	"System":     {"系统管理", "System Management"},
 	"User":       {"用户管理", "User Management"},
 	"Role":       {"角色管理", "Role Management"},

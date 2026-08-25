@@ -62,8 +62,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		respond(w, data, err, "")
 	}))
 
-	// P1-A workflow lifecycle. The editor and execution APIs arrive in later P1 slices.
+	// P1 workflow revisions and Schema-driven workbench.
 	mux.HandleFunc("GET /api/v1/workflows/templates", s.requireRole("R_SUPER", s.handleListWorkflowTemplates))
+	mux.HandleFunc("GET /api/v1/workflows/node-definitions", s.requireRole("R_SUPER", s.handleListWorkflowNodeDefinitions))
 	mux.HandleFunc("GET /api/v1/workflows", s.requireRole("R_SUPER", s.handleListWorkflows))
 	mux.HandleFunc("POST /api/v1/workflows", s.requireRole("R_SUPER", s.handleCreateWorkflow))
 	mux.HandleFunc("GET /api/v1/workflows/{workflowId}", s.requireRole("R_SUPER", s.handleGetWorkflow))

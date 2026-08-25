@@ -24,6 +24,7 @@ type App struct {
 	Cfg     *config.AppConfig
 	Hasher  *security.PasswordHasher
 	Tokens  *security.TokenManager
+	Cipher  *security.SecretCipher
 	Plugins *sdk.Registry
 
 	authStateMu         sync.Mutex
@@ -34,11 +35,13 @@ type App struct {
 
 func NewApp(gdb *gorm.DB, cfg *config.AppConfig, plugins *sdk.Registry) *App {
 	hasher := security.NewPasswordHasher(cfg.Auth.PasswordIterations)
+	cipher, _ := security.NewSecretCipher(cfg.Auth.SecretKey)
 	return &App{
 		DB:                  gdb,
 		Cfg:                 cfg,
 		Hasher:              hasher,
 		Tokens:              security.NewTokenManager(cfg.Auth.SecretKey, cfg.Auth.AccessTokenTTLMinutes),
+		Cipher:              cipher,
 		Plugins:             plugins,
 		dummyHash:           hasher.HashPassword(security.RandomToken()),
 		reauthTokens:        map[string]reauthTokenRecord{},

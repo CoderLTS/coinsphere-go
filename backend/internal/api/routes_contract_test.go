@@ -23,6 +23,7 @@ func TestRoutesExposeOnlyV2BaselineSurface(t *testing.T) {
 		{http.MethodGet, "/api/v1/home/meta"},
 		{http.MethodGet, "/api/v1/home/overview"},
 		{http.MethodGet, "/api/v1/workflows/templates"},
+		{http.MethodGet, "/api/v1/workflows/node-definitions"},
 		{http.MethodGet, "/api/v1/workflows"},
 		{http.MethodPost, "/api/v1/workflows"},
 		{http.MethodGet, "/api/v1/workflows/1"},

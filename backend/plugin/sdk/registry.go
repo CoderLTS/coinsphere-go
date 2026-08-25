@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
+	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 const jsonSchema202012 = "https://json-schema.org/draft/2020-12/schema"
@@ -128,6 +129,21 @@ func (r *Registry) Plugins() []PluginDescriptor {
 	return plugins
 }
 
+// Nodes returns an immutable, stable view of the compiled node catalog.
+func (r *Registry) Nodes() []NodeDescriptor {
+	nodes := make([]NodeDescriptor, 0, len(r.nodes))
+	for _, node := range r.nodes {
+		desc := node.desc
+		desc.ConfigSchema = append(json.RawMessage(nil), desc.ConfigSchema...)
+		desc.UISchema = append(json.RawMessage(nil), desc.UISchema...)
+		desc.InputSchema = append(json.RawMessage(nil), desc.InputSchema...)
+		desc.OutputSchema = append(json.RawMessage(nil), desc.OutputSchema...)
+		nodes = append(nodes, desc)
+	}
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Type < nodes[j].Type })
+	return nodes
+}
+
 type registrationCollector struct {
 	plugin      PluginDescriptor
 	declared    map[string]bool
@@ -158,6 +174,9 @@ func (c *registrationCollector) Trigger(desc NodeDescriptor, handler TriggerHand
 }
 
 func (c *registrationCollector) addNode(contribution string, node registeredNode) error {
+	if strings.HasPrefix(node.desc.Type, "core.") {
+		return fmt.Errorf("node type %q is reserved for workflow core", node.desc.Type)
+	}
 	if err := validateNodeDescriptor(node.desc); err != nil {
 		return err
 	}
@@ -302,6 +321,16 @@ func validateSchema(name string, raw json.RawMessage, requireDraft bool) error {
 	}
 	if requireDraft && object["$schema"] != jsonSchema202012 {
 		return fmt.Errorf("%s must declare JSON Schema 2020-12", name)
+	}
+	if requireDraft {
+		compiler := jsonschema.NewCompiler()
+		compiler.DefaultDraft(jsonschema.Draft2020)
+		if err := compiler.AddResource(name+".json", object); err != nil {
+			return fmt.Errorf("%s is invalid: %w", name, err)
+		}
+		if _, err := compiler.Compile(name + ".json"); err != nil {
+			return fmt.Errorf("%s is invalid: %w", name, err)
+		}
 	}
 	return nil
 }

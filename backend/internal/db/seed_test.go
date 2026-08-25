@@ -10,7 +10,7 @@ func TestV2BaselineMenuSeeds(t *testing.T) {
 	for _, item := range menuItems {
 		got = append(got, item.Name)
 	}
-	want := []string{"Home", "System", "User", "Role", "Menus", "UserCenter"}
+	want := []string{"Home", "Workflows", "System", "User", "Role", "Menus", "UserCenter"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("baseline menus = %v, want %v", got, want)
 	}
