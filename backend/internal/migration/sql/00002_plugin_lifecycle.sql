@@ -26,6 +26,7 @@ CREATE TABLE plugin_references (
 CREATE UNIQUE INDEX ux_plugin_references_identity ON plugin_references (plugin_id, reference_type, reference_id);
 CREATE INDEX ix_plugin_references_active ON plugin_references (plugin_id, active);
 
+-- +goose StatementBegin
 CREATE FUNCTION enforce_installed_plugin_reference() RETURNS TRIGGER AS $$
 DECLARE
     plugin_status VARCHAR(16);
@@ -42,6 +43,7 @@ BEGIN
     RETURN NEW;
 END
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
 CREATE TRIGGER trg_plugin_references_installed
 BEFORE INSERT OR UPDATE OF plugin_id, active ON plugin_references
@@ -49,6 +51,7 @@ FOR EACH ROW EXECUTE FUNCTION enforce_installed_plugin_reference();
 
 -- +goose Down
 
+-- +goose StatementBegin
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM plugin_references LIMIT 1)
@@ -58,6 +61,7 @@ BEGIN
     END IF;
 END
 $$;
+-- +goose StatementEnd
 DROP TABLE plugin_references;
 DROP TABLE plugin_installations;
 DROP FUNCTION enforce_installed_plugin_reference();
