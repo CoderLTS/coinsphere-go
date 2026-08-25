@@ -423,7 +423,9 @@ test('超级管理员可以使用 Schema 工作流工作台且移动端只读', 
 
   await expect(page.getByRole('heading', { name: '批处理示例', exact: true })).toBeVisible()
   await expect(page.getByText('节点目录', { exact: true })).toBeVisible()
-  await expect(page.getByText('core.manual@1.0.0', { exact: true })).toBeVisible()
+  await expect(
+    page.locator('.node-catalog').getByText('core.manual@1.0.0', { exact: true })
+  ).toBeVisible()
   await expect(page.getByText('Node inspector', { exact: true })).toBeVisible()
 
   await page.setViewportSize({ width: 390, height: 844 })
