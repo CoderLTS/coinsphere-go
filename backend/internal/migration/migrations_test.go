@@ -164,7 +164,7 @@ func TestWorkflowSchemaWorkbenchMigrationDownRejectsRevisions(t *testing.T) {
 		t.Fatal("rollback accepted workflow revisions")
 	}
 	current, _, err := runner.Versions(context.Background())
-	if err != nil || current != latestMigrationVersion {
+	if err != nil || current != 4 {
 		t.Fatalf("failed rollback changed migration version: current=%d err=%v", current, err)
 	}
 }
