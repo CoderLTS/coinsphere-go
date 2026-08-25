@@ -14,7 +14,7 @@ Linux 使用：
 ./scripts/verify.sh
 ```
 
-脚本会验证 Go、Vue、Python Worker，并在本机存在 Docker 时检查 Compose 配置。缺少 PostgreSQL/TimescaleDB、Docker 或浏览器依赖时，按[质量门禁](../quality/quality-gates.md)把对应检查交给 CI。
+脚本会验证 Go 与 Vue，并在本机存在 Docker 时检查 Compose 配置。缺少 PostgreSQL/TimescaleDB、Docker 或浏览器依赖时，按[质量门禁](../quality/quality-gates.md)把对应检查交给 CI。
 
 ## 定向命令
 
@@ -30,12 +30,9 @@ pnpm exec vitest run
 pnpm exec playwright test --project=chromium
 Pop-Location
 
-Push-Location .\worker
-uv run --frozen pytest
-Pop-Location
 ```
 
-需要数据库的 Go/Worker 测试使用仅供测试的 PostgreSQL DSN 和随机隔离 schema；不要连接生产数据库或固定外部表。迁移命令和回滚见[数据库迁移手册](./database-migrations.md)。
+需要数据库的 Go 测试使用仅供测试的 PostgreSQL DSN 和随机隔离 schema；不要连接生产数据库或固定外部表。迁移命令和回滚见[数据库迁移手册](./database-migrations.md)。
 
 ## 运行时诊断
 

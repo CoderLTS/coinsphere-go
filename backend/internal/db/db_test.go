@@ -13,8 +13,6 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-const postgresMigrationDSNEnv = "COINSPHERE_TEST_POSTGRES_DSN"
-
 // TestRedactingGORMLogger 固定两层日志边界：SQL 参数保持占位，驱动错误和直接 Error 调用只输出统一分类。
 func TestRedactingGORMLogger(t *testing.T) {
 	var output bytes.Buffer

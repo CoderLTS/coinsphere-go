@@ -29,7 +29,6 @@ jobs:
       backend: ${{ steps.scope.outputs.backend }}
       frontend: ${{ steps.scope.outputs.frontend }}
       release: ${{ steps.scope.outputs.release }}
-      worker: ${{ steps.scope.outputs.worker }}
       full: ${{ steps.scope.outputs.full }}
     steps:
       - name: Validate PR base
@@ -60,14 +59,12 @@ jobs:
           backend=false
           frontend=false
           release=false
-          worker=false
           full=false
 
           if [[ "$EVENT_NAME" != "pull_request" ]]; then
             backend=true
             frontend=true
             release=true
-            worker=true
             full=true
           else
             while IFS= read -r file; do
@@ -75,12 +72,10 @@ jobs:
                 backend/*) backend=true ;;
                 frontend/*) frontend=true ;;
                 scripts/release/*|deploy/production/*|.github/workflows/deploy.yml|.github/workflows/release.yml) release=true ;;
-                worker/*) worker=true ;;
                 .github/workflows/ci.yml)
                   backend=true
                   frontend=true
                   release=true
-                  worker=true
                   full=true
                   ;;
               esac
@@ -91,7 +86,6 @@ jobs:
             echo "backend=$backend"
             echo "frontend=$frontend"
             echo "release=$release"
-            echo "worker=$worker"
             echo "full=$full"
           } >>"$GITHUB_OUTPUT"
 
@@ -225,47 +219,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  worker:
-    name: Python worker
-    needs: changes
-    if: needs.changes.outputs.worker == 'true'
-    runs-on: ubuntu-latest
-    services:
-      timescaledb:
-        image: timescale/timescaledb:2.29.0-pg17@sha256:3e65c273cbf7218f2a28692492b4625b49f35c7d2142e945561ef52311a8c83a
-        env:
-          POSTGRES_DB: coinsphere_worker_test
-          POSTGRES_PASSWORD: worker-ci-only
-          POSTGRES_USER: coinsphere
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready --username=coinsphere --dbname=coinsphere_worker_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 12
-    env:
-      COINSPHERE_TEST_POSTGRES_DSN: postgres://coinsphere:worker-ci-only@127.0.0.1:5432/coinsphere_worker_test?sslmode=disable
-    defaults:
-      run:
-        working-directory: worker
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
-        with:
-          enable-cache: true
-          cache-dependency-glob: worker/uv.lock
-      - name: Install Python
-        run: uv python install 3.12
-      - name: Install dependencies
-        run: uv sync --locked --all-groups
-      - name: Ruff
-        run: uv run --frozen ruff check .
-      - name: Mypy
-        run: uv run --frozen mypy coinsphere_worker tests
-      - name: Pytest
-        run: uv run --frozen pytest
-
   release:
     name: Release script checks
     needs: changes
@@ -288,7 +241,6 @@ jobs:
       - backend
       - browser-smoke
       - frontend
-      - worker
     if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     env:
@@ -389,7 +341,6 @@ jobs:
       - containers
       - frontend
       - release
-      - worker
     if: ${{ always() && github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     steps:
@@ -410,5 +361,4 @@ jobs:
           require_selected "${{ needs.changes.outputs.frontend }}" "${{ needs.frontend.result }}" frontend
           require_selected "${{ needs.changes.outputs.frontend }}" "${{ needs.browser-smoke.result }}" browser-smoke
           require_selected "${{ needs.changes.outputs.release == 'true' && needs.changes.outputs.full != 'true' }}" "${{ needs.release.result }}" release
-          require_selected "${{ needs.changes.outputs.worker }}" "${{ needs.worker.result }}" worker
           require_selected "${{ needs.changes.outputs.full }}" "${{ needs.containers.result }}" containers

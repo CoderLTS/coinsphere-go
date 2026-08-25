@@ -2,7 +2,7 @@
 
 CoinSphere 正在重构为以可视化工作流为核心、由编译期插件提供业务能力的通用平台。项目保持 Vue、Go 模块化单体和 PostgreSQL/TimescaleDB 技术栈。
 
-> V2 P0 应用壳已开始实施。默认运行面只保留认证、RBAC、用户/角色/菜单管理和系统监控；旧领域源码与 migration 暂时保留，但不会由 Go App、公开 API 或默认 Compose 启动。目标设计见[工作流平台 V2](docs/architecture/workflow-platform-v2.md)。
+> V2 P0 基线只保留认证、RBAC、用户/角色/菜单管理和系统监控。旧领域源码、旧 migration 和 Python Worker 已移除；目标设计见[工作流平台 V2](docs/architecture/workflow-platform-v2.md)。
 
 ## 当前能力
 
@@ -24,7 +24,7 @@ flowchart LR
     MIGRATE["一次性 migration"] --> DB
 ```
 
-默认部署只包含 Web、Go App、一次性 migration 和 TimescaleDB，不依赖 Redis、消息中间件或 Kubernetes。P0 后续会建立 V2 数据基线并删除暂留的旧领域源码。
+默认部署只包含 Web、Go App、一次性 migration 和 TimescaleDB，不依赖 Redis、消息中间件或 Kubernetes。空库基线只建立认证、RBAC、菜单、i18n、审计表和 TimescaleDB 扩展。
 
 ## 快速启动
 
@@ -61,9 +61,8 @@ docker compose down
 ## 目录
 
 ```text
-backend/             Go App、migration 与暂留领域模块
+backend/             Go App、V2 基线 migration 与系统管理模块
 frontend/            Vue 3 + Vite Web
-worker/              待删除的旧 Python Worker，不由默认栈启动
 deploy/production/   生产 Compose 模板
 docs/                架构、契约、开发计划、质量门禁和 Runbook
 scripts/             验证、发布和部署脚本
@@ -71,7 +70,7 @@ scripts/             验证、发布和部署脚本
 
 ## 开发
 
-本地工具链为 Go 1.26、Node.js 24、pnpm 10.33、Python 3.12、uv 和 PostgreSQL/TimescaleDB。全量验证：
+本地工具链为 Go 1.26、Node.js 24、pnpm 10.33 和 PostgreSQL/TimescaleDB。全量验证：
 
 ```powershell
 .\scripts\verify.ps1

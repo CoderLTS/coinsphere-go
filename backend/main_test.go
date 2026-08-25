@@ -299,7 +299,6 @@ database:
   dsn: %q
 auth:
   secret_key: test-only-root-context-secret
-  encryption_key: test-only-encryption-secret
   bootstrap_admin_password: test-only-admin-password
   password_iterations: 1000
 `, port, lifecyclePostgresURL(t, baseDSN, schema))

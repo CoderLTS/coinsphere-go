@@ -223,16 +223,6 @@ func seedMenusAndButtons(tx *gorm.DB) (map[string]*SystemMenu, map[string]*Syste
 			return nil, nil, err
 		}
 	}
-	if err := tx.Model(&SystemMenu{}).Where("name IN ?", []string{
-		"TradingCenter", "TradingAccounts", "StrategyManagement",
-		"SchedulerCenter", "NodeDefinitions", "WorkflowDefinitions", "WorkflowExecutions",
-		"DataCenter", "NewsData", "MarketMetadata", "MarketChart",
-		"ConfigCenter", "ConfigOverview", "AiModelConfig", "AssistantAgentConfig",
-	}).
-		Updates(map[string]any{"is_active": false, "is_hidden": true, "updated_at": now}).Error; err != nil {
-		return nil, nil, err
-	}
-
 	buttonMap := map[string]*SystemMenuButton{}
 	// 按钮 = 页面上的操作按钮(新增/编辑/删除等),每个对应一个权限码。range 一个 map 时,
 	// 两个循环变量分别是“键、值”(遍历顺序不保证)。

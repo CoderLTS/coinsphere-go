@@ -1,11 +1,11 @@
 package service
 
 import (
+	"sort"
 	"strings"
 	"time"
 
 	"coinsphere/backend/internal/db"
-	"coinsphere/backend/internal/perm"
 	"coinsphere/backend/internal/security"
 )
 
@@ -130,7 +130,7 @@ func (a *App) BuildUserInfo(principal *Principal) M {
 	for code := range principal.PermissionCodes {
 		permissions = append(permissions, code)
 	}
-	sortStrings(permissions)
+	sort.Strings(permissions)
 	username := principal.User.Username
 	return M{
 		"permissions": permissions,
@@ -281,24 +281,4 @@ func (a *App) listPermissionCodesForRoleIDs(roleIDs []int64) map[string]bool {
 		}
 	}
 	return result
-}
-
-// agentAccessAllowed 判断主体是否可使用指定智能体。
-func agentAccessAllowed(principal *Principal, agentCode string) bool {
-	required := perm.AssistantAgentRequiredPermission[agentCode]
-	if required == "" {
-		return true
-	}
-	return principal.HasPermission(required)
-}
-
-// sortStrings 是就地插入排序(标准库有 sort.Strings,这里手写一份以免多引一个包)。
-// a, b = b, a 是 Go 的多值赋值:一行交换两个元素,不需要临时变量。
-// 切片传进来的是"底层数组的视图",所以这里的重排会直接影响调用方那个切片。
-func sortStrings(items []string) {
-	for i := 1; i < len(items); i++ {
-		for j := i; j > 0 && items[j] < items[j-1]; j-- {
-			items[j], items[j-1] = items[j-1], items[j]
-		}
-	}
 }
