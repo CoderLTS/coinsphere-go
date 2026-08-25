@@ -39,7 +39,7 @@ func run(args []string, output io.Writer) error {
 
 func runContext(parent context.Context, args []string, output io.Writer) error {
 	if len(args) < 2 || args[0] != "plugin" {
-		return errors.New("usage: coinsphere plugin <validate|install|upgrade|uninstall|purge-data> ...")
+		return errors.New("usage: coinsphere plugin <validate|install|upgrade|uninstall|purge-data>")
 	}
 	if args[1] == "validate" {
 		return validatePlugins(args[2:], output)
