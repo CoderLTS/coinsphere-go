@@ -201,7 +201,8 @@ if docker volume inspect "$DATABASE_VOLUME" >/dev/null 2>&1; then
 fi
 
 echo "已验证备份 $backup_id 并删除 $DATABASE_VOLUME；开始部署 $VERSION"
-bash "$ROOT_DIR/deploy/production/deploy.sh" "$VERSION" "$MANIFEST_FILE"
+COINSPHERE_DEPLOY_DIR=$deploy_dir \
+  bash "$ROOT_DIR/deploy/production/deploy.sh" "$VERSION" "$MANIFEST_FILE"
 
 trap - ERR INT TERM
 echo "V2 基线已重建；重置前备份保留为 $backup_id"
