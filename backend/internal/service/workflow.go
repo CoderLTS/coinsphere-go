@@ -405,14 +405,24 @@ func (a *App) UpdateWorkflow(ctx context.Context, workflowID int64, payload Work
 	if utf8.RuneCountInString(description) > 500 {
 		return WorkflowDetail{}, errors.New("workflow description must not exceed 500 characters")
 	}
-	result := a.DB.WithContext(ctx).Model(&db.Workflow{}).Where("id = ?", workflowID).Updates(map[string]any{
-		"name": name, "description": description, "updated_at": time.Now().UTC(),
-	})
+	database := a.DB.WithContext(ctx)
+	result := database.Model(&db.Workflow{}).
+		Where("id = ? AND status <> ?", workflowID, WorkflowStatusArchived).
+		Updates(map[string]any{
+			"name": name, "description": description, "updated_at": time.Now().UTC(),
+		})
 	if result.Error != nil {
 		return WorkflowDetail{}, errors.New("update workflow failed")
 	}
 	if result.RowsAffected == 0 {
-		return WorkflowDetail{}, fmt.Errorf("%w: workflow", ErrNotFound)
+		var workflow db.Workflow
+		if err := database.Select("status").First(&workflow, workflowID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return WorkflowDetail{}, fmt.Errorf("%w: workflow", ErrNotFound)
+			}
+			return WorkflowDetail{}, errors.New("load workflow failed")
+		}
+		return WorkflowDetail{}, fmt.Errorf("%w: archived workflow is read-only", ErrConflict)
 	}
 	return a.GetWorkflow(ctx, workflowID)
 }
