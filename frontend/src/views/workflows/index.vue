@@ -741,6 +741,19 @@
   })
 
   const cloneGraph = (value: WorkflowGraph): WorkflowGraph => JSON.parse(JSON.stringify(value))
+  const graphNodeVersions = (value: WorkflowGraph) => {
+    const versions = new Map<string, string>()
+    const visit = (nodes: WorkflowGraphNode[], parentId = '') => {
+      nodes.forEach((node) => {
+        const nodeId = parentId ? `${parentId}.${node.nodeInstanceId}` : node.nodeInstanceId
+        versions.set(nodeId, `${node.nodeType}@${node.nodeVersion}`)
+        const body = node.config.body as { nodes?: WorkflowGraphNode[] } | undefined
+        if (node.nodeType === 'core.loop' && Array.isArray(body?.nodes)) visit(body.nodes, nodeId)
+      })
+    }
+    visit(value.nodes)
+    return versions
+  }
   const formatTime = (value: string) =>
     new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(
       new Date(value)
@@ -1240,12 +1253,47 @@
     if (!selectedWorkflow.value || !activeRevision.value || readOnly.value) return
     saving.value = true
     try {
+      const currentWorkflow = await fetchWorkflow(selectedWorkflow.value.id)
+      selectedWorkflow.value.status = currentWorkflow.status
+      selectedWorkflow.value.stateNodeInstanceIds = currentWorkflow.stateNodeInstanceIds
+      const previousVersions = graphNodeVersions(activeRevision.value.graph)
+      const nextVersions = graphNodeVersions(graph.value)
+      const resetStateNodeInstanceIds = currentWorkflow.stateNodeInstanceIds.filter(
+        (nodeId) =>
+          !previousVersions.has(nodeId) ||
+          !nextVersions.has(nodeId) ||
+          previousVersions.get(nodeId) !== nextVersions.get(nodeId)
+      )
+      if (resetStateNodeInstanceIds.length) {
+        if (currentWorkflow.status !== 'paused') {
+          ElMessage.warning('请先暂停工作流，再保存需要重置节点状态的修改')
+          return
+        }
+        try {
+          await ElMessageBox.confirm(
+            `保存将重置节点状态：${resetStateNodeInstanceIds.join('、')}`,
+            '确认重置节点状态',
+            {
+              type: 'warning',
+              confirmButtonText: '重置并保存',
+              cancelButtonText: '取消'
+            }
+          )
+        } catch {
+          return
+        }
+      }
       const revision = await saveWorkflowRevision(selectedWorkflow.value.id, {
         expectedActiveRevisionId: selectedWorkflow.value.activeRevisionId,
         graph: cloneGraph(graph.value),
-        secretChanges: secretChanges()
+        secretChanges: secretChanges(),
+        resetStateNodeInstanceIds
       })
       selectedWorkflow.value.activeRevisionId = revision.id
+      selectedWorkflow.value.stateNodeInstanceIds =
+        selectedWorkflow.value.stateNodeInstanceIds.filter(
+          (nodeId) => !resetStateNodeInstanceIds.includes(nodeId)
+        )
       activeRevision.value = revision
       viewRevisionId.value = revision.id
       revisions.value.unshift(revision)

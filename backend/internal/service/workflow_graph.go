@@ -30,8 +30,14 @@ type validatedWorkflowGraph struct {
 	mainTriggerID    string
 	nodes            map[string]workflowGraphNode
 	nodeTypes        map[string]string
+	nodeVersions     map[string]workflowNodeVersion
 	descriptors      map[string]sdk.NodeDescriptor
 	requiredSecrets  map[workflowSecretKey]bool
+}
+
+type workflowNodeVersion struct {
+	NodeType    string `json:"nodeType"`
+	NodeVersion string `json:"nodeVersion"`
 }
 
 type workflowGraph struct {
@@ -112,7 +118,7 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 	nodes := make(map[string]workflowGraphNode, len(graph.Nodes))
 	nodeTypes := make(map[string]string, len(graph.Nodes))
 	descriptors := make(map[string]sdk.NodeDescriptor, len(graph.Nodes))
-	versions := make(map[string]map[string]string, len(graph.Nodes))
+	versions := make(map[string]workflowNodeVersion, len(graph.Nodes))
 	requiredSecrets := make(map[workflowSecretKey]bool)
 	triggerID := ""
 	for _, node := range graph.Nodes {
@@ -158,7 +164,7 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 		nodes[node.NodeInstanceID] = node
 		nodeTypes[node.NodeInstanceID] = node.NodeType
 		descriptors[node.NodeInstanceID] = desc
-		versions[node.NodeInstanceID] = map[string]string{"nodeType": node.NodeType, "nodeVersion": node.NodeVersion}
+		versions[node.NodeInstanceID] = workflowNodeVersion{NodeType: node.NodeType, NodeVersion: node.NodeVersion}
 	}
 	if triggerID == "" {
 		return validatedWorkflowGraph{}, errors.New("workflow graph must contain exactly one main trigger")
@@ -181,7 +187,7 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 			}
 			nodeTypes[compositeID] = bodyNode.NodeType
 			descriptors[compositeID] = loop.descriptors[bodyID]
-			versions[compositeID] = map[string]string{"nodeType": bodyNode.NodeType, "nodeVersion": bodyNode.NodeVersion}
+			versions[compositeID] = workflowNodeVersion{NodeType: bodyNode.NodeType, NodeVersion: bodyNode.NodeVersion}
 			for key := range loop.requiredSecrets {
 				if key.nodeInstanceID == bodyID {
 					requiredSecrets[workflowSecretKey{compositeID, key.field}] = true
@@ -211,7 +217,7 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 	}
 	return validatedWorkflowGraph{
 		graphJSON: string(canonical), nodeVersionsJSON: string(nodeVersions), mainTriggerID: triggerID,
-		nodes: nodes, nodeTypes: nodeTypes, descriptors: descriptors, requiredSecrets: requiredSecrets,
+		nodes: nodes, nodeTypes: nodeTypes, nodeVersions: versions, descriptors: descriptors, requiredSecrets: requiredSecrets,
 	}, nil
 }
 
