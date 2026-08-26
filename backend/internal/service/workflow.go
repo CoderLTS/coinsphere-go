@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -175,9 +176,10 @@ type WorkflowCreatePayload struct {
 }
 
 type WorkflowRevisionSavePayload struct {
-	ExpectedActiveRevisionID int64                  `json:"expectedActiveRevisionId"`
-	Graph                    json.RawMessage        `json:"graph"`
-	SecretChanges            []WorkflowSecretChange `json:"secretChanges,omitempty"`
+	ExpectedActiveRevisionID  int64                  `json:"expectedActiveRevisionId"`
+	Graph                     json.RawMessage        `json:"graph"`
+	SecretChanges             []WorkflowSecretChange `json:"secretChanges,omitempty"`
+	ResetStateNodeInstanceIDs []string               `json:"resetStateNodeInstanceIds,omitempty"`
 }
 
 type WorkflowLifecyclePayload struct {
@@ -207,7 +209,8 @@ type WorkflowRuntimeView struct {
 
 type WorkflowDetail struct {
 	WorkflowView
-	Runtime WorkflowRuntimeView `json:"runtime"`
+	Runtime              WorkflowRuntimeView `json:"runtime"`
+	StateNodeInstanceIDs []string            `json:"stateNodeInstanceIds"`
 }
 
 type WorkflowRevisionView struct {
@@ -373,12 +376,18 @@ func (a *App) GetWorkflow(ctx context.Context, workflowID int64) (WorkflowDetail
 	if err := a.DB.WithContext(ctx).First(&runtime, "workflow_id = ?", workflowID).Error; err != nil {
 		return WorkflowDetail{}, errors.New("load workflow runtime failed")
 	}
+	stateNodeInstanceIDs := make([]string, 0)
+	if err := a.DB.WithContext(ctx).Model(&db.WorkflowNodeState{}).Where("workflow_id = ?", workflowID).
+		Order("node_instance_id").Pluck("node_instance_id", &stateNodeInstanceIDs).Error; err != nil {
+		return WorkflowDetail{}, errors.New("load workflow node states failed")
+	}
 	return WorkflowDetail{
 		WorkflowView: workflowView(workflow),
 		Runtime: WorkflowRuntimeView{
 			ActivityCursor: runtime.ActivityCursor, HealthSummary: runtime.HealthSummary,
 			UpdatedAt: formatWorkflowTime(runtime.UpdatedAt),
 		},
+		StateNodeInstanceIDs: stateNodeInstanceIDs,
 	}, nil
 }
 
@@ -397,6 +406,17 @@ func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payloa
 	if err != nil {
 		return WorkflowRevisionView{}, err
 	}
+	resetStateNodeIDs := make(map[string]bool, len(payload.ResetStateNodeInstanceIDs))
+	for _, rawNodeID := range payload.ResetStateNodeInstanceIDs {
+		nodeID := strings.TrimSpace(rawNodeID)
+		if !workflowNodeIDPattern.MatchString(nodeID) {
+			return WorkflowRevisionView{}, errors.New("resetStateNodeInstanceIds contains an invalid nodeInstanceId")
+		}
+		if resetStateNodeIDs[nodeID] {
+			return WorkflowRevisionView{}, fmt.Errorf("duplicate state reset for node %q", nodeID)
+		}
+		resetStateNodeIDs[nodeID] = true
+	}
 
 	var revision db.WorkflowRevision
 	err = a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -413,6 +433,47 @@ func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payloa
 		if workflow.ActiveRevisionID == nil || *workflow.ActiveRevisionID != payload.ExpectedActiveRevisionID {
 			return fmt.Errorf("%w: active workflow revision changed", ErrConflict)
 		}
+		var activeRevision db.WorkflowRevision
+		if err := tx.Where("workflow_id = ? AND id = ?", workflowID, *workflow.ActiveRevisionID).First(&activeRevision).Error; err != nil {
+			return errors.New("load active workflow revision failed")
+		}
+		activeGraph, err := a.validateWorkflowGraph(json.RawMessage(activeRevision.GraphJSON))
+		if err != nil {
+			return errors.New("active workflow revision graph is invalid")
+		}
+		var states []db.WorkflowNodeState
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("workflow_id = ?", workflowID).Find(&states).Error; err != nil {
+			return errors.New("load workflow node states failed")
+		}
+		requiredStateResets := make(map[string]bool)
+		for _, state := range states {
+			previous, existed := activeGraph.nodeVersions[state.NodeInstanceID]
+			next, remains := graph.nodeVersions[state.NodeInstanceID]
+			if !existed || !remains || previous != next {
+				requiredStateResets[state.NodeInstanceID] = true
+			}
+		}
+		if len(resetStateNodeIDs) != len(requiredStateResets) {
+			return workflowStateResetConflict(requiredStateResets)
+		}
+		for nodeID := range resetStateNodeIDs {
+			if !requiredStateResets[nodeID] {
+				return workflowStateResetConflict(requiredStateResets)
+			}
+		}
+		if len(requiredStateResets) > 0 && workflow.Status != WorkflowStatusPaused {
+			return fmt.Errorf("%w: workflow must be paused before resetting node state", ErrConflict)
+		}
+		if len(requiredStateResets) > 0 {
+			nodeIDs := make([]string, 0, len(requiredStateResets))
+			for nodeID := range requiredStateResets {
+				nodeIDs = append(nodeIDs, nodeID)
+			}
+			if err := tx.Where("workflow_id = ? AND node_instance_id IN ?", workflowID, nodeIDs).
+				Delete(&db.WorkflowNodeState{}).Error; err != nil {
+				return errors.New("reset workflow node states failed")
+			}
+		}
 		var latest int64
 		if err := tx.Model(&db.WorkflowRevision{}).Where("workflow_id = ?", workflowID).
 			Select("COALESCE(MAX(revision_number), 0)").Scan(&latest).Error; err != nil {
@@ -427,7 +488,7 @@ func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payloa
 		if err := tx.Create(&revision).Error; err != nil {
 			return errors.New("create workflow revision failed")
 		}
-		if err := a.persistWorkflowSecrets(tx, workflowID, *workflow.ActiveRevisionID, revision, graph, secretChanges, now); err != nil {
+		if err := a.persistWorkflowSecrets(tx, workflowID, *workflow.ActiveRevisionID, revision, activeGraph, graph, secretChanges, now); err != nil {
 			return err
 		}
 		if err := tx.Model(&db.Workflow{}).Where("id = ?", workflowID).Updates(map[string]any{
@@ -462,6 +523,18 @@ func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payloa
 		return WorkflowRevisionView{}, err
 	}
 	return views[0], nil
+}
+
+func workflowStateResetConflict(required map[string]bool) error {
+	nodeIDs := make([]string, 0, len(required))
+	for nodeID := range required {
+		nodeIDs = append(nodeIDs, nodeID)
+	}
+	sort.Strings(nodeIDs)
+	if len(nodeIDs) == 0 {
+		return errors.New("resetStateNodeInstanceIds does not match a destructive state change")
+	}
+	return fmt.Errorf("%w: destructive edits require resetStateNodeInstanceIds for %s", ErrConflict, strings.Join(nodeIDs, ", "))
 }
 
 func (a *App) ListWorkflowRevisions(ctx context.Context, workflowID int64) ([]WorkflowRevisionView, error) {

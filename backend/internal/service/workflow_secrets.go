@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -59,22 +58,7 @@ func validateWorkflowSecretChanges(graph validatedWorkflowGraph, changes []Workf
 	return result, nil
 }
 
-func (a *App) persistWorkflowSecrets(tx *gorm.DB, workflowID, previousRevisionID int64, revision db.WorkflowRevision, graph validatedWorkflowGraph, changes map[workflowSecretKey]WorkflowSecretChange, now time.Time) error {
-	var previousRevision db.WorkflowRevision
-	if err := tx.Where("workflow_id = ? AND id = ?", workflowID, previousRevisionID).First(&previousRevision).Error; err != nil {
-		return errors.New("load active workflow revision failed")
-	}
-	previousGraph, err := a.validateWorkflowGraph(json.RawMessage(previousRevision.GraphJSON))
-	if err != nil {
-		return errors.New("active workflow revision graph is invalid")
-	}
-	previousTypes := previousGraph.nodeTypes
-	for nodeID, nodeType := range graph.nodeTypes {
-		if previousType := previousTypes[nodeID]; previousType != "" && previousType != nodeType {
-			return fmt.Errorf("%w: node %q cannot change type without a new nodeInstanceId", ErrConflict, nodeID)
-		}
-	}
-
+func (a *App) persistWorkflowSecrets(tx *gorm.DB, workflowID, previousRevisionID int64, revision db.WorkflowRevision, previousGraph, graph validatedWorkflowGraph, changes map[workflowSecretKey]WorkflowSecretChange, now time.Time) error {
 	var previous []db.WorkflowSecretBinding
 	if err := tx.Where("workflow_id = ? AND revision_id = ?", workflowID, previousRevisionID).Find(&previous).Error; err != nil {
 		return errors.New("load active workflow secret bindings failed")
@@ -84,7 +68,7 @@ func (a *App) persistWorkflowSecrets(tx *gorm.DB, workflowID, previousRevisionID
 		key := workflowSecretKey{binding.NodeInstanceID, binding.FieldName}
 		desc, nodeExists := graph.descriptors[key.nodeInstanceID]
 		fields, _ := workflowSecretFields(desc.ConfigSchema)
-		if nodeExists && previousTypes[key.nodeInstanceID] == graph.nodeTypes[key.nodeInstanceID] {
+		if nodeExists && previousGraph.nodeVersions[key.nodeInstanceID] == graph.nodeVersions[key.nodeInstanceID] {
 			if _, fieldExists := fields[key.field]; fieldExists {
 				values[key] = binding.EncryptedValue
 			}

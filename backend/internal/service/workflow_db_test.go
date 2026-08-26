@@ -151,6 +151,75 @@ func TestWorkflowRevisionAndLifecycleTransaction(t *testing.T) {
 	}
 }
 
+func TestWorkflowRevisionRequiresExplicitStateReset(t *testing.T) {
+	app, database, ownerID := openWorkflowTestApp(t)
+	principal := &Principal{User: &db.SystemUser{ID: ownerID}}
+	workflow, err := app.CreateWorkflow(context.Background(), WorkflowCreatePayload{Name: "State reset"}, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := "state-reset-secret"
+	statefulRevision, err := app.SaveWorkflowRevision(context.Background(), workflow.ID, WorkflowRevisionSavePayload{
+		ExpectedActiveRevisionID: workflow.ActiveRevisionID, Graph: jsonMessage(testPluginWorkflowGraph),
+		SecretChanges: []WorkflowSecretChange{{NodeInstanceID: "transform", Field: "token", Value: &secret}},
+	}, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO workflow_node_states
+		(workflow_id, node_instance_id, node_type, revision_id, state_json, updated_at)
+		VALUES ($1, 'transform', 'official.test.transform', $2, '{"saved":true}', NOW())`, workflow.ID, statefulRevision.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	compatibleRevision, err := app.SaveWorkflowRevision(context.Background(), workflow.ID, WorkflowRevisionSavePayload{
+		ExpectedActiveRevisionID: statefulRevision.ID, Graph: jsonMessage(testPluginWorkflowGraph),
+	}, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stateJSON string
+	if err := database.QueryRow(`SELECT state_json FROM workflow_node_states WHERE workflow_id = $1 AND node_instance_id = 'transform'`, workflow.ID).Scan(&stateJSON); err != nil || stateJSON != `{"saved": true}` {
+		t.Fatalf("compatible edit state = %q, err = %v", stateJSON, err)
+	}
+
+	if _, err := app.SaveWorkflowRevision(context.Background(), workflow.ID, WorkflowRevisionSavePayload{
+		ExpectedActiveRevisionID: compatibleRevision.ID, Graph: jsonMessage(blankWorkflowGraph),
+	}, principal); !errors.Is(err, ErrConflict) {
+		t.Fatalf("destructive save without reset error = %v", err)
+	}
+	if _, err := app.ApplyWorkflowLifecycle(context.Background(), workflow.ID, WorkflowLifecyclePayload{Action: "start"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.SaveWorkflowRevision(context.Background(), workflow.ID, WorkflowRevisionSavePayload{
+		ExpectedActiveRevisionID: compatibleRevision.ID, Graph: jsonMessage(blankWorkflowGraph),
+		ResetStateNodeInstanceIDs: []string{"transform"},
+	}, principal); !errors.Is(err, ErrConflict) {
+		t.Fatalf("running state reset error = %v", err)
+	}
+	if _, err := app.ApplyWorkflowLifecycle(context.Background(), workflow.ID, WorkflowLifecyclePayload{Action: "pause"}); err != nil {
+		t.Fatal(err)
+	}
+	resetRevision, err := app.SaveWorkflowRevision(context.Background(), workflow.ID, WorkflowRevisionSavePayload{
+		ExpectedActiveRevisionID: compatibleRevision.ID, Graph: jsonMessage(blankWorkflowGraph),
+		ResetStateNodeInstanceIDs: []string{"transform"},
+	}, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stateCount, revisionCount int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM workflow_node_states WHERE workflow_id = $1`, workflow.ID).Scan(&stateCount); err != nil || stateCount != 0 {
+		t.Fatalf("state count = %d, err = %v", stateCount, err)
+	}
+	if err := database.QueryRow(`SELECT COUNT(*) FROM workflow_revisions WHERE workflow_id = $1`, workflow.ID).Scan(&revisionCount); err != nil || revisionCount != 4 {
+		t.Fatalf("revision count = %d, err = %v", revisionCount, err)
+	}
+	detail, err := app.GetWorkflow(context.Background(), workflow.ID)
+	if err != nil || detail.ActiveRevisionID != resetRevision.ID || len(detail.StateNodeInstanceIDs) != 0 {
+		t.Fatalf("reset workflow = %#v, err = %v", detail, err)
+	}
+}
+
 func TestQuantWorkflowTemplatesCreateAndValidate(t *testing.T) {
 	app, _, ownerID := openWorkflowTestApp(t)
 	principal := &Principal{User: &db.SystemUser{ID: ownerID}}

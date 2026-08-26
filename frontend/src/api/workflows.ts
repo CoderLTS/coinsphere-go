@@ -56,6 +56,7 @@ export interface WorkflowDetail extends WorkflowItem {
     healthSummary: string
     updatedAt: string
   }
+  stateNodeInstanceIds: string[]
 }
 
 export interface WorkflowRevision {
@@ -230,6 +231,7 @@ export const saveWorkflowRevision = (
     expectedActiveRevisionId: number
     graph: WorkflowGraph
     secretChanges: WorkflowSecretChange[]
+    resetStateNodeInstanceIds: string[]
   }
 ) => request.post<WorkflowRevision>({ url: `/api/v1/workflows/${workflowId}/revisions`, params })
 
