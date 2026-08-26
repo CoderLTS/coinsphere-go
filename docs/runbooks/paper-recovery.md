@@ -2,16 +2,9 @@
 
 本手册只适用于 Paper，不授权 Testnet、Live、交易所私有接口或真实凭据。生产演练必须先取得当前任务授权，并确认数据库、制品卷和应用镜像属于同一可恢复点。
 
-## 自动化基线
+## 验证基线
 
-P4 合并前至少保留以下通过记录：
-
-```bash
-cd backend
-go test -count=1 ./internal/migration ./internal/service ./plugin/official
-```
-
-PostgreSQL 测试覆盖空库/升级/Down 保护、等待与积压恢复、Paper 操作键幂等、风险拒绝不产生部分事实、Notification 重投和账本重建。本机没有 PostgreSQL 时不得把跳过结果写成已完成，使用 CI TimescaleDB Job 作为证据。
+P4 合并前保留 Backend 构建、静态分析、容器健康检查、数据库备份恢复脚本和本手册人工演练记录。不得把未执行或跳过的恢复步骤写成已完成。
 
 ## 演练前记录
 

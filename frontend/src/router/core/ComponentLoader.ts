@@ -9,21 +9,13 @@
  */
 
 import { h } from 'vue'
+import { registeredFrontendPlugins } from '@/plugins'
 
 export class ComponentLoader {
   private modules: Record<string, () => Promise<any>>
 
   constructor() {
-    this.modules = {
-      '../../views/home/index.vue': () => import('../../views/home/index.vue'),
-      '../../views/workflows/index.vue': () => import('../../views/workflows/index.vue'),
-      '../../views/results/index.vue': () => import('../../views/results/index.vue'),
-      '../../views/system/user/index.vue': () => import('../../views/system/user/index.vue'),
-      '../../views/system/role/index.vue': () => import('../../views/system/role/index.vue'),
-      '../../views/system/menu/index.vue': () => import('../../views/system/menu/index.vue'),
-      '../../views/system/user-center/index.vue': () =>
-        import('../../views/system/user-center/index.vue')
-    }
+    this.modules = import.meta.glob('../../views/**/*.vue')
   }
 
   /**
@@ -32,6 +24,10 @@ export class ComponentLoader {
   load(componentPath: string): () => Promise<any> {
     if (!componentPath) {
       return this.createEmptyComponent()
+    }
+
+    if (componentPath.startsWith('plugin:')) {
+      return this.loadPluginPage(componentPath)
     }
 
     // 构建可能的路径
@@ -49,6 +45,19 @@ export class ComponentLoader {
     }
 
     return module
+  }
+
+  private loadPluginPage(componentPath: string): () => Promise<any> {
+    const parts = componentPath.slice('plugin:'.length).split('/')
+    const registration = registeredFrontendPlugins.find((plugin) => plugin.id === parts[0])
+    if (parts.length !== 2 || !registration) {
+      return this.createErrorComponent(componentPath)
+    }
+
+    return async () => {
+      const page = (await registration.load()).pages?.[parts[1]]
+      return page ? page() : this.createErrorComponent(componentPath)()
+    }
   }
 
   /**

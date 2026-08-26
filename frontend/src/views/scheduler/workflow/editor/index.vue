@@ -102,6 +102,7 @@
     fetchCreateWorkflowDefinition,
     fetchNodeDefinitions,
     fetchWorkflowDefinitionList,
+    fetchWorkflowDefinitionSaveContext,
     fetchWorkflowNodeTemplates,
     fetchWorkflowAgentOptions,
     fetchUpdateWorkflowDefinition,
@@ -1197,16 +1198,40 @@
       validating.value = false
     }
 
+    const payload = buildPayload()
+    let saveContext: Awaited<ReturnType<typeof fetchWorkflowDefinitionSaveContext>> | undefined
+    if (currentMode.value === 'edit' && definitionId.value) {
+      saveContext = await fetchWorkflowDefinitionSaveContext(definitionId.value, payload)
+      if (saveContext.resetStateNodeInstanceIds.length) {
+        if (saveContext.workflow.status !== 'paused') {
+          ElMessage.warning('请先暂停工作流，再保存需要重置节点状态的修改。')
+          return
+        }
+        try {
+          await ElMessageBox.confirm(
+            `保存将重置节点状态：${saveContext.resetStateNodeInstanceIds.join('、')}`,
+            '确认重置节点状态',
+            {
+              type: 'warning',
+              confirmButtonText: '重置并保存',
+              cancelButtonText: '取消'
+            }
+          )
+        } catch {
+          return
+        }
+      }
+    }
+
     saving.value = true
     try {
-      const payload = buildPayload()
       let result: WorkflowDefinitionItem
 
       if (currentMode.value === 'create') {
         result = await fetchCreateWorkflowDefinition(payload)
-      } else if (definitionId.value) {
+      } else if (definitionId.value && saveContext) {
         // 编辑任何版本都不会原地覆盖，而是由后端生成一个新的 definition version。
-        result = await fetchUpdateWorkflowDefinition(definitionId.value, payload)
+        result = await fetchUpdateWorkflowDefinition(definitionId.value, payload, saveContext)
       } else {
         throw new Error('缺少工作流定义 ID。')
       }

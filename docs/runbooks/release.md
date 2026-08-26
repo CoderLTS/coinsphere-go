@@ -26,7 +26,7 @@ CoinSphere 不再部署到 sub2api 或其他应用的 Compose 项目。发布只
 
 1. 目标 PR 合并到最新 `main`，CI 和最终只读复审通过。
 2. 涉及 Paper 时，按[数据库迁移手册](database-migrations.md)保存一致备份，并在发布记录中把目标 commit 记为 migration freeze 提交。
-3. 在 GitHub Actions 手工运行 `Release and deploy`，输入未使用的 `vX.Y.Z`。普通发布将 `reset_database` 留空；仅仓库所有者可以在 `v0.3.0` freeze Release 中按数据库迁移 Runbook 的四项条件，精确输入 `RESET coinsphere-go-timescale-data` 执行一次 V2 基线重置。
+3. 在 GitHub Actions 手工运行 `Release and deploy`，输入未使用的 `vX.Y.Z`。普通发布将 `reset_database` 留空；仅仓库所有者可以在 `v0.3.1` freeze Release 中按数据库迁移 Runbook 的四项条件，精确输入 `RESET coinsphere-go-timescale-data` 执行一次 V2 基线重置。
 4. 工作流构建 Backend/Web 固定 digest，生成 SBOM 和校验文件，并完成 CRITICAL 扫描。
 5. `deploy/production/deploy.sh` 拉取镜像，启动独立 TimescaleDB，执行目标镜像内 migration。
 6. 首次迁移时，脚本只停止并移除旧共享 Compose 中实际运行的 CoinSphere 服务，然后启动独立项目。

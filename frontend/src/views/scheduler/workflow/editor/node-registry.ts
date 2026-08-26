@@ -72,6 +72,10 @@ export function getNodeConfigSchema(typeCode: string): Record<string, any> {
   return registry.get(typeCode)?.configSchema || {}
 }
 
+export function getNodeUISchema(typeCode: string): Record<string, any> {
+  return registry.get(typeCode)?.uiSchema || {}
+}
+
 export const isStartTypeCode = (typeCode: string) => getNodeGraphKind(typeCode) === 'start'
 export const isBranchTypeCode = (typeCode: string) => getNodeGraphKind(typeCode) === 'branch'
 export const isLoopTypeCode = (typeCode: string) => getNodeGraphKind(typeCode) === 'loop'

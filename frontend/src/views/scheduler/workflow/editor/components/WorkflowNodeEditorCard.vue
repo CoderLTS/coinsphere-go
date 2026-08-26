@@ -257,6 +257,7 @@
             />
             <WorkflowSchemaFields
               :schema="configSchema"
+              :ui-schema="uiSchema"
               :config="localForm.config"
               :keys="['logic', 'conditions']"
               @update="handleSchemaFieldUpdate"
@@ -468,6 +469,7 @@
           <template v-else>
             <WorkflowSchemaFields
               :schema="configSchema"
+              :ui-schema="uiSchema"
               :config="localForm.config"
               @update="handleSchemaFieldUpdate"
             />
@@ -487,7 +489,7 @@
     WorkflowNotifyChannelOption,
     WorkflowNotifyTargetOption
   } from '../types'
-  import { getNodeConfigSchema } from '../node-registry'
+  import { getNodeConfigSchema, getNodeUISchema } from '../node-registry'
   import WorkflowSchemaFields from './WorkflowSchemaFields.vue'
 
   interface Props {
@@ -588,6 +590,7 @@
   // 后端下发的配置 schema：HTTP / 延迟 / 事件 / 遍历这几种「字段直译」的节点直接按它渲染表单，
   // 不再在本文件里逐个手写一遍。开始 / 任务 / 通知 / 条件有联动和自定义控件，仍走下面的定制模板。
   const configSchema = computed(() => getNodeConfigSchema(localForm.typeCode))
+  const uiSchema = computed(() => getNodeUISchema(localForm.typeCode))
 
   /** 当前选中的智能体：决定要不要显示「关联数据 id 路径」和「结构化分析」开关。 */
   const selectedAgent = computed(

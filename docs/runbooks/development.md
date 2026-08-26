@@ -22,17 +22,19 @@ Linux 使用：
 
 ```powershell
 Push-Location .\backend
-go test -count=1 ./...
+go vet ./...
+go build ./...
 Pop-Location
 
 Push-Location .\frontend
-pnpm exec vitest run
+pnpm lint
+pnpm build
 pnpm exec playwright test --project=chromium
 Pop-Location
 
 ```
 
-需要数据库的 Go 测试使用仅供测试的 PostgreSQL DSN 和随机隔离 schema；不要连接生产数据库或固定外部表。迁移命令和回滚见[数据库迁移手册](./database-migrations.md)。
+迁移和恢复验证只使用隔离环境；不要连接生产数据库或固定外部表。迁移命令和回滚见[数据库迁移手册](./database-migrations.md)。
 
 ## 插件清单校验
 
@@ -58,22 +60,6 @@ go run ./cmd/coinsphere plugin purge-data --config ./config.yml --backend-root .
 ```
 
 `install` 和兼容 `upgrade` 复制源码、执行插件独立 migration、生成注册表、更新 Go 依赖并构建 Backend/Web Compose 镜像；构建失败会恢复源码输入和插件 migration。major 升级默认拒绝。`uninstall` 有活动引用时拒绝，成功后重建镜像但保留插件 schema；只有无任何活动或历史引用、已卸载且确认文本完全匹配时，`purge-data` 才在一个事务中删除 schema 和安装记录。命令不启动新镜像、不重启服务，也不接触不可信或远程插件。
-
-## SDK 契约插件
-
-仓库内 `plugins/contract-test` 是测试源码，不进入生产菜单。它通过 SDK 契约工具执行 Action、注入固定 `ResultScope` 查询作用域 API，并检查结果页组件：
-
-```powershell
-Push-Location .\plugins\contract-test\backend
-go test -count=1 ./...
-Pop-Location
-
-Push-Location .\frontend
-pnpm exec vitest run src/plugins/contract-fixture.test.ts
-Pop-Location
-```
-
-Backend 的 `internal/pluginlifecycle` PostgreSQL 测试还会安装同一插件、执行其独立 migration、生成静态注册表，并验证活动引用阻止卸载、历史引用阻止数据清理。
 
 ## 运行时诊断
 

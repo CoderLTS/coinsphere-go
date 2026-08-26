@@ -198,10 +198,13 @@ export function buildWorkflowMaterialGroups(
 ): WorkflowMaterialGroup[] {
   const materialItems: WorkflowMaterialItem[] = nodeDefinitions.map((definition) => {
     const meta = MATERIAL_META[definition.typeCode]
+    const kind =
+      meta?.kind ||
+      (definition.kind === 'start' ? 'start' : definition.kind === 'terminal' ? 'end' : 'generic')
     return {
       typeCode: definition.typeCode,
-      kind: meta?.kind || 'generic',
-      group: meta?.group || FALLBACK_GROUP,
+      kind,
+      group: meta?.group || (kind === 'start' ? '开始' : kind === 'end' ? '结束' : FALLBACK_GROUP),
       title: definition.label,
       description: meta?.description || definition.typeCode,
       color: meta?.color || '#64748b',

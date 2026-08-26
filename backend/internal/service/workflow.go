@@ -175,6 +175,11 @@ type WorkflowCreatePayload struct {
 	TemplateKey string `json:"templateKey"`
 }
 
+type WorkflowUpdatePayload struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
 type WorkflowRevisionSavePayload struct {
 	ExpectedActiveRevisionID  int64                  `json:"expectedActiveRevisionId"`
 	Graph                     json.RawMessage        `json:"graph"`
@@ -389,6 +394,37 @@ func (a *App) GetWorkflow(ctx context.Context, workflowID int64) (WorkflowDetail
 		},
 		StateNodeInstanceIDs: stateNodeInstanceIDs,
 	}, nil
+}
+
+func (a *App) UpdateWorkflow(ctx context.Context, workflowID int64, payload WorkflowUpdatePayload) (WorkflowDetail, error) {
+	name := strings.TrimSpace(payload.Name)
+	description := strings.TrimSpace(payload.Description)
+	if name == "" || utf8.RuneCountInString(name) > 120 {
+		return WorkflowDetail{}, errors.New("workflow name must contain 1 to 120 characters")
+	}
+	if utf8.RuneCountInString(description) > 500 {
+		return WorkflowDetail{}, errors.New("workflow description must not exceed 500 characters")
+	}
+	database := a.DB.WithContext(ctx)
+	result := database.Model(&db.Workflow{}).
+		Where("id = ? AND status <> ?", workflowID, WorkflowStatusArchived).
+		Updates(map[string]any{
+			"name": name, "description": description, "updated_at": time.Now().UTC(),
+		})
+	if result.Error != nil {
+		return WorkflowDetail{}, errors.New("update workflow failed")
+	}
+	if result.RowsAffected == 0 {
+		var workflow db.Workflow
+		if err := database.Select("status").First(&workflow, workflowID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return WorkflowDetail{}, fmt.Errorf("%w: workflow", ErrNotFound)
+			}
+			return WorkflowDetail{}, errors.New("load workflow failed")
+		}
+		return WorkflowDetail{}, fmt.Errorf("%w: archived workflow is read-only", ErrConflict)
+	}
+	return a.GetWorkflow(ctx, workflowID)
 }
 
 func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payload WorkflowRevisionSavePayload, principal *Principal) (WorkflowRevisionView, error) {

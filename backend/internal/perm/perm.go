@@ -4,6 +4,18 @@ package perm
 const (
 	HomeView = "home.view"
 
+	SchedulerWorkflowDefinitionsView   = "scheduler.workflow_definitions.view"
+	SchedulerWorkflowDefinitionsCreate = "scheduler.workflow_definitions.create"
+	SchedulerWorkflowDefinitionsUpdate = "scheduler.workflow_definitions.update"
+	SchedulerWorkflowDefinitionsDelete = "scheduler.workflow_definitions.delete"
+	SchedulerWorkflowDefinitionsRun    = "scheduler.workflow_definitions.run"
+	SchedulerWorkflowRuntimeView       = "scheduler.workflow_runtime.view"
+	SchedulerWorkflowRuntimeActivate   = "scheduler.workflow_runtime.activate"
+	SchedulerWorkflowRuntimeUpdate     = "scheduler.workflow_runtime.update"
+	SchedulerWorkflowExecutionsView    = "scheduler.workflow_executions.view"
+
+	DataMarketView = "data.market.view"
+
 	SystemUsersView              = "system.users.view"
 	SystemUsersCreate            = "system.users.create"
 	SystemUsersUpdate            = "system.users.update"
@@ -27,8 +39,13 @@ const (
 )
 
 var MenuPermissionCodes = map[string]string{
-	"Home": HomeView, "System": "", "User": SystemUsersView,
-	"Role": SystemRolesView, "Menus": SystemMenusView, "Results": ResultViewsAccess, "UserCenter": "",
+	"Home": HomeView, "SchedulerCenter": "",
+	"WorkflowDefinitions": SchedulerWorkflowDefinitionsView,
+	"WorkflowExecutions":  SchedulerWorkflowExecutionsView,
+	"NodeDefinitions":     SchedulerWorkflowDefinitionsView, "DataCenter": "",
+	"MarketMetadata": DataMarketView, "MarketChart": DataMarketView,
+	"System": "", "User": SystemUsersView, "Role": SystemRolesView,
+	"Menus": SystemMenusView, "UserCenter": "",
 }
 
 type ButtonSpec struct {
@@ -38,6 +55,16 @@ type ButtonSpec struct {
 }
 
 var ButtonSpecs = map[string][]ButtonSpec{
+	"WorkflowDefinitions": {
+		{"create", SchedulerWorkflowDefinitionsCreate, "新建工作流定义"},
+		{"update", SchedulerWorkflowDefinitionsUpdate, "编辑工作流定义"},
+		{"delete", SchedulerWorkflowDefinitionsDelete, "删除版本"},
+		{"run", SchedulerWorkflowDefinitionsRun, "手动运行"},
+		{"runtime", SchedulerWorkflowRuntimeView, "查看运行态"},
+		{"activate", SchedulerWorkflowRuntimeActivate, "激活版本"},
+		{"update_runtime", SchedulerWorkflowRuntimeUpdate, "更新入口状态"},
+	},
+	"WorkflowExecutions": {{"view", SchedulerWorkflowExecutionsView, "查看执行记录"}},
 	"User": {
 		{"create", SystemUsersCreate, "新增"},
 		{"update", SystemUsersUpdate, "编辑"},

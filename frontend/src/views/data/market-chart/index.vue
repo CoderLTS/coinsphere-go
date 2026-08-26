@@ -17,7 +17,6 @@
       <div class="filter-group">
         <span class="filter-label">查看方式</span>
         <ElRadioGroup v-model="viewMode" @change="handleModeChange">
-          <ElRadioButton label="strategy">策略视图</ElRadioButton>
           <ElRadioButton label="market">币种视图</ElRadioButton>
         </ElRadioGroup>
       </div>
@@ -246,7 +245,6 @@
     type MarketSymbol
   } from '@/api/market'
   import {
-    fetchStrategyInstances,
     fetchStrategySignals,
     type StrategyInstanceItem,
     type StrategySignalItem
@@ -257,7 +255,7 @@
 
   const route = useRoute()
   const intervals: CandleInterval[] = ['1m', '5m', '15m', '1h', '4h', '1d']
-  const viewMode = ref<'strategy' | 'market'>('strategy')
+  const viewMode = ref<'strategy' | 'market'>('market')
   const selectedStrategyId = ref('')
   const selectedInstrumentId = ref('')
   const selectedInterval = ref<CandleInterval>('1h')
@@ -360,7 +358,7 @@
           : Promise.resolve({ records: [] })
       ]
       const [candleResult, signalResult] = await Promise.all(requests)
-      candles.value = [...candleResult.records].reverse()
+      candles.value = candleResult.records
       signals.value = signalResult.records || []
     } finally {
       loading.value = false
@@ -387,7 +385,7 @@
     try {
       const [symbolResult, strategyResult] = await Promise.all([
         fetchMarketSymbols({ limit: 200, status: 'trading' }),
-        fetchStrategyInstances({ limit: 200 })
+        Promise.resolve({ records: [] as StrategyInstanceItem[] })
       ])
       symbols.value = symbolResult.records
       strategyInstances.value = strategyResult.records

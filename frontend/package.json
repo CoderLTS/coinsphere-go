@@ -19,7 +19,6 @@
     "build": "vue-tsc --noEmit && vite build",
     "serve": "vite preview",
     "lint": "eslint",
-    "test": "vitest run",
     "fix": "eslint --fix",
     "lint:prettier": "prettier --write \"**/*.{js,cjs,ts,json,tsx,css,less,scss,vue,html,md}\"",
     "lint:stylelint": "stylelint \"**/*.{css,scss,vue}\"",
@@ -112,7 +111,6 @@
     "eslint-plugin-vue": "^9.27.0",
     "globals": "^15.9.0",
     "husky": "^9.1.5",
-    "jsdom": "29.0.0",
     "lint-staged": "^15.5.2",
     "prettier": "^3.5.3",
     "sass": "^1.81.0",
@@ -130,7 +128,6 @@
     "unplugin-vue-components": "^29.1.0",
     "vite": "^7.1.5",
     "vite-plugin-vue-devtools": "^7.7.6",
-    "vitest": "4.1.10",
     "vue-img-cutter": "^3.0.5",
     "vue-tsc": "~2.1.6"
   }

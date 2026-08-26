@@ -38,7 +38,7 @@ V2 保持 `Vue Web + Go App + PostgreSQL/TimescaleDB`。PostgreSQL 同时保存�
 
 - Action 节点和长运行 Trigger 节点；
 - JSON Schema 2020-12、UI Schema 和可选 Vue 配置组件；
-- API 路由和结果页；
+- API 路由、独立功能页和结果页；
 - PostgreSQL migration；
 - 策略等插件专属公共接口实现。
 

@@ -30,7 +30,7 @@ go run ./cmd/migrate -config ./config.yml -direction down -steps 1
 
 满足条件后，停止 CoinSphere Backend/Web，定向重建 CoinSphere 自有数据库或数据卷，再由目标镜像执行 `coinsphere-migrate -direction up`。禁止手工改写 `schema_migrations` 来伪装重置。
 
-`v0.3.0` freeze Release 需要执行一次 V2 基线重置，必须由仓库所有者在 `Release and deploy` 的 `reset_database` 输入框精确填写 `RESET coinsphere-go-timescale-data`。工作流在停止独立 Compose 后，将数据库、制品、上传和静态资源卷保存到服务器部署目录下的 `backups/<UTC 时间>.<随机后缀>/`，验证归档与 `SHA256SUMS` 后只删除 `coinsphere-go-timescale-data`。候选部署失败时再次验证备份并自动恢复同一组卷和原应用版本；自动恢复失败则保持备份并停止继续操作，按发布 Runbook 人工恢复。留空时保持普通 Up 部署，不接触数据卷；其他版本拒绝使用该一次性入口。
+`v0.3.1` freeze Release 需要执行一次 V2 基线重置，必须由仓库所有者在 `Release and deploy` 的 `reset_database` 输入框精确填写 `RESET coinsphere-go-timescale-data`。工作流在停止独立 Compose 后，将数据库、制品、上传和静态资源卷保存到服务器部署目录下的 `backups/<UTC 时间>.<随机后缀>/`，验证归档与 `SHA256SUMS` 后只删除 `coinsphere-go-timescale-data`。候选部署失败时再次验证备份并自动恢复同一组卷和原应用版本；自动恢复失败则保持备份并停止继续操作，按发布 Runbook 人工恢复。留空时保持普通 Up 部署，不接触数据卷；其他版本拒绝使用该一次性入口。
 
 ## 变更规则
 
@@ -48,13 +48,7 @@ go run ./cmd/migrate -config ./config.yml -direction down -steps 1
 
 ## 验证
 
-```bash
-cd backend
-COINSPHERE_TEST_POSTGRES_DSN='postgres://coinsphere:test-only@127.0.0.1:5432/coinsphere_test?sslmode=disable' \
-  go test -count=1 ./internal/migration ./internal/db ./internal/service ./cmd/migrate
-```
-
-最小验收范围是空库 Up、重复 Up、空库 Down、重新 Up、精确表集合、关键约束/索引、Quant hypertable、数据库超前拒绝、非空库 Down 保护和 Paper 账本重建。恢复演练见 [Paper 恢复与观察](paper-recovery.md)。
+数据库变更在隔离环境通过 migration runner、容器启动和恢复演练验收。最小范围是空库 Up、重复 Up、关键约束/索引、Quant hypertable、数据库超前拒绝、非空库保护和 Paper 账本重建；不得连接生产数据库执行验证。恢复演练见 [Paper 恢复与观察](paper-recovery.md)。
 
 ## 发布与回滚
 

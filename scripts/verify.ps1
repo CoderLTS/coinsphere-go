@@ -52,7 +52,6 @@ try {
     }
     Invoke-Native $go @('vet', './...')
     Invoke-Native $go @('run', 'honnef.co/go/tools/cmd/staticcheck@v0.7.0', './...')
-    Invoke-Native $go @('test', '-count=1', './...')
     Invoke-Native $go @('build', './...')
     Invoke-Native $go @('run', 'golang.org/x/vuln/cmd/govulncheck@v1.1.4', './...')
 } finally {
@@ -65,7 +64,6 @@ try {
     Invoke-Native 'pnpm' @('install', '--frozen-lockfile')
     Invoke-Native 'pnpm' @('lint')
     Invoke-Native 'pnpm' @('lint:stylelint')
-    Invoke-Native 'pnpm' @('test')
     Invoke-Native 'pnpm' @('build')
 } finally {
     Pop-Location

@@ -33,10 +33,6 @@ func main() {
 	}
 }
 
-func run(args []string, output io.Writer) error {
-	return runContext(context.Background(), args, output)
-}
-
 func runContext(parent context.Context, args []string, output io.Writer) error {
 	if len(args) < 2 || args[0] != "plugin" {
 		return errors.New("usage: coinsphere plugin <validate|install|upgrade|uninstall|purge-data>")
