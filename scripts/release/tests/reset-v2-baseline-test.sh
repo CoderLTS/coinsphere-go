@@ -141,6 +141,7 @@ export MOCK_DOCKER_LOG=$TEST_DIR/docker.log
 export MOCK_VOLUME_STATE_DIR=$STATE_DIR
 export MOCK_BACKEND_IMAGE=$REGISTRY/coinsphere/backend@sha256:$BACKEND_DIGEST
 export MOCK_WEB_IMAGE=$REGISTRY/coinsphere/web@sha256:$WEB_DIGEST
+unset COINSPHERE_DEPLOY_DIR COINSPHERE_STACK_ROOT
 
 status=0
 bash "$ROOT_DIR/scripts/release/reset-v2-baseline.sh" \
@@ -151,8 +152,7 @@ if [[ $status -ne 2 || -e $MOCK_DOCKER_LOG ]]; then
   exit 1
 fi
 
-if ! COINSPHERE_DEPLOY_DIR=$DEPLOY_DIR \
-  DOCKER_CONFIG=$TEST_DIR/docker-config \
+if ! DOCKER_CONFIG=$TEST_DIR/docker-config \
   COINSPHERE_REGISTRY=$REGISTRY \
   bash "$ROOT_DIR/scripts/release/reset-v2-baseline.sh" \
     "$VERSION" "$TEST_DIR/release-manifest.json" 'RESET coinsphere-go-timescale-data' \
@@ -194,7 +194,6 @@ done
 touch "$TEST_DIR/fail-migration"
 export MOCK_FAIL_MIGRATION_FILE=$TEST_DIR/fail-migration
 status=0
-COINSPHERE_DEPLOY_DIR=$DEPLOY_DIR \
 DOCKER_CONFIG=$TEST_DIR/docker-config \
 COINSPHERE_REGISTRY=$REGISTRY \
 bash "$ROOT_DIR/scripts/release/reset-v2-baseline.sh" \
