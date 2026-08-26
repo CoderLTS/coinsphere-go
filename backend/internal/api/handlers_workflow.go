@@ -101,6 +101,22 @@ func (s *Server) handleListWorkflowNodeDefinitions(w http.ResponseWriter, _ *htt
 	ok(w, M{"items": s.App.ListWorkflowNodeDefinitions()})
 }
 
+func (s *Server) handleValidateWorkflowGraph(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxWorkflowRequestBytes)
+	payload, err := decodeBody[struct {
+		Graph json.RawMessage `json:"graph"`
+	}](r)
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.App.ValidateWorkflowGraph(payload.Graph); err != nil {
+		ok(w, M{"valid": false, "issues": []M{{"scope": "graph", "level": "error", "message": err.Error()}}})
+		return
+	}
+	ok(w, M{"valid": true, "issues": []M{}})
+}
+
 func (s *Server) handleListWorkflows(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
 	items, err := s.App.ListWorkflows(r.Context(), queryStr(r, "status"))
 	respond(w, M{"items": items}, err, "")
@@ -124,6 +140,22 @@ func (s *Server) handleGetWorkflow(w http.ResponseWriter, r *http.Request, _ *se
 		return
 	}
 	data, err := s.App.GetWorkflow(r.Context(), workflowID)
+	respond(w, data, err, "")
+}
+
+func (s *Server) handleUpdateWorkflow(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
+	workflowID, err := pathInt64(r, "workflowId")
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxWorkflowRequestBytes)
+	payload, err := decodeBody[service.WorkflowUpdatePayload](r)
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	data, err := s.App.UpdateWorkflow(r.Context(), workflowID, *payload)
 	respond(w, data, err, "")
 }
 

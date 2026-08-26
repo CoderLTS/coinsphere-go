@@ -49,18 +49,18 @@ const homeMenu = {
   }
 }
 
-const workflowMenu = {
+const schedulerMenu = {
   id: 2,
   parentId: null,
-  path: '/workflows',
-  name: 'Workflows',
-  component: '/workflows/index',
+  path: '/scheduler',
+  name: 'SchedulerCenter',
+  component: '/index/index',
   updatedAt: createdAt,
   meta: {
-    title: '工作流工作台',
+    title: '工作流调度',
     i18nKey: '',
-    i18nTexts: { zh: '工作流工作台', en: 'Workflow Workbench' },
-    keepAlive: true,
+    i18nTexts: { zh: '工作流调度', en: 'Workflow Scheduler' },
+    keepAlive: false,
     isHide: false,
     isHideTab: false,
     isFullPage: false,
@@ -69,7 +69,122 @@ const workflowMenu = {
     isEnable: true,
     sort: 20,
     roles: ['R_SUPER']
-  }
+  },
+  children: [
+    {
+      id: 3,
+      parentId: 2,
+      path: '/scheduler/node-definition',
+      name: 'NodeDefinitions',
+      component: '/scheduler/node-definition/index',
+      updatedAt: createdAt,
+      meta: {
+        title: '节点定义',
+        i18nKey: '',
+        i18nTexts: { zh: '节点定义', en: 'Node Definitions' },
+        keepAlive: true,
+        isHide: false,
+        isHideTab: false,
+        isFullPage: false,
+        isIframe: false,
+        fixedTab: false,
+        isEnable: true,
+        sort: 10,
+        roles: ['R_SUPER']
+      }
+    },
+    {
+      id: 4,
+      parentId: 2,
+      path: '/scheduler/definition',
+      name: 'WorkflowDefinitions',
+      component: '/scheduler/workflow/index',
+      updatedAt: createdAt,
+      meta: {
+        title: '工作流定义',
+        i18nKey: '',
+        i18nTexts: { zh: '工作流定义', en: 'Workflow Definitions' },
+        keepAlive: true,
+        isHide: false,
+        isHideTab: false,
+        isFullPage: false,
+        isIframe: false,
+        fixedTab: false,
+        isEnable: true,
+        sort: 20,
+        roles: ['R_SUPER']
+      }
+    }
+  ]
+}
+
+const dataMenu = {
+  id: 5,
+  parentId: null,
+  path: '/data',
+  name: 'DataCenter',
+  component: '/index/index',
+  updatedAt: createdAt,
+  meta: {
+    title: '数据管理',
+    i18nKey: '',
+    i18nTexts: { zh: '数据管理', en: 'Data Management' },
+    keepAlive: false,
+    isHide: false,
+    isHideTab: false,
+    isFullPage: false,
+    isIframe: false,
+    fixedTab: false,
+    isEnable: true,
+    sort: 30,
+    roles: ['R_SUPER']
+  },
+  children: [
+    {
+      id: 6,
+      parentId: 5,
+      path: '/data/market-metadata',
+      name: 'MarketMetadata',
+      component: '/data/market-metadata/index',
+      updatedAt: createdAt,
+      meta: {
+        title: '币种数据',
+        i18nKey: '',
+        i18nTexts: { zh: '币种数据', en: 'Instruments' },
+        keepAlive: true,
+        isHide: false,
+        isHideTab: false,
+        isFullPage: false,
+        isIframe: false,
+        fixedTab: false,
+        isEnable: true,
+        sort: 10,
+        roles: ['R_SUPER']
+      }
+    },
+    {
+      id: 7,
+      parentId: 5,
+      path: '/data/market-chart',
+      name: 'MarketChart',
+      component: '/data/market-chart/index',
+      updatedAt: createdAt,
+      meta: {
+        title: 'K 线详情',
+        i18nKey: '',
+        i18nTexts: { zh: 'K 线详情', en: 'Candles' },
+        keepAlive: false,
+        isHide: true,
+        isHideTab: false,
+        isFullPage: false,
+        isIframe: false,
+        fixedTab: false,
+        isEnable: true,
+        sort: 20,
+        roles: ['R_SUPER']
+      }
+    }
+  ]
 }
 
 const workflow = {
@@ -222,7 +337,7 @@ const nodeDefinitions = ['core.manual', 'core.constant', 'core.end'].map((type) 
 function userInfo(accessMode: AccessMode) {
   const authenticated = accessMode === 'authenticated'
   return {
-    permissions: [],
+    permissions: authenticated ? ['scheduler.workflow_definitions.update'] : [],
     roleCodes: [authenticated ? 'R_SUPER' : 'R_GUEST'],
     userId: authenticated ? 1 : 0,
     username: authenticated ? 'e2e-user' : 'guest',
@@ -320,7 +435,7 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
     if (method === 'GET' && path === '/api/v1/system/menus') {
       await fulfillApi(
         route,
-        accessMode === 'authenticated' ? [homeMenu, workflowMenu] : [homeMenu]
+        accessMode === 'authenticated' ? [homeMenu, schedulerMenu, dataMenu] : [homeMenu]
       )
       return
     }
@@ -336,6 +451,18 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
       await fulfillApi(route, { items: [] })
       return
     }
+    if (method === 'GET' && path === '/api/v1/strategies') {
+      await fulfillApi(route, { records: [] })
+      return
+    }
+    if (method === 'GET' && path === '/api/v1/trading/accounts') {
+      await fulfillApi(route, [])
+      return
+    }
+    if (method === 'GET' && path === '/api/v1/notification-channels') {
+      await fulfillApi(route, [])
+      return
+    }
     if (method === 'GET' && path === '/api/v1/workflows/7') {
       await fulfillApi(route, workflow)
       return
@@ -346,6 +473,10 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
     }
     if (method === 'GET' && path === '/api/v1/workflows/7/revisions/11') {
       await fulfillApi(route, workflowRevision)
+      return
+    }
+    if (method === 'GET' && path === '/api/v1/workflows/7/batches') {
+      await fulfillApi(route, { items: [] })
       return
     }
     if (method === 'GET' && path === '/api/v1/workflows/7/activity') {
@@ -364,6 +495,43 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
         triggerType: 'manual',
         status: 'queued',
         triggeredAt: createdAt
+      })
+      return
+    }
+    if (method === 'GET' && path === '/api/v1/plugins/official.quant/instruments') {
+      await fulfillApi(route, {
+        items: [
+          {
+            market: 'spot',
+            symbol: 'BTCUSDT',
+            baseAsset: 'BTC',
+            quoteAsset: 'USDT',
+            status: 'TRADING',
+            priceTick: '0.01',
+            quantityStep: '0.00001',
+            minQuantity: '0.00001',
+            updatedAt: createdAt
+          }
+        ]
+      })
+      return
+    }
+    if (method === 'GET' && path === '/api/v1/plugins/official.quant/candles') {
+      await fulfillApi(route, {
+        items: [
+          {
+            market: 'spot',
+            instrument: 'BTCUSDT',
+            interval: '1h',
+            openTime: '2026-08-01T00:00:00Z',
+            closeTime: '2026-08-01T00:59:59Z',
+            open: '100',
+            high: '110',
+            low: '90',
+            close: '105',
+            volume: '12.5'
+          }
+        ]
       })
       return
     }
@@ -480,60 +648,73 @@ test('匿名访问工作流编辑器时被登录边界拦截', async ({ page }) 
   expect(backend.unexpectedApiCalls).toEqual([])
 })
 
-test('授权用户访问已撤下工作流路径时回退首页', async ({ page }) => {
+test('授权用户访问已撤下共享结果路径时回退首页', async ({ page }) => {
   const backend = await installBackendMocks(page, 'authenticated')
 
-  await loginAsTestUser(page, '/scheduler/workflow/create')
+  await loginAsTestUser(page, '/results')
 
   await expect(page.getByRole('heading', { name: '系统总览', exact: true })).toBeVisible()
-  await expect(page.getByText('新建工作流定义', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('共享结果', { exact: true })).toHaveCount(0)
   expect(backend.schedulerApiCalls).toEqual([])
   expect(backend.authApiCalls).toEqual(['POST /api/v1/auth/login'])
   expect(backend.unexpectedApiCalls).toEqual([])
 })
 
-test('超级管理员可以使用 Schema 工作流工作台且移动端只读', async ({ page }) => {
+test('超级管理员可以使用原节点列表页面', async ({ page }) => {
   const backend = await installBackendMocks(page, 'authenticated')
 
-  await loginAsTestUser(page, '/workflows')
+  await loginAsTestUser(page, '/scheduler/node-definition')
 
-  await expect(page.getByRole('heading', { name: '批处理示例', exact: true })).toBeVisible()
-  await expect(page.getByText('节点目录', { exact: true })).toBeVisible()
-  await expect(
-    page.locator('.node-catalog').getByText('core.manual@1.0.0', { exact: true })
-  ).toBeVisible()
-  await expect(page.getByText('Node inspector', { exact: true })).toBeVisible()
-  await expect(page.getByText('运行活动', { exact: true })).toBeVisible()
-  await expect(
-    page.locator('.activity-dock').getByText('批次执行成功', { exact: true })
-  ).toBeVisible()
-  await expect(
-    page.locator('.batch-path').getByText('manual-trigger', { exact: true })
-  ).toBeVisible()
-  await page.getByRole('button', { name: '立即运行', exact: true }).click()
-  await expect(page.getByText('批次 #21 已进入队列', { exact: true })).toBeVisible()
-
-  await page.setViewportSize({ width: 390, height: 844 })
-  await expect(page.locator('.mobile-activity')).toBeVisible()
-  await expect(page.locator('.workbench-grid')).toBeHidden()
-  await expect(
-    page.locator('.mobile-activity__summary').getByText('R1', { exact: true })
-  ).toBeVisible()
-  await expect(
-    page.locator('.mobile-activity').getByText('批次执行成功', { exact: true })
-  ).toBeVisible()
+  await expect(page.getByRole('heading', { name: '节点定义', exact: true })).toBeVisible()
+  await expect(page.getByRole('tab', { name: '内置节点', exact: true })).toBeVisible()
+  await expect(page.getByText('手动开始', { exact: true })).toBeVisible()
 
   expect(backend.schedulerApiCalls).toEqual(
+    expect.arrayContaining(['GET /api/v1/workflows/node-definitions'])
+  )
+  expect(backend.unexpectedApiCalls).toEqual([])
+})
+
+test('超级管理员可以使用原工作流列表页面', async ({ page }) => {
+  const backend = await installBackendMocks(page, 'authenticated')
+
+  await loginAsTestUser(page, '/scheduler/definition')
+  await expect(page.getByText('批处理示例', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '查看执行记录', exact: true })).toBeVisible()
+  expect(backend.unexpectedApiCalls).toEqual([])
+})
+
+test('超级管理员可以使用原工作流编辑器', async ({ page }) => {
+  const backend = await installBackendMocks(page, 'authenticated')
+
+  await loginAsTestUser(page, '/scheduler/workflow/7/edit')
+
+  await expect(page.getByRole('button', { name: '保存定义', exact: true })).toBeVisible()
+  await expect(page.locator('.workflow-canvas__graph .x6-graph-svg')).toBeVisible()
+  expect(backend.schedulerApiCalls).toEqual(
     expect.arrayContaining([
-      'GET /api/v1/workflows',
       'GET /api/v1/workflows/node-definitions',
       'GET /api/v1/workflows/7',
-      'GET /api/v1/workflows/7/revisions',
-      'GET /api/v1/workflows/7/revisions/11',
-      'GET /api/v1/workflows/7/activity',
-      'GET /api/v1/batches/21',
-      'POST /api/v1/workflows/7/batches'
+      'GET /api/v1/workflows/7/revisions'
     ])
   )
   expect(backend.unexpectedApiCalls).toEqual([])
+})
+
+test('超级管理员可以使用原币种元数据页面', async ({ page }) => {
+  const calls = await installBackendMocks(page, 'authenticated')
+  await loginAsTestUser(page, '/data/market-metadata')
+
+  await expect(page.getByRole('heading', { name: '币种元数据', exact: true })).toBeVisible()
+  await expect(page.getByText('BTCUSDT', { exact: true }).first()).toBeVisible()
+  expect(calls.unexpectedApiCalls).toEqual([])
+})
+
+test('超级管理员可以使用原 K 线详情页面', async ({ page }) => {
+  const calls = await installBackendMocks(page, 'authenticated')
+  await loginAsTestUser(page, '/data/market-chart')
+
+  await expect(page.getByRole('heading', { name: 'K 线与策略信号', exact: true })).toBeVisible()
+  await expect(page.getByText('BTCUSDT', { exact: true }).first()).toBeVisible()
+  expect(calls.unexpectedApiCalls).toEqual([])
 })

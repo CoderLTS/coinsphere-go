@@ -359,7 +359,6 @@
     fetchMarketSymbols,
     fetchMarketSyncSettings,
     fetchMarketSyncStatus,
-    fetchRunMarketSync,
     fetchUpdateMarketSyncSettings,
     type MarketStatus,
     type MarketSymbol,
@@ -368,13 +367,11 @@
     type MarketType,
     type QuoteAsset
   } from '@/api/market'
-  import { useAuth } from '@/hooks/core/useAuth'
 
   defineOptions({ name: 'MarketMetadataPage' })
 
   const router = useRouter()
-  const { hasAuth } = useAuth()
-  const canManage = computed(() => hasAuth('data.market.manage'))
+  const canManage = computed(() => false)
   const settingsSaving = ref(false)
   const proxyChecking = ref(false)
   const syncStarting = ref(false)
@@ -383,7 +380,6 @@
   const nextCursor = ref('')
   const hasMore = ref(false)
   const symbolTotal = ref(0)
-  const pollTimer = ref<ReturnType<typeof setInterval> | null>(null)
   const settings = reactive<
     Pick<
       MarketSyncSettings,
@@ -626,33 +622,12 @@
     }
   }
 
-  const stopPolling = () => {
-    if (pollTimer.value) clearInterval(pollTimer.value)
-    pollTimer.value = null
-  }
-
-  const refreshStatus = async () => {
-    const nextStatus = await fetchMarketSyncStatus()
-    Object.assign(syncStatus, nextStatus)
-    if (!isSyncing.value) {
-      stopPolling()
-      if (nextStatus.lastExecution?.status === 'success') void loadSymbols()
-    }
-  }
-
   const runSync = async () => {
     if (!canManage.value) {
-      ElMessage.warning('当前账号没有管理同步范围的权限')
+      ElMessage.warning('行情采集由工作流定义管理')
       return
     }
-    syncStarting.value = true
-    try {
-      syncStatus.lastExecution = await fetchRunMarketSync()
-      stopPolling()
-      pollTimer.value = setInterval(() => void refreshStatus(), 2000)
-    } finally {
-      syncStarting.value = false
-    }
+    await router.push('/scheduler/definition')
   }
 
   onMounted(async () => {
@@ -662,8 +637,6 @@
       // 请求层已显示错误；页面保留可操作的空状态。
     }
   })
-
-  onBeforeUnmount(stopPolling)
 </script>
 
 <style scoped lang="scss">

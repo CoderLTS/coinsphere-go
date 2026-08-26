@@ -22,8 +22,8 @@ DATABASE_VOLUME=coinsphere-go-timescale-data
   echo "版本号格式无效" >&2
   exit 2
 }
-[[ $VERSION == v0.3.0 ]] || {
-  echo "V2 基线重置只允许用于 v0.3.0 freeze Release" >&2
+[[ $VERSION == v0.3.1 ]] || {
+  echo "V2 基线重置只允许用于 v0.3.1 freeze Release" >&2
   exit 2
 }
 [[ -f $MANIFEST_FILE && ! -L $MANIFEST_FILE ]] || {

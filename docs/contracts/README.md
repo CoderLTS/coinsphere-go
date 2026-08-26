@@ -20,33 +20,35 @@
 
 ## 工作流 P1-P4
 
-| 路由                                                        | 语义                                   |
-| ----------------------------------------------------------- | -------------------------------------- |
-| `GET /api/v1/workflows/templates`                           | 列出当前可创建的批次、事件和连续流模板 |
-| `POST /api/v1/events`                                       | 发布 CloudEvents 1.0 结构化 JSON       |
-| `POST /api/v1/webhooks/{workflowId}`                        | 通过工作流 Secret 发布 Webhook 事件    |
-| `GET /api/v1/human-tasks`                                   | 查询待处理人工任务                     |
-| `POST /api/v1/human-tasks/{taskId}`                         | 一次性批准或拒绝人工任务               |
-| `GET /api/v1/workflows/node-definitions`                    | 列出核心与编译期插件节点 Schema        |
-| `GET/POST /api/v1/workflows`                                | 列表，或从模板创建工作流及初始修订     |
-| `GET /api/v1/workflows/{workflowId}`                        | 读取元数据、活动修订和唯一运行实例摘要 |
-| `GET/POST /api/v1/workflows/{workflowId}/revisions`         | 列表，或保存新不可变修订               |
-| `GET /api/v1/workflows/{workflowId}/revisions/{revisionId}` | 读取固定修订                           |
-| `POST /api/v1/workflows/{workflowId}/lifecycle`             | 执行 `start`、`pause` 或 `archive`     |
-| `GET/POST /api/v1/workflows/{workflowId}/batches`           | 最近批次摘要，或创建手工批次           |
-| `GET /api/v1/workflows/{workflowId}/activity`               | 按单调游标读取持久活动                 |
-| `GET /api/v1/workflows/{workflowId}/activity/ws`            | 游标补齐后推送活动增量                 |
-| `GET /api/v1/batches/{batchId}`                             | 读取批次、节点路径、活动和制品引用     |
-| `POST /api/v1/batches/{batchId}`                            | 执行 `cancel`、`retry` 或 `replay`     |
-| `GET /api/v1/artifacts/{sha256}/manifest`                   | 读取并校验制品清单                     |
-| `GET /api/v1/artifacts/{sha256}/download`                   | 下载解压后的制品正文                   |
-| `GET/POST /api/v1/result-views`                             | 列出获授权视图，或由管理员创建固定视图 |
-| `GET /api/v1/result-views/{viewId}`                         | 读取授权视图的公开描述                 |
-| `PUT /api/v1/result-views/{viewId}/grants`                  | 管理员原子替换用户与角色授权           |
-| `POST /api/v1/result-views/{viewId}/revoke`                 | 管理员不可逆撤销共享视图               |
-| `GET /api/v1/result-views/{viewId}/batches`                 | 读取固定工作流的脱敏批次摘要           |
-| `POST /api/v1/result-views/{viewId}/batches/{batchId}/{action}` | 按白名单重试或取消范围内批次        |
-| `POST /api/v1/result-views/{viewId}/workflow/pause`         | 按白名单暂停固定工作流                 |
+| 路由                                                            | 语义                                   |
+| --------------------------------------------------------------- | -------------------------------------- |
+| `GET /api/v1/workflows/templates`                               | 列出当前可创建的批次、事件和连续流模板 |
+| `POST /api/v1/events`                                           | 发布 CloudEvents 1.0 结构化 JSON       |
+| `POST /api/v1/webhooks/{workflowId}`                            | 通过工作流 Secret 发布 Webhook 事件    |
+| `GET /api/v1/human-tasks`                                       | 查询待处理人工任务                     |
+| `POST /api/v1/human-tasks/{taskId}`                             | 一次性批准或拒绝人工任务               |
+| `GET /api/v1/workflows/node-definitions`                        | 列出核心与编译期插件节点 Schema        |
+| `POST /api/v1/workflows/validate`                               | 只读校验完整工作流图                   |
+| `GET/POST /api/v1/workflows`                                    | 列表，或从模板创建工作流及初始修订     |
+| `GET /api/v1/workflows/{workflowId}`                            | 读取元数据、活动修订和唯一运行实例摘要 |
+| `PATCH /api/v1/workflows/{workflowId}`                          | 更新工作流名称和说明，不修改活动修订   |
+| `GET/POST /api/v1/workflows/{workflowId}/revisions`             | 列表，或保存新不可变修订               |
+| `GET /api/v1/workflows/{workflowId}/revisions/{revisionId}`     | 读取固定修订                           |
+| `POST /api/v1/workflows/{workflowId}/lifecycle`                 | 执行 `start`、`pause` 或 `archive`     |
+| `GET/POST /api/v1/workflows/{workflowId}/batches`               | 最近批次摘要，或创建手工批次           |
+| `GET /api/v1/workflows/{workflowId}/activity`                   | 按单调游标读取持久活动                 |
+| `GET /api/v1/workflows/{workflowId}/activity/ws`                | 游标补齐后推送活动增量                 |
+| `GET /api/v1/batches/{batchId}`                                 | 读取批次、节点路径、活动和制品引用     |
+| `POST /api/v1/batches/{batchId}`                                | 执行 `cancel`、`retry` 或 `replay`     |
+| `GET /api/v1/artifacts/{sha256}/manifest`                       | 读取并校验制品清单                     |
+| `GET /api/v1/artifacts/{sha256}/download`                       | 下载解压后的制品正文                   |
+| `GET/POST /api/v1/result-views`                                 | 列出获授权视图，或由管理员创建固定视图 |
+| `GET /api/v1/result-views/{viewId}`                             | 读取授权视图的公开描述                 |
+| `PUT /api/v1/result-views/{viewId}/grants`                      | 管理员原子替换用户与角色授权           |
+| `POST /api/v1/result-views/{viewId}/revoke`                     | 管理员不可逆撤销共享视图               |
+| `GET /api/v1/result-views/{viewId}/batches`                     | 读取固定工作流的脱敏批次摘要           |
+| `POST /api/v1/result-views/{viewId}/batches/{batchId}/{action}` | 按白名单重试或取消范围内批次           |
+| `POST /api/v1/result-views/{viewId}/workflow/pause`             | 按白名单暂停固定工作流                 |
 
 - 创建接受批次、事件、Connector 和 Quant 模板。事件 Trigger 按类型及可选精确 source/subject 过滤；定时配置只接受 UTC `everySeconds` 60 至 86400，不提供 Cron DSL。图 `schemaVersion` 固定为 `1`，节点保存 `nodeInstanceId`、精确节点版本、普通配置、结构化输入映射和位置；边保存两端端口及可选 Boolean CEL 条件。
 - 输入映射只接受 `field`、`literal`、`cel`。字段来源使用上游 `nodeInstanceId` 和字段路径数组；保存校验端口、可达性、DAG、JSON Schema、字段类型和 CEL，并拒绝 Decimal CEL 算术。图级后向边始终拒绝；`core.loop` 只运行内嵌无环子图，并强制 1 至 100 次上限、绝对超时和 Boolean CEL 退出条件。每轮 NodeRun、Checkpoint 与操作键都包含迭代号，人工等待节点不能嵌入 Loop。
@@ -91,7 +93,7 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 
 插件不得从查询参数扩大核心注入的范围。不存在、未授权或已撤销 ResultView 统一返回 `404`；操作先解析 active 视图，再检查白名单、RBAC 和领域状态。
 
-结果页描述符包含插件内唯一 `pageKey`、标题、前端组件入口、范围/过滤器 Schema、操作白名单和移动端能力。Vue 生成注册表把每个插件入口约束为 `FrontendPluginModule`；测试契约插件不加入生产菜单。
+结果页描述符包含插件内唯一 `pageKey`、标题、前端组件入口、范围/过滤器 Schema、操作白名单和移动端能力。`FrontendPluginModule.pages` 可为插件提供独立菜单页，`resultPages` 提供限定工作流上下文的结果页；测试契约插件不加入生产菜单。
 
 内置 `official.connector` 提供 HTTP Action、Webhook Trigger、WebSocket Trigger 和运行诊断结果页；`official.ai` 提供 OpenAI-compatible 结构化模型调用和结果页。两者只访问 `workflow.http_allowed_hosts` 的精确公共域名，禁用环境代理，拨号前后解析并拒绝非公网 IP。Binance 只允许明确列出的公共 GET/公共 WebSocket，授权、私有或未知端点一律拒绝。AI 节点只接收/返回 JSON 对象，不能控制工作流生命周期或交易。
 

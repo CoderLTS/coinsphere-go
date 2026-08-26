@@ -59,7 +59,7 @@ jobs:
           if [[ -n "$RESET_DATABASE" ]]; then
             [[ "$DEPLOY_ONLY" != true ]] || { echo "仅正式 Release 可以重置 V2 基线" >&2; exit 1; }
             [[ "$GITHUB_ACTOR" == "$REPOSITORY_OWNER" ]] || { echo "仅仓库所有者可以重置 V2 基线" >&2; exit 1; }
-            [[ "$VERSION" == v0.3.0 ]] || { echo "V2 基线重置只允许用于 v0.3.0 freeze Release" >&2; exit 1; }
+            [[ "$VERSION" == v0.3.1 ]] || { echo "V2 基线重置只允许用于 v0.3.1 freeze Release" >&2; exit 1; }
             [[ "$RESET_DATABASE" == 'RESET coinsphere-go-timescale-data' ]] || { echo "数据库重置确认文本不匹配" >&2; exit 1; }
           fi
           for attempt in 1 2 3; do

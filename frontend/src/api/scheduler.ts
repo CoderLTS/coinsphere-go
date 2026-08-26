@@ -1,5 +1,27 @@
 /** 前端接口封装：scheduler。 */
-import request from '@/utils/http'
+import {
+  applyWorkflowLifecycle,
+  createWorkflow,
+  createWorkflowBatch,
+  fetchWorkflow,
+  fetchWorkflowBatch,
+  fetchWorkflowBatches,
+  fetchWorkflowNodeDefinitions,
+  fetchWorkflowRevision,
+  fetchWorkflowRevisions,
+  fetchWorkflows,
+  saveWorkflowRevision,
+  updateWorkflow,
+  validateWorkflowGraph,
+  type WorkflowBatch,
+  type WorkflowDetail,
+  type WorkflowGraph as CurrentWorkflowGraph,
+  type WorkflowInputBinding,
+  type WorkflowItem,
+  type WorkflowNodeDefinition,
+  type WorkflowRevision,
+  type WorkflowSecretChange
+} from './workflows'
 
 export type WorkflowStartType = 'manual' | 'schedule' | 'event' | 'webhook'
 export type WorkflowTriggerType = WorkflowStartType
@@ -30,7 +52,11 @@ export type WorkflowNodeGraphKind = 'plain' | 'start' | 'branch' | 'loop' | 'ter
 export interface WorkflowNodeDefinitionItem {
   typeCode: string
   label: string
+  version?: string
+  description?: string
   configSchema: Record<string, any>
+  uiSchema?: Record<string, any>
+  secretFields?: { name: string; title: string; required: boolean }[]
   /** 图语义分类，后端注册表下发；老后端没有这个字段时按 plain 处理。 */
   kind?: WorkflowNodeGraphKind
   /** 分支节点必须存在的分支键，如 ['true','false']。 */
@@ -282,167 +308,673 @@ export interface WorkflowOverview {
   definitions: WorkflowOverviewDefinitionItem[]
 }
 
-export function fetchSchedulerOverview() {
-  return request.get<WorkflowOverview>({
-    url: '/api/v1/workflows/overview'
+const versionIDFactor = 1_000_000_000
+const currentNodeDefinitions = new Map<string, WorkflowNodeDefinition>()
+const nodeLabels: Record<string, string> = {
+  'core.manual': '手动开始',
+  'core.schedule': '定时开始',
+  'core.event': '事件开始',
+  'core.constant': '常量',
+  'core.end': '结束',
+  'core.human_approval': '人工审批',
+  'core.loop': '循环',
+  'official.quant.binance_candles': 'Binance K 线采集',
+  'official.quant.evaluate': '量化策略评估',
+  'official.quant.backtest': '量化策略回测',
+  'official.quant.signal': '量化信号',
+  'official.quant.paper_execute': 'Paper 执行',
+  'official.notification.in_app': '站内通知'
+}
+const legacyNodeTypes: Record<string, string> = {
+  'core.manual': 'start.manual',
+  'core.schedule': 'start.schedule',
+  'core.event': 'start.event',
+  'official.connector.webhook': 'start.webhook',
+  'core.end': 'end'
+}
+
+const encodeVersionID = (workflowID: number, revisionID: number) =>
+  workflowID * versionIDFactor + revisionID
+
+const decodeDefinitionID = (definitionID: number) =>
+  definitionID >= versionIDFactor
+    ? {
+        workflowID: Math.floor(definitionID / versionIDFactor),
+        revisionID: definitionID % versionIDFactor
+      }
+    : { workflowID: definitionID, revisionID: 0 }
+
+const graphKind = (definition: WorkflowNodeDefinition): WorkflowNodeGraphKind => {
+  if (definition.kind === 'trigger') return 'start'
+  if (definition.type === 'core.end' || definition.type === 'core.loop_end') return 'terminal'
+  return 'plain'
+}
+
+const inputProperties = (definition?: WorkflowNodeDefinition) =>
+  (definition?.inputSchema?.properties || {}) as Record<string, Record<string, unknown>>
+
+const legacyConfigSchema = (definition: WorkflowNodeDefinition) => {
+  const config = definition.configSchema || {}
+  const inputs = inputProperties(definition)
+  return {
+    ...config,
+    properties: { ...((config.properties || {}) as object), ...inputs }
+  }
+}
+
+const toLegacyGraph = (graph: CurrentWorkflowGraph): WorkflowGraph => ({
+  nodes: (graph.nodes || []).map((node) => {
+    const bindings = node.inputBindings || {}
+    const literalInputs = Object.fromEntries(
+      Object.entries(bindings)
+        .filter(([, binding]) => binding.kind === 'literal')
+        .map(([name, binding]) => [name, binding.value])
+    )
+    const config: Record<string, unknown> = { ...node.config, ...literalInputs }
+    if (
+      node.nodeType === 'core.manual' ||
+      node.nodeType === 'core.schedule' ||
+      node.nodeType === 'core.event' ||
+      node.nodeType === 'official.connector.webhook'
+    ) {
+      config.entryKey = node.nodeInstanceId
+      config.displayName = nodeLabels[node.nodeType] || node.nodeType
+      config.inputBindings = {}
+    }
+    if (node.nodeType === 'core.schedule') {
+      config.scheduleType = 'interval'
+      config.value = Number(config.everySeconds || 60)
+      config.unit = 'seconds'
+    }
+    if (node.nodeType === 'core.event') {
+      config.eventType = Array.isArray(config.types) ? config.types[0] || '' : ''
+    }
+    return {
+      id: node.nodeInstanceId,
+      type: legacyNodeTypes[node.nodeType] || node.nodeType,
+      label:
+        nodeLabels[node.nodeType] ||
+        currentNodeDefinitions.get(node.nodeType)?.title ||
+        node.nodeType,
+      config: {
+        ...config,
+        __nodeType: node.nodeType,
+        __nodeVersion: node.nodeVersion,
+        __inputBindings: bindings
+      },
+      position: node.position
+    }
+  }),
+  edges: (graph.edges || []).map((edge) => ({
+    id: edge.edgeId,
+    source: edge.sourceNodeInstanceId,
+    target: edge.targetNodeInstanceId,
+    branch: edge.sourcePort === 'out' ? '' : edge.sourcePort,
+    label: edge.condition || ''
+  }))
+})
+
+const toCurrentRevision = (graph: WorkflowGraph) => {
+  const secretChanges: WorkflowSecretChange[] = []
+  const currentGraph: CurrentWorkflowGraph = {
+    schemaVersion: 1,
+    nodes: (graph.nodes || []).map((node) => {
+      const rawConfig = { ...(node.config || {}) }
+      const type = String(
+        rawConfig.__nodeType ||
+          (
+            {
+              'start.manual': 'core.manual',
+              'start.schedule': 'core.schedule',
+              'start.event': 'core.event',
+              'start.webhook': 'official.connector.webhook',
+              end: 'core.end'
+            } as Record<string, string>
+          )[node.type] ||
+          node.type
+      )
+      const definition = currentNodeDefinitions.get(type)
+      const nodeVersion = String(rawConfig.__nodeVersion || definition?.version || '1.0.0')
+      const bindings = {
+        ...((rawConfig.__inputBindings || {}) as Record<string, WorkflowInputBinding>)
+      }
+      delete rawConfig.__nodeType
+      delete rawConfig.__nodeVersion
+      delete rawConfig.__inputBindings
+      definition?.secretFields.forEach((field) => {
+        const value = rawConfig[field.name]
+        delete rawConfig[field.name]
+        if (typeof value === 'string' && value.trim()) {
+          secretChanges.push({ nodeInstanceId: node.id, field: field.name, value })
+        }
+      })
+      if (type === 'core.manual') {
+        delete rawConfig.entryKey
+        delete rawConfig.displayName
+        delete rawConfig.inputBindings
+      }
+      if (type === 'core.schedule') {
+        const multiplier =
+          { seconds: 1, minutes: 60, hours: 3600, days: 86400 }[
+            String(rawConfig.unit || 'seconds')
+          ] || 1
+        rawConfig.everySeconds =
+          Math.max(1, Number(rawConfig.value || rawConfig.everySeconds || 60)) * multiplier
+        for (const key of [
+          'entryKey',
+          'displayName',
+          'inputBindings',
+          'scheduleType',
+          'value',
+          'unit',
+          'cronExpression',
+          'runAt'
+        ])
+          delete rawConfig[key]
+      }
+      if (type === 'core.event') {
+        const eventType = String(rawConfig.eventType || '').trim()
+        if (eventType) rawConfig.types = [eventType]
+        for (const key of ['entryKey', 'displayName', 'inputBindings', 'eventType', 'filters'])
+          delete rawConfig[key]
+      }
+      if (type === 'official.connector.webhook') {
+        for (const key of ['entryKey', 'displayName', 'inputBindings']) delete rawConfig[key]
+      }
+      Object.keys(inputProperties(definition)).forEach((name) => {
+        if (!(name in rawConfig)) return
+        bindings[name] = { kind: 'literal', value: rawConfig[name] }
+        delete rawConfig[name]
+      })
+      return {
+        nodeInstanceId: node.id,
+        nodeType: type,
+        nodeVersion,
+        config: rawConfig,
+        ...(Object.keys(bindings).length ? { inputBindings: bindings } : {}),
+        position: node.position || { x: 0, y: 0 }
+      }
+    }),
+    edges: (graph.edges || []).map((edge) => ({
+      edgeId: edge.id,
+      sourceNodeInstanceId: edge.source,
+      sourcePort: edge.branch || 'out',
+      targetNodeInstanceId: edge.target,
+      targetPort: 'in',
+      ...(edge.label ? { condition: edge.label } : {})
+    }))
+  }
+  return { graph: currentGraph, secretChanges }
+}
+
+const batchStatus = (status: WorkflowBatch['status']): WorkflowExecutionStatus => {
+  const mapped: Partial<Record<WorkflowBatch['status'], WorkflowExecutionStatus>> = {
+    succeeded: 'success',
+    cancelled: 'canceled',
+    retrying: 'retry_waiting',
+    waiting: 'queued'
+  }
+  return mapped[status] || (status as WorkflowExecutionStatus)
+}
+
+const statusLabel = (status: WorkflowExecutionStatus | string) =>
+  ({
+    queued: '排队中',
+    running: '运行中',
+    retry_waiting: '等待重试',
+    success: '成功',
+    failed: '失败',
+    canceled: '已取消'
+  })[status] || status
+
+const triggerLabel = (trigger: string) =>
+  ({ manual: '手动', schedule: '定时', event: '事件', stream: '流式', webhook: 'Webhook' })[
+    trigger
+  ] || trigger
+
+const elapsed = (startedAt?: string, completedAt?: string) => {
+  if (!startedAt || !completedAt) return 0
+  return Math.max(0, Date.parse(completedAt) - Date.parse(startedAt)) || 0
+}
+
+const toExecution = (
+  batch: WorkflowBatch,
+  workflow: WorkflowItem,
+  revision?: WorkflowRevision
+): WorkflowExecutionItem => {
+  const status = batchStatus(batch.status)
+  return {
+    id: batch.id,
+    workflowDefinitionId: workflow.id,
+    workflowDefinitionVersion: revision?.revisionNumber || 1,
+    workflowDefinitionName: workflow.name,
+    entryName: workflow.mainTriggerNodeId,
+    triggerType: batch.triggerType,
+    status,
+    statusLabel: statusLabel(status),
+    triggerLabel: triggerLabel(batch.triggerType),
+    queuedAt: batch.triggeredAt,
+    claimedAt: batch.startedAt || '',
+    startedAt: batch.startedAt || '',
+    finishedAt: batch.completedAt || '',
+    lastHeartbeatAt: batch.startedAt || '',
+    attemptCount: 1,
+    maxAttempts: 3,
+    durationMs: elapsed(batch.startedAt, batch.completedAt),
+    error: batch.errorCategory
+      ? { summary: batch.errorCategory, category: batch.errorCategory, retryable: false }
+      : null
+  }
+}
+
+const loadDefinition = async (definitionID: number): Promise<WorkflowDefinitionItem> => {
+  const { workflowID, revisionID } = decodeDefinitionID(definitionID)
+  const [workflow, revisionResult, batchResult] = await Promise.all([
+    fetchWorkflow(workflowID),
+    fetchWorkflowRevisions(workflowID),
+    fetchWorkflowBatches(workflowID)
+  ])
+  const revisions = [...revisionResult.items].sort((a, b) => b.revisionNumber - a.revisionNumber)
+  const selected =
+    revisions.find((item) => item.id === revisionID) ||
+    revisions.find((item) => item.id === workflow.activeRevisionId) ||
+    revisions[0]
+  if (!selected) throw new Error('工作流没有可编辑的修订版本')
+  const counts = new Map<number, number>()
+  batchResult.items.forEach((batch) =>
+    counts.set(batch.revisionId, (counts.get(batch.revisionId) || 0) + 1)
+  )
+  const activeVersion = revisions.find(
+    (item) => item.id === workflow.activeRevisionId
+  )?.revisionNumber
+  return {
+    id: definitionID,
+    code: String(workflow.id),
+    version: selected.revisionNumber,
+    displayName: workflow.name,
+    description: workflow.description,
+    graph: toLegacyGraph(selected.graph),
+    isLatest: selected.id === revisions[0]?.id,
+    isBuiltin: false,
+    isActive: workflow.status === 'running' && selected.id === workflow.activeRevisionId,
+    isWorkflowActive: workflow.status === 'running',
+    activeDefinitionId: encodeVersionID(workflow.id, workflow.activeRevisionId),
+    activeVersion: activeVersion || null,
+    executionCount: batchResult.items.length,
+    createdBy: workflow.createdBy,
+    createdAt: selected.createdAt,
+    versions: revisions.map((revision) => ({
+      id: encodeVersionID(workflow.id, revision.id),
+      version: revision.revisionNumber,
+      displayName: workflow.name,
+      isLatest: revision.id === revisions[0]?.id,
+      isBuiltin: false,
+      isActive: workflow.status === 'running' && revision.id === workflow.activeRevisionId,
+      executionCount: counts.get(revision.id) || 0,
+      createdBy: revision.createdBy,
+      createdAt: revision.createdAt
+    }))
+  }
+}
+
+export async function fetchNodeDefinitions() {
+  const result = await fetchWorkflowNodeDefinitions()
+  result.items.forEach((item) => currentNodeDefinitions.set(item.type, item))
+  return result.items
+    .filter((item) => item.available)
+    .map((item) => ({
+      typeCode: legacyNodeTypes[item.type] || item.type,
+      label: nodeLabels[item.type] || item.title,
+      version: item.version,
+      description: item.description,
+      configSchema: legacyConfigSchema(item),
+      uiSchema: item.uiSchema,
+      secretFields: item.secretFields,
+      kind: graphKind(item)
+    }))
+}
+
+export const fetchWorkflowNodeTemplates = async () => [] as WorkflowNodeTemplateItem[]
+export const fetchWorkflowAgentOptions = async () => [] as WorkflowAgentOption[]
+
+export async function fetchWorkflowDefinitionList() {
+  const { items } = await fetchWorkflows()
+  return Promise.all(items.map((item) => loadDefinition(item.id)))
+}
+
+export const fetchWorkflowDefinitionDetail = (definitionID: number) => loadDefinition(definitionID)
+
+export async function fetchCreateWorkflowDefinition(params: WorkflowDefinitionUpsertPayload) {
+  const workflow = await createWorkflow({
+    name: params.displayName,
+    description: params.description,
+    templateKey: 'blank'
   })
-}
-
-export function fetchNodeDefinitions() {
-  return request.get<WorkflowNodeDefinitionItem[]>({
-    url: '/api/v1/workflows/node-definitions'
+  const revision = toCurrentRevision(params.graph)
+  await saveWorkflowRevision(workflow.id, {
+    expectedActiveRevisionId: workflow.activeRevisionId,
+    graph: revision.graph,
+    secretChanges: revision.secretChanges,
+    resetStateNodeInstanceIds: []
   })
+  return loadDefinition(workflow.id)
 }
 
-export function fetchWorkflowNodeTemplates() {
-  return request.get<WorkflowNodeTemplateItem[]>({ url: '/api/v1/workflow-node-templates' })
+export interface WorkflowDefinitionSaveContext {
+  workflow: WorkflowDetail
+  resetStateNodeInstanceIds: string[]
 }
 
-export function fetchCreateWorkflowNodeTemplate(params: WorkflowNodeTemplatePayload) {
-  return request.post<WorkflowNodeTemplateItem>({
-    url: '/api/v1/workflow-node-templates',
-    params,
-    showSuccessMessage: true
-  })
-}
-
-export function fetchUpdateWorkflowNodeTemplate(id: string, params: WorkflowNodeTemplatePayload) {
-  return request.put<WorkflowNodeTemplateItem>({
-    url: `/api/v1/workflow-node-templates/${encodeURIComponent(id)}`,
-    params,
-    showSuccessMessage: true
-  })
-}
-
-export function fetchDeleteWorkflowNodeTemplate(id: string) {
-  return request.del<{ deleted: boolean }>({
-    url: `/api/v1/workflow-node-templates/${encodeURIComponent(id)}`,
-    showSuccessMessage: true
-  })
-}
-
-/** 工作流编辑器里 assistant.agent 节点的智能体下拉选项。 */
-export function fetchWorkflowAgentOptions() {
-  return request.get<WorkflowAgentOption[]>({
-    url: '/api/v1/workflows/agent-options'
-  })
-}
-
-export function fetchWorkflowDefinitionList() {
-  return request.get<WorkflowDefinitionItem[]>({
-    url: '/api/v1/workflows'
-  })
-}
-
-export function fetchWorkflowDefinitionDetail(definitionId: number) {
-  return request.get<WorkflowDefinitionItem>({
-    url: `/api/v1/workflows/${definitionId}`
-  })
-}
-
-export function fetchCreateWorkflowDefinition(params: WorkflowDefinitionUpsertPayload) {
-  return request.post<WorkflowDefinitionItem>({
-    url: '/api/v1/workflows',
-    params,
-    showSuccessMessage: true
-  })
-}
-
-export function fetchUpdateWorkflowDefinition(
-  definitionId: number,
+export async function fetchWorkflowDefinitionSaveContext(
+  definitionID: number,
   params: WorkflowDefinitionUpsertPayload
+): Promise<WorkflowDefinitionSaveContext> {
+  const { workflowID } = decodeDefinitionID(definitionID)
+  const workflow = await fetchWorkflow(workflowID)
+  const activeRevision = await fetchWorkflowRevision(workflowID, workflow.activeRevisionId)
+  const nextVersions = new Map(
+    toCurrentRevision(params.graph).graph.nodes.map((node) => [
+      node.nodeInstanceId,
+      { nodeType: node.nodeType, nodeVersion: node.nodeVersion }
+    ])
+  )
+  const resetStateNodeInstanceIds = workflow.stateNodeInstanceIds.filter((nodeID) => {
+    const previous = activeRevision.nodeVersions[nodeID]
+    const next = nextVersions.get(nodeID)
+    return (
+      !previous ||
+      !next ||
+      previous.nodeType !== next.nodeType ||
+      previous.nodeVersion !== next.nodeVersion
+    )
+  })
+  return { workflow, resetStateNodeInstanceIds }
+}
+
+export async function fetchUpdateWorkflowDefinition(
+  definitionID: number,
+  params: WorkflowDefinitionUpsertPayload,
+  context: WorkflowDefinitionSaveContext
 ) {
-  return request.put<WorkflowDefinitionItem>({
-    url: `/api/v1/workflows/${definitionId}`,
-    params,
-    showSuccessMessage: false
+  const { workflowID } = decodeDefinitionID(definitionID)
+  const { workflow } = context
+  if (workflow.name !== params.displayName || workflow.description !== params.description) {
+    await updateWorkflow(workflowID, {
+      name: params.displayName,
+      description: params.description
+    })
+  }
+  const revision = toCurrentRevision(params.graph)
+  await saveWorkflowRevision(workflowID, {
+    expectedActiveRevisionId: workflow.activeRevisionId,
+    graph: revision.graph,
+    secretChanges: revision.secretChanges,
+    resetStateNodeInstanceIds: context.resetStateNodeInstanceIds
   })
+  return loadDefinition(workflowID)
 }
 
-export function fetchDeleteWorkflowDefinition(definitionId: number) {
-  return request.del<void>({
-    url: `/api/v1/workflows/${definitionId}`,
-    showSuccessMessage: true
-  })
+export const fetchValidateWorkflowDefinition = async (params: WorkflowDefinitionUpsertPayload) => {
+  const result = await validateWorkflowGraph(toCurrentRevision(params.graph).graph)
+  return result as WorkflowDefinitionValidationResult
 }
 
-export function fetchValidateWorkflowDefinition(params: WorkflowDefinitionUpsertPayload) {
-  return request.post<WorkflowDefinitionValidationResult>({
-    url: '/api/v1/workflows/validate',
-    params
-  })
+export async function fetchActivateWorkflowDefinition(definitionID: number) {
+  const { workflowID, revisionID } = decodeDefinitionID(definitionID)
+  const workflow = await fetchWorkflow(workflowID)
+  if (revisionID && revisionID !== workflow.activeRevisionId) {
+    const revision = await fetchWorkflowRevision(workflowID, revisionID)
+    await saveWorkflowRevision(workflowID, {
+      expectedActiveRevisionId: workflow.activeRevisionId,
+      graph: revision.graph,
+      secretChanges: [],
+      resetStateNodeInstanceIds: []
+    })
+  }
+  await applyWorkflowLifecycle(workflowID, 'start')
+  return fetchWorkflowRuntime(workflowID)
 }
 
-export function fetchActivateWorkflowDefinition(definitionId: number) {
-  return request.post<WorkflowRuntimeStateItem>({
-    url: `/api/v1/workflows/${definitionId}/activate`,
-    showSuccessMessage: true
-  })
+export async function fetchDeactivateWorkflowDefinition(definitionID: number) {
+  const { workflowID } = decodeDefinitionID(definitionID)
+  await applyWorkflowLifecycle(workflowID, 'pause')
+  return fetchWorkflowRuntime(workflowID)
 }
 
-export function fetchDeactivateWorkflowDefinition(definitionId: number) {
-  return request.post<WorkflowRuntimeStateItem>({
-    url: `/api/v1/workflows/${definitionId}/deactivate`,
-    showSuccessMessage: true
-  })
+export async function fetchDeleteWorkflowDefinition(definitionID: number) {
+  const { workflowID, revisionID } = decodeDefinitionID(definitionID)
+  if (revisionID) throw new Error('V2 修订版本不可删除')
+  await applyWorkflowLifecycle(workflowID, 'archive')
 }
 
-export function fetchWorkflowRuntime(definitionId: number) {
-  return request.get<WorkflowRuntimeStateItem>({
-    url: `/api/v1/workflows/${definitionId}/runtime`
-  })
+const startType = (nodeType: string): WorkflowStartType => {
+  if (nodeType === 'core.manual') return 'manual'
+  if (nodeType === 'core.schedule') return 'schedule'
+  return 'event'
 }
 
-export function fetchUpdateWorkflowRuntimeEntryStatus(
-  definitionId: number,
-  entryKey: string,
+export async function fetchWorkflowRuntime(
+  definitionID: number
+): Promise<WorkflowRuntimeStateItem> {
+  const { workflowID } = decodeDefinitionID(definitionID)
+  const [workflow, revision] = await Promise.all([
+    fetchWorkflow(workflowID),
+    fetchWorkflow(workflowID).then((item) =>
+      fetchWorkflowRevision(workflowID, item.activeRevisionId)
+    )
+  ])
+  const trigger = revision.graph.nodes.find(
+    (node) => node.nodeInstanceId === workflow.mainTriggerNodeId
+  )
+  const activeID = encodeVersionID(workflowID, workflow.activeRevisionId)
+  return {
+    workflowCode: String(workflowID),
+    runtimeStateId: workflowID,
+    activeDefinitionId: workflow.status === 'running' ? activeID : null,
+    activatedAt: workflow.updatedAt,
+    entries: trigger
+      ? [
+          {
+            id: workflowID,
+            definitionId: activeID,
+            startNodeId: trigger.nodeInstanceId,
+            entryKey: trigger.nodeInstanceId,
+            entryName: nodeLabels[trigger.nodeType] || trigger.nodeType,
+            startType: startType(trigger.nodeType),
+            isEnabled: workflow.status === 'running',
+            registrationStatus: workflow.status === 'running' ? 'registered' : 'disabled',
+            nextRunAt: '',
+            lastTriggeredAt: '',
+            lastErrorMessage: '',
+            secretHint: '',
+            secretRotatedAt: ''
+          }
+        ]
+      : []
+  }
+}
+
+export async function fetchUpdateWorkflowRuntimeEntryStatus(
+  definitionID: number,
+  _entryKey: string,
   isEnabled: boolean
 ) {
-  return request.request<WorkflowRuntimeStateItem>({
-    url: `/api/v1/workflows/${definitionId}/runtime/entries/${encodeURIComponent(entryKey)}`,
-    method: 'PATCH',
-    data: { isEnabled },
-    showSuccessMessage: true
-  })
+  const { workflowID } = decodeDefinitionID(definitionID)
+  await applyWorkflowLifecycle(workflowID, isEnabled ? 'start' : 'pause')
+  return fetchWorkflowRuntime(workflowID)
 }
 
-export function fetchRotateWorkflowRuntimeEntrySecret(definitionId: number, entryKey: string) {
-  return request.post<WorkflowRuntimeSecretRotationResult>({
-    url: `/api/v1/workflows/${definitionId}/runtime/entries/${encodeURIComponent(entryKey)}/rotate-secret`,
-    showSuccessMessage: true
-  })
+export const fetchRotateWorkflowRuntimeEntrySecret = async (
+  definitionID: number,
+  entryKey: string
+): Promise<WorkflowRuntimeSecretRotationResult> => {
+  void definitionID
+  void entryKey
+  throw new Error('当前连接器的 Secret 在节点配置中管理')
 }
 
-export function fetchRunWorkflowDefinition(definitionId: number, params: WorkflowManualRunPayload) {
-  const idempotencyKey = crypto.randomUUID()
-
-  return request.post<RunWorkflowDefinitionResponse>({
-    url: `/api/v1/workflows/${definitionId}/executions`,
-    params,
-    headers: { 'Idempotency-Key': idempotencyKey },
-    showSuccessMessage: true
-  })
+export async function fetchRunWorkflowDefinition(
+  definitionID: number,
+  params: WorkflowManualRunPayload
+): Promise<RunWorkflowDefinitionResponse> {
+  void params
+  const { workflowID } = decodeDefinitionID(definitionID)
+  const [batch, workflow, revisions] = await Promise.all([
+    createWorkflowBatch(workflowID),
+    fetchWorkflow(workflowID),
+    fetchWorkflowRevisions(workflowID)
+  ])
+  return {
+    executions: [
+      toExecution(
+        batch,
+        workflow,
+        revisions.items.find((revision) => revision.id === batch.revisionId)
+      )
+    ]
+  }
 }
 
-export function fetchWorkflowDefinitionExecutions(
-  definitionId: number,
+const listExecutions = async (workflowID?: number) => {
+  const workflows = workflowID ? [await fetchWorkflow(workflowID)] : (await fetchWorkflows()).items
+  const groups = await Promise.all(
+    workflows.map(async (workflow) => {
+      const [batches, revisions] = await Promise.all([
+        fetchWorkflowBatches(workflow.id),
+        fetchWorkflowRevisions(workflow.id)
+      ])
+      return batches.items.map((batch) =>
+        toExecution(
+          batch,
+          workflow,
+          revisions.items.find((revision) => revision.id === batch.revisionId)
+        )
+      )
+    })
+  )
+  return groups.flat().sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt))
+}
+
+const paginateExecutions = (
+  records: WorkflowExecutionItem[],
+  params: WorkflowExecutionQueryParams
+): WorkflowExecutionList => {
+  const filtered = records.filter((item) => {
+    if (
+      params.workflowDefinitionCode &&
+      String(item.workflowDefinitionId) !== params.workflowDefinitionCode
+    )
+      return false
+    if (
+      params.keyword &&
+      !item.workflowDefinitionName.toLowerCase().includes(params.keyword.toLowerCase())
+    )
+      return false
+    if (params.triggerType && item.triggerType !== params.triggerType) return false
+    if (params.status && item.status !== params.status) return false
+    return true
+  })
+  const offset = Math.max(0, Number(params.cursor || 0) || 0)
+  const limit = Math.max(1, params.limit || 20)
+  const page = filtered.slice(offset, offset + limit)
+  const next = offset + page.length
+  return {
+    records: page,
+    nextCursor: next < filtered.length ? String(next) : '',
+    hasMore: next < filtered.length,
+    total: filtered.length
+  }
+}
+
+export async function fetchWorkflowDefinitionExecutions(
+  definitionID: number,
   params: WorkflowExecutionQueryParams
 ) {
-  return request.get<WorkflowExecutionList>({
-    url: `/api/v1/workflows/${definitionId}/executions`,
-    params
-  })
+  const { workflowID } = decodeDefinitionID(definitionID)
+  return paginateExecutions(await listExecutions(workflowID), params)
 }
 
-export function fetchWorkflowExecutionList(params: WorkflowExecutionQueryParams) {
-  return request.get<WorkflowExecutionList>({
-    url: '/api/v1/workflows/executions',
-    params
-  })
+export const fetchWorkflowExecutionList = async (params: WorkflowExecutionQueryParams) =>
+  paginateExecutions(await listExecutions(), params)
+
+export async function fetchWorkflowExecutionDetail(
+  executionID: number
+): Promise<WorkflowExecutionDetail> {
+  const batch = await fetchWorkflowBatch(executionID)
+  const [workflow, revision] = await Promise.all([
+    fetchWorkflow(batch.workflowId),
+    fetchWorkflowRevision(batch.workflowId, batch.revisionId)
+  ])
+  const graph = toLegacyGraph(revision.graph)
+  const names = new Map(graph.nodes.map((node) => [node.id, node.label]))
+  const execution = toExecution(batch, workflow, revision)
+  return {
+    ...execution,
+    graph,
+    startNodeId: revision.mainTriggerNodeId,
+    nodeLogs: batch.nodeRuns.map((run) => {
+      const nodeStatus = batchStatus(
+        run.status === 'succeeded'
+          ? 'succeeded'
+          : run.status === 'cancelled'
+            ? 'cancelled'
+            : (run.status as WorkflowBatch['status'])
+      )
+      return {
+        id: run.id,
+        nodeId: run.nodeInstanceId,
+        nodeName: names.get(run.nodeInstanceId) || run.nodeType,
+        status: nodeStatus,
+        statusLabel: statusLabel(nodeStatus),
+        startedAt: run.startedAt,
+        finishedAt: run.completedAt || '',
+        durationMs: run.durationMs || 0,
+        error: run.errorCategory
+          ? { summary: run.errorCategory, category: run.errorCategory, retryable: false }
+          : null
+      }
+    }),
+    attempts: [
+      {
+        id: batch.id,
+        attempt: Math.max(1, ...batch.nodeRuns.map((run) => run.attempt)),
+        startedAt: batch.startedAt || batch.triggeredAt,
+        finishedAt: batch.completedAt || '',
+        status: execution.status,
+        statusLabel: statusLabel(execution.status),
+        error: execution.error
+      }
+    ],
+    transitionLogs: []
+  }
 }
 
-export function fetchWorkflowExecutionDetail(executionId: number) {
-  return request.get<WorkflowExecutionDetail>({
-    url: `/api/v1/workflows/executions/${executionId}`
-  })
+export async function fetchSchedulerOverview(): Promise<WorkflowOverview> {
+  const definitions = await fetchWorkflowDefinitionList()
+  const executions = await listExecutions()
+  const pending = executions.filter((item) =>
+    ['queued', 'running', 'retry_waiting'].includes(item.status)
+  )
+  return {
+    stats: {
+      definitionCount: definitions.length,
+      activeDefinitionCount: definitions.filter((item) => item.isWorkflowActive).length,
+      executionCount: executions.length,
+      latestExecutedAt: executions[0]?.queuedAt || '',
+      pendingCount: pending.length,
+      queuedCount: pending.filter((item) => item.status === 'queued').length,
+      runningCount: pending.filter((item) => item.status === 'running').length,
+      retryWaitingCount: pending.filter((item) => item.status === 'retry_waiting').length,
+      oldestPendingAgeMs: 0,
+      staleRunningCount: 0
+    },
+    definitions: definitions.map((item) => ({
+      workflowDefinitionId: item.id,
+      workflowDefinitionCode: item.code,
+      workflowDefinitionVersion: item.version,
+      workflowDefinitionName: item.displayName,
+      isActive: Boolean(item.isWorkflowActive),
+      executionCount: item.executionCount
+    }))
+  }
 }

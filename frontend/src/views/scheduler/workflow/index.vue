@@ -219,13 +219,7 @@
                   </ElTooltip>
                   <ElTooltip
                     v-if="hasAuth('scheduler.workflow_definitions.delete')"
-                    :content="
-                      row.isActive
-                        ? '当前激活版本不可删除'
-                        : row.executionCount > 0
-                          ? '有执行记录的版本不可删除'
-                          : '删除版本'
-                    "
+                    :content="row.isActive ? '当前激活版本不可删除' : 'V2 修订版本不可删除'"
                     placement="top"
                   >
                     <ElButton
@@ -616,8 +610,10 @@
     await router.push(`/scheduler/workflow/${row.id}/edit`)
   }
 
-  const canDeleteVersion = (row: WorkflowDefinitionVersionItem) =>
-    !row.isActive && row.executionCount === 0
+  const canDeleteVersion = (_row: WorkflowDefinitionVersionItem) => {
+    void _row
+    return false
+  }
 
   const activateVersion = async (row: WorkflowDefinitionVersionItem) => {
     if (!versionFamilyCode.value) return

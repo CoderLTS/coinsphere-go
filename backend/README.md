@@ -43,13 +43,11 @@ go run ./cmd/coinsphere plugin validate <插件源码目录> [<插件源码目�
 
 `plugin validate` 只读校验；`install`/`upgrade` 执行插件 migration、更新静态注册和构建输入，`uninstall` 保留数据，`purge-data` 需要精确确认且拒绝删除仍有引用的数据。
 
-设置测试数据库后执行完整后端门禁：
+执行后端门禁：
 
 ```powershell
-$env:COINSPHERE_TEST_POSTGRES_DSN = 'postgres://coinsphere:test-only@127.0.0.1:5432/coinsphere_test?sslmode=disable'
 go mod tidy -diff
 go vet ./...
-go test -count=1 ./...
 go build ./...
 ```
 

@@ -194,6 +194,16 @@ export const fetchWorkflows = (status = '') =>
 export const fetchWorkflow = (workflowId: number) =>
   request.get<WorkflowDetail>({ url: `/api/v1/workflows/${workflowId}` })
 
+export const updateWorkflow = (
+  workflowId: number,
+  params: Pick<WorkflowItem, 'name' | 'description'>
+) =>
+  request.request<WorkflowDetail>({
+    url: `/api/v1/workflows/${workflowId}`,
+    method: 'PATCH',
+    data: params
+  })
+
 export const fetchWorkflowRevision = (workflowId: number, revisionId: number) =>
   request.get<WorkflowRevision>({
     url: `/api/v1/workflows/${workflowId}/revisions/${revisionId}`
@@ -208,6 +218,12 @@ export const fetchWorkflowNodeDefinitions = () =>
   request.get<ItemList<WorkflowNodeDefinition>>({
     url: '/api/v1/workflows/node-definitions'
   })
+
+export const validateWorkflowGraph = (graph: WorkflowGraph) =>
+  request.post<{
+    valid: boolean
+    issues: { scope: 'graph'; level: 'error'; message: string }[]
+  }>({ url: '/api/v1/workflows/validate', params: { graph } })
 
 export const createWorkflow = (params: {
   name: string
@@ -243,6 +259,9 @@ export const applyWorkflowLifecycle = (workflowId: number, action: 'start' | 'pa
 
 export const createWorkflowBatch = (workflowId: number) =>
   request.post<WorkflowBatch>({ url: `/api/v1/workflows/${workflowId}/batches` })
+
+export const fetchWorkflowBatches = (workflowId: number) =>
+  request.get<ItemList<WorkflowBatch>>({ url: `/api/v1/workflows/${workflowId}/batches` })
 
 export const applyWorkflowBatchAction = (batchId: number, action: 'cancel' | 'retry' | 'replay') =>
   request.post<WorkflowBatch>({ url: `/api/v1/batches/${batchId}`, params: { action } })

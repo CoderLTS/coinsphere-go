@@ -91,6 +91,11 @@ type validatedWorkflowLoop struct {
 	requiredSecrets map[workflowSecretKey]bool
 }
 
+func (a *App) ValidateWorkflowGraph(raw json.RawMessage) error {
+	_, err := a.validateWorkflowGraph(raw)
+	return err
+}
+
 func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph, error) {
 	if len(raw) == 0 || len(raw) > maxWorkflowGraphBytes {
 		return validatedWorkflowGraph{}, fmt.Errorf("workflow graph must contain 1 to %d bytes", maxWorkflowGraphBytes)

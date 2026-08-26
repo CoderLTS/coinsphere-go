@@ -26,7 +26,7 @@ type roleItem struct{ Code, Title, Description string }
 // 这叫“位置写法”。内置角色 = 系统自带的三种身份:超级管理员(全权)、普通用户、游客。
 var roleItems = []roleItem{
 	{"R_SUPER", "超级管理员", "拥有系统全部管理权限"},
-	{"R_USER", "普通用户", "仅访问获授权的共享结果"},
+	{"R_USER", "普通用户", "默认登录用户"},
 	{"R_GUEST", "游客", "仅允许匿名访问首页"},
 }
 
@@ -41,8 +41,13 @@ type menuItem struct {
 // 的字段顺序完全一致。Parent 为空字符串 "" 表示顶级菜单,否则填父菜单的 Name。
 var menuItems = []menuItem{
 	{"Home", "首页", "/home", "/home/index", "ri:home-5-line", "", true, true, false},
-	{"Workflows", "工作流工作台", "/workflows", "/workflows/index", "ri:flow-chart", "", true, false, false},
-	{"Results", "共享结果", "/results", "/results/index", "ri:file-chart-line", "", true, false, false},
+	{"SchedulerCenter", "工作流调度", "/scheduler", "/index/index", "ri:time-line", "", false, false, false},
+	{"NodeDefinitions", "节点定义", "node-definition", "/scheduler/node-definition", "ri:stack-line", "SchedulerCenter", true, false, false},
+	{"WorkflowDefinitions", "工作流定义", "definition", "/scheduler/workflow", "ri:node-tree", "SchedulerCenter", true, false, false},
+	{"WorkflowExecutions", "执行记录", "execution", "/scheduler/execution", "ri:history-line", "SchedulerCenter", true, false, false},
+	{"DataCenter", "数据管理", "/data", "/index/index", "ri:database-2-line", "", false, false, false},
+	{"MarketMetadata", "币种数据", "market-metadata", "plugin:official.quant/instruments", "ri:coins-line", "DataCenter", true, false, false},
+	{"MarketChart", "K 线详情", "market-chart", "plugin:official.quant/candles", "ri:stock-line", "DataCenter", false, false, true},
 	{"System", "系统管理", "/system", "/index/index", "ri:settings-3-line", "", false, false, false},
 	{"User", "用户管理", "user", "/system/user", "ri:user-3-line", "System", true, false, false},
 	{"Role", "角色管理", "role", "/system/role", "ri:team-line", "System", true, false, false},
@@ -53,14 +58,19 @@ var menuItems = []menuItem{
 // map(字典/映射)= 一堆“键 → 值”的对应,写成 map[键类型]值类型。这里键是菜单 Name,
 // 值是 [2]string(定长为 2 的数组):第 0 个存中文、第 1 个存英文,即菜单的多语言文案。
 var menuI18n = map[string][2]string{
-	"Home":       {"首页", "Home"},
-	"Workflows":  {"工作流工作台", "Workflow Workbench"},
-	"Results":    {"共享结果", "Shared Results"},
-	"System":     {"系统管理", "System Management"},
-	"User":       {"用户管理", "User Management"},
-	"Role":       {"角色管理", "Role Management"},
-	"Menus":      {"菜单管理", "Menu Management"},
-	"UserCenter": {"个人中心", "Profile"},
+	"Home":                {"首页", "Home"},
+	"SchedulerCenter":     {"工作流调度", "Workflow Scheduler"},
+	"WorkflowDefinitions": {"工作流定义", "Workflow Definitions"},
+	"WorkflowExecutions":  {"执行记录", "Execution Records"},
+	"NodeDefinitions":     {"节点定义", "Node Definitions"},
+	"DataCenter":          {"数据管理", "Data Management"},
+	"MarketMetadata":      {"币种数据", "Instruments"},
+	"MarketChart":         {"K 线详情", "Candles"},
+	"System":              {"系统管理", "System Management"},
+	"User":                {"用户管理", "User Management"},
+	"Role":                {"角色管理", "Role Management"},
+	"Menus":               {"菜单管理", "Menu Management"},
+	"UserCenter":          {"个人中心", "Profile"},
 }
 
 // Seed 写入内置角色、用户、菜单与 i18n。幂等。
@@ -227,6 +237,15 @@ func seedMenusAndButtons(tx *gorm.DB) (map[string]*SystemMenu, map[string]*Syste
 			return nil, nil, err
 		}
 	}
+	for _, name := range []string{
+		"Workflows", "Results", "TradingCenter", "TradingAccounts", "StrategyManagement",
+		"NewsData", "ConfigCenter", "ConfigOverview", "AiModelConfig", "AssistantAgentConfig",
+	} {
+		if err := tx.Model(&SystemMenu{}).Where("name = ?", name).
+			Updates(map[string]any{"is_active": false, "is_hidden": true, "updated_at": now}).Error; err != nil {
+			return nil, nil, err
+		}
+	}
 	buttonMap := map[string]*SystemMenuButton{}
 	// 按钮 = 页面上的操作按钮(新增/编辑/删除等),每个对应一个权限码。range 一个 map 时,
 	// 两个循环变量分别是“键、值”(遍历顺序不保证)。
@@ -289,7 +308,7 @@ func seedRoleBindings(
 	// 普通用户只看几项,游客只看首页。
 	roleMenus := map[string][]string{
 		"R_SUPER": allMenuNames,
-		"R_USER":  {"Home", "Results", "UserCenter"},
+		"R_USER":  {"Home", "UserCenter"},
 		"R_GUEST": {"Home"},
 	}
 	superButtons := make([]string, 0)
