@@ -155,7 +155,8 @@ jobs:
           python3 scripts/release/scan-artifacts.py "$VERSION" "$GITHUB_SHA" dist
 
       - name: Preserve release candidate
-        if: inputs.deploy_only != true
+        if: inputs.deploy_only != true && github.run_attempt == 1
+        continue-on-error: true
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: coinsphere-${{ inputs.version }}
@@ -172,6 +173,8 @@ jobs:
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
           draft: true
+          preserve_order: true
+          overwrite_files: ${{ github.run_attempt == 1 }}
           fail_on_unmatched_files: true
           files: |
             dist/*
