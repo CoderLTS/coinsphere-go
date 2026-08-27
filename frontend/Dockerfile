@@ -10,7 +10,7 @@ RUN --mount=type=cache,id=coinsphere-pnpm-store,target=/root/.local/share/pnpm/s
 COPY . .
 # 生产环境 VITE_API_URL=/(同源),API 走 nginx 反代。
 ARG VITE_VERSION=development
-ENV NODE_OPTIONS=--max-old-space-size=1920
+ENV NODE_OPTIONS=--max-old-space-size=1536
 RUN VITE_VERSION="${VITE_VERSION}" pnpm build
 
 FROM scratch AS assets
