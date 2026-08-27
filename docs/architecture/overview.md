@@ -52,7 +52,7 @@ Go App 是单一后端进程，负责：
 
 ### PostgreSQL / TimescaleDB
 
-数据库当前保存认证、RBAC、菜单、i18n、审计、插件安装状态和引用，以及工作流、修订、密钥、运行实例、CloudEvent、投递、Outbox、批次、人工任务、NodeRun、Checkpoint、活动游标、制品清单、节点状态和 ResultView 授权。`plugin_quant` schema 保存品种、闭合 K 线 hypertable、回测摘要、信号及 Paper 账户事实；`plugin_notification` 保存站内投递。金融值使用 `NUMERIC(38,18)`。订单、成交、费用和账本事实不可变，账户与持仓投影可从事实幂等重建。制品正文和完整回测明细按 SHA-256 分片保存在 Backend 专用持久卷。
+数据库当前保存认证、RBAC、菜单、i18n、审计、插件安装状态和引用，以及工作流、修订、密钥、运行实例、CloudEvent、投递、Outbox、批次、人工任务、NodeRun、Checkpoint、活动游标、制品清单、节点状态和 ResultView 授权。`plugin_quant` schema 保存品种、闭合 K 线 hypertable、回测摘要、信号及 Paper 账户事实；`plugin_notification` 保存站内投递。金融值使用 `NUMERIC(38,18)`。订单、成交、费用和账本事实不可变，账户与持仓投影可从事实幂等重建。制品正文和完整回测明细按 SHA-256 分片保存在部署目录的 Backend 持久目录。
 
 应用启动只校验 migration 版本。核心 DDL 由一次性 migration 命令执行，插件 DDL 由生命周期 CLI 在维护窗口执行。
 

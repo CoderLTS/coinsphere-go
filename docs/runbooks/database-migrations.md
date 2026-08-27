@@ -25,12 +25,10 @@ go run ./cmd/migrate -config ./config.yml -direction down -steps 1
 
 1. 已确认数据库没有需要保留的 Paper 晋级证据或其他业务数据。
 2. 已创建并验证可恢复的数据库备份。
-3. 用户对目标环境和目标 CoinSphere 数据卷给出明确重置授权。
-4. 已只读确认目标 Compose 项目、数据库服务和数据卷，不影响共享服务。
+3. 用户对目标环境和目标 CoinSphere 数据目录给出明确重置授权。
+4. 已只读确认目标 Compose 项目、数据库服务和数据目录，不影响共享服务。
 
-满足条件后，停止 CoinSphere Backend/Web，定向重建 CoinSphere 自有数据库或数据卷，再由目标镜像执行 `coinsphere-migrate -direction up`。禁止手工改写 `schema_migrations` 来伪装重置。
-
-`v0.3.1` freeze Release 需要执行一次 V2 基线重置，必须由仓库所有者在 `Release and deploy` 的 `reset_database` 输入框精确填写 `RESET coinsphere-go-timescale-data`。工作流在停止独立 Compose 后，将数据库、制品、上传和静态资源卷保存到服务器部署目录下的 `backups/<UTC 时间>.<随机后缀>/`，验证归档与 `SHA256SUMS` 后只删除 `coinsphere-go-timescale-data`。候选部署失败时再次验证备份并自动恢复同一组卷和原应用版本；自动恢复失败则保持备份并停止继续操作，按发布 Runbook 人工恢复。留空时保持普通 Up 部署，不接触数据卷；其他版本拒绝使用该一次性入口。
+满足条件后，停止 CoinSphere Backend/Web，备份并定向重建部署目录下的 `data/timescaledb`，再由目标镜像执行 `coinsphere-migrate -direction up`。禁止手工改写 `schema_migrations` 来伪装重置。
 
 ## 变更规则
 

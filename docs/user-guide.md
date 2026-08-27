@@ -139,11 +139,11 @@ go run ./cmd/coinsphere plugin purge-data --config ./config.yml --backend-root .
 
 ## 7. 数据、备份与升级
 
-持久数据位于 TimescaleDB、上传目录和 Backend 制品卷。升级前至少保存：
+生产持久数据位于部署目录的 `data/timescaledb` 和 `data/backend`。升级前至少保存：
 
 - PostgreSQL 一致性备份及恢复命令。
 - 上传目录备份。
-- `backend-artifacts` 制品卷备份；它必须和数据库快照属于同一恢复点。
+- `data/backend/artifacts` 制品目录备份；它必须和数据库快照属于同一恢复点。
 - 当前应用版本、Compose 配置和镜像 digest。
 - `COINSPHERE_AUTH__SECRET_KEY` 的安全离线副本。
 
