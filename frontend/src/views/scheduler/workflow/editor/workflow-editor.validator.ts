@@ -36,7 +36,7 @@ const dedupeIssues = (issues: WorkflowEditorIssue[]) => {
   })
 }
 
-const isStartNode = (node: WorkflowDomainNode) => node.data.typeCode.startsWith('start.')
+const isStartNode = (node: WorkflowDomainNode) => getNodeGraphKind(node.data.typeCode) === 'start'
 
 /** foreach 的 NEXT 连线：循环全部跑完后才走的后继边（BODY 连的才是循环体）。 */
 const isForeachNextEdge = (edge: WorkflowDomainEdge) =>
@@ -430,54 +430,6 @@ export function validateWorkflowDraft(graph: WorkflowDomainGraphModel): Workflow
       }
     })
 
-  nodes
-    .filter((node) => node.data.typeCode === 'strategy.evaluate')
-    .forEach((strategyNode) => {
-      const instrumentId = String(strategyNode.data.config?.instrumentId || '').trim()
-      const interval = String(strategyNode.data.config?.interval || '').trim()
-      const matchingEntry = startNodes.find((startNode) => {
-        if (
-          startNode.data.typeCode !== 'start.event' ||
-          String(startNode.data.config?.eventType || '').trim() !== 'market.candle.closed'
-        ) {
-          return false
-        }
-        const filters = Array.isArray(startNode.data.config?.filters)
-          ? startNode.data.config.filters
-          : []
-        const matchesInstrument = filters.some(
-          (filter: Record<string, any>) =>
-            filter?.path === 'instrumentId' && String(filter?.equals || '') === instrumentId
-        )
-        const matchesInterval = filters.some(
-          (filter: Record<string, any>) =>
-            filter?.path === 'interval' && String(filter?.equals || '') === interval
-        )
-        if (!matchesInstrument || !matchesInterval) return false
-
-        const queue = [startNode.id]
-        const visited = new Set<string>()
-        while (queue.length) {
-          const current = queue.shift() as string
-          if (current === strategyNode.id) return true
-          if (visited.has(current)) continue
-          visited.add(current)
-          ;(adjacency.get(current) || []).forEach((next) => queue.push(next))
-        }
-        return false
-      })
-      if (!matchingEntry) {
-        issues.push(
-          createIssue({
-            scope: 'node',
-            level: 'error',
-            nodeId: strategyNode.id,
-            message: '策略节点必须连接匹配币种和周期的 K 线事件入口。'
-          })
-        )
-      }
-    })
-
   return dedupeIssues(issues)
 }
 
@@ -618,16 +570,6 @@ export function validateNodeFormDraft(
       break
 
     default:
-      if (form.typeCode === 'strategy.evaluate') {
-        if (!String(config.strategyVersionId || '').trim()) errors.push('请选择已发布策略版本。')
-        if (!String(config.instrumentId || '').trim()) errors.push('请选择币种。')
-        if (!['1m', '5m', '15m', '1h', '4h', '1d'].includes(String(config.interval || ''))) {
-          errors.push('请选择有效的 K 线周期。')
-        }
-        if (!['paper', 'testnet', 'live'].includes(String(config.environment || 'paper'))) {
-          errors.push('策略运行环境无效。')
-        }
-      }
       break
   }
 

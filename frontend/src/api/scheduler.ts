@@ -70,28 +70,6 @@ export interface WorkflowNodeDefinitionItem {
   extraBranches?: string[]
 }
 
-export interface WorkflowNodeTemplateItem {
-  id: string
-  name: string
-  description: string
-  icon: string
-  baseNodeType: string
-  baseNodeLabel: string
-  defaultConfig: Record<string, any>
-  isEnabled: boolean
-  createdAt: string
-  updatedAt: string
-}
-
-export interface WorkflowNodeTemplatePayload {
-  name: string
-  description: string
-  icon?: string
-  baseNodeType: string
-  defaultConfig: Record<string, any>
-  isEnabled?: boolean
-}
-
 export interface WorkflowNodeItem {
   id: string
   type: string
@@ -633,9 +611,6 @@ export async function fetchNodeDefinitions() {
       kind: graphKind(item)
     }))
 }
-
-export const fetchWorkflowNodeTemplates = async () => [] as WorkflowNodeTemplateItem[]
-export const fetchWorkflowAgentOptions = async () => [] as WorkflowAgentOption[]
 
 export async function fetchWorkflowDefinitionList() {
   const { items } = await fetchWorkflows()

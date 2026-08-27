@@ -48,6 +48,7 @@ var menuItems = []menuItem{
 	{"DataCenter", "数据管理", "/data", "/index/index", "ri:database-2-line", "", false, false, false},
 	{"MarketMetadata", "币种数据", "market-metadata", "plugin:official.quant/instruments", "ri:coins-line", "DataCenter", true, false, false},
 	{"MarketChart", "K 线详情", "market-chart", "plugin:official.quant/candles", "ri:stock-line", "DataCenter", false, false, true},
+	{"Results", "共享结果", "/results", "/results/index", "ri:file-chart-line", "", true, false, false},
 	{"System", "系统管理", "/system", "/index/index", "ri:settings-3-line", "", false, false, false},
 	{"User", "用户管理", "user", "/system/user", "ri:user-3-line", "System", true, false, false},
 	{"Role", "角色管理", "role", "/system/role", "ri:team-line", "System", true, false, false},
@@ -66,6 +67,7 @@ var menuI18n = map[string][2]string{
 	"DataCenter":          {"数据管理", "Data Management"},
 	"MarketMetadata":      {"币种数据", "Instruments"},
 	"MarketChart":         {"K 线详情", "Candles"},
+	"Results":             {"共享结果", "Shared Results"},
 	"System":              {"系统管理", "System Management"},
 	"User":                {"用户管理", "User Management"},
 	"Role":                {"角色管理", "Role Management"},
@@ -238,7 +240,7 @@ func seedMenusAndButtons(tx *gorm.DB) (map[string]*SystemMenu, map[string]*Syste
 		}
 	}
 	for _, name := range []string{
-		"Workflows", "Results", "TradingCenter", "TradingAccounts", "StrategyManagement",
+		"Workflows", "TradingCenter", "TradingAccounts", "StrategyManagement",
 		"NewsData", "ConfigCenter", "ConfigOverview", "AiModelConfig", "AssistantAgentConfig",
 	} {
 		if err := tx.Model(&SystemMenu{}).Where("name = ?", name).
@@ -308,7 +310,7 @@ func seedRoleBindings(
 	// 普通用户只看几项,游客只看首页。
 	roleMenus := map[string][]string{
 		"R_SUPER": allMenuNames,
-		"R_USER":  {"Home", "UserCenter"},
+		"R_USER":  {"Home", "Results", "UserCenter"},
 		"R_GUEST": {"Home"},
 	}
 	superButtons := make([]string, 0)

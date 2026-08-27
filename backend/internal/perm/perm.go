@@ -44,7 +44,8 @@ var MenuPermissionCodes = map[string]string{
 	"WorkflowExecutions":  SchedulerWorkflowExecutionsView,
 	"NodeDefinitions":     SchedulerWorkflowDefinitionsView, "DataCenter": "",
 	"MarketMetadata": DataMarketView, "MarketChart": DataMarketView,
-	"System": "", "User": SystemUsersView, "Role": SystemRolesView,
+	"Results": ResultViewsAccess,
+	"System":  "", "User": SystemUsersView, "Role": SystemRolesView,
 	"Menus": SystemMenusView, "UserCenter": "",
 }
 

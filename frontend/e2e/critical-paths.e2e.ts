@@ -187,6 +187,29 @@ const dataMenu = {
   ]
 }
 
+const resultsMenu = {
+  id: 8,
+  parentId: null,
+  path: '/results',
+  name: 'Results',
+  component: '/results/index',
+  updatedAt: createdAt,
+  meta: {
+    title: '共享结果',
+    i18nKey: '',
+    i18nTexts: { zh: '共享结果', en: 'Shared Results' },
+    keepAlive: true,
+    isHide: false,
+    isHideTab: false,
+    isFullPage: false,
+    isIframe: false,
+    fixedTab: false,
+    isEnable: true,
+    sort: 40,
+    roles: ['R_SUPER']
+  }
+}
+
 const workflow = {
   id: 7,
   name: '批处理示例',
@@ -435,8 +458,14 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
     if (method === 'GET' && path === '/api/v1/system/menus') {
       await fulfillApi(
         route,
-        accessMode === 'authenticated' ? [homeMenu, schedulerMenu, dataMenu] : [homeMenu]
+        accessMode === 'authenticated'
+          ? [homeMenu, schedulerMenu, dataMenu, resultsMenu]
+          : [homeMenu]
       )
+      return
+    }
+    if (method === 'GET' && path === '/api/v1/result-views') {
+      await fulfillApi(route, { items: [] })
       return
     }
     if (method === 'GET' && path === '/api/v1/workflows') {
@@ -648,13 +677,13 @@ test('匿名访问工作流编辑器时被登录边界拦截', async ({ page }) 
   expect(backend.unexpectedApiCalls).toEqual([])
 })
 
-test('授权用户访问已撤下共享结果路径时回退首页', async ({ page }) => {
+test('授权用户可以访问共享结果页面', async ({ page }) => {
   const backend = await installBackendMocks(page, 'authenticated')
 
   await loginAsTestUser(page, '/results')
 
-  await expect(page.getByRole('heading', { name: '系统总览', exact: true })).toBeVisible()
-  await expect(page.getByText('共享结果', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: '共享结果', exact: true })).toBeVisible()
+  await expect(page.getByText('暂无共享结果', { exact: true })).toBeVisible()
   expect(backend.schedulerApiCalls).toEqual([])
   expect(backend.authApiCalls).toEqual(['POST /api/v1/auth/login'])
   expect(backend.unexpectedApiCalls).toEqual([])

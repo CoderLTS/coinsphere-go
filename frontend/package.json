@@ -24,8 +24,6 @@
     "lint:stylelint": "stylelint \"**/*.{css,scss,vue}\"",
     "fix:stylelint": "stylelint \"**/*.{css,scss,vue}\" --fix",
     "test:e2e": "playwright test",
-    "lint:lint-staged": "lint-staged",
-    "prepare": "husky",
     "commit": "git-cz",
     "clean:dev": "tsx scripts/clean-dev.ts"
   },
@@ -33,33 +31,6 @@
     "commitizen": {
       "path": "node_modules/cz-git"
     }
-  },
-  "lint-staged": {
-    "*.{js,ts,mjs,mts,tsx}": [
-      "eslint --fix",
-      "prettier --write"
-    ],
-    "*.{cjs,json,jsonc}": [
-      "prettier --write"
-    ],
-    "*.vue": [
-      "eslint --fix",
-      "stylelint --fix --allow-empty-input",
-      "prettier --write"
-    ],
-    "*.{html,htm}": [
-      "prettier --write"
-    ],
-    "*.{scss,css,less}": [
-      "stylelint --fix --allow-empty-input",
-      "prettier --write"
-    ],
-    "*.{md,mdx}": [
-      "prettier --write"
-    ],
-    "*.{yaml,yml}": [
-      "prettier --write"
-    ]
   },
   "dependencies": {
     "@antv/x6": "3.1.7",

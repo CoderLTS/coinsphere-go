@@ -7,7 +7,7 @@
       :graph="domainGraph"
       :materials-visible="materialsVisible"
       :materials="materialItems"
-      :material-groups="editorMaterialGroups"
+      :material-groups="materialGroups"
       :issues="allIssues"
       :agent-options="agentOptions"
       :notify-user-options="notifyUserOptions"
@@ -94,27 +94,16 @@
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { storeToRefs } from 'pinia'
   import { fetchGetRoleList, fetchGetUserList } from '@/api/system'
-  import { fetchNotifyChannelList, type NotifyChannelItem } from '@/api/config'
-  import { fetchMarketSymbols, type MarketSymbol } from '@/api/market'
-  import { fetchPublishedStrategies, type StrategyVersionItem } from '@/api/strategy'
-  import { fetchTradingAccounts, type TradingAccount } from '@/api/trading'
+  import type { NotifyChannelItem } from '@/api/config'
   import {
     fetchCreateWorkflowDefinition,
     fetchNodeDefinitions,
-    fetchWorkflowDefinitionList,
     fetchWorkflowDefinitionSaveContext,
-    fetchWorkflowNodeTemplates,
-    fetchWorkflowAgentOptions,
     fetchUpdateWorkflowDefinition,
     fetchValidateWorkflowDefinition,
     fetchWorkflowDefinitionDetail
   } from '@/api/scheduler'
-  import type {
-    WorkflowAgentOption,
-    WorkflowDefinitionItem,
-    WorkflowNodeDefinitionItem,
-    WorkflowNodeTemplateItem
-  } from '@/api/scheduler'
+  import type { WorkflowAgentOption, WorkflowDefinitionItem } from '@/api/scheduler'
   import { useMenuStore } from '@/store/modules/menu'
   import { useWorkflowEditorStore } from '@/store/modules/workflow-editor'
   import { buildWorkflowMaterialGroups } from './node-materials'
@@ -192,7 +181,6 @@
   const agentOptions = ref<WorkflowAgentOption[]>([])
   const notifyOptionsLoading = ref(false)
   const notifyOptionsLoaded = ref(false)
-  const nodeTemplates = ref<WorkflowNodeTemplateItem[]>([])
   const notifyChannels = ref<NotifyChannelItem[]>([])
   const notifyChannelOptions = computed(() => {
     const groups = new Map<string, NotifyChannelItem[]>()
@@ -244,103 +232,7 @@
     return raw ? Number(raw) : null
   })
 
-  const editorMaterialGroups = computed(() => {
-    const baseGroups = materialGroups.value.map((group) => ({ ...group, items: [...group.items] }))
-    const materials = baseGroups.flatMap((group) => group.items)
-    const templateItems = nodeTemplates.value
-      .filter((item) => item.isEnabled)
-      .map((item) => {
-        const base = materials.find((material) => material.typeCode === item.baseNodeType)
-        if (!base) return null
-        return {
-          ...base,
-          title: item.name,
-          description: item.description || `基于${item.baseNodeLabel}`,
-          presetSubtitle: item.baseNodeLabel,
-          presetConfig: item.defaultConfig
-        }
-      })
-      .filter((item): item is NonNullable<typeof item> => Boolean(item))
-    return templateItems.length
-      ? [{ key: 'my-templates', title: '我的节点模板', items: templateItems }, ...baseGroups]
-      : baseGroups
-  })
-
-  const setSchemaOptions = (
-    definitions: WorkflowNodeDefinitionItem[],
-    typeCode: string,
-    field: string,
-    options: Array<{ value: string; label: string }>
-  ) => {
-    const property = definitions.find((item) => item.typeCode === typeCode)?.configSchema
-      ?.properties?.[field]
-    if (!property || !options.length) return
-    property.enum = options.map((item) => item.value)
-    property.enumLabels = options.map((item) => item.label)
-  }
-
-  const enrichNodeDefinitions = (
-    source: WorkflowNodeDefinitionItem[],
-    strategies: StrategyVersionItem[],
-    instruments: MarketSymbol[],
-    accounts: TradingAccount[],
-    workflows: WorkflowDefinitionItem[]
-  ) => {
-    const definitions: WorkflowNodeDefinitionItem[] = JSON.parse(JSON.stringify(source))
-    const instrumentOptions = instruments.map((item) => ({
-      value: item.id,
-      label: `${item.nativeSymbol} · ${item.market === 'usd_m' ? 'USD-M' : 'Spot'} · ${item.status === 'trading' ? '交易中' : '已暂停'}`
-    }))
-    setSchemaOptions(
-      definitions,
-      'strategy.evaluate',
-      'strategyVersionId',
-      strategies.map((item) => ({
-        value: item.id,
-        label: `${item.name} v${item.versionNumber} · 已发布`
-      }))
-    )
-    setSchemaOptions(definitions, 'strategy.evaluate', 'instrumentId', instrumentOptions)
-    setSchemaOptions(
-      definitions,
-      'strategy.evaluate',
-      'tradingAccountId',
-      accounts.map((item) => ({
-        value: item.id,
-        label: `${item.name} · ${item.environment} · ${item.status === 'active' ? '运行中' : '已暂停'}`
-      }))
-    )
-    setSchemaOptions(definitions, 'market.candles.subscribe', 'instrumentId', instrumentOptions)
-    setSchemaOptions(definitions, 'market.candles.backfill', 'instrumentId', instrumentOptions)
-    setSchemaOptions(
-      definitions,
-      'workflow.call',
-      'workflowCode',
-      workflows.map((item) => ({
-        value: item.code,
-        label: `${item.displayName} · ${item.isWorkflowActive ? '已激活' : '未激活'}`
-      }))
-    )
-    const entryProperty = definitions.find((item) => item.typeCode === 'workflow.call')
-      ?.configSchema?.properties?.entryKey
-    if (entryProperty) {
-      entryProperty.enumByWorkflowCode = Object.fromEntries(
-        workflows.map((workflow) => [
-          workflow.code,
-          workflow.graph.nodes
-            .filter((node) => node.type.startsWith('start.'))
-            .map((node) => ({
-              value: String(node.config?.entryKey || '').trim(),
-              label: String(node.config?.displayName || node.label || '开始入口').trim()
-            }))
-            .filter((item) => item.value)
-        ])
-      )
-    }
-    return definitions
-  }
-
-  const materialItems = computed(() => editorMaterialGroups.value.flatMap((group) => group.items))
+  const materialItems = computed(() => materialGroups.value.flatMap((group) => group.items))
 
   const currentNode = computed<WorkflowDomainNode | null>(() => {
     if (selection.value.activeCellType !== 'node' || !selection.value.activeCellId) return null
@@ -1317,46 +1209,12 @@
     notifyRoleOptions.value = []
     notifyOptionsLoading.value = false
     notifyOptionsLoaded.value = false
-    nodeTemplates.value = []
     notifyChannels.value = []
     historySessionKey.value += 1
     resetGraphHistory()
 
     try {
-      const [
-        rawDefinitions,
-        agentOptionResult,
-        strategyResult,
-        symbolResult,
-        accountResult,
-        templateResult,
-        channelResult,
-        workflowResult
-      ] = await Promise.all([
-        fetchNodeDefinitions(),
-        // 智能体列表拿不到不该挡住整个编辑器（没配智能体也能画别的节点）。
-        fetchWorkflowAgentOptions().catch(() => [] as WorkflowAgentOption[]),
-        fetchPublishedStrategies({ limit: 200 })
-          .then((result) => result.records)
-          .catch(() => [] as StrategyVersionItem[]),
-        fetchMarketSymbols({ limit: 200, quoteAsset: 'USDT', status: 'trading' })
-          .then((result) => result.records)
-          .catch(() => [] as MarketSymbol[]),
-        fetchTradingAccounts().catch(() => [] as TradingAccount[]),
-        fetchWorkflowNodeTemplates().catch(() => [] as WorkflowNodeTemplateItem[]),
-        fetchNotifyChannelList().catch(() => [] as NotifyChannelItem[]),
-        fetchWorkflowDefinitionList().catch(() => [] as WorkflowDefinitionItem[])
-      ])
-      const nodeDefinitionResult = enrichNodeDefinitions(
-        rawDefinitions,
-        strategyResult,
-        symbolResult,
-        accountResult,
-        workflowResult
-      )
-      agentOptions.value = agentOptionResult
-      nodeTemplates.value = templateResult
-      notifyChannels.value = channelResult
+      const nodeDefinitionResult = await fetchNodeDefinitions()
 
       // 先把节点定义同步给本地注册表镜像：端口、分支、校验都要按后端声明的图语义来。
       syncNodeDefinitions(nodeDefinitionResult)

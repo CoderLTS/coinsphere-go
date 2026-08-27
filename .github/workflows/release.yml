@@ -1,25 +1,17 @@
 name: Release and deploy
 
 on:
-  workflow_call:
-    inputs:
-      version:
-        required: true
-        type: string
-      deploy_only:
-        required: false
-        type: boolean
-        default: false
-      reset_database:
-        required: false
-        type: string
-        default: ""
   workflow_dispatch:
     inputs:
       version:
         description: "版本号，例如 v0.1.0"
         required: true
         type: string
+      deploy_only:
+        description: "快速部署：跳过 Release 制品、SBOM 和安全扫描"
+        required: false
+        type: boolean
+        default: true
       reset_database:
         description: "通常留空；V2 基线重置须输入 RESET coinsphere-go-timescale-data"
         required: false
@@ -111,6 +103,7 @@ jobs:
           upload-release-assets: false
 
       - name: Scan release images
+        if: inputs.deploy_only != true
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           version: v0.72.0
@@ -122,6 +115,7 @@ jobs:
           timeout: 15m
 
       - name: Scan web release image
+        if: inputs.deploy_only != true
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           version: v0.72.0
