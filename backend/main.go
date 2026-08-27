@@ -112,7 +112,7 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	baseDir := filepath.Dir(executable)
 	app := service.NewApp(gdb, cfg, plugins)
 	app.ArtifactRoot = filepath.Join(baseDir, "volumes", "artifacts")
-	if err := db.Seed(ctx, gdb, app.Hasher, cfg.Auth.BootstrapAdminPassword); err != nil {
+	if err := db.Seed(ctx, gdb, app.Hasher, cfg.Auth.BootstrapAdminPassword, plugins.Pages()); err != nil {
 		return fmt.Errorf("seed database: %w", err)
 	}
 	if cfg.Auth.BootstrapAdminPassword == "coinsphere" {

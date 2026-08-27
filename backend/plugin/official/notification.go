@@ -41,11 +41,16 @@ func RegisterNotification(registry *sdk.Registry, database *gorm.DB) error {
 	runtime := &notificationRuntime{db: database}
 	return registry.RegisterPlugin(sdk.PluginDescriptor{
 		ID: notificationPluginID, Name: "CoinSphere Notification", Version: "1.0.0",
-		Contributes: []string{"nodes", "apiRoutes", "resultPages"},
+		Contributes: []string{"nodes", "apiRoutes", "pages"},
 	}, runtime.register)
 }
 
 func (n *notificationRuntime) register(registrar sdk.Registrar) error {
+	if err := registrar.Page(sdk.PageDescriptor{
+		PageKey: "deliveries", Title: "通知投递", Icon: "ri:notification-3-line", KeepAlive: true,
+	}); err != nil {
+		return err
+	}
 	if err := registrar.Action(sdk.NodeDescriptor{
 		Type: "official.notification.in_app", Version: "1.0.0", Kind: sdk.NodeKindAction,
 		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"title":{"type":"string","title":"Title","minLength":1,"maxLength":160}},"required":["title"],"additionalProperties":false}`),
@@ -56,23 +61,10 @@ func (n *notificationRuntime) register(registrar sdk.Registrar) error {
 	}, notificationInAppAction{runtime: n}); err != nil {
 		return err
 	}
-	for _, route := range []struct {
-		desc    sdk.RouteDescriptor
-		handler sdk.ScopedRouteHandler
-	}{
-		{sdk.RouteDescriptor{Method: "GET", Pattern: "/deliveries", Scope: sdk.ScopeSystem}, n.handleDeliveries},
-		{sdk.RouteDescriptor{Method: "GET", Pattern: "/deliveries", Scope: sdk.ScopeResult}, n.handleResultDeliveries},
-	} {
-		if err := registrar.Route(route.desc, route.handler); err != nil {
-			return err
-		}
-	}
-	return registrar.ResultPage(sdk.ResultPageDescriptor{
-		PageKey: "deliveries", Title: "Notification deliveries", ComponentEntry: "./official/notification/ResultPage.vue",
-		ScopeSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"workflowId":{"type":"integer","minimum":1},"nodeInstanceId":{"type":"string","minLength":1,"maxLength":128}},"required":["workflowId","nodeInstanceId"],"additionalProperties":false}`),
-		FilterSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"status":{"type":"string","enum":["delivered","failed"]}},"additionalProperties":false}`),
-		Mobile:       true,
-	})
+	return registrar.Route(
+		sdk.RouteDescriptor{Method: "GET", Pattern: "/deliveries", Scope: sdk.ScopeSystem},
+		n.handleDeliveries,
+	)
 }
 
 func (a notificationInAppAction) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
@@ -140,44 +132,16 @@ func (n *notificationRuntime) handleDeliveries(w http.ResponseWriter, r *http.Re
 		writeQuantProblem(w, http.StatusBadRequest, "invalid notification delivery query")
 		return
 	}
-	n.listDeliveries(w, r, 0, "", strings.TrimSpace(r.URL.Query().Get("status")))
+	n.listDeliveries(w, r, strings.TrimSpace(r.URL.Query().Get("status")))
 }
 
-func (n *notificationRuntime) handleResultDeliveries(w http.ResponseWriter, r *http.Request, routeScope sdk.RouteScope) {
-	scope, ok := routeScope.(sdk.ResultScope)
-	if !ok || scope.PluginID != notificationPluginID || scope.PageKey != "deliveries" || !quantQueryKeys(r) {
-		writeQuantProblem(w, http.StatusBadRequest, "invalid notification result scope")
+func (n *notificationRuntime) listDeliveries(w http.ResponseWriter, r *http.Request, status string) {
+	limit, err := quantQueryLimit(r, 100, 200)
+	if err != nil {
+		writeQuantProblem(w, http.StatusBadRequest, err.Error())
 		return
-	}
-	var fixed struct {
-		WorkflowID     int64  `json:"workflowId"`
-		NodeInstanceID string `json:"nodeInstanceId"`
-	}
-	var filters struct {
-		Status string `json:"status"`
-	}
-	if json.Unmarshal(scope.Scope, &fixed) != nil || json.Unmarshal(scope.Filters, &filters) != nil ||
-		fixed.WorkflowID <= 0 || strings.TrimSpace(fixed.NodeInstanceID) == "" {
-		writeQuantProblem(w, http.StatusBadRequest, "invalid notification result scope")
-		return
-	}
-	n.listDeliveries(w, r, fixed.WorkflowID, fixed.NodeInstanceID, filters.Status)
-}
-
-func (n *notificationRuntime) listDeliveries(w http.ResponseWriter, r *http.Request, workflowID int64, nodeID, status string) {
-	limit := 100
-	if workflowID == 0 {
-		parsed, err := quantQueryLimit(r, 100, 200)
-		if err != nil {
-			writeQuantProblem(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		limit = parsed
 	}
 	query := n.db.WithContext(r.Context()).Order("created_at DESC, id DESC").Limit(limit)
-	if workflowID > 0 {
-		query = query.Where("workflow_id = ? AND node_instance_id = ?", workflowID, nodeID)
-	}
 	if status != "" {
 		if status != "delivered" && status != "failed" {
 			writeQuantProblem(w, http.StatusBadRequest, "notification status is invalid")

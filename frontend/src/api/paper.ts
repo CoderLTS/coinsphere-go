@@ -74,7 +74,7 @@ export const exportPaperResult = (viewId: number) =>
     rawResponse: true
   })
 
-export const fetchNotificationResult = (viewId: number) =>
+export const fetchNotificationDeliveries = () =>
   request.get<{ items: NotificationDelivery[] }>({
-    url: `/api/v1/result-views/${viewId}/plugins/official.notification/deliveries`
+    url: '/api/v1/plugins/official.notification/deliveries'
   })

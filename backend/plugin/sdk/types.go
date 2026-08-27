@@ -120,6 +120,18 @@ type ResultPageDescriptor struct {
 	Mobile         bool
 }
 
+type PageDescriptor struct {
+	PageKey   string
+	Title     string
+	Icon      string
+	KeepAlive bool
+}
+
+type RegisteredPage struct {
+	PluginID string
+	PageDescriptor
+}
+
 type ScopeKind string
 
 const (

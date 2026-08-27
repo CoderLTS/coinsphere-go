@@ -109,6 +109,10 @@ if [[ -f $DOCKER_CONFIG_FILE ]]; then
 fi
 
 mkdir -p "$DEPLOY_DIR"
+DATA_DIR=$DEPLOY_DIR/data
+DATA_READY_FILE=$DATA_DIR/.bind-data-ready
+mkdir -p "$DATA_DIR/timescaledb" "$DATA_DIR/backend/uploads" \
+  "$DATA_DIR/backend/static" "$DATA_DIR/backend/artifacts"
 RUNTIME_ENV=$DEPLOY_DIR/runtime.env
 if [[ ! -f $RUNTIME_ENV ]]; then
   runtime_source=${COINSPHERE_RUNTIME_ENV_FILE:-}
@@ -173,6 +177,58 @@ compose_with() {
     --env-file "$env_file" -f "$compose_file" "$@"
 }
 
+legacy_volumes=(
+  coinsphere-go-timescale-data
+  coinsphere-go-backend-uploads
+  coinsphere-go-backend-static
+  coinsphere-go-backend-artifacts
+)
+bind_targets=(
+  "$DATA_DIR/timescaledb"
+  "$DATA_DIR/backend/uploads"
+  "$DATA_DIR/backend/static"
+  "$DATA_DIR/backend/artifacts"
+)
+volume_migration_required=false
+previous_uses_bind_data=false
+if $had_previous && grep -Fq './data/timescaledb:/var/lib/postgresql/data' "$previous_compose"; then
+  previous_uses_bind_data=true
+fi
+if [[ ! -f $DATA_READY_FILE ]] && ! $previous_uses_bind_data; then
+  for volume in "${legacy_volumes[@]}"; do
+    if docker volume inspect "$volume" >/dev/null 2>&1; then
+      project=$(docker volume inspect --format '{{ index .Labels "com.docker.compose.project" }}' "$volume")
+      [[ $project == coinsphere-go ]] || {
+        echo "拒绝迁移不属于 CoinSphere 的数据卷: $volume" >&2
+        exit 1
+      }
+      volume_migration_required=true
+    fi
+  done
+fi
+if $volume_migration_required && ! $had_previous; then
+  echo "发现旧数据卷，但缺少可回滚的上一版 Compose 与 .env" >&2
+  exit 1
+fi
+
+migrate_volume() {
+  local volume=$1
+  local target=$2
+  if ! docker volume inspect "$volume" >/dev/null 2>&1; then
+    return
+  fi
+  if docker ps -q --filter volume="$volume" | grep -q .; then
+    echo "数据卷仍被运行中的容器使用，拒绝在线迁移: $volume" >&2
+    exit 1
+  fi
+  docker run --rm --network none --user 0:0 \
+    --mount "type=volume,src=$volume,dst=/source,readonly" \
+    --mount "type=bind,src=$target,dst=/target" \
+    --entrypoint sh "$BACKEND_IMAGE" -c \
+    'rm -rf -- /target/* /target/.[!.]* /target/..?* && cp -a /source/. /target/'
+  echo "已将 $volume 迁移到 $target"
+}
+
 legacy_available=false
 legacy_removed=false
 legacy_services=()
@@ -203,10 +259,12 @@ fi
 
 previous_services=()
 obsolete_services=()
+previous_database_running=false
 if $had_previous; then
   while IFS= read -r service; do
     case "$service" in
       backend|web) previous_services+=("$service") ;;
+      timescaledb) previous_database_running=true ;;
       worker|executor)
         previous_services+=("$service")
         obsolete_services+=("$service")
@@ -243,8 +301,20 @@ trap 'rollback 130' INT
 trap 'rollback 143' TERM
 
 compose_with "$next_env" "$DEPLOY_DIR/compose.yaml" pull
+if $volume_migration_required; then
+  if ((${#previous_services[@]} > 0)); then
+    compose_with "$previous_env" "$previous_compose" stop "${previous_services[@]}"
+  fi
+  $previous_database_running && compose_with "$previous_env" "$previous_compose" stop timescaledb
+  for index in "${!legacy_volumes[@]}"; do
+    migrate_volume "${legacy_volumes[$index]}" "${bind_targets[$index]}"
+  done
+fi
+docker run --rm --network none --user 0:0 \
+  --mount "type=bind,src=$DATA_DIR/backend,dst=/target" \
+  --entrypoint sh "$BACKEND_IMAGE" -c 'chown -R app:app /target'
 compose_with "$next_env" "$DEPLOY_DIR/compose.yaml" up -d --wait --wait-timeout 180 timescaledb
-if ((${#previous_services[@]} > 0)); then
+if ! $volume_migration_required && ((${#previous_services[@]} > 0)); then
   compose_with "$previous_env" "$previous_compose" stop "${previous_services[@]}"
 fi
 compose_with "$next_env" "$DEPLOY_DIR/compose.yaml" run --rm --no-deps backend \
@@ -264,5 +334,6 @@ if ((${#obsolete_services[@]} > 0)); then
 fi
 
 install -m 0600 "$next_env" "$DEPLOY_DIR/.env"
+touch "$DATA_READY_FILE"
 trap - ERR INT TERM
 echo "CoinSphere $VERSION 已发布到独立 Compose 项目 coinsphere-go"

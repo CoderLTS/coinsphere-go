@@ -2,8 +2,8 @@
   <section class="delivery-result" aria-labelledby="delivery-title">
     <header>
       <div>
-        <p>Notification ledger</p>
-        <h2 id="delivery-title">{{ view.name }}</h2>
+        <p>站内通知</p>
+        <h2 id="delivery-title">通知投递</h2>
       </div>
       <ElButton circle title="刷新" :loading="loading" @click="load">
         <ArtSvgIcon icon="ri:refresh-line" />
@@ -27,10 +27,8 @@
 </template>
 
 <script setup lang="ts">
-  import { fetchNotificationResult, type NotificationDelivery } from '@/api/paper'
-  import type { ResultView } from '@/api/resultViews'
+  import { fetchNotificationDeliveries, type NotificationDelivery } from '@/api/paper'
 
-  const props = defineProps<{ view: ResultView }>()
   const deliveries = ref<NotificationDelivery[]>([])
   const loading = ref(false)
   const formatTime = (value: string) =>
@@ -45,13 +43,13 @@
   const load = async () => {
     loading.value = true
     try {
-      deliveries.value = (await fetchNotificationResult(props.view.id)).items
+      deliveries.value = (await fetchNotificationDeliveries()).items
     } finally {
       loading.value = false
     }
   }
 
-  watch(() => props.view.id, load, { immediate: true })
+  onMounted(load)
 </script>
 
 <style scoped>
