@@ -302,11 +302,10 @@ trap 'rollback 143' TERM
 
 compose_with "$next_env" "$DEPLOY_DIR/compose.yaml" pull
 if $volume_migration_required; then
-  migration_services=("${previous_services[@]}")
-  $previous_database_running && migration_services+=(timescaledb)
-  if ((${#migration_services[@]} > 0)); then
-    compose_with "$previous_env" "$previous_compose" stop "${migration_services[@]}"
+  if ((${#previous_services[@]} > 0)); then
+    compose_with "$previous_env" "$previous_compose" stop "${previous_services[@]}"
   fi
+  $previous_database_running && compose_with "$previous_env" "$previous_compose" stop timescaledb
   for index in "${!legacy_volumes[@]}"; do
     migrate_volume "${legacy_volumes[$index]}" "${bind_targets[$index]}"
   done
