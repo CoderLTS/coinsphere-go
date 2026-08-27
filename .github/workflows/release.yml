@@ -4,21 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "版本号，例如 v0.1.0"
+        description: "部署版本号，例如 v0.3.1-deploy.1"
         required: true
-        type: string
-      deploy_only:
-        description: "快速部署：跳过 Release 制品、SBOM 和安全扫描"
-        required: false
-        type: boolean
-        default: true
-      reset_database:
-        description: "通常留空；V2 基线重置须输入 RESET coinsphere-go-timescale-data"
-        required: false
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: coinsphere-production-release
@@ -40,20 +31,10 @@ jobs:
 
       - name: Validate release source and version
         shell: bash
-        env:
-          DEPLOY_ONLY: ${{ inputs.deploy_only }}
-          REPOSITORY_OWNER: ${{ github.repository_owner }}
-          RESET_DATABASE: ${{ inputs.reset_database }}
         run: |
           set -Eeuo pipefail
-          [[ "$GITHUB_REF" == "refs/heads/main" ]] || { echo "只能从 main 手工发布或部署" >&2; exit 1; }
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || { echo "只能从 main 手工部署" >&2; exit 1; }
           [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || { echo "版本号必须符合 vX.Y.Z 格式" >&2; exit 1; }
-          if [[ -n "$RESET_DATABASE" ]]; then
-            [[ "$DEPLOY_ONLY" != true ]] || { echo "仅正式 Release 可以重置 V2 基线" >&2; exit 1; }
-            [[ "$GITHUB_ACTOR" == "$REPOSITORY_OWNER" ]] || { echo "仅仓库所有者可以重置 V2 基线" >&2; exit 1; }
-            [[ "$VERSION" == v0.3.1 ]] || { echo "V2 基线重置只允许用于 v0.3.1 freeze Release" >&2; exit 1; }
-            [[ "$RESET_DATABASE" == 'RESET coinsphere-go-timescale-data' ]] || { echo "数据库重置确认文本不匹配" >&2; exit 1; }
-          fi
           for attempt in 1 2 3; do
             git fetch --quiet origin main --tags && break
             [[ "$attempt" -lt 3 ]] || exit 1
@@ -66,124 +47,18 @@ jobs:
           fi
 
       - name: Build packages and push images
-        id: build
         shell: bash
         run: |
           set -Eeuo pipefail
-          build_mode=release
-          if [[ "${{ inputs.deploy_only }}" == true ]]; then
-            build_mode=images-only
-          fi
-          bash scripts/release/build.sh "$VERSION" "$GITHUB_SHA" dist "$build_mode"
+          bash scripts/release/build.sh "$VERSION" "$GITHUB_SHA" dist images-only
           backend_digest=$(jq -er '.backendDigest' dist/release-manifest.json)
           web_digest=$(jq -er '.webDigest' dist/release-manifest.json)
           [[ $backend_digest =~ ^127\.0\.0\.1:5000/coinsphere/backend@sha256:[0-9a-f]{64}$ ]] || exit 1
           [[ $web_digest =~ ^127\.0\.0\.1:5000/coinsphere/web@sha256:[0-9a-f]{64}$ ]] || exit 1
-          printf 'backend_digest=%s\n' "$backend_digest" >>"$GITHUB_OUTPUT"
-          printf 'web_digest=%s\n' "$web_digest" >>"$GITHUB_OUTPUT"
-
-      - name: Generate backend SBOM
-        if: inputs.deploy_only != true
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
-        with:
-          image: registry:${{ steps.build.outputs.backend_digest }}
-          format: spdx-json
-          output-file: dist/coinsphere-${{ inputs.version }}-backend.spdx.json
-          upload-artifact: false
-          upload-release-assets: false
-
-      - name: Generate web SBOM
-        if: inputs.deploy_only != true
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
-        with:
-          image: registry:${{ steps.build.outputs.web_digest }}
-          format: spdx-json
-          output-file: dist/coinsphere-${{ inputs.version }}-web.spdx.json
-          upload-artifact: false
-          upload-release-assets: false
-
-      - name: Scan release images
-        if: inputs.deploy_only != true
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
-        with:
-          version: v0.72.0
-          scan-type: image
-          image-ref: ${{ steps.build.outputs.backend_digest }}
-          format: table
-          severity: CRITICAL
-          exit-code: "1"
-          timeout: 15m
-
-      - name: Scan web release image
-        if: inputs.deploy_only != true
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
-        with:
-          version: v0.72.0
-          skip-setup-trivy: true
-          cache: false
-          scan-type: image
-          image-ref: ${{ steps.build.outputs.web_digest }}
-          format: table
-          severity: CRITICAL
-          exit-code: "1"
-          timeout: 15m
-
-      - name: Generate final checksums
-        if: inputs.deploy_only != true
-        shell: bash
-        run: |
-          cd dist
-          sha256sum \
-            "./coinsphere-$VERSION-windows-x86.zip" \
-            "./coinsphere-$VERSION-linux-amd64.tar.gz" \
-            "./coinsphere-$VERSION-docker.tar.gz" \
-            ./release-manifest.json \
-            "./coinsphere-$VERSION-backend.spdx.json" \
-            "./coinsphere-$VERSION-web.spdx.json" >SHA256SUMS
-
-      - name: Scan final release artifacts
-        if: inputs.deploy_only != true
-        shell: bash
-        run: |
-          command -v python3 >/dev/null || { echo "缺少命令: python3" >&2; exit 3; }
-          python3 scripts/release/scan-artifacts.py "$VERSION" "$GITHUB_SHA" dist
-
-      - name: Preserve release candidate
-        if: inputs.deploy_only != true && github.run_attempt == 1
-        continue-on-error: true
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: coinsphere-${{ inputs.version }}
-          path: dist/
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload draft GitHub Release
-        if: inputs.deploy_only != true
-        uses: ./.github/actions/retry-gh-release
-        with:
-          version: ${{ inputs.version }}
-          draft: "true"
-          fail_on_unmatched_files: "true"
-          files: |
-            dist/*
 
       - name: Deploy independent CoinSphere Compose
         shell: bash
-        env:
-          RESET_DATABASE: ${{ inputs.reset_database }}
-        run: |
-          if [[ -n "$RESET_DATABASE" ]]; then
-            bash scripts/release/reset-v2-baseline.sh "$VERSION" dist/release-manifest.json "$RESET_DATABASE"
-          else
-            bash deploy/production/deploy.sh "$VERSION" dist/release-manifest.json
-          fi
-
-      - name: Publish GitHub Release
-        if: inputs.deploy_only != true
-        uses: ./.github/actions/retry-gh-release
-        with:
-          version: ${{ inputs.version }}
+        run: bash deploy/production/deploy.sh "$VERSION" dist/release-manifest.json
 
       - name: Apply CoinSphere Registry retention
         continue-on-error: true
