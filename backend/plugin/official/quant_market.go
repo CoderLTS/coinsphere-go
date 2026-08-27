@@ -2,6 +2,7 @@ package official
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -151,15 +152,15 @@ func (q *quantRuntime) backfillQuantCandles(ctx context.Context, subscription *q
 	duration := quantIntervals[config.Interval]
 	now := time.Now().UTC()
 	start := now.Add(-500 * duration)
-	var latest *time.Time
+	var latest sql.NullTime
 	err := q.db.WithContext(ctx).Model(&quantCandle{}).
 		Where("market = ? AND instrument = ? AND interval = ?", config.Market, config.Instrument, config.Interval).
 		Select("MAX(open_time)").Scan(&latest).Error
 	if err != nil {
 		return errors.New("load latest Quant candle failed")
 	}
-	if latest != nil {
-		start = latest.UTC()
+	if latest.Valid {
+		start = latest.Time.UTC()
 	}
 	for ctx.Err() == nil {
 		candles, err := q.fetchQuantKlines(ctx, config, start, 1000)
