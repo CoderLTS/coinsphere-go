@@ -38,13 +38,13 @@ flowchart LR
 
 ### 结果
 
-系统使用 `Vue Web + Go App + PostgreSQL/TimescaleDB` 的新基线启动。认证、RBAC 和系统监控可用；Python Worker、新闻、Testnet/Live 和 Private Executor 不再属于部署或数据模型。可信本地插件可以通过统一 CLI 被校验、编译、迁移和注册。
+系统使用 `Vue Web + Go App + PostgreSQL 16` 的新基线启动。认证、RBAC 和系统监控可用；Python Worker、新闻、Testnet/Live 和 Private Executor 不再属于部署或数据模型。可信本地插件可以通过统一 CLI 被校验、编译、迁移和注册。
 
 ### 建议交付切片
 
 | 切片                    | 可直接验收的能力                                                                                              |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------- |
-| P0-A 新数据与部署基线   | 空库建立 V2 核心 schema，Compose 只启动 migration、Go App、Web 和 TimescaleDB；保留登录、RBAC、菜单和系统监控 |
+| P0-A 新数据与部署基线   | 空库建立 V2 核心 schema，生产 Compose 只启动 Go App 和 Web，并连接服务器 PostgreSQL；保留登录、RBAC、菜单和系统监控 |
 | P0-B 插件清单与静态注册 | `coinsphere-plugin.json`、Core/SDK SemVer 校验、Go/Vue 生成注册表和重复 ID/类型冲突检查                       |
 | P0-C 插件迁移与生命周期 | 插件独立 schema/迁移账本，以及 validate/install/upgrade/uninstall/purge-data 的完整行为和失败保护             |
 | P0-D 最小契约插件       | 一个测试用本地插件贡献 HTTP Action、Schema、作用域 API 和结果页，由 SDK 契约测试工具证明静态扩展边界          |
@@ -143,7 +143,7 @@ P1-A 固定修订和生命周期后，工作台与执行器可以并行开发；
 
 | 切片                    | 可直接验收的能力                                                                           |
 | ----------------------- | ------------------------------------------------------------------------------------------ |
-| P3-A Quant 插件数据基线 | `plugin_quant` schema、品种/周期/闭合 K 线、Decimal/UTC 契约、Timescale 生命周期和结果 API |
+| P3-A Quant 插件数据基线 | `plugin_quant` schema、品种/周期/闭合 K 线、Decimal/UTC 契约、联合索引和结果 API          |
 | P3-B Binance 共享采集   | Spot/USD-M 公共 REST/WebSocket、订阅合并、断线补数、闭合 K 线幂等及平台级采集模板          |
 | P3-C Go 策略契约        | 策略描述符、参数 Schema、闭合 K 线回看、只读上下文、Decimal 目标和取消要求                 |
 | P3-D 回测与结果页       | compute 池回测、下一 K 线开盘成交、费用/滑点、内容寻址明细及回测/策略结果组件              |

@@ -4,7 +4,7 @@
 
 ## 1. 使用范围
 
-- 只支持 PostgreSQL/TimescaleDB。
+- 只支持 PostgreSQL 16。
 - 不开放公开注册；首次启动创建内置超级管理员。
 - 默认部署不包含 Python Worker、Private Executor、Redis 或消息代理。
 - 当前版本不会连接 Binance 私有 API，不提供 Testnet/Live 放行或真实交易。
@@ -31,7 +31,7 @@ docker compose up -d --build
 docker compose ps
 ```
 
-Compose 依次启动 `timescaledb`、一次性 `migrate`、`backend` 和 `web`。浏览器打开 <http://localhost:8080>。
+本地 Compose 依次启动 `postgresql`、一次性 `migrate`、`backend` 和 `web`。浏览器打开 <http://localhost:8080>。
 
 停止服务不会删除数据：
 
@@ -139,7 +139,7 @@ go run ./cmd/coinsphere plugin purge-data --config ./config.yml --backend-root .
 
 ## 7. 数据、备份与升级
 
-生产持久数据位于部署目录的 `data/timescaledb` 和 `data/backend`。升级前至少保存：
+生产数据库使用服务器现有 PostgreSQL 16 的独立 `coinsphere_go` 数据库，文件与制品位于部署目录的 `data/backend`。升级前至少保存：
 
 - PostgreSQL 一致性备份及恢复命令。
 - 上传目录备份。
@@ -163,7 +163,7 @@ docker compose logs --tail=200 migrate backend web
 | 现象                     | 优先检查                                                |
 | ------------------------ | ------------------------------------------------------- |
 | Compose 提示缺少签名密钥 | 当前环境是否提供稳定的 `COINSPHERE_AUTH__SECRET_KEY`    |
-| `migrate` 失败           | TimescaleDB 健康、核心版本、目标数据库是否包含旧 schema |
+| `migrate` 失败           | PostgreSQL 网络、凭据、核心版本和目标数据库 schema      |
 | Backend 不 ready         | PostgreSQL 网络、凭据、migration 是否落后或超前         |
 | Web 打不开               | Web 端口、Backend 健康和反向代理配置                    |
 | 登录立即失效             | 签名密钥是否变化、浏览器时间是否异常                    |

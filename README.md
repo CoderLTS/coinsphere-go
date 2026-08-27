@@ -1,6 +1,6 @@
 # CoinSphere
 
-CoinSphere 正在重构为以可视化工作流为核心、由编译期插件提供业务能力的通用平台。项目保持 Vue、Go 模块化单体和 PostgreSQL/TimescaleDB 技术栈。
+CoinSphere 正在重构为以可视化工作流为核心、由编译期插件提供业务能力的通用平台。项目保持 Vue、Go 模块化单体和 PostgreSQL 技术栈。
 
 > V2 已交付 P0-P4 代码基线。超级管理员可以运行批次、事件与连续流工作流，并使用 Connector/AI、Binance 公共行情、可信 Go 策略、回测、Paper 和通知；普通用户通过固定范围共享结果完成观察与授权操作。
 
@@ -25,11 +25,11 @@ CoinSphere 正在重构为以可视化工作流为核心、由编译期插件提
 ```mermaid
 flowchart LR
     WEB["Vue Web"] --> APP["单实例 Go App"]
-    APP --> DB["PostgreSQL / TimescaleDB"]
+    APP --> DB["PostgreSQL 16"]
     MIGRATE["一次性 migration"] --> DB
 ```
 
-默认部署只包含 Web、Go App、一次性 migration 和 TimescaleDB，不依赖 Redis、消息中间件或 Kubernetes。核心 schema 保存认证、RBAC、菜单、审计、插件生命周期、工作流执行历史和制品引用；压缩制品保存在独立持久卷。
+生产部署只包含 Web、Go App 和一次性 migration，连接服务器现有 PostgreSQL 16 的独立 `coinsphere_go` 数据库，不依赖 Redis、消息中间件或 Kubernetes。核心 schema 保存认证、RBAC、菜单、审计、插件生命周期、工作流执行历史和制品引用；压缩制品保存在 Backend 持久目录。
 
 ## 快速启动
 
@@ -55,7 +55,7 @@ docker compose ps
 
 浏览器打开 <http://localhost:8080>。初始超级管理员是 `coinsphere` / `coinsphere`；首次登录后立即在“用户管理”中修改密码。`COINSPHERE_AUTH__SECRET_KEY` 必须长期保持一致，变更后已有登录令牌会失效。
 
-Compose 会启动 `timescaledb`、一次性 `migrate`、`backend` 和 `web`。停止服务不会删除数据：
+本地 Compose 会启动 `postgresql`、一次性 `migrate`、`backend` 和 `web`。停止服务不会删除数据：
 
 ```bash
 docker compose down
@@ -76,7 +76,7 @@ scripts/             验证、发布和部署脚本
 
 ## 开发
 
-本地工具链为 Go 1.26、Node.js 24、pnpm 10.33 和 PostgreSQL/TimescaleDB。全量验证：
+本地工具链为 Go 1.26、Node.js 24、pnpm 10.33 和 PostgreSQL 16。全量验证：
 
 ```powershell
 .\scripts\verify.ps1

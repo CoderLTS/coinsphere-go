@@ -25,10 +25,10 @@ go run .
 - `workflows`、`workflow_revisions`、`workflow_secret_bindings`、`workflow_runtimes`
 - `execution_batches`、`workflow_node_runs`、`workflow_checkpoints`、`workflow_node_states`
 - `workflow_event_records`、`workflow_event_deliveries`、`workflow_event_outbox`、`workflow_human_tasks`
-- `plugin_quant.instruments`、`plugin_quant.candles` hypertable、`plugin_quant.backtests`
+- `plugin_quant.instruments`、`plugin_quant.candles`、`plugin_quant.backtests`
 - Goose 管理的 `schema_migrations`
 
-基线启用 TimescaleDB，并为 Quant 闭合 K 线创建 hypertable。项目不提供旧数据库转换或兼容路径；重置和回滚步骤见[数据库迁移手册](../docs/runbooks/database-migrations.md)。
+Quant 闭合 K 线使用普通 PostgreSQL 表和联合索引。项目不提供旧数据库运行时兼容层；重置和回滚步骤见[数据库迁移手册](../docs/runbooks/database-migrations.md)。
 
 ## 命令
 

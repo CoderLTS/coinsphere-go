@@ -1,7 +1,5 @@
 -- +goose Up
 
-CREATE EXTENSION IF NOT EXISTS timescaledb WITH SCHEMA public;
-
 CREATE TABLE roles (
     id BIGSERIAL PRIMARY KEY,
     display_name VARCHAR(100) NOT NULL DEFAULT '',
