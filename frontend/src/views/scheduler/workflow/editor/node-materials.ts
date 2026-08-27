@@ -1,19 +1,18 @@
-/** 工作流编辑器辅助模块：node-materials。 */
+/** 工作流编辑器节点物料的展示元数据。 */
 import type { WorkflowNodeDefinitionItem } from '@/api/scheduler'
 import type { WorkflowMaterialGroup, WorkflowMaterialItem, WorkflowNodeFormKind } from './types'
 
-const MATERIAL_META: Record<
-  string,
-  {
-    kind: WorkflowNodeFormKind
-    group: string
-    description: string
-    color: string
-    iconText: string
-    width?: number
-    height?: number
-  }
-> = {
+type MaterialMeta = {
+  kind: WorkflowNodeFormKind
+  group: string
+  description: string
+  color: string
+  iconText: string
+  width?: number
+  height?: number
+}
+
+const MATERIAL_META: Record<string, MaterialMeta> = {
   'start.manual': {
     kind: 'start',
     group: '开始',
@@ -42,124 +41,89 @@ const MATERIAL_META: Record<
     color: '#1e40af',
     iconText: 'S'
   },
-  'market.metadata.sync': {
+  'core.constant': {
     kind: 'generic',
-    group: '行情',
-    description: '按全局范围同步 Binance 币种元数据',
-    color: '#c7f46b',
-    iconText: 'M'
-  },
-  'market.candles.subscribe': {
-    kind: 'generic',
-    group: '行情',
-    description: '声明工作流需要持续接收的 K 线',
-    color: '#7ec7b7',
-    iconText: 'K'
-  },
-  'market.candles.backfill': {
-    kind: 'generic',
-    group: '行情',
-    description: '补齐指定 UTC 区间的历史 K 线',
-    color: '#5eaa74',
-    iconText: 'B'
-  },
-  'strategy.evaluate': {
-    kind: 'generic',
-    group: '策略',
-    description: '同步等待或异步提交一个策略实例',
-    color: '#9e8cff',
-    iconText: 'Σ'
-  },
-  'condition.branch': {
-    kind: 'condition',
-    group: '控制',
-    description: '按条件选择 true 或 false 分支',
-    color: '#d97706',
+    group: '数据',
+    description: '输出配置的常量文本',
+    color: '#0891b2',
     iconText: 'C'
   },
-  foreach: {
-    kind: 'foreach',
-    group: '控制',
-    description: '顺序遍历数组并执行后续节点',
-    color: '#ca8a04',
-    iconText: 'F'
-  },
-  'condition.switch': {
+  'core.human_approval': {
     kind: 'generic',
     group: '控制',
-    description: '按值路由到任意多个分支，都不命中走 default',
-    color: '#f59e0b',
-    iconText: 'S'
-  },
-  'state.set': {
-    kind: 'generic',
-    group: '数据',
-    description: '给共享状态赋值，支持 {{路径}} 模板',
-    color: '#0891b2',
-    iconText: 'V'
-  },
-  'state.append': {
-    kind: 'generic',
-    group: '数据',
-    description: '往数组变量追加一项，用于汇总 foreach 每轮的结果',
-    color: '#0e7490',
-    iconText: '+'
-  },
-  'array.filter': {
-    kind: 'generic',
-    group: '数据',
-    description: '按条件过滤数组',
-    color: '#155e75',
-    iconText: 'F'
-  },
-  'log.message': {
-    kind: 'generic',
-    group: '控制',
-    description: '打一条执行日志，方便排查流程',
-    color: '#64748b',
-    iconText: 'L'
-  },
-  'workflow.call': {
-    kind: 'generic',
-    group: '集成',
-    description: '调用另一个已激活的工作流',
-    color: '#4f46e5',
-    iconText: 'W'
-  },
-  'assistant.agent': {
-    kind: 'agent',
-    group: '智能体',
-    description: '调用一个智能体处理内容，结果写入共享状态',
-    color: '#0ea5e9',
+    description: '创建人工审批任务并等待处理',
+    color: '#d97706',
     iconText: 'A'
   },
-  notify: {
-    kind: 'notify',
-    group: '通知',
-    description: '按目标和渠道直接发送通知',
-    color: '#7c3aed',
-    iconText: 'N'
+  'core.loop': {
+    kind: 'generic',
+    group: '控制',
+    description: '在限制次数和时间内执行内嵌流程',
+    color: '#ca8a04',
+    iconText: 'L'
   },
-  'event.publish': {
-    kind: 'event',
-    group: '事件',
-    description: '发布领域事件供其他工作流消费',
-    color: '#9333ea',
-    iconText: 'E'
+  'official.connector.websocket': {
+    kind: 'generic',
+    group: '开始',
+    description: '从 WebSocket 消息触发工作流',
+    color: '#0f766e',
+    iconText: 'W'
   },
-  'http.request': {
-    kind: 'http',
+  'official.connector.http': {
+    kind: 'generic',
     group: '集成',
-    description: '向外部服务发起 HTTP 请求',
+    description: '向外部服务发起受控 HTTP 请求',
     color: '#0f766e',
     iconText: 'H'
   },
-  'delay.wait': {
-    kind: 'delay',
-    group: '控制',
-    description: '暂停当前工作流一段时间',
-    color: '#475569',
-    iconText: 'D'
+  'official.ai.model_call': {
+    kind: 'generic',
+    group: '智能体',
+    description: '调用已配置的 AI 模型',
+    color: '#0ea5e9',
+    iconText: 'AI'
+  },
+  'official.quant.binance_candles': {
+    kind: 'generic',
+    group: '行情',
+    description: '采集并发布 Binance 已收盘 K 线',
+    color: '#7ec7b7',
+    iconText: 'K'
+  },
+  'official.quant.evaluate': {
+    kind: 'generic',
+    group: '策略',
+    description: '使用已编译策略评估 K 线',
+    color: '#9e8cff',
+    iconText: 'E'
+  },
+  'official.quant.backtest': {
+    kind: 'generic',
+    group: '策略',
+    description: '基于历史 K 线执行确定性回测',
+    color: '#7c6ee6',
+    iconText: 'B'
+  },
+  'official.quant.signal': {
+    kind: 'generic',
+    group: '策略',
+    description: '持久化可替换的量化信号',
+    color: '#6d5bd0',
+    iconText: 'S'
+  },
+  'official.quant.paper_execute': {
+    kind: 'generic',
+    group: '策略',
+    description: '执行完整 Paper 风控并模拟成交',
+    color: '#5948b8',
+    iconText: 'P'
+  },
+  'official.notification.in_app': {
+    kind: 'generic',
+    group: '通知',
+    description: '持久化一条幂等站内通知',
+    color: '#7c3aed',
+    iconText: 'N'
   },
   end: {
     kind: 'end',
@@ -170,19 +134,7 @@ const MATERIAL_META: Record<
   }
 }
 
-/** 已知分组的展示顺序；不在这张表里的分组（新节点带来的）排在后面，不会被丢掉。 */
-const GROUP_ORDER = [
-  '开始',
-  '行情',
-  '策略',
-  '智能体',
-  '控制',
-  '数据',
-  '事件',
-  '通知',
-  '集成',
-  '结束'
-]
+const GROUP_ORDER = ['开始', '行情', '策略', '智能体', '控制', '数据', '通知', '集成', '结束']
 const FALLBACK_GROUP = '其他'
 
 export function inferNodeFormKind(typeCode: string): WorkflowNodeFormKind {
@@ -206,7 +158,7 @@ export function buildWorkflowMaterialGroups(
       kind,
       group: meta?.group || (kind === 'start' ? '开始' : kind === 'end' ? '结束' : FALLBACK_GROUP),
       title: definition.label,
-      description: meta?.description || definition.typeCode,
+      description: meta?.description || definition.description || definition.typeCode,
       color: meta?.color || '#64748b',
       iconText: meta?.iconText || definition.label.slice(0, 1).toUpperCase(),
       width: meta?.width || 260,
@@ -214,9 +166,6 @@ export function buildWorkflowMaterialGroups(
     }
   })
 
-  // 分组顺序 = 已知顺序 + 数据里实际出现过的其它分组。
-  // 早先这里直接 map(GROUP_ORDER)，后端新注册的节点因为落进 '其他' 分组，会被整个过滤掉、
-  // 在物料面板里凭空消失且不报错 —— 所以改成按实际数据补齐分组。
   const seenGroups = Array.from(new Set(materialItems.map((item) => item.group)))
   const orderedGroups = [
     ...GROUP_ORDER.filter((group) => seenGroups.includes(group)),

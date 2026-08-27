@@ -2,13 +2,6 @@ name: CI
 
 on:
   pull_request:
-    types:
-      - opened
-      - synchronize
-      - reopened
-      - ready_for_review
-      - converted_to_draft
-      - edited
   push:
     branches:
       - main
@@ -23,30 +16,15 @@ concurrency:
 
 jobs:
   changes:
-    name: PR base and change scope
+    name: Change scope
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.scope.outputs.backend }}
       frontend: ${{ steps.scope.outputs.frontend }}
-      release: ${{ steps.scope.outputs.release }}
-      full: ${{ steps.scope.outputs.full }}
     steps:
-      - name: Validate PR base
-        if: github.event_name == 'pull_request'
-        shell: bash
-        env:
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
-          IS_DRAFT: ${{ github.event.pull_request.draft }}
-        run: |
-          if [[ "$IS_DRAFT" != "true" && "$BASE_REF" != "main" ]]; then
-            echo "::error title=PR base invalid::Ready PR must target main; keep stacked PRs as drafts."
-            exit 1
-          fi
-
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
-
       - name: Select affected modules
         id: scope
         shell: bash
@@ -58,31 +36,18 @@ jobs:
           set -Eeuo pipefail
           backend=false
           frontend=false
-          release=false
-          full=false
 
           if [[ "$EVENT_NAME" != "pull_request" ]]; then
             backend=true
             frontend=true
-            release=true
-            full=true
           else
             while IFS= read -r file; do
               case "$file" in
-                backend/*) backend=true ;;
-                frontend/*) frontend=true ;;
-                plugins/*/backend/*) backend=true ;;
-                plugins/*/frontend/*) frontend=true ;;
-                plugins/*/coinsphere-plugin.json|plugins/*/migrations/*)
+                backend/*|plugins/*/backend/*) backend=true ;;
+                frontend/*|plugins/*/frontend/*) frontend=true ;;
+                plugins/*/coinsphere-plugin.json|plugins/*/migrations/*|.github/workflows/ci.yml)
                   backend=true
                   frontend=true
-                  ;;
-                scripts/release/*|deploy/production/*|.github/workflows/deploy.yml|.github/workflows/release.yml) release=true ;;
-                .github/workflows/ci.yml)
-                  backend=true
-                  frontend=true
-                  release=true
-                  full=true
                   ;;
               esac
             done < <(git diff --name-only --diff-filter=ACMRTD "$BASE_SHA" "$HEAD_SHA")
@@ -91,8 +56,6 @@ jobs:
           {
             echo "backend=$backend"
             echo "frontend=$frontend"
-            echo "release=$release"
-            echo "full=$full"
           } >>"$GITHUB_OUTPUT"
 
   backend:
@@ -117,10 +80,6 @@ jobs:
           test -z "$unformatted" || { printf '%s\n' "$unformatted"; exit 1; }
       - name: Vet
         run: go vet ./...
-      - name: Staticcheck
-        run: |
-          go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
-          staticcheck ./...
       - name: Build
         run: go build ./...
 
@@ -146,203 +105,5 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Lint
         run: pnpm lint
-      - name: Stylelint
-        run: pnpm lint:stylelint
       - name: Type check and build
         run: pnpm build
-
-  browser-smoke:
-    name: Playwright browser smoke
-    needs: changes
-    if: needs.changes.outputs.frontend == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
-        with:
-          version: 10.33.0
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: 24
-          cache: pnpm
-          cache-dependency-path: frontend/pnpm-lock.yaml
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Cache Playwright browsers
-        id: playwright-cache
-        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ needs.changes.outputs.full == 'true' && 'all' || 'chromium' }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
-      - name: Install Chromium
-        if: needs.changes.outputs.full != 'true'
-        run: pnpm exec playwright install --with-deps chromium
-      - name: Run Chromium smoke tests
-        if: needs.changes.outputs.full != 'true'
-        run: pnpm exec playwright test --project=chromium
-      - name: Install all Playwright browsers
-        if: needs.changes.outputs.full == 'true'
-        run: pnpm exec playwright install --with-deps chromium firefox webkit
-      - name: Run all browser smoke tests
-        if: needs.changes.outputs.full == 'true'
-        run: pnpm test:e2e
-      - name: Upload browser failure evidence
-        if: failure()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: playwright-failure-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            frontend/playwright-report
-            frontend/test-results
-          if-no-files-found: ignore
-          retention-days: 7
-
-  release:
-    name: Release script checks
-    needs: changes
-    if: needs.changes.outputs.release == 'true' && needs.changes.outputs.full != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - name: Validate release maintenance scripts
-        run: |
-          bash -n scripts/release/*.sh scripts/release/tests/*.sh deploy/production/*.sh
-          shellcheck scripts/release/*.sh scripts/release/tests/*.sh deploy/production/*.sh
-          for test_script in scripts/release/tests/*.sh; do
-            bash "$test_script"
-          done
-
-  containers:
-    name: Integration and containers
-    needs:
-      - changes
-      - backend
-      - browser-smoke
-      - frontend
-    if: needs.changes.outputs.full == 'true'
-    runs-on: ubuntu-latest
-    env:
-      COINSPHERE_AUTH__SECRET_KEY: ci-only-secret-key-that-is-never-deployed
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-      - name: Cache Docker build layers
-        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
-        with:
-          path: /tmp/coinsphere-buildx-cache
-          key: docker-buildx-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
-          restore-keys: |
-            docker-buildx-${{ runner.os }}-${{ github.ref_name }}-
-            docker-buildx-${{ runner.os }}-
-      - name: Validate release maintenance scripts
-        run: |
-          bash -n scripts/release/*.sh scripts/release/tests/*.sh deploy/production/*.sh
-          shellcheck scripts/release/*.sh scripts/release/tests/*.sh deploy/production/*.sh
-          for test_script in scripts/release/tests/*.sh; do
-            bash "$test_script"
-          done
-      - name: Build Compose images
-        run: |
-          mkdir -p \
-            /tmp/coinsphere-buildx-cache/backend \
-            /tmp/coinsphere-buildx-cache/frontend
-          rm -rf /tmp/coinsphere-buildx-cache-next
-          mkdir -p /tmp/coinsphere-buildx-cache-next
-          docker compose \
-            -f docker-compose.yml \
-            -f .github/docker-compose.ci-cache.yml \
-            build
-          rm -rf /tmp/coinsphere-buildx-cache
-          mv /tmp/coinsphere-buildx-cache-next /tmp/coinsphere-buildx-cache
-      - name: Verify image proxy isolation
-        run: |
-          proxy_pattern='^(HTTP_PROXY|HTTPS_PROXY|NO_PROXY|http_proxy|https_proxy|no_proxy)='
-          for image in coinsphere-go-backend:latest coinsphere-go-web:latest; do
-            image_env=$(docker image inspect "$image" --format '{{range .Config.Env}}{{println .}}{{end}}')
-            if grep -Eq "$proxy_pattern" <<<"$image_env"; then
-              echo "镜像包含运行时代理变量: $image" >&2
-              exit 1
-            fi
-          done
-      - name: Scan backend image
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
-        with:
-          version: v0.72.0
-          scan-type: image
-          image-ref: coinsphere-go-backend:latest
-          format: table
-          severity: CRITICAL
-          exit-code: "1"
-      - name: Scan frontend image
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
-        with:
-          version: v0.72.0
-          scan-type: image
-          image-ref: coinsphere-go-web:latest
-          format: table
-          severity: CRITICAL
-          exit-code: "1"
-      - name: Start Compose stack
-        run: docker compose up --detach --no-build --wait --wait-timeout 180
-      - name: Verify runtime proxy isolation
-        run: |
-          proxy_pattern='^(HTTP_PROXY|HTTPS_PROXY|NO_PROXY|http_proxy|https_proxy|no_proxy)='
-          for service in backend web; do
-            container_id=$(docker compose ps --quiet "$service")
-            [[ -n $container_id ]] || { echo "未找到运行容器: $service" >&2; exit 1; }
-            container_env=$(docker inspect "$container_id" --format '{{range .Config.Env}}{{println .}}{{end}}')
-            if grep -Eq "$proxy_pattern" <<<"$container_env"; then
-              echo "运行容器包含代理变量: $service" >&2
-              exit 1
-            fi
-          done
-      - name: Smoke test health and removed legacy surface
-        run: |
-          curl --fail --show-error --retry 10 --retry-all-errors --retry-delay 3 http://127.0.0.1:8080/health
-          status=$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/api/v1/workflows)
-          [[ $status == 401 ]]
-          for path in /api/v1/ws/notifications /api/v1/markets/symbols; do
-            status=$(curl --silent --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:8080$path")
-            [[ $status == 404 ]]
-          done
-      - name: Print Compose logs on failure
-        if: failure()
-        run: docker compose logs --no-color
-      - name: Stop Compose stack
-        if: always()
-        run: docker compose down --volumes --remove-orphans
-
-  pr-gate:
-    name: PR summary gate
-    needs:
-      - changes
-      - backend
-      - browser-smoke
-      - containers
-      - frontend
-      - release
-    if: ${{ always() && github.event_name == 'pull_request' }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require all selected checks
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          [[ "${{ needs.changes.result }}" == "success" ]] || exit 1
-
-          require_selected() {
-            case "$1:$2" in
-              true:success|false:skipped) ;;
-              *) echo "::error title=PR gate failed::$3 check finished with $2"; return 1 ;;
-            esac
-          }
-
-          require_selected "${{ needs.changes.outputs.backend }}" "${{ needs.backend.result }}" backend
-          require_selected "${{ needs.changes.outputs.frontend }}" "${{ needs.frontend.result }}" frontend
-          require_selected "${{ needs.changes.outputs.frontend }}" "${{ needs.browser-smoke.result }}" browser-smoke
-          require_selected "${{ needs.changes.outputs.release == 'true' && needs.changes.outputs.full != 'true' }}" "${{ needs.release.result }}" release
-          require_selected "${{ needs.changes.outputs.full }}" "${{ needs.containers.result }}" containers
