@@ -441,7 +441,7 @@ func parseQuantPaperConfig(raw json.RawMessage) (quantPaperConfig, error) {
 }
 
 func (q *quantRuntime) fetchQuantPublicQuote(ctx context.Context, config quantSeriesConfig) (quantPublicQuote, error) {
-	base, path := "https://api.binance.com", "/api/v3/ticker/price"
+	base, path := "https://data-api.binance.vision", "/api/v3/ticker/price"
 	if config.Market == "usdm" {
 		base, path = "https://fapi.binance.com", "/fapi/v1/ticker/price"
 	}

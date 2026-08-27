@@ -342,6 +342,7 @@ const legacyConfigSchema = (definition: WorkflowNodeDefinition) => {
 
 const toLegacyGraph = (graph: CurrentWorkflowGraph): WorkflowGraph => ({
   nodes: (graph.nodes || []).map((node) => {
+    const definition = currentNodeDefinitions.get(node.nodeType)
     const bindings = node.inputBindings || {}
     const literalInputs = Object.fromEntries(
       Object.entries(bindings)
@@ -349,12 +350,7 @@ const toLegacyGraph = (graph: CurrentWorkflowGraph): WorkflowGraph => ({
         .map(([name, binding]) => [name, binding.value])
     )
     const config: Record<string, unknown> = { ...node.config, ...literalInputs }
-    if (
-      node.nodeType === 'core.manual' ||
-      node.nodeType === 'core.schedule' ||
-      node.nodeType === 'core.event' ||
-      node.nodeType === 'official.connector.webhook'
-    ) {
+    if (definition?.kind === 'trigger') {
       config.entryKey = node.nodeInstanceId
       config.displayName = nodeLabels[node.nodeType] || node.nodeType
       config.inputBindings = {}
@@ -370,10 +366,7 @@ const toLegacyGraph = (graph: CurrentWorkflowGraph): WorkflowGraph => ({
     return {
       id: node.nodeInstanceId,
       type: legacyNodeTypes[node.nodeType] || node.nodeType,
-      label:
-        nodeLabels[node.nodeType] ||
-        currentNodeDefinitions.get(node.nodeType)?.title ||
-        node.nodeType,
+      label: nodeLabels[node.nodeType] || definition?.title || node.nodeType,
       config: {
         ...config,
         __nodeType: node.nodeType,
@@ -426,7 +419,7 @@ const toCurrentRevision = (graph: WorkflowGraph) => {
           secretChanges.push({ nodeInstanceId: node.id, field: field.name, value })
         }
       })
-      if (type === 'core.manual') {
+      if (definition?.kind === 'trigger') {
         delete rawConfig.entryKey
         delete rawConfig.displayName
         delete rawConfig.inputBindings
@@ -455,9 +448,6 @@ const toCurrentRevision = (graph: WorkflowGraph) => {
         if (eventType) rawConfig.types = [eventType]
         for (const key of ['entryKey', 'displayName', 'inputBindings', 'eventType', 'filters'])
           delete rawConfig[key]
-      }
-      if (type === 'official.connector.webhook') {
-        for (const key of ['entryKey', 'displayName', 'inputBindings']) delete rawConfig[key]
       }
       Object.keys(inputProperties(definition)).forEach((name) => {
         if (!(name in rawConfig)) return
