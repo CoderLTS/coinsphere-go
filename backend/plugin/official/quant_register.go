@@ -24,7 +24,7 @@ type quantRuntime struct {
 
 func RegisterQuant(registry *sdk.Registry, database *gorm.DB) error {
 	client, err := newSafeHTTPClient([]string{
-		"api.binance.com", "fapi.binance.com", "stream.binance.com", "fstream.binance.com",
+		"data-api.binance.vision", "fapi.binance.com", "data-stream.binance.vision", "fstream.binance.com",
 	})
 	if err != nil {
 		return err

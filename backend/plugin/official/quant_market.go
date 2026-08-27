@@ -189,7 +189,7 @@ func (q *quantRuntime) backfillQuantCandles(ctx context.Context, subscription *q
 }
 
 func (q *quantRuntime) fetchQuantKlines(ctx context.Context, config quantSeriesConfig, start time.Time, limit int) ([]quantCandle, error) {
-	base, path := "https://api.binance.com", "/api/v3/klines"
+	base, path := "https://data-api.binance.vision", "/api/v3/klines"
 	if config.Market == "usdm" {
 		base, path = "https://fapi.binance.com", "/fapi/v1/klines"
 	}
@@ -250,7 +250,7 @@ func parseQuantKline(config quantSeriesConfig, raw json.RawMessage) (quantCandle
 
 func (q *quantRuntime) streamQuantCandles(ctx context.Context, subscription *quantCandleSubscription) error {
 	config := subscription.config
-	host := "stream.binance.com:9443"
+	host := "data-stream.binance.vision:9443"
 	if config.Market == "usdm" {
 		host = "fstream.binance.com"
 	}
@@ -313,7 +313,7 @@ func (q *quantRuntime) streamQuantCandles(ctx context.Context, subscription *qua
 }
 
 func (q *quantRuntime) syncQuantInstruments(ctx context.Context, market string) error {
-	target := "https://api.binance.com/api/v3/exchangeInfo"
+	target := "https://data-api.binance.vision/api/v3/exchangeInfo"
 	if market == "usdm" {
 		target = "https://fapi.binance.com/fapi/v1/exchangeInfo"
 	}
