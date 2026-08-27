@@ -20,7 +20,8 @@
       >
         <template #left>
           <ElSpace wrap>
-            <ElButton @click="router.push('/scheduler/definition')">查看工作流定义</ElButton>
+            <strong>{{ workflowName || '工作流' }} · 执行记录</strong>
+            <ElButton @click="router.push('/scheduler/definition')">返回工作流定义</ElButton>
           </ElSpace>
         </template>
       </ArtTableHeader>
@@ -53,7 +54,6 @@
   import { useCursorPagination } from '@/hooks/core/useCursorPagination'
   import { useTableColumns } from '@/hooks/core/useTableColumns'
   import {
-    fetchWorkflowDefinitionList,
     fetchWorkflowExecutionList,
     type WorkflowExecutionItem,
     type WorkflowExecutionList,
@@ -61,10 +61,12 @@
     type WorkflowExecutionStatus,
     type WorkflowTriggerType
   } from '@/api/scheduler'
+  import { formatDateTime } from '@/utils/date'
 
   defineOptions({ name: 'SchedulerWorkflowExecutionsPage' })
 
   const router = useRouter()
+  const route = useRoute()
   const loading = ref(false)
   const executionList = ref<WorkflowExecutionList>({
     records: [],
@@ -72,14 +74,11 @@
     hasMore: false,
     total: 0
   })
-  const definitionOptions = ref<Array<{ value: string; label: string }>>([])
   let pollTimer: number | null = null
 
   const { pagination, requestParams, applyPage, reset, moveTo } = useCursorPagination(10)
 
   const initialFilters = {
-    keyword: '',
-    workflowDefinitionCode: '' as string,
     triggerType: '' as WorkflowTriggerType | '',
     status: '' as WorkflowExecutionStatus | ''
   }
@@ -87,29 +86,6 @@
   const formFilters = reactive({ ...initialFilters })
 
   const formItems = computed(() => [
-    {
-      label: '关键词',
-      key: 'keyword',
-      type: 'input',
-      span: 5,
-      labelWidth: 60,
-      props: {
-        clearable: true,
-        placeholder: '工作流 / 入口 / 错误信息'
-      }
-    },
-    {
-      label: '工作流定义',
-      key: 'workflowDefinitionCode',
-      type: 'select',
-      span: 5,
-      labelWidth: 86,
-      props: {
-        clearable: true,
-        placeholder: '全部定义',
-        options: definitionOptions.value
-      }
-    },
     {
       label: '触发方式',
       key: 'triggerType',
@@ -137,6 +113,9 @@
         clearable: true,
         placeholder: '全部执行状态',
         options: [
+          { value: 'queued', label: '排队中' },
+          { value: 'running', label: '运行中' },
+          { value: 'retry_waiting', label: '等待重试' },
           { value: 'success', label: '成功' },
           { value: 'failed', label: '失败' },
           { value: 'canceled', label: '已取消' }
@@ -144,6 +123,9 @@
       }
     }
   ])
+
+  const workflowId = computed(() => String(route.query.workflowId || ''))
+  const workflowName = computed(() => String(route.query.workflowName || ''))
 
   const triggerTypeLabel = (value: string) =>
     (
@@ -187,7 +169,11 @@
         size: 'small',
         icon: View,
         title: '查看详情',
-        onClick: () => router.push(`/scheduler/execution/${row.id}/detail`)
+        onClick: () =>
+          router.push({
+            path: `/scheduler/execution/${row.id}/detail`,
+            query: { workflowId: workflowId.value, workflowName: workflowName.value }
+          })
       },
       {}
     )
@@ -238,14 +224,14 @@
       label: '开始/入队时间',
       minWidth: 170,
       align: 'center',
-      formatter: (row) => row.startedAt || row.queuedAt || '--'
+      formatter: (row) => formatDateTime(row.startedAt || row.queuedAt)
     },
     {
       prop: 'finishedAt',
       label: '结束时间',
       minWidth: 170,
       align: 'center',
-      formatter: (row) => row.finishedAt || '--'
+      formatter: (row) => formatDateTime(row.finishedAt)
     },
     {
       prop: 'durationMs',
@@ -294,6 +280,10 @@
   }
 
   const loadPageData = async (options: { silent?: boolean } = {}) => {
+    if (!Number.isSafeInteger(Number(workflowId.value)) || Number(workflowId.value) <= 0) {
+      await router.replace('/scheduler/definition')
+      return
+    }
     clearPollTimer()
     if (!options.silent) {
       loading.value = true
@@ -301,8 +291,7 @@
     try {
       executionList.value = await fetchWorkflowExecutionList({
         ...requestParams(),
-        workflowDefinitionCode: formFilters.workflowDefinitionCode || undefined,
-        keyword: formFilters.keyword.trim() || undefined,
+        workflowDefinitionCode: workflowId.value,
         triggerType: formFilters.triggerType || undefined,
         status: formFilters.status || undefined
       } satisfies WorkflowExecutionQueryParams)
@@ -339,14 +328,14 @@
     void loadPageData()
   }
 
-  onMounted(() => {
-    void Promise.all([fetchWorkflowDefinitionList(), loadPageData()]).then(([definitions]) => {
-      definitionOptions.value = definitions.map((item) => ({
-        value: item.code,
-        label: item.displayName
-      }))
-    })
-  })
+  watch(
+    workflowId,
+    () => {
+      reset()
+      void loadPageData()
+    },
+    { immediate: true }
+  )
 
   onBeforeUnmount(() => {
     clearPollTimer()

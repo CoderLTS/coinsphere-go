@@ -367,6 +367,7 @@
     type MarketType,
     type QuoteAsset
   } from '@/api/market'
+  import { formatDateTime as formatTime } from '@/utils/date'
 
   defineOptions({ name: 'MarketMetadataPage' })
 
@@ -480,21 +481,6 @@
     status ||
     '等待同步'
 
-  const formatTime = (value?: string | null) => {
-    if (!value) return '--'
-    const date = new Date(value)
-    if (Number.isNaN(date.getTime())) return value
-    return new Intl.DateTimeFormat('zh-CN', {
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-      timeZone: 'UTC'
-    }).format(date)
-  }
-
   const applyMarketSettings = (nextSettings: MarketSyncSettings) => {
     settings.marketTypes = [...nextSettings.marketTypes]
     settings.quoteAssets = ['USDT']
@@ -568,7 +554,7 @@
 
   const openSymbol = (row: MarketSymbol) => {
     void router.push({
-      path: '/data/market-chart',
+      path: '/plugins/official.quant/candles',
       query: { instrumentId: row.id, market: row.market, interval: '1h' }
     })
   }

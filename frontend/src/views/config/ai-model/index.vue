@@ -97,6 +97,7 @@
     type AssistantAgentMeta
   } from '@/api/config'
   import { useAuth } from '@/hooks/core/useAuth'
+  import { formatDateTime } from '@/utils/date'
   import AiModelDialog from './modules/ai-model-dialog.vue'
 
   defineOptions({ name: 'AiModelConfigPage' })
@@ -269,13 +270,15 @@
       prop: 'lastValidatedAt',
       label: t('aiConfig.table.validatedAt'),
       minWidth: 160,
-      align: 'center'
+      align: 'center',
+      formatter: (row) => formatDateTime(row.lastValidatedAt)
     },
     {
       prop: 'updatedAt',
       label: t('aiConfig.table.updatedAt'),
       minWidth: 160,
-      align: 'center'
+      align: 'center',
+      formatter: (row) => formatDateTime(row.updatedAt)
     },
     {
       prop: 'operation',

@@ -117,7 +117,13 @@ func (a *App) CreateWorkflowBatch(ctx context.Context, workflowID int64, princip
 	return workflowBatchView(batch), nil
 }
 
-func (a *App) ListWorkflowBatches(ctx context.Context, workflowID int64) ([]WorkflowBatchView, error) {
+type WorkflowBatchListQuery struct {
+	Page        CursorPage
+	TriggerType string
+	Status      string
+}
+
+func (a *App) PageWorkflowBatches(ctx context.Context, workflowID int64, query WorkflowBatchListQuery) (M, error) {
 	var exists int64
 	if err := a.DB.WithContext(ctx).Model(&db.Workflow{}).Where("id = ?", workflowID).Count(&exists).Error; err != nil {
 		return nil, errors.New("load workflow failed")
@@ -125,8 +131,46 @@ func (a *App) ListWorkflowBatches(ctx context.Context, workflowID int64) ([]Work
 	if exists == 0 {
 		return nil, fmt.Errorf("%w: workflow", ErrNotFound)
 	}
+	dbQuery := a.DB.WithContext(ctx).Model(&db.ExecutionBatch{}).Where("workflow_id = ?", workflowID)
+	if query.TriggerType != "" {
+		dbQuery = dbQuery.Where("trigger_type = ?", query.TriggerType)
+	}
+	if query.Status != "" {
+		dbQuery = dbQuery.Where("status = ?", query.Status)
+	}
+	var total int64
+	if err := dbQuery.Count(&total).Error; err != nil {
+		return nil, errors.New("count workflow batches failed")
+	}
+	afterID, err := query.Page.AfterID()
+	if err != nil {
+		return nil, err
+	}
+	if afterID > 0 {
+		dbQuery = dbQuery.Where("id < ?", afterID)
+	}
 	var batches []db.ExecutionBatch
-	if err := a.DB.WithContext(ctx).Where("workflow_id = ?", workflowID).Order("created_at DESC, id DESC").Limit(100).Find(&batches).Error; err != nil {
+	if err := dbQuery.Order("id DESC").Limit(query.Page.Limit + 1).Find(&batches).Error; err != nil {
+		return nil, errors.New("list workflow batches failed")
+	}
+	hasMore := len(batches) > query.Page.Limit
+	if hasMore {
+		batches = batches[:query.Page.Limit]
+	}
+	items := make([]WorkflowBatchView, len(batches))
+	for index := range batches {
+		items[index] = workflowBatchView(batches[index])
+	}
+	lastKey := ""
+	if len(batches) > 0 {
+		lastKey = int64CursorKey(batches[len(batches)-1].ID)
+	}
+	return cursorResult(items, query.Page, lastKey, hasMore, total), nil
+}
+
+func (a *App) ListRecentWorkflowBatches(ctx context.Context, workflowID int64) ([]WorkflowBatchView, error) {
+	var batches []db.ExecutionBatch
+	if err := a.DB.WithContext(ctx).Where("workflow_id = ?", workflowID).Order("id DESC").Limit(100).Find(&batches).Error; err != nil {
 		return nil, errors.New("list workflow batches failed")
 	}
 	items := make([]WorkflowBatchView, len(batches))

@@ -208,7 +208,7 @@ func (a *App) ListResultScopeBatches(ctx context.Context, scope sdk.ResultScope)
 	if err != nil {
 		return nil, fmt.Errorf("%w: result workflow", ErrNotFound)
 	}
-	batches, err := a.ListWorkflowBatches(ctx, workflowID)
+	batches, err := a.ListRecentWorkflowBatches(ctx, workflowID)
 	if err != nil {
 		return nil, err
 	}

@@ -118,7 +118,7 @@
             <div class="chat-message__content">
               <div class="chat-message__meta">
                 <span>{{ item.sender }}</span>
-                <span>{{ item.createdAt.slice(11, 16) }}</span>
+                <span>{{ formatDateTime(item.createdAt) }}</span>
               </div>
               <div v-if="item.reasoning && !item.isMe" class="chat-message__reasoning">
                 <strong>{{ t('assistant.reasoning') }}</strong>
@@ -259,7 +259,7 @@
           <button type="button" class="history-item__main" @click="openHistorySession(item)">
             <div class="history-item__title">{{ item.title || item.agentName }}</div>
             <div class="history-item__meta">
-              <span>{{ item.lastMessageAt || item.updatedAt }}</span>
+              <span>{{ formatDateTime(item.lastMessageAt || item.updatedAt) }}</span>
             </div>
           </button>
           <ElButton
@@ -307,6 +307,7 @@
   } from '@/api/assistant'
   import { useUserStore } from '@/store/modules/user'
   import { mittBus, type OpenChatPayload } from '@/utils/sys'
+  import { formatDateTime } from '@/utils/date'
 
   interface ChatMessage {
     id: number | string

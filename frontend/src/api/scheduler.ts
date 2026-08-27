@@ -247,7 +247,6 @@ export interface WorkflowExecutionQueryParams {
   cursor?: string
   limit?: number
   workflowDefinitionCode?: string
-  keyword?: string
   triggerType?: WorkflowTriggerType | string
   status?: WorkflowExecutionStatus | string
 }
@@ -549,7 +548,7 @@ const loadDefinition = async (definitionID: number): Promise<WorkflowDefinitionI
     revisions[0]
   if (!selected) throw new Error('工作流没有可编辑的修订版本')
   const counts = new Map<number, number>()
-  batchResult.items.forEach((batch) =>
+  batchResult.records.forEach((batch) =>
     counts.set(batch.revisionId, (counts.get(batch.revisionId) || 0) + 1)
   )
   const activeVersion = revisions.find(
@@ -568,7 +567,7 @@ const loadDefinition = async (definitionID: number): Promise<WorkflowDefinitionI
     isWorkflowActive: workflow.status === 'running',
     activeDefinitionId: encodeVersionID(workflow.id, workflow.activeRevisionId),
     activeVersion: activeVersion || null,
-    executionCount: batchResult.items.length,
+    executionCount: batchResult.total,
     createdBy: workflow.createdBy,
     createdAt: selected.createdAt,
     versions: revisions.map((revision) => ({
@@ -800,54 +799,29 @@ export async function fetchRunWorkflowDefinition(
   }
 }
 
-const listExecutions = async (workflowID?: number) => {
-  const workflows = workflowID ? [await fetchWorkflow(workflowID)] : (await fetchWorkflows()).items
-  const groups = await Promise.all(
-    workflows.map(async (workflow) => {
-      const [batches, revisions] = await Promise.all([
-        fetchWorkflowBatches(workflow.id),
-        fetchWorkflowRevisions(workflow.id)
-      ])
-      return batches.items.map((batch) =>
-        toExecution(
-          batch,
-          workflow,
-          revisions.items.find((revision) => revision.id === batch.revisionId)
-        )
-      )
-    })
-  )
-  return groups.flat().sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt))
-}
-
-const paginateExecutions = (
-  records: WorkflowExecutionItem[],
+const pageExecutions = async (
+  workflowID: number,
   params: WorkflowExecutionQueryParams
-): WorkflowExecutionList => {
-  const filtered = records.filter((item) => {
-    if (
-      params.workflowDefinitionCode &&
-      String(item.workflowDefinitionId) !== params.workflowDefinitionCode
-    )
-      return false
-    if (
-      params.keyword &&
-      !item.workflowDefinitionName.toLowerCase().includes(params.keyword.toLowerCase())
-    )
-      return false
-    if (params.triggerType && item.triggerType !== params.triggerType) return false
-    if (params.status && item.status !== params.status) return false
-    return true
-  })
-  const offset = Math.max(0, Number(params.cursor || 0) || 0)
-  const limit = Math.max(1, params.limit || 20)
-  const page = filtered.slice(offset, offset + limit)
-  const next = offset + page.length
+): Promise<WorkflowExecutionList> => {
+  const [workflow, revisions, batches] = await Promise.all([
+    fetchWorkflow(workflowID),
+    fetchWorkflowRevisions(workflowID),
+    fetchWorkflowBatches(workflowID, {
+      cursor: params.cursor,
+      limit: params.limit,
+      triggerType: params.triggerType,
+      status: params.status
+    })
+  ])
   return {
-    records: page,
-    nextCursor: next < filtered.length ? String(next) : '',
-    hasMore: next < filtered.length,
-    total: filtered.length
+    ...batches,
+    records: batches.records.map((batch) =>
+      toExecution(
+        batch,
+        workflow,
+        revisions.items.find((revision) => revision.id === batch.revisionId)
+      )
+    )
   }
 }
 
@@ -856,11 +830,16 @@ export async function fetchWorkflowDefinitionExecutions(
   params: WorkflowExecutionQueryParams
 ) {
   const { workflowID } = decodeDefinitionID(definitionID)
-  return paginateExecutions(await listExecutions(workflowID), params)
+  return pageExecutions(workflowID, params)
 }
 
-export const fetchWorkflowExecutionList = async (params: WorkflowExecutionQueryParams) =>
-  paginateExecutions(await listExecutions(), params)
+export const fetchWorkflowExecutionList = async (params: WorkflowExecutionQueryParams) => {
+  const workflowID = Number(params.workflowDefinitionCode)
+  if (!Number.isSafeInteger(workflowID) || workflowID <= 0) {
+    throw new Error('请选择要查看执行记录的工作流')
+  }
+  return pageExecutions(workflowID, params)
+}
 
 export async function fetchWorkflowExecutionDetail(
   executionID: number
@@ -916,7 +895,12 @@ export async function fetchWorkflowExecutionDetail(
 
 export async function fetchSchedulerOverview(): Promise<WorkflowOverview> {
   const definitions = await fetchWorkflowDefinitionList()
-  const executions = await listExecutions()
+  const pages = await Promise.all(
+    definitions.map((item) => fetchWorkflowDefinitionExecutions(item.id, { limit: 50 }))
+  )
+  const executions = pages
+    .flatMap((page) => page.records)
+    .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt))
   const pending = executions.filter((item) =>
     ['queued', 'running', 'retry_waiting'].includes(item.status)
   )
@@ -924,7 +908,7 @@ export async function fetchSchedulerOverview(): Promise<WorkflowOverview> {
     stats: {
       definitionCount: definitions.length,
       activeDefinitionCount: definitions.filter((item) => item.isWorkflowActive).length,
-      executionCount: executions.length,
+      executionCount: pages.reduce((total, page) => total + page.total, 0),
       latestExecutedAt: executions[0]?.queuedAt || '',
       pendingCount: pending.length,
       queuedCount: pending.filter((item) => item.status === 'queued').length,

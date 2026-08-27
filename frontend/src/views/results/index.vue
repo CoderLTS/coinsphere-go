@@ -235,6 +235,7 @@
   } from '@/api/workflows'
   import { registeredFrontendPlugins } from '@/plugins'
   import { useUserStore } from '@/store/modules/user'
+  import { formatDateTime as formatTime } from '@/utils/date'
 
   defineOptions({ name: 'Results' })
 
@@ -286,10 +287,6 @@
 
   const pageLabel = (view: ResultView) =>
     view.pluginId === 'official.quant' ? 'Paper 账户与信号' : '通知投递'
-  const formatTime = (value: string) =>
-    new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(
-      new Date(value)
-    )
   const loadComponent = async (view: ResultView) => {
     const registration = registeredFrontendPlugins.find((plugin) => plugin.id === view.pluginId)
     if (!registration) {

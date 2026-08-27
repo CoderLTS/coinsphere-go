@@ -49,6 +49,7 @@
     type AssistantAgentUpsertPayload
   } from '@/api/config'
   import { useAuth } from '@/hooks/core/useAuth'
+  import { formatDateTime } from '@/utils/date'
   import AssistantAgentDialog from './modules/assistant-agent-dialog.vue'
 
   defineOptions({ name: 'AssistantAgentConfigPage' })
@@ -152,7 +153,8 @@
       prop: 'updatedAt',
       label: t('assistantAgent.table.updatedAt'),
       minWidth: 160,
-      align: 'center'
+      align: 'center',
+      formatter: (row) => formatDateTime(row.updatedAt)
     },
     {
       prop: 'operation',

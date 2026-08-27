@@ -43,6 +43,7 @@
   import { useUserStore } from '@/store/modules/user'
   import { fetchCreateUser, fetchDeleteUser, fetchGetUserList, fetchUpdateUser } from '@/api/system'
   import { DialogType } from '@/types'
+  import { formatDateTime } from '@/utils/date'
   import UserSearch from './modules/user-search.vue'
   import UserDialog, { type UserFormPayload } from './modules/user-dialog.vue'
 
@@ -195,7 +196,8 @@
           prop: 'updatedAt',
           label: '更新时间',
           sortable: true,
-          minWidth: 160
+          minWidth: 170,
+          formatter: (row: UserListItem) => formatDateTime(row.updatedAt)
         },
         {
           prop: 'operation',

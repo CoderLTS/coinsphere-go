@@ -90,10 +90,12 @@
           width="90"
           ><template #default="{ row }">v{{ row.versionNumber }}</template></ElTableColumn
         ><ElTableColumn prop="runtimeVersion" label="运行时" width="120" /><ElTableColumn
-          prop="publishedAt"
           label="发布时间"
           min-width="180"
-        /><ElTableColumn label="操作" width="110"
+          ><template #default="{ row }">{{
+            formatDateTime(row.publishedAt)
+          }}</template></ElTableColumn
+        ><ElTableColumn label="操作" width="110"
           ><template #default="{ row }"
             ><ElButton link type="primary" @click="openBacktest(row)">回测</ElButton></template
           ></ElTableColumn
@@ -117,22 +119,37 @@
           ></ElTableColumn
         ></ElTable
       ><ElTable v-else-if="activeTab === 'signals'" :data="signals" size="small"
-        ><ElTableColumn prop="candleOpenTime" label="K 线时间" min-width="180" /><ElTableColumn
-          prop="action"
-          label="动作"
-          width="90" /><ElTableColumn prop="target" label="目标仓位" width="110" /><ElTableColumn
-          prop="status"
-          label="状态"
-          width="100" /><ElTableColumn prop="createdAt" label="生成时间" min-width="180" /></ElTable
+        ><ElTableColumn label="K 线时间" min-width="180"
+          ><template #default="{ row }">{{
+            formatDateTime(row.candleOpenTime)
+          }}</template></ElTableColumn
+        ><ElTableColumn prop="action" label="动作" width="90" /><ElTableColumn
+          prop="target"
+          label="目标仓位"
+          width="110"
+        /><ElTableColumn prop="status" label="状态" width="100" /><ElTableColumn
+          label="生成时间"
+          min-width="180"
+          ><template #default="{ row }">{{
+            formatDateTime(row.createdAt)
+          }}</template></ElTableColumn
+        ></ElTable
       ><ElTable v-else :data="backtests.records" size="small"
         ><ElTableColumn prop="symbol" label="币种" width="130" /><ElTableColumn
           prop="interval"
           label="周期"
-          width="90" /><ElTableColumn prop="status" label="状态" width="110" /><ElTableColumn
-          prop="startTime"
+          width="90"
+        /><ElTableColumn prop="status" label="状态" width="110" /><ElTableColumn
           label="开始"
-          min-width="170" /><ElTableColumn prop="endTime" label="结束" min-width="170" /></ElTable
-    ></ElCard>
+          min-width="170"
+          ><template #default="{ row }">{{
+            formatDateTime(row.startTime)
+          }}</template></ElTableColumn
+        ><ElTableColumn label="结束" min-width="170"
+          ><template #default="{ row }">{{ formatDateTime(row.endTime) }}</template></ElTableColumn
+        ></ElTable
+      ></ElCard
+    >
     <ElDialog v-model="backtestVisible" title="创建回测" width="520px"
       ><ElForm :model="backtestForm" label-position="top"
         ><ElFormItem label="币种"
@@ -192,6 +209,7 @@
     type StrategyInstanceItem,
     type StrategySignalItem
   } from '@/api/signals'
+  import { formatDateTime } from '@/utils/date'
 
   defineOptions({ name: 'StrategyManagementPage' })
   globalThis.MonacoEnvironment = { getWorker: () => new EditorWorker() }

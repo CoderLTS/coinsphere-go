@@ -55,6 +55,7 @@
   import { useTableColumns } from '@/hooks/core/useTableColumns'
   import type { AppRouteRecord } from '@/types/router'
   import { formatMenuTitle } from '@/utils/router'
+  import { formatDateTime } from '@/utils/date'
   import {
     fetchCreateMenu,
     fetchCreateMenuButton,
@@ -303,7 +304,7 @@
       prop: 'updatedAt',
       label: '编辑时间',
       minWidth: 160,
-      formatter: (row: MenuTableRow) => row.updatedAt || '--'
+      formatter: (row: MenuTableRow) => formatDateTime(row.updatedAt)
     },
     {
       prop: 'status',

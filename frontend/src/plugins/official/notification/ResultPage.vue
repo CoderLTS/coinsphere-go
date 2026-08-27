@@ -15,7 +15,7 @@
         <div>
           <strong>{{ delivery.title }}</strong>
           <p>{{ delivery.message }}</p>
-          <small>{{ delivery.subjectKey }} · {{ formatTime(delivery.createdAt) }} UTC</small>
+          <small>{{ delivery.subjectKey }} · {{ formatTime(delivery.createdAt) }} UTC+8</small>
         </div>
         <ElTag :type="delivery.status === 'delivered' ? 'success' : 'danger'" effect="plain">
           {{ delivery.status === 'delivered' ? '已送达' : '失败' }}
@@ -28,18 +28,10 @@
 
 <script setup lang="ts">
   import { fetchNotificationDeliveries, type NotificationDelivery } from '@/api/paper'
+  import { formatDateTime as formatTime } from '@/utils/date'
 
   const deliveries = ref<NotificationDelivery[]>([])
   const loading = ref(false)
-  const formatTime = (value: string) =>
-    new Intl.DateTimeFormat('zh-CN', {
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-      timeZone: 'UTC'
-    }).format(new Date(value))
   const load = async () => {
     loading.value = true
     try {

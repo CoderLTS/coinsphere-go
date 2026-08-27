@@ -12,7 +12,6 @@
       </div>
       <div class="hero-actions">
         <ElButton type="primary" @click="router.push('/scheduler/definition')">工作流定义</ElButton>
-        <ElButton @click="router.push('/scheduler/execution')">执行记录</ElButton>
         <ElButton :loading="loading" @click="loadOverview">刷新</ElButton>
       </div>
     </section>
@@ -45,13 +44,29 @@
           </template>
         </ElTableColumn>
         <ElTableColumn prop="executionCount" label="执行次数" width="120" align="center" />
+        <ElTableColumn label="操作" width="90" align="center">
+          <template #default="{ row }">
+            <ElTooltip content="执行记录" placement="top">
+              <ElButton
+                circle
+                plain
+                size="small"
+                type="primary"
+                :icon="Clock"
+                @click="openExecutionList(row)"
+              />
+            </ElTooltip>
+          </template>
+        </ElTableColumn>
       </ElTable>
     </ElCard>
   </div>
 </template>
 
 <script setup lang="ts">
+  import { Clock } from '@element-plus/icons-vue'
   import { fetchSchedulerOverview, type WorkflowOverview } from '@/api/scheduler'
+  import { formatDateTime } from '@/utils/date'
 
   defineOptions({ name: 'SchedulerOverviewPage' })
 
@@ -102,7 +117,7 @@
       label: '累计执行',
       value: overview.stats.executionCount,
       description: overview.stats.latestExecutedAt
-        ? `最近执行：${overview.stats.latestExecutedAt}`
+        ? `最近执行：${formatDateTime(overview.stats.latestExecutedAt)}`
         : '暂无执行记录'
     },
     {
@@ -124,6 +139,15 @@
       description: `疑似超时执行：${overview.stats.staleRunningCount}`
     }
   ])
+
+  const openExecutionList = (row: WorkflowOverview['definitions'][number]) =>
+    router.push({
+      path: '/scheduler/execution',
+      query: {
+        workflowId: row.workflowDefinitionCode,
+        workflowName: row.workflowDefinitionName
+      }
+    })
 
   const loadOverview = async () => {
     loading.value = true

@@ -43,7 +43,7 @@
           </ElButton>
         </div>
         <ElTable :data="candles" height="280" size="small" empty-text="暂无闭合 K 线">
-          <ElTableColumn label="UTC" min-width="156">
+          <ElTableColumn label="UTC+8" min-width="156">
             <template #default="scope">{{ formatTime(scope.row.openTime) }}</template>
           </ElTableColumn>
           <ElTableColumn prop="open" label="Open" min-width="108" />
@@ -114,6 +114,7 @@
     type QuantStrategy
   } from '@/api/quant'
   import { downloadWorkflowArtifact, fetchWorkflowArtifactManifest } from '@/api/workflows'
+  import { formatDateTime as formatTime } from '@/utils/date'
   import { decimalPercent } from './decimal'
 
   const { result } = defineProps<{
@@ -145,15 +146,6 @@
       })[result.nodeRun.nodeType] || result.nodeRun.nodeType
   )
   const latestCandle = computed(() => candles.value.at(-1))
-  const formatTime = (value: string) =>
-    new Intl.DateTimeFormat('zh-CN', {
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-      timeZone: 'UTC'
-    }).format(new Date(value))
   const percent = (value: string) => `${decimalPercent(value)}%`
 
   const loadCandles = async () => {

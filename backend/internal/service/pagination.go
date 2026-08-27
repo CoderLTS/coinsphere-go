@@ -51,7 +51,7 @@ func (p CursorPage) AfterID() (int64, error) {
 	return id, nil
 }
 
-func cursorResult(records []M, page CursorPage, lastKey string, hasMore bool, total int64) M {
+func cursorResult[T any](records []T, page CursorPage, lastKey string, hasMore bool, total int64) M {
 	nextCursor := ""
 	if hasMore && lastKey != "" {
 		raw, _ := json.Marshal(cursorPayload{Version: 1, Scope: page.scope, Key: lastKey})

@@ -889,6 +889,7 @@
     type TradingOverview,
     type TradingRiskPayload
   } from '@/api/trading'
+  import { formatDateTime as formatTime } from '@/utils/date'
 
   defineOptions({ name: 'TradingOverviewPage' })
 
@@ -987,7 +988,7 @@
     ipWhitelistConfigured: false
   })
 
-  const { t, locale, te } = useI18n()
+  const { t, te } = useI18n()
   const userStore = useUserStore()
   const loading = ref(false)
   const commandLoading = ref('')
@@ -1626,22 +1627,6 @@
     if (eventType === 'fee') return 'warning'
     return 'info'
   }
-  const formatTime = (value?: string | null) => {
-    if (!value) return '--'
-    const date = new Date(value)
-    if (Number.isNaN(date.getTime())) return value
-    return new Intl.DateTimeFormat(locale.value.startsWith('zh') ? 'zh-CN' : 'en-US', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-      timeZone: 'UTC'
-    }).format(date)
-  }
-
   onMounted(() => {
     void loadOverview()
   })
