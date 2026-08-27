@@ -136,10 +136,10 @@
 
                       <ElDescriptions :column="1" border size="small">
                         <ElDescriptionsItem label="开始时间">{{
-                          log.startedAt || '--'
+                          formatDateTime(log.startedAt)
                         }}</ElDescriptionsItem>
                         <ElDescriptionsItem label="结束时间">{{
-                          log.finishedAt || '--'
+                          formatDateTime(log.finishedAt)
                         }}</ElDescriptionsItem>
                         <ElDescriptionsItem label="耗时">{{
                           formatDuration(log.durationMs)
@@ -205,7 +205,7 @@
                           {{ transition.branchLabel || '--' }}
                         </ElDescriptionsItem>
                         <ElDescriptionsItem label="记录时间">
-                          {{ transition.createdAt || '--' }}
+                          {{ formatDateTime(transition.createdAt) }}
                         </ElDescriptionsItem>
                       </ElDescriptions>
                     </div>
@@ -225,10 +225,10 @@
                           executionDetail.entryName || '--'
                         }}</ElDescriptionsItem>
                         <ElDescriptionsItem label="开始时间">{{
-                          executionDetail.startedAt || executionDetail.queuedAt || '--'
+                          formatDateTime(executionDetail.startedAt || executionDetail.queuedAt)
                         }}</ElDescriptionsItem>
                         <ElDescriptionsItem label="结束时间">{{
-                          executionDetail.finishedAt || '--'
+                          formatDateTime(executionDetail.finishedAt)
                         }}</ElDescriptionsItem>
                         <ElDescriptionsItem label="执行耗时">{{
                           formatDuration(executionDetail.durationMs)
@@ -281,8 +281,16 @@
                             </ElTag>
                           </template>
                         </ElTableColumn>
-                        <ElTableColumn prop="startedAt" label="开始时间" min-width="160" />
-                        <ElTableColumn prop="finishedAt" label="结束时间" min-width="160" />
+                        <ElTableColumn label="开始时间" min-width="170">
+                          <template #default="{ row }">{{
+                            formatDateTime(row.startedAt)
+                          }}</template>
+                        </ElTableColumn>
+                        <ElTableColumn label="结束时间" min-width="170">
+                          <template #default="{ row }">{{
+                            formatDateTime(row.finishedAt)
+                          }}</template>
+                        </ElTableColumn>
                         <ElTableColumn label="失败摘要" min-width="180" show-overflow-tooltip>
                           <template #default="{ row }">{{ row.error?.summary || '--' }}</template>
                         </ElTableColumn>
@@ -306,7 +314,7 @@
                           :key="item.key"
                           class="workflow-execution-detail__timeline-item"
                         >
-                          <span>{{ item.time || '--' }}</span>
+                          <span>{{ formatDateTime(item.time) }}</span>
                           <strong>{{ item.title }}</strong>
                           <small>{{ item.detail }}</small>
                         </div>
@@ -333,6 +341,7 @@
     type WorkflowExecutionDetail
   } from '@/api/scheduler'
   import { useAutoLayoutHeight } from '@/hooks/core/useLayoutHeight'
+  import { formatDateTime } from '@/utils/date'
   import WorkflowExecutionCanvas from './components/WorkflowExecutionCanvas.vue'
   import {
     flattenMaterials,
@@ -430,11 +439,12 @@
   )
 
   const handleBack = () => {
-    if (window.history.length > 1) {
-      router.back()
-      return
-    }
-    router.push('/scheduler/execution')
+    const workflowId = executionDetail.value?.workflowDefinitionId || route.query.workflowId
+    const workflowName = executionDetail.value?.workflowDefinitionName || route.query.workflowName
+    router.push({
+      path: '/scheduler/execution',
+      query: { workflowId: String(workflowId || ''), workflowName: String(workflowName || '') }
+    })
   }
 
   const clearSelection = () => {

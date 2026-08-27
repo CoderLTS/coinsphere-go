@@ -208,7 +208,7 @@
               </span>
               <span class="signal-main">
                 <strong>{{ actionLabel[item.action] }}</strong>
-                <small>{{ axisTime(item.candleOpenTime) }} UTC</small>
+                <small>{{ formatDateTime(item.candleOpenTime) }} UTC+8</small>
               </span>
               <span class="signal-target">
                 <small>目标仓位</small>
@@ -250,6 +250,7 @@
     type StrategySignalItem
   } from '@/api/signals'
   import type { KLineDataItem, KLineSignalItem } from '@/types/component/chart'
+  import { formatDateTime } from '@/utils/date'
 
   defineOptions({ name: 'MarketChartPage' })
 
@@ -293,11 +294,7 @@
   }
 
   const timeKey = (value: string) => String(new Date(value).getTime())
-  const axisTime = (value: string) => {
-    const date = new Date(value)
-    const pad = (part: number) => String(part).padStart(2, '0')
-    return `${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`
-  }
+  const axisTime = (value: string) => formatDateTime(value).slice(5, 16)
   const numberText = (value: string | number | null | undefined) => {
     const number = Number(value)
     if (value === null || value === undefined || Number.isNaN(number)) return '--'
@@ -384,7 +381,7 @@
     loading.value = true
     try {
       const [symbolResult, strategyResult] = await Promise.all([
-        fetchMarketSymbols({ limit: 200, status: 'trading' }),
+        fetchMarketSymbols({ limit: 5000, status: 'trading' }),
         Promise.resolve({ records: [] as StrategyInstanceItem[] })
       ])
       symbols.value = symbolResult.records

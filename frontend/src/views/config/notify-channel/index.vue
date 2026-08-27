@@ -53,6 +53,7 @@
     type NotifyChannelUpsertPayload
   } from '@/api/config'
   import { fetchTestInAppNotice } from '@/api/notifications'
+  import { formatDateTime } from '@/utils/date'
 
   defineOptions({ name: 'NotifyChannelPage' })
 
@@ -183,13 +184,15 @@
       prop: 'lastTestedAt',
       label: t('notifyChannel.table.lastTestedAt'),
       minWidth: 140,
-      align: 'center'
+      align: 'center',
+      formatter: (row) => formatDateTime(row.lastTestedAt)
     },
     {
       prop: 'updatedAt',
       label: t('notifyChannel.table.updatedAt'),
       minWidth: 140,
-      align: 'center'
+      align: 'center',
+      formatter: (row) => formatDateTime(row.updatedAt)
     },
     {
       prop: 'operation',

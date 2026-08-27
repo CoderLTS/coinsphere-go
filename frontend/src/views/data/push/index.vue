@@ -39,6 +39,7 @@
   import { fetchWorkflowDefinitionList } from '@/api/scheduler'
   import { useCursorPagination } from '@/hooks/core/useCursorPagination'
   import { useTableColumns } from '@/hooks/core/useTableColumns'
+  import { formatDateTime } from '@/utils/date'
 
   defineOptions({ name: 'PushDataPage' })
 
@@ -188,13 +189,15 @@
       prop: 'sentAt',
       label: '发送时间',
       minWidth: 170,
-      align: 'center'
+      align: 'center',
+      formatter: (row) => formatDateTime(row.sentAt)
     },
     {
       prop: 'createdAt',
       label: '创建时间',
       minWidth: 170,
-      align: 'center'
+      align: 'center',
+      formatter: (row) => formatDateTime(row.createdAt)
     }
   ])
 

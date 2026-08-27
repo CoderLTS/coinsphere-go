@@ -199,7 +199,7 @@
               ><dt>市场</dt><dd>{{ signal.market }}</dd></div
             >
             <div
-              ><dt>UTC</dt><dd>{{ formatTime(signal.evaluatedAt) }}</dd></div
+              ><dt>UTC+8</dt><dd>{{ formatTime(signal.evaluatedAt) }}</dd></div
             >
           </dl>
           <div v-if="signal.status === 'pending'" class="signal-mobile__actions">
@@ -244,6 +244,7 @@
   } from '@/api/paper'
   import { useAuth } from '@/hooks/core/useAuth'
   import { useUserStore } from '@/store/modules/user'
+  import { formatDateTime as formatTime } from '@/utils/date'
 
   const props = defineProps<{ view: ResultView }>()
   const { hasAuth } = useAuth()
@@ -306,17 +307,6 @@
     })[status] as 'info' | 'warning' | 'success' | 'danger'
   const cancellable = (status: ResultViewBatchStatus) =>
     ['queued', 'running', 'waiting', 'retrying'].includes(status)
-  const formatTime = (value: string) =>
-    new Intl.DateTimeFormat('zh-CN', {
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-      timeZone: 'UTC'
-    }).format(new Date(value))
-
   const load = async () => {
     loading.value = true
     try {

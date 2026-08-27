@@ -185,6 +185,13 @@ interface ItemList<T> {
   items: T[]
 }
 
+export interface WorkflowBatchQuery {
+  cursor?: string
+  limit?: number
+  triggerType?: WorkflowBatch['triggerType'] | string
+  status?: WorkflowBatch['status'] | 'success' | 'canceled' | 'retry_waiting' | string
+}
+
 export const fetchWorkflows = (status = '') =>
   request.get<ItemList<WorkflowItem>>({
     url: '/api/v1/workflows',
@@ -260,8 +267,11 @@ export const applyWorkflowLifecycle = (workflowId: number, action: 'start' | 'pa
 export const createWorkflowBatch = (workflowId: number) =>
   request.post<WorkflowBatch>({ url: `/api/v1/workflows/${workflowId}/batches` })
 
-export const fetchWorkflowBatches = (workflowId: number) =>
-  request.get<ItemList<WorkflowBatch>>({ url: `/api/v1/workflows/${workflowId}/batches` })
+export const fetchWorkflowBatches = (workflowId: number, params: WorkflowBatchQuery = {}) =>
+  request.get<Api.Common.PaginatedResponse<WorkflowBatch>>({
+    url: `/api/v1/workflows/${workflowId}/batches`,
+    params
+  })
 
 export const applyWorkflowBatchAction = (batchId: number, action: 'cancel' | 'retry' | 'replay') =>
   request.post<WorkflowBatch>({ url: `/api/v1/batches/${batchId}`, params: { action } })

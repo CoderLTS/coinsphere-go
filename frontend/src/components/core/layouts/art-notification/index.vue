@@ -59,9 +59,9 @@
                 item.messageTitle
               }}</h4>
               <p class="mt-1.5 text-xs text-g-500 line-clamp-2">{{
-                item.messageContent || item.createdAt
+                item.messageContent || formatDateTime(item.createdAt)
               }}</p>
-              <p class="mt-1 text-xs text-g-400">{{ item.createdAt }}</p>
+              <p class="mt-1 text-xs text-g-400">{{ formatDateTime(item.createdAt) }}</p>
             </div>
           </li>
         </ul>
@@ -102,7 +102,7 @@
                 }}</h4>
                 <p class="mt-1 text-xs text-g-500 line-clamp-2">{{ item.messageContent }}</p>
                 <p class="mt-1 text-xs text-g-400">
-                  {{ item.strategySignalExpiresAt || item.createdAt }}
+                  {{ formatDateTime(item.strategySignalExpiresAt || item.createdAt) }}
                 </p>
               </div>
             </div>
@@ -167,6 +167,7 @@
   import { fetchReauth } from '@/api/auth'
   import { fetchApproveStrategySignal, fetchRejectStrategySignal } from '@/api/signals'
   import { useNotificationStore } from '@/store/modules/notification'
+  import { formatDateTime } from '@/utils/date'
 
   defineOptions({ name: 'ArtNotification' })
 

@@ -74,7 +74,9 @@
             }}</ElTag></template
           >
         </ElTableColumn>
-        <ElTableColumn label="更新时间" min-width="170" prop="updatedAt" />
+        <ElTableColumn label="更新时间" min-width="170">
+          <template #default="{ row }">{{ formatDateTime(row.updatedAt) }}</template>
+        </ElTableColumn>
         <ElTableColumn label="操作" width="130" fixed="right">
           <template #default="{ row }"
             ><ElButton link type="primary" @click.stop="openDetail(row)"
@@ -124,10 +126,10 @@
             ><ElDescriptions :column="1" border size="small"
               ><ElDescriptionsItem label="账户 ID">{{ detail.account.id }}</ElDescriptionsItem
               ><ElDescriptionsItem label="创建时间">{{
-                detail.account.createdAt
+                formatDateTime(detail.account.createdAt)
               }}</ElDescriptionsItem
               ><ElDescriptionsItem label="最近更新">{{
-                detail.account.updatedAt
+                formatDateTime(detail.account.updatedAt)
               }}</ElDescriptionsItem
               ><ElDescriptionsItem label="暂停原因">{{
                 detail.account.pauseReason || '—'
@@ -171,10 +173,17 @@
             ><ElTable :data="detail.orders" size="small"
               ><ElTableColumn prop="symbol" label="标的" /><ElTableColumn
                 prop="side"
-                label="方向" /><ElTableColumn prop="status" label="状态" /><ElTableColumn
+                label="方向"
+              /><ElTableColumn prop="status" label="状态" /><ElTableColumn
                 prop="filledQuantity"
-                label="成交数量" /><ElTableColumn prop="updatedAt" label="更新时间" /></ElTable
-          ></ElTabPane>
+                label="成交数量"
+              /><ElTableColumn label="更新时间"
+                ><template #default="{ row }">{{
+                  formatDateTime(row.updatedAt)
+                }}</template></ElTableColumn
+              ></ElTable
+            ></ElTabPane
+          >
         </ElTabs>
         <div class="drawer-actions"
           ><ElButton @click="openRename">修改名称</ElButton
@@ -238,6 +247,7 @@
     type TradingAccount,
     type TradingAccountDetail
   } from '@/api/trading'
+  import { formatDateTime } from '@/utils/date'
 
   defineOptions({ name: 'TradingAccountsPage' })
   const loading = ref(false)

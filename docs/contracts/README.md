@@ -35,7 +35,7 @@
 | `GET/POST /api/v1/workflows/{workflowId}/revisions`             | 列表，或保存新不可变修订               |
 | `GET /api/v1/workflows/{workflowId}/revisions/{revisionId}`     | 读取固定修订                           |
 | `POST /api/v1/workflows/{workflowId}/lifecycle`                 | 执行 `start`、`pause` 或 `archive`     |
-| `GET/POST /api/v1/workflows/{workflowId}/batches`               | 最近批次摘要，或创建手工批次           |
+| `GET/POST /api/v1/workflows/{workflowId}/batches`               | 分页查询批次，或创建手工批次           |
 | `GET /api/v1/workflows/{workflowId}/activity`                   | 按单调游标读取持久活动                 |
 | `GET /api/v1/workflows/{workflowId}/activity/ws`                | 游标补齐后推送活动增量                 |
 | `GET /api/v1/batches/{batchId}`                                 | 读取批次、节点路径、活动和制品引用     |

@@ -56,6 +56,7 @@
   import { useAuth } from '@/hooks/core/useAuth'
   import { useCursorPagination } from '@/hooks/core/useCursorPagination'
   import { useTableColumns } from '@/hooks/core/useTableColumns'
+  import { formatDateTime } from '@/utils/date'
   import { mittBus } from '@/utils/sys'
   import NewsDialog, { type NewsFormPayload } from './modules/news-dialog.vue'
 
@@ -182,7 +183,8 @@
       prop: 'publishedAt',
       label: t('data.news.columns.publishTime'),
       minWidth: 140,
-      align: 'center'
+      align: 'center',
+      formatter: (row) => formatDateTime(row.publishedAt)
     },
     {
       prop: 'sourceUrl',

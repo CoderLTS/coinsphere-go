@@ -20,7 +20,6 @@
             >
               新增工作流定义
             </ElButton>
-            <ElButton @click="router.push('/scheduler/execution')">查看执行记录</ElButton>
           </ElSpace>
         </template>
       </ArtTableHeader>
@@ -72,10 +71,26 @@
             }}</ElTag>
           </template>
         </ElTableColumn>
-        <ElTableColumn prop="createdAt" label="创建时间" min-width="170" />
-        <ElTableColumn label="操作" width="176" align="center">
+        <ElTableColumn label="创建时间" min-width="170">
+          <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+        </ElTableColumn>
+        <ElTableColumn label="操作" width="220" align="center">
           <template #default="{ row }">
             <ElSpace wrap size="small" class="operation-actions">
+              <ElTooltip
+                v-if="hasAuth('scheduler.workflow_executions.view')"
+                content="执行记录"
+                placement="top"
+              >
+                <ElButton
+                  circle
+                  plain
+                  size="small"
+                  type="primary"
+                  :icon="Clock"
+                  @click="openExecutionList(row)"
+                />
+              </ElTooltip>
               <ElTooltip
                 v-if="hasAuth('scheduler.workflow_definitions.update')"
                 content="编辑"
@@ -166,7 +181,9 @@
               </template>
             </ElTableColumn>
             <ElTableColumn prop="executionCount" label="执行数" width="90" align="center" />
-            <ElTableColumn prop="createdAt" label="创建时间" min-width="170" />
+            <ElTableColumn label="创建时间" min-width="170">
+              <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+            </ElTableColumn>
             <ElTableColumn label="操作" width="180" align="center">
               <template #default="{ row }">
                 <ElSpace wrap size="small" class="operation-actions">
@@ -290,8 +307,12 @@
                 {{ registrationStatusLabel(row.registrationStatus) }}
               </template>
             </ElTableColumn>
-            <ElTableColumn prop="nextRunAt" label="下次运行" min-width="160" />
-            <ElTableColumn prop="lastTriggeredAt" label="最近触发" min-width="160" />
+            <ElTableColumn label="下次运行" min-width="170">
+              <template #default="{ row }">{{ formatDateTime(row.nextRunAt) }}</template>
+            </ElTableColumn>
+            <ElTableColumn label="最近触发" min-width="170">
+              <template #default="{ row }">{{ formatDateTime(row.lastTriggeredAt) }}</template>
+            </ElTableColumn>
             <ElTableColumn
               prop="lastErrorMessage"
               label="最近错误"
@@ -364,6 +385,7 @@
 
 <script setup lang="ts">
   import {
+    Clock,
     Collection,
     Delete,
     Edit,
@@ -389,6 +411,7 @@
     type WorkflowRuntimeStateItem,
     type WorkflowStartType
   } from '@/api/scheduler'
+  import { formatDateTime } from '@/utils/date'
 
   defineOptions({ name: 'SchedulerWorkflowDefinitionsPage' })
 
@@ -695,6 +718,12 @@
     runDialogVisible.value = true
   }
 
+  const openExecutionList = (row: WorkflowDefinitionItem) =>
+    router.push({
+      path: '/scheduler/execution',
+      query: { workflowId: row.code, workflowName: row.displayName }
+    })
+
   const submitManualRun = async () => {
     if (!runDefinition.value) return
     if (!selectedManualEntryKeys.value.length) {
@@ -725,10 +754,16 @@
       ElMessage.success(`已加入执行队列，共 ${result.executions.length} 条执行记录`)
       await loadPageData()
       if (result.executions.length === 1 && result.executions[0]?.id) {
-        await router.push(`/scheduler/execution/${result.executions[0].id}/detail`)
+        await router.push({
+          path: `/scheduler/execution/${result.executions[0].id}/detail`,
+          query: {
+            workflowId: runDefinition.value.code,
+            workflowName: runDefinition.value.displayName
+          }
+        })
         return
       }
-      await router.push('/scheduler/execution')
+      await openExecutionList(runDefinition.value)
     } finally {
       runSubmitting.value = false
     }

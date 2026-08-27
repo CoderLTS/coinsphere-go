@@ -51,7 +51,7 @@
               <ElTag :type="validationTagType(row.lastValidationStatus)" effect="plain">
                 {{ validationLabel(row.lastValidationStatus) }}
               </ElTag>
-              <span>{{ row.lastValidatedAt || '--' }}</span>
+              <span>{{ formatDateTime(row.lastValidatedAt) }}</span>
             </div>
           </template>
         </ElTableColumn>
@@ -63,6 +63,7 @@
 <script setup lang="ts">
   import { Refresh } from '@element-plus/icons-vue'
   import { fetchConfigOverview, type ConfigOverviewResponse } from '@/api/config'
+  import { formatDateTime } from '@/utils/date'
 
   defineOptions({ name: 'ConfigOverviewPage' })
 

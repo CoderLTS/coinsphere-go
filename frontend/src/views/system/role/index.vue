@@ -55,6 +55,7 @@
   import { useAuth } from '@/hooks/core/useAuth'
   import { useTable } from '@/hooks/core/useTable'
   import { fetchDeleteRole, fetchGetRoleList } from '@/api/system'
+  import { formatDateTime } from '@/utils/date'
   import RoleEditDialog from './modules/role-edit-dialog.vue'
   import RolePermissionDialog from './modules/role-permission-dialog.vue'
   import RoleSearch from './modules/role-search.vue'
@@ -159,7 +160,8 @@
           prop: 'createdAt',
           label: '创建日期',
           width: 180,
-          sortable: true
+          sortable: true,
+          formatter: (row: RoleListItem) => formatDateTime(row.createdAt)
         },
         {
           prop: 'operation',

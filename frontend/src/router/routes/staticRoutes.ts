@@ -108,7 +108,7 @@ export const staticRoutes: AppRouteRecordRaw[] = [
           title: '执行详情',
           isHideTab: true,
           isHide: true,
-          activePath: '/scheduler/execution'
+          activePath: '/scheduler/definition'
         }
       }
     ]

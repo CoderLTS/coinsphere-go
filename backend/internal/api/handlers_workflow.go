@@ -222,8 +222,34 @@ func (s *Server) handleListWorkflowBatches(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
-	items, err := s.App.ListWorkflowBatches(r.Context(), workflowID)
-	respond(w, M{"items": items}, err, "")
+	page, ok := cursorPage(w, r)
+	if !ok {
+		return
+	}
+	triggerType := queryStr(r, "triggerType")
+	if triggerType != "" && triggerType != "manual" && triggerType != "schedule" && triggerType != "event" &&
+		triggerType != "stream" && triggerType != "webhook" && triggerType != "failure" {
+		writeProblem(w, r, http.StatusBadRequest, "invalid workflow batch triggerType")
+		return
+	}
+	status := queryStr(r, "status")
+	statusMap := map[string]string{
+		"queued": "queued", "running": "running", "waiting": "waiting", "retrying": "retrying",
+		"retry_waiting": "retrying", "success": "succeeded", "succeeded": "succeeded",
+		"failed": "failed", "canceled": "cancelled", "cancelled": "cancelled",
+	}
+	if status != "" {
+		mapped, valid := statusMap[status]
+		if !valid {
+			writeProblem(w, r, http.StatusBadRequest, "invalid workflow batch status")
+			return
+		}
+		status = mapped
+	}
+	data, err := s.App.PageWorkflowBatches(r.Context(), workflowID, service.WorkflowBatchListQuery{
+		Page: page, TriggerType: triggerType, Status: status,
+	})
+	respond(w, data, err, "")
 }
 
 func (s *Server) handleCreateWorkflowBatch(w http.ResponseWriter, r *http.Request, principal *service.Principal) {

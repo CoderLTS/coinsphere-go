@@ -85,6 +85,7 @@
   import { Refresh } from '@element-plus/icons-vue'
   import * as echarts from 'echarts'
   import { fetchHomeOverview, type HomeOverview } from '@/api/home'
+  import { formatDateTime } from '@/utils/date'
 
   defineOptions({ name: 'HomePage' })
   const loading = ref(false)
@@ -151,13 +152,7 @@
         tooltip: { trigger: 'axis' },
         xAxis: {
           type: 'category',
-          data: trend.map((item) =>
-            new Date(item.time).toLocaleTimeString('zh-CN', {
-              hour: '2-digit',
-              minute: '2-digit',
-              hour12: false
-            })
-          ),
+          data: trend.map((item) => formatDateTime(item.time).slice(11, 16)),
           axisLabel: { interval: 9, color: '#8492a6' },
           axisLine: { lineStyle: { color: '#dcdfe6' } }
         },
@@ -208,7 +203,7 @@
     loading.value = true
     try {
       overview.value = await fetchHomeOverview()
-      refreshedAt.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
+      refreshedAt.value = formatDateTime(new Date())
       await nextTick()
       renderChart()
     } finally {
