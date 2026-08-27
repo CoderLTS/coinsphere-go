@@ -1,3 +1,3 @@
-export const resultPages = {
+export const pages = {
   deliveries: () => import('./ResultPage.vue')
 }

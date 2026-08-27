@@ -75,7 +75,7 @@
 - `id` 是稳定的小写点分名称；`version` 是严格 SemVer。
 - `sdkMajor` 必须等于当前 SDK major，`requiresCore` 必须包含当前 Core 版本。
 - Backend 入口必须是拥有匹配 module 名的 Go module；Frontend 和 migration 路径必须留在插件根目录内。
-- `contributes` 只接受 `nodes`、`triggers`、`apiRoutes`、`resultPages` 和 `migrations`，声明的非 migration 贡献必须实际注册。
+- `contributes` 只接受 `nodes`、`triggers`、`strategies`、`apiRoutes`、`pages`、`resultPages` 和 `migrations`，声明的非 migration 贡献必须实际注册。
 
 `plugin validate` 只读校验一个或多个目录。应用启动只执行生成的 Go 注册表，不扫描插件目录或动态加载共享库。
 
@@ -93,7 +93,7 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 
 插件不得从查询参数扩大核心注入的范围。不存在、未授权或已撤销 ResultView 统一返回 `404`；操作先解析 active 视图，再检查白名单、RBAC 和领域状态。
 
-结果页描述符包含插件内唯一 `pageKey`、标题、前端组件入口、范围/过滤器 Schema、操作白名单和移动端能力。`FrontendPluginModule.pages` 可为插件提供独立菜单页，`resultPages` 提供限定工作流上下文的结果页；测试契约插件不加入生产菜单。
+页面描述符通过 `pages` 注册插件内唯一的 `pageKey`、标题、图标和缓存设置，并生成独立顶级菜单；前端 `FrontendPluginModule.pages` 必须导出同名页面。`resultPages` 只提供限定工作流上下文的结果渲染器，不生成菜单。
 
 内置 `official.connector` 提供 HTTP Action、Webhook Trigger、WebSocket Trigger 和运行诊断结果页；`official.ai` 提供 OpenAI-compatible 结构化模型调用和结果页。两者只访问 `workflow.http_allowed_hosts` 的精确公共域名，禁用环境代理，拨号前后解析并拒绝非公网 IP。Binance 只允许明确列出的公共 GET/公共 WebSocket，授权、私有或未知端点一律拒绝。AI 节点只接收/返回 JSON 对象，不能控制工作流生命周期或交易。
 
@@ -101,7 +101,7 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 
 Paper 账户按 `workflowId + paper nodeInstanceId` 唯一。默认人工审批；自动模式只有在最大总名义价值、单品种名义价值、单次操作名义价值、最大日亏损和最大回撤全部显式配置时有效。批准后重新读取 Binance 公共报价，并在一个数据库事务中检查信号/任务状态、报价新鲜度、品种状态、数量步进、账户状态及五项风险限制。拒绝不会创建账户或账本；成功执行写入不可变订单、成交、费用和账本事实，再更新账户与持仓投影。操作键和唯一约束保证节点重试、进程重启及 Outbox 重投不重复成交或投递。
 
-内置 `official.notification` 提供 `in_app` Action 和投递结果页。站内投递只保存受控标题、正文和业务键，以操作键幂等；诊断重放复用原 Checkpoint，不再次产生 notification、human_action 或 paper 副作用。
+内置 `official.notification` 提供 `in_app` Action 和独立投递页。站内投递只保存受控标题、正文和业务键，以操作键幂等；诊断重放复用原 Checkpoint，不再次产生 notification、human_action 或 paper 副作用。
 
 `GET /api/v1/plugins/official.quant/{instruments|candles|strategies|backtests|signals|paper-accounts}`、Paper 账户重建和 Notification 系统查询是 `SystemScope` 路由，只允许超级管理员。ResultView 插件路由只接受核心注入的固定范围，查询参数不能扩大范围。金融值均返回十进制字符串。
 

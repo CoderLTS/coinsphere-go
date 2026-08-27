@@ -15,6 +15,7 @@ import (
 
 	"coinsphere/backend/internal/perm"
 	"coinsphere/backend/internal/security"
+	"coinsphere/backend/plugin/sdk"
 )
 
 // struct(结构体)= 把若干字段打包成一个类型(类似别的语言只有数据的“类”)。这里三个字段
@@ -39,16 +40,12 @@ type menuItem struct {
 
 // 内置菜单清单(前端导航默认就有这些)。每项仍用“位置写法”,值的顺序必须和上面 menuItem
 // 的字段顺序完全一致。Parent 为空字符串 "" 表示顶级菜单,否则填父菜单的 Name。
-var menuItems = []menuItem{
+var coreMenuItems = []menuItem{
 	{"Home", "首页", "/home", "/home/index", "ri:home-5-line", "", true, true, false},
 	{"SchedulerCenter", "工作流调度", "/scheduler", "/index/index", "ri:time-line", "", false, false, false},
 	{"NodeDefinitions", "节点定义", "node-definition", "/scheduler/node-definition", "ri:stack-line", "SchedulerCenter", true, false, false},
 	{"WorkflowDefinitions", "工作流定义", "definition", "/scheduler/workflow", "ri:node-tree", "SchedulerCenter", true, false, false},
 	{"WorkflowExecutions", "执行记录", "execution", "/scheduler/execution", "ri:history-line", "SchedulerCenter", true, false, false},
-	{"DataCenter", "数据管理", "/data", "/index/index", "ri:database-2-line", "", false, false, false},
-	{"MarketMetadata", "币种数据", "market-metadata", "plugin:official.quant/instruments", "ri:coins-line", "DataCenter", true, false, false},
-	{"MarketChart", "K 线详情", "market-chart", "plugin:official.quant/candles", "ri:stock-line", "DataCenter", false, false, true},
-	{"Results", "共享结果", "/results", "/results/index", "ri:file-chart-line", "", true, false, false},
 	{"System", "系统管理", "/system", "/index/index", "ri:settings-3-line", "", false, false, false},
 	{"User", "用户管理", "user", "/system/user", "ri:user-3-line", "System", true, false, false},
 	{"Role", "角色管理", "role", "/system/role", "ri:team-line", "System", true, false, false},
@@ -64,10 +61,6 @@ var menuI18n = map[string][2]string{
 	"WorkflowDefinitions": {"工作流定义", "Workflow Definitions"},
 	"WorkflowExecutions":  {"执行记录", "Execution Records"},
 	"NodeDefinitions":     {"节点定义", "Node Definitions"},
-	"DataCenter":          {"数据管理", "Data Management"},
-	"MarketMetadata":      {"币种数据", "Instruments"},
-	"MarketChart":         {"K 线详情", "Candles"},
-	"Results":             {"共享结果", "Shared Results"},
 	"System":              {"系统管理", "System Management"},
 	"User":                {"用户管理", "User Management"},
 	"Role":                {"角色管理", "Role Management"},
@@ -76,7 +69,15 @@ var menuI18n = map[string][2]string{
 }
 
 // Seed 写入内置角色、用户、菜单与 i18n。幂等。
-func Seed(ctx context.Context, gdb *gorm.DB, hasher *security.PasswordHasher, adminPassword string) error {
+func Seed(ctx context.Context, gdb *gorm.DB, hasher *security.PasswordHasher, adminPassword string, pluginPages []sdk.RegisteredPage) error {
+	menuItems := append([]menuItem(nil), coreMenuItems...)
+	for _, page := range pluginPages {
+		key := page.PluginID + "/" + page.PageKey
+		menuItems = append(menuItems, menuItem{
+			Name: "PluginPage:" + key, Title: page.Title, Path: "/plugins/" + key,
+			Component: "plugin:" + key, Icon: page.Icon, KeepAlive: page.KeepAlive,
+		})
+	}
 	// 入参里的 *gorm.DB、*security.PasswordHasher 都是“指针”(*类型 表示指向该类型的指针),
 	// 传指针可避免复制、并共享同一个数据库连接。函数只返回一个 error:nil 表示成功。
 	// Transaction(事务):把括号里的整段操作当成“要么全成功、要么全回滚”的整体;传进去的
@@ -94,11 +95,11 @@ func Seed(ctx context.Context, gdb *gorm.DB, hasher *security.PasswordHasher, ad
 		if err != nil {
 			return err
 		}
-		menus, buttons, err := seedMenusAndButtons(tx)
+		menus, buttons, err := seedMenusAndButtons(tx, menuItems)
 		if err != nil {
 			return err
 		}
-		if err := seedRoleBindings(tx, roles, menus, buttons, user); err != nil {
+		if err := seedRoleBindings(tx, roles, menus, buttons, user, menuItems); err != nil {
 			return err
 		}
 		if err := seedI18n(tx, menus, buttons); err != nil {
@@ -181,9 +182,13 @@ func seedSuperUser(tx *gorm.DB, hasher *security.PasswordHasher, adminPassword s
 }
 
 // seedMenusAndButtons 写入内置菜单及其下面的“按钮级权限点”,返回两张便于查找的 map。
-func seedMenusAndButtons(tx *gorm.DB) (map[string]*SystemMenu, map[string]*SystemMenuButton, error) {
+func seedMenusAndButtons(tx *gorm.DB, menuItems []menuItem) (map[string]*SystemMenu, map[string]*SystemMenuButton, error) {
 	now := time.Now()
 	menuMap := map[string]*SystemMenu{}
+	if err := tx.Model(&SystemMenu{}).Where("name LIKE ?", "PluginPage:%").
+		Updates(map[string]any{"is_active": false, "is_hidden": true, "updated_at": now}).Error; err != nil {
+		return nil, nil, err
+	}
 
 	// 把一个匿名函数赋给变量 upsertMenu,就得到一个“局部函数”(闭包):它能直接读写外层的
 	// tx、now、menuMap 等变量。下面在循环里反复调用它来插入/更新每个菜单。
@@ -240,6 +245,7 @@ func seedMenusAndButtons(tx *gorm.DB) (map[string]*SystemMenu, map[string]*Syste
 		}
 	}
 	for _, name := range []string{
+		"Results", "DataCenter", "MarketMetadata", "MarketChart",
 		"Workflows", "TradingCenter", "TradingAccounts", "StrategyManagement",
 		"NewsData", "ConfigCenter", "ConfigOverview", "AiModelConfig", "AssistantAgentConfig",
 	} {
@@ -288,6 +294,7 @@ func seedRoleBindings(
 	menus map[string]*SystemMenu,
 	buttons map[string]*SystemMenuButton,
 	user *SystemUser,
+	menuItems []menuItem,
 ) error {
 	var existing SystemUserRole
 	err := tx.Where("user_id = ? AND role_id = ?", user.ID, roles["R_SUPER"].ID).First(&existing).Error
@@ -310,7 +317,7 @@ func seedRoleBindings(
 	// 普通用户只看几项,游客只看首页。
 	roleMenus := map[string][]string{
 		"R_SUPER": allMenuNames,
-		"R_USER":  {"Home", "Results", "UserCenter"},
+		"R_USER":  {"Home", "UserCenter"},
 		"R_GUEST": {"Home"},
 	}
 	superButtons := make([]string, 0)
@@ -321,7 +328,7 @@ func seedRoleBindings(
 	}
 	roleButtons := map[string][]string{
 		"R_SUPER": superButtons,
-		"R_USER":  {perm.ResultViewsApprove, perm.ResultViewsReject, perm.ResultViewsExport},
+		"R_USER":  {},
 		"R_GUEST": {},
 	}
 

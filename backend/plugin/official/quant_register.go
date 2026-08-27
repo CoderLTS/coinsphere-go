@@ -34,11 +34,19 @@ func RegisterQuant(registry *sdk.Registry, database *gorm.DB) error {
 	runtime.quote = runtime.fetchQuantPublicQuote
 	return registry.RegisterPlugin(sdk.PluginDescriptor{
 		ID: quantPluginID, Name: "CoinSphere Quant", Version: "1.0.0",
-		Contributes: []string{"nodes", "triggers", "strategies", "apiRoutes", "resultPages"},
+		Contributes: []string{"nodes", "triggers", "strategies", "apiRoutes", "pages", "resultPages"},
 	}, func(registrar sdk.Registrar) error { return runtime.register(registrar) })
 }
 
 func (q *quantRuntime) register(registrar sdk.Registrar) error {
+	for _, page := range []sdk.PageDescriptor{
+		{PageKey: "instruments", Title: "币种数据", Icon: "ri:coins-line", KeepAlive: true},
+		{PageKey: "candles", Title: "K 线数据", Icon: "ri:stock-line"},
+	} {
+		if err := registrar.Page(page); err != nil {
+			return err
+		}
+	}
 	if err := registrar.Strategy(smaCrossoverStrategy{}); err != nil {
 		return err
 	}

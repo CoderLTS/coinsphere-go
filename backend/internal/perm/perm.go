@@ -14,8 +14,6 @@ const (
 	SchedulerWorkflowRuntimeUpdate     = "scheduler.workflow_runtime.update"
 	SchedulerWorkflowExecutionsView    = "scheduler.workflow_executions.view"
 
-	DataMarketView = "data.market.view"
-
 	SystemUsersView              = "system.users.view"
 	SystemUsersCreate            = "system.users.create"
 	SystemUsersUpdate            = "system.users.update"
@@ -42,10 +40,8 @@ var MenuPermissionCodes = map[string]string{
 	"Home": HomeView, "SchedulerCenter": "",
 	"WorkflowDefinitions": SchedulerWorkflowDefinitionsView,
 	"WorkflowExecutions":  SchedulerWorkflowExecutionsView,
-	"NodeDefinitions":     SchedulerWorkflowDefinitionsView, "DataCenter": "",
-	"MarketMetadata": DataMarketView, "MarketChart": DataMarketView,
-	"Results": ResultViewsAccess,
-	"System":  "", "User": SystemUsersView, "Role": SystemRolesView,
+	"NodeDefinitions":     SchedulerWorkflowDefinitionsView,
+	"System":              "", "User": SystemUsersView, "Role": SystemRolesView,
 	"Menus": SystemMenusView, "UserCenter": "",
 }
 
@@ -81,13 +77,5 @@ var ButtonSpecs = map[string][]ButtonSpec{
 		{"create", SystemMenusCreate, "新增"},
 		{"update", SystemMenusUpdate, "编辑"},
 		{"delete", SystemMenusDelete, "删除"},
-	},
-	"Results": {
-		{"approve", ResultViewsApprove, "批准"},
-		{"reject", ResultViewsReject, "拒绝"},
-		{"retry", ResultViewsRetry, "重试"},
-		{"cancel", ResultViewsCancel, "取消"},
-		{"pause", ResultViewsPause, "暂停"},
-		{"export", ResultViewsExport, "导出"},
 	},
 }

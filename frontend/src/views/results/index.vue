@@ -297,7 +297,7 @@
       return
     }
     const module = await registration.load()
-    const page = module.resultPages[view.pageKey]
+    const page = module.resultPages?.[view.pageKey]
     resultComponent.value = page ? (await page()).default : undefined
   }
   const selectView = async (view: ResultView) => {

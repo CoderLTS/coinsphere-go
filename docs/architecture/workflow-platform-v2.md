@@ -318,7 +318,7 @@ plugin-root/
   "migrations": {
     "directory": "./migrations"
   },
-  "contributes": ["nodes", "triggers", "apiRoutes", "resultPages", "migrations"]
+  "contributes": ["nodes", "triggers", "apiRoutes", "pages", "resultPages", "migrations"]
 }
 ```
 
@@ -357,7 +357,7 @@ type TriggerHandler interface {
 
 ### 6.3 路由和结果页作用域
 
-`ResultPageDescriptor` 声明 `pageKey`、标题、前端组件入口、范围 Schema、可用操作和移动端能力。插件 API 路由注册时必须选择以下一种注入上下文：
+`PageDescriptor` 声明独立页面的 `pageKey`、标题、图标和缓存设置，由核心生成顶级菜单。`ResultPageDescriptor` 只声明限定工作流上下文的结果渲染器。插件 API 路由注册时必须选择以下一种注入上下文：
 
 - `WorkflowScope`：仅超级管理员工作流页面使用，包含当前工作流和节点范围；
 - `ResultScope`：共享结果页使用，只包含视图 ID、插件、页面、服务端固定作用域/过滤器、操作白名单和当前用户；
