@@ -46,7 +46,6 @@ CREATE TABLE plugin_quant.candles (
         AND low <= LEAST(open, close, high)
     )
 );
-SELECT public.create_hypertable('plugin_quant.candles', 'open_time', if_not_exists => TRUE);
 CREATE INDEX ix_quant_candles_lookup
     ON plugin_quant.candles (market, instrument, interval, open_time DESC);
 

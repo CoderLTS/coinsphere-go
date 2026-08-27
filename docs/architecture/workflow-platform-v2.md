@@ -3,7 +3,7 @@
 - 状态：实施中（In Progress）
 - 日期：2026-08-24
 - 适用版本：V2 目标态
-- 关联决策：[ADR-0002：编译期插件驱动的工作流平台](decisions/0002-compile-time-plugin-workflow-platform.md)
+- 关联决策：[ADR-0002：编译期插件驱动的工作流平台](decisions/0002-compile-time-plugin-workflow-platform.md)、[ADR-0003：复用服务器 PostgreSQL](decisions/0003-use-shared-postgresql.md)
 - 交付顺序：[V2 开发路线图](../roadmap/README.md)
 
 > 本文描述 V2 目标架构。P0 基线与插件 SDK 已完成，其余代码、接口和操作仍以[架构概览](overview.md)、[公共契约](../contracts/README.md)和[使用手册](../user-guide.md)为准。各阶段达到退出条件后，再把对应契约和用户文档切换为已实现状态。
@@ -17,7 +17,7 @@ CoinSphere V2 是以可视化工作流为核心的通用自动化平台。工作
 - 用户在一个工作台内创建、连接、配置、启动、暂停、观察和排障，不需要理解 `entryKey`、原始运行输入或内部版本入口。
 - 一个节点既声明配置界面，也声明输入、输出、执行语义和结果展示，使工作流核心不包含量化、AI 或通知的私有协议。
 - 持续运行的工作流仍由有界、可重放的事件批次组成，任何失败都能定位到固定修订、固定输入和具体节点。
-- PostgreSQL/TimescaleDB 是唯一持久事实源；单实例部署在目标容量内保持简单、可恢复和可运维。
+- PostgreSQL 16 是唯一持久事实源；单实例部署在目标容量内保持简单、可恢复和可运维。
 - 策略实时评估和回测复用同一份 Go 实现；所有金融时间使用 UTC，所有价格、数量、金额和费率使用 Decimal。
 - 新交易能力默认关闭。V2 只实现 Paper，真实交易和交易所私有接口不在本设计范围内。
 
@@ -25,7 +25,7 @@ CoinSphere V2 是以可视化工作流为核心的通用自动化平台。工作
 
 | 类别 | 内容                                                                                                                              |
 | ---- | --------------------------------------------------------------------------------------------------------------------------------- |
-| 保留 | Vue 3/Vite/Element Plus/X6、Go App、PostgreSQL/TimescaleDB、认证、用户、角色、菜单、现有 RBAC、系统监控首页、模块化单体           |
+| 保留 | Vue 3/Vite/Element Plus/X6、Go App、PostgreSQL 16、认证、用户、角色、菜单、现有 RBAC、系统监控首页、模块化单体           |
 | 重建 | 工作流定义与运行模型、工作台、节点契约、事件队列、结果页、Paper 业务链路和迁移基线                                                |
 | 移除 | Python Worker、双槽位任务协议、新闻领域、全局策略源码编辑、Testnet/Live、Private Executor、被节点本地配置取代的全局模型和通知资源 |
 | 延期 | 插件签名、市场、热加载、沙箱、独立插件宿主、多实例集群、消息代理、任意在线代码执行、真实交易                                      |
@@ -82,13 +82,13 @@ flowchart LR
     REGISTRY --> AI["AI 插件"]
     REGISTRY --> QUANT["Quant 插件"]
     REGISTRY --> NOTIFY["Notification 插件"]
-    CORE <--> DB["PostgreSQL / TimescaleDB"]
+    CORE <--> DB["PostgreSQL 16"]
     CORE --> ARTIFACTS["内容寻址制品存储"]
     CONNECTOR --> PUBLIC["外部公共 API / WebSocket"]
     QUANT --> BINANCE["Binance 公共行情"]
 ```
 
-生产仍由单一 Compose 项目部署 Web、Go App、一次性 migration 服务和 TimescaleDB。插件被编译进 Go App 和主 Vite 前端，不增加常驻插件进程。P0 移除 Python Worker 服务、Worker 卷和 Private Executor profile。
+生产 Compose 只部署 Web 和 Go App，一次性 migration 连接服务器现有 PostgreSQL 16 的独立 `coinsphere_go` 数据库。插件被编译进 Go App 和主 Vite 前端，不增加常驻插件进程。P0 移除 Python Worker 服务、Worker 卷和 Private Executor profile。
 
 ### 3.1 模块职责
 
@@ -479,7 +479,7 @@ Paper 场景创建两个工作流：平台级共享行情采集流，以及策�
 2. 停止旧 Compose，备份需要人工保留的非生产数据，然后删除明确识别的 CoinSphere 开发卷。
 3. 用单一 V2 `00001_initial.sql` 建立核心 schema；插件从各自版本 1 migration 建立独立 schema 和账本。
 4. 种子只包含超级管理员、RBAC/菜单、系统设置、插件注册状态和官方场景模板，不迁移旧工作流、策略、新闻、通知资源或交易数据。
-5. 从空库验证 Up、重复 Up、Down、重新 Up、约束、Timescale 生命周期和 Compose 首次启动。
+5. 从空库验证 Up、重复 Up、Down、重新 Up、关键约束、K 线索引和 Compose 首次启动。
 6. 开始记录 Paper 晋级证据前，在 Git 标签和路线图 Issue 中记录冻结提交；此后核心和插件 migration 只追加，不改写历史。
 
 P0 移除 Worker、Private Executor 和旧领域代码属于后续代码交付；本文档本身不会执行数据库或部署操作。

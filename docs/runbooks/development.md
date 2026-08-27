@@ -14,7 +14,7 @@ Linux 使用：
 ./scripts/verify.sh
 ```
 
-脚本会验证 Go 与 Vue，并在本机存在 Docker 时检查 Compose 配置。缺少 PostgreSQL/TimescaleDB、Docker 或浏览器依赖时，按[质量门禁](../quality/quality-gates.md)把对应检查交给 CI。
+脚本会验证 Go 与 Vue，并在本机存在 Docker 时检查 Compose 配置。缺少 PostgreSQL 16、Docker 或浏览器依赖时，按[质量门禁](../quality/quality-gates.md)把对应检查交给 CI。
 
 ## 定向命令
 

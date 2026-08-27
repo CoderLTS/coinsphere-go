@@ -1,41 +1,19 @@
 name: coinsphere-go
 
 services:
-  timescaledb:
-    image: timescale/timescaledb:2.29.0-pg17@sha256:3e65c273cbf7218f2a28692492b4625b49f35c7d2142e945561ef52311a8c83a
-    restart: unless-stopped
-    environment:
-      TZ: UTC
-      POSTGRES_DB: coinsphere
-      POSTGRES_USER: coinsphere
-      POSTGRES_PASSWORD: ${COINSPHERE_DATABASE_PASSWORD:?请设置 COINSPHERE_DATABASE_PASSWORD}
-    volumes:
-      - ./data/timescaledb:/var/lib/postgresql/data
-    networks:
-      - database
-    healthcheck:
-      test:
-        ["CMD-SHELL", "pg_isready --username=coinsphere --dbname=coinsphere"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
-
   backend:
     image: ${COINSPHERE_BACKEND_IMAGE:?请设置 COINSPHERE_BACKEND_IMAGE}
     restart: unless-stopped
     stop_grace_period: 40s
-    depends_on:
-      timescaledb:
-        condition: service_healthy
     env_file:
       - runtime.env
     environment:
-      COINSPHERE_DATABASE__DSN: postgresql://coinsphere:${COINSPHERE_DATABASE_PASSWORD}@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic
+      COINSPHERE_DATABASE__DSN: postgresql://coinsphere_go:${COINSPHERE_DATABASE_PASSWORD}@postgresql:5432/coinsphere_go?sslmode=disable&options=-csearch_path%3Dpublic
     volumes:
       - ./data/backend:/app/volumes
     networks:
       - default
-      - database
+      - dpanel_stack
     healthcheck:
       test:
         [
@@ -57,5 +35,6 @@ services:
       - "${COINSPHERE_WEB_BIND:-127.0.0.1}:${COINSPHERE_WEB_PORT:-8080}:80"
 
 networks:
-  database:
-    internal: true
+  dpanel_stack:
+    external: true
+    name: dpanel_stack

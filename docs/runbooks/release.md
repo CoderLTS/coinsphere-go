@@ -4,7 +4,7 @@
 
 生产默认使用独立 Compose 项目 `coinsphere-go`：
 
-- `timescaledb`：CoinSphere 独立 PostgreSQL/TimescaleDB，数据位于部署目录 `data/timescaledb`。
+- `postgresql`：服务器数据栈中的共享 PostgreSQL 16；CoinSphere 独占 `coinsphere_go` 数据库和用户。
 - `backend`：认证、RBAC、工作流执行、系统管理和监控 API，文件位于部署目录 `data/backend`。
 - `web`：唯一对外 Web 入口。
 
@@ -17,10 +17,10 @@ CoinSphere 不再部署到 sub2api 或其他应用的 Compose 项目。发布只
 自托管 Runner 需要 Docker Compose v2、`jq`、`curl`、`openssl` 和本机 Registry。部署目录按以下顺序确定：
 
 - `COINSPHERE_DEPLOY_DIR`：独立部署目录。
-- `COINSPHERE_STACK_ROOT`：部署脚本使用其 `compose/coinsphere-go` 子目录，并在首次迁移时读取既有 CoinSphere Secret 和共享 Compose 位置。
-- 未设置变量时，脚本从 Docker Compose 标签定位已经存在的独立项目；首次迁移则定位旧 CoinSphere Backend 所在的共享项目。
+- `COINSPHERE_STACK_ROOT`：部署脚本使用其 `compose/coinsphere-go` 子目录，并读取既有 CoinSphere runtime Secret。
+- 未设置变量时，脚本只从 Docker Compose 标签定位已经存在的独立项目。
 
-独立目录必须包含权限为 `0600` 的 `runtime.env`。首次由旧部署迁移时，脚本会复制既有 CoinSphere runtime Secret；手工部署则按 `deploy/production/runtime.env.example` 创建。真实 DSN、令牌和密钥不得进入仓库、Actions 日志、Issue 或 PR。
+独立目录必须包含权限为 `0600` 的 `runtime.env`。外部 `dpanel_stack` 网络、`postgresql` 服务以及独立 `coinsphere_go` 数据库和用户必须已存在；`.env` 中的数据库密码与该用户一致。脚本可从 `COINSPHERE_STACK_ROOT/secrets/coinsphere-runtime.env` 初始化 runtime Secret；手工部署则按 `deploy/production/runtime.env.example` 创建。真实 DSN、令牌和密钥不得进入仓库、Actions 日志、Issue 或 PR。
 
 ## 发布流程
 
@@ -28,9 +28,8 @@ CoinSphere 不再部署到 sub2api 或其他应用的 Compose 项目。发布只
 2. 涉及 Paper 时，按[数据库迁移手册](database-migrations.md)保存一致备份，并在发布记录中把目标 commit 记为 migration freeze 提交。
 3. 在 GitHub Actions 手工运行 `Release and deploy`，输入未使用的 `vX.Y.Z`。
 4. 工作流构建并推送 Backend/Web 固定 digest。
-5. `deploy/production/deploy.sh` 拉取镜像，启动独立 TimescaleDB，执行目标镜像内 migration。
-6. 首次迁移时，脚本只停止并移除旧共享 Compose 中实际运行的 CoinSphere 服务；从旧命名卷升级时，停止旧服务后将数据复制到部署目录。
-7. 脚本检查 TimescaleDB、Backend、Web 和 `/health`；全部通过后保存新的 `.env`。
+5. `deploy/production/deploy.sh` 拉取镜像，停止 CoinSphere 旧服务，并对共享 PostgreSQL 执行目标镜像内 migration。
+6. 脚本启动 Backend/Web，检查容器健康和 `/health`；全部通过后保存新的 `.env`。
 
 直接在已扫描 Manifest 上手工执行同一部署器：
 
@@ -42,7 +41,7 @@ bash deploy/production/deploy.sh vX.Y.Z /path/to/release-manifest.json
 
 ## 首次独立部署
 
-首次独立部署创建 `data/timescaledb` 和 `data/backend`，并在空库应用当前 migration。后续部署默认只执行 Up，不自动重置数据库、执行 Down 或删除数据目录；V2 破坏性基线必须按独立 migration PR 和数据库 Runbook 获得明确授权。从旧命名卷升级时只在目标目录为空时复制一次，旧卷保留为人工回滚备份且不再挂载。
+首次独立部署创建 `data/backend`，并在空的 `coinsphere_go` 数据库应用当前 migration。后续部署默认只执行 Up，不自动重置数据库、执行 Down 或删除数据；V2 破坏性基线必须按独立 migration PR 和数据库 Runbook 获得明确授权。
 
 部署成功后确认：
 
@@ -52,7 +51,7 @@ docker compose --project-name coinsphere-go --project-directory "$COINSPHERE_DEP
 curl -fsS http://127.0.0.1:8080/health
 ```
 
-旧 CoinSphere 容器应不存在，sub2api 和其他服务保持运行。旧数据库和命名卷先保留，确认部署目录数据可恢复后再由用户单独安排清理。
+旧 CoinSphere 数据库容器应不存在，服务器共享 PostgreSQL、sub2api 和其他服务保持运行。旧数据库目录先保留为人工回滚备份，确认共享 PostgreSQL 备份可恢复后再由用户单独安排清理。
 
 ## 失败与回滚
 

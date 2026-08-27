@@ -1,9 +1,9 @@
-# coinsphere-go V2 开发栈：Web 与 Go App 共用一个内部 TimescaleDB，schema 只由一次性 migration 建立。
+# coinsphere-go V2 开发栈：Web 与 Go App 共用一个内部 PostgreSQL，schema 只由一次性 migration 建立。
 # 一键启动：docker compose up -d --build，然后访问 http://localhost:8080
 services:
-  timescaledb:
-    image: timescale/timescaledb:2.29.0-pg17@sha256:3e65c273cbf7218f2a28692492b4625b49f35c7d2142e945561ef52311a8c83a
-    container_name: coinsphere-go-timescaledb
+  postgresql:
+    image: postgres:16.3-alpine@sha256:36ed71227ae36305d26382657c0b96cbaf298427b3f1eaeb10d77a6dea3eec41
+    container_name: coinsphere-go-postgresql
     restart: unless-stopped
     environment:
       TZ: UTC
@@ -11,7 +11,7 @@ services:
       POSTGRES_USER: coinsphere
       POSTGRES_PASSWORD: coinsphere-dev-only
     volumes:
-      - timescale-data:/var/lib/postgresql/data
+      - postgresql-data:/var/lib/postgresql/data
     networks:
       - database
     healthcheck:
@@ -25,7 +25,7 @@ services:
     image: coinsphere-go-backend
     restart: "no"
     depends_on:
-      timescaledb:
+      postgresql:
         condition: service_healthy
     command:
       [
@@ -36,7 +36,7 @@ services:
         "up",
       ]
     environment:
-      COINSPHERE_DATABASE__DSN: postgresql://coinsphere:coinsphere-dev-only@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic
+      COINSPHERE_DATABASE__DSN: postgresql://coinsphere:coinsphere-dev-only@postgresql:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic
     networks:
       - database
 
@@ -52,7 +52,7 @@ services:
         condition: service_completed_successfully
     environment:
       TZ: ${TZ:-Asia/Shanghai}
-      COINSPHERE_DATABASE__DSN: postgresql://coinsphere:coinsphere-dev-only@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic
+      COINSPHERE_DATABASE__DSN: postgresql://coinsphere:coinsphere-dev-only@postgresql:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic
       # 必填：未设置则 compose 直接报错。生成随机值：openssl rand -hex 32
       COINSPHERE_AUTH__SECRET_KEY: ${COINSPHERE_AUTH__SECRET_KEY:?请设置 COINSPHERE_AUTH__SECRET_KEY(.env 或环境变量,如 openssl rand -hex 32)}
       COINSPHERE_WORKFLOW__HTTP_ALLOWED_HOSTS: ${COINSPHERE_WORKFLOW__HTTP_ALLOWED_HOSTS:-[]}
@@ -92,7 +92,7 @@ volumes:
   backend-artifacts:
   backend-uploads:
   backend-static:
-  timescale-data:
+  postgresql-data:
 
 networks:
   database:

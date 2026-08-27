@@ -4,7 +4,7 @@
 
 CoinSphere 是工作流优先、编译期插件驱动的个人自托管平台。V2 P0-P4 代码基线具备不可变修订、Schema 工作台、批次/事件/连续流、检查点恢复、人工等待、结构化 Loop、诊断重放、实时活动、Connector/AI、Binance 公共行情、可信 Go 策略、回测、Paper、通知、共享结果与内容寻址制品。
 
-- 只支持 PostgreSQL/TimescaleDB，领域时间统一使用 UTC。
+- 只支持 PostgreSQL 16，领域时间统一使用 UTC。
 - 价格、数量、金额和费率使用 Decimal；账务值禁止使用 `float64`。
 - 不提供旧数据、旧接口、多数据库、Python Worker 或 Private Executor 兼容层。
 - Testnet/Live 不属于当前阶段，任何部署都不会自动启用真实交易。
@@ -14,7 +14,7 @@ CoinSphere 是工作流优先、编译期插件驱动的个人自托管平台。
 ```mermaid
 flowchart LR
     WEB["Vue Web"] --> APP["单实例 Go App"]
-    APP --> DB["PostgreSQL / TimescaleDB"]
+    APP --> DB["PostgreSQL 16"]
     MIGRATE["一次性 migration"] --> DB
     APP --> PUBLIC["允许的公共 HTTP / WebSocket"]
     SOURCE["可信本地插件源码"] --> CLI["Plugin CLI"]
@@ -22,7 +22,7 @@ flowchart LR
     CLI --> DB
 ```
 
-默认 Compose 只运行 Web、Go App、一次性 migration 和 TimescaleDB。系统不依赖 Redis、消息代理、Kubernetes、动态插件进程或运行时目录扫描。
+生产 Compose 只运行 Web 和 Go App，一次性 migration 连接服务器现有 PostgreSQL 16 的独立数据库。系统不依赖 Redis、消息代理、Kubernetes、动态插件进程或运行时目录扫描。
 
 ## 组件职责
 
@@ -50,9 +50,9 @@ Go App 是单一后端进程，负责：
 
 `running` 表示工作流允许手工/定时批次入队、事件投递或连续流 Trigger 运行；`pause` 取消 Trigger 但不强制终止当前 Action，Action 完成后批次从检查点续跑。Trigger 异常退出会进入 `needs_attention`，避免无界重启。普通用户不能访问工作流 API，也不能从 ResultView 响应得到固定 scope、filter 或源 workflow ID。
 
-### PostgreSQL / TimescaleDB
+### PostgreSQL
 
-数据库当前保存认证、RBAC、菜单、i18n、审计、插件安装状态和引用，以及工作流、修订、密钥、运行实例、CloudEvent、投递、Outbox、批次、人工任务、NodeRun、Checkpoint、活动游标、制品清单、节点状态和 ResultView 授权。`plugin_quant` schema 保存品种、闭合 K 线 hypertable、回测摘要、信号及 Paper 账户事实；`plugin_notification` 保存站内投递。金融值使用 `NUMERIC(38,18)`。订单、成交、费用和账本事实不可变，账户与持仓投影可从事实幂等重建。制品正文和完整回测明细按 SHA-256 分片保存在部署目录的 Backend 持久目录。
+数据库当前保存认证、RBAC、菜单、i18n、审计、插件安装状态和引用，以及工作流、修订、密钥、运行实例、CloudEvent、投递、Outbox、批次、人工任务、NodeRun、Checkpoint、活动游标、制品清单、节点状态和 ResultView 授权。`plugin_quant` schema 使用普通表与联合索引保存品种、闭合 K 线、回测摘要、信号及 Paper 账户事实；`plugin_notification` 保存站内投递。金融值使用 `NUMERIC(38,18)`。订单、成交、费用和账本事实不可变，账户与持仓投影可从事实幂等重建。制品正文和完整回测明细按 SHA-256 分片保存在部署目录的 Backend 持久目录。
 
 应用启动只校验 migration 版本。核心 DDL 由一次性 migration 命令执行，插件 DDL 由生命周期 CLI 在维护窗口执行。
 
