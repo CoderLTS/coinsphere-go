@@ -52,6 +52,9 @@ export default ({ mode }: { mode: string }) => {
       outDir: 'dist',
       chunkSizeWarningLimit: 2000,
       reportCompressedSize: false,
+      rollupOptions: {
+        maxParallelFileOps: 16
+      },
       dynamicImportVarsOptions: {
         warnOnError: true,
         exclude: [],
