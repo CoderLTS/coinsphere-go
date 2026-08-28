@@ -12,7 +12,7 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-var quantInstrumentPattern = regexp.MustCompile(`^[A-Z0-9]{2,32}$`)
+var quantInstrumentPattern = regexp.MustCompile(`^\S{1,32}$`)
 
 type quantSeriesConfig struct {
 	Market     string `json:"market"`
