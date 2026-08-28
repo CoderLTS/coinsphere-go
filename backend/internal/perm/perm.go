@@ -12,7 +12,6 @@ const (
 	SchedulerWorkflowRuntimeView       = "scheduler.workflow_runtime.view"
 	SchedulerWorkflowRuntimeActivate   = "scheduler.workflow_runtime.activate"
 	SchedulerWorkflowRuntimeUpdate     = "scheduler.workflow_runtime.update"
-	SchedulerWorkflowExecutionsView    = "scheduler.workflow_executions.view"
 
 	SystemUsersView              = "system.users.view"
 	SystemUsersCreate            = "system.users.create"
@@ -39,8 +38,6 @@ const (
 var MenuPermissionCodes = map[string]string{
 	"Home": HomeView, "SchedulerCenter": "",
 	"WorkflowDefinitions": SchedulerWorkflowDefinitionsView,
-	"WorkflowExecutions":  SchedulerWorkflowExecutionsView,
-	"NodeDefinitions":     SchedulerWorkflowDefinitionsView,
 	"System":              "", "User": SystemUsersView, "Role": SystemRolesView,
 	"Menus": SystemMenusView, "UserCenter": "",
 }
@@ -61,7 +58,6 @@ var ButtonSpecs = map[string][]ButtonSpec{
 		{"activate", SchedulerWorkflowRuntimeActivate, "激活版本"},
 		{"update_runtime", SchedulerWorkflowRuntimeUpdate, "更新入口状态"},
 	},
-	"WorkflowExecutions": {{"view", SchedulerWorkflowExecutionsView, "查看工作流日志"}},
 	"User": {
 		{"create", SystemUsersCreate, "新增"},
 		{"update", SystemUsersUpdate, "编辑"},

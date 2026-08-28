@@ -103,7 +103,7 @@ export const staticRoutes: AppRouteRecordRaw[] = [
         path: '/scheduler/execution/:executionId/detail',
         name: 'SchedulerWorkflowExecutionDetail',
         component: () => import('@views/scheduler/execution/detail/index.vue'),
-        beforeEnter: createPermissionGuard('scheduler.workflow_executions.view'),
+        beforeEnter: createPermissionGuard('scheduler.workflow_definitions.view'),
         meta: {
           title: '执行详情',
           isHideTab: true,

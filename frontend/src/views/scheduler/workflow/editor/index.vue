@@ -31,7 +31,6 @@
       @request-commit-node-draft="void commitAndCloseNodeEditor()"
       @request-discard-node-draft="discardNodeDraft"
       @request-close-node-editor="void closeNodeEditor()"
-      @request-manage-notify="void router.push('/scheduler/node-definition?tab=channels')"
       @request-close-edge-editor="handleCloseEdgeEditor"
       @request-remove-selection="void removeSelection()"
       @request-node-context-action="void handleNodeContextAction($event)"

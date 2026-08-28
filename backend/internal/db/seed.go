@@ -43,9 +43,7 @@ type menuItem struct {
 var coreMenuItems = []menuItem{
 	{"Home", "首页", "/home", "/home/index", "ri:home-5-line", "", true, true, false},
 	{"SchedulerCenter", "工作流调度", "/scheduler", "/index/index", "ri:time-line", "", false, false, false},
-	{"NodeDefinitions", "节点定义", "node-definition", "/scheduler/node-definition", "ri:stack-line", "SchedulerCenter", true, false, false},
 	{"WorkflowDefinitions", "工作流定义", "definition", "/scheduler/workflow", "ri:node-tree", "SchedulerCenter", true, false, false},
-	{"WorkflowExecutions", "工作流日志", "execution", "/scheduler/execution", "ri:history-line", "SchedulerCenter", true, false, true},
 	{"QuantData", "量化数据", "/quant-data", "/index/index", "ri:line-chart-line", "", false, false, false},
 	{"System", "系统管理", "/system", "/index/index", "ri:settings-3-line", "", false, false, false},
 	{"User", "用户管理", "user", "/system/user", "ri:user-3-line", "System", true, false, false},
@@ -60,8 +58,6 @@ var menuI18n = map[string][2]string{
 	"Home":                {"首页", "Home"},
 	"SchedulerCenter":     {"工作流调度", "Workflow Scheduler"},
 	"WorkflowDefinitions": {"工作流定义", "Workflow Definitions"},
-	"WorkflowExecutions":  {"工作流日志", "Workflow Logs"},
-	"NodeDefinitions":     {"节点定义", "Node Definitions"},
 	"QuantData":           {"量化数据", "Quantitative Data"},
 	"System":              {"系统管理", "System Management"},
 	"User":                {"用户管理", "User Management"},
@@ -256,6 +252,7 @@ func seedMenusAndButtons(tx *gorm.DB, menuItems []menuItem) (map[string]*SystemM
 		"Results", "DataCenter", "MarketMetadata", "MarketChart",
 		"Workflows", "TradingCenter", "TradingAccounts", "StrategyManagement",
 		"NewsData", "ConfigCenter", "ConfigOverview", "AiModelConfig", "AssistantAgentConfig",
+		"NodeDefinitions", "WorkflowExecutions",
 	} {
 		if err := tx.Model(&SystemMenu{}).Where("name = ?", name).
 			Updates(map[string]any{"is_active": false, "is_hidden": true, "updated_at": now}).Error; err != nil {
