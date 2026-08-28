@@ -235,6 +235,15 @@
   --wf-node-shadow: 0 0 0 2px color-mix(in srgb, var(--el-color-warning) 15%, transparent);
 }
 
+.wf-node[data-state='waiting'] {
+  --wf-node-border: var(--el-color-info, #909399);
+  --wf-node-icon-bg: var(--el-color-info-light-9, #f4f4f5);
+  --wf-node-icon-fg: var(--el-color-info, #909399);
+  --wf-node-status-bg: var(--el-color-info-light-9, #f4f4f5);
+  --wf-node-status-fg: var(--el-color-info, #909399);
+  --wf-node-shadow: 0 0 0 2px color-mix(in srgb, var(--el-color-info) 12%, transparent);
+}
+
 .wf-node[data-state='retryWaiting'] {
   --wf-node-border: var(--el-color-warning, #e6a23c);
   --wf-node-icon-bg: var(--el-color-warning-light-9, #fff7ed);
