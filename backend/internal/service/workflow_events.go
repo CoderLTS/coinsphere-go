@@ -305,6 +305,9 @@ func (a *App) enqueueWorkflowEvent(tx *gorm.DB, event cloudevents.Event) error {
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
+		if event.Type() == workflowFailureEventType {
+			return nil
+		}
 		var existing db.WorkflowEventOutbox
 		if err := tx.Where("source = ? AND event_id = ?", event.Source(), event.ID()).First(&existing).Error; err != nil {
 			return errors.New("load duplicate workflow event outbox item failed")
