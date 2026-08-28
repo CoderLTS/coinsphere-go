@@ -295,12 +295,92 @@ const nodeLabels: Record<string, string> = {
   'core.end': '结束',
   'core.human_approval': '人工审批',
   'core.loop': '循环',
+  'official.connector.http': 'HTTP 请求',
+  'official.connector.webhook': 'Webhook 触发',
+  'official.connector.websocket': 'WebSocket 触发',
+  'official.ai.model_call': 'AI 模型调用',
   'official.quant.binance_candles': 'Binance K 线采集',
   'official.quant.evaluate': '量化策略评估',
   'official.quant.backtest': '量化策略回测',
   'official.quant.signal': '量化信号',
   'official.quant.paper_execute': 'Paper 执行',
   'official.notification.in_app': '站内通知'
+}
+
+const schemaTitleLabels: Record<string, string> = {
+  Value: '值',
+  'Interval (seconds)': '执行间隔（秒）',
+  'Event types': '事件类型',
+  Source: '事件来源',
+  Subject: '事件主题',
+  Result: '执行结果',
+  'Decision mode': '决策方式',
+  'Task type': '任务类型',
+  Prompt: '提示内容',
+  'Expires after (seconds)': '有效时间（秒）',
+  'Business key': '业务标识',
+  'Maximum iterations': '最大循环次数',
+  'Absolute timeout (seconds)': '总超时时间（秒）',
+  'Boolean exit condition': '退出条件',
+  'Embedded DAG': '内嵌流程',
+  URL: '请求地址',
+  Method: '请求方法',
+  'Timeout (seconds)': '超时时间（秒）',
+  'Use Authorization secret': '使用访问凭据',
+  Authorization: '访问凭据',
+  'JSON body': '请求内容',
+  'CloudEvent type': '事件类型',
+  'Webhook secret': 'Webhook 密钥',
+  'WebSocket URL': 'WebSocket 连接地址',
+  'Event ID field': '事件编号字段',
+  'Partition field': '分区字段',
+  'OpenAI-compatible endpoint': 'OpenAI 兼容接口地址',
+  Model: '模型',
+  'API key': '接口密钥',
+  'Structured data': '结构化数据',
+  Title: '通知标题',
+  Market: '市场类型',
+  Instrument: '交易对',
+  Interval: 'K 线周期',
+  Strategy: '量化策略',
+  Parameters: '策略参数',
+  'Start (UTC)': '开始时间（UTC）',
+  'End (UTC)': '结束时间（UTC）',
+  'Initial capital': '初始资金',
+  'Fee rate': '手续费率',
+  'Slippage rate': '滑点率',
+  'Initial balance': '初始余额',
+  'Max total notional': '最大总名义金额',
+  'Max instrument notional': '单交易对最大名义金额',
+  'Max operation notional': '单次操作最大名义金额',
+  'Max daily loss': '单日最大亏损',
+  'Max drawdown ratio': '最大回撤比例',
+  'Max quote age': '行情最大延迟（秒）'
+}
+
+const schemaFieldLabels: Record<string, string> = {
+  eventTime: '事件时间',
+  strategyId: '策略标识',
+  strategyVersion: '策略版本',
+  target: '目标仓位',
+  evaluatedAt: '评估时间',
+  businessKey: '业务标识',
+  signalId: '信号编号',
+  decisionTaskId: '审批任务编号',
+  decisionStatus: '审批状态',
+  subjectKey: '通知对象标识',
+  message: '通知内容'
+}
+
+const schemaEnumLabels: Record<string, Record<string, string>> = {
+  decisionMode: { human: '人工确认', auto: '自动执行' },
+  market: { spot: '现货', usdm: 'U 本位合约' },
+  decisionStatus: {
+    approved: '已批准',
+    rejected: '已拒绝',
+    expired: '已过期',
+    superseded: '已替代'
+  }
 }
 const legacyNodeTypes: Record<string, string> = {
   'core.manual': 'start.manual',
@@ -330,12 +410,33 @@ const graphKind = (definition: WorkflowNodeDefinition): WorkflowNodeGraphKind =>
 const inputProperties = (definition?: WorkflowNodeDefinition) =>
   (definition?.inputSchema?.properties || {}) as Record<string, Record<string, unknown>>
 
+const localizeSchemaProperties = (properties: Record<string, Record<string, unknown>>) =>
+  Object.fromEntries(
+    Object.entries(properties).map(([key, schema]) => {
+      const title = String(schema.title || '')
+      const enumLabels = (schema.enum as unknown[] | undefined)?.map(
+        (value) => schemaEnumLabels[key]?.[String(value)] || String(value)
+      )
+      return [
+        key,
+        {
+          ...schema,
+          title: schemaTitleLabels[title] || schemaFieldLabels[key] || title || key,
+          ...(enumLabels ? { enumLabels } : {})
+        }
+      ]
+    })
+  )
+
 const legacyConfigSchema = (definition: WorkflowNodeDefinition) => {
   const config = definition.configSchema || {}
   const inputs = inputProperties(definition)
   return {
     ...config,
-    properties: { ...((config.properties || {}) as object), ...inputs }
+    properties: localizeSchemaProperties({
+      ...((config.properties || {}) as Record<string, Record<string, unknown>>),
+      ...inputs
+    })
   }
 }
 

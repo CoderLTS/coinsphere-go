@@ -554,7 +554,7 @@
 
   const openSymbol = (row: MarketSymbol) => {
     void router.push({
-      path: '/plugins/official.quant/candles',
+      path: '/quant-data/candles',
       query: { instrumentId: row.id, market: row.market, interval: '1h' }
     })
   }

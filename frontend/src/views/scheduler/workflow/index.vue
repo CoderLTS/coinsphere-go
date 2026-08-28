@@ -10,7 +10,12 @@
     />
 
     <ElCard class="art-table-card">
-      <ArtTableHeader :loading="loading" :showZebra="false" @refresh="loadPageData">
+      <ArtTableHeader
+        :loading="loading"
+        :show-zebra="false"
+        layout="refresh,size,fullscreen,settings"
+        @refresh="loadPageData"
+      >
         <template #left>
           <ElSpace wrap>
             <ElButton
@@ -24,12 +29,13 @@
         </template>
       </ArtTableHeader>
 
-      <ElTable
-        v-loading="loading"
+      <ArtTable
+        :loading="loading"
         :data="filteredDefinitionList"
-        stripe
+        :stripe="false"
         table-layout="auto"
         class="workflow-definition-table"
+        empty-height="320px"
       >
         <ElTableColumn
           prop="displayName"
@@ -146,7 +152,7 @@
             </ElSpace>
           </template>
         </ElTableColumn>
-      </ElTable>
+      </ArtTable>
     </ElCard>
 
     <ElDialog v-model="versionDialogVisible" title="版本管理" width="960px">
