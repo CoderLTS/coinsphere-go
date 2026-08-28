@@ -5,20 +5,18 @@ CREATE TABLE workflows (
     name VARCHAR(120) NOT NULL,
     description VARCHAR(500) NOT NULL DEFAULT '',
     mode VARCHAR(16) NOT NULL DEFAULT 'batch',
-    status VARCHAR(32) NOT NULL DEFAULT 'paused',
+    status VARCHAR(16) NOT NULL DEFAULT 'inactive',
     active_revision_id BIGINT,
     main_trigger_node_id VARCHAR(128) NOT NULL,
     retention_days INTEGER NOT NULL DEFAULT 30,
     created_by BIGINT NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    archived_at TIMESTAMPTZ,
     CONSTRAINT ck_workflows_name CHECK (BTRIM(name) <> ''),
     CONSTRAINT ck_workflows_mode CHECK (mode IN ('batch', 'event', 'stream')),
-    CONSTRAINT ck_workflows_status CHECK (status IN ('paused', 'running', 'needs_attention', 'archived')),
+    CONSTRAINT ck_workflows_status CHECK (status IN ('inactive', 'active', 'error')),
     CONSTRAINT ck_workflows_trigger CHECK (BTRIM(main_trigger_node_id) <> ''),
-    CONSTRAINT ck_workflows_retention CHECK (retention_days BETWEEN 1 AND 3650),
-    CONSTRAINT ck_workflows_archive_time CHECK ((status = 'archived') = (archived_at IS NOT NULL))
+    CONSTRAINT ck_workflows_retention CHECK (retention_days BETWEEN 1 AND 3650)
 );
 CREATE INDEX ix_workflows_status_updated ON workflows (status, updated_at DESC, id DESC);
 
@@ -48,11 +46,13 @@ ALTER TABLE workflows
 
 CREATE TABLE workflow_runtimes (
     workflow_id BIGINT PRIMARY KEY REFERENCES workflows (id) ON DELETE CASCADE,
-    activity_cursor BIGINT NOT NULL DEFAULT 0,
-    health_summary VARCHAR(32) NOT NULL DEFAULT 'idle',
+    max_concurrent_runs INTEGER NOT NULL DEFAULT 2,
+    backlog_limit INTEGER NOT NULL DEFAULT 100,
+    next_scheduled_at TIMESTAMPTZ,
+    last_scheduled_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT ck_workflow_runtimes_cursor CHECK (activity_cursor >= 0),
-    CONSTRAINT ck_workflow_runtimes_health CHECK (health_summary IN ('idle', 'healthy', 'degraded'))
+    CONSTRAINT ck_workflow_runtimes_concurrency CHECK (max_concurrent_runs BETWEEN 1 AND 32),
+    CONSTRAINT ck_workflow_runtimes_backlog CHECK (backlog_limit BETWEEN 1 AND 10000)
 );
 
 -- +goose StatementBegin

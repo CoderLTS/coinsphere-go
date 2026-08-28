@@ -5,7 +5,7 @@
         <p>Quant</p>
         <h3 id="quant-result-title">{{ nodeTitle }}</h3>
       </div>
-      <span :data-status="result.nodeRun.status">{{ result.nodeRun.status }}</span>
+      <span :data-status="result.runNode.status">{{ result.runNode.status }}</span>
     </header>
 
     <div v-if="latestCandle" class="quant-tape" aria-label="最新闭合 K 线">
@@ -102,7 +102,7 @@
 </template>
 
 <script setup lang="ts">
-  import type { WorkflowBatchDetail, WorkflowNodeRun } from '@/api/workflows'
+  import type { WorkflowRunDetail, WorkflowRunNode } from '@/api/workflows'
   import {
     fetchQuantBacktests,
     fetchQuantCandles,
@@ -118,7 +118,7 @@
   import { decimalPercent } from './decimal'
 
   const { result } = defineProps<{
-    result: { batch: WorkflowBatchDetail; nodeRun: WorkflowNodeRun }
+    result: { run: WorkflowRunDetail; runNode: WorkflowRunNode }
   }>()
 
   const activeTab = ref('market')
@@ -143,7 +143,7 @@
         'official.quant.binance_candles': 'Binance 闭合行情',
         'official.quant.evaluate': '策略评估',
         'official.quant.backtest': '策略回测'
-      })[result.nodeRun.nodeType] || result.nodeRun.nodeType
+      })[result.runNode.nodeType] || result.runNode.nodeType
   )
   const latestCandle = computed(() => candles.value.at(-1))
   const percent = (value: string) => `${decimalPercent(value)}%`

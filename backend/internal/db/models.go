@@ -145,14 +145,13 @@ type Workflow struct {
 	Name              string `gorm:"size:120"`
 	Description       string `gorm:"size:500"`
 	Mode              string `gorm:"size:16"`
-	Status            string `gorm:"size:32"`
+	Status            string `gorm:"size:16"`
 	ActiveRevisionID  *int64 `gorm:"column:active_revision_id"`
 	MainTriggerNodeID string `gorm:"column:main_trigger_node_id;size:128"`
 	RetentionDays     int    `gorm:"column:retention_days"`
 	CreatedBy         int64  `gorm:"column:created_by"`
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
-	ArchivedAt        *time.Time
 }
 
 func (Workflow) TableName() string { return "workflows" }
@@ -182,19 +181,17 @@ type WorkflowSecretBinding struct {
 func (WorkflowSecretBinding) TableName() string { return "workflow_secret_bindings" }
 
 type WorkflowRuntime struct {
-	WorkflowID           int64  `gorm:"column:workflow_id;primaryKey"`
-	ActivityCursor       int64  `gorm:"column:activity_cursor"`
-	HealthSummary        string `gorm:"column:health_summary;size:32"`
-	MaxConcurrentBatches int    `gorm:"column:max_concurrent_batches"`
-	BacklogLimit         int    `gorm:"column:backlog_limit"`
-	NextScheduledAt      *time.Time
-	LastScheduledAt      *time.Time
-	UpdatedAt            time.Time
+	WorkflowID        int64 `gorm:"column:workflow_id;primaryKey"`
+	MaxConcurrentRuns int   `gorm:"column:max_concurrent_runs"`
+	BacklogLimit      int   `gorm:"column:backlog_limit"`
+	NextScheduledAt   *time.Time
+	LastScheduledAt   *time.Time
+	UpdatedAt         time.Time
 }
 
 func (WorkflowRuntime) TableName() string { return "workflow_runtimes" }
 
-type ExecutionBatch struct {
+type WorkflowRun struct {
 	ID                    int64  `gorm:"primaryKey;autoIncrement"`
 	WorkflowID            int64  `gorm:"column:workflow_id"`
 	RevisionID            int64  `gorm:"column:revision_id"`
@@ -203,7 +200,7 @@ type ExecutionBatch struct {
 	EventRecordID         *int64 `gorm:"column:event_record_id"`
 	PartitionKey          string `gorm:"column:partition_key;size:256"`
 	Diagnostic            bool
-	OriginalBatchID       *int64 `gorm:"column:original_batch_id"`
+	OriginalRunID         *int64 `gorm:"column:original_run_id"`
 	Status                string `gorm:"size:16"`
 	CurrentNodeInstanceID string `gorm:"column:current_node_instance_id;size:128"`
 	NotBefore             time.Time
@@ -214,12 +211,14 @@ type ExecutionBatch struct {
 	StartedAt             *time.Time
 	CompletedAt           *time.Time
 	CreatedBy             *int64 `gorm:"column:created_by"`
+	ResultSummary         string `gorm:"column:result_summary;type:jsonb"`
 	ErrorCategory         *string
+	ErrorMessage          *string
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
 }
 
-func (ExecutionBatch) TableName() string { return "execution_batches" }
+func (WorkflowRun) TableName() string { return "workflow_runs" }
 
 type WorkflowEventRecord struct {
 	ID              int64 `gorm:"primaryKey;autoIncrement"`
@@ -242,7 +241,7 @@ type WorkflowEventDelivery struct {
 	EventRecordID int64
 	WorkflowID    int64
 	RevisionID    int64
-	BatchID       int64
+	RunID         int64
 	CreatedAt     time.Time
 }
 
@@ -265,9 +264,9 @@ type WorkflowEventOutbox struct {
 
 func (WorkflowEventOutbox) TableName() string { return "workflow_event_outbox" }
 
-type WorkflowNodeRun struct {
+type WorkflowRunNode struct {
 	ID             int64 `gorm:"primaryKey;autoIncrement"`
-	BatchID        int64 `gorm:"column:batch_id"`
+	RunID          int64 `gorm:"column:run_id"`
 	NodeInstanceID string
 	NodeType       string
 	NodeVersion    string
@@ -276,28 +275,33 @@ type WorkflowNodeRun struct {
 	LoopIteration  int
 	OperationKey   string
 	Status         string
+	InputSummary   string `gorm:"column:input_summary;type:jsonb"`
+	OutputSummary  string `gorm:"column:output_summary;type:jsonb"`
 	ErrorCategory  *string
+	ErrorMessage   *string
 	StartedAt      time.Time
 	CompletedAt    *time.Time
 	DurationMS     *int64 `gorm:"column:duration_ms"`
 }
 
-func (WorkflowNodeRun) TableName() string { return "workflow_node_runs" }
+func (WorkflowRunNode) TableName() string { return "workflow_run_nodes" }
 
-type WorkflowCheckpoint struct {
+type WorkflowRunCheckpoint struct {
 	ID             int64 `gorm:"primaryKey;autoIncrement"`
-	BatchID        int64 `gorm:"column:batch_id"`
+	RunID          int64 `gorm:"column:run_id"`
+	RunNodeID      int64 `gorm:"column:run_node_id"`
 	WorkflowID     int64 `gorm:"column:workflow_id"`
 	RevisionID     int64 `gorm:"column:revision_id"`
 	NodeInstanceID string
 	LoopIteration  int
 	OperationKey   string
+	Status         string
 	OutputJSON     string `gorm:"column:output_json;type:jsonb"`
 	ArtifactsJSON  string `gorm:"column:artifacts_json;type:jsonb"`
 	CreatedAt      time.Time
 }
 
-func (WorkflowCheckpoint) TableName() string { return "workflow_checkpoints" }
+func (WorkflowRunCheckpoint) TableName() string { return "workflow_run_checkpoints" }
 
 type WorkflowNodeState struct {
 	WorkflowID     int64  `gorm:"column:workflow_id;primaryKey"`
@@ -310,19 +314,18 @@ type WorkflowNodeState struct {
 
 func (WorkflowNodeState) TableName() string { return "workflow_node_states" }
 
-type WorkflowActivity struct {
-	Cursor        int64 `gorm:"primaryKey;autoIncrement"`
-	WorkflowID    int64
-	BatchID       *int64
-	NodeRunID     *int64
-	EventType     string
-	Status        *string
-	Summary       string
-	ErrorCategory *string
-	OccurredAt    time.Time
+type WorkflowNodeLog struct {
+	ID         int64 `gorm:"primaryKey;autoIncrement"`
+	WorkflowID int64
+	RunID      int64
+	RunNodeID  int64
+	LoggedAt   time.Time
+	Level      string
+	Message    string
+	FieldsJSON string `gorm:"column:fields_json;type:jsonb"`
 }
 
-func (WorkflowActivity) TableName() string { return "workflow_activities" }
+func (WorkflowNodeLog) TableName() string { return "workflow_node_logs" }
 
 type WorkflowArtifact struct {
 	SHA256          string `gorm:"primaryKey;size:64"`
@@ -337,7 +340,7 @@ type WorkflowArtifact struct {
 func (WorkflowArtifact) TableName() string { return "workflow_artifacts" }
 
 type WorkflowArtifactRef struct {
-	CheckpointID   int64 `gorm:"primaryKey"`
+	RunNodeID      int64 `gorm:"column:run_node_id;primaryKey"`
 	ArtifactSHA256 string
 	Ordinal        int `gorm:"primaryKey"`
 	MediaType      string
@@ -349,7 +352,7 @@ func (WorkflowArtifactRef) TableName() string { return "workflow_artifact_refs" 
 type WorkflowHumanTask struct {
 	ID             int64 `gorm:"primaryKey;autoIncrement"`
 	WorkflowID     int64
-	BatchID        int64
+	RunID          int64
 	NodeInstanceID string
 	TaskType       string
 	BusinessKey    string

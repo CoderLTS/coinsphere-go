@@ -74,48 +74,48 @@
       </ElTable>
     </section>
 
-    <section class="paper-section" aria-labelledby="batch-title">
+    <section class="paper-section" aria-labelledby="run-title">
       <div class="paper-section__heading">
-        <h3 id="batch-title">最近执行</h3>
-        <span>{{ batches.length }} 条</span>
+        <h3 id="run-title">最近执行</h3>
+        <span>{{ runs.length }} 条</span>
       </div>
-      <ol class="batch-list">
-        <li v-for="batch in batches.slice(0, 8)" :key="batch.id">
+      <ol class="run-list">
+        <li v-for="run in runs.slice(0, 8)" :key="run.id">
           <div>
-            <strong>#{{ batch.id }}</strong>
+            <strong>#{{ run.id }}</strong>
             <small
-              >{{ batch.currentNodeInstanceId || batch.triggerType }} ·
-              {{ formatTime(batch.triggeredAt) }}</small
+              >{{ run.currentNodeInstanceId || run.triggerType }} ·
+              {{ formatTime(run.triggeredAt) }}</small
             >
           </div>
-          <ElTag :type="batchStatusType(batch.status)" effect="plain" size="small">
-            {{ batchStatusLabel(batch.status) }}
+          <ElTag :type="runStatusType(run.status)" effect="plain" size="small">
+            {{ runStatusLabel(run.status) }}
           </ElTag>
-          <div class="batch-list__actions">
+          <div class="run-list__actions">
             <ElButton
-              v-if="batch.status === 'failed' && can('retry')"
+              v-if="run.status === 'failed' && can('retry')"
               circle
               text
-              title="重试批次"
-              :loading="acting === batch.id"
-              @click="actBatch(batch, 'retry')"
+              title="重试运行"
+              :loading="acting === run.id"
+              @click="actRun(run, 'retry')"
             >
               <ArtSvgIcon icon="ri:restart-line" />
             </ElButton>
             <ElButton
-              v-if="cancellable(batch.status) && can('cancel')"
+              v-if="cancellable(run.status) && can('cancel')"
               circle
               text
               type="danger"
-              title="取消批次"
-              :loading="acting === batch.id"
-              @click="actBatch(batch, 'cancel')"
+              title="取消运行"
+              :loading="acting === run.id"
+              @click="actRun(run, 'cancel')"
             >
               <ArtSvgIcon icon="ri:stop-circle-line" />
             </ElButton>
           </div>
         </li>
-        <li v-if="!batches.length" class="batch-list__empty">暂无执行记录</li>
+        <li v-if="!runs.length" class="run-list__empty">暂无运行日志</li>
       </ol>
     </section>
 
@@ -226,12 +226,12 @@
 
 <script setup lang="ts">
   import {
-    applyResultViewBatchAction,
-    fetchResultViewBatches,
+    applyResultViewRunAction,
+    fetchResultViewRuns,
     pauseResultViewWorkflow,
     type ResultView,
-    type ResultViewBatch,
-    type ResultViewBatchStatus
+    type ResultViewRun,
+    type ResultViewRunStatus
   } from '@/api/resultViews'
   import { ElMessageBox } from 'element-plus'
   import {
@@ -251,7 +251,7 @@
   const userStore = useUserStore()
   const signals = ref<PaperSignal[]>([])
   const accounts = ref<PaperAccount[]>([])
-  const batches = ref<ResultViewBatch[]>([])
+  const runs = ref<ResultViewRun[]>([])
   const loading = ref(false)
   const exporting = ref(false)
   const deciding = ref<number>()
@@ -285,7 +285,7 @@
       executed: 'success'
     })[status] as 'warning' | 'info' | 'success' | 'danger'
   const statusLabel = (status: PaperSignalStatus) => labels[status]
-  const batchStatusLabel = (status: ResultViewBatchStatus) =>
+  const runStatusLabel = (status: ResultViewRunStatus) =>
     ({
       queued: '排队中',
       running: '运行中',
@@ -295,7 +295,7 @@
       failed: '失败',
       cancelled: '已取消'
     })[status]
-  const batchStatusType = (status: ResultViewBatchStatus) =>
+  const runStatusType = (status: ResultViewRunStatus) =>
     ({
       queued: 'info',
       running: 'warning',
@@ -305,33 +305,33 @@
       failed: 'danger',
       cancelled: 'info'
     })[status] as 'info' | 'warning' | 'success' | 'danger'
-  const cancellable = (status: ResultViewBatchStatus) =>
+  const cancellable = (status: ResultViewRunStatus) =>
     ['queued', 'running', 'waiting', 'retrying'].includes(status)
   const load = async () => {
     loading.value = true
     try {
-      const [result, batchResult] = await Promise.all([
+      const [result, runResult] = await Promise.all([
         fetchPaperResult(props.view.id),
-        fetchResultViewBatches(props.view.id)
+        fetchResultViewRuns(props.view.id)
       ])
       signals.value = result.signals
       accounts.value = result.accounts
-      batches.value = batchResult.items
+      runs.value = runResult.items
     } finally {
       loading.value = false
     }
   }
-  const actBatch = async (batch: ResultViewBatch, action: 'retry' | 'cancel') => {
+  const actRun = async (run: ResultViewRun, action: 'retry' | 'cancel') => {
     if (action === 'cancel') {
-      await ElMessageBox.confirm('取消后当前批次不会继续执行。', '取消批次', {
-        confirmButtonText: '取消批次',
+      await ElMessageBox.confirm('取消后当前运行不会继续执行。', '取消运行', {
+        confirmButtonText: '取消运行',
         cancelButtonText: '返回',
         type: 'warning'
       })
     }
-    acting.value = batch.id
+    acting.value = run.id
     try {
-      await applyResultViewBatchAction(props.view.id, batch.id, action)
+      await applyResultViewRunAction(props.view.id, run.id, action)
       await load()
     } finally {
       acting.value = undefined
@@ -498,14 +498,14 @@
     display: none;
   }
 
-  .batch-list {
+  .run-list {
     padding: 0;
     margin: 0;
     list-style: none;
     border-top: 1px solid var(--el-border-color-lighter);
   }
 
-  .batch-list > li {
+  .run-list > li {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto 68px;
     gap: 10px;
@@ -514,18 +514,18 @@
     border-bottom: 1px solid var(--el-border-color-lighter);
   }
 
-  .batch-list strong,
-  .batch-list small {
+  .run-list strong,
+  .run-list small {
     display: block;
   }
 
-  .batch-list__actions {
+  .run-list__actions {
     display: flex;
     justify-content: flex-end;
     min-width: 68px;
   }
 
-  .batch-list__empty {
+  .run-list__empty {
     display: block !important;
     padding: 24px 0;
     color: var(--el-text-color-secondary);
@@ -595,12 +595,12 @@
       text-align: center;
     }
 
-    .batch-list > li {
+    .run-list > li {
       grid-template-columns: minmax(0, 1fr) auto;
       padding: 8px 0;
     }
 
-    .batch-list__actions {
+    .run-list__actions {
       grid-column: 2;
     }
   }

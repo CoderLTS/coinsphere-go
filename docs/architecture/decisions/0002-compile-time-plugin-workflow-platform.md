@@ -24,11 +24,11 @@ CoinSphere 当前已经具备工作流、调度、事件、策略、回测、通
 
 系统监控仍是首页，工作流是独立一级菜单。首期只有超级管理员可以查看和操作工作流；普通用户只访问由管理员创建并授权的固定范围结果视图，不会看到源工作流。
 
-一个工作流只有一个主触发器和一个运行实例，并明确使用批处理、事件响应或连续流模式。连续流的每个事件都创建有界批次，不允许无限执行记录或无法重放的常驻业务调用栈。
+一个工作流只有一个主触发器，并明确使用批处理、事件响应或连续流模式。工作流本身只有 `inactive / active / error` 生命周期；每次触发创建一个有界 `WorkflowRun`，连续流不保留无限节点调用栈。
 
 ### 2. 保持单实例模块化单体和 PostgreSQL 持久运行时
 
-V2 保持 `Vue Web + Go App + PostgreSQL/TimescaleDB`。PostgreSQL 同时保存事件队列、工作流修订、批次、检查点、Outbox、人工任务、运行历史和插件业务事实，不引入 Redis、Kafka、其他消息代理或分布式协调系统。
+V2 保持 `Vue Web + Go App + PostgreSQL 16`。PostgreSQL 同时保存事件队列、工作流修订、Run、节点尝试、节点日志、检查点、Outbox、人工任务和插件业务事实，不引入 Redis、Kafka、其他消息代理或分布式协调系统。
 
 事件统一采用 CloudEvents 1.0 JSON，投递语义为至少一次；按 `partitionKey` 保序，副作用通过稳定操作键和数据库唯一约束幂等。执行资源只分为普通实时工作的 `stream` 池和回测等重任务的 `compute` 池。
 
@@ -52,7 +52,7 @@ V2 保持 `Vue Web + Go App + PostgreSQL/TimescaleDB`。PostgreSQL 同时保存�
 
 SDK 固定提供节点描述符、Action/Trigger 处理器、结果页、作用域路由、密钥读取、命名空间状态和制品访问。官方 Quant、Connector、AI 和 Notification 与外部可信插件使用相同注册、Schema、事件和生命周期契约，不保留核心私有旁路。
 
-插件清单使用 SemVer、`requiresCore` 和 SDK major。minor/patch 升级必须兼容已有节点配置、输入输出和状态。major 升级默认拒绝；强制升级会暂停所有受影响工作流并标记 `needs_attention`，且永不自动恢复。
+插件清单使用 SemVer、`requiresCore` 和 SDK major。minor/patch 升级必须兼容已有节点配置、输入输出和状态。major 升级默认拒绝；受影响工作流由管理员先停用并显式处理，不引入额外生命周期状态。
 
 每个插件拥有独立 PostgreSQL schema 和 migration 序列。卸载存在活动引用时拒绝并列出引用；成功卸载默认保留 schema 和数据，删除数据只能通过单独、显式、破坏性的 `purge-data` 命令。
 
@@ -107,7 +107,7 @@ Paper 默认使用人工审批。自动模式必须显式开启并配置全部�
 
 ## 数据与兼容策略
 
-P0 在正式 Paper 观察前建立新的核心初始化 migration，并为插件建立独立 schema 与迁移账本。不编写旧表、旧接口、旧工作流图或 Python 策略的迁移器。需要保留的数据只能在重置前人工导出，不能成为 V2 运行时兼容路径。
+P0 在正式 Paper 观察前建立新的核心初始化 migration，并为插件建立独立 schema 与迁移账本。2026-08-28 经用户明确授权，未冻结的 `00005-00009` 开发历史重建为 `00005_workflow_runs.sql`、`00006_quant_market_backtests.sql` 和 `00007_paper_results_notifications.sql`。不编写旧表、旧接口、旧工作流图或 Python 策略的迁移器；需要保留的数据只能在重置前人工导出。
 
 开始记录 Paper 晋级证据前必须冻结核心和插件 migration 历史；冻结后只追加版本。插件卸载不回滚 schema，应用版本回滚也不自动执行 migration Down。
 

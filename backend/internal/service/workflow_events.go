@@ -16,7 +16,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-const workflowFailureEventType = "io.coinsphere.workflow.batch.failed"
+const workflowFailureEventType = "io.coinsphere.workflow.run.failed"
 
 var errWorkflowBackpressure = errors.New("workflow backlog limit reached")
 
@@ -48,14 +48,14 @@ func (a *App) PublishWorkflowWebhook(ctx context.Context, workflowID int64, secr
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var workflow db.Workflow
 		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).First(&workflow, workflowID).Error; err != nil ||
-			workflow.Status != WorkflowStatusRunning || workflow.ActiveRevisionID == nil {
+			workflow.Status != WorkflowStatusActive || workflow.ActiveRevisionID == nil {
 			return fmt.Errorf("%w: webhook", ErrNotFound)
 		}
 		var revision db.WorkflowRevision
 		if err := tx.First(&revision, *workflow.ActiveRevisionID).Error; err != nil {
 			return fmt.Errorf("%w: webhook", ErrNotFound)
 		}
-		graph, err := a.buildWorkflowBatchGraph(revision.GraphJSON)
+		graph, err := a.buildWorkflowRunGraph(revision.GraphJSON)
 		if err != nil {
 			return errors.New("load webhook workflow graph failed")
 		}
@@ -189,7 +189,7 @@ func validateWorkflowCloudEvent(event cloudevents.Event) ([]byte, string, map[st
 }
 
 func (a *App) deliverWorkflowEventTx(tx *gorm.DB, record db.WorkflowEventRecord, event cloudevents.Event, targetWorkflowID int64, now time.Time) error {
-	query := tx.Where("status = ? AND active_revision_id IS NOT NULL", WorkflowStatusRunning)
+	query := tx.Where("status = ? AND active_revision_id IS NOT NULL", WorkflowStatusActive)
 	if targetWorkflowID > 0 {
 		query = query.Where("id = ?", targetWorkflowID)
 	} else {
@@ -207,7 +207,7 @@ func (a *App) deliverWorkflowEventTx(tx *gorm.DB, record db.WorkflowEventRecord,
 		if err := tx.First(&revision, *workflow.ActiveRevisionID).Error; err != nil {
 			return errors.New("load workflow event revision failed")
 		}
-		graph, err := a.buildWorkflowBatchGraph(revision.GraphJSON)
+		graph, err := a.buildWorkflowRunGraph(revision.GraphJSON)
 		if err != nil {
 			return errors.New("load workflow event graph failed")
 		}
@@ -234,16 +234,16 @@ func (a *App) deliverWorkflowEventTx(tx *gorm.DB, record db.WorkflowEventRecord,
 		} else if event.Type() == workflowFailureEventType {
 			triggerType = "failure"
 		}
-		batch := db.ExecutionBatch{
+		run := db.WorkflowRun{
 			WorkflowID: workflow.ID, RevisionID: revision.ID, TriggerType: triggerType,
 			TriggerKey: fmt.Sprint(record.ID), EventRecordID: &record.ID, PartitionKey: record.PartitionKey,
-			Status: BatchStatusQueued, NotBefore: now, TriggeredAt: event.Time().UTC(), CreatedAt: now, UpdatedAt: now,
+			Status: RunStatusQueued, NotBefore: now, TriggeredAt: event.Time().UTC(), ResultSummary: `{}`, CreatedAt: now, UpdatedAt: now,
 		}
-		if err := tx.Create(&batch).Error; err != nil {
-			return errors.New("create workflow event batch failed")
+		if err := tx.Create(&run).Error; err != nil {
+			return errors.New("create workflow event run failed")
 		}
 		delivery := db.WorkflowEventDelivery{
-			EventRecordID: record.ID, WorkflowID: workflow.ID, RevisionID: revision.ID, BatchID: batch.ID, CreatedAt: now,
+			EventRecordID: record.ID, WorkflowID: workflow.ID, RevisionID: revision.ID, RunID: run.ID, CreatedAt: now,
 		}
 		if err := tx.Create(&delivery).Error; err != nil {
 			return errors.New("record workflow event delivery failed")
@@ -339,35 +339,35 @@ func (a *App) dispatchWorkflowEventOutbox(ctx context.Context, now time.Time) er
 	})
 }
 
-func newWorkflowFailureEvent(batch db.ExecutionBatch, category string, now time.Time) cloudevents.Event {
+func newWorkflowFailureEvent(run db.WorkflowRun, category string, now time.Time) cloudevents.Event {
 	event := cloudevents.NewEvent()
-	event.SetID(fmt.Sprintf("batch-%d-failed", batch.ID))
+	event.SetID(fmt.Sprintf("run-%d-failed", run.ID))
 	event.SetSource("urn:coinsphere:workflow-core")
 	event.SetType(workflowFailureEventType)
-	event.SetSubject(fmt.Sprintf("workflow/%d/batch/%d", batch.WorkflowID, batch.ID))
+	event.SetSubject(fmt.Sprintf("workflow/%d/run/%d", run.WorkflowID, run.ID))
 	event.SetTime(now.UTC())
-	event.SetExtension("partitionkey", fmt.Sprintf("workflow:%d", batch.WorkflowID))
+	event.SetExtension("partitionkey", fmt.Sprintf("workflow:%d", run.WorkflowID))
 	_ = event.SetData(cloudevents.ApplicationJSON, map[string]any{
-		"workflowId": batch.WorkflowID, "batchId": batch.ID, "revisionId": batch.RevisionID, "errorCategory": category,
+		"workflowId": run.WorkflowID, "runId": run.ID, "revisionId": run.RevisionID, "errorCategory": category,
 	})
 	return event
 }
 
-func (a *App) workflowBatchEvent(ctx context.Context, batch db.ExecutionBatch) (cloudevents.Event, map[string]any, error) {
-	if batch.EventRecordID == nil {
-		return cloudevents.Event{}, nil, errors.New("workflow batch has no event")
+func (a *App) workflowRunEvent(ctx context.Context, run db.WorkflowRun) (cloudevents.Event, map[string]any, error) {
+	if run.EventRecordID == nil {
+		return cloudevents.Event{}, nil, errors.New("workflow run has no event")
 	}
 	var record db.WorkflowEventRecord
-	if err := a.DB.WithContext(ctx).First(&record, *batch.EventRecordID).Error; err != nil {
-		return cloudevents.Event{}, nil, errors.New("load workflow batch event failed")
+	if err := a.DB.WithContext(ctx).First(&record, *run.EventRecordID).Error; err != nil {
+		return cloudevents.Event{}, nil, errors.New("load workflow run event failed")
 	}
 	var event cloudevents.Event
 	if err := json.Unmarshal([]byte(record.EventJSON), &event); err != nil {
-		return cloudevents.Event{}, nil, errors.New("decode workflow batch event failed")
+		return cloudevents.Event{}, nil, errors.New("decode workflow run event failed")
 	}
 	var data map[string]any
 	if err := event.DataAs(&data); err != nil || data == nil {
-		return cloudevents.Event{}, nil, errors.New("decode workflow batch event data failed")
+		return cloudevents.Event{}, nil, errors.New("decode workflow run event data failed")
 	}
 	return event, data, nil
 }

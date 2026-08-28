@@ -2,7 +2,7 @@
 
 ## 当前基线
 
-CoinSphere 只支持 PostgreSQL 16。`00001` 至 `00007` 创建认证、插件生命周期和完整工作流运行基线；`00008_quant_market_backtests.sql` 使用普通表与联合索引创建 Quant 公共行情和回测；`00009_paper_results_notifications.sql` 创建 ResultView 授权、Quant 信号/Paper 事实与投影，以及 Notification 投递。
+CoinSphere 只支持 PostgreSQL 16。`00001` 至 `00004` 创建认证、插件和工作流定义基线；`00005_workflow_runs.sql` 创建 Run 队列、节点尝试、节点日志、检查点、事件、人工任务和制品；`00006_quant_market_backtests.sql` 创建 Quant 公共行情和回测；`00007_paper_results_notifications.sql` 创建 ResultView、Quant 信号/Paper 事实与 Notification 投递。
 
 服务启动只读校验核心版本，核心 DDL 只由 `coinsphere-migrate` 执行。内置 Quant 随应用版本迁移；通过插件 CLI 安装的插件使用 `plugin_<规范化插件 ID>` schema 和自己的 `schema_migrations` 账本。项目不提供旧表、旧接口或旧数据转换器；生产 DSN 和数据库密码只通过服务器配置注入。
 
@@ -41,7 +41,9 @@ go run ./cmd/migrate -config ./config.yml -direction down -steps 1
 3. 用户对目标环境和目标 CoinSphere 数据目录给出明确重置授权。
 4. 已只读确认目标 Compose 项目、数据库服务和数据目录，不影响共享服务。
 
-满足条件后，停止 CoinSphere Backend/Web，备份并定向重建共享 PostgreSQL 中的 `coinsphere_go` 数据库，再由目标镜像执行 `coinsphere-migrate -direction up`。禁止手工改写 `schema_migrations` 来伪装重置，也不得触及已有 `coinsphere` 旧库或其他应用数据库。
+满足条件后，停止 CoinSphere Backend/Web，备份并定向重建共享 PostgreSQL 中的 `coinsphere_go` 数据库，清空该部署独占的 `data/backend/artifacts` 目录，再由目标镜像执行 `coinsphere-migrate -direction up`。删除前必须分别解析并核对数据库名和制品绝对路径；禁止手工改写 `schema_migrations` 来伪装重置，也不得触及已有 `coinsphere` 旧库、其他应用数据库、上传目录或真实交易凭据。
+
+本次 Run 基线重建由 2026-08-28 的开发任务明确授权，取代此前未冻结的 `00005-00009` 开发历史。该授权只适用于代码基线，不等于允许代理连接或删除任意本地/共享数据库；实际重置仍需满足上述四项条件。
 
 ## 变更规则
 
@@ -50,10 +52,9 @@ go run ./cmd/migrate -config ./config.yml -direction down -steps 1
 - 插件 migration 使用独立递增版本；兼容升级只能追加高版本，卸载和应用回滚不执行插件 Down。
 - 金融时间使用 `TIMESTAMPTZ`；价格、数量、金额和费率使用 `NUMERIC(38,18)`。
 - `Down` 必须保护持久数据；插件和工作流 migration 只在所属表为空时允许回滚。
-- `00006` 只有在活动、制品和制品引用均为空时允许 Down；回滚恢复 P1-C 的 Checkpoint 和终态 NodeRun 全不可变规则。
-- `00007` 只有在事件、投递、Outbox、人工任务和诊断批次均为空时允许 Down；回滚恢复 P1 的批次与 NodeRun 状态约束。
-- `00008` 只有在 Quant 品种、K 线和回测摘要均为空时允许 Down；应用回滚不得自动删除 `plugin_quant`。
-- `00009` 只有在 ResultView、信号、Paper 账户/事实/投影和 Notification 投递全部为空时允许 Down；存在任一记录时必须恢复备份，不能删除事实来迁就旧应用。
+- `00005` 只有在 Run、RunNode、节点日志、检查点、事件、人工任务、状态和制品全部为空时允许 Down。
+- `00006` 只有在 Quant 品种、K 线和回测摘要均为空时允许 Down；应用回滚不得自动删除 `plugin_quant`。
+- `00007` 只有在 ResultView、信号、Paper 账户/事实/投影和 Notification 投递全部为空时允许 Down；存在任一记录时必须恢复备份，不能删除事实来迁就旧应用。
 - 无法无损回滚时恢复已验证备份，不提供伪可逆 SQL。
 - 禁止应用启动自动建表、手工修改 migration 账本或用删除业务行修复版本差异。
 

@@ -22,40 +22,43 @@ import (
 )
 
 const (
-	BatchStatusQueued    = "queued"
-	BatchStatusRunning   = "running"
-	BatchStatusWaiting   = "waiting"
-	BatchStatusRetrying  = "retrying"
-	BatchStatusSucceeded = "succeeded"
-	BatchStatusFailed    = "failed"
-	BatchStatusCancelled = "cancelled"
-	batchLeaseDuration   = 30 * time.Second
-	batchPollInterval    = 250 * time.Millisecond
-	batchMaxAttempts     = 3
+	RunStatusQueued    = "queued"
+	RunStatusRunning   = "running"
+	RunStatusWaiting   = "waiting"
+	RunStatusRetrying  = "retrying"
+	RunStatusSucceeded = "succeeded"
+	RunStatusFailed    = "failed"
+	RunStatusCancelled = "cancelled"
+	runLeaseDuration   = 30 * time.Second
+	runPollInterval    = 250 * time.Millisecond
+	runMaxAttempts     = 3
 )
 
-type WorkflowBatchView struct {
-	ID                    int64  `json:"id"`
-	WorkflowID            int64  `json:"workflowId"`
-	RevisionID            int64  `json:"revisionId"`
-	TriggerType           string `json:"triggerType"`
-	Status                string `json:"status"`
-	CurrentNodeInstanceID string `json:"currentNodeInstanceId,omitempty"`
-	TriggeredAt           string `json:"triggeredAt"`
-	StartedAt             string `json:"startedAt,omitempty"`
-	CompletedAt           string `json:"completedAt,omitempty"`
-	CancelRequestedAt     string `json:"cancelRequestedAt,omitempty"`
-	ErrorCategory         string `json:"errorCategory,omitempty"`
-	PartitionKey          string `json:"partitionKey,omitempty"`
-	Diagnostic            bool   `json:"diagnostic"`
-	OriginalBatchID       int64  `json:"originalBatchId,omitempty"`
+type WorkflowRunView struct {
+	ID                    int64           `json:"id"`
+	WorkflowID            int64           `json:"workflowId"`
+	RevisionID            int64           `json:"revisionId"`
+	EventRecordID         int64           `json:"eventRecordId,omitempty"`
+	TriggerType           string          `json:"triggerType"`
+	Status                string          `json:"status"`
+	CurrentNodeInstanceID string          `json:"currentNodeInstanceId,omitempty"`
+	TriggeredAt           string          `json:"triggeredAt"`
+	StartedAt             string          `json:"startedAt,omitempty"`
+	CompletedAt           string          `json:"completedAt,omitempty"`
+	CancelRequestedAt     string          `json:"cancelRequestedAt,omitempty"`
+	ErrorCategory         string          `json:"errorCategory,omitempty"`
+	ErrorMessage          string          `json:"errorMessage,omitempty"`
+	ResultSummary         json.RawMessage `json:"resultSummary"`
+	PartitionKey          string          `json:"partitionKey,omitempty"`
+	Diagnostic            bool            `json:"diagnostic"`
+	OriginalRunID         int64           `json:"originalRunId,omitempty"`
 }
 
-type WorkflowBatchActionPayload struct {
+type WorkflowRunActionPayload struct {
 	Action string `json:"action"`
 }
 
-type workflowBatchGraph struct {
+type workflowRunGraph struct {
 	graph       workflowGraph
 	nodes       map[string]workflowGraphNode
 	descriptors map[string]sdk.NodeDescriptor
@@ -72,12 +75,12 @@ type bufferedNodeState struct {
 	pending    json.RawMessage
 }
 
-func (a *App) CreateWorkflowBatch(ctx context.Context, workflowID int64, principal *Principal) (WorkflowBatchView, error) {
+func (a *App) CreateWorkflowRun(ctx context.Context, workflowID int64, principal *Principal) (WorkflowRunView, error) {
 	if principal == nil || principal.User == nil || principal.User.ID <= 0 {
-		return WorkflowBatchView{}, ErrPermission
+		return WorkflowRunView{}, ErrPermission
 	}
 	now := time.Now().UTC()
-	batch := db.ExecutionBatch{}
+	run := db.WorkflowRun{}
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var workflow db.Workflow
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&workflow, workflowID).Error; err != nil {
@@ -86,14 +89,14 @@ func (a *App) CreateWorkflowBatch(ctx context.Context, workflowID int64, princip
 			}
 			return errors.New("lock workflow failed")
 		}
-		if workflow.Status != WorkflowStatusRunning || workflow.ActiveRevisionID == nil {
-			return fmt.Errorf("%w: workflow is not accepting batches", ErrConflict)
+		if workflow.Status != WorkflowStatusActive || workflow.ActiveRevisionID == nil {
+			return fmt.Errorf("%w: workflow is not accepting runs", ErrConflict)
 		}
 		var revision db.WorkflowRevision
 		if err := tx.First(&revision, *workflow.ActiveRevisionID).Error; err != nil {
 			return errors.New("load active workflow revision failed")
 		}
-		graph, err := a.buildWorkflowBatchGraph(revision.GraphJSON)
+		graph, err := a.buildWorkflowRunGraph(revision.GraphJSON)
 		if err != nil || graph.nodes[revision.MainTriggerNodeID].NodeType != "core.manual" {
 			return fmt.Errorf("%w: workflow does not use a manual trigger", ErrConflict)
 		}
@@ -101,29 +104,32 @@ func (a *App) CreateWorkflowBatch(ctx context.Context, workflowID int64, princip
 			return err
 		}
 		ownerID := principal.User.ID
-		batch = db.ExecutionBatch{
+		run = db.WorkflowRun{
 			WorkflowID: workflowID, RevisionID: revision.ID, TriggerType: "manual",
-			TriggerKey: security.RandomToken(), Status: BatchStatusQueued, NotBefore: now,
-			TriggeredAt: now, CreatedBy: &ownerID, CreatedAt: now, UpdatedAt: now,
+			TriggerKey: security.RandomToken(), Status: RunStatusQueued, NotBefore: now,
+			TriggeredAt: now, CreatedBy: &ownerID, ResultSummary: `{}`, CreatedAt: now, UpdatedAt: now,
 		}
-		if err := tx.Create(&batch).Error; err != nil {
-			return errors.New("create workflow batch failed")
+		if err := tx.Create(&run).Error; err != nil {
+			return errors.New("create workflow run failed")
 		}
 		return nil
 	})
 	if err != nil {
-		return WorkflowBatchView{}, err
+		return WorkflowRunView{}, err
 	}
-	return workflowBatchView(batch), nil
+	return workflowRunView(run), nil
 }
 
-type WorkflowBatchListQuery struct {
+type WorkflowRunListQuery struct {
 	Page        CursorPage
 	TriggerType string
 	Status      string
+	From        *time.Time
+	To          *time.Time
+	Keyword     string
 }
 
-func (a *App) PageWorkflowBatches(ctx context.Context, workflowID int64, query WorkflowBatchListQuery) (M, error) {
+func (a *App) PageWorkflowRuns(ctx context.Context, workflowID int64, query WorkflowRunListQuery) (M, error) {
 	var exists int64
 	if err := a.DB.WithContext(ctx).Model(&db.Workflow{}).Where("id = ?", workflowID).Count(&exists).Error; err != nil {
 		return nil, errors.New("load workflow failed")
@@ -131,16 +137,29 @@ func (a *App) PageWorkflowBatches(ctx context.Context, workflowID int64, query W
 	if exists == 0 {
 		return nil, fmt.Errorf("%w: workflow", ErrNotFound)
 	}
-	dbQuery := a.DB.WithContext(ctx).Model(&db.ExecutionBatch{}).Where("workflow_id = ?", workflowID)
+	dbQuery := a.DB.WithContext(ctx).Model(&db.WorkflowRun{}).Where("workflow_id = ?", workflowID)
 	if query.TriggerType != "" {
 		dbQuery = dbQuery.Where("trigger_type = ?", query.TriggerType)
 	}
 	if query.Status != "" {
 		dbQuery = dbQuery.Where("status = ?", query.Status)
 	}
+	if query.From != nil {
+		dbQuery = dbQuery.Where("triggered_at >= ?", query.From.UTC())
+	}
+	if query.To != nil {
+		dbQuery = dbQuery.Where("triggered_at <= ?", query.To.UTC())
+	}
+	if keyword := strings.TrimSpace(query.Keyword); keyword != "" {
+		pattern := "%" + keyword + "%"
+		dbQuery = dbQuery.Where(`(
+			trigger_key ILIKE ? OR error_category ILIKE ? OR error_message ILIKE ?
+			OR EXISTS (SELECT 1 FROM workflow_node_logs log WHERE log.run_id = workflow_runs.id AND log.message ILIKE ?)
+		)`, pattern, pattern, pattern, pattern)
+	}
 	var total int64
 	if err := dbQuery.Count(&total).Error; err != nil {
-		return nil, errors.New("count workflow batches failed")
+		return nil, errors.New("count workflow runs failed")
 	}
 	afterID, err := query.Page.AfterID()
 	if err != nil {
@@ -149,108 +168,108 @@ func (a *App) PageWorkflowBatches(ctx context.Context, workflowID int64, query W
 	if afterID > 0 {
 		dbQuery = dbQuery.Where("id < ?", afterID)
 	}
-	var batches []db.ExecutionBatch
-	if err := dbQuery.Order("id DESC").Limit(query.Page.Limit + 1).Find(&batches).Error; err != nil {
-		return nil, errors.New("list workflow batches failed")
+	var runs []db.WorkflowRun
+	if err := dbQuery.Order("id DESC").Limit(query.Page.Limit + 1).Find(&runs).Error; err != nil {
+		return nil, errors.New("list workflow runs failed")
 	}
-	hasMore := len(batches) > query.Page.Limit
+	hasMore := len(runs) > query.Page.Limit
 	if hasMore {
-		batches = batches[:query.Page.Limit]
+		runs = runs[:query.Page.Limit]
 	}
-	items := make([]WorkflowBatchView, len(batches))
-	for index := range batches {
-		items[index] = workflowBatchView(batches[index])
+	items := make([]WorkflowRunView, len(runs))
+	for index := range runs {
+		items[index] = workflowRunView(runs[index])
 	}
 	lastKey := ""
-	if len(batches) > 0 {
-		lastKey = int64CursorKey(batches[len(batches)-1].ID)
+	if len(runs) > 0 {
+		lastKey = int64CursorKey(runs[len(runs)-1].ID)
 	}
 	return cursorResult(items, query.Page, lastKey, hasMore, total), nil
 }
 
-func (a *App) ListRecentWorkflowBatches(ctx context.Context, workflowID int64) ([]WorkflowBatchView, error) {
-	var batches []db.ExecutionBatch
-	if err := a.DB.WithContext(ctx).Where("workflow_id = ?", workflowID).Order("id DESC").Limit(100).Find(&batches).Error; err != nil {
-		return nil, errors.New("list workflow batches failed")
+func (a *App) ListRecentWorkflowRuns(ctx context.Context, workflowID int64) ([]WorkflowRunView, error) {
+	var runs []db.WorkflowRun
+	if err := a.DB.WithContext(ctx).Where("workflow_id = ?", workflowID).Order("id DESC").Limit(100).Find(&runs).Error; err != nil {
+		return nil, errors.New("list workflow runs failed")
 	}
-	items := make([]WorkflowBatchView, len(batches))
-	for index := range batches {
-		items[index] = workflowBatchView(batches[index])
+	items := make([]WorkflowRunView, len(runs))
+	for index := range runs {
+		items[index] = workflowRunView(runs[index])
 	}
 	return items, nil
 }
 
-func (a *App) GetWorkflowBatch(ctx context.Context, batchID int64) (WorkflowBatchView, error) {
-	var batch db.ExecutionBatch
-	if err := a.DB.WithContext(ctx).First(&batch, batchID).Error; err != nil {
+func (a *App) GetWorkflowRun(ctx context.Context, runID int64) (WorkflowRunView, error) {
+	var run db.WorkflowRun
+	if err := a.DB.WithContext(ctx).First(&run, runID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return WorkflowBatchView{}, fmt.Errorf("%w: workflow batch", ErrNotFound)
+			return WorkflowRunView{}, fmt.Errorf("%w: workflow run", ErrNotFound)
 		}
-		return WorkflowBatchView{}, errors.New("load workflow batch failed")
+		return WorkflowRunView{}, errors.New("load workflow run failed")
 	}
-	return workflowBatchView(batch), nil
+	return workflowRunView(run), nil
 }
 
-func (a *App) ApplyWorkflowBatchAction(ctx context.Context, batchID int64, payload WorkflowBatchActionPayload) (WorkflowBatchView, error) {
+func (a *App) ApplyWorkflowRunAction(ctx context.Context, runID int64, payload WorkflowRunActionPayload) (WorkflowRunView, error) {
 	action := strings.ToLower(strings.TrimSpace(payload.Action))
 	if action == "replay" {
-		return a.createDiagnosticReplay(ctx, batchID)
+		return a.createDiagnosticReplay(ctx, runID)
 	}
 	now := time.Now().UTC()
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var batch db.ExecutionBatch
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&batch, batchID).Error; err != nil {
+		var run db.WorkflowRun
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&run, runID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return fmt.Errorf("%w: workflow batch", ErrNotFound)
+				return fmt.Errorf("%w: workflow run", ErrNotFound)
 			}
-			return errors.New("lock workflow batch failed")
+			return errors.New("lock workflow run failed")
 		}
 		switch action {
 		case "cancel":
-			if batch.Status == BatchStatusQueued || batch.Status == BatchStatusWaiting || batch.Status == BatchStatusRetrying {
-				return tx.Model(&batch).Updates(map[string]any{
-					"status": BatchStatusCancelled, "cancel_requested_at": now, "completed_at": now,
+			if run.Status == RunStatusQueued || run.Status == RunStatusWaiting || run.Status == RunStatusRetrying {
+				return tx.Model(&run).Updates(map[string]any{
+					"status": RunStatusCancelled, "cancel_requested_at": now, "completed_at": now,
 					"lease_token": nil, "lease_expires_at": nil, "updated_at": now,
 				}).Error
 			}
-			if batch.Status != BatchStatusRunning {
-				return fmt.Errorf("%w: batch is already terminal", ErrConflict)
+			if run.Status != RunStatusRunning {
+				return fmt.Errorf("%w: run is already terminal", ErrConflict)
 			}
-			if err := tx.Model(&batch).Updates(map[string]any{"cancel_requested_at": now, "updated_at": now}).Error; err != nil {
-				return errors.New("request workflow batch cancellation failed")
+			if err := tx.Model(&run).Updates(map[string]any{"cancel_requested_at": now, "updated_at": now}).Error; err != nil {
+				return errors.New("request workflow run cancellation failed")
 			}
 		case "retry":
-			if batch.Status != BatchStatusFailed {
-				return fmt.Errorf("%w: only a failed batch can be retried", ErrConflict)
+			if run.Status != RunStatusFailed {
+				return fmt.Errorf("%w: only a failed run can be retried", ErrConflict)
 			}
-			if err := tx.Model(&batch).Updates(map[string]any{
-				"status": BatchStatusRetrying, "not_before": now, "completed_at": nil,
-				"error_category": nil, "cancel_requested_at": nil, "updated_at": now,
+			if err := tx.Model(&run).Updates(map[string]any{
+				"status": RunStatusRetrying, "not_before": now, "completed_at": nil,
+				"error_category": nil, "error_message": nil, "cancel_requested_at": nil, "updated_at": now,
 			}).Error; err != nil {
-				return errors.New("retry workflow batch failed")
+				return errors.New("retry workflow run failed")
 			}
 		default:
-			return errors.New("batch action must be cancel, retry, or replay")
+			return errors.New("run action must be cancel, retry, or replay")
 		}
 		return nil
 	})
 	if err != nil {
-		return WorkflowBatchView{}, err
+		return WorkflowRunView{}, err
 	}
 	if action == "cancel" {
-		a.batchCancelMu.Lock()
-		cancel := a.batchCancels[batchID]
-		a.batchCancelMu.Unlock()
+		a.runCancelMu.Lock()
+		cancel := a.runCancels[runID]
+		a.runCancelMu.Unlock()
 		if cancel != nil {
 			cancel()
 		}
 	}
-	return a.GetWorkflowBatch(ctx, batchID)
+	return a.GetWorkflowRun(ctx, runID)
 }
 
-func (a *App) RunBatchEngine(ctx context.Context) error {
+func (a *App) RunWorkflowEngine(ctx context.Context) error {
 	defer a.stopWorkflowTriggers()
-	if err := a.recoverExpiredBatches(ctx); err != nil {
+	if err := a.recoverExpiredRuns(ctx); err != nil {
 		return err
 	}
 	if err := a.syncWorkflowTriggers(ctx); err != nil {
@@ -260,7 +279,7 @@ func (a *App) RunBatchEngine(ctx context.Context) error {
 		slog.Error("workflow history cleanup failed", "error_category", "history_retention")
 	}
 	nextCleanup := time.Now().UTC().Add(24 * time.Hour)
-	ticker := time.NewTicker(batchPollInterval)
+	ticker := time.NewTicker(runPollInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -273,8 +292,8 @@ func (a *App) RunBatchEngine(ctx context.Context) error {
 				}
 				nextCleanup = now.UTC().Add(24 * time.Hour)
 			}
-			if err := a.enqueueScheduledBatches(ctx, now.UTC()); err != nil {
-				slog.Error("workflow schedule scan failed", "error_category", "batch_schedule")
+			if err := a.enqueueScheduledRuns(ctx, now.UTC()); err != nil {
+				slog.Error("workflow schedule scan failed", "error_category", "run_schedule")
 			}
 			if err := a.dispatchWorkflowEventOutbox(ctx, now.UTC()); err != nil {
 				slog.Error("workflow event outbox dispatch failed", "error_category", "event_outbox")
@@ -286,28 +305,28 @@ func (a *App) RunBatchEngine(ctx context.Context) error {
 				slog.Error("workflow trigger scan failed", "error_category", "trigger_scan")
 			}
 			for {
-				batch, ok, err := a.claimWorkflowBatch(ctx, now.UTC())
+				run, ok, err := a.claimWorkflowRun(ctx, now.UTC())
 				if err != nil {
-					slog.Error("workflow batch claim failed", "error_category", "batch_queue")
+					slog.Error("workflow run claim failed", "error_category", "run_queue")
 					break
 				}
 				if !ok {
 					break
 				}
-				a.batchWG.Add(1)
+				a.runWG.Add(1)
 				go func() {
-					defer a.batchWG.Done()
-					a.executeWorkflowBatch(ctx, batch)
+					defer a.runWG.Done()
+					a.executeWorkflowRun(ctx, run)
 				}()
 			}
 		}
 	}
 }
 
-func (a *App) WaitForWorkflowBatches(ctx context.Context) error {
+func (a *App) WaitForWorkflowRuns(ctx context.Context) error {
 	done := make(chan struct{})
 	go func() {
-		a.batchWG.Wait()
+		a.runWG.Wait()
 		a.triggerWG.Wait()
 		close(done)
 	}()
@@ -319,56 +338,64 @@ func (a *App) WaitForWorkflowBatches(ctx context.Context) error {
 	}
 }
 
-func (a *App) recoverExpiredBatches(ctx context.Context) error {
+func (a *App) recoverExpiredRuns(ctx context.Context) error {
 	now := time.Now().UTC()
 	var recovered int64
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Exec(`
-UPDATE workflow_node_runs nr
-SET status = 'failed', error_category = 'lease_expired', completed_at = ?,
+INSERT INTO workflow_node_logs (workflow_id, run_id, run_node_id, logged_at, level, message, fields_json)
+SELECT r.workflow_id, r.id, n.id, ?, 'error', '节点租约已过期，运行将恢复排队', '{"error_category":"lease_expired"}'::jsonb
+FROM workflow_run_nodes n
+JOIN workflow_runs r ON r.id = n.run_id
+WHERE n.status = 'running' AND r.status = 'running' AND r.lease_expires_at < ?`, now, now).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+UPDATE workflow_run_nodes nr
+SET status = 'failed', error_category = 'lease_expired', error_message = '节点租约已过期', completed_at = ?,
     duration_ms = GREATEST(EXTRACT(EPOCH FROM (? - nr.started_at)) * 1000, 0)::BIGINT
-FROM execution_batches eb
-WHERE nr.batch_id = eb.id AND nr.status = 'running'
+FROM workflow_runs eb
+WHERE nr.run_id = eb.id AND nr.status = 'running'
   AND eb.status = 'running' AND eb.lease_expires_at < ?`, now, now, now).Error; err != nil {
 			return err
 		}
-		result := tx.Model(&db.ExecutionBatch{}).
-			Where("status = ? AND lease_expires_at < ?", BatchStatusRunning, now).
+		result := tx.Model(&db.WorkflowRun{}).
+			Where("status = ? AND lease_expires_at < ?", RunStatusRunning, now).
 			Updates(map[string]any{
-				"status": BatchStatusQueued, "lease_token": nil, "lease_expires_at": nil,
+				"status": RunStatusQueued, "lease_token": nil, "lease_expires_at": nil,
 				"not_before": now, "updated_at": now,
 			})
 		recovered = result.RowsAffected
 		return result.Error
 	})
 	if err != nil {
-		return errors.New("recover expired workflow batches failed")
+		return errors.New("recover expired workflow runs failed")
 	}
 	if recovered > 0 {
-		slog.Info("workflow batches recovered", "count", recovered)
+		slog.Info("workflow runs recovered", "count", recovered)
 	}
 	return nil
 }
 
-func (a *App) claimWorkflowBatch(ctx context.Context, now time.Time) (db.ExecutionBatch, bool, error) {
-	a.batchClaimMu.Lock()
-	defer a.batchClaimMu.Unlock()
+func (a *App) claimWorkflowRun(ctx context.Context, now time.Time) (db.WorkflowRun, bool, error) {
+	a.runClaimMu.Lock()
+	defer a.runClaimMu.Unlock()
 	token := security.RandomToken()
-	leaseExpiry := now.Add(batchLeaseDuration)
-	var batch db.ExecutionBatch
+	leaseExpiry := now.Add(runLeaseDuration)
+	var run db.WorkflowRun
 	query := `
 WITH candidate AS (
     SELECT eb.id
-    FROM execution_batches eb
+    FROM workflow_runs eb
     JOIN workflows w ON w.id = eb.workflow_id
     JOIN workflow_runtimes wr ON wr.workflow_id = eb.workflow_id
     WHERE eb.status IN ('queued', 'retrying')
       AND eb.not_before <= ?
-      AND w.status = 'running'
-      AND (SELECT COUNT(*) FROM execution_batches active
-           WHERE active.workflow_id = eb.workflow_id AND active.status = 'running') < wr.max_concurrent_batches
+      AND w.status = 'active'
+      AND (SELECT COUNT(*) FROM workflow_runs active
+           WHERE active.workflow_id = eb.workflow_id AND active.status = 'running') < wr.max_concurrent_runs
       AND (eb.partition_key = '' OR NOT EXISTS (
-          SELECT 1 FROM execution_batches prior
+          SELECT 1 FROM workflow_runs prior
           WHERE prior.workflow_id = eb.workflow_id
             AND prior.partition_key = eb.partition_key
             AND prior.status IN ('queued', 'running', 'retrying')
@@ -378,70 +405,73 @@ WITH candidate AS (
     FOR UPDATE OF eb SKIP LOCKED
     LIMIT 1
 )
-UPDATE execution_batches eb
+UPDATE workflow_runs eb
 SET status = 'running', lease_token = ?, lease_expires_at = ?,
     started_at = COALESCE(eb.started_at, ?), updated_at = ?
 FROM candidate
 WHERE eb.id = candidate.id
 RETURNING eb.*`
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return tx.Raw(query, now, token, leaseExpiry, now, now).Scan(&batch).Error
+		return tx.Raw(query, now, token, leaseExpiry, now, now).Scan(&run).Error
 	})
 	if err != nil {
-		return db.ExecutionBatch{}, false, err
+		return db.WorkflowRun{}, false, err
 	}
-	return batch, batch.ID > 0, nil
+	return run, run.ID > 0, nil
 }
 
-func (a *App) executeWorkflowBatch(parent context.Context, batch db.ExecutionBatch) {
+func (a *App) executeWorkflowRun(parent context.Context, run db.WorkflowRun) {
 	ctx, cancel := context.WithCancel(parent)
-	a.batchCancelMu.Lock()
-	a.batchCancels[batch.ID] = cancel
-	a.batchCancelMu.Unlock()
+	a.runCancelMu.Lock()
+	a.runCancels[run.ID] = cancel
+	a.runCancelMu.Unlock()
 	defer func() {
 		cancel()
-		a.batchCancelMu.Lock()
-		delete(a.batchCancels, batch.ID)
-		a.batchCancelMu.Unlock()
+		a.runCancelMu.Lock()
+		delete(a.runCancels, run.ID)
+		a.runCancelMu.Unlock()
 	}()
 
 	leaseDone := make(chan struct{})
-	go a.renewBatchLease(ctx, batch.ID, *batch.LeaseToken, leaseDone)
+	go a.renewRunLease(ctx, run.ID, *run.LeaseToken, leaseDone)
 	defer close(leaseDone)
 
 	var revision db.WorkflowRevision
-	if err := a.DB.WithContext(ctx).First(&revision, batch.RevisionID).Error; err != nil {
-		a.failWorkflowBatch(batch.ID, "revision")
+	if err := a.DB.WithContext(ctx).First(&revision, run.RevisionID).Error; err != nil {
+		a.failWorkflowRun(run.ID, "revision")
 		return
 	}
-	graph, err := a.buildWorkflowBatchGraph(revision.GraphJSON)
+	graph, err := a.buildWorkflowRunGraph(revision.GraphJSON)
 	if err != nil {
-		a.failWorkflowBatch(batch.ID, "graph")
+		a.failWorkflowRun(run.ID, "graph")
 		return
 	}
-	outputs, err := a.loadWorkflowCheckpoints(ctx, batch.ID)
+	outputs, err := a.loadWorkflowRunCheckpoints(ctx, run.ID)
 	if err != nil {
-		a.failWorkflowBatch(batch.ID, "checkpoint")
+		a.failWorkflowRun(run.ID, "checkpoint")
 		return
 	}
-	event := map[string]string{"type": batch.TriggerType, "triggeredAt": formatWorkflowTime(batch.TriggeredAt)}
-	if batch.EventRecordID != nil {
-		cloudEvent, _, err := a.workflowBatchEvent(ctx, batch)
+	event := map[string]string{"type": run.TriggerType, "triggeredAt": formatWorkflowTime(run.TriggeredAt)}
+	if run.EventRecordID != nil {
+		cloudEvent, eventData, err := a.workflowRunEvent(ctx, run)
 		if err != nil {
-			a.failWorkflowBatch(batch.ID, "event")
+			a.failWorkflowRun(run.ID, "event")
 			return
 		}
 		event = workflowEventContext(cloudEvent)
+		if _, completed := outputs[revision.MainTriggerNodeID]; completed {
+			outputs[revision.MainTriggerNodeID] = eventData
+		}
 	}
 	for _, nodeID := range graph.order {
 		if _, completed := outputs[nodeID]; completed {
 			continue
 		}
-		if cancelled, paused := a.batchShouldStop(ctx, batch.ID, batch.WorkflowID); cancelled || paused {
+		if cancelled, paused := a.runShouldStop(ctx, run.ID, run.WorkflowID); cancelled || paused {
 			if cancelled {
-				a.cancelWorkflowBatch(batch.ID)
+				a.cancelWorkflowRun(run.ID)
 			} else {
-				a.requeueWorkflowBatch(batch.ID)
+				a.requeueWorkflowRun(run.ID)
 			}
 			return
 		}
@@ -449,7 +479,7 @@ func (a *App) executeWorkflowBatch(parent context.Context, batch db.ExecutionBat
 		if nodeID != revision.MainTriggerNodeID {
 			reachable, err := workflowNodeReachable(graph.incoming[nodeID], outputs, event)
 			if err != nil {
-				a.failWorkflowBatch(batch.ID, "condition")
+				a.failWorkflowRun(run.ID, "condition")
 				return
 			}
 			if !reachable {
@@ -458,33 +488,33 @@ func (a *App) executeWorkflowBatch(parent context.Context, batch db.ExecutionBat
 		}
 		input, err := resolveWorkflowNodeInput(node, outputs, event)
 		if err != nil {
-			a.failWorkflowBatch(batch.ID, "input")
+			a.failWorkflowRun(run.ID, "input")
 			return
 		}
-		outcome := a.executeWorkflowNode(ctx, batch, revision, graph, node, input, event, 0)
+		outcome := a.executeWorkflowNode(ctx, run, revision, graph, node, input, event, 0)
 		if outcome.waiting {
 			return
 		}
 		if outcome.err != nil {
 			if errors.Is(outcome.err, context.Canceled) || ctx.Err() != nil {
-				cancelled, _ := a.batchShouldStop(ctx, batch.ID, batch.WorkflowID)
+				cancelled, _ := a.runShouldStop(ctx, run.ID, run.WorkflowID)
 				if cancelled {
-					a.cancelWorkflowBatch(batch.ID)
+					a.cancelWorkflowRun(run.ID)
 				} else {
-					a.requeueWorkflowBatch(batch.ID)
+					a.requeueWorkflowRun(run.ID)
 				}
 				return
 			}
-			if outcome.attempt < batchMaxAttempts {
-				a.retryWorkflowBatch(batch.ID, outcome.attempt)
+			if outcome.attempt < runMaxAttempts {
+				a.retryWorkflowRun(run.ID, outcome.attempt)
 			} else {
-				a.failWorkflowBatch(batch.ID, outcome.category)
+				a.failWorkflowRun(run.ID, outcome.category)
 			}
 			return
 		}
 		outputs[nodeID] = outcome.output
 	}
-	a.completeWorkflowBatch(batch.ID)
+	a.completeWorkflowRun(run.ID)
 }
 
 type workflowNodeOutcome struct {
@@ -495,40 +525,44 @@ type workflowNodeOutcome struct {
 	err      error
 }
 
-func (a *App) executeWorkflowNode(ctx context.Context, batch db.ExecutionBatch, revision db.WorkflowRevision, graph workflowBatchGraph, node workflowGraphNode, input map[string]any, event map[string]string, iteration int) workflowNodeOutcome {
+func (a *App) executeWorkflowNode(ctx context.Context, run db.WorkflowRun, revision db.WorkflowRevision, graph workflowRunGraph, node workflowGraphNode, input map[string]any, event map[string]string, iteration int) workflowNodeOutcome {
 	desc := graph.descriptors[node.NodeInstanceID]
-	attempt, err := a.nextWorkflowNodeAttempt(ctx, batch.ID, node.NodeInstanceID, iteration)
+	attempt, err := a.nextWorkflowNodeAttempt(ctx, run.ID, node.NodeInstanceID, iteration)
 	if err != nil {
 		return workflowNodeOutcome{category: "node_run", err: err}
 	}
-	operationKey := workflowOperationKey(batch.ID, node.NodeInstanceID, iteration)
+	operationKey := workflowOperationKey(run.ID, node.NodeInstanceID, iteration)
 	startedAt := time.Now().UTC()
-	run := db.WorkflowNodeRun{
-		BatchID: batch.ID, NodeInstanceID: node.NodeInstanceID, NodeType: node.NodeType,
+	runNode := db.WorkflowRunNode{
+		RunID: run.ID, NodeInstanceID: node.NodeInstanceID, NodeType: node.NodeType,
 		NodeVersion: node.NodeVersion, ExecutionPool: string(desc.Pool), Attempt: attempt, LoopIteration: iteration,
-		OperationKey: operationKey, Status: BatchStatusRunning, StartedAt: startedAt,
+		OperationKey: operationKey, Status: RunStatusRunning, InputSummary: workflowValueSummary(input),
+		OutputSummary: `{}`, StartedAt: startedAt,
 	}
-	if err := a.DB.WithContext(ctx).Create(&run).Error; err != nil {
+	if err := a.DB.WithContext(ctx).Create(&runNode).Error; err != nil {
 		return workflowNodeOutcome{attempt: attempt, category: "node_run", err: err}
 	}
+	a.appendWorkflowNodeLog(ctx, run.WorkflowID, run.ID, runNode.ID, slog.LevelInfo, "节点开始执行", map[string]any{
+		"attempt": attempt, "loop_iteration": iteration,
+	})
 	if validateWorkflowSchemaValue(desc.InputSchema, input) != nil {
-		a.finishWorkflowNodeRun(run.ID, BatchStatusFailed, "input", startedAt)
+		a.finishWorkflowRunNode(run.WorkflowID, runNode, RunStatusFailed, "input", "节点输入不符合 JSON Schema", startedAt)
 		return workflowNodeOutcome{attempt: attempt, category: "input", err: errors.New("node input does not match its JSON Schema")}
 	}
-	if batch.Diagnostic && desc.SideEffect != sdk.SideEffectNone {
-		output, artifacts, err := a.replayWorkflowSideEffect(ctx, batch, node.NodeInstanceID, iteration)
+	if run.Diagnostic && desc.SideEffect != sdk.SideEffectNone {
+		output, artifacts, err := a.replayWorkflowSideEffect(ctx, run, node.NodeInstanceID, iteration)
 		if err != nil || validateWorkflowSchemaValue(desc.OutputSchema, output) != nil {
-			a.finishWorkflowNodeRun(run.ID, BatchStatusFailed, "diagnostic", startedAt)
+			a.finishWorkflowRunNode(run.WorkflowID, runNode, RunStatusFailed, "diagnostic", "诊断重放缺少可用检查点", startedAt)
 			return workflowNodeOutcome{attempt: attempt, category: "diagnostic", err: errors.New("diagnostic side effect checkpoint is unavailable")}
 		}
 		raw := mustJSON(output)
-		if err := a.commitWorkflowNodeSuccess(ctx, run, batch, revision, node, operationKey, iteration, raw, nil, artifacts, startedAt); err != nil {
-			a.finishWorkflowNodeRun(run.ID, BatchStatusFailed, "checkpoint", startedAt)
+		if err := a.commitWorkflowNodeSuccess(ctx, runNode, run, revision, node, operationKey, iteration, raw, nil, artifacts, startedAt); err != nil {
+			a.finishWorkflowRunNode(run.WorkflowID, runNode, RunStatusFailed, "checkpoint", "保存节点检查点失败", startedAt)
 			return workflowNodeOutcome{attempt: attempt, category: "checkpoint", err: err}
 		}
 		return workflowNodeOutcome{attempt: attempt, output: output}
 	}
-	_ = a.DB.WithContext(ctx).Model(&db.ExecutionBatch{}).Where("id = ?", batch.ID).
+	_ = a.DB.WithContext(ctx).Model(&db.WorkflowRun{}).Where("id = ?", run.ID).
 		Updates(map[string]any{"current_node_instance_id": node.NodeInstanceID, "updated_at": startedAt}).Error
 
 	slot := a.streamSlots
@@ -539,23 +573,23 @@ func (a *App) executeWorkflowNode(ctx context.Context, batch db.ExecutionBatch, 
 	case slot <- struct{}{}:
 		defer func() { <-slot }()
 	case <-ctx.Done():
-		a.finishWorkflowNodeRun(run.ID, BatchStatusCancelled, "cancelled", startedAt)
+		a.finishWorkflowRunNode(run.WorkflowID, runNode, RunStatusCancelled, "cancelled", "节点执行已取消", startedAt)
 		return workflowNodeOutcome{attempt: attempt, category: "cancelled", err: ctx.Err()}
 	}
 
-	state := &bufferedNodeState{app: a, workflowID: batch.WorkflowID, revisionID: revision.ID, node: node, stateMode: desc.State}
+	state := &bufferedNodeState{app: a, workflowID: run.WorkflowID, revisionID: revision.ID, node: node, stateMode: desc.State}
 	request := sdk.ActionRequest{
-		Revision:       sdk.RevisionRef{WorkflowID: fmt.Sprint(batch.WorkflowID), RevisionID: fmt.Sprint(revision.ID)},
+		Revision:       sdk.RevisionRef{WorkflowID: fmt.Sprint(run.WorkflowID), RevisionID: fmt.Sprint(revision.ID)},
 		NodeInstanceID: node.NodeInstanceID, OperationKey: operationKey,
 		Input: mustJSON(input), Config: append(json.RawMessage(nil), node.Config...),
 		Secrets: workflowSecretReader{app: a, revisionID: revision.ID, nodeInstanceID: node.NodeInstanceID},
 		State:   state, Artifacts: workflowArtifactStore{app: a},
-		Logger: slog.Default().With("event_category", "workflow_node", "node_type", node.NodeType),
+		Logger: a.workflowNodeLogger(run.WorkflowID, run.ID, runNode.ID, node.NodeType),
 	}
-	result, category, executeErr := a.callWorkflowNode(ctx, batch, revision, node, request, event)
+	result, category, executeErr := a.callWorkflowNode(ctx, run, revision, node, request, event)
 	if errors.Is(executeErr, errWorkflowWaiting) {
-		a.finishWorkflowNodeRun(run.ID, BatchStatusWaiting, "", startedAt)
-		a.waitWorkflowBatch(batch.ID)
+		a.finishWorkflowRunNode(run.WorkflowID, runNode, RunStatusWaiting, "", "节点等待人工决定", startedAt)
+		a.waitWorkflowRun(run.ID)
 		return workflowNodeOutcome{attempt: attempt, waiting: true}
 	}
 	var output map[string]any
@@ -568,24 +602,24 @@ func (a *App) executeWorkflowNode(ctx context.Context, batch db.ExecutionBatch, 
 		}
 	}
 	if executeErr != nil {
-		status := BatchStatusFailed
+		status := RunStatusFailed
 		if errors.Is(executeErr, context.Canceled) || ctx.Err() != nil {
-			status, category = BatchStatusCancelled, "cancelled"
+			status, category = RunStatusCancelled, "cancelled"
 		}
-		a.finishWorkflowNodeRun(run.ID, status, category, startedAt)
+		a.finishWorkflowRunNode(run.WorkflowID, runNode, status, category, workflowErrorMessage(executeErr), startedAt)
 		return workflowNodeOutcome{attempt: attempt, category: category, err: executeErr}
 	}
-	if err := a.commitWorkflowNodeSuccess(ctx, run, batch, revision, node, operationKey, iteration, result.Output, state.pending, result.Artifacts, startedAt); err != nil {
-		a.finishWorkflowNodeRun(run.ID, BatchStatusFailed, "checkpoint", startedAt)
+	if err := a.commitWorkflowNodeSuccess(ctx, runNode, run, revision, node, operationKey, iteration, result.Output, state.pending, result.Artifacts, startedAt); err != nil {
+		a.finishWorkflowRunNode(run.WorkflowID, runNode, RunStatusFailed, "checkpoint", "保存节点检查点失败", startedAt)
 		return workflowNodeOutcome{attempt: attempt, category: "checkpoint", err: err}
 	}
 	return workflowNodeOutcome{attempt: attempt, output: output}
 }
 
-func (a *App) callWorkflowNode(ctx context.Context, batch db.ExecutionBatch, revision db.WorkflowRevision, node workflowGraphNode, request sdk.ActionRequest, event map[string]string) (sdk.ActionResult, string, error) {
+func (a *App) callWorkflowNode(ctx context.Context, run db.WorkflowRun, revision db.WorkflowRevision, node workflowGraphNode, request sdk.ActionRequest, event map[string]string) (sdk.ActionResult, string, error) {
 	switch node.NodeType {
 	case "core.manual", "core.schedule":
-		return sdk.ActionResult{Output: mustJSON(map[string]any{"triggeredAt": formatWorkflowTime(batch.TriggeredAt)})}, "", nil
+		return sdk.ActionResult{Output: mustJSON(map[string]any{"triggeredAt": formatWorkflowTime(run.TriggeredAt)})}, "", nil
 	case "core.constant":
 		var config struct {
 			Value string `json:"value"`
@@ -597,7 +631,7 @@ func (a *App) callWorkflowNode(ctx context.Context, batch db.ExecutionBatch, rev
 	case "core.end":
 		return sdk.ActionResult{Output: json.RawMessage(`{}`)}, "", nil
 	case "core.loop":
-		result, err := a.executeWorkflowLoop(ctx, batch, revision, node, request.Input, event)
+		result, err := a.executeWorkflowLoop(ctx, run, revision, node, request.Input, event)
 		return result, "loop", err
 	case "core.loop_item":
 		return sdk.ActionResult{Output: append(json.RawMessage(nil), request.Input...)}, "", nil
@@ -613,12 +647,12 @@ func (a *App) callWorkflowNode(ctx context.Context, batch db.ExecutionBatch, rev
 		}
 		return sdk.ActionResult{Output: mustJSON(map[string]any{"value": input.Value})}, "", nil
 	case "core.human_approval":
-		result, err := a.workflowHumanApproval(ctx, batch, node, request.Input)
+		result, err := a.workflowHumanApproval(ctx, run, node, request.Input)
 		return result, "human_task", err
 	default:
-		if batch.EventRecordID != nil {
+		if run.EventRecordID != nil {
 			if _, _, ok := a.Plugins.Trigger(node.NodeType); ok || node.NodeType == "core.event" {
-				_, data, err := a.workflowBatchEvent(ctx, batch)
+				_, data, err := a.workflowRunEvent(ctx, run)
 				if err != nil {
 					return sdk.ActionResult{}, "event", err
 				}
@@ -637,7 +671,7 @@ func (a *App) callWorkflowNode(ctx context.Context, batch db.ExecutionBatch, rev
 	}
 }
 
-func (a *App) commitWorkflowNodeSuccess(ctx context.Context, run db.WorkflowNodeRun, batch db.ExecutionBatch, revision db.WorkflowRevision, node workflowGraphNode, operationKey string, iteration int, output, state json.RawMessage, artifacts []sdk.Artifact, startedAt time.Time) error {
+func (a *App) commitWorkflowNodeSuccess(ctx context.Context, runNode db.WorkflowRunNode, run db.WorkflowRun, revision db.WorkflowRevision, node workflowGraphNode, operationKey string, iteration int, output, state json.RawMessage, artifacts []sdk.Artifact, startedAt time.Time) error {
 	return a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := time.Now().UTC()
 		duration := max(now.Sub(startedAt).Milliseconds(), 0)
@@ -649,24 +683,36 @@ func (a *App) commitWorkflowNodeSuccess(ctx context.Context, run db.WorkflowNode
 		if err != nil {
 			return errors.New("encode workflow artifact manifest failed")
 		}
-		if err := tx.Model(&db.WorkflowNodeRun{}).Where("id = ? AND status = ?", run.ID, BatchStatusRunning).
-			Updates(map[string]any{"status": BatchStatusSucceeded, "completed_at": now, "duration_ms": duration}).Error; err != nil {
+		checkpointOutput := output
+		outputSummary := workflowJSONSummary(output)
+		if run.EventRecordID != nil && a.workflowEventTriggerNode(node.NodeType) {
+			checkpointOutput = json.RawMessage(`{}`)
+			outputSummary = mustJSONString(map[string]any{"eventRecordId": *run.EventRecordID})
+		}
+		if err := tx.Model(&db.WorkflowRunNode{}).Where("id = ? AND status = ?", runNode.ID, RunStatusRunning).
+			Updates(map[string]any{"status": RunStatusSucceeded, "output_summary": outputSummary, "completed_at": now, "duration_ms": duration}).Error; err != nil {
 			return errors.New("finish workflow node run failed")
 		}
-		checkpoint := db.WorkflowCheckpoint{
-			BatchID: batch.ID, WorkflowID: batch.WorkflowID, RevisionID: revision.ID,
+		checkpoint := db.WorkflowRunCheckpoint{
+			RunID: run.ID, RunNodeID: runNode.ID, WorkflowID: run.WorkflowID, RevisionID: revision.ID,
 			NodeInstanceID: node.NodeInstanceID, LoopIteration: iteration, OperationKey: operationKey,
-			OutputJSON: string(output), ArtifactsJSON: artifactsJSON, CreatedAt: now,
+			Status: RunStatusSucceeded, OutputJSON: string(checkpointOutput), ArtifactsJSON: artifactsJSON, CreatedAt: now,
 		}
 		if err := tx.Create(&checkpoint).Error; err != nil {
 			return errors.New("create workflow checkpoint failed")
 		}
-		if err := createWorkflowArtifactRefs(tx, checkpoint.ID, manifests); err != nil {
+		if err := createWorkflowArtifactRefs(tx, runNode.ID, manifests); err != nil {
+			return err
+		}
+		if err := appendWorkflowNodeLog(tx, db.WorkflowNodeLog{
+			WorkflowID: run.WorkflowID, RunID: run.ID, RunNodeID: runNode.ID, LoggedAt: now,
+			Level: "info", Message: "节点执行成功", FieldsJSON: workflowLogFields(map[string]any{"duration_ms": duration}),
+		}); err != nil {
 			return err
 		}
 		if len(state) > 0 {
 			nodeState := db.WorkflowNodeState{
-				WorkflowID: batch.WorkflowID, NodeInstanceID: node.NodeInstanceID, NodeType: node.NodeType,
+				WorkflowID: run.WorkflowID, NodeInstanceID: node.NodeInstanceID, NodeType: node.NodeType,
 				RevisionID: revision.ID, StateJSON: string(state), UpdatedAt: now,
 			}
 			if err := tx.Clauses(clause.OnConflict{
@@ -682,19 +728,29 @@ func (a *App) commitWorkflowNodeSuccess(ctx context.Context, run db.WorkflowNode
 	})
 }
 
-func (a *App) buildWorkflowBatchGraph(raw string) (workflowBatchGraph, error) {
+func (a *App) workflowEventTriggerNode(nodeType string) bool {
+	if nodeType == "core.event" {
+		return true
+	}
+	_, _, ok := a.Plugins.Trigger(nodeType)
+	return ok
+}
+
+func mustJSONString(value any) string { return string(mustJSON(value)) }
+
+func (a *App) buildWorkflowRunGraph(raw string) (workflowRunGraph, error) {
 	validated, err := a.validateWorkflowGraph(json.RawMessage(raw))
 	if err != nil {
-		return workflowBatchGraph{}, err
+		return workflowRunGraph{}, err
 	}
 	var graph workflowGraph
 	if json.Unmarshal([]byte(validated.graphJSON), &graph) != nil {
-		return workflowBatchGraph{}, errors.New("decode workflow graph failed")
+		return workflowRunGraph{}, errors.New("decode workflow graph failed")
 	}
-	return buildWorkflowBatchGraph(graph, validated.nodes, validated.descriptors, validated.mainTriggerID), nil
+	return buildWorkflowRunGraph(graph, validated.nodes, validated.descriptors, validated.mainTriggerID), nil
 }
 
-func buildWorkflowBatchGraph(graph workflowGraph, nodes map[string]workflowGraphNode, descriptors map[string]sdk.NodeDescriptor, startID string) workflowBatchGraph {
+func buildWorkflowRunGraph(graph workflowGraph, nodes map[string]workflowGraphNode, descriptors map[string]sdk.NodeDescriptor, startID string) workflowRunGraph {
 	incoming := make(map[string][]workflowGraphEdge, len(graph.Nodes))
 	adjacency := make(map[string][]string, len(graph.Nodes))
 	degrees := make(map[string]int, len(graph.Nodes))
@@ -720,19 +776,19 @@ func buildWorkflowBatchGraph(graph workflowGraph, nodes map[string]workflowGraph
 			}
 		}
 	}
-	return workflowBatchGraph{graph: graph, nodes: nodes, descriptors: descriptors, order: order, incoming: incoming}
+	return workflowRunGraph{graph: graph, nodes: nodes, descriptors: descriptors, order: order, incoming: incoming}
 }
 
-func (a *App) buildWorkflowLoopGraph(node workflowGraphNode) (workflowBatchGraph, workflowLoopConfig, string, string, error) {
+func (a *App) buildWorkflowLoopGraph(node workflowGraphNode) (workflowRunGraph, workflowLoopConfig, string, string, error) {
 	loop, err := validateWorkflowLoop(node, a.workflowNodeDescriptors())
 	if err != nil {
-		return workflowBatchGraph{}, workflowLoopConfig{}, "", "", err
+		return workflowRunGraph{}, workflowLoopConfig{}, "", "", err
 	}
 	mapping := make(map[string]string, len(loop.nodes))
 	for bodyID := range loop.nodes {
 		mapping[bodyID], err = workflowLoopNodeID(node.NodeInstanceID, bodyID)
 		if err != nil {
-			return workflowBatchGraph{}, workflowLoopConfig{}, "", "", err
+			return workflowRunGraph{}, workflowLoopConfig{}, "", "", err
 		}
 	}
 	graph := workflowGraph{SchemaVersion: 1, Nodes: make([]workflowGraphNode, 0, len(loop.config.Body.Nodes)), Edges: make([]workflowGraphEdge, 0, len(loop.config.Body.Edges))}
@@ -759,10 +815,10 @@ func (a *App) buildWorkflowLoopGraph(node workflowGraphNode) (workflowBatchGraph
 		graph.Edges = append(graph.Edges, runtimeEdge)
 	}
 	itemID, endID := mapping[loop.itemID], mapping[loop.endID]
-	return buildWorkflowBatchGraph(graph, nodes, descriptors, itemID), loop.config, itemID, endID, nil
+	return buildWorkflowRunGraph(graph, nodes, descriptors, itemID), loop.config, itemID, endID, nil
 }
 
-func (a *App) executeWorkflowLoop(ctx context.Context, batch db.ExecutionBatch, revision db.WorkflowRevision, node workflowGraphNode, rawInput json.RawMessage, event map[string]string) (sdk.ActionResult, error) {
+func (a *App) executeWorkflowLoop(ctx context.Context, run db.WorkflowRun, revision db.WorkflowRevision, node workflowGraphNode, rawInput json.RawMessage, event map[string]string) (sdk.ActionResult, error) {
 	graph, config, itemID, endID, err := a.buildWorkflowLoopGraph(node)
 	if err != nil {
 		return sdk.ActionResult{}, err
@@ -776,7 +832,7 @@ func (a *App) executeWorkflowLoop(ctx context.Context, batch db.ExecutionBatch, 
 	if input.Value == nil {
 		input.Value = map[string]any{}
 	}
-	startedAt, err := a.workflowLoopStartedAt(ctx, batch.ID, node.NodeInstanceID)
+	startedAt, err := a.workflowLoopStartedAt(ctx, run.ID, node.NodeInstanceID)
 	if err != nil {
 		return sdk.ActionResult{}, err
 	}
@@ -788,7 +844,7 @@ func (a *App) executeWorkflowLoop(ctx context.Context, batch db.ExecutionBatch, 
 		if err := workflowLoopContextError(ctx, loopCtx); err != nil {
 			return sdk.ActionResult{}, err
 		}
-		outputs, err := a.loadWorkflowIterationCheckpoints(loopCtx, batch.ID, iteration, graph.order)
+		outputs, err := a.loadWorkflowIterationCheckpoints(loopCtx, run.ID, iteration, graph.order)
 		if err != nil {
 			return sdk.ActionResult{}, err
 		}
@@ -796,7 +852,7 @@ func (a *App) executeWorkflowLoop(ctx context.Context, batch db.ExecutionBatch, 
 			if _, completed := outputs[nodeID]; completed {
 				continue
 			}
-			if cancelled, paused := a.batchShouldStop(loopCtx, batch.ID, batch.WorkflowID); cancelled || paused {
+			if cancelled, paused := a.runShouldStop(loopCtx, run.ID, run.WorkflowID); cancelled || paused {
 				return sdk.ActionResult{}, context.Canceled
 			}
 			bodyNode := graph.nodes[nodeID]
@@ -816,7 +872,7 @@ func (a *App) executeWorkflowLoop(ctx context.Context, batch db.ExecutionBatch, 
 					return sdk.ActionResult{}, err
 				}
 			}
-			outcome := a.executeWorkflowNode(loopCtx, batch, revision, graph, bodyNode, bodyInput, event, iteration)
+			outcome := a.executeWorkflowNode(loopCtx, run, revision, graph, bodyNode, bodyInput, event, iteration)
 			if outcome.waiting {
 				return sdk.ActionResult{}, errors.New("loop body cannot enter a durable wait")
 			}
@@ -856,10 +912,10 @@ func (a *App) executeWorkflowLoop(ctx context.Context, batch db.ExecutionBatch, 
 	return sdk.ActionResult{}, errors.New("loop did not produce a result")
 }
 
-func (a *App) workflowLoopStartedAt(ctx context.Context, batchID int64, nodeID string) (time.Time, error) {
+func (a *App) workflowLoopStartedAt(ctx context.Context, runID int64, nodeID string) (time.Time, error) {
 	var startedAt time.Time
-	err := a.DB.WithContext(ctx).Model(&db.WorkflowNodeRun{}).
-		Where("batch_id = ? AND node_instance_id = ? AND loop_iteration = 0", batchID, nodeID).
+	err := a.DB.WithContext(ctx).Model(&db.WorkflowRunNode{}).
+		Where("run_id = ? AND node_instance_id = ? AND loop_iteration = 0", runID, nodeID).
 		Select("MIN(started_at)").Scan(&startedAt).Error
 	if err != nil || startedAt.IsZero() {
 		return time.Time{}, errors.New("load workflow loop deadline failed")
@@ -984,25 +1040,25 @@ func workflowCELNative(value ref.Val) (any, error) {
 	return native, nil
 }
 
-func (a *App) loadWorkflowCheckpoints(ctx context.Context, batchID int64) (map[string]map[string]any, error) {
-	var checkpoints []db.WorkflowCheckpoint
-	if err := a.DB.WithContext(ctx).Where("batch_id = ? AND loop_iteration = 0", batchID).Order("id").Find(&checkpoints).Error; err != nil {
+func (a *App) loadWorkflowRunCheckpoints(ctx context.Context, runID int64) (map[string]map[string]any, error) {
+	var checkpoints []db.WorkflowRunCheckpoint
+	if err := a.DB.WithContext(ctx).Where("run_id = ? AND loop_iteration = 0", runID).Order("id").Find(&checkpoints).Error; err != nil {
 		return nil, err
 	}
-	return decodeWorkflowCheckpointOutputs(checkpoints)
+	return decodeWorkflowRunCheckpointOutputs(checkpoints)
 }
 
-func (a *App) loadWorkflowIterationCheckpoints(ctx context.Context, batchID int64, iteration int, nodeIDs []string) (map[string]map[string]any, error) {
-	var checkpoints []db.WorkflowCheckpoint
+func (a *App) loadWorkflowIterationCheckpoints(ctx context.Context, runID int64, iteration int, nodeIDs []string) (map[string]map[string]any, error) {
+	var checkpoints []db.WorkflowRunCheckpoint
 	if err := a.DB.WithContext(ctx).Where(
-		"batch_id = ? AND loop_iteration = ? AND node_instance_id IN ?", batchID, iteration, nodeIDs,
+		"run_id = ? AND loop_iteration = ? AND node_instance_id IN ?", runID, iteration, nodeIDs,
 	).Order("id").Find(&checkpoints).Error; err != nil {
 		return nil, err
 	}
-	return decodeWorkflowCheckpointOutputs(checkpoints)
+	return decodeWorkflowRunCheckpointOutputs(checkpoints)
 }
 
-func decodeWorkflowCheckpointOutputs(checkpoints []db.WorkflowCheckpoint) (map[string]map[string]any, error) {
+func decodeWorkflowRunCheckpointOutputs(checkpoints []db.WorkflowRunCheckpoint) (map[string]map[string]any, error) {
 	outputs := make(map[string]map[string]any, len(checkpoints))
 	for _, checkpoint := range checkpoints {
 		var output map[string]any
@@ -1014,42 +1070,63 @@ func decodeWorkflowCheckpointOutputs(checkpoints []db.WorkflowCheckpoint) (map[s
 	return outputs, nil
 }
 
-func (a *App) nextWorkflowNodeAttempt(ctx context.Context, batchID int64, nodeID string, iteration int) (int, error) {
+func (a *App) nextWorkflowNodeAttempt(ctx context.Context, runID int64, nodeID string, iteration int) (int, error) {
 	var latest int
-	err := a.DB.WithContext(ctx).Model(&db.WorkflowNodeRun{}).
-		Where("batch_id = ? AND node_instance_id = ? AND loop_iteration = ?", batchID, nodeID, iteration).
+	err := a.DB.WithContext(ctx).Model(&db.WorkflowRunNode{}).
+		Where("run_id = ? AND node_instance_id = ? AND loop_iteration = ?", runID, nodeID, iteration).
 		Select("COALESCE(MAX(attempt), 0)").Scan(&latest).Error
 	return latest + 1, err
 }
 
-func (a *App) finishWorkflowNodeRun(runID int64, status, category string, startedAt time.Time) {
+func (a *App) finishWorkflowRunNode(workflowID int64, runNode db.WorkflowRunNode, status, category, message string, startedAt time.Time) {
 	now := time.Now().UTC()
 	duration := max(now.Sub(startedAt).Milliseconds(), 0)
-	_ = a.DB.Model(&db.WorkflowNodeRun{}).Where("id = ? AND status = ?", runID, BatchStatusRunning).
-		Updates(map[string]any{"status": status, "error_category": category, "completed_at": now, "duration_ms": duration}).Error
+	updates := map[string]any{"status": status, "completed_at": now, "duration_ms": duration}
+	if category == "" {
+		updates["error_category"] = nil
+	} else {
+		updates["error_category"] = category
+	}
+	if message == "" {
+		updates["error_message"] = nil
+	} else {
+		updates["error_message"] = workflowLogMessage(message)
+	}
+	if err := a.DB.Model(&db.WorkflowRunNode{}).Where("id = ? AND status = ?", runNode.ID, RunStatusRunning).Updates(updates).Error; err != nil {
+		return
+	}
+	level := slog.LevelInfo
+	if status == RunStatusFailed {
+		level = slog.LevelError
+	} else if status == RunStatusCancelled {
+		level = slog.LevelWarn
+	}
+	a.appendWorkflowNodeLog(context.Background(), workflowID, runNode.RunID, runNode.ID, level, message, map[string]any{
+		"status": status, "error_category": category, "duration_ms": duration,
+	})
 }
 
-func (a *App) retryWorkflowBatch(batchID int64, attempt int) {
+func (a *App) retryWorkflowRun(runID int64, attempt int) {
 	now := time.Now().UTC()
-	_ = a.DB.Model(&db.ExecutionBatch{}).Where("id = ?", batchID).Updates(map[string]any{
-		"status": BatchStatusRetrying, "not_before": now.Add(time.Duration(attempt) * time.Second),
-		"lease_token": nil, "lease_expires_at": nil, "updated_at": now,
+	_ = a.DB.Model(&db.WorkflowRun{}).Where("id = ?", runID).Updates(map[string]any{
+		"status": RunStatusRetrying, "not_before": now.Add(time.Duration(attempt) * time.Second),
+		"lease_token": nil, "lease_expires_at": nil, "error_category": nil, "error_message": nil, "updated_at": now,
 	}).Error
 }
 
-func (a *App) failWorkflowBatch(batchID int64, category string) {
-	a.finishWorkflowBatch(batchID, BatchStatusFailed, category)
+func (a *App) failWorkflowRun(runID int64, category string) {
+	a.finishWorkflowRun(runID, RunStatusFailed, category)
 }
 
-func (a *App) cancelWorkflowBatch(batchID int64) {
-	a.finishWorkflowBatch(batchID, BatchStatusCancelled, "cancelled")
+func (a *App) cancelWorkflowRun(runID int64) {
+	a.finishWorkflowRun(runID, RunStatusCancelled, "cancelled")
 }
 
-func (a *App) completeWorkflowBatch(batchID int64) {
-	a.finishWorkflowBatch(batchID, BatchStatusSucceeded, "")
+func (a *App) completeWorkflowRun(runID int64) {
+	a.finishWorkflowRun(runID, RunStatusSucceeded, "")
 }
 
-func (a *App) finishWorkflowBatch(batchID int64, status, category string) {
+func (a *App) finishWorkflowRun(runID int64, status, category string) {
 	now := time.Now().UTC()
 	updates := map[string]any{
 		"status": status, "completed_at": now, "lease_token": nil, "lease_expires_at": nil,
@@ -1061,52 +1138,74 @@ func (a *App) finishWorkflowBatch(batchID int64, status, category string) {
 		updates["error_category"] = category
 	}
 	err := a.DB.Transaction(func(tx *gorm.DB) error {
-		var batch db.ExecutionBatch
-		if err := tx.First(&batch, batchID).Error; err != nil {
+		var run db.WorkflowRun
+		if err := tx.First(&run, runID).Error; err != nil {
 			return err
 		}
-		if err := tx.Model(&batch).Updates(updates).Error; err != nil {
+		updates["result_summary"] = workflowRunResultSummary(tx, runID)
+		if category == "" {
+			updates["error_message"] = nil
+		} else {
+			updates["error_message"] = workflowLogMessage("工作流运行失败: " + category)
+		}
+		if err := tx.Model(&run).Updates(updates).Error; err != nil {
 			return err
 		}
-		if status == BatchStatusFailed && batch.TriggerType != "failure" {
-			return a.enqueueWorkflowEvent(tx, newWorkflowFailureEvent(batch, category, now))
+		if status == RunStatusFailed && run.TriggerType != "failure" {
+			return a.enqueueWorkflowEvent(tx, newWorkflowFailureEvent(run, category, now))
 		}
 		return nil
 	})
 	if err != nil {
-		slog.Error("finish workflow batch failed", "batch_id", batchID, "error_category", "batch_finish")
+		slog.Error("finish workflow run failed", "run_id", runID, "error_category", "run_finish")
 	}
 }
 
-func (a *App) requeueWorkflowBatch(batchID int64) {
+func workflowRunResultSummary(tx *gorm.DB, runID int64) string {
+	var attempts int64
+	_ = tx.Model(&db.WorkflowRunNode{}).Where("run_id = ?", runID).Count(&attempts).Error
+	summary := map[string]any{"nodeAttempts": attempts}
+	var last db.WorkflowRunNode
+	if err := tx.Where("run_id = ?", runID).Order("id DESC").First(&last).Error; err == nil {
+		summary["lastNodeInstanceId"] = last.NodeInstanceID
+		summary["lastNodeStatus"] = last.Status
+		var output map[string]any
+		if json.Unmarshal([]byte(last.OutputSummary), &output) == nil && len(output) > 0 {
+			summary["output"] = output
+		}
+	}
+	return mustJSONString(summary)
+}
+
+func (a *App) requeueWorkflowRun(runID int64) {
 	now := time.Now().UTC()
-	_ = a.DB.Model(&db.ExecutionBatch{}).Where("id = ?", batchID).Updates(map[string]any{
-		"status": BatchStatusQueued, "not_before": now, "lease_token": nil,
+	_ = a.DB.Model(&db.WorkflowRun{}).Where("id = ?", runID).Updates(map[string]any{
+		"status": RunStatusQueued, "not_before": now, "lease_token": nil,
 		"lease_expires_at": nil, "updated_at": now,
 	}).Error
 }
 
-func (a *App) waitWorkflowBatch(batchID int64) {
+func (a *App) waitWorkflowRun(runID int64) {
 	now := time.Now().UTC()
-	_ = a.DB.Model(&db.ExecutionBatch{}).Where("id = ? AND status = ?", batchID, BatchStatusRunning).Updates(map[string]any{
-		"status": BatchStatusWaiting, "lease_token": nil, "lease_expires_at": nil, "updated_at": now,
+	_ = a.DB.Model(&db.WorkflowRun{}).Where("id = ? AND status = ?", runID, RunStatusRunning).Updates(map[string]any{
+		"status": RunStatusWaiting, "lease_token": nil, "lease_expires_at": nil, "updated_at": now,
 	}).Error
 }
 
-func (a *App) batchShouldStop(ctx context.Context, batchID, workflowID int64) (cancelled, paused bool) {
+func (a *App) runShouldStop(ctx context.Context, runID, workflowID int64) (cancelled, paused bool) {
 	var row struct {
 		Status            string
 		CancelRequestedAt *time.Time
 	}
-	if err := a.DB.Raw(`SELECT w.status, eb.cancel_requested_at FROM workflows w JOIN execution_batches eb ON eb.workflow_id = w.id WHERE eb.id = ? AND w.id = ?`, batchID, workflowID).Scan(&row).Error; err != nil {
+	if err := a.DB.Raw(`SELECT w.status, r.cancel_requested_at FROM workflows w JOIN workflow_runs r ON r.workflow_id = w.id WHERE r.id = ? AND w.id = ?`, runID, workflowID).Scan(&row).Error; err != nil {
 		return false, true
 	}
 	cancelled = row.CancelRequestedAt != nil
-	return cancelled, !cancelled && (ctx.Err() != nil || row.Status != WorkflowStatusRunning)
+	return cancelled, !cancelled && (ctx.Err() != nil || row.Status != WorkflowStatusActive)
 }
 
-func (a *App) renewBatchLease(ctx context.Context, batchID int64, token string, done <-chan struct{}) {
-	ticker := time.NewTicker(batchLeaseDuration / 3)
+func (a *App) renewRunLease(ctx context.Context, runID int64, token string, done <-chan struct{}) {
+	ticker := time.NewTicker(runLeaseDuration / 3)
 	defer ticker.Stop()
 	for {
 		select {
@@ -1115,14 +1214,14 @@ func (a *App) renewBatchLease(ctx context.Context, batchID int64, token string, 
 		case <-done:
 			return
 		case now := <-ticker.C:
-			_ = a.DB.WithContext(ctx).Model(&db.ExecutionBatch{}).
-				Where("id = ? AND status = ? AND lease_token = ?", batchID, BatchStatusRunning, token).
-				Updates(map[string]any{"lease_expires_at": now.UTC().Add(batchLeaseDuration), "updated_at": now.UTC()}).Error
+			_ = a.DB.WithContext(ctx).Model(&db.WorkflowRun{}).
+				Where("id = ? AND status = ? AND lease_token = ?", runID, RunStatusRunning, token).
+				Updates(map[string]any{"lease_expires_at": now.UTC().Add(runLeaseDuration), "updated_at": now.UTC()}).Error
 		}
 	}
 }
 
-func (a *App) enqueueScheduledBatches(ctx context.Context, now time.Time) error {
+func (a *App) enqueueScheduledRuns(ctx context.Context, now time.Time) error {
 	var due []struct {
 		WorkflowID int64
 		RevisionID int64
@@ -1134,12 +1233,12 @@ SELECT w.id AS workflow_id, wr.id AS revision_id, wr.graph_json, rt.next_schedul
 FROM workflows w
 JOIN workflow_revisions wr ON wr.id = w.active_revision_id
 JOIN workflow_runtimes rt ON rt.workflow_id = w.id
-WHERE w.status = 'running' AND rt.next_scheduled_at IS NOT NULL AND rt.next_scheduled_at <= ?
+WHERE w.status = 'active' AND rt.next_scheduled_at IS NOT NULL AND rt.next_scheduled_at <= ?
 ORDER BY w.id`, now).Scan(&due).Error; err != nil {
 		return err
 	}
 	for _, item := range due {
-		graph, err := a.buildWorkflowBatchGraph(item.GraphJSON)
+		graph, err := a.buildWorkflowRunGraph(item.GraphJSON)
 		if err != nil {
 			continue
 		}
@@ -1166,12 +1265,12 @@ ORDER BY w.id`, now).Scan(&due).Error; err != nil {
 			if err := enforceWorkflowBacklog(tx, item.WorkflowID); err != nil {
 				return nil
 			}
-			batch := db.ExecutionBatch{
+			run := db.WorkflowRun{
 				WorkflowID: item.WorkflowID, RevisionID: item.RevisionID, TriggerType: "schedule",
-				TriggerKey: dueAt.Format(time.RFC3339Nano), Status: BatchStatusQueued,
-				NotBefore: now, TriggeredAt: dueAt, CreatedAt: now, UpdatedAt: now,
+				TriggerKey: dueAt.Format(time.RFC3339Nano), Status: RunStatusQueued,
+				NotBefore: now, TriggeredAt: dueAt, ResultSummary: `{}`, CreatedAt: now, UpdatedAt: now,
 			}
-			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&batch).Error; err != nil {
+			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&run).Error; err != nil {
 				return err
 			}
 			next := dueAt.Add(interval)
@@ -1182,7 +1281,7 @@ ORDER BY w.id`, now).Scan(&due).Error; err != nil {
 				"last_scheduled_at": dueAt, "next_scheduled_at": next, "updated_at": now,
 			}).Error
 		}); err != nil {
-			return errors.New("enqueue scheduled workflow batch failed")
+			return errors.New("enqueue scheduled workflow run failed")
 		}
 	}
 	return nil
@@ -1193,7 +1292,7 @@ func enforceWorkflowBacklog(tx *gorm.DB, workflowID int64) error {
 		BacklogLimit int
 		Queued       int64
 	}
-	if err := tx.Raw(`SELECT wr.backlog_limit, (SELECT COUNT(*) FROM execution_batches eb WHERE eb.workflow_id = wr.workflow_id AND eb.status IN ('queued','running','waiting','retrying')) AS queued FROM workflow_runtimes wr WHERE wr.workflow_id = ?`, workflowID).Scan(&limits).Error; err != nil {
+	if err := tx.Raw(`SELECT wr.backlog_limit, (SELECT COUNT(*) FROM workflow_runs r WHERE r.workflow_id = wr.workflow_id AND r.status IN ('queued','running','waiting','retrying')) AS queued FROM workflow_runtimes wr WHERE wr.workflow_id = ?`, workflowID).Scan(&limits).Error; err != nil {
 		return errors.New("read workflow backlog failed")
 	}
 	if limits.Queued >= int64(limits.BacklogLimit) {
@@ -1212,58 +1311,67 @@ func scheduleInterval(raw json.RawMessage) (time.Duration, error) {
 	return time.Duration(config.EverySeconds) * time.Second, nil
 }
 
-func workflowOperationKey(batchID int64, nodeID string, iteration int) string {
-	digest := sha256.Sum256([]byte(fmt.Sprintf("%d:%s:%d", batchID, nodeID, iteration)))
+func workflowOperationKey(runID int64, nodeID string, iteration int) string {
+	digest := sha256.Sum256([]byte(fmt.Sprintf("%d:%s:%d", runID, nodeID, iteration)))
 	return hex.EncodeToString(digest[:])
 }
 
-func workflowBatchView(batch db.ExecutionBatch) WorkflowBatchView {
-	view := WorkflowBatchView{
-		ID: batch.ID, WorkflowID: batch.WorkflowID, RevisionID: batch.RevisionID,
-		TriggerType: batch.TriggerType, Status: batch.Status,
-		CurrentNodeInstanceID: batch.CurrentNodeInstanceID, TriggeredAt: formatWorkflowTime(batch.TriggeredAt),
-		PartitionKey: batch.PartitionKey, Diagnostic: batch.Diagnostic,
+func workflowRunView(run db.WorkflowRun) WorkflowRunView {
+	view := WorkflowRunView{
+		ID: run.ID, WorkflowID: run.WorkflowID, RevisionID: run.RevisionID,
+		TriggerType: run.TriggerType, Status: run.Status,
+		CurrentNodeInstanceID: run.CurrentNodeInstanceID, TriggeredAt: formatWorkflowTime(run.TriggeredAt),
+		PartitionKey: run.PartitionKey, Diagnostic: run.Diagnostic, ResultSummary: json.RawMessage(run.ResultSummary),
 	}
-	if batch.OriginalBatchID != nil {
-		view.OriginalBatchID = *batch.OriginalBatchID
+	if len(view.ResultSummary) == 0 {
+		view.ResultSummary = json.RawMessage(`{}`)
 	}
-	if batch.StartedAt != nil {
-		view.StartedAt = formatWorkflowTime(*batch.StartedAt)
+	if run.EventRecordID != nil {
+		view.EventRecordID = *run.EventRecordID
 	}
-	if batch.CompletedAt != nil {
-		view.CompletedAt = formatWorkflowTime(*batch.CompletedAt)
+	if run.OriginalRunID != nil {
+		view.OriginalRunID = *run.OriginalRunID
 	}
-	if batch.CancelRequestedAt != nil {
-		view.CancelRequestedAt = formatWorkflowTime(*batch.CancelRequestedAt)
+	if run.StartedAt != nil {
+		view.StartedAt = formatWorkflowTime(*run.StartedAt)
 	}
-	if batch.ErrorCategory != nil {
-		view.ErrorCategory = *batch.ErrorCategory
+	if run.CompletedAt != nil {
+		view.CompletedAt = formatWorkflowTime(*run.CompletedAt)
+	}
+	if run.CancelRequestedAt != nil {
+		view.CancelRequestedAt = formatWorkflowTime(*run.CancelRequestedAt)
+	}
+	if run.ErrorCategory != nil {
+		view.ErrorCategory = *run.ErrorCategory
+	}
+	if run.ErrorMessage != nil {
+		view.ErrorMessage = *run.ErrorMessage
 	}
 	return view
 }
 
-func (a *App) createDiagnosticReplay(ctx context.Context, batchID int64) (WorkflowBatchView, error) {
+func (a *App) createDiagnosticReplay(ctx context.Context, runID int64) (WorkflowRunView, error) {
 	now := time.Now().UTC()
-	var replay db.ExecutionBatch
+	var replay db.WorkflowRun
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var original db.ExecutionBatch
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&original, batchID).Error; err != nil {
+		var original db.WorkflowRun
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&original, runID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return fmt.Errorf("%w: workflow batch", ErrNotFound)
+				return fmt.Errorf("%w: workflow run", ErrNotFound)
 			}
-			return errors.New("load workflow batch failed")
+			return errors.New("load workflow run failed")
 		}
-		if original.Status != BatchStatusSucceeded && original.Status != BatchStatusFailed && original.Status != BatchStatusCancelled {
-			return fmt.Errorf("%w: only a terminal batch can be replayed", ErrConflict)
+		if original.Status != RunStatusSucceeded && original.Status != RunStatusFailed && original.Status != RunStatusCancelled {
+			return fmt.Errorf("%w: only a terminal run can be replayed", ErrConflict)
 		}
 		if err := enforceWorkflowBacklog(tx, original.WorkflowID); err != nil {
 			return err
 		}
-		replay = db.ExecutionBatch{
+		replay = db.WorkflowRun{
 			WorkflowID: original.WorkflowID, RevisionID: original.RevisionID, TriggerType: original.TriggerType,
 			TriggerKey: "replay:" + security.RandomToken(), EventRecordID: original.EventRecordID,
-			PartitionKey: original.PartitionKey, Diagnostic: true, OriginalBatchID: &original.ID,
-			Status: BatchStatusQueued, NotBefore: now, TriggeredAt: original.TriggeredAt,
+			PartitionKey: original.PartitionKey, Diagnostic: true, OriginalRunID: &original.ID,
+			Status: RunStatusQueued, NotBefore: now, TriggeredAt: original.TriggeredAt, ResultSummary: `{}`,
 			CreatedBy: original.CreatedBy, CreatedAt: now, UpdatedAt: now,
 		}
 		if err := tx.Create(&replay).Error; err != nil {
@@ -1272,18 +1380,18 @@ func (a *App) createDiagnosticReplay(ctx context.Context, batchID int64) (Workfl
 		return nil
 	})
 	if err != nil {
-		return WorkflowBatchView{}, err
+		return WorkflowRunView{}, err
 	}
-	return workflowBatchView(replay), nil
+	return workflowRunView(replay), nil
 }
 
-func (a *App) replayWorkflowSideEffect(ctx context.Context, batch db.ExecutionBatch, nodeID string, iteration int) (map[string]any, []sdk.Artifact, error) {
-	if batch.OriginalBatchID == nil {
-		return nil, nil, errors.New("diagnostic replay has no original batch")
+func (a *App) replayWorkflowSideEffect(ctx context.Context, run db.WorkflowRun, nodeID string, iteration int) (map[string]any, []sdk.Artifact, error) {
+	if run.OriginalRunID == nil {
+		return nil, nil, errors.New("diagnostic replay has no original run")
 	}
-	var checkpoint db.WorkflowCheckpoint
+	var checkpoint db.WorkflowRunCheckpoint
 	if err := a.DB.WithContext(ctx).Where(
-		"batch_id = ? AND node_instance_id = ? AND loop_iteration = ?", *batch.OriginalBatchID, nodeID, iteration,
+		"run_id = ? AND node_instance_id = ? AND loop_iteration = ?", *run.OriginalRunID, nodeID, iteration,
 	).First(&checkpoint).Error; err != nil {
 		return nil, nil, errors.New("original side effect checkpoint is unavailable")
 	}

@@ -22,7 +22,7 @@
 
 | 路由                                                            | 语义                                   |
 | --------------------------------------------------------------- | -------------------------------------- |
-| `GET /api/v1/workflows/templates`                               | 列出当前可创建的批次、事件和连续流模板 |
+| `GET /api/v1/workflows/templates`                               | 列出当前可创建的批处理、事件和连续流模板 |
 | `POST /api/v1/events`                                           | 发布 CloudEvents 1.0 结构化 JSON       |
 | `POST /api/v1/webhooks/{workflowId}`                            | 通过工作流 Secret 发布 Webhook 事件    |
 | `GET /api/v1/human-tasks`                                       | 查询待处理人工任务                     |
@@ -30,42 +30,40 @@
 | `GET /api/v1/workflows/node-definitions`                        | 列出核心与编译期插件节点 Schema        |
 | `POST /api/v1/workflows/validate`                               | 只读校验完整工作流图                   |
 | `GET/POST /api/v1/workflows`                                    | 列表，或从模板创建工作流及初始修订     |
-| `GET /api/v1/workflows/{workflowId}`                            | 读取元数据、活动修订和唯一运行实例摘要 |
+| `GET /api/v1/workflows/{workflowId}`                            | 读取元数据、活动修订和运行时容量       |
 | `PATCH /api/v1/workflows/{workflowId}`                          | 更新工作流名称和说明，不修改活动修订   |
 | `GET/POST /api/v1/workflows/{workflowId}/revisions`             | 列表，或保存新不可变修订               |
 | `GET /api/v1/workflows/{workflowId}/revisions/{revisionId}`     | 读取固定修订                           |
-| `POST /api/v1/workflows/{workflowId}/lifecycle`                 | 执行 `start`、`pause` 或 `archive`     |
-| `GET/POST /api/v1/workflows/{workflowId}/batches`               | 分页查询批次，或创建手工批次           |
-| `GET /api/v1/workflows/{workflowId}/activity`                   | 按单调游标读取持久活动                 |
-| `GET /api/v1/workflows/{workflowId}/activity/ws`                | 游标补齐后推送活动增量                 |
-| `GET /api/v1/batches/{batchId}`                                 | 读取批次、节点路径、活动和制品引用     |
-| `POST /api/v1/batches/{batchId}`                                | 执行 `cancel`、`retry` 或 `replay`     |
+| `POST /api/v1/workflows/{workflowId}/lifecycle`                 | 执行 `activate` 或 `deactivate`        |
+| `GET/POST /api/v1/workflows/{workflowId}/runs`                  | 搜索运行日志，或创建手工运行           |
+| `GET /api/v1/workflow-runs/{runId}`                             | 读取事件、节点尝试、日志和制品引用     |
+| `POST /api/v1/workflow-runs/{runId}`                            | 执行 `cancel`、`retry` 或 `replay`     |
 | `GET /api/v1/artifacts/{sha256}/manifest`                       | 读取并校验制品清单                     |
 | `GET /api/v1/artifacts/{sha256}/download`                       | 下载解压后的制品正文                   |
 | `GET/POST /api/v1/result-views`                                 | 列出获授权视图，或由管理员创建固定视图 |
 | `GET /api/v1/result-views/{viewId}`                             | 读取授权视图的公开描述                 |
 | `PUT /api/v1/result-views/{viewId}/grants`                      | 管理员原子替换用户与角色授权           |
 | `POST /api/v1/result-views/{viewId}/revoke`                     | 管理员不可逆撤销共享视图               |
-| `GET /api/v1/result-views/{viewId}/batches`                     | 读取固定工作流的脱敏批次摘要           |
-| `POST /api/v1/result-views/{viewId}/batches/{batchId}/{action}` | 按白名单重试或取消范围内批次           |
+| `GET /api/v1/result-views/{viewId}/runs`                        | 读取固定工作流的脱敏运行摘要           |
+| `POST /api/v1/result-views/{viewId}/runs/{runId}/{action}`      | 按白名单重试或取消范围内运行           |
 | `POST /api/v1/result-views/{viewId}/workflow/pause`             | 按白名单暂停固定工作流                 |
 
-- 创建接受批次、事件、Connector 和 Quant 模板。事件 Trigger 按类型及可选精确 source/subject 过滤；定时配置只接受 UTC `everySeconds` 60 至 86400，不提供 Cron DSL。图 `schemaVersion` 固定为 `1`，节点保存 `nodeInstanceId`、精确节点版本、普通配置、结构化输入映射和位置；边保存两端端口及可选 Boolean CEL 条件。
-- 输入映射只接受 `field`、`literal`、`cel`。字段来源使用上游 `nodeInstanceId` 和字段路径数组；保存校验端口、可达性、DAG、JSON Schema、字段类型和 CEL，并拒绝 Decimal CEL 算术。图级后向边始终拒绝；`core.loop` 只运行内嵌无环子图，并强制 1 至 100 次上限、绝对超时和 Boolean CEL 退出条件。每轮 NodeRun、Checkpoint 与操作键都包含迭代号，人工等待节点不能嵌入 Loop。
-- 保存请求必须提供当前 `expectedActiveRevisionId`。服务锁定工作流，校验完整图，写入递增修订、修订级密钥绑定并原子切换活动指针；并发旧指针返回 `409 Conflict`，失败校验不创建修订。同一节点实例的类型和版本不变时保留持久状态；删除节点或修改类型/版本且已有状态时，工作流必须为 `paused`，并由管理员通过 `resetStateNodeInstanceIds` 精确确认要重置的节点，状态删除与修订激活在同一事务提交。
+- 创建接受批处理、事件、Connector 和 Quant 模板。事件 Trigger 按类型及可选精确 source/subject 过滤；定时配置只接受 UTC `everySeconds` 60 至 86400，不提供 Cron DSL。图 `schemaVersion` 固定为 `1`，节点保存 `nodeInstanceId`、精确节点版本、普通配置、结构化输入映射和位置；边保存两端端口及可选 Boolean CEL 条件。
+- 输入映射只接受 `field`、`literal`、`cel`。字段来源使用上游 `nodeInstanceId` 和字段路径数组；保存校验端口、可达性、DAG、JSON Schema、字段类型和 CEL，并拒绝 Decimal CEL 算术。图级后向边始终拒绝；`core.loop` 只运行内嵌无环子图，并强制 1 至 100 次上限、绝对超时和 Boolean CEL 退出条件。每轮 RunNode、RunCheckpoint 与操作键都包含迭代号，人工等待节点不能嵌入 Loop。
+- 保存请求必须提供当前 `expectedActiveRevisionId`。服务锁定工作流，校验完整图，写入递增修订、修订级密钥绑定并原子切换活动指针；并发旧指针返回 `409 Conflict`，失败校验不创建修订。同一节点实例的类型和版本不变时保留持久状态；删除节点或修改类型/版本且已有状态时，工作流必须为 `inactive`，并由管理员通过 `resetStateNodeInstanceIds` 精确确认要重置的节点，状态删除与修订激活在同一事务提交。
 - `secretChanges` 只允许替换或移除节点 Config Schema 声明的顶层 `x-coinsphere-secret` 字段。密钥按修订、节点实例和字段独立加密；响应只返回 `secretFields[nodeInstanceId][field]=true`，图、修订响应和节点目录永不返回密钥值。
-- 修订保存后不可更新或删除。归档工作流只读且不能重新启动；`needs_attention` 经人工处理后先回到 `paused`，`archive` 只允许从 `paused` 或 `needs_attention` 执行。
-- `start` 允许批次队列领取工作并启动连续流 Trigger；`pause` 停止领取新批次、取消 Trigger，当前 Action 返回后保存检查点并重新排队。手工触发只适用于 `core.manual`，`core.schedule` 按 UTC 固定间隔去重入队。TriggerHandler 必须响应取消和 Emitter 背压；异常退出把工作流置为 `needs_attention`，进程重启会从数据库扫描仍在运行的连续流。
-- CloudEvent 要求 1.0、UTC 时间、对象 `data` 和 1 至 256 字节 `partitionkey`。`(source,id)` 全局唯一；相同内容重试返回原事件，不同内容返回 `409`。事件、投递和批次在同一事务提交，Outbox 持久重试内部失败事件。
-- 批次创建时固定事件与活动修订。单实例执行器使用 PostgreSQL 持久队列、每工作流并发/积压上限和有界 `stream`/`compute` 池；同工作流同分区按入队顺序领取，不同分区可并行，过期租约重启后重新排队。进入 `waiting` 的人工任务保存上下文并释放执行池和分区占用。
-- 每个成功节点原子提交终态 NodeRun、输出 Checkpoint 和缓冲状态。失败只重试当前节点，默认最多三次并线性退避；操作键固定为 `sha256(batchId + ":" + nodeInstanceId + ":" + loopIteration)`。取消通过 `context.Context` 协作传递，取消请求后不再调度下游节点。最终失败用 Outbox 发布 `io.coinsphere.workflow.batch.failed`。
+- 修订保存后不可更新或删除。工作流状态只有 `inactive / active / error`；Trigger 异常退出进入 `error`，管理员先 `deactivate` 恢复为 `inactive`，确认修复后再 `activate`。
+- `activate` 允许 Run 队列领取工作并启动连续流 Trigger；`deactivate` 停止领取新 Run、取消 Trigger，当前 Action 返回后保存检查点并重新排队。手工触发只适用于 `core.manual`，`core.schedule` 按 UTC 固定间隔去重入队。TriggerHandler 必须响应取消和 Emitter 背压；进程重启会从数据库扫描仍为 `active` 的连续流。
+- CloudEvent 要求 1.0、UTC 时间、对象 `data` 和 1 至 256 字节 `partitionkey`。`(source,id)` 全局唯一；相同内容重试返回原事件，不同内容返回 `409`。事件、投递和 Run 在同一事务提交，Outbox 持久重试内部失败事件。闭合 K 线的 OHLCV 正文只保存在 Quant 行情表和事件表，Run 只关联事件 ID。
+- Run 创建时固定事件与活动修订。单实例执行器使用 PostgreSQL 持久队列、每工作流并发/积压上限和有界 `stream`/`compute` 池；同工作流同分区按入队顺序领取，不同分区可并行，过期租约重启后重新排队。进入 `waiting` 的人工任务保存上下文并释放执行池和分区占用。
+- 每个成功节点原子提交终态 RunNode、输出 RunCheckpoint 和缓冲状态。失败只重试当前节点，默认最多三次并线性退避；操作键固定为 `sha256(runId + ":" + nodeInstanceId + ":" + loopIteration)`。取消通过 `context.Context` 协作传递，取消请求后不再调度下游节点。最终失败用 Outbox 发布 `io.coinsphere.workflow.run.failed`。
 - 核心执行 `core.manual`、`core.schedule`、`core.event`、`core.constant`、`core.human_approval`、`core.loop` 和 `core.end`，其他 Action/Trigger 从编译期插件注册表调用；执行前后分别校验输入/输出 Schema，修订密钥通过节点范围 `SecretReader` 解密。启动前必须已配置活动修订的全部必需密钥。
-- `core.human_approval` 默认产生 `pending` 任务；显式 `auto` 模式直接输出自动批准。相同工作流、节点和业务键的新任务会把旧任务置为 `superseded`。`approved`、`rejected`、`expired` 和 `superseded` 都只能提交一次并恢复原批次，决定正文最多 64 KiB。
-- 终态批次可创建固定原事件与修订的诊断重放。`notification`、`human_action` 和 `paper` 副作用不再次执行，而是复用原 Checkpoint 和制品；缺少原 Checkpoint 时重放失败。
-- 批次列表返回最近 100 条摘要；批次详情按执行顺序返回 NodeRun、受控活动摘要和制品引用。活动查询首次返回最近记录，后续使用 `after` 单调游标增量读取，单页上限 200。
-- 活动由数据库在批次、NodeRun 和人工任务状态转换时原子追加，只包含事件类型、状态、受控中文摘要和错误类别，不保存原始错误、输入、输出或密钥。活动 WebSocket 要求同源 `Origin`，使用 `coinsphere.workflow-activity.v1` 与 Access Token 两个子协议值认证，并从 `after` 游标补齐；WebSocket 不是真实事实源。
+- `core.human_approval` 默认产生 `pending` 任务；显式 `auto` 模式直接输出自动批准。相同工作流、节点和业务键的新任务会把旧任务置为 `superseded`。`approved`、`rejected`、`expired` 和 `superseded` 都只能提交一次并恢复原 Run，决定正文最多 64 KiB。
+- 终态 Run 可创建固定原事件与修订的诊断重放。`notification`、`human_action` 和 `paper` 副作用不再次执行，而是复用原 RunCheckpoint 和制品；缺少原检查点时重放失败。
+- Run 列表支持游标分页、UTC `from/to`、状态、触发类型和最多 200 字符的关键词搜索。详情按执行顺序返回全部 RunNode 尝试、节点多行日志、脱敏输入输出摘要、事件摘要、结果和制品引用。
+- 核心和插件通过节点范围 `slog.Logger` 写入 `workflow_node_logs`。消息最多 1000 字符，结构化字段最多 4 KiB，只保留受限标量；密钥、令牌、授权头、Cookie、DSN 和原始载荷统一丢弃或脱敏。不提供 Activity API 或活动 WebSocket。
 - `ArtifactStore` 将最多 1 GiB 的正文用标准库 gzip 压缩并按未压缩正文 SHA-256 寻址。Checkpoint 原子引用清单；Manifest 在服务端重新计算大小和摘要，Web 下载后再次校验摘要。
-- 终态批次、NodeRun、Checkpoint、批次活动和未被其他检查点引用的制品按工作流 `retentionDays` 清理，默认 30 天。制品数据库记录提交后再删除正文；失败最多留下无引用文件，不丢失仍被引用的正文。
+- 终态 Run、RunNode、节点日志、RunCheckpoint 和未被其他检查点引用的制品按工作流 `retentionDays` 清理，默认 30 天。制品数据库记录提交后再删除正文；失败最多留下无引用文件，不丢失仍被引用的正文。
 
 ## 插件清单
 

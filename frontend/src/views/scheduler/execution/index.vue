@@ -1,4 +1,4 @@
-<!-- 执行记录列表页 -->
+<!-- 工作流运行日志列表。 -->
 <template>
   <div class="workflow-execution-page art-full-height">
     <ArtSearchBar
@@ -20,7 +20,7 @@
       >
         <template #left>
           <ElSpace wrap>
-            <strong>{{ workflowName || '工作流' }} · 执行记录</strong>
+            <strong>{{ workflowName || '工作流' }} · 工作流日志</strong>
             <ElButton @click="router.push('/scheduler/definition')">返回工作流定义</ElButton>
           </ElSpace>
         </template>
@@ -78,12 +78,17 @@
 
   const { pagination, requestParams, applyPage, reset, moveTo } = useCursorPagination(10)
 
+  const recentWindow = () => [new Date(Date.now() - 24 * 60 * 60 * 1000), new Date()]
+
   const initialFilters = {
     triggerType: '' as WorkflowTriggerType | '',
-    status: '' as WorkflowExecutionStatus | ''
+    status: '' as WorkflowExecutionStatus | '',
+    keyword: '',
+    timeRange: recentWindow()
   }
 
   const formFilters = reactive({ ...initialFilters })
+  const defaultWindow = ref(true)
 
   const formItems = computed(() => [
     {
@@ -99,6 +104,7 @@
           { value: 'manual', label: '手动触发' },
           { value: 'schedule', label: '定时触发' },
           { value: 'event', label: '事件触发' },
+          { value: 'stream', label: '流式触发' },
           { value: 'webhook', label: 'Webhook 触发' }
         ]
       }
@@ -121,6 +127,26 @@
           { value: 'canceled', label: '已取消' }
         ]
       }
+    },
+    {
+      label: 'UTC 时间',
+      key: 'timeRange',
+      type: 'datetimerange',
+      span: 8,
+      props: {
+        type: 'datetimerange',
+        rangeSeparator: '至',
+        startPlaceholder: '开始时间',
+        endPlaceholder: '结束时间',
+        clearable: false
+      }
+    },
+    {
+      label: '关键词',
+      key: 'keyword',
+      type: 'input',
+      span: 5,
+      props: { clearable: true, maxlength: 200, placeholder: '节点日志或错误' }
     }
   ])
 
@@ -133,6 +159,7 @@
         manual: '手动触发',
         schedule: '定时触发',
         event: '事件触发',
+        stream: '流式触发',
         webhook: 'Webhook 触发'
       }) as Record<string, string>
     )[value] ||
@@ -289,11 +316,16 @@
       loading.value = true
     }
     try {
+      if (defaultWindow.value) formFilters.timeRange = recentWindow()
+      const [from, to] = formFilters.timeRange || []
       executionList.value = await fetchWorkflowExecutionList({
         ...requestParams(),
         workflowDefinitionCode: workflowId.value,
         triggerType: formFilters.triggerType || undefined,
-        status: formFilters.status || undefined
+        status: formFilters.status || undefined,
+        from: from ? new Date(from).toISOString() : undefined,
+        to: to ? new Date(to).toISOString() : undefined,
+        keyword: formFilters.keyword.trim() || undefined
       } satisfies WorkflowExecutionQueryParams)
       applyPage(executionList.value)
     } catch (error) {
@@ -309,12 +341,14 @@
   }
 
   const handleSearch = () => {
+    defaultWindow.value = false
     reset()
     void loadPageData()
   }
 
   const handleReset = () => {
-    Object.assign(formFilters, { ...initialFilters })
+    Object.assign(formFilters, { ...initialFilters, timeRange: recentWindow() })
+    defaultWindow.value = true
     reset()
     void loadPageData()
   }

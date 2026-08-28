@@ -606,7 +606,7 @@
       return '定时开始节点只声明计划配置，真正注册状态由运行态统一管理。'
     }
     if (localForm.typeCode === 'start.event') {
-      return '事件开始节点只声明监听事件和过滤条件，命中一次就会创建一条独立执行记录。'
+      return '事件开始节点只声明监听事件和过滤条件，命中一次就会创建一条独立 Run。'
     }
     if (localForm.typeCode === 'start.webhook') {
       return 'Webhook 开始节点只声明入口，Secret 在版本激活后由运行态生成和轮换。'

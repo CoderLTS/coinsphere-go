@@ -111,8 +111,8 @@ func (a quantSignalAction) Execute(ctx context.Context, request sdk.ActionReques
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
 			`workflow_id = ? AND node_instance_id = ? AND business_key = ? AND status = 'pending'
 			AND NOT EXISTS (
-				SELECT 1 FROM workflow_node_runs signal_run
-				JOIN workflow_human_tasks task ON task.batch_id = signal_run.batch_id
+				SELECT 1 FROM workflow_run_nodes signal_run
+				JOIN workflow_human_tasks task ON task.run_id = signal_run.run_id
 				WHERE signal_run.operation_key = plugin_quant.signals.operation_key
 				AND task.status IN ('approved', 'rejected')
 			)`,

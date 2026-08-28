@@ -46,7 +46,7 @@
         <ElTableColumn prop="executionCount" label="执行次数" width="120" align="center" />
         <ElTableColumn label="操作" width="90" align="center">
           <template #default="{ row }">
-            <ElTooltip content="执行记录" placement="top">
+            <ElTooltip content="工作流日志" placement="top">
               <ElButton
                 circle
                 plain
@@ -118,7 +118,7 @@
       value: overview.stats.executionCount,
       description: overview.stats.latestExecutedAt
         ? `最近执行：${formatDateTime(overview.stats.latestExecutedAt)}`
-        : '暂无执行记录'
+        : '暂无运行日志'
     },
     {
       key: 'queued',
