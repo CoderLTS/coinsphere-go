@@ -354,7 +354,11 @@
     fetchWorkflowExecutionDetail,
     type WorkflowExecutionDetail
   } from '@/api/scheduler'
-  import { buildWorkflowRunsWsUrl, WORKFLOW_RUNS_WS_PROTOCOL } from '@/api/workflows'
+  import {
+    buildWorkflowRunsWsUrl,
+    fetchWorkflowRuns,
+    WORKFLOW_RUNS_WS_PROTOCOL
+  } from '@/api/workflows'
   import { useUserStore } from '@/store/modules/user'
   import { useAutoLayoutHeight } from '@/hooks/core/useLayoutHeight'
   import { formatDateTime } from '@/utils/date'
@@ -588,7 +592,7 @@
         return
       }
       realtimeConnected.value = true
-      void refreshExecutionFromRealtime()
+      void syncLatestExecution()
     }
     socket.onmessage = (event) => {
       if (workflowSocket !== socket) return
@@ -651,6 +655,25 @@
       await loadPageData({ preserveSelection: true, silent: true })
     } while (realtimeRefreshPending)
     realtimeRefreshRunning = false
+  }
+
+  const syncLatestExecution = async () => {
+    if (shouldFollowLatest.value) {
+      try {
+        const result = await fetchWorkflowRuns(activeWorkflowId.value, { limit: 1 })
+        const latestRunId = result.records[0]?.id
+        if (latestRunId && latestRunId > Number(route.params.executionId)) {
+          await router.replace({
+            path: `/scheduler/execution/${latestRunId}/detail`,
+            query: route.query
+          })
+          return
+        }
+      } catch {
+        // Keep the current run visible if the reconnect snapshot fails.
+      }
+    }
+    await refreshExecutionFromRealtime()
   }
 
   const loadPageData = async (options: { preserveSelection?: boolean; silent?: boolean } = {}) => {
