@@ -51,6 +51,9 @@ func (h *workflowNodeLogHandler) Handle(ctx context.Context, record slog.Record)
 		Message:    workflowLogMessage(record.Message),
 		FieldsJSON: workflowLogFields(fields),
 	})
+	if logErr == nil {
+		h.app.PublishWorkflowRunUpdated(h.workflowID, h.runID)
+	}
 	if h.next != nil && h.next.Enabled(ctx, record.Level) {
 		logErr = errors.Join(logErr, h.next.Handle(ctx, record))
 	}

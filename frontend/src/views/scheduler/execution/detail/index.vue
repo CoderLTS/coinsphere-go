@@ -388,6 +388,8 @@
   const realtimeConnected = ref(false)
   let workflowSocket: WebSocket | null = null
   let workflowReconnectTimer: ReturnType<typeof setTimeout> | null = null
+  let realtimeRefreshRunning = false
+  let realtimeRefreshPending = false
 
   const pageStyle = computed(() => ({
     height: containerMinHeight.value,
@@ -621,7 +623,7 @@
           return
         }
         if (updatedRunId === currentId) {
-          void loadPageData({ preserveSelection: true, silent: true })
+          void refreshExecutionFromRealtime()
         }
       } catch {
         // Ignore malformed frames; the next valid update restores the view.
@@ -640,6 +642,19 @@
     socket.onerror = () => {
       if (workflowSocket === socket) realtimeConnected.value = false
     }
+  }
+
+  const refreshExecutionFromRealtime = async () => {
+    if (realtimeRefreshRunning) {
+      realtimeRefreshPending = true
+      return
+    }
+    realtimeRefreshRunning = true
+    do {
+      realtimeRefreshPending = false
+      await loadPageData({ preserveSelection: true, silent: true })
+    } while (realtimeRefreshPending)
+    realtimeRefreshRunning = false
   }
 
   const loadPageData = async (options: { preserveSelection?: boolean; silent?: boolean } = {}) => {
