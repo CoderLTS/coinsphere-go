@@ -540,11 +540,11 @@ func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payloa
 			nextScheduledAt := any(nil)
 			trigger := graph.nodes[graph.mainTriggerID]
 			if trigger.NodeType == "core.schedule" {
-				interval, err := scheduleInterval(trigger.Config)
+				next, err := nextWorkflowScheduledAt(trigger.Config, now)
 				if err != nil {
 					return errors.New("schedule config is invalid")
 				}
-				nextScheduledAt = now.Add(interval)
+				nextScheduledAt = next
 			}
 			if err := tx.Model(&db.WorkflowRuntime{}).Where("workflow_id = ?", workflowID).Updates(map[string]any{
 				"next_scheduled_at": nextScheduledAt, "updated_at": now,
@@ -647,17 +647,13 @@ func (a *App) ApplyWorkflowLifecycle(ctx context.Context, workflowID int64, payl
 				return err
 			}
 			runtimeUpdates = map[string]any{"updated_at": now, "next_scheduled_at": nil}
-			var graph workflowGraph
-			if json.Unmarshal([]byte(validated.graphJSON), &graph) == nil {
-				for _, node := range graph.Nodes {
-					if node.NodeInstanceID == revision.MainTriggerNodeID && node.NodeType == "core.schedule" {
-						interval, err := scheduleInterval(node.Config)
-						if err != nil {
-							return fmt.Errorf("%w: schedule config is invalid", ErrConflict)
-						}
-						runtimeUpdates["next_scheduled_at"] = now.Add(interval)
-					}
+			trigger := validated.nodes[validated.mainTriggerID]
+			if trigger.NodeType == "core.schedule" {
+				next, err := nextWorkflowScheduledAt(trigger.Config, now)
+				if err != nil {
+					return fmt.Errorf("%w: schedule config is invalid", ErrConflict)
 				}
+				runtimeUpdates["next_scheduled_at"] = next
 			}
 		} else if action == "deactivate" {
 			runtimeUpdates = map[string]any{"updated_at": now, "next_scheduled_at": nil}

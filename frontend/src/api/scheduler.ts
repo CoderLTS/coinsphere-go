@@ -253,6 +253,7 @@ const nodeLabels: Record<string, string> = {
   'official.connector.websocket': 'WebSocket 触发',
   'official.ai.model_call': 'AI 模型调用',
   'official.quant.binance_candles': 'Binance K 线采集',
+  'official.quant.sync_instruments': 'Binance 币种元数据采集',
   'official.quant.evaluate': '量化策略评估',
   'official.quant.backtest': '量化策略回测',
   'official.quant.signal': '量化信号',
@@ -263,6 +264,12 @@ const nodeLabels: Record<string, string> = {
 const schemaTitleLabels: Record<string, string> = {
   Value: '值',
   'Interval (seconds)': '执行间隔（秒）',
+  Markets: '市场',
+  'Quote assets': '报价资产',
+  'Base asset allowlist': '基础资产白名单',
+  'Base asset denylist': '基础资产黑名单',
+  'Symbol allowlist': '交易对白名单',
+  'Symbol denylist': '交易对黑名单',
   'Event types': '事件类型',
   Source: '事件来源',
   Subject: '事件主题',
@@ -409,9 +416,14 @@ const toLegacyGraph = (graph: CurrentWorkflowGraph): WorkflowGraph => ({
       config.inputBindings = {}
     }
     if (node.nodeType === 'core.schedule') {
-      config.scheduleType = 'interval'
-      config.value = Number(config.everySeconds || 60)
-      config.unit = 'seconds'
+      if (String(config.cronExpression || '').trim()) {
+        config.scheduleType = 'cron'
+        config.timeZone = String(config.timeZone || 'Asia/Shanghai')
+      } else {
+        config.scheduleType = 'interval'
+        config.value = Number(config.everySeconds || 60)
+        config.unit = 'seconds'
+      }
     }
     if (node.nodeType === 'core.event') {
       config.eventType = Array.isArray(config.types) ? config.types[0] || '' : ''
@@ -478,12 +490,20 @@ const toCurrentRevision = (graph: WorkflowGraph) => {
         delete rawConfig.inputBindings
       }
       if (type === 'core.schedule') {
-        const multiplier =
-          { seconds: 1, minutes: 60, hours: 3600, days: 86400 }[
-            String(rawConfig.unit || 'seconds')
-          ] || 1
-        rawConfig.everySeconds =
-          Math.max(1, Number(rawConfig.value || rawConfig.everySeconds || 60)) * multiplier
+        if (rawConfig.scheduleType === 'cron') {
+          rawConfig.cronExpression = String(rawConfig.cronExpression || '').trim()
+          rawConfig.timeZone = String(rawConfig.timeZone || 'Asia/Shanghai').trim()
+          delete rawConfig.everySeconds
+        } else {
+          const multiplier =
+            { seconds: 1, minutes: 60, hours: 3600, days: 86400 }[
+              String(rawConfig.unit || 'seconds')
+            ] || 1
+          rawConfig.everySeconds =
+            Math.max(1, Number(rawConfig.value || rawConfig.everySeconds || 60)) * multiplier
+          delete rawConfig.cronExpression
+          delete rawConfig.timeZone
+        }
         for (const key of [
           'entryKey',
           'displayName',
@@ -491,7 +511,6 @@ const toCurrentRevision = (graph: WorkflowGraph) => {
           'scheduleType',
           'value',
           'unit',
-          'cronExpression',
           'runAt'
         ])
           delete rawConfig[key]

@@ -76,8 +76,8 @@ func coreWorkflowNodeDescriptors() []sdk.NodeDescriptor {
 		},
 		{
 			Type: "core.schedule", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
-			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"everySeconds":{"type":"integer","title":"Interval (seconds)","minimum":60,"maximum":86400,"default":3600}},"required":["everySeconds"],"additionalProperties":false}`),
-			UISchema:     json.RawMessage(`{"ui:order":["everySeconds"]}`), InputSchema: empty,
+			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"everySeconds":{"type":"integer","title":"Interval (seconds)","minimum":60,"maximum":86400,"default":3600},"cronExpression":{"type":"string","title":"Cron expression","minLength":1,"maxLength":255},"timeZone":{"type":"string","title":"Time zone","minLength":1,"maxLength":255,"default":"Asia/Shanghai"}},"oneOf":[{"required":["everySeconds"]},{"required":["cronExpression","timeZone"]}],"additionalProperties":false}`),
+			UISchema:     json.RawMessage(`{"ui:order":["everySeconds","cronExpression","timeZone"]}`), InputSchema: empty,
 			OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"triggeredAt":{"type":"string","format":"date-time"}},"required":["triggeredAt"],"additionalProperties":false}`),
 			Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
 		},
@@ -168,6 +168,8 @@ func workflowNodeTitle(nodeType string) string {
 		return "Loop end"
 	case "official.quant.binance_candles":
 		return "Binance closed candles"
+	case "official.quant.sync_instruments":
+		return "Binance instrument metadata"
 	case "official.quant.evaluate":
 		return "Quant strategy evaluation"
 	case "official.quant.backtest":
@@ -188,7 +190,7 @@ func workflowNodeDescription(nodeType string) string {
 	case "core.manual":
 		return "Starts one run on demand."
 	case "core.schedule":
-		return "Starts one run at a fixed UTC interval."
+		return "Starts one run on an interval or six-field Cron schedule."
 	case "core.event":
 		return "Starts one run for each matching CloudEvent."
 	case "core.constant":
@@ -205,6 +207,8 @@ func workflowNodeDescription(nodeType string) string {
 		return "Returns the carried value from one loop iteration."
 	case "official.quant.binance_candles":
 		return "Collects and publishes closed Binance Spot or USD-M candles."
+	case "official.quant.sync_instruments":
+		return "Synchronizes a filtered Binance instrument metadata snapshot."
 	case "official.quant.evaluate":
 		return "Evaluates a compiled Go strategy against closed candles."
 	case "official.quant.backtest":

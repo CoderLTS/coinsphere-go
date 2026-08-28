@@ -26,6 +26,7 @@ const (
 	PoolCompute ExecutionPool = "compute"
 
 	SideEffectNone         SideEffectClass = "none"
+	SideEffectData         SideEffectClass = "data"
 	SideEffectNotification SideEffectClass = "notification"
 	SideEffectHumanAction  SideEffectClass = "human_action"
 	SideEffectPaper        SideEffectClass = "paper"

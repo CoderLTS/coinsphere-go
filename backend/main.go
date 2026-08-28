@@ -115,6 +115,13 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	if err := db.Seed(ctx, gdb, app.Hasher, cfg.Auth.BootstrapAdminPassword, plugins.Pages()); err != nil {
 		return fmt.Errorf("seed database: %w", err)
 	}
+	createdQuantWorkflow, err := app.EnsureQuantInstrumentWorkflow(ctx)
+	if err != nil {
+		return fmt.Errorf("initialize Quant instrument workflow: %w", err)
+	}
+	if createdQuantWorkflow {
+		slog.Info("built-in Quant instrument workflow created")
+	}
 	if cfg.Auth.BootstrapAdminPassword == "coinsphere" {
 		slog.Warn("内置超管仍使用默认初始密码，请登录后尽快修改")
 	}

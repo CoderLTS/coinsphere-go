@@ -24,6 +24,36 @@
     />
   </ElSelect>
 
+  <ElCheckboxGroup
+    v-else-if="field.control === 'multiEnum'"
+    :model-value="arrayValue"
+    class="schema-field__checks"
+    @update:model-value="$emit('update', $event)"
+  >
+    <ElCheckbox v-for="option in field.options" :key="option.value" :value="option.value">
+      {{ option.label }}
+    </ElCheckbox>
+  </ElCheckboxGroup>
+
+  <ElSelect
+    v-else-if="field.control === 'stringList'"
+    :model-value="arrayValue"
+    class="schema-field__full"
+    multiple
+    filterable
+    allow-create
+    default-first-option
+    :placeholder="field.placeholder"
+    @update:model-value="$emit('update', $event)"
+  >
+    <ElOption
+      v-for="option in field.options"
+      :key="option.value"
+      :label="option.label"
+      :value="option.value"
+    />
+  </ElSelect>
+
   <ElInputNumber
     v-else-if="field.control === 'number'"
     :model-value="numberValue"
@@ -70,6 +100,7 @@
     props.value === undefined || props.value === null ? '' : String(props.value)
   )
   const numberValue = computed(() => (typeof props.value === 'number' ? props.value : undefined))
+  const arrayValue = computed(() => (Array.isArray(props.value) ? props.value : []))
 
   /** 文本字段失焦时顺手去掉首尾空白，省得路径里混进空格导致取值取不到。 */
   const handleBlur = () => {
@@ -82,5 +113,15 @@
 <style scoped lang="scss">
   .schema-field__full {
     width: 100%;
+  }
+
+  .schema-field__checks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+
+    :deep(.el-checkbox) {
+      margin-right: 0;
+    }
   }
 </style>

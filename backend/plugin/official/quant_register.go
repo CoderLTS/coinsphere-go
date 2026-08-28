@@ -59,6 +59,16 @@ func (q *quantRuntime) register(registrar sdk.Registrar) error {
 		return err
 	}
 	if err := registrar.Action(sdk.NodeDescriptor{
+		Type: "official.quant.sync_instruments", Version: "1.0.0", Kind: sdk.NodeKindAction,
+		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"markets":{"type":"array","title":"Markets","items":{"type":"string","enum":["spot","usdm"],"enumLabels":["Spot","USD-M"]},"minItems":1,"maxItems":2,"uniqueItems":true,"default":["spot","usdm"]},"quoteAssets":{"type":"array","title":"Quote assets","items":{"type":"string","pattern":"^[A-Z0-9]{2,32}$"},"minItems":1,"maxItems":100,"uniqueItems":true,"default":["USDT","USDC"]},"baseAssetAllowlist":{"type":"array","title":"Base asset allowlist","items":{"type":"string","pattern":"^[A-Z0-9]{2,32}$"},"maxItems":1000,"uniqueItems":true,"default":[]},"baseAssetDenylist":{"type":"array","title":"Base asset denylist","items":{"type":"string","pattern":"^[A-Z0-9]{2,32}$"},"maxItems":1000,"uniqueItems":true,"default":[]},"symbolAllowlist":{"type":"array","title":"Symbol allowlist","items":{"type":"string","pattern":"^[A-Z0-9]{2,32}$"},"maxItems":1000,"uniqueItems":true,"default":[]},"symbolDenylist":{"type":"array","title":"Symbol denylist","items":{"type":"string","pattern":"^[A-Z0-9]{2,32}$"},"maxItems":1000,"uniqueItems":true,"default":[]}},"required":["markets","quoteAssets","baseAssetAllowlist","baseAssetDenylist","symbolAllowlist","symbolDenylist"],"additionalProperties":false}`),
+		UISchema:     json.RawMessage(`{"ui:order":["markets","quoteAssets","baseAssetAllowlist","baseAssetDenylist","symbolAllowlist","symbolDenylist"]}`),
+		InputSchema:  emptyObjectSchema,
+		OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"fetchedCount":{"type":"integer","minimum":0},"matchedCount":{"type":"integer","minimum":0},"upsertedCount":{"type":"integer","minimum":0},"deletedCount":{"type":"integer","minimum":0},"syncedAt":{"type":"string","format":"date-time"}},"required":["fetchedCount","matchedCount","upsertedCount","deletedCount","syncedAt"],"additionalProperties":false}`),
+		Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectData, State: sdk.StateStateless,
+	}, quantInstrumentSyncAction{runtime: q}); err != nil {
+		return err
+	}
+	if err := registrar.Action(sdk.NodeDescriptor{
 		Type: "official.quant.evaluate", Version: "1.0.0", Kind: sdk.NodeKindAction,
 		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"strategyId":{"type":"string","title":"Strategy","const":"official.quant.sma-crossover"},"market":{"type":"string","title":"Market","enum":["spot","usdm"]},"instrument":{"type":"string","title":"Instrument","pattern":"^[A-Z0-9]{2,32}$"},"interval":{"type":"string","title":"Interval","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"]},"parameters":{"type":"object","title":"Parameters"}},"required":["strategyId","market","instrument","interval","parameters"],"additionalProperties":false}`),
 		UISchema:     json.RawMessage(`{"ui:order":["strategyId","market","instrument","interval","parameters"]}`),

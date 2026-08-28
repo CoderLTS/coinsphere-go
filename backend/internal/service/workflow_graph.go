@@ -8,6 +8,7 @@ import (
 	"io"
 	"regexp"
 	"strings"
+	"time"
 
 	"cel.dev/cel-go/cel"
 	"cel.dev/cel-go/common/operators"
@@ -166,6 +167,11 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 		if err != nil || validateWorkflowSchemaValue(ordinarySchema, config) != nil {
 			return validatedWorkflowGraph{}, fmt.Errorf("node %q config does not match its JSON Schema", node.NodeInstanceID)
 		}
+		if node.NodeType == "core.schedule" {
+			if _, err := nextWorkflowScheduledAt(node.Config, time.Now().UTC()); err != nil {
+				return validatedWorkflowGraph{}, fmt.Errorf("node %q schedule config is invalid", node.NodeInstanceID)
+			}
+		}
 		nodes[node.NodeInstanceID] = node
 		nodeTypes[node.NodeInstanceID] = node.NodeType
 		descriptors[node.NodeInstanceID] = desc
@@ -199,6 +205,15 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 				}
 			}
 		}
+	}
+	metadataSyncNodes := 0
+	for _, nodeType := range nodeTypes {
+		if nodeType == "official.quant.sync_instruments" {
+			metadataSyncNodes++
+		}
+	}
+	if metadataSyncNodes > 1 {
+		return validatedWorkflowGraph{}, errors.New("workflow graph must not contain more than one instrument metadata sync node")
 	}
 
 	adjacency, reverse, err := validateWorkflowEdges(graph.Edges, nodes, descriptors, triggerID)

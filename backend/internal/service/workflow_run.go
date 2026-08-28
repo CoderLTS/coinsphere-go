@@ -1287,10 +1287,6 @@ ORDER BY w.id`, now).Scan(&due).Error; err != nil {
 		if trigger.NodeType != "core.schedule" {
 			continue
 		}
-		interval, err := scheduleInterval(trigger.Config)
-		if err != nil {
-			continue
-		}
 		dueAt := now
 		if item.DueAt != nil {
 			dueAt = item.DueAt.UTC()
@@ -1316,9 +1312,15 @@ ORDER BY w.id`, now).Scan(&due).Error; err != nil {
 				return err
 			}
 			createdRun = run
-			next := dueAt.Add(interval)
+			next, err := nextWorkflowScheduledAt(trigger.Config, dueAt)
+			if err != nil {
+				return err
+			}
 			for !next.After(now) {
-				next = next.Add(interval)
+				next, err = nextWorkflowScheduledAt(trigger.Config, next)
+				if err != nil {
+					return err
+				}
 			}
 			return tx.Model(&runtime).Updates(map[string]any{
 				"last_scheduled_at": dueAt, "next_scheduled_at": next, "updated_at": now,
@@ -1345,16 +1347,6 @@ func enforceWorkflowBacklog(tx *gorm.DB, workflowID int64) error {
 		return fmt.Errorf("%w: %w", ErrConflict, errWorkflowBackpressure)
 	}
 	return nil
-}
-
-func scheduleInterval(raw json.RawMessage) (time.Duration, error) {
-	var config struct {
-		EverySeconds int `json:"everySeconds"`
-	}
-	if json.Unmarshal(raw, &config) != nil || config.EverySeconds < 60 || config.EverySeconds > 86400 {
-		return 0, errors.New("schedule interval is invalid")
-	}
-	return time.Duration(config.EverySeconds) * time.Second, nil
 }
 
 func workflowOperationKey(runID int64, nodeID string, iteration int) string {

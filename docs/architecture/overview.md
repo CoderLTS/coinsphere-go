@@ -43,8 +43,10 @@ Go App 是单一后端进程，负责：
 - 持久化 CloudEvents、投递和 Outbox，按分区顺序调度事件 Run，并管理长运行 Trigger 的取消、背压和重启扫描。
 - 管理持久人工任务、结构化 Loop、标准失败事件和固定输入/修订的诊断重放。
 - 提供 Run 搜索、事件摘要、完整节点路径、节点持久日志和经过 SHA-256 校验的 gzip 制品下载，并按工作流保留期清理终态历史。
+- `core.schedule` 支持 60 至 86400 秒间隔，或带 IANA 时区的六段 Cron；服务恢复后最多补一次漏跑，再推进到下一未来时刻。
 - 内置 Connector/AI 只通过精确域名白名单和公网 DNS 校验访问外部接口；环境代理不参与拨号。
 - 内置 Quant 合并相同公共行情订阅，使用 UTC/Decimal 保存闭合 K 线，并让实时评估与回测调用同一可信 Go 策略。
+- 内置 Quant 通过 `official.quant.sync_instruments` 原子替换每个工作流的过滤后币种快照；全局目录取所有工作流来源并集，K 线连接和重连不再刷新元数据。
 - 内置 Quant 将策略目标持久化为可取代信号，经人工或显式自动决策、公共报价复核和完整 Paper 风控后原子写入订单、成交、费用、账本与持仓投影。
 - 内置 Notification 以稳定操作键持久化站内投递；核心 ResultView 固定插件页面、范围、过滤器、操作白名单及用户/角色授权。
 
@@ -52,7 +54,7 @@ Go App 是单一后端进程，负责：
 
 ### PostgreSQL
 
-数据库当前保存认证、RBAC、菜单、i18n、审计、插件安装状态和引用，以及工作流、修订、密钥、CloudEvent、投递、Outbox、Run、RunNode、节点日志、RunCheckpoint、人工任务、制品清单、节点状态和 ResultView 授权。`workflow_runtimes` 只保存并发、积压和定时调度字段。`plugin_quant` schema 使用普通表与联合索引保存品种、闭合 K 线、回测摘要、信号及 Paper 账户事实；`plugin_notification` 保存站内投递。金融值使用 `NUMERIC(38,18)`。订单、成交、费用和账本事实不可变，账户与持仓投影可从事实幂等重建。
+数据库当前保存认证、RBAC、菜单、i18n、审计、插件安装状态和引用，以及工作流、修订、密钥、CloudEvent、投递、Outbox、Run、RunNode、节点日志、RunCheckpoint、人工任务、制品清单、节点状态和 ResultView 授权。`workflow_runtimes` 只保存并发、积压和定时调度字段。`plugin_quant` schema 使用普通表与联合索引保存品种、工作流品种来源、闭合 K 线、回测摘要、信号及 Paper 账户事实；`plugin_notification` 保存站内投递。金融值使用 `NUMERIC(38,18)`。订单、成交、费用和账本事实不可变，账户与持仓投影可从事实幂等重建。
 
 应用启动只校验 migration 版本。核心 DDL 由一次性 migration 命令执行，插件 DDL 由生命周期 CLI 在维护窗口执行。
 

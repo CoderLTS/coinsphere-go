@@ -1,8 +1,6 @@
-import type { WorkflowExecutionItem } from './scheduler'
 import { fetchQuantCandles, fetchQuantInstruments, type QuantInstrument } from './quant'
 
 export type MarketType = 'spot' | 'usd_m'
-export type QuoteAsset = 'USDT'
 export type MarketStatus = 'trading' | 'suspended' | 'all'
 export type CandleInterval = '1m' | '5m' | '15m' | '1h' | '4h' | '1d'
 
@@ -12,7 +10,7 @@ export interface MarketSymbol {
   market: MarketType
   nativeSymbol: string
   baseAsset: string
-  quoteAsset: QuoteAsset | string
+  quoteAsset: string
   status: 'trading' | 'suspended'
   priceTick: string
   quantityStep: string
@@ -34,56 +32,11 @@ export interface MarketCandle {
   isClosed: boolean
 }
 
-export interface MarketSyncSettings {
-  venue: 'binance'
-  marketTypes: MarketType[]
-  quoteAssets: QuoteAsset[]
-  spotRestBaseUrl: string
-  usdmRestBaseUrl: string
-  proxyEnabled: boolean
-  proxyUrl: string
-  proxyUsername: string
-  proxyPasswordConfigured: boolean
-  proxyLastCheckStatus: 'unchecked' | 'healthy' | 'failed'
-  proxyLastCheckedAt: string | null
-  proxyLastLatencyMs: number | null
-  proxyLastError: string
-  updatedByUserId: number | null
-  createdAt: string
-  updatedAt: string
-}
-
-export interface MarketSyncSettingsUpdate {
-  marketTypes: MarketType[]
-  quoteAssets: ['USDT']
-  spotRestBaseUrl: string
-  usdmRestBaseUrl: string
-  proxyEnabled: boolean
-  proxyUrl: string
-  proxyUsername: string
-  proxyPassword?: string
-  clearProxyPassword: boolean
-}
-
-export interface MarketProxyStatus {
-  mode: 'direct' | 'proxy'
-  status: 'healthy' | 'failed'
-  latencyMs: number | null
-  checkedAt: string
-  message: string
-}
-
-export interface MarketSyncStatus {
-  lastSyncAt: string | null
-  nextSyncAt: string | null
-  lastExecution: WorkflowExecutionItem | null
-}
-
 export interface MarketSymbolQuery {
   cursor?: string
   limit?: number
   market?: MarketType | ''
-  quoteAsset?: 'USDT' | ''
+  quoteAsset?: string
   status?: MarketStatus
   keyword?: string
 }
@@ -161,47 +114,4 @@ export async function fetchMarketCandles(params: MarketCandleQuery) {
     isClosed: true
   }))
   return { records, nextCursor: '', hasMore: false, total: records.length }
-}
-
-const pluginSettings: MarketSyncSettings = {
-  venue: 'binance',
-  marketTypes: ['spot', 'usd_m'],
-  quoteAssets: ['USDT'],
-  spotRestBaseUrl: 'official.quant',
-  usdmRestBaseUrl: 'official.quant',
-  proxyEnabled: false,
-  proxyUrl: '',
-  proxyUsername: '',
-  proxyPasswordConfigured: false,
-  proxyLastCheckStatus: 'unchecked',
-  proxyLastCheckedAt: null,
-  proxyLastLatencyMs: null,
-  proxyLastError: '',
-  updatedByUserId: null,
-  createdAt: '',
-  updatedAt: ''
-}
-
-export const fetchMarketSyncSettings = async () => pluginSettings
-
-export function fetchUpdateMarketSyncSettings(params: MarketSyncSettingsUpdate) {
-  return Promise.resolve({ ...pluginSettings, marketTypes: params.marketTypes })
-}
-
-export function fetchCheckMarketProxy() {
-  return Promise.resolve<MarketProxyStatus>({
-    mode: 'direct',
-    status: 'healthy',
-    latencyMs: null,
-    checkedAt: '',
-    message: '由采集工作流管理'
-  })
-}
-
-export function fetchMarketSyncStatus() {
-  return Promise.resolve<MarketSyncStatus>({
-    lastSyncAt: null,
-    nextSyncAt: null,
-    lastExecution: null
-  })
 }
