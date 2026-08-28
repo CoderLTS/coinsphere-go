@@ -36,6 +36,8 @@ type App struct {
 	runClaimMu          sync.Mutex
 	runCancelMu         sync.Mutex
 	runCancels          map[int64]context.CancelFunc
+	workflowWatchMu     sync.RWMutex
+	workflowWatchers    map[int64]map[chan WorkflowRunUpdate]struct{}
 	runWG               sync.WaitGroup
 	triggerMu           sync.Mutex
 	triggerRuns         map[int64]workflowTriggerRun
@@ -58,6 +60,7 @@ func NewApp(gdb *gorm.DB, cfg *config.AppConfig, plugins *sdk.Registry) *App {
 		reauthTokens:        map[string]reauthTokenRecord{},
 		revokedAccessTokens: map[string]time.Time{},
 		runCancels:          map[int64]context.CancelFunc{},
+		workflowWatchers:    map[int64]map[chan WorkflowRunUpdate]struct{}{},
 		triggerRuns:         map[int64]workflowTriggerRun{},
 		streamSlots:         make(chan struct{}, 4),
 		computeSlots:        make(chan struct{}, 1),

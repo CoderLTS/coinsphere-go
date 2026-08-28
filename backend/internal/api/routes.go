@@ -83,6 +83,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/workflows/{workflowId}/lifecycle", s.requireRole("R_SUPER", s.handleWorkflowLifecycle))
 	mux.HandleFunc("GET /api/v1/workflows/{workflowId}/runs", s.requireRole("R_SUPER", s.handleListWorkflowRuns))
 	mux.HandleFunc("POST /api/v1/workflows/{workflowId}/runs", s.requireRole("R_SUPER", s.handleCreateWorkflowRun))
+	mux.HandleFunc("GET /api/v1/ws/workflows/{workflowId}/runs", s.handleWorkflowRunsWebSocket)
 	mux.HandleFunc("GET /api/v1/workflow-runs/{runId}", s.requireRole("R_SUPER", s.handleGetWorkflowRun))
 	mux.HandleFunc("POST /api/v1/workflow-runs/{runId}", s.requireRole("R_SUPER", s.handleWorkflowRunAction))
 	mux.HandleFunc("GET /api/v1/artifacts/{sha256}/manifest", s.requireRole("R_SUPER", s.handleGetWorkflowArtifactManifest))

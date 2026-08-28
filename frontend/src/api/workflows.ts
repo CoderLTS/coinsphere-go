@@ -1,5 +1,16 @@
 import request from '@/utils/http'
 
+export const WORKFLOW_RUNS_WS_PROTOCOL = 'coinsphere.workflow-runs.v1'
+
+export function buildWorkflowRunsWsUrl(pageOrigin: string, workflowId: number) {
+  const url = new URL(`/api/v1/ws/workflows/${workflowId}/runs`, pageOrigin)
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error('workflow websocket requires an HTTP page origin')
+  }
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  return url.toString()
+}
+
 export type WorkflowStatus = 'inactive' | 'active' | 'error'
 export type WorkflowBindingKind = 'field' | 'literal' | 'cel'
 
