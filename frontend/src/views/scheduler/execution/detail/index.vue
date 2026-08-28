@@ -78,6 +78,46 @@
               />
             </div>
 
+            <section class="workflow-execution-detail__live-logs" aria-label="实时运行日志">
+              <div class="workflow-execution-detail__live-logs-header">
+                <div class="workflow-execution-detail__live-logs-title">
+                  <span
+                    class="workflow-execution-detail__live-logs-dot"
+                    :class="{
+                      'workflow-execution-detail__live-logs-dot--active': shouldPollExecution
+                    }"
+                  />
+                  <span>实时运行日志</span>
+                  <span class="workflow-execution-detail__live-logs-count">
+                    {{ liveLogRows.length }} 条
+                  </span>
+                </div>
+                <ElTag :type="statusTagType(executionDetail.status)" effect="plain" size="small">
+                  {{ statusLabel(executionDetail.status) }}
+                </ElTag>
+              </div>
+              <div ref="liveLogViewport" class="workflow-execution-detail__live-logs-body">
+                <ElEmpty v-if="!liveLogRows.length" description="等待节点日志" />
+                <div
+                  v-for="line in liveLogRows"
+                  :key="line.key"
+                  class="workflow-execution-detail__live-log-row"
+                >
+                  <time>{{ formatDateTime(line.time) }}</time>
+                  <span class="workflow-execution-detail__live-log-level" :data-level="line.level">
+                    {{ line.level.toUpperCase() }}
+                  </span>
+                  <span class="workflow-execution-detail__live-log-node">{{ line.nodeName }}</span>
+                  <span class="workflow-execution-detail__live-log-message">{{
+                    line.message
+                  }}</span>
+                  <code v-if="line.fields" class="workflow-execution-detail__live-log-fields">
+                    {{ line.fields }}
+                  </code>
+                </div>
+              </div>
+            </section>
+
             <aside
               v-show="inspectorVisible"
               class="workflow-execution-detail__inspector workflow-execution-detail__inspector--left workflow-execution-detail__overlay-card"
@@ -294,22 +334,6 @@
                         }}</ElDescriptionsItem>
                       </ElDescriptions>
                     </div>
-
-                    <div class="workflow-execution-detail__section">
-                      <div class="workflow-execution-detail__section-title">运行日志</div>
-                      <ElEmpty v-if="!executionTimeline.length" description="暂无运行日志" />
-                      <div v-else class="workflow-execution-detail__timeline">
-                        <div
-                          v-for="item in executionTimeline"
-                          :key="item.key"
-                          class="workflow-execution-detail__timeline-item"
-                        >
-                          <span>{{ formatDateTime(item.time) }}</span>
-                          <strong>{{ item.title }}</strong>
-                          <small>{{ item.detail }}</small>
-                        </div>
-                      </div>
-                    </div>
                   </template>
                 </div>
               </ElScrollbar>
@@ -330,6 +354,7 @@
     fetchWorkflowExecutionDetail,
     type WorkflowExecutionDetail
   } from '@/api/scheduler'
+  import { fetchWorkflowRuns } from '@/api/workflows'
   import { useAutoLayoutHeight } from '@/hooks/core/useLayoutHeight'
   import { formatDateTime } from '@/utils/date'
   import WorkflowExecutionCanvas from './components/WorkflowExecutionCanvas.vue'
@@ -356,6 +381,7 @@
   const selectedCellId = ref<string | null>(null)
   const selectedCellType = ref<WorkflowActiveCellType>(null)
   const inspectorVisible = ref(true)
+  const liveLogViewport = ref<HTMLDivElement | null>(null)
   const { containerMinHeight } = useAutoLayoutHeight(undefined, { updateCssVar: false })
   let pollTimer: number | null = null
 
@@ -495,24 +521,43 @@
     return text === '{}' ? '' : text
   }
 
-  const executionTimeline = computed(() => {
+  const liveLogRows = computed(() => {
     const detail = executionDetail.value
     if (!detail) return []
-    return detail.nodeAttempts
-      .flatMap((attempt) =>
-        attempt.logs.map((line) => ({
-          key: `log-${line.id}`,
-          time: line.loggedAt,
-          title: `${attempt.nodeName} · ${line.message}`,
-          detail: formatLogFields(line.fields)
-        }))
-      )
-      .sort((left, right) => Date.parse(left.time || '') - Date.parse(right.time || ''))
+    const nodeNames = new Map(detail.nodeAttempts.map((attempt) => [attempt.id, attempt.nodeName]))
+    const rows = new Map<number, (typeof detail.logs)[number]>()
+    detail.logs.forEach((line) => rows.set(line.id, line))
+    detail.nodeAttempts.forEach((attempt) =>
+      attempt.logs.forEach((line) => rows.set(line.id, line))
+    )
+    return [...rows.values()]
+      .sort((left, right) => {
+        const timeDiff = Date.parse(left.loggedAt || '') - Date.parse(right.loggedAt || '')
+        return timeDiff || left.id - right.id
+      })
+      .map((line) => ({
+        key: `log-${line.id}`,
+        time: line.loggedAt,
+        level: line.level,
+        nodeName: nodeNames.get(line.runNodeId) || '工作流',
+        message: line.message,
+        fields: formatLogFields(line.fields)
+      }))
+  })
+
+  const shouldFollowLatest = computed(() => {
+    if (route.query.followLatest === '1') return true
+    return executionDetail.value?.triggerType === 'stream'
   })
 
   const shouldPollExecution = computed(() => {
     const status = executionDetail.value?.status
-    return status === 'queued' || status === 'running' || status === 'retry_waiting'
+    return (
+      shouldFollowLatest.value ||
+      status === 'queued' ||
+      status === 'running' ||
+      status === 'retry_waiting'
+    )
   })
 
   const clearPollTimer = () => {
@@ -526,8 +571,35 @@
     clearPollTimer()
     if (!shouldPollExecution.value) return
     pollTimer = window.setTimeout(() => {
-      void loadPageData({ preserveSelection: true, silent: true })
+      void refreshExecution()
     }, 2000)
+  }
+
+  const refreshExecution = async () => {
+    if (shouldFollowLatest.value) {
+      const workflowId = Number(route.query.workflowId)
+      if (Number.isSafeInteger(workflowId) && workflowId > 0) {
+        try {
+          const latest = (
+            await fetchWorkflowRuns(workflowId, {
+              limit: 1,
+              ...(executionDetail.value?.triggerType === 'stream' ? { triggerType: 'stream' } : {})
+            })
+          ).records[0]
+          const currentId = Number(route.params.executionId)
+          if (latest && latest.id !== currentId) {
+            await router.replace({
+              path: `/scheduler/execution/${latest.id}/detail`,
+              query: route.query
+            })
+            return
+          }
+        } catch {
+          // The detail poll below still keeps the current run visible if the latest-run check fails.
+        }
+      }
+    }
+    await loadPageData({ preserveSelection: true, silent: true })
   }
 
   const loadPageData = async (options: { preserveSelection?: boolean; silent?: boolean } = {}) => {
@@ -597,6 +669,16 @@
       void loadPageData()
     },
     { immediate: true }
+  )
+
+  watch(
+    () => liveLogRows.value.map((line) => `${line.key}:${line.message}`),
+    () => {
+      nextTick(() => {
+        const viewport = liveLogViewport.value
+        if (viewport) viewport.scrollTop = viewport.scrollHeight
+      })
+    }
   )
 
   onBeforeUnmount(() => {
@@ -789,17 +871,20 @@
   .workflow-execution-detail__body {
     position: absolute;
     inset: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
     min-width: 0;
     min-height: 0;
     overflow: hidden;
   }
 
   .workflow-execution-detail__canvas-pane {
-    position: absolute;
-    inset: 0;
+    position: relative;
     display: block;
+    flex: 1 1 auto;
     min-width: 0;
-    min-height: 0;
+    min-height: 220px;
     overflow: hidden;
     isolation: isolate;
   }
@@ -809,6 +894,125 @@
     min-width: 0;
     height: 100%;
     min-height: 0;
+  }
+
+  .workflow-execution-detail__live-logs {
+    display: flex;
+    flex: 0 0 218px;
+    flex-direction: column;
+    min-height: 150px;
+    overflow: hidden;
+    background: var(--workflow-overlay-bg);
+    border: 1px solid var(--workflow-overlay-border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgb(31 35 48 / 0.08);
+  }
+
+  .workflow-execution-detail__live-logs-header {
+    display: flex;
+    flex: 0 0 44px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--workflow-overlay-border-subtle);
+  }
+
+  .workflow-execution-detail__live-logs-title {
+    display: inline-flex;
+    gap: 8px;
+    align-items: center;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--workflow-overlay-text);
+  }
+
+  .workflow-execution-detail__live-logs-dot {
+    width: 7px;
+    height: 7px;
+    background: var(--workflow-overlay-muted);
+    border-radius: 50%;
+  }
+
+  .workflow-execution-detail__live-logs-dot--active {
+    background: var(--el-color-success);
+    box-shadow: 0 0 0 3px var(--el-color-success-light-8);
+    animation: workflow-live-log-pulse 1.8s ease-in-out infinite;
+  }
+
+  @keyframes workflow-live-log-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+
+    50% {
+      opacity: 0.45;
+    }
+  }
+
+  .workflow-execution-detail__live-logs-count {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--workflow-overlay-muted);
+  }
+
+  .workflow-execution-detail__live-logs-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 6px 0;
+    overflow: auto;
+    scrollbar-width: thin;
+  }
+
+  .workflow-execution-detail__live-log-row {
+    display: grid;
+    grid-template-columns: 142px 48px 150px minmax(0, 1fr) minmax(0, 260px);
+    gap: 10px;
+    align-items: baseline;
+    min-height: 30px;
+    padding: 6px 14px;
+    font-family: 'Cascadia Code', SFMono-Regular, Consolas, monospace;
+    font-size: 12px;
+    border-bottom: 1px solid var(--workflow-overlay-border-subtle);
+  }
+
+  .workflow-execution-detail__live-log-row:last-child {
+    border-bottom: 0;
+  }
+
+  .workflow-execution-detail__live-log-row time,
+  .workflow-execution-detail__live-log-node,
+  .workflow-execution-detail__live-log-fields {
+    overflow: hidden;
+    color: var(--workflow-overlay-muted);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .workflow-execution-detail__live-log-level {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--el-color-primary);
+  }
+
+  .workflow-execution-detail__live-log-level[data-level='warn'] {
+    color: var(--el-color-warning);
+  }
+
+  .workflow-execution-detail__live-log-level[data-level='error'] {
+    color: var(--el-color-danger);
+  }
+
+  .workflow-execution-detail__live-log-message {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--workflow-overlay-text);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .workflow-execution-detail__live-log-fields {
+    font-size: 11px;
   }
 
   .workflow-execution-detail__inspector {
@@ -835,9 +1039,7 @@
   }
 
   .workflow-execution-detail__inspector--left {
-    top: 82px;
-    right: 8px;
-    left: auto;
+    inset: 82px 8px 240px auto;
   }
 
   .workflow-execution-detail__inspector--right {
@@ -997,12 +1199,29 @@
     }
 
     .workflow-execution-detail__inspector {
-      inset: auto 8px 8px;
+      inset: auto 8px 206px;
       width: auto;
       min-width: 0;
       max-width: none;
-      height: min(52%, 480px);
+      height: min(38%, 320px);
       min-height: 260px;
+    }
+
+    .workflow-execution-detail__live-logs {
+      flex-basis: 190px;
+    }
+
+    .workflow-execution-detail__live-log-row {
+      grid-template-columns: 112px 44px minmax(0, 1fr);
+      gap: 8px;
+    }
+
+    .workflow-execution-detail__live-log-message {
+      grid-column: 3;
+    }
+
+    .workflow-execution-detail__live-log-fields {
+      display: none;
     }
 
     .workflow-execution-detail__panel-toggle {

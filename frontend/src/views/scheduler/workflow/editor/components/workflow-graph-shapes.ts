@@ -52,6 +52,7 @@ type NodeVisualState =
   | 'issue'
   | 'failed'
   | 'running'
+  | 'waiting'
   | 'retryWaiting'
   | 'queued'
   | 'success'
@@ -68,6 +69,7 @@ const resolveVisualState = (flags: {
   if (flags.hasIssue) return 'issue'
   if (flags.executionState === 'failed') return 'failed'
   if (flags.executionState === 'running') return 'running'
+  if (flags.executionState === 'waiting') return 'waiting'
   if (flags.executionState === 'retry_waiting') return 'retryWaiting'
   if (flags.executionState === 'queued') return 'queued'
   if (flags.executionState === 'success') return 'success'
@@ -84,6 +86,7 @@ const STATE_TEXT: Record<NodeVisualState, string> = {
   issue: '异常',
   failed: '执行失败',
   running: '执行中',
+  waiting: '等待人工处理',
   retryWaiting: '等待重试',
   queued: '等待执行',
   success: '',

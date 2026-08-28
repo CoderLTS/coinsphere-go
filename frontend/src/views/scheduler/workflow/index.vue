@@ -118,6 +118,7 @@
     fetchWorkflowDefinitionList,
     type WorkflowDefinitionItem
   } from '@/api/scheduler'
+  import { fetchWorkflowRuns } from '@/api/workflows'
   import type { WorkflowStatus } from '@/api/workflows'
   import { formatDateTime } from '@/utils/date'
 
@@ -185,11 +186,26 @@
     }
   }
 
-  const openLogs = (row: WorkflowDefinitionItem) =>
-    router.push({
-      path: '/scheduler/execution',
-      query: { workflowId: row.code, workflowName: row.displayName }
-    })
+  const openLogs = async (row: WorkflowDefinitionItem) => {
+    try {
+      const result = await fetchWorkflowRuns(row.id, { limit: 1 })
+      const run = result.records[0]
+      if (!run) {
+        ElMessage.info('该工作流暂无运行记录')
+        return
+      }
+      await router.push({
+        path: `/scheduler/execution/${run.id}/detail`,
+        query: {
+          workflowId: row.code,
+          workflowName: row.displayName,
+          ...(run.triggerType === 'stream' ? { followLatest: '1' } : {})
+        }
+      })
+    } catch (error: any) {
+      ElMessage.error(error?.message || '加载工作流运行日志失败')
+    }
+  }
 
   const toggleLifecycle = async (row: WorkflowDefinitionItem) => {
     const activate = row.workflowStatus === 'inactive'

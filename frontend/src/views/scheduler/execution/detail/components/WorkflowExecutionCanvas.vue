@@ -91,6 +91,7 @@
     if (logs.some((item) => item.status === 'failed')) return 'failed'
     if (logs.some((item) => item.status === 'running')) return 'running'
     if (logs.some((item) => item.status === 'retry_waiting')) return 'retry_waiting'
+    if (logs.some((item) => item.status === 'waiting')) return 'waiting'
     if (logs.some((item) => item.status === 'queued' || item.status === 'pending')) return 'queued'
     return 'success'
   }
@@ -171,11 +172,30 @@
   const syncEdgeVisuals = () => {
     const graph = graphInstance.value
     if (!graph) return
+    const stateByNode = new Map(
+      [...nodeAttemptsById.value.entries()].map(([nodeId, attempts]) => [
+        nodeId,
+        {
+          hasAttempt: attempts.length > 0,
+          hasSuccess: attempts.some((item) => item.status === 'success'),
+          isActive: attempts.some((item) =>
+            ['queued', 'pending', 'running', 'waiting', 'retry_waiting'].includes(item.status)
+          )
+        }
+      ])
+    )
     graph.getEdges().forEach((edge) => {
       const selected = activeCellType.value === 'edge' && activeCellId.value === edge.id
-      const stroke = 'var(--workflow-edge-color, #98a4b6)'
-      const opacity = selected ? 1 : 0.62
-      const strokeWidth = selected ? 2.2 : 1.1
+      const sourceState = stateByNode.get(String(edge.getSourceCellId()))
+      const targetState = stateByNode.get(String(edge.getTargetCellId()))
+      const isFlowing = Boolean(sourceState?.hasSuccess && targetState?.isActive)
+      const isTraversed = Boolean(sourceState?.hasSuccess && targetState?.hasAttempt)
+      const isActive = isFlowing || isTraversed
+      const stroke = isActive
+        ? 'var(--theme-color, var(--el-color-primary))'
+        : 'var(--workflow-edge-color, #98a4b6)'
+      const opacity = selected ? 1 : isActive ? 0.92 : 0.34
+      const strokeWidth = selected ? 2.2 : isActive ? 1.8 : 1.1
       const baseLabel = String((edge.getData() || {}).label || '')
 
       edge.setAttrs({
@@ -183,10 +203,10 @@
           stroke,
           strokeWidth,
           opacity,
-          strokeDasharray: '4 5',
+          strokeDasharray: isFlowing ? '8 6' : isActive ? '6 4' : '4 5',
           strokeLinecap: 'round',
           strokeLinejoin: 'round',
-          class: 'workflow-execution-canvas__edge-line',
+          class: `workflow-execution-canvas__edge-line${isFlowing ? ' workflow-execution-canvas__edge-line--flow' : ''}`,
           targetMarker: {
             name: 'block',
             width: 9,
