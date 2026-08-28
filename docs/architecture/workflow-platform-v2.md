@@ -123,6 +123,8 @@ flowchart LR
 
 插件领域数据位于插件自有 schema，例如 `plugin_quant`。核心表只保存跨插件运行事实和引用，不复制插件账本、行情或结果数据。
 
+Quant 的币种目录由 `official.quant.sync_instruments` Action 维护。每个工作流拥有一份过滤后的成功快照，全局目录取全部来源并集；更新在 PostgreSQL 事务级 advisory lock 下串行执行，只有所有选中市场均抓取和解析成功后才替换来源并删除无来源品种。停用工作流保留最后一次成功快照，K 线 Trigger 启动和重连不参与元数据同步。
+
 ### 4.2 工作流状态机
 
 ```mermaid
@@ -163,11 +165,13 @@ stateDiagram-v2
 
 | 模式     | 主触发器              | 典型用途            | Run 边界             |
 | -------- | --------------------- | ------------------- | -------------------- |
-| `batch`  | 手工、定时、Webhook   | 补数、回测、导出    | 一次触发一个 Run     |
+| `batch`  | 手工、定时、Webhook   | 元数据同步、回测、导出 | 一次触发一个 Run     |
 | `event`  | CloudEvent 订阅       | K 线收盘、失败处理  | 一个事件一个 Run     |
 | `stream` | 长运行 TriggerHandler | WebSocket、持续采集 | 每次 `Emit` 一个 Run |
 
 每个图只能有一个主触发器。持续流的激活状态表示允许 Trigger 连接，不表示存在无限节点调用栈；每次 `Emit` 都形成可恢复、可查询的独立 Run。
+
+定时 Trigger 接受 60 至 86400 秒间隔，或六段 Cron 表达式和 IANA 时区。保存、激活和调度使用同一解析语义；服务恢复后最多创建一个错过时刻的 Run，再推进到下一未来时刻。
 
 ### 4.5 修订和保存
 
@@ -380,7 +384,7 @@ type TriggerHandler interface {
 | ------------ | --------------------------------------------------------------- | ----------------------------------------------------- |
 | Connector    | HTTP Action、Webhook、通用 WebSocket Trigger、连接诊断          | 不允许配置 Binance 私有交易请求，不绕过网络与密钥策略 |
 | AI           | 模型调用 Action、结构化输入输出、节点本地凭据                   | 不拥有工作流、不直接触发交易                          |
-| Quant        | Binance 公共行情、Go 策略、回测、信号、风险和 Paper 账本/结果页 | 不含 Python、Testnet、Live 或私有 API                 |
+| Quant        | Binance 元数据快照、公共行情、Go 策略、回测、信号、风险和 Paper 账本/结果页 | 不含 Python、Testnet、Live 或私有 API                 |
 | Notification | 站内及已支持渠道、投递记录和结果页                              | 诊断重放不发送，凭据不进入日志                        |
 
 ## 7. API 与授权边界
@@ -429,6 +433,8 @@ type EvaluateRequest struct {
 - 策略必须检查取消信号。主进程无法安全终止忽略取消的 Go 代码，这是可信插件模型的已知限制。
 
 ### 8.2 共享行情与回测
+
+首次部署在没有元数据同步节点时幂等创建并激活默认工作流：Spot 与 USD-M、USDT 与 USDC，首次立即入队，之后固定在 `Asia/Shanghai` 的 `00:00 / 06:00 / 12:00 / 18:00` 运行。用户主动停用后，后续启动不自动重新激活。
 
 ```mermaid
 flowchart LR

@@ -448,7 +448,7 @@ func validateNodeDescriptor(desc NodeDescriptor) error {
 	if desc.Pool != PoolStream && desc.Pool != PoolCompute {
 		return fmt.Errorf("node %q has invalid pool %q", desc.Type, desc.Pool)
 	}
-	if desc.SideEffect != SideEffectNone && desc.SideEffect != SideEffectNotification && desc.SideEffect != SideEffectHumanAction && desc.SideEffect != SideEffectPaper {
+	if desc.SideEffect != SideEffectNone && desc.SideEffect != SideEffectData && desc.SideEffect != SideEffectNotification && desc.SideEffect != SideEffectHumanAction && desc.SideEffect != SideEffectPaper {
 		return fmt.Errorf("node %q has invalid side effect %q", desc.Type, desc.SideEffect)
 	}
 	if desc.State != StateStateless && desc.State != StatePersistent {

@@ -461,15 +461,16 @@ export function validateNodeFormDraft(
         const scheduleType = String(config.scheduleType || '').trim()
         if (!scheduleType) {
           errors.push('定时开始节点必须选择计划类型。')
-        } else if (scheduleType === 'cron' && !String(config.cronExpression || '').trim()) {
-          errors.push('Cron 计划必须填写表达式。')
+        } else if (scheduleType === 'cron') {
+          if (!String(config.cronExpression || '').trim()) errors.push('Cron 计划必须填写表达式。')
+          if (!String(config.timeZone || '').trim()) errors.push('Cron 计划必须填写时区。')
         } else if (scheduleType === 'interval') {
           if (Number(config.value || 0) <= 0) errors.push('间隔数值必须大于 0。')
           if (!['seconds', 'minutes', 'hours', 'days'].includes(String(config.unit || '').trim())) {
             errors.push('间隔计划的 unit 不正确。')
           }
-        } else if (scheduleType === 'once' && !String(config.runAt || '').trim()) {
-          errors.push('单次计划必须填写 runAt。')
+        } else {
+          errors.push('定时开始节点的计划类型无效。')
         }
       }
       break

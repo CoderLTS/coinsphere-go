@@ -20,6 +20,67 @@ type quantSeriesConfig struct {
 	Interval   string `json:"interval"`
 }
 
+type quantInstrumentSyncConfig struct {
+	Markets            []string `json:"markets"`
+	QuoteAssets        []string `json:"quoteAssets"`
+	BaseAssetAllowlist []string `json:"baseAssetAllowlist"`
+	BaseAssetDenylist  []string `json:"baseAssetDenylist"`
+	SymbolAllowlist    []string `json:"symbolAllowlist"`
+	SymbolDenylist     []string `json:"symbolDenylist"`
+}
+
+func parseQuantInstrumentSyncConfig(raw json.RawMessage) (quantInstrumentSyncConfig, error) {
+	var config quantInstrumentSyncConfig
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&config) != nil {
+		return config, errors.New("quant instrument sync configuration is invalid")
+	}
+	config.Markets = normalizeQuantFilter(config.Markets, true)
+	config.QuoteAssets = normalizeQuantFilter(config.QuoteAssets, false)
+	config.BaseAssetAllowlist = normalizeQuantFilter(config.BaseAssetAllowlist, false)
+	config.BaseAssetDenylist = normalizeQuantFilter(config.BaseAssetDenylist, false)
+	config.SymbolAllowlist = normalizeQuantFilter(config.SymbolAllowlist, false)
+	config.SymbolDenylist = normalizeQuantFilter(config.SymbolDenylist, false)
+	if len(config.Markets) == 0 || len(config.QuoteAssets) == 0 {
+		return config, errors.New("quant instrument sync markets and quote assets are required")
+	}
+	for _, market := range config.Markets {
+		if market != "spot" && market != "usdm" {
+			return config, errors.New("quant instrument sync market is invalid")
+		}
+	}
+	for _, values := range [][]string{
+		config.QuoteAssets, config.BaseAssetAllowlist, config.BaseAssetDenylist,
+		config.SymbolAllowlist, config.SymbolDenylist,
+	} {
+		for _, value := range values {
+			if !quantInstrumentPattern.MatchString(value) {
+				return config, errors.New("quant instrument sync filter is invalid")
+			}
+		}
+	}
+	return config, nil
+}
+
+func normalizeQuantFilter(values []string, lower bool) []string {
+	seen := make(map[string]bool, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if lower {
+			value = strings.ToLower(value)
+		} else {
+			value = strings.ToUpper(value)
+		}
+		if value != "" && !seen[value] {
+			seen[value] = true
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
 type quantStrategyConfig struct {
 	quantSeriesConfig
 	StrategyID string          `json:"strategyId"`

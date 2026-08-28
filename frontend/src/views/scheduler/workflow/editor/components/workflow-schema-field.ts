@@ -10,7 +10,15 @@
  */
 
 /** 控件类型。objectList 是「对象数组」的行编辑器，比让用户手写 JSON 好用得多。 */
-export type SchemaFieldControl = 'text' | 'enum' | 'number' | 'boolean' | 'json' | 'objectList'
+export type SchemaFieldControl =
+  | 'text'
+  | 'enum'
+  | 'multiEnum'
+  | 'stringList'
+  | 'number'
+  | 'boolean'
+  | 'json'
+  | 'objectList'
 
 export interface SchemaFieldMeta {
   key: string
@@ -43,7 +51,8 @@ const resolveControl = (schema: Record<string, any>): SchemaFieldControl => {
   if (schema.type === 'integer' || schema.type === 'number') return 'number'
   if (schema.type === 'boolean') return 'boolean'
   if (schema.type === 'array') {
-    // 元素是带字段的对象 → 行编辑器；否则（字符串数组之类）退回 JSON 文本域。
+    if (Array.isArray(schema.items?.enum) && schema.items.enum.length) return 'multiEnum'
+    if (schema.items?.type === 'string') return 'stringList'
     return schema.items?.properties ? 'objectList' : 'json'
   }
   if (schema.type === 'object') return 'json'
@@ -67,10 +76,14 @@ export function buildSchemaField(key: string, raw: unknown): SchemaFieldMeta {
     title: String(schema.title || key),
     description: String(schema.description || ''),
     control,
-    options: (schema.enum || []).map((item: unknown, index: number) => ({
-      value: String(item),
-      label: String(schema.enumLabels?.[index] || item)
-    })),
+    options: (control === 'multiEnum' ? schema.items?.enum || [] : schema.enum || []).map(
+      (item: unknown, index: number) => ({
+        value: String(item),
+        label: String(
+          (control === 'multiEnum' ? schema.items?.enumLabels : schema.enumLabels)?.[index] || item
+        )
+      })
+    ),
     min: typeof schema.minimum === 'number' ? schema.minimum : undefined,
     max: typeof schema.maximum === 'number' ? schema.maximum : undefined,
     step: schema.type === 'integer' ? 1 : undefined,

@@ -48,12 +48,12 @@
 | `POST /api/v1/result-views/{viewId}/runs/{runId}/{action}`      | 按白名单重试或取消范围内运行           |
 | `POST /api/v1/result-views/{viewId}/workflow/pause`             | 按白名单暂停固定工作流                 |
 
-- 创建接受批处理、事件、Connector 和 Quant 模板。事件 Trigger 按类型及可选精确 source/subject 过滤；定时配置只接受 UTC `everySeconds` 60 至 86400，不提供 Cron DSL。图 `schemaVersion` 固定为 `1`，节点保存 `nodeInstanceId`、精确节点版本、普通配置、结构化输入映射和位置；边保存两端端口及可选 Boolean CEL 条件。
+- 创建接受批处理、事件、Connector 和 Quant 模板。事件 Trigger 按类型及可选精确 source/subject 过滤；`core.schedule` 配置必须二选一：`everySeconds` 60 至 86400，或六段 `cronExpression` 加 IANA `timeZone`。图 `schemaVersion` 固定为 `1`，节点保存 `nodeInstanceId`、精确节点版本、普通配置、结构化输入映射和位置；边保存两端端口及可选 Boolean CEL 条件。
 - 输入映射只接受 `field`、`literal`、`cel`。字段来源使用上游 `nodeInstanceId` 和字段路径数组；保存校验端口、可达性、DAG、JSON Schema、字段类型和 CEL，并拒绝 Decimal CEL 算术。图级后向边始终拒绝；`core.loop` 只运行内嵌无环子图，并强制 1 至 100 次上限、绝对超时和 Boolean CEL 退出条件。每轮 RunNode、RunCheckpoint 与操作键都包含迭代号，人工等待节点不能嵌入 Loop。
 - 保存请求必须提供当前 `expectedActiveRevisionId`。服务锁定工作流，校验完整图，写入递增修订、修订级密钥绑定并原子切换活动指针；并发旧指针返回 `409 Conflict`，失败校验不创建修订。同一节点实例的类型和版本不变时保留持久状态；删除节点或修改类型/版本且已有状态时，工作流必须为 `inactive`，并由管理员通过 `resetStateNodeInstanceIds` 精确确认要重置的节点，状态删除与修订激活在同一事务提交。
 - `secretChanges` 只允许替换或移除节点 Config Schema 声明的顶层 `x-coinsphere-secret` 字段。密钥按修订、节点实例和字段独立加密；响应只返回 `secretFields[nodeInstanceId][field]=true`，图、修订响应和节点目录永不返回密钥值。
 - 修订保存后不可更新或删除。工作流状态只有 `inactive / active / error`；Trigger 异常退出进入 `error`，管理员先 `deactivate` 恢复为 `inactive`，确认修复后再 `activate`。
-- `activate` 允许 Run 队列领取工作并启动连续流 Trigger；`deactivate` 停止领取新 Run、取消 Trigger，当前 Action 返回后保存检查点并重新排队。手工触发只适用于 `core.manual`，`core.schedule` 按 UTC 固定间隔去重入队。TriggerHandler 必须响应取消和 Emitter 背压；进程重启会从数据库扫描仍为 `active` 的连续流。
+- `activate` 允许 Run 队列领取工作并启动连续流 Trigger；`deactivate` 停止领取新 Run、取消 Trigger，当前 Action 返回后保存检查点并重新排队。手工触发只适用于 `core.manual`；`core.schedule` 按固定间隔或带时区 Cron 去重入队，服务恢复后最多补一次漏跑。TriggerHandler 必须响应取消和 Emitter 背压；进程重启会从数据库扫描仍为 `active` 的连续流。
 - CloudEvent 要求 1.0、UTC 时间、对象 `data` 和 1 至 256 字节 `partitionkey`。`(source,id)` 全局唯一；相同内容重试返回原事件，不同内容返回 `409`。事件、投递和 Run 在同一事务提交，Outbox 持久重试内部失败事件。闭合 K 线的 OHLCV 正文只保存在 Quant 行情表和事件表，Run 只关联事件 ID。
 - Run 创建时固定事件与活动修订。单实例执行器使用 PostgreSQL 持久队列、每工作流并发/积压上限和有界 `stream`/`compute` 池；同工作流同分区按入队顺序领取，不同分区可并行，过期租约重启后重新排队。进入 `waiting` 的人工任务保存上下文并释放执行池和分区占用。
 - 每个成功节点原子提交终态 RunNode、输出 RunCheckpoint 和缓冲状态。失败只重试当前节点，默认最多三次并线性退避；操作键固定为 `sha256(runId + ":" + nodeInstanceId + ":" + loopIteration)`。取消通过 `context.Context` 协作传递，取消请求后不再调度下游节点。最终失败用 Outbox 发布 `io.coinsphere.workflow.run.failed`。
@@ -95,7 +95,7 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 
 内置 `official.connector` 提供 HTTP Action、Webhook Trigger、WebSocket Trigger 和运行诊断结果页；`official.ai` 提供 OpenAI-compatible 结构化模型调用和结果页。两者只访问 `workflow.http_allowed_hosts` 的精确公共域名，禁用环境代理，拨号前后解析并拒绝非公网 IP。Binance 只允许明确列出的公共 GET/公共 WebSocket，授权、私有或未知端点一律拒绝。AI 节点只接收/返回 JSON 对象，不能控制工作流生命周期或交易。
 
-内置 `official.quant` 提供 `binance_candles` Trigger、`evaluate`/`backtest`/`signal`/`paper_execute` Action、可信 SMA crossover 策略和移动可用结果页。行情只使用 Binance Spot/USD-M 公共接口，按 `market + instrument + interval` 合并订阅并发布 `market.candle.closed`；重复 REST/WebSocket 数据由 K 线键和 CloudEvent `(source,id)` 去重。策略只接收升序、连续、UTC 闭合 K 线和已校验参数，返回 `-1` 至 `1` 的 Decimal 目标；实时、回测与 Paper 调用同一 `Evaluate`。
+内置 `official.quant` 提供 `binance_candles` Trigger、`sync_instruments`/`evaluate`/`backtest`/`signal`/`paper_execute` Action、可信 SMA crossover 策略和移动可用结果页。`sync_instruments` 在所有选中 Spot/USD-M 公共元数据均成功解析后，用事务级 advisory lock 原子替换当前工作流的过滤快照；白名单取交集、黑名单任一命中即排除，全局目录取全部工作流来源并集。应用首次缺少该节点时创建并激活北京时间每六小时运行的默认工作流并立即首跑，后续启动不重新激活已停用工作流。K 线连接只负责补数和实时采集，按 `market + instrument + interval` 合并订阅并发布 `market.candle.closed`；重复 REST/WebSocket 数据由 K 线键和 CloudEvent `(source,id)` 去重。策略只接收升序、连续、UTC 闭合 K 线和已校验参数，返回 `-1` 至 `1` 的 Decimal 目标；实时、回测与 Paper 调用同一 `Evaluate`。
 
 Paper 账户按 `workflowId + paper nodeInstanceId` 唯一。默认人工审批；自动模式只有在最大总名义价值、单品种名义价值、单次操作名义价值、最大日亏损和最大回撤全部显式配置时有效。批准后重新读取 Binance 公共报价，并在一个数据库事务中检查信号/任务状态、报价新鲜度、品种状态、数量步进、账户状态及五项风险限制。拒绝不会创建账户或账本；成功执行写入不可变订单、成交、费用和账本事实，再更新账户与持仓投影。操作键和唯一约束保证节点重试、进程重启及 Outbox 重投不重复成交或投递。
 

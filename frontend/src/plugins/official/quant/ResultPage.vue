@@ -141,6 +141,7 @@
     () =>
       ({
         'official.quant.binance_candles': 'Binance 闭合行情',
+        'official.quant.sync_instruments': 'Binance 币种元数据采集',
         'official.quant.evaluate': '策略评估',
         'official.quant.backtest': '策略回测'
       })[result.runNode.nodeType] || result.runNode.nodeType

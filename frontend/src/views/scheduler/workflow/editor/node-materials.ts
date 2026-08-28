@@ -90,6 +90,13 @@ const MATERIAL_META: Record<string, MaterialMeta> = {
     color: '#7ec7b7',
     iconText: 'K'
   },
+  'official.quant.sync_instruments': {
+    kind: 'generic',
+    group: '行情',
+    description: '同步过滤后的 Binance 币种元数据',
+    color: '#0891b2',
+    iconText: 'M'
+  },
   'official.quant.evaluate': {
     kind: 'generic',
     group: '策略',

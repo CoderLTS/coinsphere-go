@@ -20,6 +20,15 @@ type quantInstrument struct {
 
 func (quantInstrument) TableName() string { return "plugin_quant.instruments" }
 
+type quantInstrumentSource struct {
+	WorkflowID int64
+	Market     string
+	Symbol     string
+	SyncedAt   time.Time
+}
+
+func (quantInstrumentSource) TableName() string { return "plugin_quant.instrument_sources" }
+
 type quantCandle struct {
 	Market        string
 	Instrument    string

@@ -69,7 +69,6 @@
                 <ElSelect v-model="localForm.config.scheduleType" @change="emitModel">
                   <ElOption label="Cron" value="cron" />
                   <ElOption label="间隔执行" value="interval" />
-                  <ElOption label="单次执行" value="once" />
                 </ElSelect>
               </ElFormItem>
 
@@ -78,6 +77,14 @@
                   v-model="localForm.config.cronExpression"
                   placeholder="例如 0 */5 * * * *"
                   @blur="handleTextBlur(['config', 'cronExpression'])"
+                />
+              </ElFormItem>
+
+              <ElFormItem v-if="localForm.config.scheduleType === 'cron'" label="时区">
+                <ElInput
+                  v-model="localForm.config.timeZone"
+                  placeholder="例如 Asia/Shanghai"
+                  @blur="handleTextBlur(['config', 'timeZone'])"
                 />
               </ElFormItem>
 
@@ -101,14 +108,6 @@
                   </ElSelect>
                 </ElFormItem>
               </template>
-
-              <ElFormItem v-else-if="localForm.config.scheduleType === 'once'" label="执行时间">
-                <ElInput
-                  v-model="localForm.config.runAt"
-                  placeholder="例如 2026-04-06T10:00:00+08:00"
-                  @blur="handleTextBlur(['config', 'runAt'])"
-                />
-              </ElFormItem>
             </template>
 
             <template v-else-if="localForm.typeCode === 'start.event'">

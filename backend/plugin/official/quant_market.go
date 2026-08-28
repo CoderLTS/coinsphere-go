@@ -18,7 +18,6 @@ import (
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/gorilla/websocket"
 	"github.com/shopspring/decimal"
-	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -89,10 +88,8 @@ func (h *quantCandleHub) subscribe(ctx context.Context, config quantSeriesConfig
 
 func (h *quantCandleHub) run(key string, subscription *quantCandleSubscription) {
 	for subscription.ctx.Err() == nil {
-		if err := h.runtime.syncQuantInstruments(subscription.ctx, subscription.config.Market); err == nil {
-			if err = h.runtime.backfillQuantCandles(subscription.ctx, subscription); err == nil {
-				_ = h.runtime.streamQuantCandles(subscription.ctx, subscription)
-			}
+		if err := h.runtime.backfillQuantCandles(subscription.ctx, subscription); err == nil {
+			_ = h.runtime.streamQuantCandles(subscription.ctx, subscription)
 		}
 		select {
 		case <-subscription.ctx.Done():
@@ -311,61 +308,6 @@ func (q *quantRuntime) streamQuantCandles(ctx context.Context, subscription *qua
 			return err
 		}
 	}
-}
-
-func (q *quantRuntime) syncQuantInstruments(ctx context.Context, market string) error {
-	target := "https://data-api.binance.vision/api/v3/exchangeInfo"
-	if market == "usdm" {
-		target = "https://fapi.binance.com/fapi/v1/exchangeInfo"
-	}
-	var payload struct {
-		Symbols []struct {
-			Symbol, BaseAsset, QuoteAsset, Status string
-			Filters                               []struct {
-				FilterType, TickSize, StepSize, MinQty string
-			} `json:"filters"`
-		} `json:"symbols"`
-	}
-	if err := q.getQuantJSON(ctx, target, &payload); err != nil {
-		return err
-	}
-	now := time.Now().UTC()
-	return q.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		for _, item := range payload.Symbols {
-			instrument := quantInstrument{
-				Market: market, Symbol: item.Symbol, BaseAsset: item.BaseAsset, QuoteAsset: item.QuoteAsset,
-				Status: item.Status, UpdatedAt: now,
-			}
-			valid := true
-			for _, filter := range item.Filters {
-				switch filter.FilterType {
-				case "PRICE_FILTER":
-					value, parseErr := decimal.NewFromString(filter.TickSize)
-					instrument.PriceTick, valid = value, valid && parseErr == nil
-				case "LOT_SIZE":
-					step, stepErr := decimal.NewFromString(filter.StepSize)
-					minimum, minimumErr := decimal.NewFromString(filter.MinQty)
-					instrument.QuantityStep, instrument.MinQuantity = step, minimum
-					valid = valid && stepErr == nil && minimumErr == nil
-				}
-			}
-			if !valid || !quantInstrumentPattern.MatchString(instrument.Symbol) ||
-				!quantInstrumentPattern.MatchString(instrument.BaseAsset) || !quantInstrumentPattern.MatchString(instrument.QuoteAsset) ||
-				strings.TrimSpace(instrument.Status) == "" || instrument.PriceTick.Sign() <= 0 ||
-				instrument.QuantityStep.Sign() <= 0 || instrument.MinQuantity.Sign() < 0 {
-				continue
-			}
-			if err := tx.Clauses(clause.OnConflict{
-				Columns: []clause.Column{{Name: "market"}, {Name: "symbol"}},
-				DoUpdates: clause.AssignmentColumns([]string{
-					"base_asset", "quote_asset", "status", "price_tick", "quantity_step", "min_quantity", "updated_at",
-				}),
-			}).Create(&instrument).Error; err != nil {
-				return errors.New("persist Binance instrument metadata failed")
-			}
-		}
-		return nil
-	})
 }
 
 func (q *quantRuntime) getQuantJSON(ctx context.Context, target string, destination any) error {
