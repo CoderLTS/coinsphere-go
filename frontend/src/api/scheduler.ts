@@ -223,6 +223,7 @@ export interface WorkflowExecutionDetail extends WorkflowExecutionItem {
   graph: WorkflowGraph
   startNodeId: string
   nodeAttempts: WorkflowExecutionNodeAttempt[]
+  logs: WorkflowNodeLog[]
   event?: WorkflowRunEvent
   resultSummary: Record<string, unknown>
   artifacts: WorkflowArtifact[]
@@ -960,6 +961,7 @@ export async function fetchWorkflowExecutionDetail(
     ...execution,
     graph,
     startNodeId: revision.mainTriggerNodeId,
+    logs: run.logs,
     event: run.event,
     resultSummary: run.resultSummary,
     artifacts: run.artifacts,
