@@ -382,6 +382,7 @@
   const loading = ref(false)
   const loadError = ref('')
   const executionDetail = ref<WorkflowExecutionDetail | null>(null)
+  const activeExecutionId = ref(Number(route.params.executionId))
   const domainGraph = ref<WorkflowDomainGraphModel | null>(null)
   const selectedCellId = ref<string | null>(null)
   const selectedCellType = ref<WorkflowActiveCellType>(null)
@@ -526,29 +527,41 @@
     return text === '{}' ? '' : text
   }
 
-  const liveLogRows = computed(() => {
-    const detail = executionDetail.value
-    if (!detail) return []
+  type LiveLogRow = {
+    key: string
+    time: string
+    level: string
+    nodeName: string
+    message: string
+    fields: string
+  }
+
+  const liveLogRows = ref<LiveLogRow[]>([])
+
+  const appendLiveLogs = (detail: WorkflowExecutionDetail) => {
     const nodeNames = new Map(detail.nodeAttempts.map((attempt) => [attempt.id, attempt.nodeName]))
     const rows = new Map<number, (typeof detail.logs)[number]>()
     detail.logs.forEach((line) => rows.set(line.id, line))
     detail.nodeAttempts.forEach((attempt) =>
       attempt.logs.forEach((line) => rows.set(line.id, line))
     )
-    return [...rows.values()]
-      .sort((left, right) => {
-        const timeDiff = Date.parse(left.loggedAt || '') - Date.parse(right.loggedAt || '')
-        return timeDiff || left.id - right.id
-      })
-      .map((line) => ({
-        key: `log-${line.id}`,
+
+    const merged = new Map(liveLogRows.value.map((line) => [line.key, line]))
+    rows.forEach((line) =>
+      merged.set(`run-${detail.id}-log-${line.id}`, {
+        key: `run-${detail.id}-log-${line.id}`,
         time: line.loggedAt,
         level: line.level,
         nodeName: nodeNames.get(line.runNodeId) || '工作流',
         message: line.message,
         fields: formatLogFields(line.fields)
-      }))
-  })
+      })
+    )
+    liveLogRows.value = [...merged.values()].sort((left, right) => {
+      const timeDiff = Date.parse(left.time || '') - Date.parse(right.time || '')
+      return timeDiff || left.key.localeCompare(right.key)
+    })
+  }
 
   const shouldFollowLatest = computed(() => {
     if (route.query.followLatest === '1') return true
@@ -614,12 +627,10 @@
           return
         }
         const updatedRunId = update.runId
-        const currentId = Number(route.params.executionId)
+        const currentId = activeExecutionId.value
         if (shouldFollowLatest.value && updatedRunId > currentId) {
-          void router.replace({
-            path: `/scheduler/execution/${updatedRunId}/detail`,
-            query: route.query
-          })
+          activeExecutionId.value = updatedRunId
+          void refreshExecutionFromRealtime()
           return
         }
         if (updatedRunId === currentId) {
@@ -662,12 +673,8 @@
       try {
         const result = await fetchWorkflowRuns(activeWorkflowId.value, { limit: 1 })
         const latestRunId = result.records[0]?.id
-        if (latestRunId && latestRunId > Number(route.params.executionId)) {
-          await router.replace({
-            path: `/scheduler/execution/${latestRunId}/detail`,
-            query: route.query
-          })
-          return
+        if (latestRunId && latestRunId > activeExecutionId.value) {
+          activeExecutionId.value = latestRunId
         }
       } catch {
         // Keep the current run visible if the reconnect snapshot fails.
@@ -677,7 +684,7 @@
   }
 
   const loadPageData = async (options: { preserveSelection?: boolean; silent?: boolean } = {}) => {
-    const executionId = Number(route.params.executionId)
+    const executionId = activeExecutionId.value
     if (!Number.isFinite(executionId) || executionId <= 0) {
       loadError.value = '运行日志不存在'
       return
@@ -694,20 +701,27 @@
     }
 
     try {
-      // 节点定义和执行详情一起加载，随后把服务端 graph 映射成前端 domain graph，
-      // 这样详情画布和编辑器画布可以共用一套节点形状与映射逻辑。
-      const [detail, nodeDefinitions] = await Promise.all([
-        fetchWorkflowExecutionDetail(executionId),
-        fetchNodeDefinitions().catch(() => [] as WorkflowNodeDefinitionItem[])
-      ])
+      const detail = await fetchWorkflowExecutionDetail(executionId)
+      if (executionId !== activeExecutionId.value) return
+      const previousDetail = executionDetail.value
+      const graphChanged =
+        !domainGraph.value ||
+        previousDetail?.workflowDefinitionId !== detail.workflowDefinitionId ||
+        previousDetail.workflowDefinitionVersion !== detail.workflowDefinitionVersion
+      if (graphChanged) {
+        const nodeDefinitions = await fetchNodeDefinitions().catch(
+          () => [] as WorkflowNodeDefinitionItem[]
+        )
+        if (executionId !== activeExecutionId.value) return
+        syncNodeDefinitions(nodeDefinitions)
+        domainGraph.value = mapServerGraphToDomain(
+          detail.graph || { nodes: [], edges: [] },
+          nodeDefinitions,
+          flattenMaterials(nodeDefinitions)
+        )
+      }
+      appendLiveLogs(detail)
       executionDetail.value = detail
-      // 详情画布共用编辑器那套映射，注册表镜像也得同步，端口与分支才画得对。
-      syncNodeDefinitions(nodeDefinitions)
-      domainGraph.value = mapServerGraphToDomain(
-        detail.graph || { nodes: [], edges: [] },
-        nodeDefinitions,
-        flattenMaterials(nodeDefinitions)
-      )
       if (!options.preserveSelection && detail.status === 'failed') {
         const failed = detail.nodeAttempts.find(
           (item) => item.status === 'failed' || Boolean(item.error)
@@ -735,8 +749,10 @@
 
   watch(
     () => route.params.executionId,
-    () => {
+    (executionId) => {
       // 详情页通过参数切换不同 execution 时，复用页面实例并重新加载数据。
+      activeExecutionId.value = Number(executionId)
+      liveLogRows.value = []
       void loadPageData()
     },
     { immediate: true }
