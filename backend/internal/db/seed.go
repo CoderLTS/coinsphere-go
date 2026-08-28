@@ -46,6 +46,7 @@ var coreMenuItems = []menuItem{
 	{"NodeDefinitions", "节点定义", "node-definition", "/scheduler/node-definition", "ri:stack-line", "SchedulerCenter", true, false, false},
 	{"WorkflowDefinitions", "工作流定义", "definition", "/scheduler/workflow", "ri:node-tree", "SchedulerCenter", true, false, false},
 	{"WorkflowExecutions", "执行记录", "execution", "/scheduler/execution", "ri:history-line", "SchedulerCenter", true, false, true},
+	{"QuantData", "量化数据", "/quant-data", "/index/index", "ri:line-chart-line", "", false, false, false},
 	{"System", "系统管理", "/system", "/index/index", "ri:settings-3-line", "", false, false, false},
 	{"User", "用户管理", "user", "/system/user", "ri:user-3-line", "System", true, false, false},
 	{"Role", "角色管理", "role", "/system/role", "ri:team-line", "System", true, false, false},
@@ -61,6 +62,7 @@ var menuI18n = map[string][2]string{
 	"WorkflowDefinitions": {"工作流定义", "Workflow Definitions"},
 	"WorkflowExecutions":  {"执行记录", "Execution Records"},
 	"NodeDefinitions":     {"节点定义", "Node Definitions"},
+	"QuantData":           {"量化数据", "Quantitative Data"},
 	"System":              {"系统管理", "System Management"},
 	"User":                {"用户管理", "User Management"},
 	"Role":                {"角色管理", "Role Management"},
@@ -73,9 +75,15 @@ func Seed(ctx context.Context, gdb *gorm.DB, hasher *security.PasswordHasher, ad
 	menuItems := append([]menuItem(nil), coreMenuItems...)
 	for _, page := range pluginPages {
 		key := page.PluginID + "/" + page.PageKey
+		parent := ""
+		path := "/plugins/" + key
+		if page.PluginID == "official.quant" {
+			parent = "QuantData"
+			path = page.PageKey
+		}
 		menuItems = append(menuItems, menuItem{
-			Name: "PluginPage:" + key, Title: page.Title, Path: "/plugins/" + key,
-			Component: "plugin:" + key, Icon: page.Icon, KeepAlive: page.KeepAlive,
+			Name: "PluginPage:" + key, Title: page.Title, Path: path,
+			Component: "plugin:" + key, Icon: page.Icon, Parent: parent, KeepAlive: page.KeepAlive,
 		})
 	}
 	// 入参里的 *gorm.DB、*security.PasswordHasher 都是“指针”(*类型 表示指向该类型的指针),

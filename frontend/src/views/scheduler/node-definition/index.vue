@@ -1,52 +1,50 @@
 <template>
-  <div class="node-console">
-    <header class="console-head">
-      <div><div class="eyebrow">工作流调度</div><h1>节点定义</h1></div>
-      <ElButton :icon="Refresh" :loading="loading" @click="loadData">刷新</ElButton>
-    </header>
+  <div class="art-full-height">
+    <ElCard class="art-table-card">
+      <ArtTableHeader
+        :loading="loading"
+        :show-zebra="false"
+        layout="refresh,size,fullscreen,settings"
+        @refresh="loadData"
+      />
 
-    <ElCard shadow="never">
-      <ElTabs model-value="builtin">
-        <ElTabPane label="内置节点" name="builtin">
-          <ElTable :data="definitions" v-loading="loading">
-            <ElTableColumn label="节点" min-width="210">
-              <template #default="{ row }">
-                <div class="node-name">
-                  <span><ArtSvgIcon icon="ri:node-tree" /></span>
-                  <strong>{{ row.label }}</strong>
-                </div>
-              </template>
-            </ElTableColumn>
-            <ElTableColumn label="能力" min-width="220">
-              <template #default="{ row }">{{ capabilityLabel(row) }}</template>
-            </ElTableColumn>
-            <ElTableColumn label="配置项" min-width="320">
-              <template #default="{ row }">
-                <div class="field-tags">
-                  <ElTag
-                    v-for="field in configFields(row)"
-                    :key="field"
-                    effect="plain"
-                    size="small"
-                  >
-                    {{ field }}
-                  </ElTag>
-                  <span v-if="!configFields(row).length" class="muted">无需配置</span>
-                </div>
-              </template>
-            </ElTableColumn>
-            <ElTableColumn label="状态" width="100">
-              <template #default><ElTag type="success" effect="plain">可用</ElTag></template>
-            </ElTableColumn>
-          </ElTable>
-        </ElTabPane>
-      </ElTabs>
+      <ArtTable
+        :data="definitions"
+        :loading="loading"
+        :stripe="false"
+        table-layout="auto"
+        empty-height="320px"
+      >
+        <ElTableColumn label="节点名称" min-width="210">
+          <template #default="{ row }">
+            <div class="node-name">
+              <span><ArtSvgIcon icon="ri:node-tree" /></span>
+              <strong>{{ row.label }}</strong>
+            </div>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn label="节点能力" min-width="220">
+          <template #default="{ row }">{{ capabilityLabel(row) }}</template>
+        </ElTableColumn>
+        <ElTableColumn label="配置项" min-width="320">
+          <template #default="{ row }">
+            <div class="field-tags">
+              <ElTag v-for="field in configFields(row)" :key="field" effect="plain" size="small">
+                {{ field }}
+              </ElTag>
+              <span v-if="!configFields(row).length" class="muted">无需配置</span>
+            </div>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn label="状态" width="100" align="center">
+          <template #default><ElTag type="success" effect="plain">可用</ElTag></template>
+        </ElTableColumn>
+      </ArtTable>
     </ElCard>
   </div>
 </template>
 
 <script setup lang="ts">
-  import { Refresh } from '@element-plus/icons-vue'
   import { fetchNodeDefinitions, type WorkflowNodeDefinitionItem } from '@/api/scheduler'
 
   defineOptions({ name: 'NodeDefinitions' })
@@ -80,38 +78,10 @@
 </script>
 
 <style scoped lang="scss">
-  .node-console {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    padding-bottom: 24px;
-  }
-
-  .console-head,
   .node-name {
     display: flex;
-    align-items: center;
-  }
-
-  .console-head {
-    gap: 12px;
-    justify-content: space-between;
-  }
-
-  .eyebrow {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--el-color-primary);
-    letter-spacing: 0;
-  }
-
-  h1 {
-    margin: 6px 0 0;
-    font-size: 24px;
-  }
-
-  .node-name {
     gap: 10px;
+    align-items: center;
   }
 
   .node-name > span {
@@ -124,12 +94,6 @@
     border-radius: 7px;
   }
 
-  .node-name small {
-    display: block;
-    margin-top: 3px;
-    color: var(--el-text-color-secondary);
-  }
-
   .field-tags {
     display: flex;
     flex-wrap: wrap;
@@ -138,12 +102,5 @@
 
   .muted {
     color: var(--el-text-color-secondary);
-  }
-
-  @media (max-width: 680px) {
-    .console-head {
-      flex-direction: column;
-      align-items: flex-start;
-    }
   }
 </style>
