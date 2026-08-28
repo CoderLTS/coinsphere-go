@@ -12,7 +12,7 @@
 <script setup lang="ts">
   import { Graph } from '@antv/x6'
   import { useElementSize } from '@vueuse/core'
-  import type { WorkflowExecutionNodeLog, WorkflowExecutionTransitionLog } from '@/api/scheduler'
+  import type { WorkflowExecutionNodeAttempt } from '@/api/scheduler'
   import { mapDomainGraphToX6 } from '@/views/scheduler/workflow/editor/workflow-editor.mapper'
   import type { WorkflowDomainGraphModel } from '@/views/scheduler/workflow/editor/types'
   import {
@@ -24,8 +24,7 @@
 
   const props = defineProps<{
     graph: WorkflowDomainGraphModel
-    nodeLogs: WorkflowExecutionNodeLog[]
-    transitionLogs: WorkflowExecutionTransitionLog[]
+    nodeAttempts: WorkflowExecutionNodeAttempt[]
     startNodeId: string
   }>()
 
@@ -47,9 +46,9 @@
   let fitTimer: ReturnType<typeof setTimeout> | null = null
   const { width: graphHostWidth, height: graphHostHeight } = useElementSize(graphRef)
 
-  const nodeLogsById = computed(() => {
-    const map = new Map<string, WorkflowExecutionNodeLog[]>()
-    props.nodeLogs.forEach((item) => {
+  const nodeAttemptsById = computed(() => {
+    const map = new Map<string, WorkflowExecutionNodeAttempt[]>()
+    props.nodeAttempts.forEach((item) => {
       const list = map.get(item.nodeId) || []
       list.push(item)
       map.set(item.nodeId, list)
@@ -61,30 +60,6 @@
       })
     })
     return map
-  })
-
-  const transitionLogsByEdgeId = computed(() => {
-    const map = new Map<string, WorkflowExecutionTransitionLog[]>()
-    props.transitionLogs.forEach((item) => {
-      const list = map.get(item.edgeId) || []
-      list.push(item)
-      map.set(item.edgeId, list)
-    })
-    map.forEach((list) => {
-      list.sort((a, b) => {
-        if (a.traversalIndex === b.traversalIndex) return a.id - b.id
-        return a.traversalIndex - b.traversalIndex
-      })
-    })
-    return map
-  })
-
-  const failedNodeIds = computed(() => {
-    const set = new Set<string>()
-    nodeLogsById.value.forEach((logs, nodeId) => {
-      if (logs.some((item) => item.status === 'failed')) set.add(nodeId)
-    })
-    return set
   })
 
   const buildTextLabel = (text: string) => {
@@ -111,31 +86,7 @@
     ]
   }
 
-  const buildCountLabel = (count: number) => {
-    if (count <= 1) return []
-    return [
-      {
-        position: 0.76,
-        attrs: {
-          body: {
-            fill: 'var(--el-color-primary-light-9, #ecf2ff)',
-            stroke: 'var(--theme-color, #5d87ff)',
-            strokeWidth: 1,
-            rx: 10,
-            ry: 10
-          },
-          label: {
-            text: `x${count}`,
-            fill: 'var(--theme-color, #5d87ff)',
-            fontSize: 11,
-            fontWeight: 700
-          }
-        }
-      }
-    ]
-  }
-
-  const resolveNodeExecutionState = (logs: WorkflowExecutionNodeLog[]) => {
+  const resolveNodeExecutionState = (logs: WorkflowExecutionNodeAttempt[]) => {
     if (!logs.length) return ''
     if (logs.some((item) => item.status === 'failed')) return 'failed'
     if (logs.some((item) => item.status === 'running')) return 'running'
@@ -204,7 +155,7 @@
     const graph = graphInstance.value
     if (!graph) return
     graph.getNodes().forEach((node) => {
-      const logs = nodeLogsById.value.get(node.id) || []
+      const logs = nodeAttemptsById.value.get(node.id) || []
       const nextData = {
         ...(node.getData() || {}),
         executionState: resolveNodeExecutionState(logs),
@@ -221,33 +172,21 @@
     const graph = graphInstance.value
     if (!graph) return
     graph.getEdges().forEach((edge) => {
-      const transitions = transitionLogsByEdgeId.value.get(edge.id) || []
-      const count = transitions.length
-      const executed = count > 0
       const selected = activeCellType.value === 'edge' && activeCellId.value === edge.id
-      const targetNodeId = String(edge.getTargetCellId() || '')
-      const leadsToFailure = executed && failedNodeIds.value.has(targetNodeId)
-      const stroke = leadsToFailure
-        ? 'var(--el-color-danger, #f56c6c)'
-        : executed
-          ? 'var(--el-color-success, #67c23a)'
-          : 'var(--workflow-edge-color, #98a4b6)'
-      const opacity = selected ? 1 : executed ? 0.96 : 0.62
-      const strokeWidth = selected ? (executed ? 3 : 2.2) : executed ? 1.9 : 1.1
+      const stroke = 'var(--workflow-edge-color, #98a4b6)'
+      const opacity = selected ? 1 : 0.62
+      const strokeWidth = selected ? 2.2 : 1.1
       const baseLabel = String((edge.getData() || {}).label || '')
-      const labels = [...buildTextLabel(baseLabel), ...buildCountLabel(count)]
 
       edge.setAttrs({
         line: {
           stroke,
           strokeWidth,
           opacity,
-          strokeDasharray: executed ? '6 6' : '4 5',
+          strokeDasharray: '4 5',
           strokeLinecap: 'round',
           strokeLinejoin: 'round',
-          class: executed
-            ? 'workflow-execution-canvas__edge-line--flow'
-            : 'workflow-execution-canvas__edge-line',
+          class: 'workflow-execution-canvas__edge-line',
           targetMarker: {
             name: 'block',
             width: 9,
@@ -257,8 +196,8 @@
           }
         }
       })
-      edge.setLabels(labels)
-      edge.setZIndex(executed ? 3 : 1)
+      edge.setLabels(buildTextLabel(baseLabel))
+      edge.setZIndex(1)
     })
   }
 
@@ -366,7 +305,7 @@
   )
 
   watch(
-    [nodeLogsById, transitionLogsByEdgeId, () => props.startNodeId],
+    [nodeAttemptsById, () => props.startNodeId],
     () => {
       syncVisuals()
     },

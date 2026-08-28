@@ -23,32 +23,45 @@ import (
 
 const maxWorkflowArtifactBytes = int64(1 << 30)
 
-type WorkflowActivityView struct {
-	Cursor        int64  `json:"cursor"`
-	WorkflowID    int64  `json:"workflowId"`
-	BatchID       int64  `json:"batchId,omitempty"`
-	NodeRunID     int64  `json:"nodeRunId,omitempty"`
-	EventType     string `json:"eventType"`
-	Status        string `json:"status,omitempty"`
-	Summary       string `json:"summary"`
-	ErrorCategory string `json:"errorCategory,omitempty"`
-	OccurredAt    string `json:"occurredAt"`
+type WorkflowNodeLogView struct {
+	ID         int64           `json:"id"`
+	WorkflowID int64           `json:"workflowId"`
+	RunID      int64           `json:"runId"`
+	RunNodeID  int64           `json:"runNodeId"`
+	LoggedAt   string          `json:"loggedAt"`
+	Level      string          `json:"level"`
+	Message    string          `json:"message"`
+	Fields     json.RawMessage `json:"fields"`
 }
 
-type WorkflowNodeRunView struct {
-	ID             int64  `json:"id"`
-	NodeInstanceID string `json:"nodeInstanceId"`
-	NodeType       string `json:"nodeType"`
-	NodeVersion    string `json:"nodeVersion"`
-	ExecutionPool  string `json:"executionPool"`
-	Attempt        int    `json:"attempt"`
-	LoopIteration  int    `json:"loopIteration"`
-	OperationKey   string `json:"operationKey"`
-	Status         string `json:"status"`
-	ErrorCategory  string `json:"errorCategory,omitempty"`
-	StartedAt      string `json:"startedAt"`
-	CompletedAt    string `json:"completedAt,omitempty"`
-	DurationMS     *int64 `json:"durationMs,omitempty"`
+type WorkflowRunNodeView struct {
+	ID             int64                 `json:"id"`
+	NodeInstanceID string                `json:"nodeInstanceId"`
+	NodeType       string                `json:"nodeType"`
+	NodeVersion    string                `json:"nodeVersion"`
+	ExecutionPool  string                `json:"executionPool"`
+	Attempt        int                   `json:"attempt"`
+	LoopIteration  int                   `json:"loopIteration"`
+	OperationKey   string                `json:"operationKey"`
+	Status         string                `json:"status"`
+	InputSummary   json.RawMessage       `json:"inputSummary"`
+	OutputSummary  json.RawMessage       `json:"outputSummary"`
+	ErrorCategory  string                `json:"errorCategory,omitempty"`
+	ErrorMessage   string                `json:"errorMessage,omitempty"`
+	StartedAt      string                `json:"startedAt"`
+	CompletedAt    string                `json:"completedAt,omitempty"`
+	DurationMS     *int64                `json:"durationMs,omitempty"`
+	Logs           []WorkflowNodeLogView `json:"logs"`
+}
+
+type WorkflowRunEventView struct {
+	ID           int64  `json:"id"`
+	Source       string `json:"source"`
+	EventID      string `json:"eventId"`
+	Type         string `json:"type"`
+	Subject      string `json:"subject"`
+	Time         string `json:"time"`
+	PartitionKey string `json:"partitionKey"`
 }
 
 type WorkflowArtifactView struct {
@@ -62,11 +75,12 @@ type WorkflowArtifactView struct {
 	Verified        bool   `json:"verified,omitempty"`
 }
 
-type WorkflowBatchDetail struct {
-	WorkflowBatchView
-	NodeRuns   []WorkflowNodeRunView  `json:"nodeRuns"`
-	Activities []WorkflowActivityView `json:"activities"`
-	Artifacts  []WorkflowArtifactView `json:"artifacts"`
+type WorkflowRunDetail struct {
+	WorkflowRunView
+	Event     *WorkflowRunEventView  `json:"event,omitempty"`
+	RunNodes  []WorkflowRunNodeView  `json:"runNodes"`
+	Logs      []WorkflowNodeLogView  `json:"logs"`
+	Artifacts []WorkflowArtifactView `json:"artifacts"`
 }
 
 type workflowArtifactManifest struct {
@@ -77,61 +91,32 @@ type workflowArtifactManifest struct {
 	StoredSizeBytes int64  `json:"storedSizeBytes"`
 }
 
-func (a *App) ListWorkflowActivities(ctx context.Context, workflowID, after int64, limit int) ([]WorkflowActivityView, int64, error) {
-	if after < 0 || limit < 1 || limit > 200 {
-		return nil, after, errors.New("activity cursor or limit is invalid")
-	}
-	var exists int64
-	if err := a.DB.WithContext(ctx).Model(&db.Workflow{}).Where("id = ?", workflowID).Count(&exists).Error; err != nil {
-		return nil, after, errors.New("load workflow failed")
-	}
-	if exists == 0 {
-		return nil, after, fmt.Errorf("%w: workflow", ErrNotFound)
-	}
-	var rows []db.WorkflowActivity
-	query := a.DB.WithContext(ctx).Where("workflow_id = ? AND cursor > ?", workflowID, after)
-	if after == 0 {
-		query = query.Order("cursor DESC")
-	} else {
-		query = query.Order("cursor")
-	}
-	if err := query.Limit(limit).Find(&rows).Error; err != nil {
-		return nil, after, errors.New("list workflow activity failed")
-	}
-	if after == 0 {
-		for left, right := 0, len(rows)-1; left < right; left, right = left+1, right-1 {
-			rows[left], rows[right] = rows[right], rows[left]
-		}
-	}
-	items := make([]WorkflowActivityView, len(rows))
-	next := after
-	for index, row := range rows {
-		items[index] = workflowActivityView(row)
-		next = row.Cursor
-	}
-	return items, next, nil
-}
-
-func (a *App) GetWorkflowBatchDetail(ctx context.Context, batchID int64) (WorkflowBatchDetail, error) {
-	batch, err := a.GetWorkflowBatch(ctx, batchID)
+func (a *App) GetWorkflowRunDetail(ctx context.Context, runID int64) (WorkflowRunDetail, error) {
+	run, err := a.GetWorkflowRun(ctx, runID)
 	if err != nil {
-		return WorkflowBatchDetail{}, err
+		return WorkflowRunDetail{}, err
 	}
-	var runs []db.WorkflowNodeRun
-	if err := a.DB.WithContext(ctx).Where("batch_id = ?", batchID).Order("id").Find(&runs).Error; err != nil {
-		return WorkflowBatchDetail{}, errors.New("list workflow node runs failed")
+	var nodes []db.WorkflowRunNode
+	if err := a.DB.WithContext(ctx).Where("run_id = ?", runID).Order("id").Find(&nodes).Error; err != nil {
+		return WorkflowRunDetail{}, errors.New("list workflow node runs failed")
 	}
-	nodeRuns := make([]WorkflowNodeRunView, len(runs))
-	for index, run := range runs {
-		nodeRuns[index] = workflowNodeRunView(run)
+	var logRows []db.WorkflowNodeLog
+	if err := a.DB.WithContext(ctx).Where("run_id = ?", runID).Order("logged_at, id").Find(&logRows).Error; err != nil {
+		return WorkflowRunDetail{}, errors.New("list workflow node logs failed")
 	}
-	var activities []db.WorkflowActivity
-	if err := a.DB.WithContext(ctx).Where("batch_id = ?", batchID).Order("cursor").Find(&activities).Error; err != nil {
-		return WorkflowBatchDetail{}, errors.New("list workflow batch activity failed")
+	logs := make([]WorkflowNodeLogView, len(logRows))
+	logsByNode := make(map[int64][]WorkflowNodeLogView)
+	for index, row := range logRows {
+		logs[index] = workflowNodeLogView(row)
+		logsByNode[row.RunNodeID] = append(logsByNode[row.RunNodeID], logs[index])
 	}
-	activityViews := make([]WorkflowActivityView, len(activities))
-	for index, activity := range activities {
-		activityViews[index] = workflowActivityView(activity)
+	runNodes := make([]WorkflowRunNodeView, len(nodes))
+	for index, node := range nodes {
+		runNodes[index] = workflowRunNodeView(node)
+		runNodes[index].Logs = logsByNode[node.ID]
+		if runNodes[index].Logs == nil {
+			runNodes[index].Logs = []WorkflowNodeLogView{}
+		}
 	}
 	var artifacts []struct {
 		NodeInstanceID  string
@@ -142,13 +127,13 @@ func (a *App) GetWorkflowBatchDetail(ctx context.Context, batchID int64) (Workfl
 		StoredSizeBytes int64
 	}
 	if err := a.DB.WithContext(ctx).Raw(`
-SELECT c.node_instance_id, a.sha256, r.media_type, a.encoding, r.size_bytes, a.stored_size_bytes
+SELECT n.node_instance_id, a.sha256, r.media_type, a.encoding, r.size_bytes, a.stored_size_bytes
 FROM workflow_artifact_refs r
-JOIN workflow_checkpoints c ON c.id = r.checkpoint_id
+JOIN workflow_run_nodes n ON n.id = r.run_node_id
 JOIN workflow_artifacts a ON a.sha256 = r.artifact_sha256
-WHERE c.batch_id = ?
-ORDER BY c.id, r.ordinal`, batchID).Scan(&artifacts).Error; err != nil {
-		return WorkflowBatchDetail{}, errors.New("list workflow batch artifacts failed")
+WHERE n.run_id = ?
+ORDER BY n.id, r.ordinal`, runID).Scan(&artifacts).Error; err != nil {
+		return WorkflowRunDetail{}, errors.New("list workflow run artifacts failed")
 	}
 	artifactViews := make([]WorkflowArtifactView, len(artifacts))
 	for index, artifact := range artifacts {
@@ -159,7 +144,18 @@ ORDER BY c.id, r.ordinal`, batchID).Scan(&artifacts).Error; err != nil {
 			DownloadURL: "/api/v1/artifacts/" + artifact.SHA256 + "/download",
 		}
 	}
-	return WorkflowBatchDetail{WorkflowBatchView: batch, NodeRuns: nodeRuns, Activities: activityViews, Artifacts: artifactViews}, nil
+	detail := WorkflowRunDetail{WorkflowRunView: run, RunNodes: runNodes, Logs: logs, Artifacts: artifactViews}
+	if run.EventRecordID > 0 {
+		var event db.WorkflowEventRecord
+		if err := a.DB.WithContext(ctx).First(&event, run.EventRecordID).Error; err != nil {
+			return WorkflowRunDetail{}, errors.New("load workflow run event summary failed")
+		}
+		detail.Event = &WorkflowRunEventView{
+			ID: event.ID, Source: event.Source, EventID: event.EventID, Type: event.EventType,
+			Subject: event.Subject, Time: formatWorkflowTime(event.EventTime), PartitionKey: event.PartitionKey,
+		}
+	}
+	return detail, nil
 }
 
 func (a *App) GetWorkflowArtifactManifest(ctx context.Context, digest string, verify bool) (WorkflowArtifactView, error) {
@@ -204,26 +200,26 @@ func (a *App) OpenWorkflowArtifact(ctx context.Context, digest string) (io.ReadC
 }
 
 func (a *App) cleanupWorkflowHistory(ctx context.Context, now time.Time) error {
-	if strings.TrimSpace(a.ArtifactRoot) == "" {
-		return errors.New("workflow artifact storage is unavailable")
-	}
 	var storageKeys []string
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		eligible := `
-SELECT eb.id FROM execution_batches eb
-JOIN workflows w ON w.id = eb.workflow_id
-WHERE eb.status IN ('succeeded','failed','cancelled')
-  AND eb.completed_at < CAST(? AS TIMESTAMPTZ) - make_interval(days => w.retention_days)`
+SELECT r.id FROM workflow_runs r
+JOIN workflows w ON w.id = r.workflow_id
+WHERE r.status IN ('succeeded','failed','cancelled')
+  AND r.completed_at < CAST(? AS TIMESTAMPTZ) - make_interval(days => w.retention_days)
+  AND NOT EXISTS (SELECT 1 FROM workflow_runs child WHERE child.original_run_id = r.id)`
 		var candidateDigests []string
-		if err := tx.Raw(`SELECT DISTINCT r.artifact_sha256 FROM workflow_artifact_refs r JOIN workflow_checkpoints c ON c.id = r.checkpoint_id WHERE c.batch_id IN (`+eligible+`)`, now).Scan(&candidateDigests).Error; err != nil {
+		if err := tx.Raw(`SELECT DISTINCT ref.artifact_sha256 FROM workflow_artifact_refs ref JOIN workflow_run_nodes n ON n.id = ref.run_node_id WHERE n.run_id IN (`+eligible+`)`, now).Scan(&candidateDigests).Error; err != nil {
 			return err
 		}
 		statements := []string{
-			`DELETE FROM workflow_activities WHERE batch_id IN (` + eligible + `)`,
-			`DELETE FROM workflow_artifact_refs WHERE checkpoint_id IN (SELECT id FROM workflow_checkpoints WHERE batch_id IN (` + eligible + `))`,
-			`DELETE FROM workflow_checkpoints WHERE batch_id IN (` + eligible + `)`,
-			`DELETE FROM workflow_node_runs WHERE batch_id IN (` + eligible + `)`,
-			`DELETE FROM execution_batches WHERE id IN (` + eligible + `)`,
+			`DELETE FROM workflow_human_tasks WHERE run_id IN (` + eligible + `)`,
+			`DELETE FROM workflow_event_deliveries WHERE run_id IN (` + eligible + `)`,
+			`DELETE FROM workflow_artifact_refs WHERE run_node_id IN (SELECT id FROM workflow_run_nodes WHERE run_id IN (` + eligible + `))`,
+			`DELETE FROM workflow_run_checkpoints WHERE run_id IN (` + eligible + `)`,
+			`DELETE FROM workflow_node_logs WHERE run_id IN (` + eligible + `)`,
+			`DELETE FROM workflow_run_nodes WHERE run_id IN (` + eligible + `)`,
+			`DELETE FROM workflow_runs WHERE id IN (` + eligible + `)`,
 		}
 		for _, statement := range statements {
 			if err := tx.Exec(statement, now).Error; err != nil {
@@ -250,12 +246,21 @@ WHERE eb.status IN ('succeeded','failed','cancelled')
 				storageKeys = append(storageKeys, artifact.StorageKey)
 			}
 		}
+		if err := tx.Exec(`DELETE FROM workflow_event_records e WHERE e.received_at < ? AND NOT EXISTS (SELECT 1 FROM workflow_event_deliveries d WHERE d.event_record_id = e.id)`, now.Add(-30*24*time.Hour)).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`DELETE FROM workflow_event_outbox WHERE status IN ('published','dead_letter') AND updated_at < ?`, now.Add(-30*24*time.Hour)).Error; err != nil {
+			return err
+		}
 		return nil
 	})
 	if err != nil {
 		return errors.New("clean workflow history failed")
 	}
 	for _, key := range storageKeys {
+		if strings.TrimSpace(a.ArtifactRoot) == "" {
+			continue
+		}
 		if err := os.Remove(filepath.Join(a.ArtifactRoot, filepath.FromSlash(key))); err != nil && !errors.Is(err, os.ErrNotExist) {
 			// ponytail: an orphaned compressed file is harmless; add a filesystem reconciliation sweep if this occurs in practice.
 			return errors.New("remove expired workflow artifact failed")
@@ -264,40 +269,32 @@ WHERE eb.status IN ('succeeded','failed','cancelled')
 	return nil
 }
 
-func workflowActivityView(row db.WorkflowActivity) WorkflowActivityView {
-	view := WorkflowActivityView{
-		Cursor: row.Cursor, WorkflowID: row.WorkflowID, EventType: row.EventType,
-		Summary: row.Summary, OccurredAt: formatWorkflowTime(row.OccurredAt),
-	}
-	if row.BatchID != nil {
-		view.BatchID = *row.BatchID
-	}
-	if row.NodeRunID != nil {
-		view.NodeRunID = *row.NodeRunID
-	}
-	if row.Status != nil {
-		view.Status = *row.Status
-	}
-	if row.ErrorCategory != nil {
-		view.ErrorCategory = *row.ErrorCategory
-	}
-	return view
-}
-
-func workflowNodeRunView(run db.WorkflowNodeRun) WorkflowNodeRunView {
-	view := WorkflowNodeRunView{
+func workflowRunNodeView(run db.WorkflowRunNode) WorkflowRunNodeView {
+	view := WorkflowRunNodeView{
 		ID: run.ID, NodeInstanceID: run.NodeInstanceID, NodeType: run.NodeType,
 		NodeVersion: run.NodeVersion, ExecutionPool: run.ExecutionPool, Attempt: run.Attempt,
 		LoopIteration: run.LoopIteration, OperationKey: run.OperationKey, Status: run.Status,
-		StartedAt: formatWorkflowTime(run.StartedAt), DurationMS: run.DurationMS,
+		InputSummary: json.RawMessage(run.InputSummary), OutputSummary: json.RawMessage(run.OutputSummary),
+		StartedAt: formatWorkflowTime(run.StartedAt), DurationMS: run.DurationMS, Logs: []WorkflowNodeLogView{},
 	}
 	if run.ErrorCategory != nil {
 		view.ErrorCategory = *run.ErrorCategory
+	}
+	if run.ErrorMessage != nil {
+		view.ErrorMessage = *run.ErrorMessage
 	}
 	if run.CompletedAt != nil {
 		view.CompletedAt = formatWorkflowTime(*run.CompletedAt)
 	}
 	return view
+}
+
+func workflowNodeLogView(row db.WorkflowNodeLog) WorkflowNodeLogView {
+	return WorkflowNodeLogView{
+		ID: row.ID, WorkflowID: row.WorkflowID, RunID: row.RunID, RunNodeID: row.RunNodeID,
+		LoggedAt: formatWorkflowTime(row.LoggedAt), Level: row.Level, Message: row.Message,
+		Fields: json.RawMessage(row.FieldsJSON),
+	}
 }
 
 func loadWorkflowArtifactManifests(tx *gorm.DB, artifacts []sdk.Artifact) ([]workflowArtifactManifest, error) {
@@ -321,10 +318,10 @@ func loadWorkflowArtifactManifests(tx *gorm.DB, artifacts []sdk.Artifact) ([]wor
 	return manifests, nil
 }
 
-func createWorkflowArtifactRefs(tx *gorm.DB, checkpointID int64, manifests []workflowArtifactManifest) error {
+func createWorkflowArtifactRefs(tx *gorm.DB, runNodeID int64, manifests []workflowArtifactManifest) error {
 	for index, manifest := range manifests {
 		if err := tx.Create(&db.WorkflowArtifactRef{
-			CheckpointID: checkpointID, ArtifactSHA256: manifest.SHA256, Ordinal: index,
+			RunNodeID: runNodeID, ArtifactSHA256: manifest.SHA256, Ordinal: index,
 			MediaType: manifest.MediaType, SizeBytes: manifest.SizeBytes,
 		}).Error; err != nil {
 			return errors.New("create workflow artifact reference failed")

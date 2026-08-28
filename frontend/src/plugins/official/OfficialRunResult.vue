@@ -5,7 +5,7 @@
         <p>{{ eyebrow }}</p>
         <h3 :id="titleId">{{ title }}</h3>
       </div>
-      <span :data-status="result.nodeRun.status">{{ result.nodeRun.status }}</span>
+      <span :data-status="result.runNode.status">{{ result.runNode.status }}</span>
     </header>
     <dl>
       <div v-for="item in items" :key="item.label">
@@ -20,13 +20,13 @@
 </template>
 
 <script setup lang="ts">
-  import type { WorkflowBatchDetail, WorkflowNodeRun } from '@/api/workflows'
+  import type { WorkflowRunDetail, WorkflowRunNode } from '@/api/workflows'
 
   defineProps<{
     eyebrow: string
     title: string
     titleId: string
-    result: { batch: WorkflowBatchDetail; nodeRun: WorkflowNodeRun }
+    result: { run: WorkflowRunDetail; runNode: WorkflowRunNode }
     items: Array<{ label: string; value: string | number; code?: boolean }>
   }>()
 </script>

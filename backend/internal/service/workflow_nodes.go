@@ -186,11 +186,11 @@ func workflowNodeTitle(nodeType string) string {
 func workflowNodeDescription(nodeType string) string {
 	switch nodeType {
 	case "core.manual":
-		return "Starts one batch on demand."
+		return "Starts one run on demand."
 	case "core.schedule":
-		return "Starts one batch at a fixed UTC interval."
+		return "Starts one run at a fixed UTC interval."
 	case "core.event":
-		return "Starts one batch for each matching CloudEvent."
+		return "Starts one run for each matching CloudEvent."
 	case "core.constant":
 		return "Emits a configured text value."
 	case "core.end":

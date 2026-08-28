@@ -23,7 +23,7 @@ go run .
 - `i18n_texts`、`audit_records`
 - `plugin_installations`、`plugin_references`
 - `workflows`、`workflow_revisions`、`workflow_secret_bindings`、`workflow_runtimes`
-- `execution_batches`、`workflow_node_runs`、`workflow_checkpoints`、`workflow_node_states`
+- `workflow_runs`、`workflow_run_nodes`、`workflow_node_logs`、`workflow_run_checkpoints`、`workflow_node_states`
 - `workflow_event_records`、`workflow_event_deliveries`、`workflow_event_outbox`、`workflow_human_tasks`
 - `plugin_quant.instruments`、`plugin_quant.candles`、`plugin_quant.backtests`
 - Goose 管理的 `schema_migrations`

@@ -27,7 +27,7 @@ type workflowTriggerEmitter struct {
 }
 
 func (e workflowTriggerEmitter) Emit(ctx context.Context, event cloudevents.Event) error {
-	ticker := time.NewTicker(batchPollInterval)
+	ticker := time.NewTicker(runPollInterval)
 	defer ticker.Stop()
 	for {
 		err := e.app.publishWorkflowTriggerEvent(ctx, event, e.workflowID)
@@ -93,7 +93,7 @@ func (s workflowTriggerState) Save(ctx context.Context, state json.RawMessage) e
 func (a *App) syncWorkflowTriggers(ctx context.Context) error {
 	var workflows []db.Workflow
 	if err := a.DB.WithContext(ctx).Where(
-		"status = ? AND mode = ? AND active_revision_id IS NOT NULL", WorkflowStatusRunning, WorkflowModeStream,
+		"status = ? AND mode = ? AND active_revision_id IS NOT NULL", WorkflowStatusActive, WorkflowModeStream,
 	).Order("id").Find(&workflows).Error; err != nil {
 		return errors.New("load stream workflows failed")
 	}
@@ -122,8 +122,8 @@ func (a *App) syncWorkflowTriggers(ctx context.Context) error {
 			continue
 		}
 		if err := a.startWorkflowTrigger(ctx, workflow, *workflow.ActiveRevisionID); err != nil {
-			_ = a.DB.WithContext(ctx).Model(&db.WorkflowRuntime{}).Where("workflow_id = ?", workflow.ID).
-				Updates(map[string]any{"health_summary": "degraded", "updated_at": time.Now().UTC()}).Error
+			_ = a.DB.WithContext(ctx).Model(&db.Workflow{}).Where("id = ? AND status = ?", workflow.ID, WorkflowStatusActive).
+				Updates(map[string]any{"status": WorkflowStatusError, "updated_at": time.Now().UTC()}).Error
 			slog.Error("workflow trigger start failed", "workflow_id", workflow.ID, "error_category", "trigger_start")
 		}
 	}
@@ -135,7 +135,7 @@ func (a *App) startWorkflowTrigger(parent context.Context, workflow db.Workflow,
 	if err := a.DB.WithContext(parent).First(&revision, revisionID).Error; err != nil {
 		return errors.New("load workflow trigger revision failed")
 	}
-	graph, err := a.buildWorkflowBatchGraph(revision.GraphJSON)
+	graph, err := a.buildWorkflowRunGraph(revision.GraphJSON)
 	if err != nil {
 		return err
 	}
@@ -161,16 +161,6 @@ func (a *App) startWorkflowTrigger(parent context.Context, workflow db.Workflow,
 		State:   workflowTriggerState{app: a, workflowID: workflow.ID, revisionID: revisionID, node: node, stateMode: desc.State},
 		Logger:  slog.Default().With("event_category", "workflow_trigger", "node_type", node.NodeType),
 	}
-	if err := a.DB.WithContext(parent).Model(&db.WorkflowRuntime{}).Where("workflow_id = ?", workflow.ID).
-		Updates(map[string]any{"health_summary": "healthy", "updated_at": time.Now().UTC()}).Error; err != nil {
-		a.triggerMu.Lock()
-		if current, ok := a.triggerRuns[workflow.ID]; ok && current.token == token {
-			delete(a.triggerRuns, workflow.ID)
-		}
-		a.triggerMu.Unlock()
-		cancel()
-		return err
-	}
 	a.triggerWG.Add(1)
 	go func() {
 		defer a.triggerWG.Done()
@@ -184,15 +174,11 @@ func (a *App) startWorkflowTrigger(parent context.Context, workflow db.Workflow,
 			a.triggerMu.Unlock()
 			return
 		}
-		health := "idle"
 		if !stoppedByCancellation {
-			health = "degraded"
 			slog.Error("workflow trigger stopped", "workflow_id", workflow.ID, "error_category", "trigger_run")
-			_ = a.DB.Model(&db.Workflow{}).Where("id = ? AND status = ?", workflow.ID, WorkflowStatusRunning).
-				Updates(map[string]any{"status": WorkflowStatusAttention, "updated_at": time.Now().UTC()}).Error
+			_ = a.DB.Model(&db.Workflow{}).Where("id = ? AND status = ?", workflow.ID, WorkflowStatusActive).
+				Updates(map[string]any{"status": WorkflowStatusError, "updated_at": time.Now().UTC()}).Error
 		}
-		_ = a.DB.Model(&db.WorkflowRuntime{}).Where("workflow_id = ?", workflow.ID).
-			Updates(map[string]any{"health_summary": health, "updated_at": time.Now().UTC()}).Error
 		delete(a.triggerRuns, workflow.ID)
 		a.triggerMu.Unlock()
 	}()

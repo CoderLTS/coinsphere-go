@@ -33,10 +33,10 @@ type App struct {
 	reauthTokens        map[string]reauthTokenRecord
 	revokedAccessTokens map[string]time.Time
 	dummyHash           string
-	batchClaimMu        sync.Mutex
-	batchCancelMu       sync.Mutex
-	batchCancels        map[int64]context.CancelFunc
-	batchWG             sync.WaitGroup
+	runClaimMu          sync.Mutex
+	runCancelMu         sync.Mutex
+	runCancels          map[int64]context.CancelFunc
+	runWG               sync.WaitGroup
 	triggerMu           sync.Mutex
 	triggerRuns         map[int64]workflowTriggerRun
 	triggerWG           sync.WaitGroup
@@ -57,7 +57,7 @@ func NewApp(gdb *gorm.DB, cfg *config.AppConfig, plugins *sdk.Registry) *App {
 		dummyHash:           hasher.HashPassword(security.RandomToken()),
 		reauthTokens:        map[string]reauthTokenRecord{},
 		revokedAccessTokens: map[string]time.Time{},
-		batchCancels:        map[int64]context.CancelFunc{},
+		runCancels:          map[int64]context.CancelFunc{},
 		triggerRuns:         map[int64]workflowTriggerRun{},
 		streamSlots:         make(chan struct{}, 4),
 		computeSlots:        make(chan struct{}, 1),

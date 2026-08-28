@@ -1095,8 +1095,8 @@
     if (currentMode.value === 'edit' && definitionId.value) {
       saveContext = await fetchWorkflowDefinitionSaveContext(definitionId.value, payload)
       if (saveContext.resetStateNodeInstanceIds.length) {
-        if (saveContext.workflow.status !== 'paused') {
-          ElMessage.warning('请先暂停工作流，再保存需要重置节点状态的修改。')
+        if (saveContext.workflow.status !== 'inactive') {
+          ElMessage.warning('请先停用工作流，再保存需要重置节点状态的修改。')
           return
         }
         try {

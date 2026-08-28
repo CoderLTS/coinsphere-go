@@ -1,6 +1,6 @@
 import request from '@/utils/http'
 
-export type WorkflowStatus = 'paused' | 'running' | 'needs_attention' | 'archived'
+export type WorkflowStatus = 'inactive' | 'active' | 'error'
 export type WorkflowBindingKind = 'field' | 'literal' | 'cel'
 
 export interface WorkflowInputBinding {
@@ -47,13 +47,14 @@ export interface WorkflowItem {
   createdBy: number
   createdAt: string
   updatedAt: string
-  archivedAt?: string
 }
 
 export interface WorkflowDetail extends WorkflowItem {
   runtime: {
-    activityCursor: number
-    healthSummary: string
+    maxConcurrentRuns: number
+    backlogLimit: number
+    nextScheduledAt?: string
+    lastScheduledAt?: string
     updatedAt: string
   }
   stateNodeInstanceIds: string[]
@@ -101,7 +102,7 @@ export interface WorkflowSecretChange {
   remove?: boolean
 }
 
-export interface WorkflowBatch {
+export interface WorkflowRun {
   id: number
   workflowId: number
   revisionId: number
@@ -113,12 +114,25 @@ export interface WorkflowBatch {
   completedAt?: string
   cancelRequestedAt?: string
   errorCategory?: string
+  errorMessage?: string
+  resultSummary: Record<string, unknown>
   partitionKey?: string
   diagnostic: boolean
-  originalBatchId?: number
+  originalRunId?: number
 }
 
-export interface WorkflowNodeRun {
+export interface WorkflowNodeLog {
+  id: number
+  workflowId: number
+  runId: number
+  runNodeId: number
+  loggedAt: string
+  level: 'debug' | 'info' | 'warn' | 'error'
+  message: string
+  fields: Record<string, unknown>
+}
+
+export interface WorkflowRunNode {
   id: number
   nodeInstanceId: string
   nodeType: string
@@ -128,22 +142,14 @@ export interface WorkflowNodeRun {
   loopIteration: number
   operationKey: string
   status: 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'skipped'
+  inputSummary: Record<string, unknown>
+  outputSummary: Record<string, unknown>
   errorCategory?: string
+  errorMessage?: string
   startedAt: string
   completedAt?: string
   durationMs?: number
-}
-
-export interface WorkflowActivity {
-  cursor: number
-  workflowId: number
-  batchId?: number
-  nodeRunId?: number
-  eventType: string
-  status?: string
-  summary: string
-  errorCategory?: string
-  occurredAt: string
+  logs: WorkflowNodeLog[]
 }
 
 export interface WorkflowArtifact {
@@ -157,16 +163,27 @@ export interface WorkflowArtifact {
   verified?: boolean
 }
 
-export interface WorkflowBatchDetail extends WorkflowBatch {
-  nodeRuns: WorkflowNodeRun[]
-  activities: WorkflowActivity[]
+export interface WorkflowRunEvent {
+  id: number
+  source: string
+  eventId: string
+  type: string
+  subject: string
+  time: string
+  partitionKey: string
+}
+
+export interface WorkflowRunDetail extends WorkflowRun {
+  event?: WorkflowRunEvent
+  runNodes: WorkflowRunNode[]
+  logs: WorkflowNodeLog[]
   artifacts: WorkflowArtifact[]
 }
 
 export interface WorkflowHumanTask {
   id: number
   workflowId: number
-  batchId: number
+  runId: number
   nodeInstanceId: string
   taskType: string
   businessKey: string
@@ -177,19 +194,18 @@ export interface WorkflowHumanTask {
   decidedAt?: string
 }
 
-interface WorkflowActivityPage extends ItemList<WorkflowActivity> {
-  nextCursor: number
-}
-
 interface ItemList<T> {
   items: T[]
 }
 
-export interface WorkflowBatchQuery {
+export interface WorkflowRunQuery {
   cursor?: string
   limit?: number
-  triggerType?: WorkflowBatch['triggerType'] | string
-  status?: WorkflowBatch['status'] | 'success' | 'canceled' | 'retry_waiting' | string
+  triggerType?: WorkflowRun['triggerType'] | string
+  status?: WorkflowRun['status'] | 'success' | 'canceled' | 'retry_waiting' | string
+  from?: string
+  to?: string
+  keyword?: string
 }
 
 export const fetchWorkflows = (status = '') =>
@@ -258,23 +274,23 @@ export const saveWorkflowRevision = (
   }
 ) => request.post<WorkflowRevision>({ url: `/api/v1/workflows/${workflowId}/revisions`, params })
 
-export const applyWorkflowLifecycle = (workflowId: number, action: 'start' | 'pause' | 'archive') =>
+export const applyWorkflowLifecycle = (workflowId: number, action: 'activate' | 'deactivate') =>
   request.post<WorkflowDetail>({
     url: `/api/v1/workflows/${workflowId}/lifecycle`,
     params: { action }
   })
 
-export const createWorkflowBatch = (workflowId: number) =>
-  request.post<WorkflowBatch>({ url: `/api/v1/workflows/${workflowId}/batches` })
+export const createWorkflowRun = (workflowId: number) =>
+  request.post<WorkflowRun>({ url: `/api/v1/workflows/${workflowId}/runs` })
 
-export const fetchWorkflowBatches = (workflowId: number, params: WorkflowBatchQuery = {}) =>
-  request.get<Api.Common.PaginatedResponse<WorkflowBatch>>({
-    url: `/api/v1/workflows/${workflowId}/batches`,
+export const fetchWorkflowRuns = (workflowId: number, params: WorkflowRunQuery = {}) =>
+  request.get<Api.Common.PaginatedResponse<WorkflowRun>>({
+    url: `/api/v1/workflows/${workflowId}/runs`,
     params
   })
 
-export const applyWorkflowBatchAction = (batchId: number, action: 'cancel' | 'retry' | 'replay') =>
-  request.post<WorkflowBatch>({ url: `/api/v1/batches/${batchId}`, params: { action } })
+export const applyWorkflowRunAction = (runId: number, action: 'cancel' | 'retry' | 'replay') =>
+  request.post<WorkflowRun>({ url: `/api/v1/workflow-runs/${runId}`, params: { action } })
 
 export const fetchWorkflowHumanTasks = (status = 'pending') =>
   request.get<ItemList<WorkflowHumanTask>>({
@@ -288,15 +304,8 @@ export const decideWorkflowHumanTask = (taskId: number, action: 'approve' | 'rej
     params: { action, data: {} }
   })
 
-export const fetchWorkflowActivity = (workflowId: number, after = 0, limit = 100) =>
-  request.get<WorkflowActivityPage>({
-    url: `/api/v1/workflows/${workflowId}/activity`,
-    params: { after, limit },
-    showErrorMessage: after === 0
-  })
-
-export const fetchWorkflowBatch = (batchId: number) =>
-  request.get<WorkflowBatchDetail>({ url: `/api/v1/batches/${batchId}` })
+export const fetchWorkflowRun = (runId: number) =>
+  request.get<WorkflowRunDetail>({ url: `/api/v1/workflow-runs/${runId}` })
 
 export const fetchWorkflowArtifactManifest = (sha256: string) =>
   request.get<WorkflowArtifact>({ url: `/api/v1/artifacts/${sha256}/manifest` })

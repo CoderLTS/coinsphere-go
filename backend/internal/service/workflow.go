@@ -19,10 +19,9 @@ const (
 	WorkflowModeBatch         = "batch"
 	WorkflowModeEvent         = "event"
 	WorkflowModeStream        = "stream"
-	WorkflowStatusPaused      = "paused"
-	WorkflowStatusRunning     = "running"
-	WorkflowStatusAttention   = "needs_attention"
-	WorkflowStatusArchived    = "archived"
+	WorkflowStatusInactive    = "inactive"
+	WorkflowStatusActive      = "active"
+	WorkflowStatusError       = "error"
 	WorkflowTemplateBlank     = "blank"
 	WorkflowTemplateSchedule  = "scheduled"
 	WorkflowTemplateEvent     = "event"
@@ -72,8 +71,8 @@ const eventWorkflowGraph = `{
 const failureWorkflowGraph = `{
   "schemaVersion": 1,
   "nodes": [
-    {"nodeInstanceId":"failure-trigger","nodeType":"core.event","nodeVersion":"1.0.0","config":{"types":["io.coinsphere.workflow.batch.failed"],"source":"urn:coinsphere:workflow-core"},"position":{"x":100,"y":220}},
-    {"nodeInstanceId":"notify","nodeType":"official.notification.in_app","nodeVersion":"1.0.0","config":{"title":"工作流执行失败"},"inputBindings":{"subjectKey":{"kind":"cel","expression":"event.id"},"message":{"kind":"literal","value":"工作流批次执行失败，请在工作台查看受控错误分类。"}},"position":{"x":400,"y":220}},
+    {"nodeInstanceId":"failure-trigger","nodeType":"core.event","nodeVersion":"1.0.0","config":{"types":["io.coinsphere.workflow.run.failed"],"source":"urn:coinsphere:workflow-core"},"position":{"x":100,"y":220}},
+    {"nodeInstanceId":"notify","nodeType":"official.notification.in_app","nodeVersion":"1.0.0","config":{"title":"工作流执行失败"},"inputBindings":{"subjectKey":{"kind":"cel","expression":"event.id"},"message":{"kind":"literal","value":"工作流运行失败，请在工作台查看受控错误分类。"}},"position":{"x":400,"y":220}},
     {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":700,"y":220}}
   ],
   "edges": [
@@ -203,13 +202,14 @@ type WorkflowView struct {
 	CreatedBy         int64  `json:"createdBy"`
 	CreatedAt         string `json:"createdAt"`
 	UpdatedAt         string `json:"updatedAt"`
-	ArchivedAt        string `json:"archivedAt,omitempty"`
 }
 
 type WorkflowRuntimeView struct {
-	ActivityCursor int64  `json:"activityCursor"`
-	HealthSummary  string `json:"healthSummary"`
-	UpdatedAt      string `json:"updatedAt"`
+	MaxConcurrentRuns int    `json:"maxConcurrentRuns"`
+	BacklogLimit      int    `json:"backlogLimit"`
+	NextScheduledAt   string `json:"nextScheduledAt,omitempty"`
+	LastScheduledAt   string `json:"lastScheduledAt,omitempty"`
+	UpdatedAt         string `json:"updatedAt"`
 }
 
 type WorkflowDetail struct {
@@ -295,7 +295,7 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 
 	now := time.Now().UTC()
 	workflow := db.Workflow{
-		Name: name, Description: description, Mode: workflowModeForTrigger(graph.nodes[graph.mainTriggerID].NodeType), Status: WorkflowStatusPaused,
+		Name: name, Description: description, Mode: workflowModeForTrigger(graph.nodes[graph.mainTriggerID].NodeType), Status: WorkflowStatusInactive,
 		MainTriggerNodeID: graph.mainTriggerID, RetentionDays: 30, CreatedBy: principal.User.ID,
 		CreatedAt: now, UpdatedAt: now,
 	}
@@ -324,7 +324,7 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 
 func createWorkflowRecord(tx *gorm.DB, name, description string, graph validatedWorkflowGraph, userID int64, now time.Time) (db.Workflow, error) {
 	workflow := db.Workflow{
-		Name: name, Description: description, Mode: workflowModeForTrigger(graph.nodes[graph.mainTriggerID].NodeType), Status: WorkflowStatusPaused,
+		Name: name, Description: description, Mode: workflowModeForTrigger(graph.nodes[graph.mainTriggerID].NodeType), Status: WorkflowStatusInactive,
 		MainTriggerNodeID: graph.mainTriggerID, RetentionDays: 30, CreatedBy: userID, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := tx.Create(&workflow).Error; err != nil {
@@ -342,7 +342,7 @@ func createWorkflowRecord(tx *gorm.DB, name, description string, graph validated
 		return db.Workflow{}, errors.New("activate initial workflow revision failed")
 	}
 	if err := tx.Create(&db.WorkflowRuntime{
-		WorkflowID: workflow.ID, ActivityCursor: 0, HealthSummary: "idle", MaxConcurrentBatches: 2, BacklogLimit: 100, UpdatedAt: now,
+		WorkflowID: workflow.ID, MaxConcurrentRuns: 2, BacklogLimit: 100, UpdatedAt: now,
 	}).Error; err != nil {
 		return db.Workflow{}, errors.New("create workflow runtime failed")
 	}
@@ -386,12 +386,19 @@ func (a *App) GetWorkflow(ctx context.Context, workflowID int64) (WorkflowDetail
 		Order("node_instance_id").Pluck("node_instance_id", &stateNodeInstanceIDs).Error; err != nil {
 		return WorkflowDetail{}, errors.New("load workflow node states failed")
 	}
+	runtimeView := WorkflowRuntimeView{
+		MaxConcurrentRuns: runtime.MaxConcurrentRuns, BacklogLimit: runtime.BacklogLimit,
+		UpdatedAt: formatWorkflowTime(runtime.UpdatedAt),
+	}
+	if runtime.NextScheduledAt != nil {
+		runtimeView.NextScheduledAt = formatWorkflowTime(*runtime.NextScheduledAt)
+	}
+	if runtime.LastScheduledAt != nil {
+		runtimeView.LastScheduledAt = formatWorkflowTime(*runtime.LastScheduledAt)
+	}
 	return WorkflowDetail{
-		WorkflowView: workflowView(workflow),
-		Runtime: WorkflowRuntimeView{
-			ActivityCursor: runtime.ActivityCursor, HealthSummary: runtime.HealthSummary,
-			UpdatedAt: formatWorkflowTime(runtime.UpdatedAt),
-		},
+		WorkflowView:         workflowView(workflow),
+		Runtime:              runtimeView,
 		StateNodeInstanceIDs: stateNodeInstanceIDs,
 	}, nil
 }
@@ -406,8 +413,7 @@ func (a *App) UpdateWorkflow(ctx context.Context, workflowID int64, payload Work
 		return WorkflowDetail{}, errors.New("workflow description must not exceed 500 characters")
 	}
 	database := a.DB.WithContext(ctx)
-	result := database.Model(&db.Workflow{}).
-		Where("id = ? AND status <> ?", workflowID, WorkflowStatusArchived).
+	result := database.Model(&db.Workflow{}).Where("id = ?", workflowID).
 		Updates(map[string]any{
 			"name": name, "description": description, "updated_at": time.Now().UTC(),
 		})
@@ -416,13 +422,13 @@ func (a *App) UpdateWorkflow(ctx context.Context, workflowID int64, payload Work
 	}
 	if result.RowsAffected == 0 {
 		var workflow db.Workflow
-		if err := database.Select("status").First(&workflow, workflowID).Error; err != nil {
+		if err := database.Select("id").First(&workflow, workflowID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return WorkflowDetail{}, fmt.Errorf("%w: workflow", ErrNotFound)
 			}
 			return WorkflowDetail{}, errors.New("load workflow failed")
 		}
-		return WorkflowDetail{}, fmt.Errorf("%w: archived workflow is read-only", ErrConflict)
+		return WorkflowDetail{}, errors.New("update workflow failed")
 	}
 	return a.GetWorkflow(ctx, workflowID)
 }
@@ -463,9 +469,6 @@ func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payloa
 			}
 			return errors.New("lock workflow failed")
 		}
-		if workflow.Status == WorkflowStatusArchived {
-			return fmt.Errorf("%w: archived workflow is read-only", ErrConflict)
-		}
 		if workflow.ActiveRevisionID == nil || *workflow.ActiveRevisionID != payload.ExpectedActiveRevisionID {
 			return fmt.Errorf("%w: active workflow revision changed", ErrConflict)
 		}
@@ -497,8 +500,8 @@ func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payloa
 				return workflowStateResetConflict(requiredStateResets)
 			}
 		}
-		if len(requiredStateResets) > 0 && workflow.Status != WorkflowStatusPaused {
-			return fmt.Errorf("%w: workflow must be paused before resetting node state", ErrConflict)
+		if len(requiredStateResets) > 0 && workflow.Status != WorkflowStatusInactive {
+			return fmt.Errorf("%w: workflow must be inactive before resetting node state", ErrConflict)
 		}
 		if len(requiredStateResets) > 0 {
 			nodeIDs := make([]string, 0, len(requiredStateResets))
@@ -533,7 +536,7 @@ func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payloa
 		}).Error; err != nil {
 			return errors.New("activate workflow revision failed")
 		}
-		if workflow.Status == WorkflowStatusRunning {
+		if workflow.Status == WorkflowStatusActive {
 			nextScheduledAt := any(nil)
 			trigger := graph.nodes[graph.mainTriggerID]
 			if trigger.NodeType == "core.schedule" {
@@ -625,13 +628,13 @@ func (a *App) ApplyWorkflowLifecycle(ctx context.Context, workflowID int64, payl
 		if err != nil {
 			return err
 		}
-		if action == "start" && workflow.ActiveRevisionID == nil {
+		if action == "activate" && workflow.ActiveRevisionID == nil {
 			return fmt.Errorf("%w: workflow is not startable", ErrConflict)
 		}
 		now := time.Now().UTC()
 		updates := map[string]any{"status": next, "updated_at": now}
 		var runtimeUpdates map[string]any
-		if action == "start" {
+		if action == "activate" {
 			var revision db.WorkflowRevision
 			if err := tx.First(&revision, *workflow.ActiveRevisionID).Error; err != nil {
 				return errors.New("load active workflow revision failed")
@@ -656,11 +659,8 @@ func (a *App) ApplyWorkflowLifecycle(ctx context.Context, workflowID int64, payl
 					}
 				}
 			}
-		} else if action == "pause" {
-			runtimeUpdates = map[string]any{"health_summary": "idle", "updated_at": now, "next_scheduled_at": nil}
-		}
-		if next == WorkflowStatusArchived {
-			updates["archived_at"] = now
+		} else if action == "deactivate" {
+			runtimeUpdates = map[string]any{"updated_at": now, "next_scheduled_at": nil}
 		}
 		if err := tx.Model(&db.Workflow{}).Where("id = ?", workflowID).Updates(updates).Error; err != nil {
 			return errors.New("update workflow lifecycle failed")
@@ -675,7 +675,7 @@ func (a *App) ApplyWorkflowLifecycle(ctx context.Context, workflowID int64, payl
 	if err != nil {
 		return WorkflowDetail{}, err
 	}
-	if action == "pause" || action == "archive" {
+	if action == "deactivate" {
 		a.stopWorkflowTrigger(workflowID)
 	}
 	return a.GetWorkflow(ctx, workflowID)
@@ -683,20 +683,16 @@ func (a *App) ApplyWorkflowLifecycle(ctx context.Context, workflowID int64, payl
 
 func nextWorkflowStatus(current, action string) (string, error) {
 	switch action {
-	case "start":
-		if current == WorkflowStatusPaused {
-			return WorkflowStatusRunning, nil
+	case "activate":
+		if current == WorkflowStatusInactive {
+			return WorkflowStatusActive, nil
 		}
-	case "pause":
-		if current == WorkflowStatusRunning || current == WorkflowStatusAttention {
-			return WorkflowStatusPaused, nil
-		}
-	case "archive":
-		if current == WorkflowStatusPaused || current == WorkflowStatusAttention {
-			return WorkflowStatusArchived, nil
+	case "deactivate":
+		if current == WorkflowStatusActive || current == WorkflowStatusError {
+			return WorkflowStatusInactive, nil
 		}
 	default:
-		return "", errors.New("lifecycle action must be start, pause, or archive")
+		return "", errors.New("lifecycle action must be activate or deactivate")
 	}
 	return "", fmt.Errorf("%w: cannot %s workflow from %s", ErrConflict, action, current)
 }
@@ -713,9 +709,6 @@ func workflowView(workflow db.Workflow) WorkflowView {
 		CreatedBy: workflow.CreatedBy, CreatedAt: formatWorkflowTime(workflow.CreatedAt),
 		UpdatedAt: formatWorkflowTime(workflow.UpdatedAt),
 	}
-	if workflow.ArchivedAt != nil {
-		view.ArchivedAt = formatWorkflowTime(*workflow.ArchivedAt)
-	}
 	return view
 }
 
@@ -731,8 +724,7 @@ func workflowRevisionView(revision db.WorkflowRevision) WorkflowRevisionView {
 func formatWorkflowTime(value time.Time) string { return value.UTC().Format(time.RFC3339Nano) }
 
 func validWorkflowStatus(status string) bool {
-	return status == WorkflowStatusPaused || status == WorkflowStatusRunning ||
-		status == WorkflowStatusAttention || status == WorkflowStatusArchived
+	return status == WorkflowStatusInactive || status == WorkflowStatusActive || status == WorkflowStatusError
 }
 
 func workflowModeForTrigger(nodeType string) string {

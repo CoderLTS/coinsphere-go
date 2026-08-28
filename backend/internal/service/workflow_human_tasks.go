@@ -19,7 +19,7 @@ var errWorkflowWaiting = errors.New("workflow is waiting for a durable signal")
 type WorkflowHumanTaskView struct {
 	ID             int64  `json:"id"`
 	WorkflowID     int64  `json:"workflowId"`
-	BatchID        int64  `json:"batchId"`
+	RunID          int64  `json:"runId"`
 	NodeInstanceID string `json:"nodeInstanceId"`
 	TaskType       string `json:"taskType"`
 	BusinessKey    string `json:"businessKey"`
@@ -35,7 +35,7 @@ type WorkflowHumanTaskDecision struct {
 	Data   map[string]any `json:"data,omitempty"`
 }
 
-func (a *App) workflowHumanApproval(ctx context.Context, batch db.ExecutionBatch, node workflowGraphNode, input json.RawMessage) (sdk.ActionResult, error) {
+func (a *App) workflowHumanApproval(ctx context.Context, run db.WorkflowRun, node workflowGraphNode, input json.RawMessage) (sdk.ActionResult, error) {
 	var config struct {
 		DecisionMode  string `json:"decisionMode"`
 		TaskType      string `json:"taskType"`
@@ -61,12 +61,12 @@ func (a *App) workflowHumanApproval(ctx context.Context, batch db.ExecutionBatch
 	var task db.WorkflowHumanTask
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		businessKey := strings.TrimSpace(values.BusinessKey)
-		identity := fmt.Sprintf("%d:%d:%s:%d:%s", batch.WorkflowID, len(node.NodeInstanceID), node.NodeInstanceID, len(businessKey), businessKey)
+		identity := fmt.Sprintf("%d:%d:%s:%d:%s", run.WorkflowID, len(node.NodeInstanceID), node.NodeInstanceID, len(businessKey), businessKey)
 		if err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtextextended(?, 0))`, identity).Error; err != nil {
 			return errors.New("lock workflow human task identity failed")
 		}
 		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("batch_id = ? AND node_instance_id = ?", batch.ID, node.NodeInstanceID).First(&task).Error
+			Where("run_id = ? AND node_instance_id = ?", run.ID, node.NodeInstanceID).First(&task).Error
 		if err == nil {
 			if task.Status == "pending" && !task.ExpiresAt.After(now) {
 				if err := finishWorkflowHumanTask(tx, &task, "expired", nil, nil, now); err != nil {
@@ -81,7 +81,7 @@ func (a *App) workflowHumanApproval(ctx context.Context, batch db.ExecutionBatch
 		var superseded []db.WorkflowHumanTask
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
 			"workflow_id = ? AND node_instance_id = ? AND business_key = ? AND status = 'pending'",
-			batch.WorkflowID, node.NodeInstanceID, businessKey,
+			run.WorkflowID, node.NodeInstanceID, businessKey,
 		).Find(&superseded).Error; err != nil {
 			return errors.New("load superseded workflow human tasks failed")
 		}
@@ -89,12 +89,12 @@ func (a *App) workflowHumanApproval(ctx context.Context, batch db.ExecutionBatch
 			if err := finishWorkflowHumanTask(tx, &superseded[index], "superseded", nil, nil, now); err != nil {
 				return err
 			}
-			if err := resumeWorkflowHumanTaskBatch(tx, superseded[index].BatchID, now); err != nil {
+			if err := resumeWorkflowHumanTaskRun(tx, superseded[index].RunID, now); err != nil {
 				return err
 			}
 		}
 		task = db.WorkflowHumanTask{
-			WorkflowID: batch.WorkflowID, BatchID: batch.ID, NodeInstanceID: node.NodeInstanceID,
+			WorkflowID: run.WorkflowID, RunID: run.ID, NodeInstanceID: node.NodeInstanceID,
 			TaskType: strings.TrimSpace(config.TaskType), BusinessKey: businessKey,
 			Prompt: strings.TrimSpace(config.Prompt), Status: "pending", ExpiresAt: now.Add(time.Duration(config.ExpiresSecond) * time.Second),
 			DecisionJSON: `{}`, CreatedAt: now, UpdatedAt: now,
@@ -171,7 +171,7 @@ func (a *App) DecideWorkflowHumanTask(ctx context.Context, taskID int64, payload
 			if err := finishWorkflowHumanTask(tx, &task, "expired", nil, nil, now); err != nil {
 				return err
 			}
-			if err := resumeWorkflowHumanTaskBatch(tx, task.BatchID, now); err != nil {
+			if err := resumeWorkflowHumanTaskRun(tx, task.RunID, now); err != nil {
 				return err
 			}
 			expired = true
@@ -185,7 +185,7 @@ func (a *App) DecideWorkflowHumanTask(ctx context.Context, taskID int64, payload
 		if err := finishWorkflowHumanTask(tx, &task, status, decision, &actorID, now); err != nil {
 			return err
 		}
-		return resumeWorkflowHumanTaskBatch(tx, task.BatchID, now)
+		return resumeWorkflowHumanTaskRun(tx, task.RunID, now)
 	})
 	if err != nil {
 		return WorkflowHumanTaskView{}, err
@@ -207,7 +207,7 @@ func (a *App) expireWorkflowHumanTasks(ctx context.Context, now time.Time) error
 			if err := finishWorkflowHumanTask(tx, &tasks[index], "expired", nil, nil, now); err != nil {
 				return err
 			}
-			if err := resumeWorkflowHumanTaskBatch(tx, tasks[index].BatchID, now); err != nil {
+			if err := resumeWorkflowHumanTaskRun(tx, tasks[index].RunID, now); err != nil {
 				return err
 			}
 		}
@@ -229,18 +229,18 @@ func finishWorkflowHumanTask(tx *gorm.DB, task *db.WorkflowHumanTask, status str
 	return nil
 }
 
-func resumeWorkflowHumanTaskBatch(tx *gorm.DB, batchID int64, now time.Time) error {
-	if err := tx.Model(&db.ExecutionBatch{}).Where("id = ? AND status = ?", batchID, BatchStatusWaiting).Updates(map[string]any{
-		"status": BatchStatusQueued, "not_before": now, "lease_token": nil, "lease_expires_at": nil, "updated_at": now,
+func resumeWorkflowHumanTaskRun(tx *gorm.DB, runID int64, now time.Time) error {
+	if err := tx.Model(&db.WorkflowRun{}).Where("id = ? AND status = ?", runID, RunStatusWaiting).Updates(map[string]any{
+		"status": RunStatusQueued, "not_before": now, "lease_token": nil, "lease_expires_at": nil, "updated_at": now,
 	}).Error; err != nil {
-		return errors.New("resume workflow human task batch failed")
+		return errors.New("resume workflow human task run failed")
 	}
 	return nil
 }
 
 func workflowHumanTaskView(task db.WorkflowHumanTask) WorkflowHumanTaskView {
 	view := WorkflowHumanTaskView{
-		ID: task.ID, WorkflowID: task.WorkflowID, BatchID: task.BatchID, NodeInstanceID: task.NodeInstanceID,
+		ID: task.ID, WorkflowID: task.WorkflowID, RunID: task.RunID, NodeInstanceID: task.NodeInstanceID,
 		TaskType: task.TaskType, BusinessKey: task.BusinessKey, Prompt: task.Prompt, Status: task.Status,
 		ExpiresAt: formatWorkflowTime(task.ExpiresAt), CreatedAt: formatWorkflowTime(task.CreatedAt),
 	}

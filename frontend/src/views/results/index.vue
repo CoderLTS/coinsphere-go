@@ -148,8 +148,8 @@
           <ElCheckboxGroup v-model="createForm.allowedActions">
             <ElCheckbox value="approve">批准</ElCheckbox>
             <ElCheckbox value="reject">拒绝</ElCheckbox>
-            <ElCheckbox value="retry">重试批次</ElCheckbox>
-            <ElCheckbox value="cancel">取消批次</ElCheckbox>
+            <ElCheckbox value="retry">重试运行</ElCheckbox>
+            <ElCheckbox value="cancel">取消运行</ElCheckbox>
             <ElCheckbox value="pause">暂停工作流</ElCheckbox>
             <ElCheckbox value="export">导出</ElCheckbox>
           </ElCheckboxGroup>

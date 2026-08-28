@@ -2,10 +2,10 @@
 import {
   applyWorkflowLifecycle,
   createWorkflow,
-  createWorkflowBatch,
+  createWorkflowRun,
   fetchWorkflow,
-  fetchWorkflowBatch,
-  fetchWorkflowBatches,
+  fetchWorkflowRun,
+  fetchWorkflowRuns,
   fetchWorkflowNodeDefinitions,
   fetchWorkflowRevision,
   fetchWorkflowRevisions,
@@ -13,7 +13,10 @@ import {
   saveWorkflowRevision,
   updateWorkflow,
   validateWorkflowGraph,
-  type WorkflowBatch,
+  type WorkflowRun,
+  type WorkflowNodeLog,
+  type WorkflowArtifact,
+  type WorkflowRunEvent,
   type WorkflowDetail,
   type WorkflowGraph as CurrentWorkflowGraph,
   type WorkflowInputBinding,
@@ -117,6 +120,7 @@ export interface WorkflowDefinitionItem {
   isBuiltin: boolean
   isActive: boolean
   isWorkflowActive?: boolean
+  workflowStatus: WorkflowItem['status']
   activeDefinitionId?: number | null
   activeVersion?: number | null
   executionCount: number
@@ -176,29 +180,21 @@ export interface WorkflowRuntimeSecretRotationResult {
   secretHint: string
 }
 
-export interface WorkflowExecutionNodeLog {
+export interface WorkflowExecutionNodeAttempt {
   id: number
   nodeId: string
   nodeName: string
+  attempt: number
+  loopIteration: number
   status: WorkflowExecutionStatus | string
   statusLabel: string
   startedAt: string
   finishedAt: string
   durationMs: number
+  inputSummary: Record<string, unknown>
+  outputSummary: Record<string, unknown>
+  logs: WorkflowNodeLog[]
   error: { summary: string; category: string; retryable: boolean } | null
-}
-
-export interface WorkflowExecutionTransitionLog {
-  id: number
-  edgeId: string
-  sourceNodeId: string
-  targetNodeId: string
-  traversalIndex: number
-  iterationIndex?: number | null
-  sourceNodeName: string
-  targetNodeName: string
-  branchLabel: string
-  createdAt: string
 }
 
 export interface WorkflowExecutionItem {
@@ -223,22 +219,13 @@ export interface WorkflowExecutionItem {
   error: { summary: string; category: string; retryable: boolean } | null
 }
 
-export interface WorkflowExecutionAttemptItem {
-  id: number
-  attempt: number
-  startedAt: string
-  finishedAt: string
-  statusLabel: string
-  error: { summary: string; category: string; retryable: boolean } | null
-  status: WorkflowExecutionStatus | string
-}
-
 export interface WorkflowExecutionDetail extends WorkflowExecutionItem {
   graph: WorkflowGraph
   startNodeId: string
-  nodeLogs: WorkflowExecutionNodeLog[]
-  attempts: WorkflowExecutionAttemptItem[]
-  transitionLogs: WorkflowExecutionTransitionLog[]
+  nodeAttempts: WorkflowExecutionNodeAttempt[]
+  event?: WorkflowRunEvent
+  resultSummary: Record<string, unknown>
+  artifacts: WorkflowArtifact[]
 }
 
 export type WorkflowExecutionList = Api.Common.PaginatedResponse<WorkflowExecutionItem>
@@ -249,6 +236,9 @@ export interface WorkflowExecutionQueryParams {
   workflowDefinitionCode?: string
   triggerType?: WorkflowTriggerType | string
   status?: WorkflowExecutionStatus | string
+  from?: string
+  to?: string
+  keyword?: string
 }
 
 export interface WorkflowManualRunPayload {
@@ -575,14 +565,20 @@ const toCurrentRevision = (graph: WorkflowGraph) => {
   return { graph: currentGraph, secretChanges }
 }
 
-const batchStatus = (status: WorkflowBatch['status']): WorkflowExecutionStatus => {
-  const mapped: Partial<Record<WorkflowBatch['status'], WorkflowExecutionStatus>> = {
+const runStatus = (status: WorkflowRun['status']): WorkflowExecutionStatus => {
+  const mapped: Partial<Record<WorkflowRun['status'], WorkflowExecutionStatus>> = {
     succeeded: 'success',
     cancelled: 'canceled',
     retrying: 'retry_waiting',
     waiting: 'queued'
   }
   return mapped[status] || (status as WorkflowExecutionStatus)
+}
+
+const nodeAttemptStatus = (status: string): WorkflowExecutionStatus | string => {
+  if (status === 'succeeded') return 'success'
+  if (status === 'cancelled') return 'canceled'
+  return status
 }
 
 const statusLabel = (status: WorkflowExecutionStatus | string) =>
@@ -606,41 +602,45 @@ const elapsed = (startedAt?: string, completedAt?: string) => {
 }
 
 const toExecution = (
-  batch: WorkflowBatch,
+  run: WorkflowRun,
   workflow: WorkflowItem,
   revision?: WorkflowRevision
 ): WorkflowExecutionItem => {
-  const status = batchStatus(batch.status)
+  const status = runStatus(run.status)
   return {
-    id: batch.id,
+    id: run.id,
     workflowDefinitionId: workflow.id,
     workflowDefinitionVersion: revision?.revisionNumber || 1,
     workflowDefinitionName: workflow.name,
     entryName: workflow.mainTriggerNodeId,
-    triggerType: batch.triggerType,
+    triggerType: run.triggerType,
     status,
     statusLabel: statusLabel(status),
-    triggerLabel: triggerLabel(batch.triggerType),
-    queuedAt: batch.triggeredAt,
-    claimedAt: batch.startedAt || '',
-    startedAt: batch.startedAt || '',
-    finishedAt: batch.completedAt || '',
-    lastHeartbeatAt: batch.startedAt || '',
+    triggerLabel: triggerLabel(run.triggerType),
+    queuedAt: run.triggeredAt,
+    claimedAt: run.startedAt || '',
+    startedAt: run.startedAt || '',
+    finishedAt: run.completedAt || '',
+    lastHeartbeatAt: run.startedAt || '',
     attemptCount: 1,
     maxAttempts: 3,
-    durationMs: elapsed(batch.startedAt, batch.completedAt),
-    error: batch.errorCategory
-      ? { summary: batch.errorCategory, category: batch.errorCategory, retryable: false }
+    durationMs: elapsed(run.startedAt, run.completedAt),
+    error: run.errorCategory
+      ? {
+          summary: run.errorMessage || run.errorCategory,
+          category: run.errorCategory,
+          retryable: false
+        }
       : null
   }
 }
 
 const loadDefinition = async (definitionID: number): Promise<WorkflowDefinitionItem> => {
   const { workflowID, revisionID } = decodeDefinitionID(definitionID)
-  const [workflow, revisionResult, batchResult] = await Promise.all([
+  const [workflow, revisionResult, runResult] = await Promise.all([
     fetchWorkflow(workflowID),
     fetchWorkflowRevisions(workflowID),
-    fetchWorkflowBatches(workflowID)
+    fetchWorkflowRuns(workflowID)
   ])
   const revisions = [...revisionResult.items].sort((a, b) => b.revisionNumber - a.revisionNumber)
   const selected =
@@ -649,8 +649,8 @@ const loadDefinition = async (definitionID: number): Promise<WorkflowDefinitionI
     revisions[0]
   if (!selected) throw new Error('工作流没有可编辑的修订版本')
   const counts = new Map<number, number>()
-  batchResult.records.forEach((batch) =>
-    counts.set(batch.revisionId, (counts.get(batch.revisionId) || 0) + 1)
+  runResult.records.forEach((run) =>
+    counts.set(run.revisionId, (counts.get(run.revisionId) || 0) + 1)
   )
   const activeVersion = revisions.find(
     (item) => item.id === workflow.activeRevisionId
@@ -664,11 +664,12 @@ const loadDefinition = async (definitionID: number): Promise<WorkflowDefinitionI
     graph: toLegacyGraph(selected.graph),
     isLatest: selected.id === revisions[0]?.id,
     isBuiltin: false,
-    isActive: workflow.status === 'running' && selected.id === workflow.activeRevisionId,
-    isWorkflowActive: workflow.status === 'running',
+    isActive: workflow.status === 'active' && selected.id === workflow.activeRevisionId,
+    isWorkflowActive: workflow.status === 'active',
+    workflowStatus: workflow.status,
     activeDefinitionId: encodeVersionID(workflow.id, workflow.activeRevisionId),
     activeVersion: activeVersion || null,
-    executionCount: batchResult.total,
+    executionCount: runResult.total,
     createdBy: workflow.createdBy,
     createdAt: selected.createdAt,
     versions: revisions.map((revision) => ({
@@ -677,7 +678,7 @@ const loadDefinition = async (definitionID: number): Promise<WorkflowDefinitionI
       displayName: workflow.name,
       isLatest: revision.id === revisions[0]?.id,
       isBuiltin: false,
-      isActive: workflow.status === 'running' && revision.id === workflow.activeRevisionId,
+      isActive: workflow.status === 'active' && revision.id === workflow.activeRevisionId,
       executionCount: counts.get(revision.id) || 0,
       createdBy: revision.createdBy,
       createdAt: revision.createdAt
@@ -796,20 +797,19 @@ export async function fetchActivateWorkflowDefinition(definitionID: number) {
       resetStateNodeInstanceIds: []
     })
   }
-  await applyWorkflowLifecycle(workflowID, 'start')
+  await applyWorkflowLifecycle(workflowID, 'activate')
   return fetchWorkflowRuntime(workflowID)
 }
 
 export async function fetchDeactivateWorkflowDefinition(definitionID: number) {
   const { workflowID } = decodeDefinitionID(definitionID)
-  await applyWorkflowLifecycle(workflowID, 'pause')
+  await applyWorkflowLifecycle(workflowID, 'deactivate')
   return fetchWorkflowRuntime(workflowID)
 }
 
 export async function fetchDeleteWorkflowDefinition(definitionID: number) {
-  const { workflowID, revisionID } = decodeDefinitionID(definitionID)
-  if (revisionID) throw new Error('V2 修订版本不可删除')
-  await applyWorkflowLifecycle(workflowID, 'archive')
+  void definitionID
+  throw new Error('工作流不支持归档或删除')
 }
 
 const startType = (nodeType: string): WorkflowStartType => {
@@ -835,7 +835,7 @@ export async function fetchWorkflowRuntime(
   return {
     workflowCode: String(workflowID),
     runtimeStateId: workflowID,
-    activeDefinitionId: workflow.status === 'running' ? activeID : null,
+    activeDefinitionId: workflow.status === 'active' ? activeID : null,
     activatedAt: workflow.updatedAt,
     entries: trigger
       ? [
@@ -846,8 +846,8 @@ export async function fetchWorkflowRuntime(
             entryKey: trigger.nodeInstanceId,
             entryName: nodeLabels[trigger.nodeType] || trigger.nodeType,
             startType: startType(trigger.nodeType),
-            isEnabled: workflow.status === 'running',
-            registrationStatus: workflow.status === 'running' ? 'registered' : 'disabled',
+            isEnabled: workflow.status === 'active',
+            registrationStatus: workflow.status === 'active' ? 'registered' : 'disabled',
             nextRunAt: '',
             lastTriggeredAt: '',
             lastErrorMessage: '',
@@ -865,7 +865,7 @@ export async function fetchUpdateWorkflowRuntimeEntryStatus(
   isEnabled: boolean
 ) {
   const { workflowID } = decodeDefinitionID(definitionID)
-  await applyWorkflowLifecycle(workflowID, isEnabled ? 'start' : 'pause')
+  await applyWorkflowLifecycle(workflowID, isEnabled ? 'activate' : 'deactivate')
   return fetchWorkflowRuntime(workflowID)
 }
 
@@ -884,17 +884,17 @@ export async function fetchRunWorkflowDefinition(
 ): Promise<RunWorkflowDefinitionResponse> {
   void params
   const { workflowID } = decodeDefinitionID(definitionID)
-  const [batch, workflow, revisions] = await Promise.all([
-    createWorkflowBatch(workflowID),
+  const [run, workflow, revisions] = await Promise.all([
+    createWorkflowRun(workflowID),
     fetchWorkflow(workflowID),
     fetchWorkflowRevisions(workflowID)
   ])
   return {
     executions: [
       toExecution(
-        batch,
+        run,
         workflow,
-        revisions.items.find((revision) => revision.id === batch.revisionId)
+        revisions.items.find((revision) => revision.id === run.revisionId)
       )
     ]
   }
@@ -904,23 +904,26 @@ const pageExecutions = async (
   workflowID: number,
   params: WorkflowExecutionQueryParams
 ): Promise<WorkflowExecutionList> => {
-  const [workflow, revisions, batches] = await Promise.all([
+  const [workflow, revisions, runs] = await Promise.all([
     fetchWorkflow(workflowID),
     fetchWorkflowRevisions(workflowID),
-    fetchWorkflowBatches(workflowID, {
+    fetchWorkflowRuns(workflowID, {
       cursor: params.cursor,
       limit: params.limit,
       triggerType: params.triggerType,
-      status: params.status
+      status: params.status,
+      from: params.from,
+      to: params.to,
+      keyword: params.keyword
     })
   ])
   return {
-    ...batches,
-    records: batches.records.map((batch) =>
+    ...runs,
+    records: runs.records.map((run) =>
       toExecution(
-        batch,
+        run,
         workflow,
-        revisions.items.find((revision) => revision.id === batch.revisionId)
+        revisions.items.find((revision) => revision.id === run.revisionId)
       )
     )
   }
@@ -937,7 +940,7 @@ export async function fetchWorkflowDefinitionExecutions(
 export const fetchWorkflowExecutionList = async (params: WorkflowExecutionQueryParams) => {
   const workflowID = Number(params.workflowDefinitionCode)
   if (!Number.isSafeInteger(workflowID) || workflowID <= 0) {
-    throw new Error('请选择要查看执行记录的工作流')
+    throw new Error('请选择要查看日志的工作流')
   }
   return pageExecutions(workflowID, params)
 }
@@ -945,52 +948,46 @@ export const fetchWorkflowExecutionList = async (params: WorkflowExecutionQueryP
 export async function fetchWorkflowExecutionDetail(
   executionID: number
 ): Promise<WorkflowExecutionDetail> {
-  const batch = await fetchWorkflowBatch(executionID)
+  const run = await fetchWorkflowRun(executionID)
   const [workflow, revision] = await Promise.all([
-    fetchWorkflow(batch.workflowId),
-    fetchWorkflowRevision(batch.workflowId, batch.revisionId)
+    fetchWorkflow(run.workflowId),
+    fetchWorkflowRevision(run.workflowId, run.revisionId)
   ])
   const graph = toLegacyGraph(revision.graph)
   const names = new Map(graph.nodes.map((node) => [node.id, node.label]))
-  const execution = toExecution(batch, workflow, revision)
+  const execution = toExecution(run, workflow, revision)
   return {
     ...execution,
     graph,
     startNodeId: revision.mainTriggerNodeId,
-    nodeLogs: batch.nodeRuns.map((run) => {
-      const nodeStatus = batchStatus(
-        run.status === 'succeeded'
-          ? 'succeeded'
-          : run.status === 'cancelled'
-            ? 'cancelled'
-            : (run.status as WorkflowBatch['status'])
-      )
+    event: run.event,
+    resultSummary: run.resultSummary,
+    artifacts: run.artifacts,
+    nodeAttempts: run.runNodes.map((node) => {
+      const nodeStatus = nodeAttemptStatus(node.status)
       return {
-        id: run.id,
-        nodeId: run.nodeInstanceId,
-        nodeName: names.get(run.nodeInstanceId) || run.nodeType,
+        id: node.id,
+        nodeId: node.nodeInstanceId,
+        nodeName: names.get(node.nodeInstanceId) || node.nodeType,
+        attempt: node.attempt,
+        loopIteration: node.loopIteration,
         status: nodeStatus,
         statusLabel: statusLabel(nodeStatus),
-        startedAt: run.startedAt,
-        finishedAt: run.completedAt || '',
-        durationMs: run.durationMs || 0,
-        error: run.errorCategory
-          ? { summary: run.errorCategory, category: run.errorCategory, retryable: false }
+        startedAt: node.startedAt,
+        finishedAt: node.completedAt || '',
+        durationMs: node.durationMs || 0,
+        inputSummary: node.inputSummary,
+        outputSummary: node.outputSummary,
+        logs: node.logs,
+        error: node.errorCategory
+          ? {
+              summary: node.errorMessage || node.errorCategory,
+              category: node.errorCategory,
+              retryable: false
+            }
           : null
       }
-    }),
-    attempts: [
-      {
-        id: batch.id,
-        attempt: Math.max(1, ...batch.nodeRuns.map((run) => run.attempt)),
-        startedAt: batch.startedAt || batch.triggeredAt,
-        finishedAt: batch.completedAt || '',
-        status: execution.status,
-        statusLabel: statusLabel(execution.status),
-        error: execution.error
-      }
-    ],
-    transitionLogs: []
+    })
   }
 }
 

@@ -137,7 +137,7 @@ func (q *quantRuntime) handleQuantSignalDecision(w http.ResponseWriter, r *http.
 		ID int64
 	}
 	if err := q.db.WithContext(r.Context()).Table("workflow_human_tasks tasks").Select("tasks.id").
-		Joins("JOIN workflow_node_runs signal_run ON signal_run.batch_id = tasks.batch_id").Where(
+		Joins("JOIN workflow_run_nodes signal_run ON signal_run.run_id = tasks.run_id").Where(
 		"signal_run.operation_key = ? AND tasks.workflow_id = ? AND tasks.task_type = 'paper_signal' AND tasks.business_key = ? AND tasks.status = 'pending'",
 		signal.OperationKey, signal.WorkflowID, signal.BusinessKey,
 	).Order("tasks.created_at DESC, tasks.id DESC").First(&task).Error; err != nil {
@@ -207,7 +207,7 @@ func (q *quantRuntime) listQuantSignals(r *http.Request, workflowID int64, nodeI
 				Status string
 			}
 			if err := q.db.WithContext(r.Context()).Table("workflow_human_tasks tasks").Select("tasks.id, tasks.status").
-				Joins("JOIN workflow_node_runs signal_run ON signal_run.batch_id = tasks.batch_id").Where(
+				Joins("JOIN workflow_run_nodes signal_run ON signal_run.run_id = tasks.run_id").Where(
 				"signal_run.operation_key = ? AND tasks.workflow_id = ? AND tasks.task_type = 'paper_signal' AND tasks.business_key = ?",
 				signals[index].OperationKey, signals[index].WorkflowID, signals[index].BusinessKey,
 			).Order("tasks.created_at DESC, tasks.id DESC").First(&task).Error; err == nil {

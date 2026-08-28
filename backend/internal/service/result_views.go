@@ -46,7 +46,7 @@ type ResultViewView struct {
 	RevokedAt      string          `json:"revokedAt,omitempty"`
 }
 
-type ResultViewBatch struct {
+type ResultViewRun struct {
 	ID                    int64  `json:"id"`
 	Status                string `json:"status"`
 	TriggerType           string `json:"triggerType"`
@@ -55,6 +55,7 @@ type ResultViewBatch struct {
 	StartedAt             string `json:"startedAt,omitempty"`
 	CompletedAt           string `json:"completedAt,omitempty"`
 	ErrorCategory         string `json:"errorCategory,omitempty"`
+	ErrorMessage          string `json:"errorMessage,omitempty"`
 }
 
 func (a *App) CreateResultView(ctx context.Context, payload ResultViewCreatePayload, principal *Principal) (ResultViewView, error) {
@@ -191,33 +192,34 @@ func (a *App) ResolveResultScope(ctx context.Context, viewID int64, action strin
 	}, nil
 }
 
-func (a *App) ApplyResultScopeBatchAction(ctx context.Context, scope sdk.ResultScope, batchID int64, action string) (WorkflowBatchView, error) {
+func (a *App) ApplyResultScopeRunAction(ctx context.Context, scope sdk.ResultScope, runID int64, action string) (WorkflowRunView, error) {
 	workflowID, err := resultScopeWorkflowID(scope)
-	if err != nil || batchID <= 0 || action != "retry" && action != "cancel" {
-		return WorkflowBatchView{}, fmt.Errorf("%w: result batch", ErrNotFound)
+	if err != nil || runID <= 0 || action != "retry" && action != "cancel" {
+		return WorkflowRunView{}, fmt.Errorf("%w: result run", ErrNotFound)
 	}
-	var batch db.ExecutionBatch
-	if err := a.DB.WithContext(ctx).Select("id", "workflow_id").First(&batch, batchID).Error; err != nil || batch.WorkflowID != workflowID {
-		return WorkflowBatchView{}, fmt.Errorf("%w: result batch", ErrNotFound)
+	var run db.WorkflowRun
+	if err := a.DB.WithContext(ctx).Select("id", "workflow_id").First(&run, runID).Error; err != nil || run.WorkflowID != workflowID {
+		return WorkflowRunView{}, fmt.Errorf("%w: result run", ErrNotFound)
 	}
-	return a.ApplyWorkflowBatchAction(ctx, batchID, WorkflowBatchActionPayload{Action: action})
+	return a.ApplyWorkflowRunAction(ctx, runID, WorkflowRunActionPayload{Action: action})
 }
 
-func (a *App) ListResultScopeBatches(ctx context.Context, scope sdk.ResultScope) ([]ResultViewBatch, error) {
+func (a *App) ListResultScopeRuns(ctx context.Context, scope sdk.ResultScope) ([]ResultViewRun, error) {
 	workflowID, err := resultScopeWorkflowID(scope)
 	if err != nil {
 		return nil, fmt.Errorf("%w: result workflow", ErrNotFound)
 	}
-	batches, err := a.ListRecentWorkflowBatches(ctx, workflowID)
+	runs, err := a.ListRecentWorkflowRuns(ctx, workflowID)
 	if err != nil {
 		return nil, err
 	}
-	items := make([]ResultViewBatch, len(batches))
-	for index, batch := range batches {
-		items[index] = ResultViewBatch{
-			ID: batch.ID, Status: batch.Status, TriggerType: batch.TriggerType,
-			CurrentNodeInstanceID: batch.CurrentNodeInstanceID, TriggeredAt: batch.TriggeredAt,
-			StartedAt: batch.StartedAt, CompletedAt: batch.CompletedAt, ErrorCategory: batch.ErrorCategory,
+	items := make([]ResultViewRun, len(runs))
+	for index, run := range runs {
+		items[index] = ResultViewRun{
+			ID: run.ID, Status: run.Status, TriggerType: run.TriggerType,
+			CurrentNodeInstanceID: run.CurrentNodeInstanceID, TriggeredAt: run.TriggeredAt,
+			StartedAt: run.StartedAt, CompletedAt: run.CompletedAt,
+			ErrorCategory: run.ErrorCategory, ErrorMessage: run.ErrorMessage,
 		}
 	}
 	return items, nil
@@ -228,7 +230,7 @@ func (a *App) PauseResultScopeWorkflow(ctx context.Context, scope sdk.ResultScop
 	if err != nil {
 		return WorkflowDetail{}, fmt.Errorf("%w: result workflow", ErrNotFound)
 	}
-	return a.ApplyWorkflowLifecycle(ctx, workflowID, WorkflowLifecyclePayload{Action: "pause"})
+	return a.ApplyWorkflowLifecycle(ctx, workflowID, WorkflowLifecyclePayload{Action: "deactivate"})
 }
 
 func resultScopeWorkflowID(scope sdk.ResultScope) (int64, error) {

@@ -33,7 +33,7 @@ export interface ResultViewGrantPayload {
   roleCodes: string[]
 }
 
-export type ResultViewBatchStatus =
+export type ResultViewRunStatus =
   | 'queued'
   | 'running'
   | 'waiting'
@@ -42,15 +42,16 @@ export type ResultViewBatchStatus =
   | 'failed'
   | 'cancelled'
 
-export interface ResultViewBatch {
+export interface ResultViewRun {
   id: number
-  status: ResultViewBatchStatus
+  status: ResultViewRunStatus
   triggerType: string
   currentNodeInstanceId?: string
   triggeredAt: string
   startedAt?: string
   completedAt?: string
   errorCategory?: string
+  errorMessage?: string
 }
 
 export const fetchResultViews = () =>
@@ -72,16 +73,16 @@ export const revokeResultView = (viewId: number) =>
     showSuccessMessage: true
   })
 
-export const fetchResultViewBatches = (viewId: number) =>
-  request.get<{ items: ResultViewBatch[] }>({ url: `/api/v1/result-views/${viewId}/batches` })
+export const fetchResultViewRuns = (viewId: number) =>
+  request.get<{ items: ResultViewRun[] }>({ url: `/api/v1/result-views/${viewId}/runs` })
 
-export const applyResultViewBatchAction = (
+export const applyResultViewRunAction = (
   viewId: number,
-  batchId: number,
+  runId: number,
   action: 'retry' | 'cancel'
 ) =>
-  request.post<ResultViewBatch>({
-    url: `/api/v1/result-views/${viewId}/batches/${batchId}/${action}`,
+  request.post<ResultViewRun>({
+    url: `/api/v1/result-views/${viewId}/runs/${runId}/${action}`,
     showSuccessMessage: true
   })
 

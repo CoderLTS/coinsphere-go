@@ -119,8 +119,8 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 		slog.Warn("内置超管仍使用默认初始密码，请登录后尽快修改")
 	}
 	slog.Info("database ready", "engine", "postgres")
-	batchEngineErr := make(chan error, 1)
-	go func() { batchEngineErr <- app.RunBatchEngine(ctx) }()
+	runEngineErr := make(chan error, 1)
+	go func() { runEngineErr <- app.RunWorkflowEngine(ctx) }()
 
 	mux := api.NewServer(app, filepath.Join(baseDir, "volumes", "static"), filepath.Join(baseDir, "volumes", "uploads"))
 	server := &http.Server{
@@ -144,7 +144,7 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	}()
 
 	var cause error
-	batchEngineStopped := false
+	runEngineStopped := false
 	select {
 	case <-ctx.Done():
 		slog.Info("backend shutdown started")
@@ -152,10 +152,10 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 		if err != nil {
 			cause = fmt.Errorf("http server: %w", err)
 		}
-	case err := <-batchEngineErr:
-		batchEngineStopped = true
+	case err := <-runEngineErr:
+		runEngineStopped = true
 		if err != nil {
-			cause = fmt.Errorf("workflow batch engine: %w", err)
+			cause = fmt.Errorf("workflow run engine: %w", err)
 		}
 	}
 
@@ -169,18 +169,18 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 		shutdownErrs = append(shutdownErrs, fmt.Errorf("shutdown http server: %w", err))
 		_ = server.Close()
 	}
-	if !batchEngineStopped {
+	if !runEngineStopped {
 		select {
-		case err := <-batchEngineErr:
+		case err := <-runEngineErr:
 			if err != nil {
-				shutdownErrs = append(shutdownErrs, fmt.Errorf("stop workflow batch engine: %w", err))
+				shutdownErrs = append(shutdownErrs, fmt.Errorf("stop workflow run engine: %w", err))
 			}
 		case <-shutdownCtx.Done():
-			shutdownErrs = append(shutdownErrs, errors.New("stop workflow batch engine: timeout"))
+			shutdownErrs = append(shutdownErrs, errors.New("stop workflow run engine: timeout"))
 		}
 	}
-	if err := app.WaitForWorkflowBatches(shutdownCtx); err != nil {
-		shutdownErrs = append(shutdownErrs, errors.New("stop workflow batches: timeout"))
+	if err := app.WaitForWorkflowRuns(shutdownCtx); err != nil {
+		shutdownErrs = append(shutdownErrs, errors.New("stop workflow runs: timeout"))
 	}
 	if cause == nil && len(shutdownErrs) == 0 {
 		slog.Info("backend shutdown completed")

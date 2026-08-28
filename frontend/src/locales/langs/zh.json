@@ -1012,7 +1012,7 @@
         },
         "health": {
           "label": "健康得分",
-          "emptyDescription": "暂无最近执行记录"
+          "emptyDescription": "暂无最近运行日志"
         }
       }
     },

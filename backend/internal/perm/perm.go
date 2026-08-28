@@ -61,7 +61,7 @@ var ButtonSpecs = map[string][]ButtonSpec{
 		{"activate", SchedulerWorkflowRuntimeActivate, "激活版本"},
 		{"update_runtime", SchedulerWorkflowRuntimeUpdate, "更新入口状态"},
 	},
-	"WorkflowExecutions": {{"view", SchedulerWorkflowExecutionsView, "查看执行记录"}},
+	"WorkflowExecutions": {{"view", SchedulerWorkflowExecutionsView, "查看工作流日志"}},
 	"User": {
 		{"create", SystemUsersCreate, "新增"},
 		{"update", SystemUsersUpdate, "编辑"},

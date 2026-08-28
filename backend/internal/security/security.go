@@ -211,15 +211,15 @@ func Mask(secretText string) string {
 	if normalized == "" {
 		return ""
 	}
-	runes := []rune(normalized)
-	if len(runes) <= 8 {
-		return strings.Repeat("*", len(runes))
+	runs := []rune(normalized)
+	if len(runs) <= 8 {
+		return strings.Repeat("*", len(runs))
 	}
-	stars := len(runes) - 8
+	stars := len(runs) - 8
 	if stars < 4 {
 		stars = 4
 	}
-	return string(runes[:4]) + strings.Repeat("*", stars) + string(runes[len(runes)-4:])
+	return string(runs[:4]) + strings.Repeat("*", stars) + string(runs[len(runs)-4:])
 }
 
 // RandomToken 生成 32 位 hex 随机 token。

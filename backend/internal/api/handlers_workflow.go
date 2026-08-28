@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"coinsphere/backend/internal/service"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
@@ -216,7 +217,7 @@ func (s *Server) handleWorkflowLifecycle(w http.ResponseWriter, r *http.Request,
 	respond(w, data, err, "")
 }
 
-func (s *Server) handleListWorkflowBatches(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
+func (s *Server) handleListWorkflowRuns(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
 	workflowID, err := pathInt64(r, "workflowId")
 	if err != nil {
 		writeProblem(w, r, http.StatusBadRequest, err.Error())
@@ -229,7 +230,7 @@ func (s *Server) handleListWorkflowBatches(w http.ResponseWriter, r *http.Reques
 	triggerType := queryStr(r, "triggerType")
 	if triggerType != "" && triggerType != "manual" && triggerType != "schedule" && triggerType != "event" &&
 		triggerType != "stream" && triggerType != "webhook" && triggerType != "failure" {
-		writeProblem(w, r, http.StatusBadRequest, "invalid workflow batch triggerType")
+		writeProblem(w, r, http.StatusBadRequest, "invalid workflow run triggerType")
 		return
 	}
 	status := queryStr(r, "status")
@@ -241,66 +242,76 @@ func (s *Server) handleListWorkflowBatches(w http.ResponseWriter, r *http.Reques
 	if status != "" {
 		mapped, valid := statusMap[status]
 		if !valid {
-			writeProblem(w, r, http.StatusBadRequest, "invalid workflow batch status")
+			writeProblem(w, r, http.StatusBadRequest, "invalid workflow run status")
 			return
 		}
 		status = mapped
 	}
-	data, err := s.App.PageWorkflowBatches(r.Context(), workflowID, service.WorkflowBatchListQuery{
-		Page: page, TriggerType: triggerType, Status: status,
+	from, err := workflowRunQueryTime(r, "from")
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	to, err := workflowRunQueryTime(r, "to")
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	if from != nil && to != nil && from.After(*to) {
+		writeProblem(w, r, http.StatusBadRequest, "from must not be after to")
+		return
+	}
+	keyword := queryStr(r, "keyword")
+	if len(keyword) > 200 {
+		writeProblem(w, r, http.StatusBadRequest, "keyword must not exceed 200 bytes")
+		return
+	}
+	data, err := s.App.PageWorkflowRuns(r.Context(), workflowID, service.WorkflowRunListQuery{
+		Page: page, TriggerType: triggerType, Status: status, From: from, To: to, Keyword: keyword,
 	})
 	respond(w, data, err, "")
 }
 
-func (s *Server) handleCreateWorkflowBatch(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+func (s *Server) handleCreateWorkflowRun(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
 	workflowID, err := pathInt64(r, "workflowId")
 	if err != nil {
 		writeProblem(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
-	data, err := s.App.CreateWorkflowBatch(r.Context(), workflowID, principal)
+	data, err := s.App.CreateWorkflowRun(r.Context(), workflowID, principal)
 	respond(w, data, err, "")
 }
 
-func (s *Server) handleGetWorkflowBatch(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
-	batchID, err := pathInt64(r, "batchId")
+func (s *Server) handleGetWorkflowRun(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
+	runID, err := pathInt64(r, "runId")
 	if err != nil {
 		writeProblem(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
-	data, err := s.App.GetWorkflowBatchDetail(r.Context(), batchID)
+	data, err := s.App.GetWorkflowRunDetail(r.Context(), runID)
 	respond(w, data, err, "")
-}
-
-func (s *Server) handleListWorkflowActivity(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
-	workflowID, err := pathInt64(r, "workflowId")
-	if err != nil {
-		writeProblem(w, r, http.StatusBadRequest, err.Error())
-		return
-	}
-	after := int64(0)
-	if raw := queryStr(r, "after"); raw != "" {
-		after, err = strconv.ParseInt(raw, 10, 64)
-		if err != nil || after < 0 {
-			writeProblem(w, r, http.StatusBadRequest, "after must be a non-negative activity cursor")
-			return
-		}
-	}
-	limit := 100
-	if raw := queryStr(r, "limit"); raw != "" {
-		limit, err = strconv.Atoi(raw)
-		if err != nil || limit < 1 || limit > 200 {
-			writeProblem(w, r, http.StatusBadRequest, "limit must be between 1 and 200")
-			return
-		}
-	}
-	items, next, err := s.App.ListWorkflowActivities(r.Context(), workflowID, after, limit)
-	respond(w, M{"items": items, "nextCursor": next}, err, "")
 }
 
 func (s *Server) handleGetWorkflowArtifactManifest(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
 	data, err := s.App.GetWorkflowArtifactManifest(r.Context(), r.PathValue("sha256"), true)
 	respond(w, data, err, "")
+}
+
+func workflowRunQueryTime(r *http.Request, name string) (*time.Time, error) {
+	raw := queryStr(r, name)
+	if raw == "" {
+		return nil, nil
+	}
+	value, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return nil, fmt.Errorf("%s must be an RFC3339 UTC time", name)
+	}
+	_, offset := value.Zone()
+	if offset != 0 {
+		return nil, fmt.Errorf("%s must be UTC", name)
+	}
+	value = value.UTC()
+	return &value, nil
 }
 
 func (s *Server) handleDownloadWorkflowArtifact(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
@@ -319,18 +330,18 @@ func (s *Server) handleDownloadWorkflowArtifact(w http.ResponseWriter, r *http.R
 	_, _ = io.Copy(w, reader)
 }
 
-func (s *Server) handleWorkflowBatchAction(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
-	batchID, err := pathInt64(r, "batchId")
+func (s *Server) handleWorkflowRunAction(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
+	runID, err := pathInt64(r, "runId")
 	if err != nil {
 		writeProblem(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxWorkflowRequestBytes)
-	payload, err := decodeBody[service.WorkflowBatchActionPayload](r)
+	payload, err := decodeBody[service.WorkflowRunActionPayload](r)
 	if err != nil {
 		writeProblem(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
-	data, err := s.App.ApplyWorkflowBatchAction(r.Context(), batchID, *payload)
+	data, err := s.App.ApplyWorkflowRunAction(r.Context(), runID, *payload)
 	respond(w, data, err, "")
 }

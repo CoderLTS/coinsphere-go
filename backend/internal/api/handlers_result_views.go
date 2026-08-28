@@ -59,7 +59,7 @@ func (s *Server) handleRevokeResultView(w http.ResponseWriter, r *http.Request, 
 	respond(w, view, err, "")
 }
 
-func (s *Server) handleListResultViewBatches(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+func (s *Server) handleListResultViewRuns(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
 	viewID, err := pathInt64(r, "viewId")
 	if err != nil {
 		writeProblem(w, r, http.StatusNotFound, service.ErrNotFound.Error())
@@ -70,15 +70,15 @@ func (s *Server) handleListResultViewBatches(w http.ResponseWriter, r *http.Requ
 		respond(w, nil, fmt.Errorf("%w: result view", service.ErrNotFound), "")
 		return
 	}
-	batches, err := s.App.ListResultScopeBatches(r.Context(), scope)
-	respond(w, M{"items": batches}, err, "")
+	runs, err := s.App.ListResultScopeRuns(r.Context(), scope)
+	respond(w, M{"items": runs}, err, "")
 }
 
-func (s *Server) handleResultViewBatchAction(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
+func (s *Server) handleResultViewRunAction(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
 	action := r.PathValue("action")
 	viewID, viewErr := pathInt64(r, "viewId")
-	batchID, batchErr := pathInt64(r, "batchId")
-	if viewErr != nil || batchErr != nil {
+	runID, runErr := pathInt64(r, "runId")
+	if viewErr != nil || runErr != nil {
 		writeProblem(w, r, http.StatusNotFound, service.ErrNotFound.Error())
 		return
 	}
@@ -90,8 +90,8 @@ func (s *Server) handleResultViewBatchAction(w http.ResponseWriter, r *http.Requ
 	if !authorizeResultAction(w, r, principal, action) {
 		return
 	}
-	batch, err := s.App.ApplyResultScopeBatchAction(r.Context(), scope, batchID, action)
-	respond(w, batch, err, "")
+	run, err := s.App.ApplyResultScopeRunAction(r.Context(), scope, runID, action)
+	respond(w, run, err, "")
 }
 
 func (s *Server) handleResultViewWorkflowPause(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
