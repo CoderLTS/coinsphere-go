@@ -117,6 +117,7 @@ func (a *App) CreateWorkflowRun(ctx context.Context, workflowID int64, principal
 	if err != nil {
 		return WorkflowRunView{}, err
 	}
+	a.PublishWorkflowRunUpdated(run.WorkflowID, run.ID)
 	return workflowRunView(run), nil
 }
 
@@ -216,6 +217,7 @@ func (a *App) ApplyWorkflowRunAction(ctx context.Context, runID int64, payload W
 		return a.createDiagnosticReplay(ctx, runID)
 	}
 	now := time.Now().UTC()
+	var workflowID int64
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var run db.WorkflowRun
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&run, runID).Error; err != nil {
@@ -224,6 +226,7 @@ func (a *App) ApplyWorkflowRunAction(ctx context.Context, runID int64, payload W
 			}
 			return errors.New("lock workflow run failed")
 		}
+		workflowID = run.WorkflowID
 		switch action {
 		case "cancel":
 			if run.Status == RunStatusQueued || run.Status == RunStatusWaiting || run.Status == RunStatusRetrying {
@@ -256,6 +259,7 @@ func (a *App) ApplyWorkflowRunAction(ctx context.Context, runID int64, payload W
 	if err != nil {
 		return WorkflowRunView{}, err
 	}
+	a.PublishWorkflowRunUpdated(workflowID, runID)
 	if action == "cancel" {
 		a.runCancelMu.Lock()
 		cancel := a.runCancels[runID]
@@ -417,6 +421,9 @@ RETURNING eb.*`
 	if err != nil {
 		return db.WorkflowRun{}, false, err
 	}
+	if run.ID > 0 {
+		a.PublishWorkflowRunUpdated(run.WorkflowID, run.ID)
+	}
 	return run, run.ID > 0, nil
 }
 
@@ -542,6 +549,7 @@ func (a *App) executeWorkflowNode(ctx context.Context, run db.WorkflowRun, revis
 	if err := a.DB.WithContext(ctx).Create(&runNode).Error; err != nil {
 		return workflowNodeOutcome{attempt: attempt, category: "node_run", err: err}
 	}
+	a.PublishWorkflowRunUpdated(run.WorkflowID, run.ID)
 	a.appendWorkflowNodeLog(ctx, run.WorkflowID, run.ID, runNode.ID, slog.LevelInfo, "节点开始执行", map[string]any{
 		"attempt": attempt, "loop_iteration": iteration,
 	})
@@ -562,8 +570,10 @@ func (a *App) executeWorkflowNode(ctx context.Context, run db.WorkflowRun, revis
 		}
 		return workflowNodeOutcome{attempt: attempt, output: output}
 	}
-	_ = a.DB.WithContext(ctx).Model(&db.WorkflowRun{}).Where("id = ?", run.ID).
-		Updates(map[string]any{"current_node_instance_id": node.NodeInstanceID, "updated_at": startedAt}).Error
+	if err := a.DB.WithContext(ctx).Model(&db.WorkflowRun{}).Where("id = ?", run.ID).
+		Updates(map[string]any{"current_node_instance_id": node.NodeInstanceID, "updated_at": startedAt}).Error; err == nil {
+		a.PublishWorkflowRunUpdated(run.WorkflowID, run.ID)
+	}
 
 	slot := a.streamSlots
 	if desc.Pool == sdk.PoolCompute {
@@ -672,7 +682,7 @@ func (a *App) callWorkflowNode(ctx context.Context, run db.WorkflowRun, revision
 }
 
 func (a *App) commitWorkflowNodeSuccess(ctx context.Context, runNode db.WorkflowRunNode, run db.WorkflowRun, revision db.WorkflowRevision, node workflowGraphNode, operationKey string, iteration int, output, state json.RawMessage, artifacts []sdk.Artifact, startedAt time.Time) error {
-	return a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := time.Now().UTC()
 		duration := max(now.Sub(startedAt).Milliseconds(), 0)
 		manifests, err := loadWorkflowArtifactManifests(tx, artifacts)
@@ -726,6 +736,10 @@ func (a *App) commitWorkflowNodeSuccess(ctx context.Context, runNode db.Workflow
 		}
 		return nil
 	})
+	if err == nil {
+		a.PublishWorkflowRunUpdated(run.WorkflowID, run.ID)
+	}
+	return err
 }
 
 func (a *App) workflowEventTriggerNode(nodeType string) bool {
@@ -1095,6 +1109,7 @@ func (a *App) finishWorkflowRunNode(workflowID int64, runNode db.WorkflowRunNode
 	if err := a.DB.Model(&db.WorkflowRunNode{}).Where("id = ? AND status = ?", runNode.ID, RunStatusRunning).Updates(updates).Error; err != nil {
 		return
 	}
+	a.PublishWorkflowRunUpdated(workflowID, runNode.RunID)
 	level := slog.LevelInfo
 	if status == RunStatusFailed {
 		level = slog.LevelError
@@ -1108,10 +1123,16 @@ func (a *App) finishWorkflowRunNode(workflowID int64, runNode db.WorkflowRunNode
 
 func (a *App) retryWorkflowRun(runID int64, attempt int) {
 	now := time.Now().UTC()
-	_ = a.DB.Model(&db.WorkflowRun{}).Where("id = ?", runID).Updates(map[string]any{
+	var run db.WorkflowRun
+	if a.DB.Model(&db.WorkflowRun{}).Select("workflow_id").First(&run, runID).Error != nil {
+		return
+	}
+	if a.DB.Model(&db.WorkflowRun{}).Where("id = ?", runID).Updates(map[string]any{
 		"status": RunStatusRetrying, "not_before": now.Add(time.Duration(attempt) * time.Second),
 		"lease_token": nil, "lease_expires_at": nil, "error_category": nil, "error_message": nil, "updated_at": now,
-	}).Error
+	}).Error == nil {
+		a.PublishWorkflowRunUpdated(run.WorkflowID, runID)
+	}
 }
 
 func (a *App) failWorkflowRun(runID int64, category string) {
@@ -1128,6 +1149,7 @@ func (a *App) completeWorkflowRun(runID int64) {
 
 func (a *App) finishWorkflowRun(runID int64, status, category string) {
 	now := time.Now().UTC()
+	var workflowID int64
 	updates := map[string]any{
 		"status": status, "completed_at": now, "lease_token": nil, "lease_expires_at": nil,
 		"current_node_instance_id": "", "updated_at": now,
@@ -1142,6 +1164,7 @@ func (a *App) finishWorkflowRun(runID int64, status, category string) {
 		if err := tx.First(&run, runID).Error; err != nil {
 			return err
 		}
+		workflowID = run.WorkflowID
 		updates["result_summary"] = workflowRunResultSummary(tx, runID)
 		if category == "" {
 			updates["error_message"] = nil
@@ -1158,7 +1181,9 @@ func (a *App) finishWorkflowRun(runID int64, status, category string) {
 	})
 	if err != nil {
 		slog.Error("finish workflow run failed", "run_id", runID, "error_category", "run_finish")
+		return
 	}
+	a.PublishWorkflowRunUpdated(workflowID, runID)
 }
 
 func workflowRunResultSummary(tx *gorm.DB, runID int64) string {
@@ -1179,17 +1204,29 @@ func workflowRunResultSummary(tx *gorm.DB, runID int64) string {
 
 func (a *App) requeueWorkflowRun(runID int64) {
 	now := time.Now().UTC()
-	_ = a.DB.Model(&db.WorkflowRun{}).Where("id = ?", runID).Updates(map[string]any{
+	var run db.WorkflowRun
+	if a.DB.Model(&db.WorkflowRun{}).Select("workflow_id").First(&run, runID).Error != nil {
+		return
+	}
+	if a.DB.Model(&db.WorkflowRun{}).Where("id = ?", runID).Updates(map[string]any{
 		"status": RunStatusQueued, "not_before": now, "lease_token": nil,
 		"lease_expires_at": nil, "updated_at": now,
-	}).Error
+	}).Error == nil {
+		a.PublishWorkflowRunUpdated(run.WorkflowID, runID)
+	}
 }
 
 func (a *App) waitWorkflowRun(runID int64) {
 	now := time.Now().UTC()
-	_ = a.DB.Model(&db.WorkflowRun{}).Where("id = ? AND status = ?", runID, RunStatusRunning).Updates(map[string]any{
+	var run db.WorkflowRun
+	if a.DB.Model(&db.WorkflowRun{}).Select("workflow_id").First(&run, runID).Error != nil {
+		return
+	}
+	if a.DB.Model(&db.WorkflowRun{}).Where("id = ? AND status = ?", runID, RunStatusRunning).Updates(map[string]any{
 		"status": RunStatusWaiting, "lease_token": nil, "lease_expires_at": nil, "updated_at": now,
-	}).Error
+	}).Error == nil {
+		a.PublishWorkflowRunUpdated(run.WorkflowID, runID)
+	}
 }
 
 func (a *App) runShouldStop(ctx context.Context, runID, workflowID int64) (cancelled, paused bool) {
@@ -1254,6 +1291,7 @@ ORDER BY w.id`, now).Scan(&due).Error; err != nil {
 		if item.DueAt != nil {
 			dueAt = item.DueAt.UTC()
 		}
+		var createdRun db.WorkflowRun
 		if err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			var runtime db.WorkflowRuntime
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&runtime, item.WorkflowID).Error; err != nil {
@@ -1273,6 +1311,7 @@ ORDER BY w.id`, now).Scan(&due).Error; err != nil {
 			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&run).Error; err != nil {
 				return err
 			}
+			createdRun = run
 			next := dueAt.Add(interval)
 			for !next.After(now) {
 				next = next.Add(interval)
@@ -1282,6 +1321,9 @@ ORDER BY w.id`, now).Scan(&due).Error; err != nil {
 			}).Error
 		}); err != nil {
 			return errors.New("enqueue scheduled workflow run failed")
+		}
+		if createdRun.ID > 0 {
+			a.PublishWorkflowRunUpdated(createdRun.WorkflowID, createdRun.ID)
 		}
 	}
 	return nil
@@ -1382,6 +1424,7 @@ func (a *App) createDiagnosticReplay(ctx context.Context, runID int64) (Workflow
 	if err != nil {
 		return WorkflowRunView{}, err
 	}
+	a.PublishWorkflowRunUpdated(replay.WorkflowID, replay.ID)
 	return workflowRunView(replay), nil
 }
 

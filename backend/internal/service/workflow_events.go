@@ -34,6 +34,7 @@ func (a *App) PublishWorkflowEvent(ctx context.Context, event cloudevents.Event)
 	if err != nil {
 		return WorkflowEventView{}, err
 	}
+	a.publishWorkflowEventRunUpdates(record.ID)
 	return workflowEventView(record), nil
 }
 
@@ -115,7 +116,21 @@ func (a *App) PublishWorkflowWebhook(ctx context.Context, workflowID int64, secr
 	if err != nil {
 		return WorkflowEventView{}, err
 	}
+	a.publishWorkflowEventRunUpdates(record.ID)
 	return workflowEventView(record), nil
+}
+
+func (a *App) publishWorkflowEventRunUpdates(eventRecordID int64) {
+	if eventRecordID <= 0 {
+		return
+	}
+	var deliveries []db.WorkflowEventDelivery
+	if a.DB.Select("workflow_id, run_id").Where("event_record_id = ?", eventRecordID).Find(&deliveries).Error != nil {
+		return
+	}
+	for _, delivery := range deliveries {
+		a.PublishWorkflowRunUpdated(delivery.WorkflowID, delivery.RunID)
+	}
 }
 
 func (a *App) persistWorkflowEvent(ctx context.Context, event cloudevents.Event, targetWorkflowID int64) (db.WorkflowEventRecord, error) {
@@ -306,7 +321,8 @@ func (a *App) enqueueWorkflowEvent(tx *gorm.DB, event cloudevents.Event) error {
 }
 
 func (a *App) dispatchWorkflowEventOutbox(ctx context.Context, now time.Time) error {
-	return a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var record db.WorkflowEventRecord
+	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var item db.WorkflowEventOutbox
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
 			Where("status = 'pending' AND available_at <= ?", now).Order("available_at, id").First(&item).Error; err != nil {
@@ -318,7 +334,7 @@ func (a *App) dispatchWorkflowEventOutbox(ctx context.Context, now time.Time) er
 		item.AttemptCount++
 		var event cloudevents.Event
 		if err := json.Unmarshal([]byte(item.EventJSON), &event); err == nil {
-			_, err = a.persistWorkflowEventTx(tx, event, 0)
+			record, err = a.persistWorkflowEventTx(tx, event, 0)
 			if err == nil {
 				return tx.Model(&item).Updates(map[string]any{
 					"status": "published", "attempt_count": item.AttemptCount, "published_at": now,
@@ -337,6 +353,10 @@ func (a *App) dispatchWorkflowEventOutbox(ctx context.Context, now time.Time) er
 			"last_error_category": category, "updated_at": now,
 		}).Error
 	})
+	if err == nil {
+		a.publishWorkflowEventRunUpdates(record.ID)
+	}
+	return err
 }
 
 func newWorkflowFailureEvent(run db.WorkflowRun, category string, now time.Time) cloudevents.Event {

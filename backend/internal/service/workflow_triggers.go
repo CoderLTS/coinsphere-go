@@ -46,13 +46,19 @@ func (e workflowTriggerEmitter) Emit(ctx context.Context, event cloudevents.Even
 }
 
 func (a *App) publishWorkflowTriggerEvent(ctx context.Context, event cloudevents.Event, workflowID int64) error {
-	return a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		record, err := a.persistWorkflowEventTx(tx, event, workflowID)
+	var record db.WorkflowEventRecord
+	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var err error
+		record, err = a.persistWorkflowEventTx(tx, event, workflowID)
 		if err != nil {
 			return err
 		}
 		return a.deliverWorkflowEventTx(tx, record, event, 0, time.Now().UTC())
 	})
+	if err == nil {
+		a.publishWorkflowEventRunUpdates(record.ID)
+	}
+	return err
 }
 
 type workflowTriggerState struct {

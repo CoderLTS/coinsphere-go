@@ -193,6 +193,7 @@ func (a *App) DecideWorkflowHumanTask(ctx context.Context, taskID int64, payload
 	if expired {
 		return WorkflowHumanTaskView{}, fmt.Errorf("%w: human task has expired", ErrConflict)
 	}
+	a.PublishWorkflowRunUpdated(task.WorkflowID, task.RunID)
 	return workflowHumanTaskView(task), nil
 }
 

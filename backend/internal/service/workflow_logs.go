@@ -84,10 +84,12 @@ func (a *App) workflowNodeLogger(workflowID, runID, runNodeID int64, nodeType st
 }
 
 func (a *App) appendWorkflowNodeLog(ctx context.Context, workflowID, runID, runNodeID int64, level slog.Level, message string, fields map[string]any) {
-	_ = appendWorkflowNodeLog(a.DB.WithContext(context.WithoutCancel(ctx)), db.WorkflowNodeLog{
+	if err := appendWorkflowNodeLog(a.DB.WithContext(context.WithoutCancel(ctx)), db.WorkflowNodeLog{
 		WorkflowID: workflowID, RunID: runID, RunNodeID: runNodeID, LoggedAt: time.Now().UTC(),
 		Level: workflowLogLevel(level), Message: workflowLogMessage(message), FieldsJSON: workflowLogFields(fields),
-	})
+	}); err == nil {
+		a.PublishWorkflowRunUpdated(workflowID, runID)
+	}
 }
 
 func appendWorkflowNodeLog(database *gorm.DB, entry db.WorkflowNodeLog) error {

@@ -84,7 +84,7 @@
                   <span
                     class="workflow-execution-detail__live-logs-dot"
                     :class="{
-                      'workflow-execution-detail__live-logs-dot--active': shouldPollExecution
+                      'workflow-execution-detail__live-logs-dot--active': realtimeConnected
                     }"
                   />
                   <span>实时运行日志</span>
@@ -354,7 +354,8 @@
     fetchWorkflowExecutionDetail,
     type WorkflowExecutionDetail
   } from '@/api/scheduler'
-  import { fetchWorkflowRuns } from '@/api/workflows'
+  import { buildWorkflowRunsWsUrl, WORKFLOW_RUNS_WS_PROTOCOL } from '@/api/workflows'
+  import { useUserStore } from '@/store/modules/user'
   import { useAutoLayoutHeight } from '@/hooks/core/useLayoutHeight'
   import { formatDateTime } from '@/utils/date'
   import WorkflowExecutionCanvas from './components/WorkflowExecutionCanvas.vue'
@@ -383,7 +384,10 @@
   const inspectorVisible = ref(true)
   const liveLogViewport = ref<HTMLDivElement | null>(null)
   const { containerMinHeight } = useAutoLayoutHeight(undefined, { updateCssVar: false })
-  let pollTimer: number | null = null
+  const userStore = useUserStore()
+  const realtimeConnected = ref(false)
+  let workflowSocket: WebSocket | null = null
+  let workflowReconnectTimer: ReturnType<typeof setTimeout> | null = null
 
   const pageStyle = computed(() => ({
     height: containerMinHeight.value,
@@ -550,56 +554,92 @@
     return executionDetail.value?.triggerType === 'stream'
   })
 
-  const shouldPollExecution = computed(() => {
-    const status = executionDetail.value?.status
-    return (
-      shouldFollowLatest.value ||
-      status === 'queued' ||
-      status === 'running' ||
-      status === 'retry_waiting'
-    )
-  })
+  const activeWorkflowId = computed(() =>
+    Number(executionDetail.value?.workflowDefinitionId || route.query.workflowId || 0)
+  )
 
-  const clearPollTimer = () => {
-    if (pollTimer !== null) {
-      window.clearTimeout(pollTimer)
-      pollTimer = null
+  const clearWorkflowReconnect = () => {
+    if (workflowReconnectTimer) {
+      clearTimeout(workflowReconnectTimer)
+      workflowReconnectTimer = null
     }
   }
 
-  const schedulePoll = () => {
-    clearPollTimer()
-    if (!shouldPollExecution.value) return
-    pollTimer = window.setTimeout(() => {
-      void refreshExecution()
-    }, 2000)
+  const closeWorkflowSocket = () => {
+    clearWorkflowReconnect()
+    realtimeConnected.value = false
+    if (workflowSocket) {
+      workflowSocket.close()
+      workflowSocket = null
+    }
   }
 
-  const refreshExecution = async () => {
-    if (shouldFollowLatest.value) {
-      const workflowId = Number(route.query.workflowId)
-      if (Number.isSafeInteger(workflowId) && workflowId > 0) {
-        try {
-          const latest = (
-            await fetchWorkflowRuns(workflowId, {
-              limit: 1,
-              ...(executionDetail.value?.triggerType === 'stream' ? { triggerType: 'stream' } : {})
-            })
-          ).records[0]
-          const currentId = Number(route.params.executionId)
-          if (latest && latest.id !== currentId) {
-            await router.replace({
-              path: `/scheduler/execution/${latest.id}/detail`,
-              query: route.query
-            })
-            return
-          }
-        } catch {
-          // The detail poll below still keeps the current run visible if the latest-run check fails.
+  const connectWorkflowSocket = () => {
+    closeWorkflowSocket()
+    const workflowId = activeWorkflowId.value
+    if (workflowId <= 0 || userStore.accessMode !== 'authenticated' || !userStore.accessToken)
+      return
+    const socket = new WebSocket(buildWorkflowRunsWsUrl(window.location.origin, workflowId), [
+      WORKFLOW_RUNS_WS_PROTOCOL,
+      userStore.accessToken
+    ])
+    workflowSocket = socket
+    socket.onopen = () => {
+      if (workflowSocket !== socket) return
+      if (socket.protocol !== WORKFLOW_RUNS_WS_PROTOCOL) {
+        socket.close(1002, 'unexpected websocket protocol')
+        return
+      }
+      realtimeConnected.value = true
+    }
+    socket.onmessage = (event) => {
+      if (workflowSocket !== socket) return
+      try {
+        const envelope = JSON.parse(event.data) as {
+          type?: string
+          version?: number
+          data?: { workflowId?: number; runId?: number }
         }
+        const update = envelope.data
+        if (
+          envelope.type !== 'workflow.run.updated' ||
+          envelope.version !== 1 ||
+          !update ||
+          update.workflowId !== workflowId ||
+          typeof update.runId !== 'number' ||
+          !Number.isSafeInteger(update.runId)
+        ) {
+          return
+        }
+        const updatedRunId = update.runId
+        const currentId = Number(route.params.executionId)
+        if (shouldFollowLatest.value && updatedRunId > currentId) {
+          void router.replace({
+            path: `/scheduler/execution/${updatedRunId}/detail`,
+            query: route.query
+          })
+          return
+        }
+        if (updatedRunId === currentId) {
+          void loadPageData({ preserveSelection: true, silent: true })
+        }
+      } catch {
+        // Ignore malformed frames; the next valid update restores the view.
       }
     }
-    await loadPageData({ preserveSelection: true, silent: true })
+    socket.onclose = () => {
+      if (workflowSocket !== socket) return
+      workflowSocket = null
+      realtimeConnected.value = false
+      clearWorkflowReconnect()
+      workflowReconnectTimer = setTimeout(() => {
+        workflowReconnectTimer = null
+        connectWorkflowSocket()
+      }, 3000)
+    }
+    socket.onerror = () => {
+      if (workflowSocket === socket) realtimeConnected.value = false
+    }
   }
 
   const loadPageData = async (options: { preserveSelection?: boolean; silent?: boolean } = {}) => {
@@ -609,7 +649,6 @@
       return
     }
 
-    clearPollTimer()
     if (!options.silent || !executionDetail.value) {
       loading.value = true
     }
@@ -657,7 +696,6 @@
       if (!options.silent || !executionDetail.value) {
         loading.value = false
       }
-      schedulePoll()
     }
   }
 
@@ -665,11 +703,12 @@
     () => route.params.executionId,
     () => {
       // 详情页通过参数切换不同 execution 时，复用页面实例并重新加载数据。
-      clearPollTimer()
       void loadPageData()
     },
     { immediate: true }
   )
+
+  watch(activeWorkflowId, connectWorkflowSocket, { immediate: true })
 
   watch(
     () => liveLogRows.value.map((line) => `${line.key}:${line.message}`),
@@ -682,7 +721,7 @@
   )
 
   onBeforeUnmount(() => {
-    clearPollTimer()
+    closeWorkflowSocket()
   })
 </script>
 
