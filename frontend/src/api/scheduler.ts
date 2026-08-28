@@ -229,19 +229,6 @@ export interface WorkflowExecutionDetail extends WorkflowExecutionItem {
   artifacts: WorkflowArtifact[]
 }
 
-export type WorkflowExecutionList = Api.Common.PaginatedResponse<WorkflowExecutionItem>
-
-export interface WorkflowExecutionQueryParams {
-  cursor?: string
-  limit?: number
-  workflowDefinitionCode?: string
-  triggerType?: WorkflowTriggerType | string
-  status?: WorkflowExecutionStatus | string
-  from?: string
-  to?: string
-  keyword?: string
-}
-
 export interface WorkflowManualRunPayload {
   startEntryKeys: string[]
   inputs?: Record<string, any>
@@ -249,31 +236,6 @@ export interface WorkflowManualRunPayload {
 
 export interface RunWorkflowDefinitionResponse {
   executions: WorkflowExecutionItem[]
-}
-
-export interface WorkflowOverviewDefinitionItem {
-  workflowDefinitionId: number
-  workflowDefinitionCode: string
-  workflowDefinitionVersion: number
-  workflowDefinitionName: string
-  isActive: boolean
-  executionCount: number
-}
-
-export interface WorkflowOverview {
-  stats: {
-    definitionCount: number
-    activeDefinitionCount: number
-    executionCount: number
-    latestExecutedAt: string
-    pendingCount: number
-    queuedCount: number
-    runningCount: number
-    retryWaitingCount: number
-    oldestPendingAgeMs: number
-    staleRunningCount: number
-  }
-  definitions: WorkflowOverviewDefinitionItem[]
 }
 
 const versionIDFactor = 1_000_000_000
@@ -901,51 +863,6 @@ export async function fetchRunWorkflowDefinition(
   }
 }
 
-const pageExecutions = async (
-  workflowID: number,
-  params: WorkflowExecutionQueryParams
-): Promise<WorkflowExecutionList> => {
-  const [workflow, revisions, runs] = await Promise.all([
-    fetchWorkflow(workflowID),
-    fetchWorkflowRevisions(workflowID),
-    fetchWorkflowRuns(workflowID, {
-      cursor: params.cursor,
-      limit: params.limit,
-      triggerType: params.triggerType,
-      status: params.status,
-      from: params.from,
-      to: params.to,
-      keyword: params.keyword
-    })
-  ])
-  return {
-    ...runs,
-    records: runs.records.map((run) =>
-      toExecution(
-        run,
-        workflow,
-        revisions.items.find((revision) => revision.id === run.revisionId)
-      )
-    )
-  }
-}
-
-export async function fetchWorkflowDefinitionExecutions(
-  definitionID: number,
-  params: WorkflowExecutionQueryParams
-) {
-  const { workflowID } = decodeDefinitionID(definitionID)
-  return pageExecutions(workflowID, params)
-}
-
-export const fetchWorkflowExecutionList = async (params: WorkflowExecutionQueryParams) => {
-  const workflowID = Number(params.workflowDefinitionCode)
-  if (!Number.isSafeInteger(workflowID) || workflowID <= 0) {
-    throw new Error('请选择要查看日志的工作流')
-  }
-  return pageExecutions(workflowID, params)
-}
-
 export async function fetchWorkflowExecutionDetail(
   executionID: number
 ): Promise<WorkflowExecutionDetail> {
@@ -990,40 +907,5 @@ export async function fetchWorkflowExecutionDetail(
           : null
       }
     })
-  }
-}
-
-export async function fetchSchedulerOverview(): Promise<WorkflowOverview> {
-  const definitions = await fetchWorkflowDefinitionList()
-  const pages = await Promise.all(
-    definitions.map((item) => fetchWorkflowDefinitionExecutions(item.id, { limit: 50 }))
-  )
-  const executions = pages
-    .flatMap((page) => page.records)
-    .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt))
-  const pending = executions.filter((item) =>
-    ['queued', 'running', 'retry_waiting'].includes(item.status)
-  )
-  return {
-    stats: {
-      definitionCount: definitions.length,
-      activeDefinitionCount: definitions.filter((item) => item.isWorkflowActive).length,
-      executionCount: pages.reduce((total, page) => total + page.total, 0),
-      latestExecutedAt: executions[0]?.queuedAt || '',
-      pendingCount: pending.length,
-      queuedCount: pending.filter((item) => item.status === 'queued').length,
-      runningCount: pending.filter((item) => item.status === 'running').length,
-      retryWaitingCount: pending.filter((item) => item.status === 'retry_waiting').length,
-      oldestPendingAgeMs: 0,
-      staleRunningCount: 0
-    },
-    definitions: definitions.map((item) => ({
-      workflowDefinitionId: item.id,
-      workflowDefinitionCode: item.code,
-      workflowDefinitionVersion: item.version,
-      workflowDefinitionName: item.displayName,
-      isActive: Boolean(item.isWorkflowActive),
-      executionCount: item.executionCount
-    }))
   }
 }

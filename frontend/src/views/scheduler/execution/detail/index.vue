@@ -5,7 +5,7 @@
       <ElResult v-if="loadError" icon="warning" title="运行日志加载失败" :sub-title="loadError">
         <template #extra>
           <ElSpace>
-            <ElButton @click="handleBack">返回工作流日志</ElButton>
+            <ElButton @click="handleBack">返回工作流定义</ElButton>
             <ElButton type="primary" @click="() => loadPageData()">重新加载</ElButton>
           </ElSpace>
         </template>
@@ -14,7 +14,7 @@
       <template v-else-if="executionDetail && domainGraph">
         <div class="workflow-execution-detail__stage">
           <div class="workflow-execution-detail__back-wrap">
-            <ElTooltip content="返回工作流日志" placement="bottom">
+            <ElTooltip content="返回工作流定义" placement="bottom">
               <ElButton plain class="workflow-execution-detail__icon-btn" @click="handleBack">
                 <ElIcon><ArrowLeft /></ElIcon>
               </ElButton>
@@ -454,12 +454,7 @@
   )
 
   const handleBack = () => {
-    const workflowId = executionDetail.value?.workflowDefinitionId || route.query.workflowId
-    const workflowName = executionDetail.value?.workflowDefinitionName || route.query.workflowName
-    router.push({
-      path: '/scheduler/execution',
-      query: { workflowId: String(workflowId || ''), workflowName: String(workflowName || '') }
-    })
+    router.push('/scheduler/definition')
   }
 
   const clearSelection = () => {
@@ -593,6 +588,7 @@
         return
       }
       realtimeConnected.value = true
+      void refreshExecutionFromRealtime()
     }
     socket.onmessage = (event) => {
       if (workflowSocket !== socket) return

@@ -292,14 +292,6 @@
                   {{ channel.label }}{{ channel.enabled ? '' : '（已停用）' }}
                 </ElCheckbox>
               </ElCheckboxGroup>
-              <ElButton
-                link
-                type="primary"
-                native-type="button"
-                @click="$emit('request-manage-notify')"
-              >
-                新增、编辑或测试渠道
-              </ElButton>
             </ElFormItem>
 
             <ElFormItem label="标题模板">
@@ -509,7 +501,6 @@
     (e: 'request-commit'): void
     (e: 'request-discard'): void
     (e: 'request-close'): void
-    (e: 'request-manage-notify'): void
     (e: 'request-remove'): void
   }
 

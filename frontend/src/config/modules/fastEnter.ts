@@ -18,15 +18,6 @@ const fastEnterConfig: FastEnterConfig = {
       routeName: 'Dashboard'
     },
     {
-      name: '任务概览',
-      description: '查看定时任务统计分析',
-      icon: 'ri:line-chart-line',
-      iconColor: '#11a36a',
-      enabled: true,
-      order: 2,
-      routeName: 'SchedulerOverview'
-    },
-    {
       name: '新闻数据',
       description: '进入数据管理维护新闻数据',
       icon: 'ri:database-2-line',

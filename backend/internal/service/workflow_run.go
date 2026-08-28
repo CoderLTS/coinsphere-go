@@ -550,9 +550,11 @@ func (a *App) executeWorkflowNode(ctx context.Context, run db.WorkflowRun, revis
 		return workflowNodeOutcome{attempt: attempt, category: "node_run", err: err}
 	}
 	a.PublishWorkflowRunUpdated(run.WorkflowID, run.ID)
-	a.appendWorkflowNodeLog(ctx, run.WorkflowID, run.ID, runNode.ID, slog.LevelInfo, "节点开始执行", map[string]any{
-		"attempt": attempt, "loop_iteration": iteration,
-	})
+	if node.NodeType != "core.end" {
+		a.appendWorkflowNodeLog(ctx, run.WorkflowID, run.ID, runNode.ID, slog.LevelInfo, "节点开始执行", map[string]any{
+			"attempt": attempt, "loop_iteration": iteration,
+		})
+	}
 	if validateWorkflowSchemaValue(desc.InputSchema, input) != nil {
 		a.finishWorkflowRunNode(run.WorkflowID, runNode, RunStatusFailed, "input", "节点输入不符合 JSON Schema", startedAt)
 		return workflowNodeOutcome{attempt: attempt, category: "input", err: errors.New("node input does not match its JSON Schema")}
@@ -714,11 +716,13 @@ func (a *App) commitWorkflowNodeSuccess(ctx context.Context, runNode db.Workflow
 		if err := createWorkflowArtifactRefs(tx, runNode.ID, manifests); err != nil {
 			return err
 		}
-		if err := appendWorkflowNodeLog(tx, db.WorkflowNodeLog{
-			WorkflowID: run.WorkflowID, RunID: run.ID, RunNodeID: runNode.ID, LoggedAt: now,
-			Level: "info", Message: "节点执行成功", FieldsJSON: workflowLogFields(map[string]any{"duration_ms": duration}),
-		}); err != nil {
-			return err
+		if node.NodeType != "core.end" {
+			if err := appendWorkflowNodeLog(tx, db.WorkflowNodeLog{
+				WorkflowID: run.WorkflowID, RunID: run.ID, RunNodeID: runNode.ID, LoggedAt: now,
+				Level: "info", Message: "节点执行成功", FieldsJSON: workflowLogFields(map[string]any{"duration_ms": duration}),
+			}); err != nil {
+				return err
+			}
 		}
 		if len(state) > 0 {
 			nodeState := db.WorkflowNodeState{

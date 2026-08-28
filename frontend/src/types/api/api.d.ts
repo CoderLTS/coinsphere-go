@@ -870,8 +870,6 @@ declare namespace Api {
       transitionLogs: Api.Scheduler.WorkflowExecutionTransitionLog[]
     }
 
-    type WorkflowExecutionList = Api.Common.PaginatedResponse<WorkflowExecutionItem>
-
     interface WorkflowManualRunPayload {
       startEntryKeys: string[]
       inputs?: Record<string, any>
@@ -879,31 +877,6 @@ declare namespace Api {
 
     interface RunWorkflowDefinitionResponse {
       executions: WorkflowExecutionItem[]
-    }
-
-    interface WorkflowOverviewDefinitionItem {
-      workflowDefinitionId: number
-      workflowDefinitionCode: string
-      workflowDefinitionVersion: number
-      workflowDefinitionName: string
-      isActive: boolean
-      executionCount: number
-    }
-
-    interface WorkflowOverview {
-      stats: {
-        definitionCount: number
-        activeDefinitionCount: number
-        executionCount: number
-        latestExecutedAt: string
-        pendingCount: number
-        queuedCount: number
-        runningCount: number
-        retryWaitingCount: number
-        oldestPendingAgeMs: number
-        staleRunningCount: number
-      }
-      definitions: WorkflowOverviewDefinitionItem[]
     }
   }
 

@@ -160,7 +160,7 @@ func (q *quantRuntime) backfillQuantCandles(ctx context.Context, subscription *q
 		return errors.New("load latest Quant candle failed")
 	}
 	if latest.Valid {
-		start = latest.Time.UTC()
+		start = latest.Time.UTC().Add(duration)
 	}
 	for ctx.Err() == nil {
 		candles, err := q.fetchQuantKlines(ctx, config, start, 1000)
