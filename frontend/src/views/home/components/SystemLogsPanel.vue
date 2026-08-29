@@ -413,8 +413,7 @@
 
   const formattedDetails = computed(() => JSON.stringify(selectedLog.value?.details || {}, null, 2))
   const levelIcon = (level: unknown) => levelMeta[level as LogLevel]?.icon || 'ri:information-line'
-  const logUserLabel = (log: LogItem) =>
-    log.userName || (log.userId ? `用户 #${log.userId}` : '--')
+  const logUserLabel = (log: LogItem) => log.userName || (log.userId ? `用户 #${log.userId}` : '--')
 
   const loadRuntime = async () => {
     runtimeLoading.value = true
