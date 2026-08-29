@@ -1,6 +1,6 @@
 # CoinSphere 公共契约
 
-本文只冻结当前已实现的跨模块语义。目标能力以[工作流平台 V2](../architecture/workflow-platform-v2.md)和[路线图](../roadmap/README.md)为准；未实现路由不得视为可用接口。
+本文只冻结当前已实现的跨模块语义。系统结构见[当前架构](../architecture/overview.md)，插件包与示例见[插件开发指南](../plugin-development.md)；未注册路由不得视为可用接口。
 
 ## 通用边界
 
@@ -18,7 +18,7 @@
 - `/health/live` 只报告进程存活；`/health/ready` 和 `/health` 在一秒预算内检查 PostgreSQL；`/metrics` 要求登录。
 - 旧行情、策略、回测、信号、通知和交易路由已移除，不提供别名或兼容响应。
 
-## 工作流 P1-P4
+## 工作流
 
 | 路由                                                            | 语义                                   |
 | --------------------------------------------------------------- | -------------------------------------- |
@@ -36,6 +36,7 @@
 | `GET /api/v1/workflows/{workflowId}/revisions/{revisionId}`     | 读取固定修订                           |
 | `POST /api/v1/workflows/{workflowId}/lifecycle`                 | 执行 `activate` 或 `deactivate`        |
 | `GET/POST /api/v1/workflows/{workflowId}/runs`                  | 搜索运行日志，或创建手工运行           |
+| `WS /api/v1/ws/workflows/{workflowId}/runs`                    | 超级管理员订阅轻量运行更新通知         |
 | `GET /api/v1/workflow-runs/{runId}`                             | 读取事件、节点尝试、日志和制品引用     |
 | `POST /api/v1/workflow-runs/{runId}`                            | 执行 `cancel`、`retry` 或 `replay`     |
 | `GET /api/v1/artifacts/{sha256}/manifest`                       | 读取并校验制品清单                     |
@@ -61,7 +62,7 @@
 - `core.human_approval` 默认产生 `pending` 任务；显式 `auto` 模式直接输出自动批准。相同工作流、节点和业务键的新任务会把旧任务置为 `superseded`。`approved`、`rejected`、`expired` 和 `superseded` 都只能提交一次并恢复原 Run，决定正文最多 64 KiB。
 - 终态 Run 可创建固定原事件与修订的诊断重放。`notification`、`human_action` 和 `paper` 副作用不再次执行，而是复用原 RunCheckpoint 和制品；缺少原检查点时重放失败。
 - Run 列表支持游标分页、UTC `from/to`、状态、触发类型和最多 200 字符的关键词搜索。详情按执行顺序返回全部 RunNode 尝试、节点多行日志、脱敏输入输出摘要、事件摘要、结果和制品引用。
-- 核心和插件通过节点范围 `slog.Logger` 写入 `workflow_node_logs`。消息最多 1000 字符，结构化字段最多 4 KiB，只保留受限标量；密钥、令牌、授权头、Cookie、DSN 和原始载荷统一丢弃或脱敏。不提供 Activity API 或活动 WebSocket。
+- 核心和插件通过节点范围 `slog.Logger` 写入 `workflow_node_logs`。消息最多 1000 字符，结构化字段最多 4 KiB，只保留受限标量；密钥、令牌、授权头、Cookie、DSN 和原始载荷统一丢弃或脱敏。不提供第二套 Activity API。运行详情 WebSocket 使用 `coinsphere.workflow-runs.v1` 子协议、同源 Origin 和超级管理员 Access Token，只发送轻量更新通知；客户端仍从 HTTP API 读取持久事实。
 - `ArtifactStore` 将最多 1 GiB 的正文用标准库 gzip 压缩并按未压缩正文 SHA-256 寻址。Checkpoint 原子引用清单；Manifest 在服务端重新计算大小和摘要，Web 下载后再次校验摘要。
 - 终态 Run、RunNode、节点日志、RunCheckpoint 和未被其他检查点引用的制品按工作流 `retentionDays` 清理，默认 30 天。制品数据库记录提交后再删除正文；失败最多留下无引用文件，不丢失仍被引用的正文。
 
@@ -81,17 +82,17 @@
 
 Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、执行池、副作用等级和状态模式。需要校验的 Schema 必须声明 JSON Schema 2020-12。
 
-`ActionRequest` 包含固定工作流/修订、节点实例 ID、稳定操作键、已解析输入和配置，以及 SecretReader、StateStore、ArtifactStore 和结构化 Logger。`ActionResult` 只返回 JSON 输出和制品引用。P0 注册并可在契约测试上下文执行 Action；P1 工作流运行时已经接入全部上下文。
+`ActionRequest` 包含固定工作流/修订、节点实例 ID、稳定操作键、已解析输入和配置，以及 SecretReader、StateStore、ArtifactStore 和结构化 Logger。`ActionResult` 只返回 JSON 输出和制品引用。契约测试和工作流运行时使用同一 Registry 与 Handler 接口。
 
 插件作用域路由必须声明一种上下文：
 
-- `WorkflowScope`：当前工作流和节点范围，仅供工作流管理面。
+- `WorkflowScope`：SDK 已定义的工作流和节点范围；当前公共 HTTP 未挂载该作用域，插件不得假定存在可调用 URL。
 - `ResultScope`：固定视图、插件、页面、服务端 scope/filter、操作白名单和当前用户；普通响应不返回固定 scope/filter 或源 workflow ID。
 - `SystemScope`：插件安装状态和系统级健康范围。
 
 插件不得从查询参数扩大核心注入的范围。不存在、未授权或已撤销 ResultView 统一返回 `404`；操作先解析 active 视图，再检查白名单、RBAC 和领域状态。
 
-页面描述符通过 `pages` 注册插件内唯一的 `pageKey`、标题、图标和缓存设置，并生成独立顶级菜单；前端 `FrontendPluginModule.pages` 必须导出同名页面。`resultPages` 只提供限定工作流上下文的结果渲染器，不生成菜单。
+页面描述符通过 `pages` 注册插件内唯一的 `pageKey`、标题、图标和缓存设置，并生成独立顶级菜单；前端 `FrontendPluginModule.pages` 必须导出同名页面。`resultPages` 只渲染服务端固定 ResultView 范围，不生成菜单。
 
 内置 `official.connector` 提供 HTTP Action、Webhook Trigger、WebSocket Trigger 和运行诊断结果页；`official.ai` 提供 OpenAI-compatible 结构化模型调用和结果页。两者只访问 `workflow.http_allowed_hosts` 的精确公共域名，禁用环境代理，拨号前后解析并拒绝非公网 IP。Binance 只允许明确列出的公共 GET/公共 WebSocket，授权、私有或未知端点一律拒绝。AI 节点只接收/返回 JSON 对象，不能控制工作流生命周期或交易。
 
@@ -113,8 +114,8 @@ Paper 账户按 `workflowId + paper nodeInstanceId` 唯一。默认人工审批�
 - `plugin uninstall` 有活动引用时拒绝；成功后移除静态源码和注册并保留插件 schema。
 - `plugin purge-data` 要求插件已卸载、无任何活动或历史引用，并精确提供 `PURGE <plugin-id>`；schema 和安装记录在同一事务删除。
 
-核心及随应用发布的内置 Quant/Notification migration 使用 `schema_migrations`；领域数据仍由 `plugin_quant` 和 `plugin_notification` schema 拥有。通过 CLI 安装的插件使用独立 `plugin_<规范化 ID>` schema 和 `<schema>.schema_migrations`，卸载不执行 Down。P4 发布标签记录 migration freeze 提交；冻结后已有 migration 字节不变，只能追加更高版本。
+核心及随应用发布的内置 Quant/Notification migration 使用 `schema_migrations`；领域数据仍由 `plugin_quant` 和 `plugin_notification` schema 拥有。通过 CLI 安装的插件使用独立 `plugin_<规范化 ID>` schema 和 `<schema>.schema_migrations`，卸载不执行 Down。正式 Paper 观察开始前必须记录 migration freeze 提交；冻结后已有 migration 字节不变，只能追加更高版本。
 
 ## 尚未实现
 
-Testnet/Live、私有交易 API、插件市场、签名、沙箱、热加载和多实例集群不属于 V2 当前合同。P4 合并、发布或部署不构成任何真实交易放行。
+Testnet、Live、私有交易 API、插件市场、签名、沙箱、热加载和多实例集群不属于当前合同。代码合并、发布、部署或 Paper 观察不构成任何真实交易放行。

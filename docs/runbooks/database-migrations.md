@@ -2,7 +2,7 @@
 
 ## 当前基线
 
-CoinSphere 只支持 PostgreSQL 16。`00001` 至 `00004` 创建认证、插件和工作流定义基线；`00005_workflow_runs.sql` 创建 Run 队列、节点尝试、节点日志、检查点、事件、人工任务和制品；`00006_quant_market_backtests.sql` 创建 Quant 公共行情和回测；`00007_paper_results_notifications.sql` 创建 ResultView、Quant 信号/Paper 事实与 Notification 投递。
+CoinSphere 只支持 PostgreSQL 16。`00001` 至 `00004` 创建认证、插件和工作流定义基线；`00005_workflow_runs.sql` 创建 Run 队列、节点尝试、节点日志、检查点、事件、人工任务和制品；`00006_quant_market_backtests.sql` 创建 Quant 公共行情和回测；`00007_paper_results_notifications.sql` 创建 ResultView、Quant 信号/Paper 事实与 Notification 投递；`00008_quant_instrument_sources.sql` 保存工作流级品种来源；`00009_system_logs.sql` 保存结构化系统日志和运行配置。
 
 服务启动只读校验核心版本，核心 DDL 只由 `coinsphere-migrate` 执行。内置 Quant 随应用版本迁移；通过插件 CLI 安装的插件使用 `plugin_<规范化插件 ID>` schema 和自己的 `schema_migrations` 账本。项目不提供旧表、旧接口或旧数据转换器；生产 DSN 和数据库密码只通过服务器配置注入。
 
@@ -32,7 +32,7 @@ go run ./cmd/migrate -config ./config.yml -direction down -steps 1
 
 任何一步失败都停止候选服务并恢复旧 Compose，不删除旧数据库目录，也不修改其他共享数据库。
 
-## V2 基线重置
+## 当前基线重置
 
 此流程会永久删除当前 CoinSphere 数据库内容，必须同时满足：
 
@@ -43,11 +43,9 @@ go run ./cmd/migrate -config ./config.yml -direction down -steps 1
 
 满足条件后，停止 CoinSphere Backend/Web，备份并定向重建共享 PostgreSQL 中的 `coinsphere_go` 数据库，清空该部署独占的 `data/backend/artifacts` 目录，再由目标镜像执行 `coinsphere-migrate -direction up`。删除前必须分别解析并核对数据库名和制品绝对路径；禁止手工改写 `schema_migrations` 来伪装重置，也不得触及已有 `coinsphere` 旧库、其他应用数据库、上传目录或真实交易凭据。
 
-本次 Run 基线重建由 2026-08-28 的开发任务明确授权，取代此前未冻结的 `00005-00009` 开发历史。该授权只适用于代码基线，不等于允许代理连接或删除任意本地/共享数据库；实际重置仍需满足上述四项条件。
-
 ## 变更规则
 
-- P4 发布标签的目标提交是正式 Paper 观察前的 migration freeze 记录；从该提交开始，核心与内置插件 migration 只追加递增版本，已有文件必须保持字节不变。
+- 开始正式 Paper 观察前必须在 GitHub 验收记录或发布记录中标记 migration freeze 提交；从该提交开始，核心与内置插件 migration 只追加递增版本，已有文件必须保持字节不变。
 - 每个 migration 包含 `-- +goose Up` 和 `-- +goose Down`，默认在事务中执行。
 - 插件 migration 使用独立递增版本；兼容升级只能追加高版本，卸载和应用回滚不执行插件 Down。
 - 金融时间使用 `TIMESTAMPTZ`；价格、数量、金额和费率使用 `NUMERIC(38,18)`。
@@ -55,6 +53,7 @@ go run ./cmd/migrate -config ./config.yml -direction down -steps 1
 - `00005` 只有在 Run、RunNode、节点日志、检查点、事件、人工任务、状态和制品全部为空时允许 Down。
 - `00006` 只有在 Quant 品种、K 线和回测摘要均为空时允许 Down；应用回滚不得自动删除 `plugin_quant`。
 - `00007` 只有在 ResultView、信号、Paper 账户/事实/投影和 Notification 投递全部为空时允许 Down；存在任一记录时必须恢复备份，不能删除事实来迁就旧应用。
+- `00008` 只有在所有 Quant 工作流品种来源为空时允许 Down；`00009` 只有在系统日志和日志设置都为空时允许 Down。
 - 无法无损回滚时恢复已验证备份，不提供伪可逆 SQL。
 - 禁止应用启动自动建表、手工修改 migration 账本或用删除业务行修复版本差异。
 
@@ -64,6 +63,6 @@ go run ./cmd/migrate -config ./config.yml -direction down -steps 1
 
 ## 发布与回滚
 
-本基线不能对旧 version 4 数据库执行原地 Up。部署前必须按上面的授权流程重置 CoinSphere 自有数据库；旧账本与当前迁移文件不一致时，migration runner 也会在缺失的 V2 表上停止。
+本基线不能对旧 version 4 数据库执行原地 Up。部署前必须按上面的授权流程重置 CoinSphere 自有数据库；旧账本与当前迁移文件不一致时，migration runner 也会在缺失的当前表上停止。
 
-应用回滚不自动执行 Down。若需要回滚到重置前版本，停止当前应用并恢复重置前已验证备份及与其匹配的应用镜像。不得把旧应用指向 V2 基线，也不得把 V2 应用指向旧 schema。
+应用回滚不自动执行 Down。若需要回滚到重置前版本，停止当前应用并恢复重置前已验证备份及与其匹配的应用镜像。不得把旧应用指向当前基线，也不得把当前应用指向旧 schema。

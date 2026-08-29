@@ -1,6 +1,6 @@
 # CoinSphere 使用手册
 
-本文面向当前 V2 个人自托管用户和管理员。当前可用能力是登录、RBAC、系统管理、系统监控、可信本地插件维护，以及工作流、Connector/AI、Binance 公共行情、可信 Go 策略、回测、Paper 和站内通知。
+本文面向 CoinSphere 个人自托管用户和管理员。当前可用能力是登录、RBAC、系统管理、系统监控、结构化系统日志、可信本地插件维护，以及工作流、Connector/AI、Binance 公共行情、可信 Go 策略、回测、Paper 和站内通知。
 
 ## 1. 使用范围
 
@@ -58,13 +58,15 @@ docker compose down
 | ---------- | ---------------------------------------------------------- |
 | 首页       | 查看 Go 进程、HTTP、PostgreSQL、migration 和插件版本状态   |
 | 节点定义   | 查看核心与编译期插件提供的可用节点                         |
-| 工作流定义 | 使用原画布布局创建、编辑、启停和手工运行 V2 工作流         |
+| 工作流定义 | 使用画布创建、编辑、启停和手工运行工作流                   |
 | 工作流日志 | 搜索每次 Run，查看节点尝试、多行日志、摘要和制品引用        |
 | 币种数据   | 查看工作流采集的真实交易标的目录并进入对应工作流           |
 | K 线详情   | 使用 `official.quant` 独立页面，以原形式查看闭合 K 线      |
+| 插件管理   | 查看编译进当前应用的插件版本与贡献                         |
+| 系统日志   | 按级别、组件、请求和用户查询结构化运行日志                 |
 | 系统管理   | 维护用户、角色、菜单与权限码                               |
 
-导航和页面布局沿用原 `/scheduler/*`、`/data/*` 形态，底层工作流、修订、Run 和插件接口使用 V2 契约。旧交易、新闻和模型配置接口未恢复，因此对应菜单不展示。
+导航和页面布局沿用 `/scheduler/*`、`/data/*` 形态，底层工作流、修订、Run 和插件接口统一使用当前 `/api/v1` 契约。旧交易、新闻和模型配置接口未恢复，因此对应菜单不展示。
 
 ## 5. 工作流定义
 
@@ -74,7 +76,7 @@ docker compose down
 
 激活后，手工工作流可用“手动运行”创建固定当前修订的 Run；定时工作流可选择 `everySeconds` 间隔，或配置六段 Cron 和 IANA 时区。服务恢复后最多补一次错过的运行，再计算下一未来时刻。事件按 `partitionkey` 保证同工作流同分区顺序，不同分区可并行。失败节点默认重试三次并从最后成功检查点继续。停用会取消连续流 Trigger，并在当前 Action 完成后停止领取新 Run；待处理 Run 保留，重新激活后续跑。连续流异常进入“异常”后，先停用恢复为“未激活”，确认修复再重新激活。
 
-“工作流日志”默认查询最近 24 小时，可按 UTC 时间、运行状态、触发方式和关键词搜索。Run 详情复用工作流画布；选择节点可查看真实尝试、Loop 轮次、执行池、耗时、脱敏输入输出摘要和节点多行日志，总览显示事件摘要、结果和制品引用。系统不生成伪尝试或边流转记录，也不提供 Activity WebSocket。日志不包含原始载荷或密钥，终态历史默认保留 30 天。
+“工作流日志”默认查询最近 24 小时，可按 UTC 时间、运行状态、触发方式和关键词搜索。Run 详情复用工作流画布；选择节点可查看真实尝试、Loop 轮次、执行池、耗时、脱敏输入输出摘要和节点多行日志，总览显示事件摘要、结果和制品引用。详情页通过 `coinsphere.workflow-runs.v1` WebSocket 接收轻量更新通知，再从 HTTP API 刷新持久事实；断线不会改变运行结果。日志不包含原始载荷或密钥，终态历史默认保留 30 天。
 
 `core.human_approval` 进入等待后释放执行与分区容量。批准、拒绝、过期或被相同业务键的新任务取代后，原 Run 从持久检查点继续。每个任务只能决定一次。
 
@@ -141,6 +143,8 @@ go run ./cmd/coinsphere plugin purge-data --config ./config.yml --backend-root .
 - 卸载保留插件 schema；`purge-data` 只有在无任何活动或历史引用时才删除 schema。
 - 同一 checkout 一次只运行一个插件维护命令。
 
+插件目录、manifest、SDK、Vue 页面、migration 和契约测试见[插件开发指南](plugin-development.md)。
+
 ## 7. 数据、备份与升级
 
 生产数据库使用服务器现有 PostgreSQL 16 的独立 `coinsphere_go` 数据库，文件与制品位于部署目录的 `data/backend`。升级前至少保存：
@@ -153,7 +157,7 @@ go run ./cmd/coinsphere plugin purge-data --config ./config.yml --backend-root .
 
 升级使用最新固定版本镜像先运行 migration，再启动 Backend/Web。应用启动只校验 schema，不自动建表。失败时停止候选版本并按[发布 Runbook](runbooks/release.md)恢复匹配的应用镜像；不要手工改 migration 账本或自动执行 Down。
 
-P4 发布标签记录 migration freeze 提交；从该提交开始，已有 migration 只能保持字节不变并追加新版本。任何数据重置都必须按[数据库迁移 Runbook](runbooks/database-migrations.md)确认目标、备份和是否已有 Paper 观察证据。
+开始正式 Paper 观察前必须记录 migration freeze 提交；从该提交开始，已有 migration 只能保持字节不变并追加新版本。任何数据重置都必须按[数据库迁移 Runbook](runbooks/database-migrations.md)确认目标、备份和是否已有 Paper 观察证据。
 
 ## 8. 健康检查与排障
 
@@ -185,13 +189,14 @@ docker compose logs --tail=200 migrate backend web
 - 不把真实 API Key、Secret、令牌、DSN 或生产配置提交到代码、日志、Issue、PR、CI 或 AI 上下文。
 - 不安装不可信、远程下载或未经审查的插件源码。
 - AI、工作流和通用 HTTP 节点不得调用交易所私有接口或绕过风控。
-- 完成或部署 P4 不会自动创建 Testnet/Live 阶段，也不会启用任何真实交易。
+- 合并、发布、部署或开始 Paper 观察都不会自动启用 Testnet、Live 或任何真实交易。
 
 ## 10. 文档索引
 
-- [架构概览](architecture/overview.md)
+- [当前架构](architecture/overview.md)
+- [代码结构](code-structure.md)
+- [插件开发指南](plugin-development.md)
 - [公共契约](contracts/README.md)
-- [V2 路线图](roadmap/README.md)
 - [质量门禁](quality/quality-gates.md)
 - [本地开发](runbooks/development.md)
 - [数据库迁移](runbooks/database-migrations.md)

@@ -22,3 +22,5 @@ COINSPHERE_DEPLOY_DIR=/path/to/coinsphere-go ./deploy.sh vX.Y.Z release-manifest
 自动发布在服务器已配置 `COINSPHERE_STACK_ROOT` 时，将独立项目放在其 `compose/coinsphere-go` 子目录，并从既有 CoinSphere Secret 初始化 `runtime.env`。部署只操作独立 `coinsphere-go` 项目的服务，不执行共享项目级 `down`，也不修改 PostgreSQL 数据栈或其他服务。
 
 应用 schema 来自 Backend 镜像内的版本化 migration。数据库由服务器 PostgreSQL 数据栈持久化，Backend 文件绑定到部署目录下的 `data/backend`；回滚不会自动执行 migration Down。
+
+完整发布、失败恢复和 migration 规则见[发布与回滚](../../docs/runbooks/release.md)和[数据库迁移](../../docs/runbooks/database-migrations.md)。
