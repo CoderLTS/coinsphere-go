@@ -731,14 +731,13 @@ export function mapDomainGraphToServer(graph: WorkflowDomainGraphModel): Workflo
         edge.sourcePort,
         edge.data.branch
       ),
-      label:
-        buildEdgeDisplayLabel(
-          nodeMap.get(edge.source)?.data.typeCode === INDICATOR_CONDITION_TYPE &&
-            NOTIFICATION_NODE_TYPES.has(nodeMap.get(edge.target)?.data.typeCode || '') &&
-            edge.data.branch === 'true'
-            ? notificationCondition(edge.data.condition)
-            : edge.data.condition || ''
-        ),
+      label: buildEdgeDisplayLabel(
+        nodeMap.get(edge.source)?.data.typeCode === INDICATOR_CONDITION_TYPE &&
+          NOTIFICATION_NODE_TYPES.has(nodeMap.get(edge.target)?.data.typeCode || '') &&
+          edge.data.branch === 'true'
+          ? notificationCondition(edge.data.condition)
+          : edge.data.condition || ''
+      ),
       condition:
         nodeMap.get(edge.source)?.data.typeCode === INDICATOR_CONDITION_TYPE &&
         NOTIFICATION_NODE_TYPES.has(nodeMap.get(edge.target)?.data.typeCode || '') &&
