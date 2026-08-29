@@ -48,8 +48,12 @@ printf 'header = "Authorization: Basic %s"\n' "$registry_auth" >"$curl_config"
 chmod 0600 "$curl_config"
 unset registry_auth
 
-current_version=$(docker container inspect coinsphere-backend \
-  --format '{{index .Config.Labels "org.opencontainers.image.version"}}' 2>/dev/null || true)
+current_version=
+for backend_container in coinsphere-go-backend-1 coinsphere-backend; do
+  current_version=$(docker container inspect "$backend_container" \
+    --format '{{index .Config.Labels "org.opencontainers.image.version"}}' 2>/dev/null || true)
+  [[ -n $current_version ]] && break
+done
 
 manifest_digest() {
   local repository=$1
