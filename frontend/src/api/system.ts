@@ -148,3 +148,32 @@ export function fetchDeleteMenuButton(buttonId: number) {
     showSuccessMessage: true
   })
 }
+
+export function fetchGetSystemLogs(params: Api.System.SystemLogSearchParams) {
+  return request.get<Api.System.SystemLogList>({
+    url: '/api/v1/system/logs',
+    params
+  })
+}
+
+export function fetchGetSystemLogRuntime() {
+  return request.get<Api.System.SystemLogRuntimeStatus>({
+    url: '/api/v1/system/logs/runtime'
+  })
+}
+
+export function fetchUpdateSystemLogRuntime(params: Api.System.SystemLogSettingsPayload) {
+  return request.put<Api.System.SystemLogRuntimeStatus>({
+    url: '/api/v1/system/logs/runtime',
+    params,
+    showSuccessMessage: true
+  })
+}
+
+export function fetchDeleteSystemLogs(params: Api.System.SystemLogSearchParams) {
+  return request.del<{ deletedCount: number }>({
+    url: '/api/v1/system/logs',
+    params,
+    showSuccessMessage: true
+  })
+}

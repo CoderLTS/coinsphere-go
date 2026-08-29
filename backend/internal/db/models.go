@@ -140,6 +140,33 @@ type AuditRecord struct {
 
 func (AuditRecord) TableName() string { return "audit_records" }
 
+type SystemLog struct {
+	ID          int64 `gorm:"primaryKey;autoIncrement"`
+	LoggedAt    time.Time
+	Level       string `gorm:"size:8"`
+	Component   string `gorm:"size:64"`
+	Message     string `gorm:"type:text"`
+	RequestID   string `gorm:"column:request_id;size:64"`
+	UserID      *int64 `gorm:"column:user_id"`
+	Method      string `gorm:"size:8"`
+	Route       string `gorm:"size:255"`
+	StatusCode  *int   `gorm:"column:status_code"`
+	DurationMS  *int64 `gorm:"column:duration_ms"`
+	DetailsJSON string `gorm:"column:details_json;type:jsonb"`
+}
+
+func (SystemLog) TableName() string { return "system_logs" }
+
+type SystemLogSettings struct {
+	ID            int16  `gorm:"primaryKey"`
+	Level         string `gorm:"size:8"`
+	RetentionDays int
+	UpdatedBy     *int64
+	UpdatedAt     time.Time
+}
+
+func (SystemLogSettings) TableName() string { return "system_log_settings" }
+
 type Workflow struct {
 	ID                int64  `gorm:"primaryKey;autoIncrement"`
 	Name              string `gorm:"size:120"`

@@ -49,6 +49,7 @@ var coreMenuItems = []menuItem{
 	{"User", "用户管理", "user", "/system/user", "ri:user-3-line", "System", true, false, false},
 	{"Role", "角色管理", "role", "/system/role", "ri:team-line", "System", true, false, false},
 	{"Menus", "菜单管理", "menu", "/system/menu", "ri:menu-line", "System", true, false, false},
+	{"SystemLogs", "系统日志", "logs", "/system/logs", "ri:file-search-line", "System", true, false, false},
 	{"UserCenter", "个人中心", "/profile", "/system/user-center", "", "", true, false, true},
 }
 
@@ -63,6 +64,7 @@ var menuI18n = map[string][2]string{
 	"User":                {"用户管理", "User Management"},
 	"Role":                {"角色管理", "Role Management"},
 	"Menus":               {"菜单管理", "Menu Management"},
+	"SystemLogs":          {"系统日志", "System Logs"},
 	"UserCenter":          {"个人中心", "Profile"},
 }
 

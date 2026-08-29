@@ -540,6 +540,56 @@ declare namespace Api {
     type RoleSearchParams = Api.Config.RoleSearchParams
     type RoleUpsertPayload = Api.Config.RoleUpsertPayload
     type RolePermissionPayload = Api.Config.RolePermissionPayload
+
+    type SystemLogLevel = 'debug' | 'info' | 'warn' | 'error'
+
+    interface SystemLogSearchParams extends Api.Common.CursorParams {
+      startTime?: string
+      endTime?: string
+      level?: SystemLogLevel
+      component?: string
+      requestId?: string
+      userId?: number
+      method?: string
+      route?: string
+      statusCode?: number
+      keyword?: string
+    }
+
+    interface SystemLogItem {
+      id: number
+      loggedAt: string
+      level: SystemLogLevel
+      component: string
+      message: string
+      requestId: string
+      userId?: number | null
+      method: string
+      route: string
+      statusCode?: number | null
+      durationMs?: number | null
+      details: Record<string, string | number | boolean>
+    }
+
+    type SystemLogList = Api.Common.PaginatedResponse<SystemLogItem>
+
+    interface SystemLogRuntimeStatus {
+      level: SystemLogLevel
+      retentionDays: number
+      queueDepth: number
+      queueCapacity: number
+      written: number
+      dropped: number
+      failed: number
+      startedAt: string
+      updatedAt: string
+      updatedBy?: number | null
+    }
+
+    interface SystemLogSettingsPayload {
+      level: SystemLogLevel
+      retentionDays: number
+    }
   }
 
   namespace Notifications {

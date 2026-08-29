@@ -39,7 +39,8 @@ type AuthConfig struct {
 }
 
 type LogConfig struct {
-	Level string `yaml:"level"`
+	Level         string `yaml:"level"`
+	RetentionDays int    `yaml:"retention_days"`
 }
 
 type WorkflowConfig struct {
@@ -93,7 +94,7 @@ func defaultConfig() *AppConfig {
 			SecretKey: DefaultInsecureSecret, AccessTokenTTLMinutes: 15,
 			PasswordIterations: 390000, LoginRateLimitPerMinute: 10,
 		},
-		Log: LogConfig{Level: "info"},
+		Log: LogConfig{Level: "info", RetentionDays: 30},
 	}
 }
 
@@ -123,6 +124,9 @@ func (c *AppConfig) normalize() {
 	}
 	if c.Auth.LoginRateLimitPerMinute < 1 {
 		c.Auth.LoginRateLimitPerMinute = 10
+	}
+	if c.Log.RetentionDays < 1 || c.Log.RetentionDays > 365 {
+		c.Log.RetentionDays = 30
 	}
 }
 
