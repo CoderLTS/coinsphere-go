@@ -1531,5 +1531,4 @@
       height: 236px;
     }
   }
-
 </style>
