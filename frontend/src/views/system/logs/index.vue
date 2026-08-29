@@ -69,10 +69,11 @@
             />
           </label>
           <div v-if="hasAuth('system.logs.configure')" class="runtime-actions">
-            <ElButton :loading="runtimeLoading" @click="resetSettings">
-              <ArtSvgIcon icon="ri:restart-line" />
-              重置默认值
-            </ElButton>
+            <ElTooltip content="重置为 info / 30 天" placement="top">
+              <ElButton circle aria-label="重置日志默认配置" @click="resetSettings">
+                <ArtSvgIcon icon="ri:restart-line" />
+              </ElButton>
+            </ElTooltip>
             <ElButton type="primary" :loading="runtimeLoading" @click="saveSettings">
               <ArtSvgIcon icon="ri:save-3-line" />
               保存并应用
@@ -178,7 +179,7 @@
             @click="clearFilteredLogs"
           >
             <ArtSvgIcon icon="ri:delete-bin-6-line" />
-            清理当前筛选结果
+            清理 {{ pagination.total }} 条匹配日志
           </ElButton>
           <ElTooltip content="刷新日志和写入状态" placement="top">
             <ElButton circle aria-label="刷新日志和写入状态" :loading="loading" @click="refreshAll">
