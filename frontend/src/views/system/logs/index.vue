@@ -49,11 +49,11 @@
         <div class="runtime-controls">
           <label class="field-control">
             <span>日志级别</span>
-          <ElSelect
-            v-model="settingsForm.level"
-            :disabled="!hasAuth('system.logs.configure')"
-            aria-label="日志级别"
-          >
+            <ElSelect
+              v-model="settingsForm.level"
+              :disabled="!hasAuth('system.logs.configure')"
+              aria-label="日志级别"
+            >
               <ElOption v-for="option in levelOptions" :key="option.value" v-bind="option" />
             </ElSelect>
           </label>
