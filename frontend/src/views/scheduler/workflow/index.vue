@@ -76,6 +76,16 @@
                   @click="router.push(`/scheduler/workflow/${row.id}/edit`)"
                 />
               </ElTooltip>
+              <ElTooltip content="版本记录" placement="top">
+                <ElButton
+                  circle
+                  plain
+                  size="small"
+                  type="primary"
+                  :icon="Collection"
+                  @click="openVersionDialog(row)"
+                />
+              </ElTooltip>
               <ElTooltip :content="lifecycleLabel(row.workflowStatus)" placement="top">
                 <ElButton
                   circle
@@ -104,11 +114,73 @@
         </ElTableColumn>
       </ArtTable>
     </ElCard>
+
+    <ElDialog
+      v-model="versionDialogVisible"
+      title="版本记录"
+      width="min(920px, calc(100vw - 32px))"
+    >
+      <div>
+        <div v-if="versionDetail" class="version-header">
+          <div>
+            <div class="version-header__title">{{ versionDetail.displayName }}</div>
+            <div v-if="versionDetail.description" class="version-header__description">
+              {{ versionDetail.description }}
+            </div>
+          </div>
+          <ElTag effect="plain" type="info">{{ versionRows.length }} 个版本</ElTag>
+        </div>
+
+        <ElTable :data="versionRows" empty-text="暂无版本记录">
+          <ElTableColumn label="版本" width="100" align="center">
+            <template #default="{ row }">
+              <ElTag :type="row.isLatest ? 'primary' : 'info'" effect="plain">
+                v{{ row.version }}
+              </ElTag>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="状态" min-width="220">
+            <template #default="{ row }">
+              <ElSpace size="small" wrap>
+                <ElTag v-if="row.isLatest" type="primary" effect="plain">最新版本</ElTag>
+                <ElTag v-if="row.isActive" type="success" effect="plain">当前激活</ElTag>
+                <ElTag v-if="!row.isLatest && !row.isActive" type="info" effect="plain">
+                  历史版本
+                </ElTag>
+              </ElSpace>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn prop="executionCount" label="执行数" width="100" align="center" />
+          <ElTableColumn label="创建时间" min-width="180">
+            <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+          </ElTableColumn>
+          <ElTableColumn
+            v-if="hasAuth('scheduler.workflow_definitions.update')"
+            label="操作"
+            width="90"
+            align="center"
+          >
+            <template #default="{ row }">
+              <ElTooltip content="打开版本" placement="top">
+                <ElButton
+                  circle
+                  plain
+                  size="small"
+                  type="primary"
+                  :icon="Edit"
+                  @click="openVersionEditor(row)"
+                />
+              </ElTooltip>
+            </template>
+          </ElTableColumn>
+        </ElTable>
+      </div>
+    </ElDialog>
   </div>
 </template>
 
 <script setup lang="ts">
-  import { Clock, Edit, SwitchButton, VideoPlay } from '@element-plus/icons-vue'
+  import { Clock, Collection, Edit, SwitchButton, VideoPlay } from '@element-plus/icons-vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { useAuth } from '@/hooks/core/useAuth'
   import {
@@ -116,7 +188,8 @@
     fetchDeactivateWorkflowDefinition,
     fetchRunWorkflowDefinition,
     fetchWorkflowDefinitionList,
-    type WorkflowDefinitionItem
+    type WorkflowDefinitionItem,
+    type WorkflowDefinitionVersionItem
   } from '@/api/scheduler'
   import { fetchWorkflowRuns } from '@/api/workflows'
   import type { WorkflowStatus } from '@/api/workflows'
@@ -130,6 +203,9 @@
   const actingId = ref<number>()
   const runningId = ref<number>()
   const definitions = ref<WorkflowDefinitionItem[]>([])
+  const versionDialogVisible = ref(false)
+  const versionDetail = ref<WorkflowDefinitionItem | null>(null)
+  const versionRows = computed(() => versionDetail.value?.versions || [])
   const initialFilters = { keyword: '', status: '' }
   const formFilters = reactive({ ...initialFilters })
   const appliedFilters = reactive({ ...initialFilters })
@@ -207,6 +283,16 @@
     }
   }
 
+  const openVersionDialog = (row: WorkflowDefinitionItem) => {
+    versionDetail.value = row
+    versionDialogVisible.value = true
+  }
+
+  const openVersionEditor = async (row: WorkflowDefinitionVersionItem) => {
+    versionDialogVisible.value = false
+    await router.push(`/scheduler/workflow/${row.id}/edit`)
+  }
+
   const toggleLifecycle = async (row: WorkflowDefinitionItem) => {
     const activate = row.workflowStatus === 'inactive'
     await ElMessageBox.confirm(
@@ -249,3 +335,25 @@
 
   onMounted(loadPageData)
 </script>
+
+<style scoped lang="scss">
+  .version-header {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+
+  .version-header__title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--el-text-color-primary);
+  }
+
+  .version-header__description {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+</style>
