@@ -96,6 +96,7 @@ export interface WorkflowDomainNode {
 export interface WorkflowDomainEdgeData {
   branch: string
   label: string
+  condition: string
 }
 
 export interface WorkflowDomainEdge {
@@ -185,6 +186,7 @@ export interface WorkflowEdgeFormModel {
   targetPort: string
   branch: string
   label: string
+  condition: string
 }
 
 export interface WorkflowEditorDraftState {

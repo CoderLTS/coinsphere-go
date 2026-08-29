@@ -11,8 +11,18 @@
         <ElInput :model-value="branchDisplayText" readonly />
         <div v-if="branchHint" class="edge-bubble__hint">{{ branchHint }}</div>
       </ElFormItem>
-      <ElFormItem label="显示标签">
-        <ElInput v-model.trim="localForm.label" placeholder="用于画布展示" />
+      <ElFormItem label="画布说明">
+        <ElInput :model-value="displayLabel || '—'" readonly />
+      </ElFormItem>
+      <ElFormItem label="执行条件（CEL）">
+        <ElInput
+          v-model.trim="localForm.condition"
+          class="edge-bubble__condition"
+          type="textarea"
+          :rows="3"
+          resize="vertical"
+          spellcheck="false"
+        />
       </ElFormItem>
     </ElForm>
 
@@ -28,6 +38,7 @@
 <script setup lang="ts">
   import type { WorkflowDomainEdge, WorkflowEdgeFormModel } from '../types'
   import { LOOP_NEXT_BRANCH } from '../node-registry'
+  import { buildEdgeDisplayLabel } from '../workflow-editor.mapper'
 
   interface Props {
     edge: WorkflowDomainEdge
@@ -61,6 +72,7 @@
 
   const branchDisplayText = computed(() => localForm.branch || props.edge.sourcePort || '')
   const branchHint = computed(() => BRANCH_HINTS[props.edge.sourcePort || ''] || '')
+  const displayLabel = computed(() => buildEdgeDisplayLabel(localForm.condition))
 
   const localForm = reactive<WorkflowEdgeFormModel>({
     id: props.edge.id,
@@ -69,7 +81,8 @@
     sourcePort: props.edge.sourcePort || '',
     targetPort: props.edge.targetPort || '',
     branch: props.edge.data.branch || '',
-    label: props.edge.data.label || ''
+    label: props.edge.data.label || '',
+    condition: props.edge.data.condition || ''
   })
 
   watch(
@@ -82,7 +95,8 @@
         sourcePort: value.sourcePort || '',
         targetPort: value.targetPort || '',
         branch: value.data.branch || '',
-        label: value.data.label || ''
+        label: value.data.label || '',
+        condition: value.data.condition || ''
       })
     },
     { deep: true }
@@ -91,7 +105,9 @@
 
 <style scoped lang="scss">
   .edge-bubble {
-    width: 240px;
+    width: 300px;
+    max-width: calc(100vw - 24px);
+    box-sizing: border-box;
     padding: 14px;
     background: color-mix(in srgb, var(--workflow-overlay-bg) 97%, transparent);
     backdrop-filter: blur(16px);
@@ -122,6 +138,11 @@
     font-size: 12px;
     line-height: 18px;
     color: var(--workflow-overlay-muted);
+  }
+
+  .edge-bubble__condition :deep(textarea) {
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    line-height: 1.5;
   }
 
   .edge-bubble__footer {

@@ -47,6 +47,14 @@ const START_LABELS: Record<string, string> = {
   'start.webhook': 'Webhook 开始'
 }
 
+const INDICATOR_CONDITION_TYPE = 'official.quant.indicator_condition'
+const NOTIFICATION_NODE_TYPES = new Set([
+  'official.notification.in_app',
+  'official.notification.dingtalk',
+  'official.notification.qq',
+  'official.notification.smtp'
+])
+
 const LEGACY_NODE_LABELS: Record<string, Record<string, string>> = {
   'start.manual': {
     'Manual Start': '手动开始'
@@ -95,6 +103,21 @@ const truncateText = (value: string, max = 32) => {
   const text = String(value || '').trim()
   if (!text) return ''
   return text.length > max ? `${text.slice(0, max - 1)}…` : text
+}
+
+export const buildEdgeDisplayLabel = (condition: string) => {
+  const expression = String(condition || '').trim()
+  if (!expression) return ''
+  if (expression.includes('.endsWith(":59:59.999Z")')) return '每小时一次'
+  if (expression.includes('input.triggered == true')) return '首次命中时'
+  return '满足条件时'
+}
+
+const notificationCondition = (condition: string) => {
+  const original = String(condition || '').trim()
+  const trigger = 'input.triggered == true'
+  if (original.split('&&').some((part) => part.trim() === trigger)) return original
+  return original ? `(${original}) && ${trigger}` : trigger
 }
 
 const getNodeMaterial = (typeCode: string, materials: WorkflowMaterialItem[]) => {
@@ -505,6 +528,7 @@ const createDomainEdge = (
     targetPort?: string
     branch?: string
     label?: string
+    condition?: string
   },
   nodeMap: Map<string, WorkflowDomainNode>
 ): WorkflowDomainEdge => {
@@ -516,6 +540,14 @@ const createDomainEdge = (
   )
   const sourcePort = normalizeEdgeSourcePort(sourceType, edge.sourcePort, edge.branch)
   const branch = normalizeEdgeBranch(sourceType, sourcePort, edge.branch)
+  const sourceNode = nodeMap.get(String(edge.source))
+  const targetNode = nodeMap.get(String(edge.target))
+  const condition =
+    sourceNode?.data.typeCode === INDICATOR_CONDITION_TYPE &&
+    NOTIFICATION_NODE_TYPES.has(targetNode?.data.typeCode || '') &&
+    branch === 'true'
+      ? notificationCondition(edge.condition || '')
+      : String(edge.condition || '').trim()
 
   return {
     id: String(edge.id),
@@ -525,7 +557,8 @@ const createDomainEdge = (
     targetPort: 'in',
     data: {
       branch,
-      label: String(edge.label || '')
+      label: buildEdgeDisplayLabel(condition),
+      condition
     }
   }
 }
@@ -542,7 +575,8 @@ export function createDomainEdgeFromForm(
       sourcePort: edge.sourcePort,
       targetPort: edge.targetPort,
       branch: edge.branch,
-      label: edge.label
+      label: edge.label,
+      condition: edge.condition
     },
     new Map(nodes.map((node) => [node.id, node]))
   )
@@ -603,7 +637,8 @@ export function createDefaultDomainGraph(
         targetPort: 'in',
         data: {
           branch: '',
-          label: ''
+          label: '',
+          condition: ''
         }
       }
     ]
@@ -627,19 +662,12 @@ export function mapServerGraphToDomain(
 export function mapDomainGraphToServer(graph: WorkflowDomainGraphModel): WorkflowGraph {
   const nodeMap = new Map(graph.nodes.map((node) => [node.id, node]))
   const nodeOrder = new Map(graph.nodes.map((node, index) => [node.id, index]))
-  const conditionType = 'official.quant.indicator_condition'
-  const notifyTypes = new Set([
-    'official.notification.in_app',
-    'official.notification.dingtalk',
-    'official.notification.qq',
-    'official.notification.smtp'
-  ])
   const incomingConditions = (targetID: string, branch?: string) =>
     graph.edges
       .filter((edge) => edge.target === targetID && (!branch || edge.data.branch === branch))
       .map((edge) => {
         const source = nodeMap.get(edge.source)
-        return source?.data.typeCode === conditionType
+        return source?.data.typeCode === INDICATOR_CONDITION_TYPE
           ? {
               nodeInstanceId: edge.source,
               ...(edge.data.branch ? { branch: edge.data.branch } : {})
@@ -657,7 +685,7 @@ export function mapDomainGraphToServer(graph: WorkflowDomainGraphModel): Workflo
         ? { ...node.data.config.__inputBindings }
         : {}
     const conditionSources = incomingConditions(node.id)
-    if (node.data.typeCode === conditionType) {
+    if (node.data.typeCode === INDICATOR_CONDITION_TYPE) {
       if (!existing.eventTime) {
         existing.eventTime = {
           kind: 'cel',
@@ -671,20 +699,14 @@ export function mapDomainGraphToServer(graph: WorkflowDomainGraphModel): Workflo
       }
     }
     const notificationSources = incomingConditions(node.id, 'true')
-    if (notifyTypes.has(node.data.typeCode) && notificationSources.length) {
+    if (NOTIFICATION_NODE_TYPES.has(node.data.typeCode) && notificationSources.length) {
       existing.subjectKey = { kind: 'condition_subject', sources: notificationSources }
       existing.message = { kind: 'condition_message', sources: notificationSources }
-    } else if (notifyTypes.has(node.data.typeCode)) {
+    } else if (NOTIFICATION_NODE_TYPES.has(node.data.typeCode)) {
       if (existing.subjectKey?.kind === 'condition_subject') delete existing.subjectKey
       if (existing.message?.kind === 'condition_message') delete existing.message
     }
     return existing
-  }
-  const notificationCondition = (edge: WorkflowDomainEdge) => {
-    const original = edge.data.label || ''
-    const trigger = 'input.triggered == true'
-    if (original.split('&&').some((part) => part.trim() === trigger)) return original
-    return original ? `(${original}) && ${trigger}` : trigger
   }
   return {
     nodes: graph.nodes.map((node) => ({
@@ -710,11 +732,19 @@ export function mapDomainGraphToServer(graph: WorkflowDomainGraphModel): Workflo
         edge.data.branch
       ),
       label:
-        nodeMap.get(edge.source)?.data.typeCode === conditionType &&
-        notifyTypes.has(nodeMap.get(edge.target)?.data.typeCode || '') &&
+        buildEdgeDisplayLabel(
+          nodeMap.get(edge.source)?.data.typeCode === INDICATOR_CONDITION_TYPE &&
+            NOTIFICATION_NODE_TYPES.has(nodeMap.get(edge.target)?.data.typeCode || '') &&
+            edge.data.branch === 'true'
+            ? notificationCondition(edge.data.condition)
+            : edge.data.condition || ''
+        ),
+      condition:
+        nodeMap.get(edge.source)?.data.typeCode === INDICATOR_CONDITION_TYPE &&
+        NOTIFICATION_NODE_TYPES.has(nodeMap.get(edge.target)?.data.typeCode || '') &&
         edge.data.branch === 'true'
-          ? notificationCondition(edge)
-          : edge.data.label || ''
+          ? notificationCondition(edge.data.condition)
+          : edge.data.condition || ''
     }))
   }
 }
@@ -1001,7 +1031,8 @@ export function mapDomainGraphToX6(
       labels: buildEdgeLabel(edge),
       data: {
         branch: edge.data.branch,
-        label: edge.data.label
+        label: edge.data.label,
+        condition: edge.data.condition
       }
     })
   })
@@ -1067,7 +1098,8 @@ export function mapX6GraphToDomain(
           sourcePort: edgeCell.source?.port,
           targetPort: edgeCell.target?.port,
           branch: edgeCell.data?.branch || '',
-          label: edgeCell.data?.label || ''
+          label: edgeCell.data?.label || '',
+          condition: edgeCell.data?.condition || ''
         },
         nodeMap
       )
@@ -1097,7 +1129,8 @@ export function mapDomainEdgeToForm(edge: WorkflowDomainEdge | null): WorkflowEd
     sourcePort: edge.sourcePort || '',
     targetPort: edge.targetPort || '',
     branch: edge.data.branch || '',
-    label: edge.data.label || ''
+    label: edge.data.label || '',
+    condition: edge.data.condition || ''
   }
 }
 
@@ -1140,7 +1173,8 @@ export function applyEdgeFormToDomain(
     targetPort: 'in',
     data: {
       branch: normalizeEdgeBranch(sourceType, sourcePort, form.branch || edge.data.branch),
-      label: form.label
+      label: buildEdgeDisplayLabel(form.condition),
+      condition: form.condition
     }
   }
 }
