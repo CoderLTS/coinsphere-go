@@ -12,7 +12,6 @@
       :agent-options="agentOptions"
       :notify-user-options="notifyUserOptions"
       :notify-role-options="notifyRoleOptions"
-      :notify-channel-options="notifyChannelOptions"
       :notify-options-loading="notifyOptionsLoading"
       :json-definition-visible="jsonDefinitionVisible"
       :dirty-node-ids="dirtyNodeIds"
@@ -93,7 +92,6 @@
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { storeToRefs } from 'pinia'
   import { fetchGetRoleList, fetchGetUserList } from '@/api/system'
-  import type { NotifyChannelItem } from '@/api/config'
   import {
     fetchCreateWorkflowDefinition,
     fetchNodeDefinitions,
@@ -180,20 +178,6 @@
   const agentOptions = ref<WorkflowAgentOption[]>([])
   const notifyOptionsLoading = ref(false)
   const notifyOptionsLoaded = ref(false)
-  const notifyChannels = ref<NotifyChannelItem[]>([])
-  const notifyChannelOptions = computed(() => {
-    const groups = new Map<string, NotifyChannelItem[]>()
-    notifyChannels.value.forEach((item) => {
-      const current = groups.get(item.channelType) || []
-      current.push(item)
-      groups.set(item.channelType, current)
-    })
-    return Array.from(groups, ([value, items]) => ({
-      value,
-      label: items.map((item) => item.displayName).join(' / '),
-      enabled: items.some((item) => item.isEnabled)
-    }))
-  })
   const zoomText = computed(() => `${Math.round(zoom.value * 100)}%`)
   const cloneGraph = (graph: WorkflowDomainGraphModel): WorkflowDomainGraphModel =>
     JSON.parse(JSON.stringify(graph))
@@ -1208,7 +1192,6 @@
     notifyRoleOptions.value = []
     notifyOptionsLoading.value = false
     notifyOptionsLoaded.value = false
-    notifyChannels.value = []
     historySessionKey.value += 1
     resetGraphHistory()
 

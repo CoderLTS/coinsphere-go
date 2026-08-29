@@ -1,44 +1,6 @@
 /** 前端接口封装：data。 */
 import request from '@/utils/http'
 
-export interface NotifyDeliverySearchParams {
-  cursor?: string
-  limit?: number
-  keyword?: string
-  workflowDefinitionId?: number
-  channelType?: Api.Config.NotifyChannelType | string
-  deliveryStatus?: 'pending' | 'success' | 'failed' | 'skipped_offline' | string
-}
-
-export interface NotifyDeliveryItem {
-  id: number
-  workflowExecutionId?: number | null
-  workflowExecutionNodeId?: number | null
-  workflowDefinitionId?: number | null
-  workflowDefinitionCode: string
-  workflowDefinitionName: string
-  targetType: string
-  targetId?: number | null
-  targetLabel: string
-  recipientId?: number | null
-  recipientLabel: string
-  channelType: string
-  channelTypeLabel: string
-  channelDisplayName: string
-  deliveryStatus: string
-  deliveryStatusLabel: string
-  messageTitle: string
-  messageContent: string
-  providerResponseText: string
-  errorMessage: string
-  isRead: boolean
-  readAt: string
-  sentAt: string
-  createdAt: string
-}
-
-export type NotifyDeliveryList = Api.Common.PaginatedResponse<NotifyDeliveryItem>
-
 export function fetchNewsList(params: Api.Data.NewsSearchParams) {
   return request.get<Api.Data.NewsList>({
     url: '/api/v1/data/news',
@@ -66,19 +28,5 @@ export function fetchDeleteNews(newsId: number) {
   return request.del<void>({
     url: `/api/v1/data/news/${newsId}`,
     showSuccessMessage: true
-  })
-}
-
-export function fetchPushDeliveryList(params: NotifyDeliverySearchParams) {
-  return request.get<NotifyDeliveryList>({
-    url: '/api/v1/admin/notification-deliveries',
-    params: {
-      cursor: params.cursor,
-      limit: params.limit,
-      keyword: params.keyword,
-      workflowDefinitionId: params.workflowDefinitionId,
-      channelType: params.channelType,
-      deliveryStatus: params.deliveryStatus
-    }
   })
 }

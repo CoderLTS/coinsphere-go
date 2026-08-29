@@ -115,9 +115,6 @@ declare namespace Api {
 
     type AiProviderType = 'openai_compatible' | 'anthropic' | 'gemini'
     type AssistantAgentDataSourceType = 'none' | 'system_context' | 'news_context'
-    type NotifyChannelType = 'in_app' | 'dingtalk_webhook' | 'qq_bot' | 'smtp_email'
-    type NotifyContentFormat = 'text' | 'markdown' | 'html'
-    type NotifyTargetType = 'user' | 'role'
 
     interface AiModelConfig {
       id: number
@@ -291,59 +288,6 @@ declare namespace Api {
       buttonIds: number[]
     }
 
-    interface NotifyChannelFieldMeta {
-      prop: string
-      label: string
-      required: boolean
-      secret?: boolean
-    }
-
-    interface NotifyChannelMeta {
-      channelTypes: Array<{
-        value: NotifyChannelType
-        label: string
-        description: string
-        summaryFields: string[]
-        fields: NotifyChannelFieldMeta[]
-        builtinReadonly?: boolean
-      }>
-      owners?: Array<{
-        id: number
-        label: string
-      }>
-    }
-
-    interface NotifyChannelItem {
-      id: number
-      channelType: NotifyChannelType
-      channelTypeLabel: string
-      displayName: string
-      isEnabled: boolean
-      ownerId?: number | null
-      ownerLabel: string
-      isBuiltin: boolean
-      isSystem: boolean
-      targetSummary: string
-      settingsJson: string
-      secretJsonMasked: string
-      remark: string
-      lastTestStatus: 'success' | 'failed' | 'unknown' | string
-      lastTestMessage: string
-      lastTestedAt: string
-      updatedAt: string
-      createdAt: string
-    }
-
-    interface NotifyChannelUpsertPayload {
-      channelType: Extract<NotifyChannelType, 'dingtalk_webhook' | 'qq_bot' | 'smtp_email'>
-      displayName: string
-      isEnabled: boolean
-      ownerId?: number | null
-      settingsJson: string
-      secretJson?: string
-      remark: string
-    }
-
     interface DataSourceDefinitionItem {
       code: string
       label: string
@@ -378,159 +322,6 @@ declare namespace Api {
       description: string
       configValues: Record<string, any>
       isEnabled: boolean
-    }
-
-    interface NotifyRuleMeta {
-      formats: NotifyContentFormat[]
-      sources: Array<{
-        id: number
-        code: string
-        label: string
-        description: string
-        variables: Array<{
-          key: string
-          label: string
-        }>
-        isEnabled: boolean
-      }>
-      targetTypes: Array<{
-        value: NotifyTargetType
-        label: string
-      }>
-      channelTypes: Array<{
-        value: NotifyChannelType
-        label: string
-        builtinReadonly?: boolean
-      }>
-      users: Array<{
-        id: number
-        label: string
-      }>
-      roles: Array<{
-        id: number
-        label: string
-      }>
-    }
-
-    interface NotifyRuleTargetItem {
-      targetType: NotifyTargetType
-      targetId: number
-      targetLabel: string
-      channelTypes: NotifyChannelType[]
-      channelTypeLabels: string[]
-    }
-
-    interface NotifyRuleItem {
-      id: number
-      ruleName: string
-      dataSourceInstanceId: number
-      sourceLabel: string
-      messageFormat: NotifyContentFormat
-      titleTemplate: string
-      contentTemplate: string
-      isEnabled: boolean
-      remark: string
-      targets: NotifyRuleTargetItem[]
-      targetCount: number
-      targetLabels: string[]
-      channelTypes: NotifyChannelType[]
-      channelTypeLabels: string[]
-      updatedAt: string
-      createdAt: string
-    }
-
-    interface NotifyRuleUpsertPayload {
-      ruleName: string
-      dataSourceInstanceId: number
-      targets: Array<{
-        targetType: NotifyTargetType
-        targetId: number
-        channelTypes: NotifyChannelType[]
-      }>
-      messageFormat: NotifyContentFormat
-      titleTemplate: string
-      contentTemplate: string
-      isEnabled: boolean
-      remark: string
-    }
-
-    interface NotifyDeliverySearchParams extends Partial<Api.Common.CommonSearchParams> {
-      keyword?: string
-      dataSourceInstanceId?: number
-      channelType?: NotifyChannelType
-      deliveryStatus?: 'pending' | 'success' | 'failed' | 'skipped_offline' | string
-    }
-
-    interface NotifyDeliveryItem {
-      id: number
-      ruleName: string
-      dataSourceInstanceId?: number | null
-      sourceLabel: string
-      sourceEmissionId?: number | null
-      recipientId?: number | null
-      recipientLabel: string
-      channelType: NotifyChannelType | string
-      channelTypeLabel: string
-      channelDisplayName: string
-      deliveryStatus: string
-      deliveryStatusLabel: string
-      messageTitle: string
-      messageContent: string
-      providerResponseText: string
-      errorMessage: string
-      isRead: boolean
-      readAt: string
-      sentAt: string
-      createdAt: string
-    }
-
-    type NotifyDeliveryList = Api.Common.PaginatedResponse<NotifyDeliveryItem>
-
-    interface InAppNoticeItem {
-      id: number
-      workflowExecutionId?: number | null
-      workflowExecutionNodeId?: number | null
-      workflowDefinitionId?: number | null
-      workflowDefinitionCode: string
-      workflowDefinitionName: string
-      strategySignalId?: string | null
-      strategySignalMode: string
-      strategySignalStatus: string
-      strategySignalExpiresAt: string
-      targetType: string
-      targetId?: number | null
-      targetLabel: string
-      recipientId?: number | null
-      recipientLabel: string
-      channelType: string
-      channelTypeLabel: string
-      channelDisplayName: string
-      deliveryStatus: string
-      deliveryStatusLabel: string
-      messageTitle: string
-      messageContent: string
-      providerResponseText: string
-      errorMessage: string
-      isRead: boolean
-      readAt: string
-      sentAt: string
-      createdAt: string
-    }
-
-    interface InAppNoticePage {
-      records: InAppNoticeItem[]
-      nextCursor: string
-      total: number
-      hasMore: boolean
-      unreadCount: number
-    }
-
-    interface NotifyOverviewSummary {
-      channelCount: number
-      enabledChannelCount: number
-      enabledRuleCount: number
-      latestDeliveryStatus: string
-      latestDeliveryAt: string
     }
   }
 
@@ -607,11 +398,44 @@ declare namespace Api {
   }
 
   namespace Notifications {
-    type NotifyDeliverySearchParams = Api.Config.NotifyDeliverySearchParams
-    type NotifyDeliveryItem = Api.Config.NotifyDeliveryItem
-    type NotifyDeliveryList = Api.Config.NotifyDeliveryList
-    type InAppNoticeItem = Api.Config.InAppNoticeItem
-    type InAppNoticePage = Api.Config.InAppNoticePage
+    interface InAppNoticeItem {
+      id: number
+      workflowExecutionId?: number | null
+      workflowExecutionNodeId?: number | null
+      workflowDefinitionId?: number | null
+      workflowDefinitionCode: string
+      workflowDefinitionName: string
+      strategySignalId?: string | null
+      strategySignalMode: string
+      strategySignalStatus: string
+      strategySignalExpiresAt: string
+      targetType: string
+      targetId?: number | null
+      targetLabel: string
+      recipientId?: number | null
+      recipientLabel: string
+      channelType: string
+      channelTypeLabel: string
+      channelDisplayName: string
+      deliveryStatus: string
+      deliveryStatusLabel: string
+      messageTitle: string
+      messageContent: string
+      providerResponseText: string
+      errorMessage: string
+      isRead: boolean
+      readAt: string
+      sentAt: string
+      createdAt: string
+    }
+
+    interface InAppNoticePage {
+      records: InAppNoticeItem[]
+      nextCursor: string
+      total: number
+      hasMore: boolean
+      unreadCount: number
+    }
 
     interface StrategySignalDecision {
       id: string

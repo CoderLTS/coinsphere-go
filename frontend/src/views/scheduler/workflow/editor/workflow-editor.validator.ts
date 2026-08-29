@@ -570,9 +570,7 @@ export function validateNodeFormDraft(
       break
 
     case 'notify':
-      if (!Array.isArray(config.targets) || !config.targets.length) {
-        errors.push('通知节点至少需要一个通知目标。')
-      } else {
+      if (Array.isArray(config.targets)) {
         config.targets.forEach((target: Record<string, any>, index: number) => {
           const targetType = String(target?.targetType || '').trim()
           const targetId = Number(target?.targetId)
@@ -584,14 +582,7 @@ export function validateNodeFormDraft(
           }
         })
       }
-      if (!Array.isArray(config.channelTypes) || !config.channelTypes.length) {
-        errors.push('通知节点至少需要一个通知渠道。')
-      }
-      if (!String(config.titleTemplate || '').trim()) errors.push('通知节点必须填写标题模板。')
-      if (!String(config.contentTemplate || '').trim()) errors.push('通知节点必须填写内容模板。')
-      if (!['markdown', 'plain_text'].includes(String(config.messageFormat || 'markdown').trim())) {
-        errors.push('通知节点消息格式仅支持 markdown 或 plain_text。')
-      }
+      if (!String(config.title || '').trim()) errors.push('通知节点必须填写标题。')
       break
 
     case 'event':

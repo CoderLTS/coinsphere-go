@@ -31,6 +31,7 @@ export interface SchemaFieldMeta {
   step?: number
   placeholder: string
   multiline: boolean
+  secret: boolean
   /** control 为 json 时：这个字段是数组还是对象，决定校验与空值。 */
   isArray: boolean
   /** control 为 objectList 时：每一行内部的子字段。 */
@@ -89,6 +90,7 @@ export function buildSchemaField(key: string, raw: unknown): SchemaFieldMeta {
     step: schema.type === 'integer' ? 1 : undefined,
     placeholder,
     multiline: isMultiline(key, schema),
+    secret: schema['x-coinsphere-secret'] === true,
     isArray,
     itemFields: control === 'objectList' ? buildSchemaFields(schema.items?.properties || {}) : []
   }

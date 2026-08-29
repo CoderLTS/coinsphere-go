@@ -80,7 +80,7 @@ sequenceDiagram
 
 Web 负责登录、导航、权限感知页面、系统管理、工作流编辑与运行观察，以及插件页面和共享结果页的呈现。API 模块只负责传输和类型映射，领域状态仍由 Backend 与数据库拥有。
 
-工作流编辑器从 `/api/v1/workflows/node-definitions` 获取核心和插件节点的 JSON Schema/UI Schema 及固定分支端口；Quant 指标判断使用紧凑的嵌套条件树编辑器，普通节点仍使用 Schema 表单。运行详情先读取持久 API，再使用 `coinsphere.workflow-runs.v1` WebSocket 接收“数据已变化”通知并刷新。WebSocket 是进程内实时提示，不是第二份运行事实源。
+工作流编辑器从 `/api/v1/workflows/node-definitions` 获取核心和插件节点的 JSON Schema/UI Schema 及固定分支端口；Quant 指标判断使用紧凑的嵌套条件树编辑器，通知凭据使用修订级 Secret 输入，普通节点仍使用 Schema 表单。运行详情和个人通知先读取持久 API，再分别使用 `coinsphere.workflow-runs.v1` 与 `coinsphere.notifications.v1` WebSocket 接收更新。WebSocket 是进程内实时提示，不是第二份事实源。
 
 前端插件通过生成的 `registry.generated.ts` 与内置插件表静态加入 Vite 构建。普通页面和结果页均是主应用 Vue 组件，不使用 iframe、Web Component 或运行时远程模块。
 
@@ -93,6 +93,7 @@ Backend 使用 Go 标准库 `net/http` 路由。除登录、健康检查、静�
 - `/api/v1/result-views/*` 解析固定视图及用户/角色授权。
 - `/api/v1/plugins/{pluginId}/*` 承载系统作用域插件路由。
 - `/api/v1/result-views/{viewId}/plugins/{pluginId}/*` 承载结果作用域插件路由。
+- `/api/v1/notification-deliveries` 和 `/api/v1/ws/notifications` 按当前登录用户隔离站内通知。
 - `/api/v1/ws/workflows/{workflowId}/runs` 仅允许超级管理员使用同源 WebSocket 订阅运行更新。
 
 错误响应统一使用 Problem Details。请求 ID 用于关联结构化日志；原始 Token、Cookie、授权头、DSN、密钥和载荷不会进入日志。
@@ -150,7 +151,7 @@ Run WebSocket 只发送工作流 ID、Run ID 和更新时间等轻量更新。�
 
 `core.schedule` 支持固定秒数或带 IANA 时区的六段 Cron，服务恢复后最多补一次漏跑。插件 `TriggerHandler` 用 Emitter 发送事件并必须响应取消与背压；服务启动时扫描 active 连续流并恢复 Trigger。
 
-Connector/AI 的 HTTP 与 WebSocket 访问执行精确域名白名单、公共 DNS 和重定向复核，不继承环境代理。Binance Quant 只访问公共行情接口，通用节点不能调用交易所私有接口。Quant 指标判断按周期合并读取 UTC 闭合 K 线，在当前和上一检查时点确定性计算 Decimal 指标；工作流只承担端口路由、路径进入传播和通知输入聚合，不参与逐 K 线计算。
+Connector/AI 的 HTTP 与 WebSocket 访问执行精确域名白名单、公共 DNS 和重定向复核，不继承环境代理。Notification 的钉钉与 QQ 节点只访问固定官方域名，SMTP 只拨号公网域名并强制 TLS 或 STARTTLS；凭据只经 SecretReader 解密。Binance Quant 只访问公共行情接口，通用节点不能调用交易所私有接口。Quant 指标判断按周期合并读取 UTC 闭合 K 线，在当前和上一检查时点确定性计算 Decimal 指标；工作流只承担端口路由、路径进入传播和通知输入聚合，不参与逐 K 线计算。
 
 ## 9. 编译期插件
 
@@ -194,14 +195,14 @@ flowchart LR
     DECISION --> QUOTE["公共报价复核"]
     QUOTE --> PAPER["订单 / 成交 / 费用 / 账本"]
     PAPER --> PROJECTION["账户与持仓投影"]
-    PAPER --> NOTIFY["幂等站内通知"]
+    PAPER --> NOTIFY["幂等多渠道通知"]
 ```
 
 Quant 将相同 `market + instrument + interval` 的公共行情订阅合并，使用 UTC 和 Decimal 保存已闭合 K 线。品种同步节点按工作流保存过滤后的来源快照，全局目录是所有工作流来源的并集。实时策略评估与回测调用同一个无状态 Go `Strategy.Evaluate`；回测按下一根 K 线开盘应用费用和滑点，大明细写入内容寻址制品。
 
 策略目标先持久化为 Signal。默认需要人工决定；自动模式只有在总名义价值、单品种名义价值、单次操作名义价值、最大日亏损和最大回撤全部明确配置后才能启用。决定后重新取得公共报价并复核时效、步进、账户状态和全部风险上限。
 
-Paper 订单、成交、费用和账本事实不可变，账户与持仓是可重建投影。稳定操作键保证 Run 重试不会重复记账。Notification 使用同一操作键幂等写入站内投递；当前系统不包含真实订单、真实凭据或私有交易接口。
+Paper 订单、成交、费用和账本事实不可变，账户与持仓是可重建投影。稳定操作键保证 Run 重试不会重复记账。Notification 使用同一操作键幂等记录站内、钉钉、QQ 或 SMTP 投递；当前系统不包含真实订单、真实凭据或私有交易接口。
 
 ## 12. 数据所有权
 
@@ -211,7 +212,7 @@ Paper 订单、成交、费用和账本事实不可变，账户与持仓是可�
 | `public` 工作流表 | 工作流核心 | 工作流、修订、密钥、运行时、事件、投递、Outbox、Run、节点、日志、检查点、人工任务、制品、节点状态 |
 | `public` ResultView 表 | 结果视图模块 | 固定视图、用户授权、角色授权、撤销状态 |
 | `plugin_quant` | Quant 插件 | 品种、品种来源、K 线、回测、信号、Paper 账户、订单、成交、费用、账本和持仓 |
-| `plugin_notification` | Notification 插件 | 幂等通知投递 |
+| `plugin_notification` | Notification 插件 | 多渠道幂等投递、站内收件人与已读状态 |
 | Backend 持久目录 | 制品与上传模块 | gzip 制品正文、静态文件和用户上传 |
 | `plugin_<id>` | 外部插件 | 独立 migration 账本和插件自有领域数据 |
 
@@ -229,7 +230,7 @@ Paper 订单、成交、费用和账本事实不可变，账户与持仓是可�
 ## 14. 安全与可观察性
 
 - 密码使用迭代哈希；节点密钥独立加密；Access Token 可按会话撤销。
-- WebSocket 要求同源 Origin、专用子协议和有效超级管理员 Token。
+- WebSocket 要求同源 Origin、专用子协议和有效 Access Token；工作流运行订阅另要求超级管理员权限。
 - Connector/AI 默认拒绝全部外部主机，且拒绝私网、IP、通配符和交易所私有目标。
 - 只有状态拥有模块记录对应结构化日志，日志以 request ID、workflow ID、run ID 或 node ID 关联。
 - `/health/live` 只报告进程存活；`/health/ready` 和 `/health` 检查 PostgreSQL；`/metrics` 需要登录。

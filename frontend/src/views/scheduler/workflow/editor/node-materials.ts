@@ -135,11 +135,32 @@ const MATERIAL_META: Record<string, MaterialMeta> = {
     iconText: 'P'
   },
   'official.notification.in_app': {
+    kind: 'notify',
+    group: '通知',
+    description: '向用户或角色发送站内通知',
+    color: '#7c3aed',
+    iconText: '内'
+  },
+  'official.notification.dingtalk': {
     kind: 'generic',
     group: '通知',
-    description: '持久化一条幂等站内通知',
-    color: '#7c3aed',
-    iconText: 'N'
+    description: '通过钉钉机器人发送通知',
+    color: '#2563eb',
+    iconText: '钉'
+  },
+  'official.notification.qq': {
+    kind: 'generic',
+    group: '通知',
+    description: '向 QQ 群或频道发送通知',
+    color: '#0891b2',
+    iconText: 'Q'
+  },
+  'official.notification.smtp': {
+    kind: 'generic',
+    group: '通知',
+    description: '通过 TLS SMTP 发送邮件通知',
+    color: '#15803d',
+    iconText: '邮'
   },
   end: {
     kind: 'end',

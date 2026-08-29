@@ -39,6 +39,8 @@ type App struct {
 	runCancels          map[int64]context.CancelFunc
 	workflowWatchMu     sync.RWMutex
 	workflowWatchers    map[int64]map[chan WorkflowRunUpdate]struct{}
+	notificationWatchMu sync.Mutex
+	notificationWatches map[int64]map[chan NotificationEvent]struct{}
 	runWG               sync.WaitGroup
 	triggerMu           sync.Mutex
 	triggerRuns         map[int64]workflowTriggerRun
@@ -62,6 +64,7 @@ func NewApp(gdb *gorm.DB, cfg *config.AppConfig, plugins *sdk.Registry) *App {
 		revokedAccessTokens: map[string]time.Time{},
 		runCancels:          map[int64]context.CancelFunc{},
 		workflowWatchers:    map[int64]map[chan WorkflowRunUpdate]struct{}{},
+		notificationWatches: map[int64]map[chan NotificationEvent]struct{}{},
 		triggerRuns:         map[int64]workflowTriggerRun{},
 		streamSlots:         make(chan struct{}, 4),
 		computeSlots:        make(chan struct{}, 1),

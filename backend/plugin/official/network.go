@@ -142,11 +142,19 @@ func (c *safeHTTPClient) dialContext(ctx context.Context, network, address strin
 }
 
 func (c *safeHTTPClient) resolvePublic(ctx context.Context, rawHost string) ([]netip.Addr, error) {
+	return c.resolveDomain(ctx, rawHost, true)
+}
+
+func (c *safeHTTPClient) resolvePublicDomain(ctx context.Context, rawHost string) ([]netip.Addr, error) {
+	return c.resolveDomain(ctx, rawHost, false)
+}
+
+func (c *safeHTTPClient) resolveDomain(ctx context.Context, rawHost string, requireAllowed bool) ([]netip.Addr, error) {
 	host, ok := normalizeDomain(rawHost)
 	if !ok {
 		return nil, unsafeEndpoint("target host must be a domain name")
 	}
-	if _, ok := c.allowedHosts[host]; !ok {
+	if _, ok := c.allowedHosts[host]; requireAllowed && !ok {
 		return nil, unsafeEndpoint("target host %q is not allowed", host)
 	}
 	addresses, err := c.lookup(ctx, "ip", host)

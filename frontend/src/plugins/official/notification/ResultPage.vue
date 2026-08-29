@@ -2,7 +2,7 @@
   <section class="delivery-result" aria-labelledby="delivery-title">
     <header>
       <div>
-        <p>站内通知</p>
+        <p>站内、钉钉、QQ 与邮件</p>
         <h2 id="delivery-title">通知投递</h2>
       </div>
       <ElButton circle title="刷新" :loading="loading" @click="load">
@@ -15,10 +15,17 @@
         <div>
           <strong>{{ delivery.title }}</strong>
           <p>{{ delivery.message }}</p>
-          <small>{{ delivery.subjectKey }} · {{ formatTime(delivery.createdAt) }} UTC+8</small>
+          <small>
+            {{ channelLabel(delivery.channel) }} · {{ recipientLabel(delivery) }} · 尝试
+            {{ delivery.attemptCount }} 次 · {{ delivery.subjectKey }} ·
+            {{ formatTime(delivery.deliveredAt || delivery.createdAt) }} UTC+8
+          </small>
+          <small v-if="delivery.lastErrorCategory" class="delivery-list__error">
+            错误类别：{{ delivery.lastErrorCategory }}
+          </small>
         </div>
-        <ElTag :type="delivery.status === 'delivered' ? 'success' : 'danger'" effect="plain">
-          {{ delivery.status === 'delivered' ? '已送达' : '失败' }}
+        <ElTag :type="statusType(delivery.status)" effect="plain">
+          {{ statusLabel(delivery.status) }}
         </ElTag>
       </li>
       <li v-if="!deliveries.length" class="delivery-list__empty">暂无通知投递</li>
@@ -27,10 +34,18 @@
 </template>
 
 <script setup lang="ts">
-  import { fetchNotificationDeliveries, type NotificationDelivery } from '@/api/paper'
+  import { fetchNotificationDeliveries, type NotificationDelivery } from '@/api/notifications'
   import { formatDateTime as formatTime } from '@/utils/date'
 
   const deliveries = ref<NotificationDelivery[]>([])
+  const channelLabel = (channel: NotificationDelivery['channel']) =>
+    ({ in_app: '站内通知', dingtalk: '钉钉', qq: 'QQ', smtp: '邮件' })[channel]
+  const recipientLabel = (delivery: NotificationDelivery) =>
+    delivery.recipientUserId ? `用户 #${delivery.recipientUserId}` : '外部目标'
+  const statusLabel = (status: NotificationDelivery['status']) =>
+    ({ pending: '发送中', delivered: '已送达', failed: '失败' })[status]
+  const statusType = (status: NotificationDelivery['status']) =>
+    status === 'delivered' ? 'success' : status === 'failed' ? 'danger' : 'info'
   const loading = ref(false)
   const load = async () => {
     loading.value = true
@@ -107,6 +122,10 @@
     background: var(--el-color-danger);
   }
 
+  .delivery-list__mark[data-status='pending'] {
+    background: var(--el-color-info);
+  }
+
   .delivery-list strong,
   .delivery-list p,
   .delivery-list small {
@@ -120,6 +139,10 @@
 
   .delivery-list small {
     margin-top: 5px;
+  }
+
+  .delivery-list__error {
+    color: var(--el-color-danger) !important;
   }
 
   .delivery-list__empty {

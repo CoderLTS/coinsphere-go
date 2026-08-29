@@ -434,8 +434,7 @@ const buildNodeCollapsedSummary = (node: WorkflowDomainNode) => {
 
     case 'notify': {
       const targets = Array.isArray(config.targets) ? config.targets.length : 0
-      const channels = Array.isArray(config.channelTypes) ? config.channelTypes.length : 0
-      return `${targets} 个目标 / ${channels} 个渠道`
+      return targets ? `${targets} 个通知目标` : '通知工作流创建者'
     }
 
     case 'event':
@@ -629,7 +628,12 @@ export function mapDomainGraphToServer(graph: WorkflowDomainGraphModel): Workflo
   const nodeMap = new Map(graph.nodes.map((node) => [node.id, node]))
   const nodeOrder = new Map(graph.nodes.map((node, index) => [node.id, index]))
   const conditionType = 'official.quant.indicator_condition'
-  const notifyType = 'official.notification.in_app'
+  const notifyTypes = new Set([
+    'official.notification.in_app',
+    'official.notification.dingtalk',
+    'official.notification.qq',
+    'official.notification.smtp'
+  ])
   const incomingConditions = (targetID: string, branch?: string) =>
     graph.edges
       .filter((edge) => edge.target === targetID && (!branch || edge.data.branch === branch))
@@ -667,10 +671,10 @@ export function mapDomainGraphToServer(graph: WorkflowDomainGraphModel): Workflo
       }
     }
     const notificationSources = incomingConditions(node.id, 'true')
-    if (node.data.typeCode === notifyType && notificationSources.length) {
+    if (notifyTypes.has(node.data.typeCode) && notificationSources.length) {
       existing.subjectKey = { kind: 'condition_subject', sources: notificationSources }
       existing.message = { kind: 'condition_message', sources: notificationSources }
-    } else if (node.data.typeCode === notifyType) {
+    } else if (notifyTypes.has(node.data.typeCode)) {
       if (existing.subjectKey?.kind === 'condition_subject') delete existing.subjectKey
       if (existing.message?.kind === 'condition_message') delete existing.message
     }
@@ -707,7 +711,7 @@ export function mapDomainGraphToServer(graph: WorkflowDomainGraphModel): Workflo
       ),
       label:
         nodeMap.get(edge.source)?.data.typeCode === conditionType &&
-        nodeMap.get(edge.target)?.data.typeCode === notifyType &&
+        notifyTypes.has(nodeMap.get(edge.target)?.data.typeCode || '') &&
         edge.data.branch === 'true'
           ? notificationCondition(edge)
           : edge.data.label || ''

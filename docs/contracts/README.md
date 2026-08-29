@@ -16,7 +16,7 @@
 - `POST /api/v1/auth/reauth` 返回绑定当前用户与当前会话、五分钟失效且只能使用一次的不透明 Token。
 - 当前业务 API 包含 `/api/v1/home/*`、`/api/v1/admin/users`、`/api/v1/system/*`、工作流路由、ResultView 路由和系统插件路由；除匿名 Webhook 和获授权 ResultView 外，工作流与系统插件路由只允许 `R_SUPER`。
 - `/health/live` 只报告进程存活；`/health/ready` 和 `/health` 在一秒预算内检查 PostgreSQL；`/metrics` 要求登录。
-- 旧行情、策略、回测、信号、通知和交易路由已移除，不提供别名或兼容响应。
+- 旧行情、策略、回测、信号、全局通知渠道/规则和交易路由已移除，不提供别名或兼容响应。
 
 ## 工作流
 
@@ -39,6 +39,10 @@
 | `WS /api/v1/ws/workflows/{workflowId}/runs`                    | 超级管理员订阅轻量运行更新通知         |
 | `GET /api/v1/workflow-runs/{runId}`                             | 读取事件、节点尝试、日志和制品引用     |
 | `POST /api/v1/workflow-runs/{runId}`                            | 执行 `cancel`、`retry` 或 `replay`     |
+| `GET /api/v1/notification-deliveries`                          | 查询当前用户的站内通知与未读数         |
+| `POST /api/v1/notification-deliveries/{deliveryId}/read`       | 将当前用户的一条站内通知标为已读       |
+| `POST /api/v1/notification-deliveries/read-all`                | 将当前用户的全部站内通知标为已读       |
+| `WS /api/v1/ws/notifications`                                  | 订阅当前用户的站内通知和未读数更新     |
 | `GET /api/v1/artifacts/{sha256}/manifest`                       | 读取并校验制品清单                     |
 | `GET /api/v1/artifacts/{sha256}/download`                       | 下载解压后的制品正文                   |
 | `GET/POST /api/v1/result-views`                                 | 列出获授权视图，或由管理员创建固定视图 |
@@ -100,11 +104,15 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 
 `official.quant.indicator_condition@1.0.0` 固定市场、交易对和检查周期，一个实例保存最多 4 层、16 个叶子的 `AND/OR` 条件树；叶子可分别选择 K 线周期及放量、首尾涨跌/振幅、MACD、KDJ、Wilder RSI 或布林带。每个周期只读取一次所需最大回看，并在当前与上一个检查时点分别截取当时已闭合的 K 线，禁止未来数据；K 线断档、非法参数和数据库错误使节点失败，任一条件历史不足则 `ready=false` 并走 `false`。EMA、RSI、KDJ、布林标准差和有界平方根全部使用确定性 Decimal。
 
-判断输出包含 `matched`、`previousMatched`、`branch`、`entered`、`triggered`、叶子结果、UTC 时间、业务键和中文摘要。`branch` 始终反映当前组合结果，连续命中仍执行下游；`entered` 会沿判断节点连线传播路径重新进入状态，`triggered` 只在整体重新进入 true 路径时成立。编辑器连接判断节点到 `official.notification.in_app` 时自动附加 `input.triggered == true`，并按节点顺序聚合本次触发的业务键和摘要，因此连续命中只通知一次，恢复后再次命中会重新通知。
+判断输出包含 `matched`、`previousMatched`、`branch`、`entered`、`triggered`、叶子结果、UTC 时间、业务键和中文摘要。`branch` 始终反映当前组合结果，连续命中仍执行下游；`entered` 会沿判断节点连线传播路径重新进入状态，`triggered` 只在整体重新进入 true 路径时成立。编辑器连接判断节点到任一 `official.notification` 节点时自动附加 `input.triggered == true`，并按节点顺序聚合本次触发的业务键和摘要，因此连续命中只通知一次，恢复后再次命中会重新通知。
 
 Paper 账户按 `workflowId + paper nodeInstanceId` 唯一。默认人工审批；自动模式只有在最大总名义价值、单品种名义价值、单次操作名义价值、最大日亏损和最大回撤全部显式配置时有效。批准后重新读取 Binance 公共报价，并在一个数据库事务中检查信号/任务状态、报价新鲜度、品种状态、数量步进、账户状态及五项风险限制。拒绝不会创建账户或账本；成功执行写入不可变订单、成交、费用和账本事实，再更新账户与持仓投影。操作键和唯一约束保证节点重试、进程重启及 Outbox 重投不重复成交或投递。
 
-内置 `official.notification` 提供 `in_app` Action 和独立投递页。站内投递只保存受控标题、正文和业务键，以操作键幂等；诊断重放复用原 Checkpoint，不再次产生 notification、human_action 或 paper 副作用。
+内置 `official.notification@1.1.0` 提供 `in_app`、`dingtalk`、`qq` 和 `smtp` 四个独立 Action 及统一投递页。四种节点统一接收 `subjectKey/message` 并按稳定操作键幂等；站内节点把用户和当前启用角色成员合并去重，旧配置没有目标时投递给工作流创建者。外部节点失败保存受控错误类别并交给当前节点最多三次重试，已成功操作直接复用。
+
+钉钉和 QQ 只访问固定官方域名，使用 8 秒超时、禁止重定向和 64 KiB 响应上限；QQ Token 按凭据指纹缓存。SMTP 只接受解析到公网地址的域名和 TLS/STARTTLS，STARTTLS 不可用时失败而不降级。Access Token、Client Secret、SMTP 密码及钉钉签名 Secret 均为修订级 `x-coinsphere-secret`，不进入图、日志或投递表。
+
+站内通知按 `recipient_user_id` 隔离，查询和已读操作只影响当前用户。持久投递提交后才发布 `notice.created`；实时 WebSocket 使用 `coinsphere.notifications.v1` 子协议携带 Access Token，要求同源 Origin、有界发送队列和 Ping/Pong，断线或队列满不影响数据库事实。诊断重放复用原 Checkpoint，不再次产生 notification、human_action 或 paper 副作用。
 
 `GET /api/v1/plugins/official.quant/{instruments|candles|strategies|backtests|signals|paper-accounts}`、Paper 账户重建和 Notification 系统查询是 `SystemScope` 路由，只允许超级管理员。ResultView 插件路由只接受核心注入的固定范围，查询参数不能扩大范围。金融值均返回十进制字符串。
 

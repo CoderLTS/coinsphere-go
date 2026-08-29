@@ -44,17 +44,6 @@ export interface PaperResult {
   accounts: PaperAccount[]
 }
 
-export interface NotificationDelivery {
-  id: number
-  channel: 'in_app'
-  subjectKey: string
-  title: string
-  message: string
-  status: 'delivered' | 'failed'
-  attemptCount: number
-  createdAt: string
-}
-
 const quantPath = (viewId: number) => `/api/v1/result-views/${viewId}/plugins/official.quant`
 
 export const fetchPaperResult = (viewId: number) =>
@@ -72,9 +61,4 @@ export const exportPaperResult = (viewId: number) =>
     method: 'GET',
     responseType: 'blob',
     rawResponse: true
-  })
-
-export const fetchNotificationDeliveries = () =>
-  request.get<{ items: NotificationDelivery[] }>({
-    url: '/api/v1/plugins/official.notification/deliveries'
   })

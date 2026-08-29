@@ -190,6 +190,12 @@ func workflowNodeTitle(nodeType string) string {
 		return "Paper execution"
 	case "official.notification.in_app":
 		return "In-app notification"
+	case "official.notification.dingtalk":
+		return "DingTalk notification"
+	case "official.notification.qq":
+		return "QQ notification"
+	case "official.notification.smtp":
+		return "SMTP notification"
 	default:
 		return nodeType
 	}
@@ -231,6 +237,12 @@ func workflowNodeDescription(nodeType string) string {
 		return "Revalidates a public quote and applies the complete Paper risk gate atomically."
 	case "official.notification.in_app":
 		return "Persists one idempotent in-app notification delivery."
+	case "official.notification.dingtalk":
+		return "Sends one idempotent DingTalk robot notification."
+	case "official.notification.qq":
+		return "Sends one idempotent QQ group or channel notification."
+	case "official.notification.smtp":
+		return "Sends one idempotent TLS-protected SMTP notification."
 	default:
 		return "Compiled plugin node."
 	}
