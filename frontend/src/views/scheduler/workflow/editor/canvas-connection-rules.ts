@@ -107,9 +107,8 @@ export const createConnectionValidator =
     const allowedPorts = outPortsOfCell(sourceCell)
     if (!allowedPorts.includes(sourcePort)) return false
 
-    // 分支与循环的每个出口只允许接一条边；普通节点的 out 端口可以扇出多条。
-    const singleUsePort =
-      graphKindOfCell(sourceCell) === 'branch' || graphKindOfCell(sourceCell) === 'loop'
+    // 循环出口只允许接一条边；判断分支和普通节点都允许扇出多条。
+    const singleUsePort = graphKindOfCell(sourceCell) === 'loop'
     if (singleUsePort && isSourcePortOccupied(graph, sourceCell.id, sourcePort, edge?.id))
       return false
 

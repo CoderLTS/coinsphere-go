@@ -104,6 +104,15 @@ const MATERIAL_META: Record<string, MaterialMeta> = {
     color: '#9e8cff',
     iconText: 'E'
   },
+  'official.quant.indicator_condition': {
+    kind: 'indicator-condition',
+    group: '行情',
+    description: '组合多个 K 线指标并输出 true / false 分支',
+    color: '#0f766e',
+    iconText: 'Q',
+    width: 280,
+    height: 112
+  },
   'official.quant.backtest': {
     kind: 'generic',
     group: '策略',

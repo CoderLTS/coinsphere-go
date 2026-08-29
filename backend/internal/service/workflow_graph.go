@@ -69,11 +69,17 @@ type workflowGraphEdge struct {
 }
 
 type workflowInputBinding struct {
-	Kind           string          `json:"kind"`
-	NodeInstanceID string          `json:"nodeInstanceId,omitempty"`
-	FieldPath      []string        `json:"fieldPath,omitempty"`
-	Value          json.RawMessage `json:"value,omitempty"`
-	Expression     string          `json:"expression,omitempty"`
+	Kind           string                       `json:"kind"`
+	NodeInstanceID string                       `json:"nodeInstanceId,omitempty"`
+	Sources        []workflowInputBindingSource `json:"sources,omitempty"`
+	FieldPath      []string                     `json:"fieldPath,omitempty"`
+	Value          json.RawMessage              `json:"value,omitempty"`
+	Expression     string                       `json:"expression,omitempty"`
+}
+
+type workflowInputBindingSource struct {
+	NodeInstanceID string `json:"nodeInstanceId"`
+	Branch         string `json:"branch,omitempty"`
 }
 
 type workflowLoopConfig struct {
@@ -223,7 +229,7 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 	if err := validateWorkflowTopology(nodes, adjacency, reverse, triggerID); err != nil {
 		return validatedWorkflowGraph{}, err
 	}
-	if err := validateWorkflowBindings(nodes, descriptors, adjacency); err != nil {
+	if err := validateWorkflowBindings(nodes, descriptors, adjacency, graph.Edges); err != nil {
 		return validatedWorkflowGraph{}, err
 	}
 
@@ -325,7 +331,7 @@ func validateWorkflowLoop(node workflowGraphNode, catalog map[string]sdk.NodeDes
 			return validatedWorkflowLoop{}, fmt.Errorf("body node %q must lead to core.loop_end", id)
 		}
 	}
-	if err := validateWorkflowBindings(nodes, descriptors, adjacency); err != nil {
+	if err := validateWorkflowBindings(nodes, descriptors, adjacency, config.Body.Edges); err != nil {
 		return validatedWorkflowLoop{}, err
 	}
 	return validatedWorkflowLoop{
@@ -437,7 +443,7 @@ func validateWorkflowTopology(nodes map[string]workflowGraphNode, adjacency, rev
 	return nil
 }
 
-func validateWorkflowBindings(nodes map[string]workflowGraphNode, descriptors map[string]sdk.NodeDescriptor, adjacency map[string][]string) error {
+func validateWorkflowBindings(nodes map[string]workflowGraphNode, descriptors map[string]sdk.NodeDescriptor, adjacency map[string][]string, edges []workflowGraphEdge) error {
 	for nodeID, node := range nodes {
 		targetProperties, required := workflowSchemaProperties(descriptors[nodeID].InputSchema)
 		for field := range required {
@@ -452,7 +458,7 @@ func validateWorkflowBindings(nodes map[string]workflowGraphNode, descriptors ma
 			}
 			switch binding.Kind {
 			case "field":
-				if binding.NodeInstanceID == "" || len(binding.FieldPath) == 0 || len(binding.Value) != 0 || binding.Expression != "" {
+				if binding.NodeInstanceID == "" || len(binding.Sources) != 0 || len(binding.FieldPath) == 0 || len(binding.Value) != 0 || binding.Expression != "" {
 					return fmt.Errorf("node %q input binding %q has invalid field mapping", nodeID, field)
 				}
 				if nodes[binding.NodeInstanceID].NodeInstanceID == "" || !workflowPathExists(adjacency, binding.NodeInstanceID, nodeID) {
@@ -463,7 +469,7 @@ func validateWorkflowBindings(nodes map[string]workflowGraphNode, descriptors ma
 					return fmt.Errorf("node %q input binding %q has an unknown or incompatible field path", nodeID, field)
 				}
 			case "literal":
-				if binding.NodeInstanceID != "" || len(binding.FieldPath) != 0 || len(binding.Value) == 0 || binding.Expression != "" {
+				if binding.NodeInstanceID != "" || len(binding.Sources) != 0 || len(binding.FieldPath) != 0 || len(binding.Value) == 0 || binding.Expression != "" {
 					return fmt.Errorf("node %q input binding %q has invalid literal mapping", nodeID, field)
 				}
 				var value any
@@ -471,7 +477,7 @@ func validateWorkflowBindings(nodes map[string]workflowGraphNode, descriptors ma
 					return fmt.Errorf("node %q input binding %q literal has an incompatible type", nodeID, field)
 				}
 			case "cel":
-				if binding.NodeInstanceID != "" || len(binding.FieldPath) != 0 || len(binding.Value) != 0 || strings.TrimSpace(binding.Expression) == "" {
+				if binding.NodeInstanceID != "" || len(binding.Sources) != 0 || len(binding.FieldPath) != 0 || len(binding.Value) != 0 || strings.TrimSpace(binding.Expression) == "" {
 					return fmt.Errorf("node %q input binding %q has invalid CEL mapping", nodeID, field)
 				}
 				ast, err := compileWorkflowCEL(binding.Expression)
@@ -485,12 +491,49 @@ func validateWorkflowBindings(nodes map[string]workflowGraphNode, descriptors ma
 				if celHasArithmetic(expr) && schemaBool(targetSchema, "x-coinsphere-decimal") {
 					return fmt.Errorf("node %q input binding %q must not perform Decimal arithmetic", nodeID, field)
 				}
+			case "condition_entry", "condition_subject", "condition_message":
+				if err := validateWorkflowConditionBinding(nodeID, field, binding, targetSchema, nodes, descriptors, edges); err != nil {
+					return err
+				}
 			case "":
 				return fmt.Errorf("node %q input binding %q kind is required", nodeID, field)
 			default:
 				return fmt.Errorf("node %q input binding %q has unknown kind %q", nodeID, field, binding.Kind)
 			}
 		}
+	}
+	return nil
+}
+
+func validateWorkflowConditionBinding(nodeID, field string, binding workflowInputBinding, targetSchema map[string]any, nodes map[string]workflowGraphNode, descriptors map[string]sdk.NodeDescriptor, edges []workflowGraphEdge) error {
+	if binding.NodeInstanceID != "" || len(binding.FieldPath) != 0 || len(binding.Value) != 0 || binding.Expression != "" || len(binding.Sources) == 0 || len(binding.Sources) > maxWorkflowNodes {
+		return fmt.Errorf("node %q input binding %q has invalid condition sources", nodeID, field)
+	}
+	types := schemaTypes(targetSchema)
+	if binding.Kind == "condition_entry" && !types["boolean"] || binding.Kind != "condition_entry" && !types["string"] {
+		return fmt.Errorf("node %q input binding %q has an incompatible condition target", nodeID, field)
+	}
+	seen := map[string]bool{}
+	for _, source := range binding.Sources {
+		if source.NodeInstanceID == "" || seen[source.NodeInstanceID+"\x00"+source.Branch] || nodes[source.NodeInstanceID].NodeInstanceID == "" ||
+			descriptors[source.NodeInstanceID].Type != "official.quant.indicator_condition" {
+			return fmt.Errorf("node %q input binding %q has an invalid condition source", nodeID, field)
+		}
+		if !containsString(descriptors[source.NodeInstanceID].Branches, source.Branch) ||
+			binding.Kind != "condition_entry" && source.Branch != "true" {
+			return fmt.Errorf("node %q input binding %q has an invalid condition branch", nodeID, field)
+		}
+		direct := false
+		for _, edge := range edges {
+			if edge.SourceNodeInstanceID == source.NodeInstanceID && edge.SourcePort == source.Branch && edge.TargetNodeInstanceID == nodeID {
+				direct = true
+				break
+			}
+		}
+		if !direct {
+			return fmt.Errorf("node %q input binding %q must reference a direct condition edge", nodeID, field)
+		}
+		seen[source.NodeInstanceID+"\x00"+source.Branch] = true
 	}
 	return nil
 }

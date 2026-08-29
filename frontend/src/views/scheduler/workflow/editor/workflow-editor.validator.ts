@@ -217,7 +217,6 @@ export function validateWorkflowDraft(graph: WorkflowDomainGraphModel): Workflow
     if (getNodeGraphKind(node.data.typeCode) === 'branch') {
       const declared = getNodeBranches(node.data.typeCode, node.data.config)
       const seen = new Set(nodeOutgoing.map((edge) => edge.data.branch || edge.sourcePort || ''))
-      const missing = declared.filter((branch) => !seen.has(branch))
       const unknown = Array.from(seen).filter((branch) => !declared.includes(branch))
       if (declared.length < 2) {
         issues.push(
@@ -228,13 +227,13 @@ export function validateWorkflowDraft(graph: WorkflowDomainGraphModel): Workflow
             message: '分支节点至少需要配置两个分支。'
           })
         )
-      } else if (missing.length || unknown.length || nodeOutgoing.length !== declared.length) {
+      } else if (unknown.length) {
         issues.push(
           createIssue({
             scope: 'node',
             level: 'error',
             nodeId: node.id,
-            message: `分支节点必须为每个分支各连一条线：${declared.join(' / ')}`
+            message: `分支节点存在未声明的出口：${declared.join(' / ')}`
           })
         )
       }
@@ -526,6 +525,43 @@ export function validateNodeFormDraft(
       ) {
         errors.push('条件节点必须填写比较值或比较值路径。')
       }
+      break
+    }
+
+    case 'indicator-condition': {
+      if (!['spot', 'usdm'].includes(String(config.market || ''))) errors.push('请选择市场。')
+      if (!/^[A-Z0-9]{2,32}$/.test(String(config.instrument || '')))
+        errors.push('交易对必须使用 2 至 32 位大写字母或数字。')
+      const ids = new Set<string>()
+      let leaves = 0
+      const walk = (item: Record<string, any>, depth: number) => {
+        if (!item || depth > 4) {
+          errors.push('条件树最多嵌套 4 层。')
+          return
+        }
+        const id = String(item.id || '')
+        if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id) || ids.has(id)) {
+          errors.push('每个条件和分组必须具有唯一标识。')
+        }
+        ids.add(id)
+        if (item.kind === 'condition') {
+          leaves += 1
+          if (!String(item.name || '').trim()) errors.push('指标条件名称不能为空。')
+          return
+        }
+        if (
+          item.kind !== 'group' ||
+          !['AND', 'OR'].includes(String(item.operator || '')) ||
+          !Array.isArray(item.children) ||
+          !item.children.length
+        ) {
+          errors.push('条件分组必须选择“全部”或“任一”，并至少包含一项。')
+          return
+        }
+        item.children.forEach((child: Record<string, any>) => walk(child, depth + 1))
+      }
+      walk(config.conditionTree, 1)
+      if (leaves < 1 || leaves > 16) errors.push('一个判断节点必须包含 1 至 16 个指标条件。')
       break
     }
 

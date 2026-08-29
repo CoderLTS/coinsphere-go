@@ -493,7 +493,7 @@ func (a *App) executeWorkflowRun(parent context.Context, run db.WorkflowRun) {
 				continue
 			}
 		}
-		input, err := resolveWorkflowNodeInput(node, outputs, event)
+		input, err := resolveWorkflowNodeInput(node, graph.incoming[nodeID], outputs, event)
 		if err != nil {
 			a.failWorkflowRun(run.ID, "input")
 			return
@@ -611,6 +611,8 @@ func (a *App) executeWorkflowNode(ctx context.Context, run db.WorkflowRun, revis
 		}
 		if json.Unmarshal(result.Output, &output) != nil || output == nil || validateWorkflowSchemaValue(desc.OutputSchema, output) != nil {
 			category, executeErr = "output", errors.New("node output does not match its JSON Schema")
+		} else if branch, _ := output["branch"].(string); len(desc.Branches) > 0 && !containsString(desc.Branches, branch) {
+			category, executeErr = "output", errors.New("node output does not match a declared branch")
 		}
 	}
 	if executeErr != nil {
@@ -820,6 +822,9 @@ func (a *App) buildWorkflowLoopGraph(node workflowGraphNode) (workflowRunGraph, 
 			if binding.NodeInstanceID != "" {
 				binding.NodeInstanceID = mapping[binding.NodeInstanceID]
 			}
+			for index := range binding.Sources {
+				binding.Sources[index].NodeInstanceID = mapping[binding.Sources[index].NodeInstanceID]
+			}
 			runtimeNode.InputBindings[field] = binding
 		}
 		graph.Nodes = append(graph.Nodes, runtimeNode)
@@ -885,7 +890,7 @@ func (a *App) executeWorkflowLoop(ctx context.Context, run db.WorkflowRun, revis
 			}
 			bodyInput := map[string]any{"iteration": iteration, "value": carried}
 			if nodeID != itemID {
-				bodyInput, err = resolveWorkflowNodeInput(bodyNode, outputs, event)
+				bodyInput, err = resolveWorkflowNodeInput(bodyNode, graph.incoming[nodeID], outputs, event)
 				if err != nil {
 					return sdk.ActionResult{}, err
 				}
@@ -953,25 +958,40 @@ func workflowLoopContextError(parent, loop context.Context) error {
 
 func workflowNodeReachable(edges []workflowGraphEdge, outputs map[string]map[string]any, event map[string]string) (bool, error) {
 	for _, edge := range edges {
-		output, completed := outputs[edge.SourceNodeInstanceID]
-		if !completed {
-			continue
-		}
-		if strings.TrimSpace(edge.Condition) == "" {
-			return true, nil
-		}
-		value, err := evaluateWorkflowCEL(edge.Condition, event, output)
+		reached, err := workflowEdgeReached(edge, outputs, event)
 		if err != nil {
 			return false, err
 		}
-		if condition, ok := value.(bool); ok && condition {
+		if reached {
 			return true, nil
 		}
 	}
 	return false, nil
 }
 
-func resolveWorkflowNodeInput(node workflowGraphNode, outputs map[string]map[string]any, event map[string]string) (map[string]any, error) {
+func workflowEdgeReached(edge workflowGraphEdge, outputs map[string]map[string]any, event map[string]string) (bool, error) {
+	output, completed := outputs[edge.SourceNodeInstanceID]
+	if !completed {
+		return false, nil
+	}
+	if edge.SourcePort != "out" {
+		branch, _ := output["branch"].(string)
+		if branch != edge.SourcePort {
+			return false, nil
+		}
+	}
+	if strings.TrimSpace(edge.Condition) == "" {
+		return true, nil
+	}
+	value, err := evaluateWorkflowCEL(edge.Condition, event, output)
+	if err != nil {
+		return false, err
+	}
+	condition, _ := value.(bool)
+	return condition, nil
+}
+
+func resolveWorkflowNodeInput(node workflowGraphNode, incoming []workflowGraphEdge, outputs map[string]map[string]any, event map[string]string) (map[string]any, error) {
 	input := make(map[string]any, len(node.InputBindings))
 	celInput := flattenWorkflowOutputs(outputs)
 	for field, binding := range node.InputBindings {
@@ -994,9 +1014,84 @@ func resolveWorkflowNodeInput(node workflowGraphNode, outputs map[string]map[str
 				return nil, fmt.Errorf("input CEL %q failed", field)
 			}
 			input[field] = value
+		case "condition_entry":
+			value, err := workflowConditionPathEntered(binding.Sources, incoming, outputs, event)
+			if err != nil {
+				return nil, fmt.Errorf("input condition path %q failed", field)
+			}
+			input[field] = value
+		case "condition_subject", "condition_message":
+			value, err := workflowConditionNotificationValue(binding.Kind, binding.Sources, incoming, outputs, event)
+			if err != nil {
+				return nil, fmt.Errorf("input condition notification %q failed", field)
+			}
+			input[field] = value
 		}
 	}
 	return input, nil
+}
+
+func workflowConditionPathEntered(sources []workflowInputBindingSource, incoming []workflowGraphEdge, outputs map[string]map[string]any, event map[string]string) (bool, error) {
+	for _, source := range sources {
+		output := outputs[source.NodeInstanceID]
+		entered, _ := output["entered"].(bool)
+		if !entered {
+			continue
+		}
+		for _, edge := range incoming {
+			if edge.SourceNodeInstanceID != source.NodeInstanceID || edge.SourcePort != source.Branch {
+				continue
+			}
+			reached, err := workflowEdgeReached(edge, outputs, event)
+			if err != nil {
+				return false, err
+			}
+			if reached {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func workflowConditionNotificationValue(kind string, sources []workflowInputBindingSource, incoming []workflowGraphEdge, outputs map[string]map[string]any, event map[string]string) (string, error) {
+	values := make([]string, 0, len(sources))
+	for _, source := range sources {
+		output := outputs[source.NodeInstanceID]
+		triggered, _ := output["triggered"].(bool)
+		if !triggered {
+			continue
+		}
+		reached := false
+		for _, edge := range incoming {
+			if edge.SourceNodeInstanceID != source.NodeInstanceID || edge.SourcePort != source.Branch {
+				continue
+			}
+			var err error
+			reached, err = workflowEdgeReached(edge, outputs, event)
+			if err != nil {
+				return "", err
+			}
+			if reached {
+				break
+			}
+		}
+		if !reached {
+			continue
+		}
+		field := "summary"
+		if kind == "condition_subject" {
+			field = "businessKey"
+		}
+		if value, _ := output[field].(string); value != "" {
+			values = append(values, value)
+		}
+	}
+	if kind == "condition_subject" {
+		digest := sha256.Sum256([]byte(strings.Join(values, "\x00")))
+		return "quant-condition:" + hex.EncodeToString(digest[:16]), nil
+	}
+	return truncateWorkflowText(strings.Join(values, "\n"), 2000), nil
 }
 
 func flattenWorkflowOutputs(outputs map[string]map[string]any) map[string]any {

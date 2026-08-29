@@ -80,7 +80,7 @@
 
 ## SDK
 
-Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、执行池、副作用等级和状态模式。需要校验的 Schema 必须声明 JSON Schema 2020-12。
+Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、可选固定 `Branches`、执行池、副作用等级和状态模式。需要校验的 Schema 必须声明 JSON Schema 2020-12。分支节点输出 `branch` 后，运行时先选择同名端口，再执行该边原有 Boolean CEL；端口允许零条或多条出边，图仍必须是 DAG，目标节点类型不受限制。
 
 `ActionRequest` 包含固定工作流/修订、节点实例 ID、稳定操作键、已解析输入和配置，以及 SecretReader、StateStore、ArtifactStore 和结构化 Logger。`ActionResult` 只返回 JSON 输出和制品引用。契约测试和工作流运行时使用同一 Registry 与 Handler 接口。
 
@@ -96,7 +96,11 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 
 内置 `official.connector` 提供 HTTP Action、Webhook Trigger、WebSocket Trigger 和运行诊断结果页；`official.ai` 提供 OpenAI-compatible 结构化模型调用和结果页。两者只访问 `workflow.http_allowed_hosts` 的精确公共域名，禁用环境代理，拨号前后解析并拒绝非公网 IP。Binance 只允许明确列出的公共 GET/公共 WebSocket，授权、私有或未知端点一律拒绝。AI 节点只接收/返回 JSON 对象，不能控制工作流生命周期或交易。
 
-内置 `official.quant` 提供 `binance_candles` Trigger、`sync_instruments`/`evaluate`/`backtest`/`signal`/`paper_execute` Action、可信 SMA crossover 策略和移动可用结果页。`sync_instruments` 在所有选中 Spot/USD-M 公共元数据均成功解析后，用事务级 advisory lock 原子替换当前工作流的过滤快照；白名单取交集、黑名单任一命中即排除，全局目录取全部工作流来源并集。应用首次缺少该节点时创建并激活北京时间每六小时运行的默认工作流并立即首跑，后续启动不重新激活已停用工作流。K 线连接只负责补数和实时采集，按 `market + instrument + interval` 合并订阅并发布 `market.candle.closed`；重复 REST/WebSocket 数据由 K 线键和 CloudEvent `(source,id)` 去重。策略只接收升序、连续、UTC 闭合 K 线和已校验参数，返回 `-1` 至 `1` 的 Decimal 目标；实时、回测与 Paper 调用同一 `Evaluate`。
+内置 `official.quant` 提供 `binance_candles` Trigger、`sync_instruments`/`evaluate`/`indicator_condition`/`backtest`/`signal`/`paper_execute` Action、可信 SMA crossover 策略和移动可用结果页。`sync_instruments` 在所有选中 Spot/USD-M 公共元数据均成功解析后，用事务级 advisory lock 原子替换当前工作流的过滤快照；白名单取交集、黑名单任一命中即排除，全局目录取全部工作流来源并集。应用首次缺少该节点时创建并激活北京时间每六小时运行的默认工作流并立即首跑，后续启动不重新激活已停用工作流。K 线连接只负责补数和实时采集，按 `market + instrument + interval` 合并订阅并发布 `market.candle.closed`；重复 REST/WebSocket 数据由 K 线键和 CloudEvent `(source,id)` 去重。策略只接收升序、连续、UTC 闭合 K 线和已校验参数，返回 `-1` 至 `1` 的 Decimal 目标；实时、回测与 Paper 调用同一 `Evaluate`。
+
+`official.quant.indicator_condition@1.0.0` 固定市场、交易对和检查周期，一个实例保存最多 4 层、16 个叶子的 `AND/OR` 条件树；叶子可分别选择 K 线周期及放量、首尾涨跌/振幅、MACD、KDJ、Wilder RSI 或布林带。每个周期只读取一次所需最大回看，并在当前与上一个检查时点分别截取当时已闭合的 K 线，禁止未来数据；K 线断档、非法参数和数据库错误使节点失败，任一条件历史不足则 `ready=false` 并走 `false`。EMA、RSI、KDJ、布林标准差和有界平方根全部使用确定性 Decimal。
+
+判断输出包含 `matched`、`previousMatched`、`branch`、`entered`、`triggered`、叶子结果、UTC 时间、业务键和中文摘要。`branch` 始终反映当前组合结果，连续命中仍执行下游；`entered` 会沿判断节点连线传播路径重新进入状态，`triggered` 只在整体重新进入 true 路径时成立。编辑器连接判断节点到 `official.notification.in_app` 时自动附加 `input.triggered == true`，并按节点顺序聚合本次触发的业务键和摘要，因此连续命中只通知一次，恢复后再次命中会重新通知。
 
 Paper 账户按 `workflowId + paper nodeInstanceId` 唯一。默认人工审批；自动模式只有在最大总名义价值、单品种名义价值、单次操作名义价值、最大日亏损和最大回撤全部显式配置时有效。批准后重新读取 Binance 公共报价，并在一个数据库事务中检查信号/任务状态、报价新鲜度、品种状态、数量步进、账户状态及五项风险限制。拒绝不会创建账户或账本；成功执行写入不可变订单、成交、费用和账本事实，再更新账户与持仓投影。操作键和唯一约束保证节点重试、进程重启及 Outbox 重投不重复成交或投递。
 

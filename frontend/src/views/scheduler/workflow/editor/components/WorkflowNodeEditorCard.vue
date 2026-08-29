@@ -263,6 +263,20 @@
             />
           </template>
 
+          <template v-else-if="localForm.kind === 'indicator-condition'">
+            <WorkflowSchemaFields
+              :schema="configSchema"
+              :ui-schema="uiSchema"
+              :config="localForm.config"
+              :keys="['market', 'instrument', 'checkInterval']"
+              @update="handleSchemaFieldUpdate"
+            />
+            <QuantConditionTreeEditor
+              :model-value="localForm.config.conditionTree"
+              @update:model-value="handleIndicatorTreeUpdate"
+            />
+          </template>
+
           <template v-else-if="localForm.kind === 'foreach'">
             <WorkflowSchemaFields
               :schema="configSchema"
@@ -482,6 +496,7 @@
   } from '../types'
   import { getNodeConfigSchema, getNodeUISchema } from '../node-registry'
   import WorkflowSchemaFields from './WorkflowSchemaFields.vue'
+  import QuantConditionTreeEditor from './QuantConditionTreeEditor.vue'
 
   interface Props {
     node: WorkflowDomainNode
@@ -525,6 +540,7 @@
     'start.event': '开始节点（事件触发）',
     'start.webhook': '开始节点（Webhook 触发）',
     'condition.branch': '条件判断节点',
+    'official.quant.indicator_condition': '量化指标判断节点',
     foreach: '遍历节点',
     notify: '通知节点',
     'event.publish': '发布事件节点',
@@ -536,6 +552,7 @@
   const NODE_KIND_LABELS: Record<string, string> = {
     start: '开始节点',
     condition: '判断节点',
+    'indicator-condition': '量化指标判断节点',
     foreach: '遍历节点',
     notify: '通知节点',
     event: '事件节点',
@@ -813,6 +830,11 @@
   /** schema 驱动的字段改动统一走这里写回草稿：子组件不直接改 config，改动来源单一好追。 */
   const handleSchemaFieldUpdate = (key: string, value: any) => {
     localForm.config[key] = value
+    emitModel()
+  }
+
+  const handleIndicatorTreeUpdate = (value: Record<string, any>) => {
+    localForm.config.conditionTree = value
     emitModel()
   }
 

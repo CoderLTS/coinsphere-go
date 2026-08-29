@@ -39,6 +39,7 @@ type NodeDescriptor struct {
 	Type         string
 	Version      string
 	Kind         NodeKind
+	Branches     []string
 	ConfigSchema json.RawMessage
 	UISchema     json.RawMessage
 	InputSchema  json.RawMessage

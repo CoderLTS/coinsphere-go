@@ -140,7 +140,9 @@ func (r *Registry) Action(nodeType string) (NodeDescriptor, ActionHandler, bool)
 	if !ok || node.action == nil {
 		return NodeDescriptor{}, nil, false
 	}
-	return node.desc, node.action, true
+	desc := node.desc
+	desc.Branches = append([]string(nil), desc.Branches...)
+	return desc, node.action, true
 }
 
 func (r *Registry) Trigger(nodeType string) (NodeDescriptor, TriggerHandler, bool) {
@@ -148,7 +150,9 @@ func (r *Registry) Trigger(nodeType string) (NodeDescriptor, TriggerHandler, boo
 	if !ok || node.trigger == nil {
 		return NodeDescriptor{}, nil, false
 	}
-	return node.desc, node.trigger, true
+	desc := node.desc
+	desc.Branches = append([]string(nil), desc.Branches...)
+	return desc, node.trigger, true
 }
 
 func (r *Registry) Strategy(strategyID string) (StrategyDescriptor, Strategy, bool) {
@@ -232,6 +236,7 @@ func (r *Registry) Nodes() []NodeDescriptor {
 	nodes := make([]NodeDescriptor, 0, len(r.nodes))
 	for _, node := range r.nodes {
 		desc := node.desc
+		desc.Branches = append([]string(nil), desc.Branches...)
 		desc.ConfigSchema = append(json.RawMessage(nil), desc.ConfigSchema...)
 		desc.UISchema = append(json.RawMessage(nil), desc.UISchema...)
 		desc.InputSchema = append(json.RawMessage(nil), desc.InputSchema...)
@@ -453,6 +458,16 @@ func validateNodeDescriptor(desc NodeDescriptor) error {
 	}
 	if desc.State != StateStateless && desc.State != StatePersistent {
 		return fmt.Errorf("node %q has invalid state mode %q", desc.Type, desc.State)
+	}
+	branches := map[string]bool{}
+	for _, branch := range desc.Branches {
+		if branch == "out" || !contributionKeyPattern.MatchString(branch) || branches[branch] {
+			return fmt.Errorf("node %q has invalid or duplicate branch %q", desc.Type, branch)
+		}
+		branches[branch] = true
+	}
+	if len(desc.Branches) == 1 {
+		return fmt.Errorf("node %q must declare zero or at least two branches", desc.Type)
 	}
 	for name, schema := range map[string]json.RawMessage{
 		"configSchema": desc.ConfigSchema, "inputSchema": desc.InputSchema, "outputSchema": desc.OutputSchema,

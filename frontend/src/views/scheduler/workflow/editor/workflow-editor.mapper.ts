@@ -426,6 +426,9 @@ const buildNodeCollapsedSummary = (node: WorkflowDomainNode) => {
       )
     }
 
+    case 'indicator-condition':
+      return truncateText(String(config.conditionTree?.operator || 'AND') + ' 条件组合')
+
     case 'foreach':
       return truncateText(String(config.itemsPath || '遍历数组输入'))
 
@@ -624,12 +627,70 @@ export function mapServerGraphToDomain(
 
 export function mapDomainGraphToServer(graph: WorkflowDomainGraphModel): WorkflowGraph {
   const nodeMap = new Map(graph.nodes.map((node) => [node.id, node]))
+  const nodeOrder = new Map(graph.nodes.map((node, index) => [node.id, index]))
+  const conditionType = 'official.quant.indicator_condition'
+  const notifyType = 'official.notification.in_app'
+  const incomingConditions = (targetID: string, branch?: string) =>
+    graph.edges
+      .filter((edge) => edge.target === targetID && (!branch || edge.data.branch === branch))
+      .map((edge) => {
+        const source = nodeMap.get(edge.source)
+        return source?.data.typeCode === conditionType
+          ? {
+              nodeInstanceId: edge.source,
+              ...(edge.data.branch ? { branch: edge.data.branch } : {})
+            }
+          : null
+      })
+      .filter(Boolean)
+      .sort(
+        (left, right) =>
+          (nodeOrder.get(left!.nodeInstanceId) || 0) - (nodeOrder.get(right!.nodeInstanceId) || 0)
+      ) as { nodeInstanceId: string; branch?: string }[]
+  const inputBindingsForNode = (node: WorkflowDomainNode) => {
+    const existing: Record<string, any> =
+      node.data.config?.__inputBindings && typeof node.data.config.__inputBindings === 'object'
+        ? { ...node.data.config.__inputBindings }
+        : {}
+    const conditionSources = incomingConditions(node.id)
+    if (node.data.typeCode === conditionType) {
+      if (!existing.eventTime) {
+        existing.eventTime = {
+          kind: 'cel',
+          expression: '"time" in event ? event.time : event.triggeredAt'
+        }
+      }
+      if (conditionSources.length) {
+        existing.pathEntered = { kind: 'condition_entry', sources: conditionSources }
+      } else if (existing.pathEntered?.kind === 'condition_entry') {
+        delete existing.pathEntered
+      }
+    }
+    const notificationSources = incomingConditions(node.id, 'true')
+    if (node.data.typeCode === notifyType && notificationSources.length) {
+      existing.subjectKey = { kind: 'condition_subject', sources: notificationSources }
+      existing.message = { kind: 'condition_message', sources: notificationSources }
+    } else if (node.data.typeCode === notifyType) {
+      if (existing.subjectKey?.kind === 'condition_subject') delete existing.subjectKey
+      if (existing.message?.kind === 'condition_message') delete existing.message
+    }
+    return existing
+  }
+  const notificationCondition = (edge: WorkflowDomainEdge) => {
+    const original = edge.data.label || ''
+    const trigger = 'input.triggered == true'
+    if (original.split('&&').some((part) => part.trim() === trigger)) return original
+    return original ? `(${original}) && ${trigger}` : trigger
+  }
   return {
     nodes: graph.nodes.map((node) => ({
       id: node.id,
       type: node.data.typeCode,
       label: node.data.title,
-      config: cloneConfig(node.data.config || {}),
+      config: {
+        ...cloneConfig(node.data.config || {}),
+        __inputBindings: inputBindingsForNode(node)
+      },
       position: {
         x: Math.round(node.position.x),
         y: Math.round(node.position.y)
@@ -644,7 +705,12 @@ export function mapDomainGraphToServer(graph: WorkflowDomainGraphModel): Workflo
         edge.sourcePort,
         edge.data.branch
       ),
-      label: edge.data.label || ''
+      label:
+        nodeMap.get(edge.source)?.data.typeCode === conditionType &&
+        nodeMap.get(edge.target)?.data.typeCode === notifyType &&
+        edge.data.branch === 'true'
+          ? notificationCondition(edge)
+          : edge.data.label || ''
     }))
   }
 }
