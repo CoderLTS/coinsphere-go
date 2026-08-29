@@ -38,7 +38,7 @@ Pop-Location
 
 ## 插件清单校验
 
-P0-B 可以只读检查一个或多个本地插件源码目录：
+可以只读检查一个或多个本地插件源码目录：
 
 ```powershell
 Push-Location .\backend
@@ -47,6 +47,8 @@ Pop-Location
 ```
 
 命令严格解析每个 `coinsphere-plugin.json`，校验 Core/SDK 版本、插件目录边界、后端 `go.mod` 模块名、migration 版本和重复插件 ID，以及 Go/Vue 静态注册表能否确定性生成。它不会复制源码、执行 migration、更新依赖、写入注册表或重建 Compose。
+
+插件最小目录、manifest、SDK、Vue 页面、migration 和契约测试见[插件开发指南](../plugin-development.md)。
 
 ## 插件安装与生命周期
 
@@ -68,10 +70,10 @@ go run ./cmd/coinsphere plugin purge-data --config ./config.yml --backend-root .
 ```powershell
 Invoke-WebRequest http://127.0.0.1:6987/health/live
 Invoke-WebRequest http://127.0.0.1:6987/health/ready
-Invoke-WebRequest http://127.0.0.1:6987/metrics
+Invoke-WebRequest http://127.0.0.1:6987/metrics -Headers @{ Authorization = 'Bearer <access-token>' }
 ```
 
-`/health/live` 只表示进程能响应；`/health/ready` 和兼容 `/health` 在一秒预算内 Ping PostgreSQL。`/metrics` 只包含固定的无标签进程指标。日志写标准输出，以 `request_id` 关联请求；不得把 DSN、原始载荷、令牌或凭据拼入命令和日志。
+`/health/live` 只表示进程能响应；`/health/ready` 和兼容 `/health` 在一秒预算内 Ping PostgreSQL。`/metrics` 要求有效登录 Token，只包含固定的无标签进程指标。日志写标准输出，以 `request_id` 关联请求；不得把 DSN、原始载荷、令牌或凭据拼入命令和日志。
 
 浏览器测试使用本地 Web Server 和后端路由 Mock，不访问公网、真实凭据或生产服务：
 

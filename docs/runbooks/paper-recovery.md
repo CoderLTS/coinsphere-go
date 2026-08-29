@@ -4,7 +4,7 @@
 
 ## 验证基线
 
-P4 合并前保留 Backend 构建、静态分析、容器健康检查、数据库备份恢复脚本和本手册人工演练记录。不得把未执行或跳过的恢复步骤写成已完成。
+开始正式 Paper 观察前，保留 Backend 构建、静态分析、容器健康检查、数据库备份恢复脚本和本手册人工演练记录。不得把未执行或跳过的恢复步骤写成已完成。
 
 ## 演练前记录
 
@@ -46,4 +46,4 @@ curl --fail-with-body -X POST \
 
 ## 观察门禁
 
-使用 [Paper 观察证据模板](../templates/paper-observation-evidence.md)记录 CI、发布、恢复、账本和视觉验收链接。只有用户确认这些证据满足要求后才能开始正式 Paper 观察；P4 发布和部署本身不构成观察、Testnet 或 Live 放行。
+使用 [Paper 观察证据模板](../templates/paper-observation-evidence.md)记录 CI、发布、恢复、账本和视觉验收链接。只有用户确认这些证据满足要求后才能开始正式 Paper 观察；代码合并、发布和部署本身不构成观察、Testnet 或 Live 放行。

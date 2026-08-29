@@ -8,7 +8,7 @@
 - `backend`：认证、RBAC、工作流执行、系统管理和监控 API，文件位于部署目录 `data/backend`。
 - `web`：唯一对外 Web 入口。
 
-Migration 由目标 Backend 镜像中的 `coinsphere-migrate` 在启动服务前一次性执行，不是常驻服务。Python Worker、Worker 卷和 Private Executor 不属于 V2 部署拓扑。
+Migration 由目标 Backend 镜像中的 `coinsphere-migrate` 在启动服务前一次性执行，不是常驻服务。Python Worker、Worker 卷和 Private Executor 不属于当前部署拓扑。
 
 CoinSphere 不再部署到 sub2api 或其他应用的 Compose 项目。发布只操作旧的 CoinSphere 容器和新的 `coinsphere-go` 项目，不执行其他项目的 `down`，也不删除旧数据库或数据目录。
 
@@ -25,7 +25,7 @@ CoinSphere 不再部署到 sub2api 或其他应用的 Compose 项目。发布只
 ## 发布流程
 
 1. 目标 PR 合并到最新 `main`，CI 和最终只读复审通过。
-2. 涉及 Paper 时，按[数据库迁移手册](database-migrations.md)保存一致备份，并在发布记录中把目标 commit 记为 migration freeze 提交。
+2. 涉及 Paper 时，按[数据库迁移手册](database-migrations.md)保存一致备份；只有首次进入正式 Paper 观察时，才在发布记录中把目标 commit 记为 migration freeze 提交。
 3. 在 GitHub Actions 手工运行 `Release and deploy`，输入未使用的 `vX.Y.Z`。
 4. 工作流构建并推送 Backend/Web 固定 digest。
 5. `deploy/production/deploy.sh` 拉取镜像，停止 CoinSphere 旧服务，并对共享 PostgreSQL 执行目标镜像内 migration。
@@ -41,7 +41,7 @@ bash deploy/production/deploy.sh vX.Y.Z /path/to/release-manifest.json
 
 ## 首次独立部署
 
-首次独立部署创建 `data/backend`，并在空的 `coinsphere_go` 数据库应用当前 migration。后续部署默认只执行 Up，不自动重置数据库、执行 Down 或删除数据；V2 破坏性基线必须按独立 migration PR 和数据库 Runbook 获得明确授权。
+首次独立部署创建 `data/backend`，并在空的 `coinsphere_go` 数据库应用当前 migration。后续部署默认只执行 Up，不自动重置数据库、执行 Down 或删除数据；任何破坏性基线变更必须按独立 migration PR 和数据库 Runbook 获得明确授权。
 
 部署成功后确认：
 
@@ -64,6 +64,6 @@ curl -fsS http://127.0.0.1:8080/health
 
 ## 安全边界
 
-V2 部署不包含 Testnet、Live 或交易所私有接口。发布、CI、Codex 和工作流不得提供真实交易凭据、自动下单、打开交易开关或解除急停。
+当前部署不包含 Testnet、Live 或交易所私有接口。发布、CI、Codex 和工作流不得提供真实交易凭据、自动下单、打开交易开关或解除急停。
 
 部署后的 Paper 重启、积压与账本验证按 [Paper 恢复与观察](paper-recovery.md)执行；发布成功不自动开始正式 Paper 观察。

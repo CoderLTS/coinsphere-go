@@ -1,8 +1,6 @@
 # CoinSphere
 
-CoinSphere 正在重构为以可视化工作流为核心、由编译期插件提供业务能力的通用平台。项目保持 Vue、Go 模块化单体和 PostgreSQL 技术栈。
-
-> V2 已交付 P0-P4 代码基线。超级管理员可以运行批次、事件与连续流工作流，并使用 Connector/AI、Binance 公共行情、可信 Go 策略、回测、Paper 和通知；普通用户通过固定范围共享结果完成观察与授权操作。
+CoinSphere 是以可视化工作流为核心、由编译期可信插件提供业务能力的个人自托管量化平台。当前系统采用 Vue 3、单实例 Go 模块化单体和 PostgreSQL 16；超级管理员可以运行批次、事件与连续流工作流，普通用户通过固定范围的共享结果完成观察与授权操作。
 
 ## 当前能力
 
@@ -14,8 +12,8 @@ CoinSphere 正在重构为以可视化工作流为核心、由编译期插件提
 | 工作流、修订、事件、批次和活动 API   | `/api/v1`       | 超级管理员可用；Webhook 使用独立 Secret           |
 | Schema 工作台、人工任务和历史制品    | Web             | 可用；移动端提供只读活动视图                      |
 | Connector、AI 与连续流               | 工作流节点      | 默认外部域名白名单为空，不含交易私有接口          |
-| Quant 公共行情、策略、回测与 Paper     | 工作流 + 结果页 | 支持 Binance Spot/USD-M 公共接口，不含真实交易    |
-| Notification 与共享结果               | 工作流 + 结果页 | 站内幂等投递、固定范围授权与移动端审批            |
+| Quant 公共行情、策略、回测与 Paper   | 工作流 + 结果页 | 支持 Binance Spot/USD-M 公共接口，不含真实交易    |
+| Notification 与共享结果             | 工作流 + 结果页 | 站内幂等投递、固定范围授权与移动端审批            |
 | 旧工作流、新闻、策略、交易和通知接口  | -               | 已从公开运行面移除                                |
 
 详细操作见[使用手册](docs/user-guide.md)，接口语义见[公共契约](docs/contracts/README.md)。
@@ -66,17 +64,16 @@ docker compose down
 ## 目录
 
 ```text
-backend/             Go App、V2 基线 migration 与系统管理模块
+backend/             Go App、版本化 migration、工作流与系统模块
 frontend/            Vue 3 + Vite Web
-plugins/             测试插件与后续官方插件源码
 deploy/production/   生产 Compose 模板
-docs/                架构、契约、开发计划、质量门禁和 Runbook
+docs/                架构、契约、代码/插件指南、质量门禁和 Runbook
 scripts/             验证、发布和部署脚本
 ```
 
 ## 开发
 
-本地工具链为 Go 1.26、Node.js 24、pnpm 10.33 和 PostgreSQL 16。全量验证：
+本地工具链为 Go 1.26.6、Node.js 24、pnpm 10.33 和 PostgreSQL 16。全量验证：
 
 ```powershell
 .\scripts\verify.ps1
@@ -91,9 +88,10 @@ scripts/             验证、发布和部署脚本
 ## 文档
 
 - [使用手册](docs/user-guide.md)：安装、系统管理、插件、备份、升级和排障
-- [架构说明](docs/architecture/overview.md)：系统边界、组件职责和关键数据流
+- [当前架构](docs/architecture/overview.md)：系统边界、组件职责、状态流与数据所有权
+- [代码结构](docs/code-structure.md)：目录、模块职责和常见修改入口
+- [插件开发指南](docs/plugin-development.md)：manifest、SDK、Vue、migration、测试和生命周期
 - [公共契约](docs/contracts/README.md)：`/api/v1`、插件 SDK 和生命周期语义
-- [开发计划](docs/roadmap/README.md)：能力顺序、完成标准和晋级门禁
 - [质量门禁](docs/quality/quality-gates.md)：测试与验收要求
 - [发布与回滚](docs/runbooks/release.md)：手工发布、固定 digest 部署和回滚
 - [Paper 恢复与观察](docs/runbooks/paper-recovery.md)：重启、积压、账本重建与观察证据
@@ -104,4 +102,4 @@ scripts/             验证、发布和部署脚本
 - Codex、CI 和工作流不接触真实交易密钥，不启用 Live 开关，也不解除全局急停。
 - 工作流和通用 HTTP 节点不能调用交易所私有接口、创建交易命令或绕过风控。
 - 新交易能力默认关闭；缺少完整风控、匹配对账、管理员授权或 Owner 手工放行时保持禁用。
-- 个人部署应优先使用 Paper。启用任何私有交易能力前，先完成对应开发计划门禁和独立安全评审。
+- 个人部署应优先使用 Paper。任何私有交易能力必须先建立独立 ADR、安全边界、观察证据和用户手工放行。

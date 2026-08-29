@@ -3,7 +3,7 @@
 写给完全没接触过 Go 的人。目标不是教你成为 Go 专家,而是让你**读得懂 `backend/` 里的每一段代码**。
 代码里的行内注释会引用本文的小节名(如"见 GO入门笔记『并发』"),所以基础概念只在这里讲一遍。
 
-配套阅读顺序建议:`main.go`(入口)→ `internal/config` → `internal/db` → `internal/api` → `internal/service`。
+配套阅读顺序建议：先看[代码结构](../docs/code-structure.md)，再按 `main.go`（入口）→ `internal/config` → `internal/db` → `internal/api` → `internal/service` 阅读。
 
 ---
 

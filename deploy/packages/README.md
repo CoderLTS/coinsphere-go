@@ -6,4 +6,4 @@
 
 Windows 包的后端目标架构为 `GOOS=windows GOARCH=386`；Linux 包为 `GOOS=linux GOARCH=amd64`。
 
-启动后端前必须先执行 migration。V2 不包含 Testnet、Live 或 Private Executor。
+启动后端前必须先执行 migration。当前发布包不包含 Testnet、Live 或 Private Executor。系统模块与运行拓扑见[当前架构](../../docs/architecture/overview.md)。
