@@ -240,6 +240,10 @@
             >
           </article>
         </section>
+
+        <section v-if="hasAuth('system.logs.view')" class="home-log-section">
+          <SystemLogsPanel ref="logsPanel" />
+        </section>
       </template>
 
       <div v-else-if="!loading" class="empty-state">
@@ -258,14 +262,17 @@
   import { SystemThemeEnum } from '@/enums/appEnum'
   import { useTheme } from '@/hooks/core/useTheme'
   import { useSettingStore } from '@/store/modules/setting'
+  import { useAuth } from '@/hooks/core/useAuth'
   import { fetchHomeOverview, type HomeOverview } from '@/api/home'
   import { formatDateTime } from '@/utils/date'
+  import SystemLogsPanel from './components/SystemLogsPanel.vue'
 
   defineOptions({ name: 'HomePage' })
 
   type Tone = 'blue' | 'green' | 'red' | 'purple' | 'cyan'
 
   const router = useRouter()
+  const { hasAuth } = useAuth()
   const settingStore = useSettingStore()
   const { isDark } = storeToRefs(settingStore)
   const { switchThemeStyles } = useTheme()
@@ -274,8 +281,10 @@
   const refreshedAt = ref('')
   const selectedRange = ref(60)
   const chartHost = ref<HTMLElement>()
+  const logsPanel = ref<{ refresh: () => Promise<void> }>()
   let chart: echarts.ECharts | null = null
   let timer: number | null = null
+  let logRefreshTimer: number | null = null
   let resizeObserver: ResizeObserver | null = null
 
   const toggleTheme = () => {
@@ -596,12 +605,17 @@
       await nextTick()
       renderChart()
       observeChart()
+      if (logsPanel.value) {
+        if (logRefreshTimer !== null) window.clearTimeout(logRefreshTimer)
+        logRefreshTimer = window.setTimeout(() => void logsPanel.value?.refresh(), 400)
+      }
     } finally {
       loading.value = false
     }
   }
   const schedule = () => {
     if (timer !== null) window.clearInterval(timer)
+    if (logRefreshTimer !== null) window.clearTimeout(logRefreshTimer)
     timer = document.hidden ? null : window.setInterval(() => void loadOverview(), 15000)
   }
   const visibilityChanged = () => {
@@ -619,6 +633,7 @@
   })
   onBeforeUnmount(() => {
     if (timer !== null) window.clearInterval(timer)
+    if (logRefreshTimer !== null) window.clearTimeout(logRefreshTimer)
     document.removeEventListener('visibilitychange', visibilityChanged)
     resizeObserver?.disconnect()
     chart?.dispose()
@@ -646,6 +661,10 @@
     color: var(--ops-ink);
     background: var(--ops-bg);
     border-radius: 18px;
+  }
+
+  .home-log-section {
+    margin-top: 16px;
   }
 
   .dashboard-shell {

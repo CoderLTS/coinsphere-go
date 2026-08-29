@@ -472,21 +472,6 @@ func (a *App) ListSystemLogs(ctx context.Context, query SystemLogQuery) (M, erro
 	return cursorResult(records, query.Page, lastKey, hasMore, total), nil
 }
 
-func (a *App) DeleteSystemLogs(ctx context.Context, query SystemLogQuery) (M, error) {
-	if !query.hasFilter() {
-		return nil, errors.New("at least one log filter is required")
-	}
-	q, err := a.systemLogQuery(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-	result := q.Delete(&db.SystemLog{})
-	if result.Error != nil {
-		return nil, result.Error
-	}
-	return M{"deletedCount": result.RowsAffected}, nil
-}
-
 func (a *App) GetSystemLogRuntime() (SystemLogRuntimeStatus, error) {
 	if a.SystemLogs == nil {
 		return SystemLogRuntimeStatus{}, errors.New("system log runtime is unavailable")
@@ -543,13 +528,6 @@ func (a *App) systemLogQuery(ctx context.Context, query SystemLogQuery) (*gorm.D
 		q = q.Where("message ILIKE ? OR request_id ILIKE ?", pattern, pattern)
 	}
 	return q, nil
-}
-
-func (q SystemLogQuery) hasFilter() bool {
-	return q.StartTime != nil || q.EndTime != nil || strings.TrimSpace(q.Level) != "" ||
-		strings.TrimSpace(q.Component) != "" || strings.TrimSpace(q.RequestID) != "" || q.UserID != nil ||
-		strings.TrimSpace(q.Method) != "" || strings.TrimSpace(q.Route) != "" || q.StatusCode != nil ||
-		strings.TrimSpace(q.Keyword) != ""
 }
 
 func serializeSystemLog(row *db.SystemLog) M {

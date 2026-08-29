@@ -70,9 +70,7 @@
             </div>
 
             <div class="form-options">
-              <ElCheckbox v-model="formData.rememberPassword">{{
-                $t('login.rememberPwd')
-              }}</ElCheckbox>
+              <ElCheckbox v-model="formData.keepLoggedIn">{{ $t('login.rememberPwd') }}</ElCheckbox>
               <span class="session-note"
                 ><ArtSvgIcon icon="ri:shield-check-line" /> {{ $t('login.sessionNote') }}</span
               >
@@ -134,7 +132,7 @@
   const formData = reactive({
     username: '',
     password: '',
-    rememberPassword: true
+    keepLoggedIn: false
   })
 
   const rules = computed<FormRules>(() => ({
@@ -184,11 +182,12 @@
       loading.value = true
 
       // 登录请求
-      const { username, password } = formData
+      const { username, password, keepLoggedIn } = formData
 
       const { accessToken } = await fetchLogin({
         username,
-        password
+        password,
+        keepLoggedIn
       })
 
       // 验证token

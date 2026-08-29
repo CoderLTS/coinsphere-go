@@ -14,6 +14,18 @@ func (a *App) GetHomeMeta() M {
 	}
 }
 
+func (a *App) ListInstalledPlugins() []M {
+	plugins := a.Plugins.Plugins()
+	result := make([]M, 0, len(plugins))
+	for _, plugin := range plugins {
+		result = append(result, M{
+			"id": plugin.ID, "name": plugin.Name, "version": plugin.Version,
+			"contributes": plugin.Contributes, "status": "loaded",
+		})
+	}
+	return result
+}
+
 func (a *App) GetHomeOverview(ctx context.Context) (M, error) {
 	database := a.DB.WithContext(ctx)
 	sqlDB, err := database.DB()

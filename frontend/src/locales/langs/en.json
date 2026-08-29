@@ -173,8 +173,8 @@
     },
     "sliderText": "Please slide to verify",
     "sliderSuccessText": "Verification successful",
-    "rememberPwd": "Remember password",
-    "sessionNote": "Secure session enabled",
+    "rememberPwd": "Keep me signed in for 30 days",
+    "sessionNote": "Default session: 7 days",
     "btnText": "Login",
     "footnote": "By signing in, you agree to your workspace access policy.",
     "success": {

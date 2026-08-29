@@ -1,4 +1,4 @@
-/** 用户会话状态；访问令牌和锁屏密码只保存在当前页面内存中。 */
+/** 用户会话状态；访问令牌持久化到服务端签发的过期时间，锁屏密码只保存在内存中。 */
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { LanguageEnum } from '@/enums/appEnum'
@@ -100,7 +100,6 @@ export const useUserStore = defineStore(
       lockPassword.value = password
     }
 
-    /** access token 只写入 Pinia 内存，刷新页面后必须重新登录。 */
     const setToken = (newAccessToken: string) => {
       accessToken.value = newAccessToken
     }
@@ -206,8 +205,8 @@ export const useUserStore = defineStore(
     persist: {
       key: 'user-preferences',
       storage: localStorage,
-      pick: ['language', 'searchHistory'],
-      // 旧键可能包含 accessToken、lockPassword，初始化前直接删除。
+      pick: ['language', 'searchHistory', 'isLogin', 'accessMode', 'accessToken'],
+      // 旧版本使用过默认 store key，初始化前移除，避免恢复锁屏密码等废弃字段。
       beforeHydrate: () => localStorage.removeItem('user')
     }
   }

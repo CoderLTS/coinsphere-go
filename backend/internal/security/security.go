@@ -78,14 +78,20 @@ type TokenManager struct {
 	accessTTL time.Duration
 }
 
+const rememberedAccessTokenTTL = 30 * 24 * time.Hour
+
 func NewTokenManager(secretKey string, accessTTLMinutes int) *TokenManager {
 	return &TokenManager{
 		secret: []byte(secretKey), accessTTL: time.Duration(accessTTLMinutes) * time.Minute,
 	}
 }
 
-func (m *TokenManager) CreateAccessToken(userID int64) AuthToken {
-	return m.create(userID, m.accessTTL)
+func (m *TokenManager) CreateAccessToken(userID int64, keepLoggedIn bool) AuthToken {
+	ttl := m.accessTTL
+	if keepLoggedIn {
+		ttl = rememberedAccessTokenTTL
+	}
+	return m.create(userID, ttl)
 }
 
 // create 签发一个 JWT(登录令牌):由 header.payload.signature 三段组成,用点号连接,各段做 base64 编码。

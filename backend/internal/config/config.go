@@ -91,7 +91,7 @@ func defaultConfig() *AppConfig {
 		Database: DatabaseConfig{MaxOpenConns: 40, MaxIdleConns: 10, ConnMaxIdleTimeSeconds: 300},
 		Server:   ServerConfig{Host: "0.0.0.0", Port: 6987},
 		Auth: AuthConfig{
-			SecretKey: DefaultInsecureSecret, AccessTokenTTLMinutes: 15,
+			SecretKey: DefaultInsecureSecret, AccessTokenTTLMinutes: 7 * 24 * 60,
 			PasswordIterations: 390000, LoginRateLimitPerMinute: 10,
 		},
 		Log: LogConfig{Level: "info", RetentionDays: 30},
@@ -117,7 +117,7 @@ func (c *AppConfig) normalize() {
 		c.Auth.BootstrapAdminPassword = "coinsphere"
 	}
 	if c.Auth.AccessTokenTTLMinutes < 1 {
-		c.Auth.AccessTokenTTLMinutes = 15
+		c.Auth.AccessTokenTTLMinutes = 7 * 24 * 60
 	}
 	if c.Auth.PasswordIterations < 1 {
 		c.Auth.PasswordIterations = 390000
