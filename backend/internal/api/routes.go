@@ -119,6 +119,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/system/menu-buttons", s.requirePermission(perm.SystemMenusCreate, s.handleCreateMenuButton))
 	mux.HandleFunc("PUT /api/v1/system/menu-buttons/{buttonId}", s.requirePermission(perm.SystemMenusUpdate, s.handleUpdateMenuButton))
 	mux.HandleFunc("DELETE /api/v1/system/menu-buttons/{buttonId}", s.requirePermission(perm.SystemMenusDelete, s.handleDeleteMenuButton))
+	mux.HandleFunc("GET /api/v1/system/logs", s.requirePermission(perm.SystemLogsView, s.handleListSystemLogs))
+	mux.HandleFunc("DELETE /api/v1/system/logs", s.requirePermission(perm.SystemLogsDelete, s.handleDeleteSystemLogs))
+	mux.HandleFunc("GET /api/v1/system/logs/runtime", s.requirePermission(perm.SystemLogsView, s.handleGetSystemLogRuntime))
+	mux.HandleFunc("PUT /api/v1/system/logs/runtime", s.requirePermission(perm.SystemLogsConfigure, s.handleUpdateSystemLogRuntime))
 }
 
 func (s *Server) registerResultPluginRoutes(mux *http.ServeMux) {

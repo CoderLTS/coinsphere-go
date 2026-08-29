@@ -28,6 +28,7 @@ type App struct {
 	Cipher       *security.SecretCipher
 	Plugins      *sdk.Registry
 	ArtifactRoot string
+	SystemLogs   *SystemLogRuntime
 
 	authStateMu         sync.Mutex
 	reauthTokens        map[string]reauthTokenRecord

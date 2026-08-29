@@ -28,9 +28,10 @@ import (
 )
 
 const (
-	shutdownTimeout   = 30 * time.Second
-	readHeaderTimeout = 10 * time.Second
-	idleTimeout       = 60 * time.Second
+	shutdownTimeout          = 30 * time.Second
+	systemLogShutdownTimeout = 5 * time.Second
+	readHeaderTimeout        = 10 * time.Second
+	idleTimeout              = 60 * time.Second
 )
 
 func main() {
@@ -46,7 +47,7 @@ func main() {
 	err := run(ctx, *configPath)
 	stop()
 	if err != nil {
-		slog.Error("backend stopped", "error_category", "runtime")
+		slog.Error("backend stopped", "component", "runtime", "error_category", "runtime")
 		os.Exit(1)
 	}
 }
@@ -55,7 +56,7 @@ func main() {
 type httpServerErrorWriter struct{}
 
 func (httpServerErrorWriter) Write(message []byte) (int, error) {
-	slog.Error("http server error", "error_category", "http_server")
+	slog.Error("http server error", "component", "runtime", "error_category", "http_server")
 	return len(message), nil
 }
 
@@ -74,7 +75,8 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
 	}
-	if err := configureLogger(cfg.Log.Level); err != nil {
+	levelVar, stdoutHandler, err := configureLogger(cfg.Log.Level)
+	if err != nil {
 		return err
 	}
 
@@ -115,17 +117,28 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	if err := db.Seed(ctx, gdb, app.Hasher, cfg.Auth.BootstrapAdminPassword, plugins.Pages()); err != nil {
 		return fmt.Errorf("seed database: %w", err)
 	}
+	systemLogs, err := service.NewSystemLogRuntime(gdb, cfg.Log, levelVar)
+	if err != nil {
+		return fmt.Errorf("start system log runtime: %w", err)
+	}
+	app.SystemLogs = systemLogs
+	slog.SetDefault(slog.New(systemLogs.Handler(stdoutHandler)))
+	defer func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), systemLogShutdownTimeout)
+		defer closeCancel()
+		runErr = errors.Join(runErr, systemLogs.Close(closeCtx))
+	}()
 	createdQuantWorkflow, err := app.EnsureQuantInstrumentWorkflow(ctx)
 	if err != nil {
 		return fmt.Errorf("initialize Quant instrument workflow: %w", err)
 	}
 	if createdQuantWorkflow {
-		slog.Info("built-in Quant instrument workflow created")
+		slog.Info("built-in Quant instrument workflow created", "component", "workflow.runtime")
 	}
 	if cfg.Auth.BootstrapAdminPassword == "coinsphere" {
-		slog.Warn("内置超管仍使用默认初始密码，请登录后尽快修改")
+		slog.Warn("内置超管仍使用默认初始密码，请登录后尽快修改", "component", "runtime")
 	}
-	slog.Info("database ready", "engine", "postgres")
+	slog.Info("database ready", "component", "runtime", "engine", "postgres")
 	runEngineErr := make(chan error, 1)
 	go func() { runEngineErr <- app.RunWorkflowEngine(ctx) }()
 
@@ -142,7 +155,7 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	}
 	serveErr := make(chan error, 1)
 	go func() {
-		slog.Info("http server started")
+		slog.Info("http server started", "component", "runtime")
 		err := server.ListenAndServe()
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil
@@ -154,7 +167,7 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	runEngineStopped := false
 	select {
 	case <-ctx.Done():
-		slog.Info("backend shutdown started")
+		slog.Info("backend shutdown started", "component", "runtime")
 	case err := <-serveErr:
 		if err != nil {
 			cause = fmt.Errorf("http server: %w", err)
@@ -190,16 +203,19 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 		shutdownErrs = append(shutdownErrs, errors.New("stop workflow runs: timeout"))
 	}
 	if cause == nil && len(shutdownErrs) == 0 {
-		slog.Info("backend shutdown completed")
+		slog.Info("backend shutdown completed", "component", "runtime")
 	}
 	return errors.Join(append([]error{cause}, shutdownErrs...)...)
 }
 
-func configureLogger(levelText string) error {
+func configureLogger(levelText string) (*slog.LevelVar, slog.Handler, error) {
 	var level slog.Level
 	if err := level.UnmarshalText([]byte(strings.TrimSpace(levelText))); err != nil {
-		return fmt.Errorf("invalid log level: %w", err)
+		return nil, nil, fmt.Errorf("invalid log level: %w", err)
 	}
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})))
-	return nil
+	levelVar := &slog.LevelVar{}
+	levelVar.Set(level)
+	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: levelVar})
+	slog.SetDefault(slog.New(handler))
+	return levelVar, handler, nil
 }

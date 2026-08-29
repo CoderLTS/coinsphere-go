@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -111,17 +112,23 @@ func (s *Server) observe(next http.Handler) http.Handler {
 		route := r.Pattern
 		if route == "" {
 			route = "unmatched"
+		} else {
+			route = strings.TrimPrefix(route, r.Method+" ")
 		}
 		if isMutation(r.Method) && r.Pattern != "" {
 			s.recordAudit(r, state, observed, failed)
 		}
 
 		attrs := []any{
+			"component", "http.access",
 			"request_id", state.requestID,
 			"method", r.Method,
 			"route", route,
 			"status", observed.statusCode,
 			"duration_ms", duration.Milliseconds(),
+		}
+		if state.actorUserID > 0 {
+			attrs = append(attrs, "user_id", state.actorUserID)
 		}
 		if failed {
 			slog.WarnContext(r.Context(), "http request completed", attrs...)
@@ -209,6 +216,7 @@ func (s *Server) recordAudit(r *http.Request, state *requestState, response *obs
 	}); err != nil {
 		s.metrics.auditWriteFailures.Add(1)
 		slog.ErrorContext(ctx, "audit write failed",
+			"component", "audit",
 			"request_id", state.requestID,
 			"action", r.Pattern,
 			"error_category", "database")

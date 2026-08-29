@@ -280,7 +280,7 @@ func (a *App) RunWorkflowEngine(ctx context.Context) error {
 		return err
 	}
 	if err := a.cleanupWorkflowHistory(ctx, time.Now().UTC()); err != nil {
-		slog.Error("workflow history cleanup failed", "error_category", "history_retention")
+		slog.Error("workflow history cleanup failed", "component", "workflow.runtime", "error_category", "history_retention")
 	}
 	nextCleanup := time.Now().UTC().Add(24 * time.Hour)
 	ticker := time.NewTicker(runPollInterval)
@@ -292,26 +292,26 @@ func (a *App) RunWorkflowEngine(ctx context.Context) error {
 		case now := <-ticker.C:
 			if !now.Before(nextCleanup) {
 				if err := a.cleanupWorkflowHistory(ctx, now.UTC()); err != nil {
-					slog.Error("workflow history cleanup failed", "error_category", "history_retention")
+					slog.Error("workflow history cleanup failed", "component", "workflow.runtime", "error_category", "history_retention")
 				}
 				nextCleanup = now.UTC().Add(24 * time.Hour)
 			}
 			if err := a.enqueueScheduledRuns(ctx, now.UTC()); err != nil {
-				slog.Error("workflow schedule scan failed", "error_category", "run_schedule")
+				slog.Error("workflow schedule scan failed", "component", "workflow.runtime", "error_category", "run_schedule")
 			}
 			if err := a.dispatchWorkflowEventOutbox(ctx, now.UTC()); err != nil {
-				slog.Error("workflow event outbox dispatch failed", "error_category", "event_outbox")
+				slog.Error("workflow event outbox dispatch failed", "component", "workflow.runtime", "error_category", "event_outbox")
 			}
 			if err := a.expireWorkflowHumanTasks(ctx, now.UTC()); err != nil {
-				slog.Error("workflow human task expiration failed", "error_category", "human_task")
+				slog.Error("workflow human task expiration failed", "component", "workflow.runtime", "error_category", "human_task")
 			}
 			if err := a.syncWorkflowTriggers(ctx); err != nil {
-				slog.Error("workflow trigger scan failed", "error_category", "trigger_scan")
+				slog.Error("workflow trigger scan failed", "component", "workflow.runtime", "error_category", "trigger_scan")
 			}
 			for {
 				run, ok, err := a.claimWorkflowRun(ctx, now.UTC())
 				if err != nil {
-					slog.Error("workflow run claim failed", "error_category", "run_queue")
+					slog.Error("workflow run claim failed", "component", "workflow.runtime", "error_category", "run_queue")
 					break
 				}
 				if !ok {
@@ -376,7 +376,7 @@ WHERE nr.run_id = eb.id AND nr.status = 'running'
 		return errors.New("recover expired workflow runs failed")
 	}
 	if recovered > 0 {
-		slog.Info("workflow runs recovered", "count", recovered)
+		slog.Info("workflow runs recovered", "component", "workflow.runtime", "count", recovered)
 	}
 	return nil
 }
@@ -1184,7 +1184,7 @@ func (a *App) finishWorkflowRun(runID int64, status, category string) {
 		return nil
 	})
 	if err != nil {
-		slog.Error("finish workflow run failed", "run_id", runID, "error_category", "run_finish")
+		slog.Error("finish workflow run failed", "component", "workflow.runtime", "run_id", runID, "error_category", "run_finish")
 		return
 	}
 	a.PublishWorkflowRunUpdated(workflowID, runID)

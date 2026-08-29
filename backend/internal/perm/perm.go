@@ -26,6 +26,9 @@ const (
 	SystemMenusCreate            = "system.menus.create"
 	SystemMenusUpdate            = "system.menus.update"
 	SystemMenusDelete            = "system.menus.delete"
+	SystemLogsView               = "system.logs.view"
+	SystemLogsConfigure          = "system.logs.configure"
+	SystemLogsDelete             = "system.logs.delete"
 	ResultViewsAccess            = "result.views.access"
 	ResultViewsApprove           = "result.views.approve"
 	ResultViewsReject            = "result.views.reject"
@@ -39,7 +42,7 @@ var MenuPermissionCodes = map[string]string{
 	"Home": HomeView, "SchedulerCenter": "",
 	"WorkflowDefinitions": SchedulerWorkflowDefinitionsView,
 	"System":              "", "User": SystemUsersView, "Role": SystemRolesView,
-	"Menus": SystemMenusView, "UserCenter": "",
+	"Menus": SystemMenusView, "SystemLogs": SystemLogsView, "UserCenter": "",
 }
 
 type ButtonSpec struct {
@@ -73,5 +76,9 @@ var ButtonSpecs = map[string][]ButtonSpec{
 		{"create", SystemMenusCreate, "新增"},
 		{"update", SystemMenusUpdate, "编辑"},
 		{"delete", SystemMenusDelete, "删除"},
+	},
+	"SystemLogs": {
+		{"configure", SystemLogsConfigure, "配置"},
+		{"delete", SystemLogsDelete, "清理"},
 	},
 }

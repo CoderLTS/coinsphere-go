@@ -130,7 +130,7 @@ func (a *App) syncWorkflowTriggers(ctx context.Context) error {
 		if err := a.startWorkflowTrigger(ctx, workflow, *workflow.ActiveRevisionID); err != nil {
 			_ = a.DB.WithContext(ctx).Model(&db.Workflow{}).Where("id = ? AND status = ?", workflow.ID, WorkflowStatusActive).
 				Updates(map[string]any{"status": WorkflowStatusError, "updated_at": time.Now().UTC()}).Error
-			slog.Error("workflow trigger start failed", "workflow_id", workflow.ID, "error_category", "trigger_start")
+			slog.Error("workflow trigger start failed", "component", "workflow.runtime", "workflow_id", workflow.ID, "error_category", "trigger_start")
 		}
 	}
 	return nil
@@ -181,7 +181,7 @@ func (a *App) startWorkflowTrigger(parent context.Context, workflow db.Workflow,
 			return
 		}
 		if !stoppedByCancellation {
-			slog.Error("workflow trigger stopped", "workflow_id", workflow.ID, "error_category", "trigger_run")
+			slog.Error("workflow trigger stopped", "component", "workflow.runtime", "workflow_id", workflow.ID, "error_category", "trigger_run")
 			_ = a.DB.Model(&db.Workflow{}).Where("id = ? AND status = ?", workflow.ID, WorkflowStatusActive).
 				Updates(map[string]any{"status": WorkflowStatusError, "updated_at": time.Now().UTC()}).Error
 		}
