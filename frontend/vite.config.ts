@@ -53,7 +53,7 @@ export default ({ mode }: { mode: string }) => {
       chunkSizeWarningLimit: 2000,
       reportCompressedSize: false,
       rollupOptions: {
-        maxParallelFileOps: 16
+        maxParallelFileOps: 4
       },
       dynamicImportVarsOptions: {
         warnOnError: true,
