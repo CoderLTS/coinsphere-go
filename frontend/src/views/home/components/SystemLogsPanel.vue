@@ -250,7 +250,12 @@
           <ElDescriptionsItem label="request_id">{{
             selectedLog.requestId || '--'
           }}</ElDescriptionsItem>
-          <ElDescriptionsItem label="用户 ID">{{ selectedLog.userId || '--' }}</ElDescriptionsItem>
+          <ElDescriptionsItem label="用户">
+            {{ logUserLabel(selectedLog) }}
+            <span v-if="selectedLog.userName && selectedLog.userId" class="user-id-hint">
+              （ID: {{ selectedLog.userId }}）
+            </span>
+          </ElDescriptionsItem>
           <ElDescriptionsItem label="HTTP 请求">
             {{ selectedLog.route ? `${selectedLog.method} ${selectedLog.route}` : '--' }}
           </ElDescriptionsItem>
@@ -398,8 +403,8 @@
         {
           prop: 'userId',
           label: '用户',
-          width: 90,
-          formatter: (row: LogItem) => row.userId || '--'
+          width: 160,
+          formatter: (row: LogItem) => logUserLabel(row)
         },
         { prop: 'http', label: '状态 / 耗时', width: 130, useSlot: true }
       ]
@@ -408,6 +413,8 @@
 
   const formattedDetails = computed(() => JSON.stringify(selectedLog.value?.details || {}, null, 2))
   const levelIcon = (level: unknown) => levelMeta[level as LogLevel]?.icon || 'ri:information-line'
+  const logUserLabel = (log: LogItem) =>
+    log.userName || (log.userId ? `用户 #${log.userId}` : '--')
 
   const loadRuntime = async () => {
     runtimeLoading.value = true
@@ -843,6 +850,10 @@
   .detail-message p {
     margin: 12px 0 0;
     line-height: 1.7;
+  }
+
+  .user-id-hint {
+    color: var(--art-gray-600);
   }
 
   .details-json {

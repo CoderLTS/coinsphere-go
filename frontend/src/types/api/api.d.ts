@@ -577,6 +577,7 @@ declare namespace Api {
       message: string
       requestId: string
       userId?: number | null
+      userName?: string | null
       method: string
       route: string
       statusCode?: number | null

@@ -451,10 +451,12 @@ func (a *App) ListSystemLogs(ctx context.Context, query SystemLogQuery) (M, erro
 		return nil, err
 	}
 	if afterID > 0 {
-		q = q.Where("id < ?", afterID)
+		q = q.Where("system_logs.id < ?", afterID)
 	}
-	var rows []db.SystemLog
-	if err := q.Order("id DESC").Limit(query.Page.Limit + 1).Find(&rows).Error; err != nil {
+	var rows []systemLogListRow
+	if err := q.Select("system_logs.*, COALESCE(NULLIF(users.nickname, ''), NULLIF(users.username, ''), '') AS user_name").
+		Joins("LEFT JOIN users ON users.id = system_logs.user_id").
+		Order("system_logs.id DESC").Limit(query.Page.Limit + 1).Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	hasMore := len(rows) > query.Page.Limit
@@ -530,13 +532,18 @@ func (a *App) systemLogQuery(ctx context.Context, query SystemLogQuery) (*gorm.D
 	return q, nil
 }
 
-func serializeSystemLog(row *db.SystemLog) M {
+type systemLogListRow struct {
+	db.SystemLog
+	UserName string `gorm:"column:user_name"`
+}
+
+func serializeSystemLog(row *systemLogListRow) M {
 	details := map[string]any{}
 	_ = json.Unmarshal([]byte(row.DetailsJSON), &details)
 	return M{
 		"id": row.ID, "loggedAt": row.LoggedAt.UTC().Format(time.RFC3339Nano),
 		"level": row.Level, "component": row.Component, "message": row.Message,
-		"requestId": row.RequestID, "userId": row.UserID, "method": row.Method,
+		"requestId": row.RequestID, "userId": row.UserID, "userName": row.UserName, "method": row.Method,
 		"route": row.Route, "statusCode": row.StatusCode, "durationMs": row.DurationMS,
 		"details": details,
 	}
