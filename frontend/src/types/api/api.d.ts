@@ -603,6 +603,7 @@ declare namespace Api {
       target: string
       branch?: string
       label?: string
+      condition?: string
     }
 
     interface WorkflowGraph {

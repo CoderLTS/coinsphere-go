@@ -541,7 +541,8 @@
       sourcePort,
       targetPort: String(edge.getTargetPortId() || 'in'),
       branch: branchFromPort || String(data.branch || ''),
-      label: String(data.label || '')
+      label: String(data.label || ''),
+      condition: String(data.condition || '')
     }
   }
 
@@ -561,7 +562,8 @@
         zIndex: 3,
         data: {
           branch: '',
-          label: ''
+          label: '',
+          condition: ''
         }
       }) as Edge
     }
@@ -572,7 +574,8 @@
       zIndex: 3,
       data: {
         branch: '',
-        label: ''
+        label: '',
+        condition: ''
       }
     })
   }

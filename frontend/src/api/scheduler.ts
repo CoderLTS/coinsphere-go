@@ -90,6 +90,7 @@ export interface WorkflowEdgeItem {
   target: string
   branch?: string
   label?: string
+  condition?: string
 }
 
 export interface WorkflowGraph {
@@ -452,7 +453,7 @@ const toLegacyGraph = (graph: CurrentWorkflowGraph): WorkflowGraph => ({
     source: edge.sourceNodeInstanceId,
     target: edge.targetNodeInstanceId,
     branch: edge.sourcePort === 'out' ? '' : edge.sourcePort,
-    label: edge.condition || ''
+    condition: edge.condition || ''
   }))
 })
 
@@ -547,7 +548,7 @@ const toCurrentRevision = (graph: WorkflowGraph) => {
       sourcePort: edge.branch || 'out',
       targetNodeInstanceId: edge.target,
       targetPort: 'in',
-      ...(edge.label ? { condition: edge.label } : {})
+      ...(edge.condition ? { condition: edge.condition } : {})
     }))
   }
   return { graph: currentGraph, secretChanges }
