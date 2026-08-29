@@ -4,7 +4,7 @@
       <div class="title-block">
         <span class="title-icon"><ArtSvgIcon icon="ri:puzzle-2-line" /></span>
         <div>
-          <p>EXTENSION REGISTRY</p>
+          <p>插件注册表</p>
           <h1>插件管理</h1>
           <span>当前进程已加载的插件与扩展能力</span>
         </div>
@@ -26,8 +26,11 @@
         <div class="plugin-card__head">
           <span class="plugin-mark"><ArtSvgIcon :icon="pluginIcon(plugin.id)" /></span>
           <div>
-            <h2>{{ plugin.name }}</h2>
-            <code>{{ plugin.id }}</code>
+            <h2>{{ pluginLabel(plugin) }}</h2>
+            <span class="plugin-id">
+              <span class="plugin-id__label">插件标识</span>
+              <code>{{ plugin.id }}</code>
+            </span>
           </div>
           <span class="version">v{{ plugin.version }}</span>
         </div>
@@ -70,9 +73,21 @@
     nodes: '节点',
     triggers: '触发器',
     strategies: '策略',
-    apiRoutes: 'API 路由',
+    apiRoutes: '接口路由',
     pages: '页面',
-    resultPages: '结果页'
+    resultPages: '结果页',
+    migrations: '数据库迁移'
+  }
+
+  const pluginNames: Record<string, string> = {
+    'official.connector': '连接器插件',
+    'official.ai': '人工智能插件',
+    'official.quant': '量化分析插件',
+    'official.notification': '通知插件',
+    'CoinSphere Connector': '连接器插件',
+    'CoinSphere AI': '人工智能插件',
+    'CoinSphere Quant': '量化分析插件',
+    'CoinSphere Notification': '通知插件'
   }
 
   const icons: Record<string, string> = {
@@ -81,9 +96,14 @@
     strategies: 'ri:stock-line',
     apiRoutes: 'ri:route-line',
     pages: 'ri:layout-grid-line',
-    resultPages: 'ri:file-chart-line'
+    resultPages: 'ri:file-chart-line',
+    migrations: 'ri:database-2-line'
   }
 
+  const pluginLabel = (plugin: Api.System.InstalledPlugin) =>
+    pluginNames[plugin.id] ||
+    pluginNames[plugin.name] ||
+    (/[一-鿿]/.test(plugin.name) ? plugin.name : '扩展插件')
   const contributionLabel = (value: string) => labels[value] || value
   const contributionIcon = (value: string) => icons[value] || 'ri:add-circle-line'
 
@@ -252,6 +272,22 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .plugin-id {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .plugin-id__label {
+    flex: 0 0 auto;
+    font-size: 11px;
+    color: var(--art-gray-500);
+  }
+
+  .plugin-id code {
+    display: inline;
   }
 
   .version {

@@ -20,37 +20,6 @@
             </select>
             <ArtSvgIcon icon="ri:arrow-down-s-line" />
           </label>
-          <ElTooltip content="立即刷新" placement="top">
-            <button
-              type="button"
-              class="icon-button"
-              :class="{ 'is-loading': loading }"
-              aria-label="立即刷新数据"
-              @click="loadOverview"
-            >
-              <ArtSvgIcon icon="ri:refresh-line" />
-            </button>
-          </ElTooltip>
-          <ElTooltip content="预警设置" placement="top">
-            <button type="button" class="icon-button is-accent" aria-label="预警设置">
-              <ArtSvgIcon icon="ri:notification-3-line" />
-            </button>
-          </ElTooltip>
-          <ElTooltip :content="isDark ? '切换日间模式' : '切换夜间模式'" placement="top">
-            <button
-              type="button"
-              class="icon-button"
-              :aria-label="isDark ? '切换日间模式' : '切换夜间模式'"
-              @click="toggleTheme"
-            >
-              <ArtSvgIcon :icon="isDark ? 'ri:sun-line' : 'ri:moon-line'" />
-            </button>
-          </ElTooltip>
-          <ElTooltip content="全屏查看" placement="top">
-            <button type="button" class="icon-button" aria-label="全屏查看">
-              <ArtSvgIcon icon="ri:fullscreen-line" />
-            </button>
-          </ElTooltip>
         </div>
       </header>
 
@@ -105,7 +74,6 @@
                 /></span>
                 <span>{{ item.label }}</span>
                 <span class="info-mark" aria-hidden="true">i</span>
-                <a href="#" @click.prevent>{{ item.detail }}</a>
               </div>
               <strong class="metric-value" :class="`is-${item.tone}`">{{ item.value }}</strong>
               <div v-if="item.meter !== null" class="metric-meter" aria-hidden="true">
@@ -259,8 +227,6 @@
 <script setup lang="ts">
   import { Refresh } from '@element-plus/icons-vue'
   import * as echarts from 'echarts'
-  import { SystemThemeEnum } from '@/enums/appEnum'
-  import { useTheme } from '@/hooks/core/useTheme'
   import { useSettingStore } from '@/store/modules/setting'
   import { useAuth } from '@/hooks/core/useAuth'
   import { fetchHomeOverview, type HomeOverview } from '@/api/home'
@@ -275,7 +241,6 @@
   const { hasAuth } = useAuth()
   const settingStore = useSettingStore()
   const { isDark } = storeToRefs(settingStore)
-  const { switchThemeStyles } = useTheme()
   const loading = ref(false)
   const overview = ref<HomeOverview | null>(null)
   const refreshedAt = ref('')
@@ -286,10 +251,6 @@
   let timer: number | null = null
   let logRefreshTimer: number | null = null
   let resizeObserver: ResizeObserver | null = null
-
-  const toggleTheme = () => {
-    switchThemeStyles(isDark.value ? SystemThemeEnum.LIGHT : SystemThemeEnum.DARK)
-  }
 
   const overallTone = computed<Tone>(() =>
     !overview.value || overview.value.database.status !== 'healthy' ? 'red' : 'green'
@@ -340,7 +301,6 @@
         caption: `近 ${selectedRange.value} 分钟累计`,
         icon: 'ri:arrow-left-right-line',
         tone: 'blue' as Tone,
-        detail: '明细',
         meter: null
       },
       {
@@ -349,7 +309,6 @@
         caption: `异常数 ${overview.value.http.requestsFailed}`,
         icon: 'ri:shield-check-line',
         tone: 'green' as Tone,
-        detail: '明细',
         meter: Math.max(0, 100 - failureRateValue.value)
       },
       {
@@ -358,7 +317,6 @@
         caption: `失败请求 ${overview.value.http.requestsFailed}`,
         icon: 'ri:error-warning-line',
         tone: 'green' as Tone,
-        detail: '明细',
         meter: null
       },
       {
@@ -367,7 +325,6 @@
         caption: '按请求数加权',
         icon: 'ri:timer-flash-line',
         tone: 'purple' as Tone,
-        detail: '明细',
         meter: null
       },
       {
@@ -376,7 +333,6 @@
         caption: '当前正在处理',
         icon: 'ri:loader-4-line',
         tone: 'red' as Tone,
-        detail: '明细',
         meter: null
       },
       {
@@ -385,7 +341,6 @@
         caption: `打开 ${overview.value.database.openConnections} · 空闲 ${overview.value.database.idle}`,
         icon: 'ri:database-line',
         tone: 'cyan' as Tone,
-        detail: '明细',
         meter: overview.value.database.maxOpenConnections
           ? Math.min(
               100,
@@ -754,8 +709,7 @@
     gap: 10px;
   }
 
-  .range-control,
-  .icon-button {
+  .range-control {
     height: 42px;
     color: var(--ops-ink);
     background: #233249;
@@ -791,36 +745,6 @@
   .range-control > :deep(.art-svg-icon) {
     color: var(--ops-muted);
     pointer-events: none;
-  }
-
-  .icon-button {
-    display: grid;
-    place-items: center;
-    width: 42px;
-    padding: 0;
-    font-size: 18px;
-    cursor: pointer;
-    transition:
-      border-color 160ms ease,
-      color 160ms ease,
-      background 160ms ease;
-  }
-
-  .icon-button:hover,
-  .icon-button:focus-visible {
-    color: var(--ops-blue);
-    border-color: var(--ops-blue);
-    outline: none;
-  }
-
-  .icon-button.is-accent {
-    color: var(--ops-blue);
-    background: #142f61;
-    border-color: #27519c;
-  }
-
-  .icon-button.is-loading :deep(.art-svg-icon) {
-    animation: spin 800ms linear infinite;
   }
 
   .overview-grid {
@@ -1450,8 +1374,7 @@
     border-color: #dce5ee;
   }
 
-  .ops-console.is-light .range-control,
-  .ops-console.is-light .icon-button {
+  .ops-console.is-light .range-control {
     color: var(--ops-ink);
     background: #fff;
     border-color: #c9d6e4;
@@ -1459,12 +1382,6 @@
 
   .ops-console.is-light .range-control select {
     color: var(--ops-ink);
-  }
-
-  .ops-console.is-light .icon-button.is-accent {
-    color: #2f72df;
-    background: #e7f0ff;
-    border-color: #b9d0f7;
   }
 
   .ops-console.is-light .health-ring {
@@ -1525,12 +1442,6 @@
     background: rgb(238 243 248 / 0.8);
   }
 
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
   @media (max-width: 1220px) {
     .overview-grid,
     .content-grid {
@@ -1563,10 +1474,6 @@
       align-items: stretch;
     }
 
-    .head-actions {
-      justify-content: flex-end;
-    }
-
     .health-card__body {
       grid-template-columns: 120px minmax(0, 1fr);
       gap: 12px;
@@ -1597,10 +1504,6 @@
   }
 
   @media (max-width: 440px) {
-    .head-actions {
-      flex-wrap: wrap;
-    }
-
     .range-control {
       flex: 1 1 100%;
     }
@@ -1626,16 +1529,6 @@
 
     .trend-chart {
       height: 236px;
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .icon-button {
-      transition: none;
-    }
-
-    .icon-button.is-loading :deep(.art-svg-icon) {
-      animation: none;
     }
   }
 </style>
