@@ -16,8 +16,9 @@ import (
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	payload, err := decodeBody[struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
+		Username     string `json:"username"`
+		Password     string `json:"password"`
+		KeepLoggedIn bool   `json:"keepLoggedIn"`
 	}](r)
 	if err != nil {
 		writeProblem(w, r, http.StatusBadRequest, "invalid login request")
@@ -27,7 +28,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
-	session, err := s.App.Login(payload.Username, payload.Password)
+	session, err := s.App.Login(payload.Username, payload.Password, payload.KeepLoggedIn)
 	if err != nil {
 		writeProblem(w, r, http.StatusUnauthorized, "invalid credentials")
 		return

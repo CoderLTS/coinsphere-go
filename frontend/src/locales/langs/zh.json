@@ -173,8 +173,8 @@
     },
     "sliderText": "按住滑块拖动",
     "sliderSuccessText": "验证成功",
-    "rememberPwd": "记住密码",
-    "sessionNote": "安全会话已启用",
+    "rememberPwd": "保持登录 30 天",
+    "sessionNote": "默认登录有效期 7 天",
     "btnText": "登录",
     "footnote": "登录即表示你同意遵守当前工作区的访问策略。",
     "success": {

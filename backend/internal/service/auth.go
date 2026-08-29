@@ -52,7 +52,7 @@ type AuthSession struct {
 }
 
 // Login 校验凭据并签发 access token。
-func (a *App) Login(username, password string) (*AuthSession, error) {
+func (a *App) Login(username, password string, keepLoggedIn bool) (*AuthSession, error) {
 	var user db.SystemUser
 	lookupErr := a.DB.Where("username = ?", username).First(&user).Error
 	hashToCheck := a.dummyHash
@@ -63,7 +63,7 @@ func (a *App) Login(username, password string) (*AuthSession, error) {
 	if lookupErr != nil || !user.IsActive || !passwordOK {
 		return nil, bizErr("用户名或密码错误")
 	}
-	accessToken := a.Tokens.CreateAccessToken(user.ID)
+	accessToken := a.Tokens.CreateAccessToken(user.ID, keepLoggedIn)
 	now := time.Now()
 	a.DB.Model(&db.SystemUser{}).Where("id = ?", user.ID).
 		Updates(map[string]any{"last_login_at": now, "updated_at": now})

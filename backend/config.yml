@@ -13,7 +13,7 @@ server:
 auth:
   # Must be replaced in every non-local environment.
   secret_key: "coinsphere-dev-secret"
-  access_token_ttl_minutes: 15
+  access_token_ttl_minutes: 10080
   password_iterations: 390000
   login_rate_limit_per_minute: 10
 

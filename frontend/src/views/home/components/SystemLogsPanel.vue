@@ -1,5 +1,5 @@
 <template>
-  <div class="system-log-page art-full-height">
+  <div class="system-log-panel">
     <div class="log-console">
       <header class="console-header">
         <div class="title-block">
@@ -171,16 +171,6 @@
               <ArtSvgIcon icon="ri:restart-line" />
             </ElButton>
           </ElTooltip>
-          <ElButton
-            v-if="hasAuth('system.logs.delete')"
-            type="danger"
-            plain
-            :disabled="pagination.total === 0"
-            @click="clearFilteredLogs"
-          >
-            <ArtSvgIcon icon="ri:delete-bin-6-line" />
-            清理 {{ pagination.total }} 条匹配日志
-          </ElButton>
           <ElTooltip content="刷新日志和写入状态" placement="top">
             <ElButton circle aria-label="刷新日志和写入状态" :loading="loading" @click="refreshAll">
               <ArtSvgIcon icon="ri:refresh-line" />
@@ -278,18 +268,17 @@
 </template>
 
 <script setup lang="ts">
-  import { ElMessage, ElMessageBox } from 'element-plus'
+  import { ElMessage } from 'element-plus'
   import { useAuth } from '@/hooks/core/useAuth'
   import { useTable } from '@/hooks/core/useTable'
   import {
-    fetchDeleteSystemLogs,
     fetchGetSystemLogRuntime,
     fetchGetSystemLogs,
     fetchUpdateSystemLogRuntime
   } from '@/api/system'
   import { formatDateTime } from '@/utils/date'
 
-  defineOptions({ name: 'SystemLogs' })
+  defineOptions({ name: 'SystemLogsPanel' })
 
   type LogLevel = Api.System.SystemLogLevel
   type LogItem = Api.System.SystemLogItem
@@ -348,11 +337,11 @@
   }
 
   const createFilters = (): LogFilters => {
-    const endTime = new Date()
+    const now = new Date()
     return {
       timeRange: '1h',
-      startTime: new Date(endTime.getTime() - rangeMilliseconds['1h']),
-      endTime,
+      startTime: new Date(now.getTime() - rangeMilliseconds['1h']),
+      endTime: null,
       level: undefined,
       component: '',
       requestId: '',
@@ -368,7 +357,7 @@
 
   const buildQuery = (): Api.System.SystemLogSearchParams => ({
     startTime: filters.startTime?.toISOString(),
-    endTime: filters.endTime?.toISOString(),
+    endTime: filters.timeRange === 'custom' ? filters.endTime?.toISOString() : undefined,
     level: filters.level,
     component: filters.component || undefined,
     requestId: filters.requestId || undefined,
@@ -433,9 +422,9 @@
 
   const changeTimeRange = (range: TimeRange) => {
     if (range === 'custom') return
-    const endTime = new Date()
-    filters.endTime = endTime
-    filters.startTime = new Date(endTime.getTime() - rangeMilliseconds[range])
+    const now = new Date()
+    filters.endTime = null
+    filters.startTime = new Date(now.getTime() - rangeMilliseconds[range])
   }
 
   const markCustomRange = () => {
@@ -472,23 +461,14 @@
     }
   }
 
-  const clearFilteredLogs = async () => {
-    await ElMessageBox.confirm(
-      `将物理删除当前筛选条件匹配的 ${pagination.total} 条日志，此操作不可恢复。`,
-      '清理系统日志',
-      {
-        confirmButtonText: '确认清理',
-        cancelButtonText: '取消',
-        type: 'warning'
-      }
-    )
-    await fetchDeleteSystemLogs(appliedQuery.value)
+  const refreshAll = async () => {
+    if (filters.timeRange !== 'custom') changeTimeRange(filters.timeRange)
+    appliedQuery.value = buildQuery()
+    replaceSearchParams({ limit: pagination.size, ...appliedQuery.value })
     await Promise.all([refreshData(), loadRuntime()])
   }
 
-  const refreshAll = async () => {
-    await Promise.all([refreshData(), loadRuntime()])
-  }
+  defineExpose({ refresh: refreshAll })
 
   const openDetail = (row: LogItem) => {
     selectedLog.value = row
@@ -506,7 +486,7 @@
 </script>
 
 <style scoped lang="scss">
-  .system-log-page {
+  .system-log-panel {
     min-width: 0;
     color: var(--art-gray-900);
   }

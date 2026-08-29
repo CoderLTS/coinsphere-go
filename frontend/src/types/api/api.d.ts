@@ -25,7 +25,11 @@
  * ## 使用方式
  *
  * ```typescript
- * const params: Api.Auth.LoginParams = { username: 'coinsphere', password: 'coinsphere' }
+ * const params: Api.Auth.LoginParams = {
+ *   username: 'coinsphere',
+ *   password: 'coinsphere',
+ *   keepLoggedIn: false
+ * }
  * const response: Api.Auth.UserInfo = await fetchUserInfo()
  * ```
  *
@@ -73,6 +77,7 @@ declare namespace Api {
     interface LoginParams {
       username: string
       password: string
+      keepLoggedIn: boolean
     }
 
     /** 登录响应 */
@@ -530,6 +535,14 @@ declare namespace Api {
   }
 
   namespace System {
+    interface InstalledPlugin {
+      id: string
+      name: string
+      version: string
+      contributes: string[]
+      status: 'loaded'
+    }
+
     type I18nTexts = Api.Config.I18nTexts
     type MenuI18nDict = Api.Config.MenuI18nDict
     type UserList = Api.Config.UserList

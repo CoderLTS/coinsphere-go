@@ -39,16 +39,6 @@ func (s *Server) handleUpdateSystemLogRuntime(w http.ResponseWriter, r *http.Req
 	respond(w, data, err, "日志配置已应用")
 }
 
-func (s *Server) handleDeleteSystemLogs(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
-	query, err := systemLogQuery(r)
-	if err != nil {
-		writeProblem(w, r, http.StatusBadRequest, err.Error())
-		return
-	}
-	data, err := s.App.DeleteSystemLogs(r.Context(), query)
-	respond(w, data, err, "筛选日志已清理")
-}
-
 func systemLogQuery(r *http.Request) (service.SystemLogQuery, error) {
 	startTime, err := workflowRunQueryTime(r, "startTime")
 	if err != nil {
