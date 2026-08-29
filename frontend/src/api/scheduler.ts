@@ -255,6 +255,7 @@ const nodeLabels: Record<string, string> = {
   'official.quant.binance_candles': 'Binance K 线采集',
   'official.quant.sync_instruments': 'Binance 币种元数据采集',
   'official.quant.evaluate': '量化策略评估',
+  'official.quant.indicator_condition': '量化指标判断',
   'official.quant.backtest': '量化策略回测',
   'official.quant.signal': '量化信号',
   'official.quant.paper_execute': 'Paper 执行',
@@ -302,6 +303,7 @@ const schemaTitleLabels: Record<string, string> = {
   Market: '市场类型',
   Instrument: '交易对',
   Interval: 'K 线周期',
+  'Check interval': '检查周期',
   Strategy: '量化策略',
   Parameters: '策略参数',
   'Start (UTC)': '开始时间（UTC）',
@@ -364,6 +366,7 @@ const decodeDefinitionID = (definitionID: number) =>
 const graphKind = (definition: WorkflowNodeDefinition): WorkflowNodeGraphKind => {
   if (definition.kind === 'trigger') return 'start'
   if (definition.type === 'core.end' || definition.type === 'core.loop_end') return 'terminal'
+  if (definition.branches?.length) return 'branch'
   return 'plain'
 }
 
@@ -523,7 +526,7 @@ const toCurrentRevision = (graph: WorkflowGraph) => {
       }
       Object.keys(inputProperties(definition)).forEach((name) => {
         if (!(name in rawConfig)) return
-        bindings[name] = { kind: 'literal', value: rawConfig[name] }
+        if (!(name in bindings)) bindings[name] = { kind: 'literal', value: rawConfig[name] }
         delete rawConfig[name]
       })
       return {
@@ -681,7 +684,8 @@ export async function fetchNodeDefinitions() {
       configSchema: legacyConfigSchema(item),
       uiSchema: item.uiSchema,
       secretFields: item.secretFields,
-      kind: graphKind(item)
+      kind: graphKind(item),
+      branches: item.branches
     }))
 }
 

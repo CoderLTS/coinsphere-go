@@ -33,7 +33,7 @@ func RegisterQuant(registry *sdk.Registry, database *gorm.DB) error {
 	runtime.hub = newQuantCandleHub(runtime)
 	runtime.quote = runtime.fetchQuantPublicQuote
 	return registry.RegisterPlugin(sdk.PluginDescriptor{
-		ID: quantPluginID, Name: "CoinSphere Quant", Version: "1.0.0",
+		ID: quantPluginID, Name: "CoinSphere Quant", Version: "1.1.0",
 		Contributes: []string{"nodes", "triggers", "strategies", "apiRoutes", "pages", "resultPages"},
 	}, func(registrar sdk.Registrar) error { return runtime.register(registrar) })
 }
@@ -76,6 +76,15 @@ func (q *quantRuntime) register(registrar sdk.Registrar) error {
 		OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"strategyId":{"type":"string"},"strategyVersion":{"type":"string"},"target":{"type":"string","pattern":"^-?[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"evaluatedAt":{"type":"string","format":"date-time"}},"required":["strategyId","strategyVersion","target","evaluatedAt"],"additionalProperties":false}`),
 		Pool:         sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
 	}, quantEvaluateAction{runtime: q}); err != nil {
+		return err
+	}
+	if err := registrar.Action(sdk.NodeDescriptor{
+		Type: quantIndicatorConditionType, Version: "1.0.0", Kind: sdk.NodeKindAction,
+		Branches: []string{"true", "false"}, ConfigSchema: quantIndicatorConditionConfigSchema,
+		UISchema:    json.RawMessage(`{"ui:order":["market","instrument","checkInterval","conditionTree"]}`),
+		InputSchema: quantIndicatorConditionInputSchema, OutputSchema: quantIndicatorConditionOutputSchema,
+		Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
+	}, quantIndicatorConditionAction{runtime: q}); err != nil {
 		return err
 	}
 	if err := registrar.Action(sdk.NodeDescriptor{

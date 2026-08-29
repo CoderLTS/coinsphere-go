@@ -188,7 +188,7 @@ func Register(registrar sdk.Registrar) error {
 }
 ```
 
-节点 `Type` 必须是小写点分 key，且不能使用保留前缀 `core.`。节点 `Version` 必须是严格 SemVer。Config/Input/Output Schema 必须显式声明 Draft 2020-12；UI Schema 只要求是 JSON 对象。
+节点 `Type` 必须是小写点分 key，且不能使用保留前缀 `core.`。节点 `Version` 必须是严格 SemVer。Config/Input/Output Schema 必须显式声明 Draft 2020-12；UI Schema 只要求是 JSON 对象。需要多出口时在 `NodeDescriptor.Branches` 声明至少两个稳定分支键；运行时以节点输出的字符串 `branch` 选择端口，再执行边上的 Boolean CEL，同一端口可以连接零个或多个下游节点。
 
 Backend 会在执行前后分别校验输入和输出 Schema。插件仍应处理 JSON 解码、外部响应、URL、文件和凭据等信任边界错误，并响应 `context.Context` 取消。
 

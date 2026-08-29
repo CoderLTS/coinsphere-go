@@ -80,7 +80,7 @@ sequenceDiagram
 
 Web 负责登录、导航、权限感知页面、系统管理、工作流编辑与运行观察，以及插件页面和共享结果页的呈现。API 模块只负责传输和类型映射，领域状态仍由 Backend 与数据库拥有。
 
-工作流编辑器从 `/api/v1/workflows/node-definitions` 获取核心和插件节点的 JSON Schema/UI Schema；运行详情先读取持久 API，再使用 `coinsphere.workflow-runs.v1` WebSocket 接收“数据已变化”通知并刷新。WebSocket 是进程内实时提示，不是第二份运行事实源。
+工作流编辑器从 `/api/v1/workflows/node-definitions` 获取核心和插件节点的 JSON Schema/UI Schema 及固定分支端口；Quant 指标判断使用紧凑的嵌套条件树编辑器，普通节点仍使用 Schema 表单。运行详情先读取持久 API，再使用 `coinsphere.workflow-runs.v1` WebSocket 接收“数据已变化”通知并刷新。WebSocket 是进程内实时提示，不是第二份运行事实源。
 
 前端插件通过生成的 `registry.generated.ts` 与内置插件表静态加入 Vite 构建。普通页面和结果页均是主应用 Vue 组件，不使用 iframe、Web Component 或运行时远程模块。
 
@@ -111,7 +111,7 @@ PostgreSQL 同时承担业务事实、持久队列、Outbox、幂等约束和恢
 
 `workflows` 保存名称、生命周期和活动修订指针；`workflow_revisions` 保存不可变图快照；`workflow_runtimes` 保存并发、积压、保留期和调度字段。每次保存必须携带预期活动修订 ID，服务锁定工作流、校验完整图和密钥变更后创建递增修订并原子切换指针。
 
-图固定包含一个主 Trigger，并使用 `batch`、`event` 或 `stream` 模式。节点保存稳定 `nodeInstanceId`、精确节点版本、普通配置、输入映射和画布位置；密钥按修订、节点实例和字段独立加密。修订响应、日志、导出和复制不会返回密钥值。
+图固定包含一个主 Trigger，并使用 `batch`、`event` 或 `stream` 模式。节点保存稳定 `nodeInstanceId`、精确节点版本、普通配置、输入映射和画布位置；密钥按修订、节点实例和字段独立加密。插件节点可声明固定分支端口，执行器先用输出 `branch` 选择端口，再应用边 CEL；端口可扇出且多来源可汇合，拓扑仍保持 DAG。修订响应、日志、导出和复制不会返回密钥值。
 
 工作流生命周期只有：
 
@@ -150,7 +150,7 @@ Run WebSocket 只发送工作流 ID、Run ID 和更新时间等轻量更新。�
 
 `core.schedule` 支持固定秒数或带 IANA 时区的六段 Cron，服务恢复后最多补一次漏跑。插件 `TriggerHandler` 用 Emitter 发送事件并必须响应取消与背压；服务启动时扫描 active 连续流并恢复 Trigger。
 
-Connector/AI 的 HTTP 与 WebSocket 访问执行精确域名白名单、公共 DNS 和重定向复核，不继承环境代理。Binance Quant 只访问公共行情接口，通用节点不能调用交易所私有接口。
+Connector/AI 的 HTTP 与 WebSocket 访问执行精确域名白名单、公共 DNS 和重定向复核，不继承环境代理。Binance Quant 只访问公共行情接口，通用节点不能调用交易所私有接口。Quant 指标判断按周期合并读取 UTC 闭合 K 线，在当前和上一检查时点确定性计算 Decimal 指标；工作流只承担端口路由、路径进入传播和通知输入聚合，不参与逐 K 线计算。
 
 ## 9. 编译期插件
 

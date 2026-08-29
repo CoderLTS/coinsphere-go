@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"coinsphere/backend/plugin/sdk"
 	"gorm.io/gorm"
@@ -79,7 +80,7 @@ func (a notificationInAppAction) Execute(ctx context.Context, request sdk.Action
 	workflowID, workflowErr := quantInt64(request.Revision.WorkflowID)
 	revisionID, revisionErr := quantInt64(request.Revision.RevisionID)
 	if workflowErr != nil || revisionErr != nil || config.Title == "" || input.SubjectKey == "" || input.Message == "" ||
-		len(config.Title) > 160 || len(input.SubjectKey) > 256 || len(input.Message) > 2000 {
+		utf8.RuneCountInString(config.Title) > 160 || utf8.RuneCountInString(input.SubjectKey) > 256 || utf8.RuneCountInString(input.Message) > 2000 {
 		return sdk.ActionResult{}, errors.New("notification identity or text is invalid")
 	}
 	if existing, ok, err := a.runtime.loadDelivery(ctx, request.OperationKey); err != nil {

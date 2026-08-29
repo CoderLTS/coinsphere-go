@@ -12,11 +12,23 @@ export function buildWorkflowRunsWsUrl(pageOrigin: string, workflowId: number) {
 }
 
 export type WorkflowStatus = 'inactive' | 'active' | 'error'
-export type WorkflowBindingKind = 'field' | 'literal' | 'cel'
+export type WorkflowBindingKind =
+  | 'field'
+  | 'literal'
+  | 'cel'
+  | 'condition_entry'
+  | 'condition_subject'
+  | 'condition_message'
+
+export interface WorkflowConditionBindingSource {
+  nodeInstanceId: string
+  branch?: string
+}
 
 export interface WorkflowInputBinding {
   kind: WorkflowBindingKind
   nodeInstanceId?: string
+  sources?: WorkflowConditionBindingSource[]
   fieldPath?: string[]
   value?: unknown
   expression?: string
@@ -102,6 +114,7 @@ export interface WorkflowNodeDefinition {
   outputSchema: Record<string, unknown>
   inputPorts: string[]
   outputPorts: string[]
+  branches?: string[]
   secretFields: WorkflowSecretField[]
   available: boolean
 }

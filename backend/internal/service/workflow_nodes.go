@@ -27,6 +27,7 @@ type WorkflowNodeDefinitionView struct {
 	UISchema     json.RawMessage           `json:"uiSchema"`
 	InputSchema  json.RawMessage           `json:"inputSchema"`
 	OutputSchema json.RawMessage           `json:"outputSchema"`
+	Branches     []string                  `json:"branches,omitempty"`
 	InputPorts   []string                  `json:"inputPorts"`
 	OutputPorts  []string                  `json:"outputPorts"`
 	SecretFields []WorkflowSecretFieldView `json:"secretFields"`
@@ -44,6 +45,7 @@ func (a *App) ListWorkflowNodeDefinitions() []WorkflowNodeDefinitionView {
 			Description: workflowNodeDescription(desc.Type), Kind: desc.Kind,
 			ConfigSchema: desc.ConfigSchema, UISchema: desc.UISchema,
 			InputSchema: desc.InputSchema, OutputSchema: desc.OutputSchema,
+			Branches:   append([]string(nil), desc.Branches...),
 			InputPorts: inputPorts, OutputPorts: outputPorts,
 			SecretFields: workflowSecretFieldViews(desc.ConfigSchema), Available: available,
 		})
@@ -135,6 +137,9 @@ func coreWorkflowNodeDescriptors() []sdk.NodeDescriptor {
 
 func workflowPorts(desc sdk.NodeDescriptor) ([]string, []string) {
 	if desc.Kind == sdk.NodeKindTrigger {
+		if len(desc.Branches) > 0 {
+			return []string{}, append([]string(nil), desc.Branches...)
+		}
 		return []string{}, []string{"out"}
 	}
 	if desc.Type == "core.loop_item" {
@@ -142,6 +147,9 @@ func workflowPorts(desc sdk.NodeDescriptor) ([]string, []string) {
 	}
 	if desc.Type == "core.end" || desc.Type == "core.loop_end" {
 		return []string{"in"}, []string{}
+	}
+	if len(desc.Branches) > 0 {
+		return []string{"in"}, append([]string(nil), desc.Branches...)
 	}
 	return []string{"in"}, []string{"out"}
 }
@@ -172,6 +180,8 @@ func workflowNodeTitle(nodeType string) string {
 		return "Binance instrument metadata"
 	case "official.quant.evaluate":
 		return "Quant strategy evaluation"
+	case "official.quant.indicator_condition":
+		return "Quant indicator condition"
 	case "official.quant.backtest":
 		return "Quant strategy backtest"
 	case "official.quant.signal":
@@ -211,6 +221,8 @@ func workflowNodeDescription(nodeType string) string {
 		return "Synchronizes a filtered Binance instrument metadata snapshot."
 	case "official.quant.evaluate":
 		return "Evaluates a compiled Go strategy against closed candles."
+	case "official.quant.indicator_condition":
+		return "Evaluates nested indicator conditions against closed candles."
 	case "official.quant.backtest":
 		return "Runs a deterministic next-open backtest over stored candles."
 	case "official.quant.signal":
