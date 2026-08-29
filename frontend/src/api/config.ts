@@ -9,9 +9,6 @@ export type AiProviderMeta = Api.Config.AiProviderMeta
 export type AssistantAgentItem = Api.Config.AssistantAgentItem
 export type AssistantAgentUpsertPayload = Api.Config.AssistantAgentUpsertPayload
 export type AssistantAgentMeta = Api.Config.AssistantAgentMeta
-export type NotifyChannelItem = Api.Config.NotifyChannelItem
-export type NotifyChannelMeta = Api.Config.NotifyChannelMeta
-export type NotifyChannelUpsertPayload = Api.Config.NotifyChannelUpsertPayload
 
 export interface NotifyOverviewSummary {
   channelCount: number
@@ -156,70 +153,5 @@ export function fetchDisableAssistantAgent(agentId: number) {
 export function fetchAssistantAgentMeta() {
   return request.get<AssistantAgentMeta>({
     url: '/api/v1/config/assistant-agents/meta'
-  })
-}
-
-export function fetchNotifyChannelList() {
-  return request.get<NotifyChannelItem[]>({
-    url: '/api/v1/notification-channels'
-  })
-}
-
-export function fetchNotifyChannelMeta() {
-  return request.get<NotifyChannelMeta>({
-    url: '/api/v1/notification-channels/meta'
-  })
-}
-
-export function fetchCreateNotifyChannel(params: NotifyChannelUpsertPayload) {
-  return request.post<{ id: number }>({
-    url: '/api/v1/notification-channels',
-    params,
-    showSuccessMessage: true
-  })
-}
-
-export function fetchUpdateNotifyChannel(channelId: number, params: NotifyChannelUpsertPayload) {
-  return request.put<{ id: number }>({
-    url: `/api/v1/notification-channels/${channelId}`,
-    params,
-    showSuccessMessage: true
-  })
-}
-
-export function fetchDeleteNotifyChannel(channelId: number) {
-  return request.del<void>({
-    url: `/api/v1/notification-channels/${channelId}`,
-    showSuccessMessage: true
-  })
-}
-
-export function fetchEnableNotifyChannel(channelId: number) {
-  return request.request<void>({
-    url: `/api/v1/notification-channels/${channelId}`,
-    method: 'PATCH',
-    data: { isEnabled: true },
-    showSuccessMessage: true
-  })
-}
-
-export function fetchDisableNotifyChannel(channelId: number) {
-  return request.request<void>({
-    url: `/api/v1/notification-channels/${channelId}`,
-    method: 'PATCH',
-    data: { isEnabled: false },
-    showSuccessMessage: true
-  })
-}
-
-export function fetchTestNotifyChannel(channelId: number) {
-  return request.post<{
-    success: boolean
-    status: string
-    message: string
-    testedAt: string
-  }>({
-    url: `/api/v1/notification-channels/${channelId}/tests`,
-    showSuccessMessage: true
   })
 }

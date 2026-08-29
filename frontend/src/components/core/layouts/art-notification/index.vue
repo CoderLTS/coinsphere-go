@@ -318,7 +318,7 @@
 
   const handleFooterAction = async () => {
     emit('update:value', false)
-    await router.push('/data/push')
+    await router.push('/plugins/official.notification/deliveries')
   }
 </script>
 

@@ -426,3 +426,26 @@ type ResultViewRoleGrant struct {
 }
 
 func (ResultViewRoleGrant) TableName() string { return "result_view_role_grants" }
+
+type NotificationDelivery struct {
+	ID                int64 `gorm:"primaryKey;autoIncrement"`
+	OperationKey      string
+	WorkflowID        int64
+	RevisionID        int64
+	NodeInstanceID    string
+	Channel           string
+	RecipientUserID   *int64
+	SubjectKey        string
+	Title             string
+	Message           string
+	Status            string
+	AttemptCount      int
+	DeliveredAt       *time.Time
+	IsRead            bool
+	ReadAt            *time.Time
+	LastErrorCategory *string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+func (NotificationDelivery) TableName() string { return "plugin_notification.deliveries" }

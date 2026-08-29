@@ -104,7 +104,12 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	if err := official.RegisterQuant(plugins, gdb); err != nil {
 		return fmt.Errorf("register Quant plugin: %w", err)
 	}
-	if err := official.RegisterNotification(plugins, gdb); err != nil {
+	var app *service.App
+	if err := official.RegisterNotification(plugins, gdb, func(ctx context.Context, userID, deliveryID int64) {
+		if app != nil {
+			app.PublishInAppNotification(ctx, userID, deliveryID)
+		}
+	}); err != nil {
 		return fmt.Errorf("register Notification plugin: %w", err)
 	}
 	if err := pluginregistry.RegisterAll(plugins); err != nil {
@@ -112,7 +117,7 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	}
 	executable, _ := os.Executable()
 	baseDir := filepath.Dir(executable)
-	app := service.NewApp(gdb, cfg, plugins)
+	app = service.NewApp(gdb, cfg, plugins)
 	app.ArtifactRoot = filepath.Join(baseDir, "volumes", "artifacts")
 	if err := db.Seed(ctx, gdb, app.Hasher, cfg.Auth.BootstrapAdminPassword, plugins.Pages()); err != nil {
 		return fmt.Errorf("seed database: %w", err)
@@ -181,6 +186,7 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 
 	// 一个取消信号同时阻止新请求并传到在途外部 I/O。
 	cancel()
+	app.CloseNotificationEvents()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer shutdownCancel()
 

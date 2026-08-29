@@ -73,8 +73,9 @@
   <ElInput
     v-else
     :model-value="textValue"
-    :type="field.multiline ? 'textarea' : 'text'"
+    :type="field.secret ? 'password' : field.multiline ? 'textarea' : 'text'"
     :rows="field.multiline ? 4 : undefined"
+    :show-password="field.secret"
     :placeholder="field.placeholder"
     @update:model-value="$emit('update', $event)"
     @blur="handleBlur"

@@ -39,7 +39,6 @@
         :agent-options="agentOptions"
         :notify-user-options="notifyUserOptions"
         :notify-role-options="notifyRoleOptions"
-        :notify-channel-options="notifyChannelOptions"
         :notify-options-loading="notifyOptionsLoading"
         :issues="selectedNodeIssues"
         :errors="draftState.errors"
@@ -153,7 +152,6 @@
     WorkflowMaterialItem,
     WorkflowNodeContextActionPayload,
     WorkflowNodeFormModel,
-    WorkflowNotifyChannelOption,
     WorkflowNotifyTargetOption
   } from '../types'
   import WorkflowEdgeBubble from './WorkflowEdgeBubble.vue'
@@ -167,7 +165,6 @@
     agentOptions: WorkflowAgentOption[]
     notifyUserOptions: WorkflowNotifyTargetOption[]
     notifyRoleOptions: WorkflowNotifyTargetOption[]
-    notifyChannelOptions: WorkflowNotifyChannelOption[]
     notifyOptionsLoading: boolean
     jsonDefinitionVisible: boolean
     dirtyNodeIds: string[]

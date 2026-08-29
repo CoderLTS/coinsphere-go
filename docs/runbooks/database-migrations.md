@@ -2,7 +2,7 @@
 
 ## 当前基线
 
-CoinSphere 只支持 PostgreSQL 16。`00001` 至 `00004` 创建认证、插件和工作流定义基线；`00005_workflow_runs.sql` 创建 Run 队列、节点尝试、节点日志、检查点、事件、人工任务和制品；`00006_quant_market_backtests.sql` 创建 Quant 公共行情和回测；`00007_paper_results_notifications.sql` 创建 ResultView、Quant 信号/Paper 事实与 Notification 投递；`00008_quant_instrument_sources.sql` 保存工作流级品种来源；`00009_system_logs.sql` 保存结构化系统日志和运行配置。
+CoinSphere 只支持 PostgreSQL 16。`00001` 至 `00004` 创建认证、插件和工作流定义基线；`00005_workflow_runs.sql` 创建 Run 队列、节点尝试、节点日志、检查点、事件、人工任务和制品；`00006_quant_market_backtests.sql` 创建 Quant 公共行情和回测；`00007_paper_results_notifications.sql` 创建 ResultView、Quant 信号/Paper 事实与 Notification 投递；`00008_quant_instrument_sources.sql` 保存工作流级品种来源；`00009_system_logs.sql` 保存结构化系统日志和运行配置；`00010_notification_delivery_channels.sql` 扩展多渠道状态、站内收件人、已读状态、受控错误类别和幂等索引。
 
 服务启动只读校验核心版本，核心 DDL 只由 `coinsphere-migrate` 执行。内置 Quant 随应用版本迁移；通过插件 CLI 安装的插件使用 `plugin_<规范化插件 ID>` schema 和自己的 `schema_migrations` 账本。项目不提供旧表、旧接口或旧数据转换器；生产 DSN 和数据库密码只通过服务器配置注入。
 
@@ -54,6 +54,7 @@ go run ./cmd/migrate -config ./config.yml -direction down -steps 1
 - `00006` 只有在 Quant 品种、K 线和回测摘要均为空时允许 Down；应用回滚不得自动删除 `plugin_quant`。
 - `00007` 只有在 ResultView、信号、Paper 账户/事实/投影和 Notification 投递全部为空时允许 Down；存在任一记录时必须恢复备份，不能删除事实来迁就旧应用。
 - `00008` 只有在所有 Quant 工作流品种来源为空时允许 Down；`00009` 只有在系统日志和日志设置都为空时允许 Down。
+- `00010` 只有在不存在外部渠道、站内收件人、已读或错误类别数据时允许 Down；应用回滚不执行该 Down，也不删除通知记录。
 - 无法无损回滚时恢复已验证备份，不提供伪可逆 SQL。
 - 禁止应用启动自动建表、手工修改 migration 账本或用删除业务行修复版本差异。
 

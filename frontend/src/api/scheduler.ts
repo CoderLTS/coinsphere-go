@@ -259,7 +259,10 @@ const nodeLabels: Record<string, string> = {
   'official.quant.backtest': '量化策略回测',
   'official.quant.signal': '量化信号',
   'official.quant.paper_execute': 'Paper 执行',
-  'official.notification.in_app': '站内通知'
+  'official.notification.in_app': '站内通知',
+  'official.notification.dingtalk': '钉钉通知',
+  'official.notification.qq': 'QQ 通知',
+  'official.notification.smtp': '邮件通知'
 }
 
 const schemaTitleLabels: Record<string, string> = {

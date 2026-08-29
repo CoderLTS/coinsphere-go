@@ -135,6 +135,20 @@
           :icon="isDark ? 'ri:sun-fill' : 'ri:moon-line'"
         />
 
+        <ArtIconButton
+          v-if="shouldShowNotification && userStore.accessMode === 'authenticated'"
+          icon="ri:notification-2-line"
+          class="notice-button relative"
+          @click="visibleNotice"
+        >
+          <div
+            v-if="unreadCount > 0"
+            class="absolute top-1.5 right-1.5 min-w-[14px] h-[14px] px-[3px] !bg-danger rounded-full flex items-center justify-center text-[9px] leading-none text-white shadow-sm"
+          >
+            {{ unreadCount > 99 ? '99+' : unreadCount }}
+          </div>
+        </ArtIconButton>
+
         <!-- 用户头像、菜单 -->
         <ArtUserMenu />
       </div>
@@ -142,6 +156,8 @@
 
     <!-- 标签页 -->
     <ArtWorkTab />
+
+    <ArtNotification v-model:value="showNotice" />
   </div>
 </template>
 
@@ -153,6 +169,7 @@
   import { useSettingStore } from '@/store/modules/setting'
   import { useUserStore } from '@/store/modules/user'
   import { useMenuStore } from '@/store/modules/menu'
+  import { useNotificationStore } from '@/store/modules/notification'
   import AppConfig from '@/config'
   import { languageOptions } from '@/locales'
   import { mittBus } from '@/utils/sys'
@@ -173,6 +190,7 @@
   const settingStore = useSettingStore()
   const userStore = useUserStore()
   const menuStore = useMenuStore()
+  const notificationStore = useNotificationStore()
 
   // 顶部栏功能配置
   const {
@@ -182,6 +200,7 @@
     shouldShowBreadcrumb,
     shouldShowGlobalSearch,
     shouldShowFullscreen,
+    shouldShowNotification,
     shouldShowLanguage,
     shouldShowSettings,
     shouldShowThemeToggle,
@@ -193,6 +212,8 @@
 
   const { language } = storeToRefs(userStore)
   const { menuList } = storeToRefs(menuStore)
+  const { unreadCount } = storeToRefs(notificationStore)
+  const showNotice = ref(false)
   // 菜单类型判断
   const isLeftMenu = computed(() => menuType.value === MenuTypeEnum.LEFT)
   const isDualMenu = computed(() => menuType.value === MenuTypeEnum.DUAL_MENU)
@@ -202,7 +223,19 @@
 
   onMounted(() => {
     initLanguage()
+    document.addEventListener('click', bodyCloseNotice)
+    syncNotificationConnection()
   })
+
+  onUnmounted(() => {
+    document.removeEventListener('click', bodyCloseNotice)
+    notificationStore.disconnect()
+  })
+
+  watch(
+    () => [userStore.accessMode, userStore.accessToken],
+    () => syncNotificationConnection()
+  )
 
   /**
    * 切换全屏状态
@@ -253,6 +286,24 @@
     if (locale.value === lang) return
     locale.value = lang
     userStore.setLanguage(lang)
+  }
+
+  const bodyCloseNotice = (event: Event): void => {
+    if (!showNotice.value) return
+    const target = event.target as HTMLElement
+    if (!target.closest('.notice-button') && !target.closest('.art-notification-panel')) {
+      showNotice.value = false
+    }
+  }
+
+  const visibleNotice = (): void => {
+    showNotice.value = !showNotice.value
+    if (showNotice.value) void notificationStore.loadNotices()
+  }
+
+  const syncNotificationConnection = () => {
+    notificationStore.disconnect()
+    if (userStore.accessMode === 'authenticated') notificationStore.connect()
   }
 
   /**

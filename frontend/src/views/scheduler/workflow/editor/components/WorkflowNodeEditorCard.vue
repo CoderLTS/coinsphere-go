@@ -291,51 +291,25 @@
           </template>
 
           <template v-else-if="localForm.kind === 'notify'">
-            <ElFormItem label="通知渠道">
-              <ElCheckboxGroup
-                v-model="notifyChannelTypes"
-                @change="handleNotifyChannelTypesChange"
-              >
-                <ElCheckbox
-                  v-for="channel in notifyChannelChoices"
-                  :key="channel.value"
-                  :value="channel.value"
-                  :disabled="!channel.enabled"
-                >
-                  {{ channel.label }}{{ channel.enabled ? '' : '（已停用）' }}
-                </ElCheckbox>
-              </ElCheckboxGroup>
-            </ElFormItem>
-
-            <ElFormItem label="标题模板">
+            <ElFormItem label="通知标题">
               <ElInput
-                v-model="localForm.config.titleTemplate"
-                placeholder="请输入标题模板"
-                @blur="handleTextBlur(['config', 'titleTemplate'])"
+                v-model="localForm.config.title"
+                placeholder="请输入通知标题"
+                @blur="handleTextBlur(['config', 'title'])"
               />
             </ElFormItem>
 
-            <ElFormItem label="内容模板">
-              <ElInput
-                v-model="localForm.config.contentTemplate"
-                type="textarea"
-                :rows="5"
-                placeholder="请输入通知内容模板"
-                @blur="handleTextBlur(['config', 'contentTemplate'])"
-              />
-            </ElFormItem>
-
-            <ElFormItem label="消息格式">
-              <ElSelect v-model="notifyMessageFormat" @change="handleNotifyMessageFormatChange">
-                <ElOption label="Markdown 富文本" value="markdown" />
-                <ElOption label="纯文本" value="plain_text" />
-              </ElSelect>
-            </ElFormItem>
+            <WorkflowSchemaFields
+              :schema="configSchema"
+              :config="localForm.config"
+              :keys="['subjectKey', 'message']"
+              @update="handleSchemaFieldUpdate"
+            />
 
             <ElAlert
               type="info"
               :closable="false"
-              title="支持 {{ taskResult.xxx }}、{{ trigger.xxx }} 等模板变量。通知目标按用户或角色多选。"
+              title="未选择目标时通知工作流创建者；用户与角色可同时选择并自动去重。"
             />
 
             <ElAlert
@@ -433,7 +407,7 @@
                 </div>
               </div>
 
-              <ElEmpty v-else description="请至少添加一个通知目标" :image-size="40" />
+              <ElEmpty v-else description="未选择目标，将通知工作流创建者" :image-size="40" />
             </div>
           </template>
 
@@ -491,7 +465,6 @@
     WorkflowDomainNode,
     WorkflowEditorIssue,
     WorkflowNodeFormModel,
-    WorkflowNotifyChannelOption,
     WorkflowNotifyTargetOption
   } from '../types'
   import { getNodeConfigSchema, getNodeUISchema } from '../node-registry'
@@ -504,7 +477,6 @@
     agentOptions?: WorkflowAgentOption[]
     notifyUserOptions?: WorkflowNotifyTargetOption[]
     notifyRoleOptions?: WorkflowNotifyTargetOption[]
-    notifyChannelOptions?: WorkflowNotifyChannelOption[]
     notifyOptionsLoading?: boolean
     issues: WorkflowEditorIssue[]
     errors?: string[]
@@ -529,7 +501,6 @@
     agentOptions: () => [],
     notifyUserOptions: () => [],
     notifyRoleOptions: () => [],
-    notifyChannelOptions: () => [],
     notifyOptionsLoading: false
   })
   const emit = defineEmits<Emits>()
@@ -541,6 +512,10 @@
     'start.webhook': '开始节点（Webhook 触发）',
     'condition.branch': '条件判断节点',
     'official.quant.indicator_condition': '量化指标判断节点',
+    'official.notification.in_app': '站内通知节点',
+    'official.notification.dingtalk': '钉钉通知节点',
+    'official.notification.qq': 'QQ 通知节点',
+    'official.notification.smtp': '邮件通知节点',
     foreach: '遍历节点',
     notify: '通知节点',
     'event.publish': '发布事件节点',
@@ -562,8 +537,6 @@
   }
 
   const NOTIFY_TARGET_TYPES = ['user', 'role'] as const
-  const NOTIFY_CHANNEL_TYPES = ['in_app', 'dingtalk_webhook', 'smtp_email'] as const
-  const NOTIFY_MESSAGE_FORMATS = ['markdown', 'plain_text'] as const
   const cloneModel = (value: WorkflowNodeFormModel | null): WorkflowNodeFormModel => ({
     id: value?.id || props.node.id,
     label: value?.label || props.node.data.title,
@@ -573,17 +546,6 @@
   })
 
   const localForm = reactive<WorkflowNodeFormModel>(cloneModel(props.model))
-  const notifyChannelTypes = ref<string[]>([])
-  const notifyChannelChoices = computed<WorkflowNotifyChannelOption[]>(() =>
-    props.notifyChannelOptions.length
-      ? props.notifyChannelOptions
-      : [
-          { value: 'in_app', label: '站内通知', enabled: true },
-          { value: 'dingtalk_webhook', label: '钉钉 Webhook', enabled: true },
-          { value: 'smtp_email', label: '邮件', enabled: true }
-        ]
-  )
-  const notifyMessageFormat = ref('markdown')
   const notifyTargetRows = ref<NotifyTargetRow[]>([])
   const startInputBindingsJson = ref('{}')
   const eventFiltersJson = ref('[]')
@@ -637,26 +599,6 @@
       : []
   })
 
-  const normalizeNotifyChannelTypes = (value: unknown): string[] => {
-    const list = Array.isArray(value) ? value : []
-    return Array.from(
-      new Set(
-        list
-          .map((item) => String(item || '').trim())
-          .filter(
-            (item): item is string =>
-              notifyChannelChoices.value.some((option) => option.value === item) ||
-              (NOTIFY_CHANNEL_TYPES as readonly string[]).includes(item)
-          )
-      )
-    )
-  }
-
-  const normalizeNotifyMessageFormat = (value: unknown): string => {
-    const text = String(value || '').trim()
-    return (NOTIFY_MESSAGE_FORMATS as readonly string[]).includes(text) ? text : 'markdown'
-  }
-
   const normalizeNotifyRowsFromConfig = (value: unknown): NotifyTargetRow[] => {
     if (!Array.isArray(value)) return []
     const grouped = new Map<'user' | 'role', number[]>()
@@ -700,8 +642,6 @@
 
   const syncNotifyRowsToConfig = () => {
     if (localForm.kind !== 'notify') return
-    localForm.config.channelTypes = [...notifyChannelTypes.value]
-    localForm.config.messageFormat = notifyMessageFormat.value
     localForm.config.targets = notifyTargetRows.value.flatMap((item) =>
       item.targetIds.map((targetId) => ({
         targetType: item.targetType,
@@ -712,18 +652,11 @@
 
   const syncNotifyConfigToRows = () => {
     if (localForm.kind !== 'notify') {
-      notifyChannelTypes.value = []
-      notifyMessageFormat.value = 'markdown'
       notifyTargetRows.value = []
       return
     }
 
-    notifyChannelTypes.value = normalizeNotifyChannelTypes(localForm.config.channelTypes)
-    notifyMessageFormat.value = normalizeNotifyMessageFormat(localForm.config.messageFormat)
-    localForm.config.channelTypes = [...notifyChannelTypes.value]
-    localForm.config.messageFormat = notifyMessageFormat.value
-    localForm.config.titleTemplate = String(localForm.config.titleTemplate ?? '')
-    localForm.config.contentTemplate = String(localForm.config.contentTemplate ?? '')
+    localForm.config.title = String(localForm.config.title ?? '')
     notifyTargetRows.value = normalizeNotifyRowsFromConfig(localForm.config.targets)
     syncNotifyRowsToConfig()
   }
@@ -835,18 +768,6 @@
 
   const handleIndicatorTreeUpdate = (value: Record<string, any>) => {
     localForm.config.conditionTree = value
-    emitModel()
-  }
-
-  const handleNotifyChannelTypesChange = (value: Array<string | number | boolean>) => {
-    notifyChannelTypes.value = normalizeNotifyChannelTypes(value)
-    localForm.config.channelTypes = [...notifyChannelTypes.value]
-    emitModel()
-  }
-
-  const handleNotifyMessageFormatChange = (value: string) => {
-    notifyMessageFormat.value = normalizeNotifyMessageFormat(value)
-    localForm.config.messageFormat = notifyMessageFormat.value
     emitModel()
   }
 
