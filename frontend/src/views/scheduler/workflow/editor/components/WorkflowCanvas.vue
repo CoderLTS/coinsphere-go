@@ -74,10 +74,7 @@
       </div>
     </div>
 
-    <aside
-      v-if="showNodeEditor || props.jsonDefinitionVisible"
-      class="workflow-canvas__side-panel"
-    >
+    <aside v-if="showNodeEditor || props.jsonDefinitionVisible" class="workflow-canvas__side-panel">
       <section v-if="props.jsonDefinitionVisible" class="workflow-canvas__json">
         <div class="workflow-canvas__json-head">
           <strong>JSON 定义</strong>

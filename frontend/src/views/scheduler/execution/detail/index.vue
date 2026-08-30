@@ -88,9 +88,7 @@
                     </span>
                   </div>
                   <div class="workflow-execution-detail__live-logs-actions">
-                    <ElButton size="small" :icon="Clock" @click="handleHistory"
-                      >历史日志</ElButton
-                    >
+                    <ElButton size="small" :icon="Clock" @click="handleHistory">历史日志</ElButton>
                     <ElTag
                       :type="statusTagType(executionDetail.status)"
                       effect="plain"
@@ -121,21 +119,16 @@
                       <span class="workflow-execution-detail__live-log-message">{{
                         line.message
                       }}</span>
-                      <pre
-                        v-if="line.fields"
-                        class="workflow-execution-detail__live-log-fields"
-                        >{{ line.fields }}</pre
-                      >
+                      <pre v-if="line.fields" class="workflow-execution-detail__live-log-fields">{{
+                        line.fields
+                      }}</pre>
                     </div>
                   </div>
                 </div>
               </section>
             </div>
 
-            <aside
-              v-show="inspectorVisible"
-              class="workflow-execution-detail__inspector"
-            >
+            <aside v-show="inspectorVisible" class="workflow-execution-detail__inspector">
               <div class="workflow-execution-detail__inspector-header">
                 <div class="workflow-execution-detail__inspector-title">{{ inspectorTitle }}</div>
                 <ElButton v-if="selectedCellId" link type="primary" @click="clearSelection">

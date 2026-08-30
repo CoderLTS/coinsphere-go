@@ -81,7 +81,10 @@ export function useCanvasContextMenu(options: ContextMenuOptions) {
     const margin = 8
     return new MouseEvent('contextmenu', {
       clientX: Math.max(rect.left + margin, Math.min(event.clientX, rect.right - 144 - margin)),
-      clientY: Math.max(rect.top + margin, Math.min(event.clientY, rect.bottom - menuHeight - margin))
+      clientY: Math.max(
+        rect.top + margin,
+        Math.min(event.clientY, rect.bottom - menuHeight - margin)
+      )
     })
   }
 
