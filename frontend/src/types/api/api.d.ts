@@ -249,6 +249,7 @@ declare namespace Api {
         title: string
         version: string
         kind: 'action' | 'trigger'
+        configSchema: Record<string, any>
       }>
       pages: Array<{
         pageKey: string

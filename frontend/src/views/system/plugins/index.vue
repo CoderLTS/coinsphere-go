@@ -65,7 +65,7 @@
     <ElDrawer
       v-model="detailVisible"
       :title="selectedPlugin ? pluginLabel(selectedPlugin) : '插件详情'"
-      size="min(520px, 94vw)"
+      size="min(600px, 96vw)"
     >
       <div v-if="selectedPlugin" class="plugin-detail">
         <div class="plugin-detail__summary">
@@ -82,14 +82,83 @@
             <small>{{ selectedPlugin.nodes.length }}</small>
           </h3>
           <div v-if="selectedPlugin.nodes.length" class="detail-list">
-            <div v-for="node in selectedPlugin.nodes" :key="node.type" class="detail-row">
-              <div>
-                <strong>{{ node.title }}</strong>
-                <code>{{ node.type }}</code>
-              </div>
-              <div class="detail-tags">
-                <ElTag size="small" effect="plain">{{ nodeKindLabel(node.kind) }}</ElTag>
-                <span>v{{ node.version }}</span>
+            <div
+              v-for="node in selectedPlugin.nodes"
+              :key="node.type"
+              :class="['node-entry', { 'is-open': expandedNodeType === node.type }]"
+            >
+              <button
+                type="button"
+                class="node-row"
+                :aria-expanded="expandedNodeType === node.type"
+                @click="toggleNode(node.type)"
+              >
+                <span class="node-copy">
+                  <strong>{{ node.title }}</strong>
+                  <code>{{ node.type }}</code>
+                </span>
+                <span class="node-controls">
+                  <ElTag size="small" effect="plain">{{ nodeKindLabel(node.kind) }}</ElTag>
+                  <span class="node-version">v{{ node.version }}</span>
+                  <ArtSvgIcon
+                    icon="ri:arrow-down-s-line"
+                    :class="['node-chevron', { 'is-open': expandedNodeType === node.type }]"
+                  />
+                </span>
+              </button>
+
+              <div v-if="expandedNodeType === node.type" class="node-config">
+                <div class="node-config__heading">
+                  <strong>配置参数</strong>
+                  <small>{{ configFields(node).length }} 项</small>
+                </div>
+                <dl v-if="configFields(node).length" class="parameter-list">
+                  <div
+                    v-for="[fieldName, schema] in configFields(node)"
+                    :key="fieldName"
+                    class="parameter-row"
+                  >
+                    <dt>
+                      <span class="parameter-title">
+                        <strong>{{ schema.title || fieldName }}</strong>
+                        <code>{{ fieldName }}</code>
+                      </span>
+                      <span class="parameter-tags">
+                        <ElTag size="small" effect="plain">{{
+                          schemaTypeLabel(schema.type)
+                        }}</ElTag>
+                        <ElTag
+                          v-if="isConfigRequired(node, fieldName)"
+                          size="small"
+                          type="warning"
+                          effect="plain"
+                        >
+                          必填
+                        </ElTag>
+                        <ElTag
+                          v-if="schema['x-coinsphere-secret'] === true"
+                          size="small"
+                          type="danger"
+                          effect="plain"
+                        >
+                          密钥
+                        </ElTag>
+                      </span>
+                    </dt>
+                    <dd v-if="schema.description" class="parameter-description">
+                      {{ schema.description }}
+                    </dd>
+                    <dd v-if="hasSchemaDefault(schema)" class="parameter-meta">
+                      <span>默认值</span>
+                      <code>{{ formatSchemaValue(schema.default) }}</code>
+                    </dd>
+                    <dd v-if="schemaOptions(schema)" class="parameter-meta">
+                      <span>可选值</span>
+                      <span>{{ schemaOptions(schema) }}</span>
+                    </dd>
+                  </div>
+                </dl>
+                <p v-else class="node-config__empty">无需配置参数</p>
               </div>
             </div>
           </div>
@@ -130,6 +199,10 @@
   const plugins = ref<Api.System.InstalledPlugin[]>([])
   const selectedPlugin = ref<Api.System.InstalledPlugin>()
   const detailVisible = ref(false)
+  const expandedNodeType = ref<string>()
+
+  type PluginNode = Api.System.InstalledPlugin['nodes'][number]
+  type ConfigSchema = Record<string, any>
 
   const pluginIcon = (id: string) => {
     if (id.includes('quant')) return 'ri:line-chart-line'
@@ -176,8 +249,39 @@
   const contributionIcon = (value: string) => icons[value] || 'ri:add-circle-line'
   const nodeKindLabel = (kind: 'action' | 'trigger') => (kind === 'trigger' ? '触发器' : '动作')
   const pageKindLabel = (kind: 'page' | 'resultPage') => (kind === 'resultPage' ? '结果页' : '页面')
+  const schemaTypeLabels: Record<string, string> = {
+    string: '文本',
+    integer: '整数',
+    number: '数值',
+    boolean: '布尔值',
+    array: '数组',
+    object: '对象'
+  }
+  const configFields = (node: PluginNode) =>
+    Object.entries(node.configSchema?.properties || {}) as Array<[string, ConfigSchema]>
+  const isConfigRequired = (node: PluginNode, fieldName: string) =>
+    Array.isArray(node.configSchema?.required) && node.configSchema.required.includes(fieldName)
+  const schemaTypeLabel = (value: unknown) =>
+    Array.isArray(value)
+      ? value.map((item) => schemaTypeLabels[String(item)] || String(item)).join(' / ')
+      : schemaTypeLabels[String(value)] || String(value || '任意')
+  const formatSchemaValue = (value: unknown) =>
+    typeof value === 'string' ? value : JSON.stringify(value)
+  const hasSchemaDefault = (schema: ConfigSchema) =>
+    Object.prototype.hasOwnProperty.call(schema, 'default')
+  const schemaOptions = (schema: ConfigSchema) => {
+    if (!Array.isArray(schema.enum)) return ''
+    const labels = Array.isArray(schema.enumLabels) ? schema.enumLabels : []
+    return schema.enum
+      .map((value: unknown, index: number) => formatSchemaValue(labels[index] ?? value))
+      .join('、')
+  }
+  const toggleNode = (nodeType: string) => {
+    expandedNodeType.value = expandedNodeType.value === nodeType ? undefined : nodeType
+  }
   const openPlugin = (plugin: Api.System.InstalledPlugin) => {
     selectedPlugin.value = plugin
+    expandedNodeType.value = undefined
     detailVisible.value = true
   }
 
@@ -480,6 +584,180 @@
     border-top: 1px solid var(--art-gray-300);
   }
 
+  .node-entry {
+    border-bottom: 1px solid var(--art-gray-300);
+  }
+
+  .node-row,
+  .node-controls,
+  .parameter-row dt,
+  .parameter-tags,
+  .node-config__heading,
+  .parameter-meta {
+    display: flex;
+    align-items: center;
+  }
+
+  .node-row {
+    gap: 16px;
+    justify-content: space-between;
+    width: 100%;
+    min-height: 64px;
+    padding: 10px 0;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    background: transparent;
+    border: 0;
+  }
+
+  .node-row:hover,
+  .node-row:focus-visible {
+    background: var(--art-gray-100);
+    outline: none;
+  }
+
+  .node-copy {
+    min-width: 0;
+  }
+
+  .node-copy strong,
+  .node-copy code,
+  .parameter-title strong,
+  .parameter-title code {
+    display: block;
+  }
+
+  .node-copy strong,
+  .parameter-title strong {
+    margin-bottom: 4px;
+    font-size: 13px;
+    font-weight: 650;
+  }
+
+  .node-copy code,
+  .parameter-title code,
+  .parameter-meta code {
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 12px;
+    color: var(--art-gray-600);
+  }
+
+  .node-copy code {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .node-controls {
+    flex: 0 0 auto;
+    gap: 8px;
+  }
+
+  .node-version {
+    font-size: 12px;
+    color: var(--art-gray-600);
+  }
+
+  .node-chevron {
+    width: 18px;
+    height: 18px;
+    color: var(--art-gray-500);
+    transition: transform 160ms ease;
+  }
+
+  .node-chevron.is-open {
+    transform: rotate(180deg);
+  }
+
+  .node-config {
+    padding: 12px 14px 14px;
+    margin-bottom: 12px;
+    background: var(--art-gray-100);
+    border-left: 2px solid #147d78;
+  }
+
+  .node-config__heading {
+    gap: 7px;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+
+  .node-config__heading strong {
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .node-config__heading small {
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 11px;
+    color: var(--art-gray-500);
+  }
+
+  .parameter-list {
+    margin: 0;
+  }
+
+  .parameter-row {
+    padding: 10px 0;
+    border-top: 1px solid var(--art-gray-300);
+  }
+
+  .parameter-row dt {
+    gap: 12px;
+    justify-content: space-between;
+  }
+
+  .parameter-title {
+    min-width: 0;
+  }
+
+  .parameter-title code,
+  .parameter-description,
+  .parameter-meta > span:last-child,
+  .parameter-meta code {
+    overflow-wrap: anywhere;
+  }
+
+  .parameter-tags {
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    gap: 5px;
+    justify-content: flex-end;
+  }
+
+  .parameter-row dd {
+    margin-left: 0;
+  }
+
+  .parameter-description {
+    margin-top: 7px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--art-gray-600);
+  }
+
+  .parameter-meta {
+    gap: 8px;
+    align-items: flex-start;
+    margin-top: 7px;
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--art-gray-700);
+  }
+
+  .parameter-meta > span:first-child {
+    flex: 0 0 auto;
+    color: var(--art-gray-500);
+  }
+
+  .node-config__empty {
+    margin: 0;
+    font-size: 12px;
+    color: var(--art-gray-500);
+  }
+
   .detail-row,
   .detail-tags {
     display: flex;
@@ -536,6 +814,16 @@
 
     .plugin-grid {
       grid-template-columns: 1fr;
+    }
+
+    .node-row,
+    .parameter-row dt {
+      gap: 10px;
+    }
+
+    .node-config {
+      padding-right: 10px;
+      padding-left: 10px;
     }
   }
 </style>
