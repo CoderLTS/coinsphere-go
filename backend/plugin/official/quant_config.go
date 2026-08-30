@@ -13,6 +13,7 @@ import (
 )
 
 var quantInstrumentPattern = regexp.MustCompile(`^\S{1,32}$`)
+var quantSeriesInstrumentPattern = regexp.MustCompile(`^[A-Z0-9]{2,32}$`)
 
 type quantSeriesConfig struct {
 	Market     string `json:"market"`
@@ -118,7 +119,7 @@ func parseQuantSeriesConfig(raw json.RawMessage) (quantSeriesConfig, error) {
 	config.Market = strings.ToLower(strings.TrimSpace(config.Market))
 	config.Instrument = strings.ToUpper(strings.TrimSpace(config.Instrument))
 	config.Interval = strings.TrimSpace(config.Interval)
-	if config.Market != "spot" && config.Market != "usdm" || !quantInstrumentPattern.MatchString(config.Instrument) {
+	if config.Market != "spot" && config.Market != "usdm" || !quantSeriesInstrumentPattern.MatchString(config.Instrument) {
 		return config, errors.New("quant market or instrument is invalid")
 	}
 	if _, ok := quantIntervals[config.Interval]; !ok {
@@ -167,7 +168,7 @@ func parseQuantCandleBackfillConfig(raw json.RawMessage, now time.Time) (quantCa
 func normalizeQuantCandleStreamConfig(config quantCandleStreamConfig) (quantCandleStreamConfig, error) {
 	config.Market = strings.ToLower(strings.TrimSpace(config.Market))
 	config.Instrument = strings.ToUpper(strings.TrimSpace(config.Instrument))
-	if config.Market != "spot" && config.Market != "usdm" || !quantInstrumentPattern.MatchString(config.Instrument) ||
+	if config.Market != "spot" && config.Market != "usdm" || !quantSeriesInstrumentPattern.MatchString(config.Instrument) ||
 		len(config.Intervals) == 0 || len(config.Intervals) > len(quantIntervalOrder) {
 		return config, errors.New("quant candle stream market, instrument, or intervals are invalid")
 	}
