@@ -38,6 +38,7 @@
     "tips": "Prompt",
     "cancel": "Cancel",
     "confirm": "Confirm",
+    "close": "Close",
     "logOutTips": "Do you want to log out?",
     "noMore": "No more",
     "refresh": "Refresh",
@@ -233,7 +234,8 @@
       "user": "User Manage",
       "role": "Role Manage",
       "userCenter": "User Center",
-      "menu": "Menu Manage"
+      "menu": "Menu Manage",
+      "aiModels": "AI Models"
     },
     "trading": {
       "title": "Trading",
@@ -255,8 +257,6 @@
     "config": {
       "title": "Configuration",
       "overview": "Configuration Overview",
-      "aiModels": "Model Config",
-      "assistantAgents": "Assistant Agents",
       "notifyChannels": "Notification Channels",
       "notifyRules": "Notification Rules"
     }
@@ -299,239 +299,78 @@
   },
   "assistant": {
     "title": "Smart Assistant",
-    "newsContextFallback": "Current News",
-    "agentDescriptionEmpty": "Choose an agent to start the conversation",
-    "placeholderGeneral": "Type your question…",
-    "placeholderNews": "Ask a follow-up about this news…",
-    "emptyGeneral": "Your general conversation history will appear here",
-    "emptyNews": "Use AI Analysis from the news page and the result will appear here",
-    "reasoning": "Reasoning",
-    "reasoningToggle": "Deep Think",
-    "reasoningOn": "On",
-    "reasoningOff": "Off",
+    "newSession": "New session",
+    "emptyTitle": "What needs attention?",
+    "placeholder": "Ask about the platform, query data, or describe a workflow…",
+    "send": "Send",
+    "stop": "Stop",
     "history": "History",
     "deleteSession": "Delete Session",
     "deleteSessionConfirm": "Delete \"{title}\"? This action cannot be undone.",
     "deleteSessionSuccess": "Session deleted",
-    "historyEmpty": "No history for the current agent yet",
+    "historyEmpty": "No sessions yet",
     "historyEmptyPreview": "No message preview yet",
-    "generating": "Generating response...",
-    "newsScope": "News Context",
     "modelPlaceholder": "Select a model",
-    "noModels": "No available AI model",
     "noModelsTitle": "No enabled model configured yet",
-    "noModelsDescription": "Go to Configuration / Model Config, enable a model, and then start asking questions.",
-    "modelSelectionRequired": "Please choose a model first",
-    "generalTip": "Press Enter to send",
-    "newsTip": "You can continue asking about impact, risk, and trade setup",
     "goModelConfig": "Open Model Config",
+    "tool": {
+      "running": "Running",
+      "completed": "Completed",
+      "failed": "Failed"
+    },
+    "proposal": {
+      "title": "Workflow proposal",
+      "nodes": "{count} nodes",
+      "edges": "{count} edges",
+      "missingSecrets": "Add the required secrets in the editor after creation",
+      "create": "Create draft",
+      "edit": "Edit workflow",
+      "created": "Workflow draft created"
+    },
     "errors": {
       "loadConversation": "Failed to load the assistant conversation. Please try again later.",
-      "loadModels": "Failed to load the available models. Please try again later.",
-      "stream": "The assistant is temporarily unavailable. Please try again later.",
-      "loadHistory": "Failed to load the session history. Please try again later.",
-      "deleteSession": "Failed to delete the session. Please try again later.",
-      "agentUnavailable": "The current agent does not exist or has been disabled.",
-      "newsContextRequired": "The news analysis agent must be opened from the news page."
+      "stream": "The assistant is temporarily unavailable. Please try again later."
     }
   },
   "aiConfig": {
     "title": "Model Config",
-    "description": "Manage the current user's own model connections here. Only enabled models can be used by the assistant and news analysis agents.",
     "table": {
       "displayName": "Display Name",
-      "provider": "Provider / Protocol",
       "modelName": "Model Name",
       "baseUrl": "Base URL",
-      "boundAgents": "Bound Agents",
+      "apiKey": "API Key",
+      "noApiKey": "Not configured",
       "status": "Status",
+      "priority": "Priority",
+      "timeout": "Timeout (ms)",
       "sessionCount": "Sessions",
-      "validation": "Validation",
-      "validatedAt": "Validated At",
       "updatedAt": "Updated At",
-      "action": "Action",
-      "noBoundAgents": "No bound agents"
+      "action": "Action"
     },
     "actions": {
-      "validate": "Validate",
-      "bindAgent": "Bind Agents"
-    },
-    "agentDialog": {
-      "title": "Bind Agents",
-      "description": "A model can be bound to multiple agents. If no binding is configured, the system falls back to the user's enabled models by priority.",
-      "field": "Agent",
-      "placeholder": "Please select",
-      "disabled": "Disabled"
+      "validate": "Check connection"
     },
     "dialog": {
       "addTitle": "Add AI Model",
       "editTitle": "Edit AI Model"
     },
     "form": {
-      "providerType": "Protocol",
-      "preset": "Provider Preset",
-      "presetPlaceholder": "Select a preset",
-      "providerLabel": "Provider Name",
       "displayName": "Display Name",
       "modelName": "Model Name",
       "baseUrl": "Base URL",
       "apiKey": "API Key",
-      "apiKeyPlaceholder": "Enter the API key",
-      "apiKeyKeepHint": "Leave empty to keep the current key",
+      "apiKeyPlaceholder": "Optional for services without authentication",
+      "apiKeyKeepHint": "Current value {masked}; leave empty to keep it",
       "timeoutMs": "Timeout (ms)",
       "priority": "Priority",
-      "enabled": "Enabled",
-      "headersJson": "Custom Headers JSON",
-      "headersJsonPlaceholder": "{\"Authorization\":\"Bearer xxx\"}",
-      "extraBodyJson": "Extra Body JSON",
-      "extraBodyJsonPlaceholder": "{\"temperature\":0.3}",
-      "remark": "Remark",
-      "remarkPlaceholder": "Optional notes for the team"
-    },
-    "validation": {
-      "providerType": "Please choose a protocol",
-      "providerLabel": "Please enter the provider name",
-      "displayName": "Please enter the display name",
-      "modelName": "Please enter the model name",
-      "baseUrl": "Please enter the base URL",
-      "apiKey": "Please enter the API key",
-      "jsonObject": "JSON root must be an object",
-      "jsonInvalid": "Please enter valid JSON",
-      "statusSuccess": "Validated",
-      "statusFailed": "Failed",
-      "statusUnknown": "Not validated"
-    },
-    "deleteConfirm": "Delete model \"{name}\"? Existing history will be kept, but new requests will not be able to use this model."
-  },
-  "assistantAgent": {
-    "title": "Assistant Agents",
-    "description": "Manage global assistant templates here. Agents define the system prompt, welcome message, starter prompts, and context source.",
-    "dataSources": {
-      "none": "Pure chat",
-      "system_context": "System context",
-      "news_context": "News context"
-    },
-    "table": {
-      "displayName": "Agent",
-      "dataSourceType": "Data Source",
-      "bindingCount": "Bound Models",
-      "sessionCount": "Sessions",
-      "status": "Status",
-      "updatedAt": "Updated At",
-      "action": "Action",
-      "builtin": "Built-in",
-      "noDescription": "No description"
-    },
-    "dialog": {
-      "addTitle": "Add Agent",
-      "editTitle": "Edit Agent"
-    },
-    "form": {
-      "code": "Agent Code",
-      "displayName": "Agent Name",
-      "avatar": "Avatar",
-      "uploadAvatar": "Upload Avatar",
-      "restoreDefaultAvatar": "Restore Default",
-      "avatarUploadTip": "Supports jpg/png/webp/gif up to 2MB",
-      "avatarFormatError": "Only jpg, png, webp, and gif avatar images are supported",
-      "avatarSizeError": "Avatar image must be 2MB or smaller",
-      "description": "Description",
-      "descriptionPlaceholder": "Describe what this agent is best at",
-      "welcomeMessage": "Welcome Message",
-      "welcomeMessagePlaceholder": "Shown when the assistant opens for the first time",
-      "systemPrompt": "System Prompt",
-      "systemPromptPlaceholder": "Define the identity, boundaries, and output style of this agent",
-      "starterPrompts": "Starter Prompts",
-      "starterPromptsPlaceholder": "One prompt per line. Only the first 6 will be kept.",
-      "dataSourceType": "Data Source",
-      "sort": "Sort",
       "enabled": "Enabled"
     },
     "validation": {
-      "code": "Please enter the agent code",
-      "displayName": "Please enter the agent name",
-      "dataSourceType": "Please choose a data source",
-      "systemPrompt": "Please enter the system prompt"
+      "displayName": "Please enter the display name",
+      "modelName": "Please enter the model name",
+      "baseUrl": "Please enter the base URL"
     },
-    "deleteConfirm": "Delete agent \"{name}\"? This action cannot be undone."
-  },
-  "configOverview": {
-    "title": "Configuration Overview",
-    "description": "Review model readiness, assistant templates, provider distribution, and notification health before changing configuration.",
-    "actions": {
-      "goModels": "Open Model Config",
-      "goAgents": "Open Assistant Agents",
-      "goNotifyChannels": "Open Notification Channels",
-      "goNotifyRules": "Open Notification Rules"
-    },
-    "summary": {
-      "total": {
-        "label": "Total Models",
-        "description": "All model endpoints currently registered in coinsphere"
-      },
-      "enabled": {
-        "label": "Enabled Models",
-        "description": "Models that can be used by the assistant right now"
-      },
-      "validated": {
-        "label": "Validated Models",
-        "description": "Models that passed the latest connectivity validation"
-      },
-      "notifyRules": {
-        "label": "Enabled Notification Rules",
-        "description": "Notification rules that can dispatch messages when a source event fires"
-      },
-      "agents": {
-        "label": "Enabled Agents",
-        "description": "Agents currently available to the assistant and news analysis entry"
-      },
-      "bindings": {
-        "label": "Model Bindings",
-        "description": "Total bindings between user models and assistant agents"
-      }
-    },
-    "agentPanel": {
-      "title": "Assistant Templates",
-      "description": "Review enabled agents, their data source strategy, and how many models are bound to them.",
-      "enabled": "Enabled",
-      "disabled": "Disabled",
-      "bindingCount": "{count} bound models"
-    },
-    "providerMix": {
-      "title": "Provider Mix",
-      "description": "View how current model deployments are distributed across providers and protocols."
-    },
-    "notificationPanel": {
-      "title": "Notification Health",
-      "description": "Track the ready-to-send notification channels, enabled notification rules, and the latest delivery outcome.",
-      "channelCount": "Configured channels",
-      "channelDescription": "Total notification channel instances configured in the notification center",
-      "ruleCount": "Enabled notification rules",
-      "ruleDescription": "Rules currently ready to dispatch after a source event is triggered",
-      "latestDelivery": "Latest delivery",
-      "latestDeliveryEmpty": "No delivery record yet",
-      "deliverySuccess": "Success",
-      "deliveryFailed": "Failed",
-      "deliveryUnknown": "Unknown"
-    },
-    "healthTable": {
-      "title": "Model Health Table",
-      "description": "Track availability, validation status, bound agents, and update time in a single table.",
-      "enabled": "Enabled",
-      "disabled": "Disabled",
-      "noBoundAgents": "No bound agents",
-      "columns": {
-        "model": "Display Name",
-        "provider": "Provider",
-        "modelName": "Model Name",
-        "status": "Status",
-        "validation": "Validation",
-        "validatedAt": "Validated At",
-        "boundAgents": "Bound Agents",
-        "sessionCount": "Sessions",
-        "updatedAt": "Updated At"
-      }
-    }
+    "deleteConfirm": "Delete model \"{name}\"? Models referenced by sessions cannot be deleted."
   },
   "notifyChannel": {
     "title": "Notification Channels",

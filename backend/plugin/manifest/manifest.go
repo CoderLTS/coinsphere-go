@@ -27,7 +27,8 @@ var pluginIDPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-
 var windowsAbsolutePathPattern = regexp.MustCompile(`^[A-Za-z]:/`)
 
 var contributionTypes = map[string]bool{
-	"nodes": true, "triggers": true, "strategies": true, "apiRoutes": true, "pages": true, "resultPages": true, "migrations": true,
+	"nodes": true, "triggers": true, "strategies": true, "apiRoutes": true, "pages": true,
+	"resultPages": true, "assistantQueries": true, "migrations": true,
 }
 
 type Manifest struct {

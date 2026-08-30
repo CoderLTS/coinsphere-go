@@ -55,7 +55,7 @@ func RegisterNotification(registry *sdk.Registry, database *gorm.DB, publish fun
 	runtime := &notificationRuntime{db: database, publish: publish, http: client, qqToken: map[string]qqAccessToken{}}
 	return registry.RegisterPlugin(sdk.PluginDescriptor{
 		ID: notificationPluginID, Name: "CoinSphere Notification", Version: "1.1.0",
-		Contributes: []string{"nodes", "apiRoutes", "pages"},
+		Contributes: []string{"nodes", "apiRoutes", "pages", "assistantQueries"},
 	}, runtime.register)
 }
 
@@ -99,10 +99,16 @@ func (n *notificationRuntime) register(registrar sdk.Registrar) error {
 			return err
 		}
 	}
-	return registrar.Route(
+	if err := registrar.Route(
 		sdk.RouteDescriptor{Method: "GET", Pattern: "/deliveries", Scope: sdk.ScopeSystem},
 		n.handleDeliveries,
-	)
+	); err != nil {
+		return err
+	}
+	return registrar.AssistantQuery(sdk.AssistantQueryDescriptor{
+		Name: "deliveries", Description: "查询通知投递状态和标题摘要，不返回消息正文或收件人信息。",
+		InputSchema: notificationAssistantQuerySchema,
+	}, sdk.AssistantQueryHandlerFunc(n.assistantQuery))
 }
 
 func notificationInputSchema() json.RawMessage {

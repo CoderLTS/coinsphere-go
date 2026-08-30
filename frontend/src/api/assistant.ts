@@ -1,33 +1,31 @@
-/** 前端接口封装：assistant。 */
+/** 平台智能助手 API 与 SSE 事件解析。 */
 import request from '@/utils/http'
 import { useUserStore } from '@/store/modules/user'
 import { ApiStatus } from '@/utils/http/status'
 
 interface AssistantStreamHandlers {
   onUser?: (message: Api.Assistant.Message) => void
-  onReasoning?: (chunk: string) => void
+  onTool?: (payload: { name: string; status: 'running' | 'completed' | 'failed' }) => void
   onContent?: (chunk: string) => void
+  onProposal?: (payload: { messageId: number; proposal: Api.Assistant.WorkflowProposal }) => void
   onDone?: (payload: { message?: Api.Assistant.Message; session?: Api.Assistant.Session }) => void
   onError?: (payload: { code?: number; msg?: string }) => void
 }
 
-export function fetchAssistantAgents() {
-  return request.get<Api.Assistant.AgentSummary[]>({
-    url: '/api/v1/assistant/agents'
-  })
+export function fetchAssistantModels() {
+  return request.get<Api.Assistant.ModelOption[]>({ url: '/api/v1/assistant/models' })
 }
 
-export function fetchAssistantSession(params: Api.Assistant.SessionQuery) {
-  return request.get<Api.Assistant.Session>({
-    url: '/api/v1/assistant/sessions/current',
-    params
-  })
+export function fetchAssistantSessions() {
+  return request.get<Api.Assistant.Session[]>({ url: '/api/v1/assistant/sessions' })
 }
 
-export function fetchAssistantModelOptions(agentCode: string) {
-  return request.get<Api.Assistant.ModelOptions>({
-    url: `/api/v1/assistant/agents/${agentCode}/model-options`
-  })
+export function createAssistantSession(params: Api.Assistant.SessionCreateRequest) {
+  return request.post<Api.Assistant.Session>({ url: '/api/v1/assistant/sessions', params })
+}
+
+export function fetchAssistantSession(sessionId: number) {
+  return request.get<Api.Assistant.Session>({ url: `/api/v1/assistant/sessions/${sessionId}` })
 }
 
 export function fetchAssistantMessages(sessionId: number) {
@@ -37,15 +35,12 @@ export function fetchAssistantMessages(sessionId: number) {
 }
 
 export function deleteAssistantSession(sessionId: number) {
-  return request.del<{ id: number }>({
-    url: `/api/v1/assistant/sessions/${sessionId}`
-  })
+  return request.del<{ id: number }>({ url: `/api/v1/assistant/sessions/${sessionId}` })
 }
 
-export function fetchAssistantSessions(params: Api.Assistant.SessionHistoryQuery) {
-  return request.get<Api.Assistant.SessionHistoryResponse>({
-    url: '/api/v1/assistant/sessions',
-    params
+export function confirmAssistantWorkflow(messageId: number) {
+  return request.post<Api.Assistant.WorkflowCreateResult>({
+    url: `/api/v1/assistant/messages/${messageId}/workflow`
   })
 }
 
@@ -57,9 +52,7 @@ export async function streamAssistantSession(
 ) {
   const userStore = useUserStore()
   const baseUrl = (import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '')
-  const requestUrl = `${baseUrl}/api/v1/assistant/sessions/${sessionId}/stream`
-
-  const response = await fetch(requestUrl, {
+  const response = await fetch(`${baseUrl}/api/v1/assistant/sessions/${sessionId}/stream`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -71,77 +64,49 @@ export async function streamAssistantSession(
   })
 
   if (response.status === ApiStatus.unauthorized) {
-    userStore.logOut()
+    userStore.clearSession()
     throw new Error('UNAUTHORIZED')
   }
-
   if (!response.ok || !response.body) {
-    throw new Error(`ASSISTANT_STREAM_FAILED:${response.status}`)
+    const error = await response.json().catch(() => null)
+    throw new Error(error?.msg || `ASSISTANT_STREAM_FAILED:${response.status}`)
+  }
+
+  let streamDone = false
+  const consumeEvent = (block: string) => {
+    let eventName = 'message'
+    const data: string[] = []
+    block.split(/\r?\n/).forEach((line) => {
+      if (line.startsWith('event:')) eventName = line.slice(6).trim()
+      if (line.startsWith('data:')) data.push(line.slice(5).trimStart())
+    })
+    const eventPayload = data.length ? JSON.parse(data.join('\n')) : {}
+
+    if (eventName === 'user' && eventPayload.message) handlers.onUser?.(eventPayload.message)
+    else if (eventName === 'tool') handlers.onTool?.(eventPayload)
+    else if (eventName === 'content') handlers.onContent?.(eventPayload.content || '')
+    else if (eventName === 'proposal') handlers.onProposal?.(eventPayload)
+    else if (eventName === 'done') {
+      streamDone = true
+      handlers.onDone?.(eventPayload)
+    } else if (eventName === 'error') handlers.onError?.(eventPayload)
   }
 
   const reader = response.body.getReader()
-  const decoder = new TextDecoder('utf-8')
+  const decoder = new TextDecoder()
   let buffer = ''
-
-  const consumeEventBlock = (block: string) => {
-    const lines = block.split(/\r?\n/)
-    let eventName = 'message'
-    const dataLines: string[] = []
-
-    lines.forEach((line) => {
-      if (line.startsWith('event:')) {
-        eventName = line.slice(6).trim()
-      }
-      if (line.startsWith('data:')) {
-        dataLines.push(line.slice(5).trimStart())
-      }
-    })
-
-    const payloadText = dataLines.join('\n')
-    const eventPayload = payloadText ? JSON.parse(payloadText) : {}
-
-    if (eventName === 'user' && eventPayload.message) {
-      handlers.onUser?.(eventPayload.message)
-      return
-    }
-    if (eventName === 'reasoning') {
-      handlers.onReasoning?.(eventPayload.content || '')
-      return
-    }
-    if (eventName === 'content') {
-      handlers.onContent?.(eventPayload.content || '')
-      return
-    }
-    if (eventName === 'error') {
-      handlers.onError?.(eventPayload)
-      return
-    }
-    if (eventName === 'done') {
-      handlers.onDone?.(eventPayload)
-    }
-  }
-
   while (true) {
     const { done, value } = await reader.read()
-    buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
-    buffer = buffer.replace(/\r\n/g, '\n')
-
-    let separatorIndex = buffer.indexOf('\n\n')
-    while (separatorIndex >= 0) {
-      const block = buffer.slice(0, separatorIndex).trim()
-      buffer = buffer.slice(separatorIndex + 2)
-      if (block) {
-        consumeEventBlock(block)
-      }
-      separatorIndex = buffer.indexOf('\n\n')
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done }).replace(/\r\n/g, '\n')
+    let separator = buffer.indexOf('\n\n')
+    while (separator >= 0) {
+      const block = buffer.slice(0, separator).trim()
+      buffer = buffer.slice(separator + 2)
+      if (block) consumeEvent(block)
+      separator = buffer.indexOf('\n\n')
     }
-
-    if (done) {
-      const rest = buffer.trim()
-      if (rest) {
-        consumeEventBlock(rest)
-      }
-      break
-    }
+    if (done) break
   }
+  if (buffer.trim()) consumeEvent(buffer.trim())
+  if (!streamDone) throw new Error('ASSISTANT_STREAM_INTERRUPTED')
 }

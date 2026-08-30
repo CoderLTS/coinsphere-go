@@ -65,6 +65,22 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		respond(w, data, err, "")
 	}))
 
+	// 平台智能助手和全局 OpenAI-compatible 模型配置仅向超级管理员开放。
+	mux.HandleFunc("GET /api/v1/config/ai-models", s.requireRole("R_SUPER", s.handleListAIModels))
+	mux.HandleFunc("POST /api/v1/config/ai-models", s.requireRole("R_SUPER", s.handleCreateAIModel))
+	mux.HandleFunc("PUT /api/v1/config/ai-models/{modelId}", s.requireRole("R_SUPER", s.handleUpdateAIModel))
+	mux.HandleFunc("PATCH /api/v1/config/ai-models/{modelId}", s.requireRole("R_SUPER", s.handlePatchAIModel))
+	mux.HandleFunc("DELETE /api/v1/config/ai-models/{modelId}", s.requireRole("R_SUPER", s.handleDeleteAIModel))
+	mux.HandleFunc("POST /api/v1/config/ai-models/{modelId}/validations", s.requireRole("R_SUPER", s.handleValidateAIModel))
+	mux.HandleFunc("GET /api/v1/assistant/models", s.requireRole("R_SUPER", s.handleListAssistantModels))
+	mux.HandleFunc("GET /api/v1/assistant/sessions", s.requireRole("R_SUPER", s.handleListAssistantSessions))
+	mux.HandleFunc("POST /api/v1/assistant/sessions", s.requireRole("R_SUPER", s.handleCreateAssistantSession))
+	mux.HandleFunc("GET /api/v1/assistant/sessions/{sessionId}", s.requireRole("R_SUPER", s.handleGetAssistantSession))
+	mux.HandleFunc("DELETE /api/v1/assistant/sessions/{sessionId}", s.requireRole("R_SUPER", s.handleDeleteAssistantSession))
+	mux.HandleFunc("GET /api/v1/assistant/sessions/{sessionId}/messages", s.requireRole("R_SUPER", s.handleListAssistantMessages))
+	mux.HandleFunc("POST /api/v1/assistant/sessions/{sessionId}/stream", s.requireRole("R_SUPER", s.handleStreamAssistantSession))
+	mux.HandleFunc("POST /api/v1/assistant/messages/{messageId}/workflow", s.requireRole("R_SUPER", s.handleConfirmAssistantWorkflow))
+
 	// P2 workflow execution, events, and Schema-driven workbench.
 	mux.HandleFunc("POST /api/v1/webhooks/{workflowId}", s.handlePublishWorkflowWebhook)
 	mux.HandleFunc("GET /api/v1/workflows/templates", s.requireRole("R_SUPER", s.handleListWorkflowTemplates))

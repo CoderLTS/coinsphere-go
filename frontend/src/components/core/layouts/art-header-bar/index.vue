@@ -135,6 +135,10 @@
           :icon="isDark ? 'ri:sun-fill' : 'ri:moon-line'"
         />
 
+        <ElTooltip v-if="isSuperAdmin" :content="$t('assistant.title')" placement="bottom">
+          <ArtIconButton icon="ri:robot-2-line" @click="openAssistant" />
+        </ElTooltip>
+
         <ArtIconButton
           v-if="shouldShowNotification && userStore.accessMode === 'authenticated'"
           icon="ri:notification-2-line"
@@ -214,6 +218,7 @@
   const { menuList } = storeToRefs(menuStore)
   const { unreadCount } = storeToRefs(notificationStore)
   const showNotice = ref(false)
+  const isSuperAdmin = computed(() => userStore.info.roleCodes.includes('R_SUPER'))
   // 菜单类型判断
   const isLeftMenu = computed(() => menuType.value === MenuTypeEnum.LEFT)
   const isDualMenu = computed(() => menuType.value === MenuTypeEnum.DUAL_MENU)
@@ -250,6 +255,8 @@
   const visibleMenu = (): void => {
     settingStore.setMenuOpen(!menuOpen.value)
   }
+
+  const openAssistant = () => mittBus.emit('openAssistant')
 
   const { homePath } = useCommon()
   const { refresh } = useCommon()

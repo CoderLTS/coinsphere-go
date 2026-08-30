@@ -50,6 +50,7 @@ var coreMenuItems = []menuItem{
 	{"Role", "角色管理", "role", "/system/role", "ri:team-line", "System", true, false, false},
 	{"Menus", "菜单管理", "menu", "/system/menu", "ri:menu-line", "System", true, false, false},
 	{"Plugins", "插件管理", "plugins", "/system/plugins", "ri:puzzle-2-line", "System", true, false, false},
+	{"AiModelConfig", "模型配置", "ai-models", "/config/ai-model", "ri:brain-line", "System", true, false, false},
 	{"UserCenter", "个人中心", "/profile", "/system/user-center", "", "", true, false, true},
 }
 
@@ -65,6 +66,7 @@ var menuI18n = map[string][2]string{
 	"Role":                {"角色管理", "Role Management"},
 	"Menus":               {"菜单管理", "Menu Management"},
 	"Plugins":             {"插件管理", "Plugins"},
+	"AiModelConfig":       {"模型配置", "AI Models"},
 	"UserCenter":          {"个人中心", "Profile"},
 }
 
@@ -253,7 +255,7 @@ func seedMenusAndButtons(tx *gorm.DB, menuItems []menuItem) (map[string]*SystemM
 	for _, name := range []string{
 		"Results", "DataCenter", "MarketMetadata", "MarketChart",
 		"Workflows", "TradingCenter", "TradingAccounts", "StrategyManagement",
-		"NewsData", "ConfigCenter", "ConfigOverview", "AiModelConfig", "AssistantAgentConfig",
+		"NewsData", "ConfigCenter", "ConfigOverview", "AssistantAgentConfig",
 		"NodeDefinitions", "WorkflowExecutions", "SystemLogs",
 	} {
 		if err := tx.Model(&SystemMenu{}).Where("name = ?", name).

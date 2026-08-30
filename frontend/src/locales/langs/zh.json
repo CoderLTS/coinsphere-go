@@ -38,6 +38,7 @@
     "tips": "提示",
     "cancel": "取消",
     "confirm": "确定",
+    "close": "关闭",
     "logOutTips": "您是否要退出登录?",
     "noMore": "没有更多了",
     "refresh": "刷新",
@@ -233,7 +234,8 @@
       "user": "用户管理",
       "role": "角色管理",
       "userCenter": "个人中心",
-      "menu": "菜单管理"
+      "menu": "菜单管理",
+      "aiModels": "模型配置"
     },
     "trading": {
       "title": "交易管理",
@@ -255,8 +257,6 @@
     "config": {
       "title": "配置管理",
       "overview": "配置概览",
-      "aiModels": "模型配置",
-      "assistantAgents": "智能体配置",
       "notifyChannels": "通知渠道",
       "notifyRules": "通知规则"
     }
@@ -299,239 +299,78 @@
   },
   "assistant": {
     "title": "智能助手",
-    "newsContextFallback": "当前新闻",
-    "agentDescriptionEmpty": "选择一个智能体后开始对话",
-    "placeholderGeneral": "输入你的问题…",
-    "placeholderNews": "继续追问这条新闻…",
-    "emptyGeneral": "这里会展示你的通用会话记录",
-    "emptyNews": "点击新闻数据中的 AI 分析后，这里会生成新闻解读",
-    "reasoning": "推理过程",
-    "reasoningToggle": "深度思考",
-    "reasoningOn": "开",
-    "reasoningOff": "关",
+    "newSession": "新会话",
+    "emptyTitle": "有什么需要处理？",
+    "placeholder": "输入平台问题、数据查询或工作流需求…",
+    "send": "发送",
+    "stop": "停止",
     "history": "会话历史",
     "deleteSession": "删除会话",
     "deleteSessionConfirm": "确认删除“{title}”吗？删除后无法恢复。",
     "deleteSessionSuccess": "会话已删除",
-    "historyEmpty": "当前智能体还没有历史会话",
+    "historyEmpty": "暂无会话",
     "historyEmptyPreview": "暂时没有消息内容",
-    "generating": "正在生成回复...",
-    "newsScope": "新闻上下文",
-    "generalTip": "输入后按 Enter 发送",
-    "newsTip": "可继续追问新闻影响、风险和交易思路",
     "goModelConfig": "前往模型配置",
+    "modelPlaceholder": "请选择模型",
+    "noModelsTitle": "尚未配置可用模型",
+    "tool": {
+      "running": "执行中",
+      "completed": "已完成",
+      "failed": "失败"
+    },
+    "proposal": {
+      "title": "工作流方案",
+      "nodes": "{count} 个节点",
+      "edges": "{count} 条连线",
+      "missingSecrets": "创建后仍需在编辑器中补充密钥",
+      "create": "创建草稿",
+      "edit": "编辑工作流",
+      "created": "工作流草稿已创建"
+    },
     "errors": {
       "loadConversation": "加载智能助手会话失败，请稍后重试",
-      "stream": "智能助手暂时不可用，请稍后重试",
-      "loadModels": "加载可用模型失败，请稍后重试",
-      "loadHistory": "加载会话历史失败，请稍后重试",
-      "deleteSession": "删除会话失败，请稍后重试",
-      "agentUnavailable": "当前智能体不存在或已停用",
-      "newsContextRequired": "新闻分析智能体需要从新闻数据页进入"
-    },
-    "modelPlaceholder": "请选择模型",
-    "noModels": "当前无可用 AI 模型",
-    "noModelsTitle": "尚未配置可用模型",
-    "noModelsDescription": "请前往「配置管理 / 模型配置」完成启用后再开始提问。",
-    "modelSelectionRequired": "当前有多个可用模型，请先选择一个模型"
+      "stream": "智能助手暂时不可用，请稍后重试"
+    }
   },
   "aiConfig": {
     "title": "模型配置",
-    "description": "这里管理当前登录用户自己的模型配置。只有已启用的模型，才能被智能助手和新闻分析智能体使用。",
     "table": {
       "displayName": "展示名称",
-      "provider": "厂商 / 协议",
       "modelName": "模型名称",
       "baseUrl": "接口地址",
-      "boundAgents": "绑定智能体",
+      "apiKey": "API Key",
+      "noApiKey": "未配置",
       "status": "状态",
+      "priority": "优先级",
+      "timeout": "超时(ms)",
       "sessionCount": "会话数",
-      "validation": "校验状态",
-      "validatedAt": "校验时间",
       "updatedAt": "更新时间",
-      "action": "操作",
-      "noBoundAgents": "未绑定智能体"
+      "action": "操作"
     },
     "actions": {
-      "validate": "连通性校验",
-      "bindAgent": "绑定智能体"
-    },
-    "agentDialog": {
-      "title": "绑定智能体",
-      "description": "一个模型可同时绑定多个智能体。未绑定时，系统会在当前用户的启用模型中按优先级自动回退。",
-      "field": "智能体",
-      "placeholder": "请选择智能体",
-      "disabled": "已停用"
+      "validate": "连接检查"
     },
     "dialog": {
       "addTitle": "新增 AI 模型",
       "editTitle": "编辑 AI 模型"
     },
     "form": {
-      "providerType": "协议类型",
-      "preset": "厂商预设",
-      "presetPlaceholder": "请选择厂商预设",
-      "providerLabel": "厂商名称",
       "displayName": "展示名称",
       "modelName": "模型名称",
       "baseUrl": "接口地址",
       "apiKey": "API Key",
-      "apiKeyPlaceholder": "请输入 API Key",
-      "apiKeyKeepHint": "留空表示保留当前密钥",
+      "apiKeyPlaceholder": "可选，未鉴权服务可留空",
+      "apiKeyKeepHint": "当前 {masked}，留空表示保留",
       "timeoutMs": "超时时间(ms)",
       "priority": "优先级",
-      "enabled": "是否启用",
-      "headersJson": "自定义 Headers JSON",
-      "headersJsonPlaceholder": "{\"Authorization\":\"Bearer xxx\"}",
-      "extraBodyJson": "额外 Body JSON",
-      "extraBodyJsonPlaceholder": "{\"temperature\":0.3}",
-      "remark": "备注",
-      "remarkPlaceholder": "填写团队内部说明或用途"
-    },
-    "validation": {
-      "providerType": "请选择协议类型",
-      "providerLabel": "请输入厂商名称",
-      "displayName": "请输入展示名称",
-      "modelName": "请输入模型名称",
-      "baseUrl": "请输入接口地址",
-      "apiKey": "请输入 API Key",
-      "jsonObject": "JSON 顶层必须是对象",
-      "jsonInvalid": "请输入合法的 JSON",
-      "statusSuccess": "已校验",
-      "statusFailed": "失败",
-      "statusUnknown": "未校验"
-    },
-    "deleteConfirm": "确认删除模型“{name}”吗？历史会话会保留，但后续新请求将不能再使用这个模型。"
-  },
-  "assistantAgent": {
-    "title": "智能体配置",
-    "description": "在这里维护全局智能体模板。智能体决定系统提示词、欢迎语、开场问题和上下文数据来源。",
-    "dataSources": {
-      "none": "纯对话",
-      "system_context": "系统上下文",
-      "news_context": "新闻上下文"
-    },
-    "table": {
-      "displayName": "智能体",
-      "dataSourceType": "数据来源",
-      "bindingCount": "绑定模型数",
-      "sessionCount": "会话数",
-      "status": "状态",
-      "updatedAt": "更新时间",
-      "action": "操作",
-      "builtin": "内置",
-      "noDescription": "未填写描述"
-    },
-    "dialog": {
-      "addTitle": "新增智能体",
-      "editTitle": "编辑智能体"
-    },
-    "form": {
-      "code": "智能体编码",
-      "displayName": "智能体名称",
-      "avatar": "头像",
-      "uploadAvatar": "上传头像",
-      "restoreDefaultAvatar": "恢复默认",
-      "avatarUploadTip": "支持 jpg/png/webp/gif，大小不超过 2MB",
-      "avatarFormatError": "仅支持 jpg、png、webp、gif 格式的头像图片",
-      "avatarSizeError": "头像图片不能超过 2MB",
-      "description": "描述",
-      "descriptionPlaceholder": "用于说明该智能体适合处理什么问题",
-      "welcomeMessage": "欢迎语",
-      "welcomeMessagePlaceholder": "首次打开助手时展示的欢迎语",
-      "systemPrompt": "系统提示词",
-      "systemPromptPlaceholder": "定义该智能体的身份、边界和输出风格",
-      "starterPrompts": "开场问题",
-      "starterPromptsPlaceholder": "每行一条开场问题，最多保留前 6 条",
-      "dataSourceType": "数据来源",
-      "sort": "排序",
       "enabled": "是否启用"
     },
     "validation": {
-      "code": "请输入智能体编码",
-      "displayName": "请输入智能体名称",
-      "dataSourceType": "请选择数据来源",
-      "systemPrompt": "请输入系统提示词"
+      "displayName": "请输入展示名称",
+      "modelName": "请输入模型名称",
+      "baseUrl": "请输入接口地址"
     },
-    "deleteConfirm": "确认删除智能体“{name}”吗？删除后不可恢复。"
-  },
-  "configOverview": {
-    "title": "配置概览",
-    "description": "统一查看模型可用性、智能体模板、厂商分布和通知健康状态，便于在修改配置前快速判断系统当前状态。",
-    "actions": {
-      "goModels": "查看模型配置",
-      "goAgents": "查看智能体配置",
-      "goNotifyChannels": "查看通知渠道",
-      "goNotifyRules": "查看通知规则"
-    },
-    "summary": {
-      "total": {
-        "label": "模型总数",
-        "description": "当前注册到 coinsphere 的全部模型配置数量"
-      },
-      "enabled": {
-        "label": "已启用模型",
-        "description": "当前可被智能助手直接使用的模型数量"
-      },
-      "validated": {
-        "label": "已校验模型",
-        "description": "最近一次连通性校验通过的模型数量"
-      },
-      "notifyRules": {
-        "label": "启用通知规则",
-        "description": "触发消息来源事件后可自动分发的通知规则数量"
-      },
-      "agents": {
-        "label": "启用智能体",
-        "description": "当前可被助手入口和新闻分析使用的智能体数量"
-      },
-      "bindings": {
-        "label": "模型绑定",
-        "description": "所有用户模型与智能体之间的绑定总数"
-      }
-    },
-    "agentPanel": {
-      "title": "智能体模板",
-      "description": "查看当前启用中的智能体、数据来源以及被多少模型绑定。",
-      "enabled": "已启用",
-      "disabled": "已停用",
-      "bindingCount": "已绑定 {count} 个模型"
-    },
-    "providerMix": {
-      "title": "厂商分布",
-      "description": "查看当前模型配置在不同厂商和协议之间的分布情况。"
-    },
-    "healthTable": {
-      "title": "模型健康列表",
-      "description": "统一查看模型可用性、校验状态、已绑定智能体和更新时间。",
-      "enabled": "已启用",
-      "disabled": "已停用",
-      "noBoundAgents": "未绑定智能体",
-      "columns": {
-        "model": "展示名称",
-        "provider": "厂商",
-        "modelName": "模型名称",
-        "status": "状态",
-        "validation": "校验状态",
-        "validatedAt": "校验时间",
-        "boundAgents": "绑定智能体",
-        "sessionCount": "会话数",
-        "updatedAt": "更新时间"
-      }
-    },
-    "notificationPanel": {
-      "title": "通知健康状态",
-      "description": "关注可发送通知的渠道实例、启用中的通知规则，以及最近一次消息下发结果。",
-      "channelCount": "已配置渠道",
-      "channelDescription": "通知中心中已创建的通知渠道实例总数",
-      "ruleCount": "启用通知规则",
-      "ruleDescription": "消息来源触发后可立即执行的通知规则数量",
-      "latestDelivery": "最近发送结果",
-      "latestDeliveryEmpty": "暂无发送记录",
-      "deliverySuccess": "成功",
-      "deliveryFailed": "失败",
-      "deliveryUnknown": "未知"
-    }
+    "deleteConfirm": "确认删除模型“{name}”吗？已被会话引用的模型无法删除。"
   },
   "notifyChannel": {
     "title": "通知渠道",
