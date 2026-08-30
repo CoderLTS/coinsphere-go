@@ -2,6 +2,7 @@
 <template>
   <div v-loading="loading" class="workflow-editor-page art-full-height">
     <WorkflowEditorToolbar
+      class="workflow-editor-page__toolbar"
       :mode="mode"
       :saving="saving"
       :validating="validating"
@@ -1299,7 +1300,6 @@
     position: relative;
     display: flex;
     flex-direction: column;
-    gap: 10px;
     box-sizing: border-box;
     width: 100%;
     height: 100%;
@@ -1307,6 +1307,15 @@
     overflow: hidden;
     background: var(--workflow-page-bg);
     padding: 10px;
+  }
+
+  .workflow-editor-page__toolbar {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    left: 20px;
+    z-index: 40;
+    width: auto;
   }
 
   .workflow-editor-page__canvas {
@@ -1324,8 +1333,13 @@
 
   @media (max-width: 768px) {
     .workflow-editor-page {
-      gap: 8px;
       padding: 8px;
+    }
+
+    .workflow-editor-page__toolbar {
+      top: 16px;
+      right: 16px;
+      left: 16px;
     }
 
     .workflow-editor-page__meta {

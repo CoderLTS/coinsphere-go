@@ -13,50 +13,6 @@
 
       <template v-else-if="executionDetail && domainGraph">
         <div class="workflow-execution-detail__stage">
-          <section class="workflow-execution-detail__toolbar">
-            <ElTooltip content="返回工作流定义" placement="bottom">
-              <ElButton plain class="workflow-execution-detail__icon-btn" @click="handleBack">
-                <ElIcon><ArrowLeft /></ElIcon>
-              </ElButton>
-            </ElTooltip>
-
-            <div class="workflow-execution-detail__header-main">
-              <div class="workflow-execution-detail__header-copy">
-                <div class="workflow-execution-detail__title">{{
-                  executionDetail.workflowDefinitionName
-                }}</div>
-              </div>
-
-              <div class="workflow-execution-detail__header-status">
-                <ElTag :type="statusTagType(executionDetail.status)" effect="plain">
-                  {{ statusLabel(executionDetail.status) }}
-                </ElTag>
-                <ElTag type="info" effect="plain">
-                  {{ triggerTypeLabel(executionDetail.triggerType) }}
-                </ElTag>
-                <ElTag v-if="executionDetail.finishedAt" type="info" effect="plain">
-                  耗时 {{ formatDuration(executionDetail.durationMs) }}
-                </ElTag>
-              </div>
-            </div>
-
-            <ElTooltip
-              :content="inspectorVisible ? '隐藏详情面板' : '显示详情面板'"
-              placement="bottom"
-            >
-              <ElButton
-                plain
-                class="workflow-execution-detail__panel-btn"
-                @click="inspectorVisible = !inspectorVisible"
-              >
-                <ElIcon>
-                  <component :is="inspectorVisible ? Hide : View" />
-                </ElIcon>
-                <span>{{ inspectorVisible ? '收起面板' : '展开面板' }}</span>
-              </ElButton>
-            </ElTooltip>
-          </section>
-
           <div
             class="workflow-execution-detail__body"
             :class="{
@@ -65,6 +21,50 @@
           >
             <div class="workflow-execution-detail__main">
               <div class="workflow-execution-detail__canvas-pane">
+                <section class="workflow-execution-detail__toolbar">
+                  <ElTooltip content="返回工作流定义" placement="bottom">
+                    <ElButton plain class="workflow-execution-detail__icon-btn" @click="handleBack">
+                      <ElIcon><ArrowLeft /></ElIcon>
+                    </ElButton>
+                  </ElTooltip>
+
+                  <div class="workflow-execution-detail__header-main">
+                    <div class="workflow-execution-detail__header-copy">
+                      <div class="workflow-execution-detail__title">{{
+                        executionDetail.workflowDefinitionName
+                      }}</div>
+                    </div>
+
+                    <div class="workflow-execution-detail__header-status">
+                      <ElTag :type="statusTagType(executionDetail.status)" effect="plain">
+                        {{ statusLabel(executionDetail.status) }}
+                      </ElTag>
+                      <ElTag type="info" effect="plain">
+                        {{ triggerTypeLabel(executionDetail.triggerType) }}
+                      </ElTag>
+                      <ElTag v-if="executionDetail.finishedAt" type="info" effect="plain">
+                        耗时 {{ formatDuration(executionDetail.durationMs) }}
+                      </ElTag>
+                    </div>
+                  </div>
+
+                  <ElTooltip
+                    :content="inspectorVisible ? '隐藏详情面板' : '显示详情面板'"
+                    placement="bottom"
+                  >
+                    <ElButton
+                      plain
+                      class="workflow-execution-detail__panel-btn"
+                      @click="inspectorVisible = !inspectorVisible"
+                    >
+                      <ElIcon>
+                        <component :is="inspectorVisible ? Hide : View" />
+                      </ElIcon>
+                      <span>{{ inspectorVisible ? '收起面板' : '展开面板' }}</span>
+                    </ElButton>
+                  </ElTooltip>
+                </section>
+
                 <WorkflowExecutionCanvas
                   :graph="domainGraph"
                   :node-attempts="executionDetail.nodeAttempts"
@@ -846,7 +846,6 @@
     display: flex;
     flex: 0 0 auto;
     flex-direction: column;
-    gap: 10px;
     min-width: 0;
     min-height: 100%;
     overflow: visible;
@@ -860,13 +859,17 @@
   }
 
   .workflow-execution-detail__toolbar {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    left: 10px;
+    z-index: 30;
     box-sizing: border-box;
     display: grid;
-    flex: 0 0 auto;
     grid-template-columns: auto minmax(0, 1fr) auto;
     gap: 10px;
     align-items: center;
-    width: 100%;
+    width: auto;
     padding: 8px 10px;
     border-radius: 8px;
   }
