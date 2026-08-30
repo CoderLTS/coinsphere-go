@@ -124,9 +124,9 @@ SELECT
       "nodes": [
         {
           "nodeInstanceId": "market-stream",
-          "nodeType": "official.quant.binance_candles",
+          "nodeType": "official.quant.realtime_candles",
           "nodeVersion": "1.0.0",
-          "config": {"market": "spot", "instrument": "YGGUSDT", "interval": "1m"},
+          "config": {"market": "spot", "instrument": "YGGUSDT", "intervals": ["1m"]},
           "position": {"x": 100, "y": 220}
         },
         {
@@ -211,7 +211,7 @@ SELECT
       ]
     }$graph$::JSONB,
     $versions${
-      "market-stream": {"nodeType": "official.quant.binance_candles", "nodeVersion": "1.0.0"},
+      "market-stream": {"nodeType": "official.quant.realtime_candles", "nodeVersion": "1.0.0"},
       "price-condition": {"nodeType": "official.quant.price_change_condition", "nodeVersion": "1.0.0"},
       "in-app-notification": {"nodeType": "official.notification.in_app", "nodeVersion": "1.0.0"},
       "end_1": {"nodeType": "core.end", "nodeVersion": "1.0.0"},

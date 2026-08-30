@@ -430,6 +430,15 @@
             />
           </template>
 
+          <template v-else-if="isQuantCandleNode">
+            <QuantCandleConfigEditor
+              :schema="configSchema"
+              :ui-schema="uiSchema"
+              :config="localForm.config"
+              @update="handleSchemaFieldUpdate"
+            />
+          </template>
+
           <template v-else-if="localForm.kind === 'end'">
             <ElAlert
               type="success"
@@ -463,6 +472,7 @@
     WorkflowNotifyTargetOption
   } from '../types'
   import { getNodeConfigSchema, getNodeUISchema } from '../node-registry'
+  import QuantCandleConfigEditor from './QuantCandleConfigEditor.vue'
   import QuantIndicatorEditor from './QuantIndicatorEditor.vue'
   import WorkflowSchemaFields from './WorkflowSchemaFields.vue'
 
@@ -512,6 +522,7 @@
     'official.quant.kdj_condition': 'KDJ 判断节点',
     'official.quant.rsi_condition': 'RSI 判断节点',
     'official.quant.bollinger_condition': '布林带判断节点',
+    'official.quant.market_signal': '输出信号节点',
     'official.notification.in_app': '站内通知节点',
     'official.notification.dingtalk': '钉钉通知节点',
     'official.qq.receive': 'QQ 消息接收节点',
@@ -561,6 +572,11 @@
   // 不再在本文件里逐个手写一遍。开始 / 任务 / 通知 / 条件有联动和自定义控件，仍走下面的定制模板。
   const configSchema = computed(() => getNodeConfigSchema(localForm.typeCode))
   const uiSchema = computed(() => getNodeUISchema(localForm.typeCode))
+  const isQuantCandleNode = computed(() =>
+    ['official.quant.realtime_candles', 'official.quant.backfill_candles'].includes(
+      localForm.typeCode
+    )
+  )
 
   /** 当前选中的智能体：决定要不要显示「关联数据 id 路径」和「结构化分析」开关。 */
   const selectedAgent = computed(

@@ -106,7 +106,7 @@ const webSocketWorkflowGraph = `{
 const quantMarketDataWorkflowGraph = `{
   "schemaVersion": 1,
   "nodes": [
-    {"nodeInstanceId":"market-stream","nodeType":"official.quant.binance_candles","nodeVersion":"1.0.0","config":{"market":"spot","instrument":"BTCUSDT","interval":"1h"},"position":{"x":140,"y":220}},
+    {"nodeInstanceId":"market-stream","nodeType":"official.quant.realtime_candles","nodeVersion":"1.0.0","config":{"market":"spot","instrument":"BTCUSDT","intervals":["1h"]},"position":{"x":140,"y":220}},
     {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":520,"y":220}}
   ],
   "edges": [
@@ -238,7 +238,7 @@ func (a *App) ListWorkflowTemplates() []WorkflowTemplate {
 		{Key: WorkflowTemplateFailure, Name: "Failure handler", Mode: WorkflowModeEvent, Description: "Standard workflow failure trigger connected to an end node."},
 		{Key: WorkflowTemplateWebhook, Name: "Connector webhook", Mode: WorkflowModeBatch, Description: "Authenticated webhook trigger connected to an end node."},
 		{Key: WorkflowTemplateWebSocket, Name: "Connector WebSocket", Mode: WorkflowModeStream, Description: "Public WebSocket stream trigger connected to an end node."},
-		{Key: WorkflowTemplateQuantData, Name: "Shared Binance market data", Mode: WorkflowModeStream, Description: "Shared public closed-candle collection for Spot or USD-M."},
+		{Key: WorkflowTemplateQuantData, Name: "Shared Binance market data", Mode: WorkflowModeStream, Description: "Shared public real-time closed-candle collection for Spot or USD-M."},
 		{Key: WorkflowTemplateQuantLive, Name: "Live strategy evaluation", Mode: WorkflowModeEvent, Description: "Evaluate a trusted Go strategy for each matching closed candle."},
 		{Key: WorkflowTemplateBacktest, Name: "Strategy backtest", Mode: WorkflowModeBatch, Description: "Run a deterministic closed-candle backtest in the compute pool."},
 		{Key: WorkflowTemplatePaper, Name: "Paper strategy pair", Mode: WorkflowModeEvent, Description: "Create shared market data and an approval-first Paper strategy workflow."},

@@ -58,6 +58,19 @@ export interface QuantBacktest {
   createdAt: string
 }
 
+export interface QuantMarketSignal {
+  id: number
+  market: 'spot' | 'usdm'
+  instrument: string
+  interval: string
+  name: string
+  indicator: string
+  candleCloseTime: string
+  summary: string
+  values: Record<string, string>
+  createdAt: string
+}
+
 const quantBase = '/api/v1/plugins/official.quant'
 
 export const fetchQuantInstruments = (market: 'spot' | 'usdm') =>
@@ -75,3 +88,12 @@ export const fetchQuantStrategies = () =>
 
 export const fetchQuantBacktests = (limit = 50) =>
   request.get<ItemList<QuantBacktest>>({ url: `${quantBase}/backtests`, params: { limit } })
+
+export const fetchQuantMarketSignals = (params: {
+  market: 'spot' | 'usdm'
+  instrument: string
+  interval: string
+  startTime?: string
+  endTime?: string
+  limit?: number
+}) => request.get<ItemList<QuantMarketSignal>>({ url: `${quantBase}/market-signals`, params })

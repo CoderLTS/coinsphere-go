@@ -2,7 +2,6 @@ package official
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,14 +22,47 @@ import (
 
 const maxQuantResponseBytes = 32 << 20
 
-type quantCandleTrigger struct{ runtime *quantRuntime }
+type quantCandleRealtimeTrigger struct{ runtime *quantRuntime }
+type quantCandleBackfillAction struct{ runtime *quantRuntime }
 
-func (t quantCandleTrigger) Run(ctx context.Context, request sdk.TriggerRequest, emitter sdk.Emitter) error {
-	config, err := parseQuantSeriesConfig(request.Config)
+func (t quantCandleRealtimeTrigger) Run(ctx context.Context, request sdk.TriggerRequest, emitter sdk.Emitter) error {
+	config, err := parseQuantCandleStreamConfig(request.Config)
 	if err != nil {
 		return err
 	}
 	return t.runtime.hub.subscribe(ctx, config, emitter)
+}
+
+func (a quantCandleBackfillAction) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
+	now := time.Now().UTC()
+	config, err := parseQuantCandleBackfillConfig(request.Config, now)
+	if err != nil {
+		return sdk.ActionResult{}, err
+	}
+	fetchedCount, insertedCount := 0, int64(0)
+	for _, interval := range config.Intervals {
+		series := quantSeriesConfig{Market: config.Market, Instrument: config.Instrument, Interval: interval}
+		candles, err := a.runtime.fetchQuantKlinesBefore(ctx, series, config.EndTime, config.CandleCount)
+		if err != nil {
+			return sdk.ActionResult{}, err
+		}
+		fetchedCount += len(candles)
+		inserted, err := a.runtime.persistQuantCandles(ctx, candles)
+		if err != nil {
+			return sdk.ActionResult{}, err
+		}
+		insertedCount += inserted
+	}
+	completedAt := time.Now().UTC()
+	request.Logger.Info("Binance K 线补数完成",
+		"market", config.Market, "instrument", config.Instrument, "intervals", strings.Join(config.Intervals, ","),
+		"requested_count_per_interval", config.CandleCount, "fetched_count", fetchedCount, "inserted_count", insertedCount,
+	)
+	return sdk.ActionResult{Output: mustMarshal(map[string]any{
+		"market": config.Market, "instrument": config.Instrument, "intervals": config.Intervals,
+		"requestedCountPerInterval": config.CandleCount, "fetchedCount": fetchedCount,
+		"insertedCount": insertedCount, "completedAt": completedAt.Format(time.RFC3339Nano),
+	})}, nil
 }
 
 type quantCandleHub struct {
@@ -41,7 +73,7 @@ type quantCandleHub struct {
 }
 
 type quantCandleSubscription struct {
-	config      quantSeriesConfig
+	config      quantCandleStreamConfig
 	ctx         context.Context
 	cancel      context.CancelFunc
 	subscribers map[uint64]quantCandleSubscriber
@@ -56,8 +88,8 @@ func newQuantCandleHub(runtime *quantRuntime) *quantCandleHub {
 	return &quantCandleHub{runtime: runtime, subscriptions: map[string]*quantCandleSubscription{}}
 }
 
-func (h *quantCandleHub) subscribe(ctx context.Context, config quantSeriesConfig, emitter sdk.Emitter) error {
-	key := config.Market + ":" + config.Instrument + ":" + config.Interval
+func (h *quantCandleHub) subscribe(ctx context.Context, config quantCandleStreamConfig, emitter sdk.Emitter) error {
+	key := config.Market + ":" + config.Instrument + ":" + strings.Join(config.Intervals, ",")
 	h.mu.Lock()
 	subscription := h.subscriptions[key]
 	if subscription == nil {
@@ -88,9 +120,7 @@ func (h *quantCandleHub) subscribe(ctx context.Context, config quantSeriesConfig
 
 func (h *quantCandleHub) run(key string, subscription *quantCandleSubscription) {
 	for subscription.ctx.Err() == nil {
-		if err := h.runtime.backfillQuantCandles(subscription.ctx, subscription); err == nil {
-			_ = h.runtime.streamQuantCandles(subscription.ctx, subscription)
-		}
+		_ = h.runtime.streamQuantCandles(subscription.ctx, subscription)
 		select {
 		case <-subscription.ctx.Done():
 			return
@@ -137,63 +167,61 @@ func (q *quantRuntime) broadcastQuantCandle(subscription *quantCandleSubscriptio
 }
 
 func (q *quantRuntime) persistQuantCandle(ctx context.Context, candle quantCandle) error {
-	candle.ReceivedAt = time.Now().UTC()
-	if err := q.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&candle).Error; err != nil {
-		return errors.New("persist Quant candle failed")
-	}
-	return nil
+	_, err := q.persistQuantCandles(ctx, []quantCandle{candle})
+	return err
 }
 
-func (q *quantRuntime) backfillQuantCandles(ctx context.Context, subscription *quantCandleSubscription) error {
-	config := subscription.config
-	duration := quantIntervals[config.Interval]
-	now := time.Now().UTC()
-	start := now.Add(-500 * duration)
-	var latest sql.NullTime
-	err := q.db.WithContext(ctx).Model(&quantCandle{}).
-		Where("market = ? AND instrument = ? AND interval = ?", config.Market, config.Instrument, config.Interval).
-		Select("MAX(open_time)").Scan(&latest).Error
-	if err != nil {
-		return errors.New("load latest Quant candle failed")
+func (q *quantRuntime) persistQuantCandles(ctx context.Context, candles []quantCandle) (int64, error) {
+	if len(candles) == 0 {
+		return 0, nil
 	}
-	if latest.Valid {
-		start = latest.Time.UTC().Add(duration)
+	receivedAt := time.Now().UTC()
+	for index := range candles {
+		candles[index].ReceivedAt = receivedAt
 	}
-	for ctx.Err() == nil {
-		candles, err := q.fetchQuantKlines(ctx, config, start, 1000)
+	result := q.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(&candles, 500)
+	if result.Error != nil {
+		return 0, errors.New("persist Quant candles failed")
+	}
+	return result.RowsAffected, nil
+}
+
+func (q *quantRuntime) fetchQuantKlinesBefore(ctx context.Context, config quantSeriesConfig, end time.Time, count int) ([]quantCandle, error) {
+	result := make([]quantCandle, 0, count)
+	cursor := end.UTC()
+	for len(result) < count {
+		limit := count - len(result)
+		if limit > 1000 {
+			limit = 1000
+		}
+		page, err := q.fetchQuantKlinePage(ctx, config, cursor, limit)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if len(candles) == 0 {
-			return nil
+		if len(page) == 0 {
+			break
 		}
-		closed := 0
-		for _, candle := range candles {
-			if candle.CloseTime.After(now) {
-				continue
-			}
-			closed++
-			if err := q.broadcastQuantCandle(subscription, candle); err != nil {
-				return err
+		for _, candle := range page {
+			if !candle.CloseTime.After(end) {
+				result = append(result, candle)
 			}
 		}
-		last := candles[len(candles)-1].OpenTime
-		if len(candles) < 1000 || closed < len(candles) || !last.Before(now) {
-			return nil
+		if len(result) >= count || len(page) < limit {
+			break
 		}
-		start = last.Add(duration)
+		cursor = page[0].OpenTime.Add(-time.Millisecond)
 	}
-	return ctx.Err()
+	return result, nil
 }
 
-func (q *quantRuntime) fetchQuantKlines(ctx context.Context, config quantSeriesConfig, start time.Time, limit int) ([]quantCandle, error) {
+func (q *quantRuntime) fetchQuantKlinePage(ctx context.Context, config quantSeriesConfig, end time.Time, limit int) ([]quantCandle, error) {
 	base, path := "https://data-api.binance.vision", "/api/v3/klines"
 	if config.Market == "usdm" {
 		base, path = "https://fapi.binance.com", "/fapi/v1/klines"
 	}
 	values := url.Values{
 		"symbol": {config.Instrument}, "interval": {config.Interval},
-		"startTime": {strconv.FormatInt(start.UnixMilli(), 10)}, "limit": {strconv.Itoa(limit)},
+		"endTime": {strconv.FormatInt(end.UnixMilli(), 10)}, "limit": {strconv.Itoa(limit)},
 	}
 	var rows []json.RawMessage
 	if err := q.getQuantJSON(ctx, base+path+"?"+values.Encode(), &rows); err != nil {
@@ -252,7 +280,13 @@ func (q *quantRuntime) streamQuantCandles(ctx context.Context, subscription *qua
 	if config.Market == "usdm" {
 		host = "fstream.binance.com"
 	}
-	target, _ := url.Parse("wss://" + host + "/ws/" + strings.ToLower(config.Instrument) + "@kline_" + config.Interval)
+	streams := make([]string, len(config.Intervals))
+	expected := make(map[string]string, len(config.Intervals))
+	for index, interval := range config.Intervals {
+		streams[index] = strings.ToLower(config.Instrument) + "@kline_" + interval
+		expected[streams[index]] = interval
+	}
+	target, _ := url.Parse("wss://" + host + "/stream?streams=" + strings.Join(streams, "/"))
 	if err := q.client.validateWebSocketURL(ctx, target, false); err != nil {
 		return err
 	}
@@ -277,31 +311,39 @@ func (q *quantRuntime) streamQuantCandles(ctx context.Context, subscription *qua
 	defer connection.Close()
 	for {
 		var message struct {
-			Symbol string `json:"s"`
-			Kline  struct {
-				OpenTime  int64  `json:"t"`
-				CloseTime int64  `json:"T"`
-				Interval  string `json:"i"`
-				Open      string `json:"o"`
-				High      string `json:"h"`
-				Low       string `json:"l"`
-				Close     string `json:"c"`
-				Volume    string `json:"v"`
-				Closed    bool   `json:"x"`
-			} `json:"k"`
+			Stream string `json:"stream"`
+			Data   struct {
+				Symbol string `json:"s"`
+				Kline  struct {
+					OpenTime  int64  `json:"t"`
+					CloseTime int64  `json:"T"`
+					Interval  string `json:"i"`
+					Open      string `json:"o"`
+					High      string `json:"h"`
+					Low       string `json:"l"`
+					Close     string `json:"c"`
+					Volume    string `json:"v"`
+					Closed    bool   `json:"x"`
+				} `json:"k"`
+			} `json:"data"`
 		}
 		if err := connection.ReadJSON(&message); err != nil {
 			return err
 		}
-		if !message.Kline.Closed {
+		interval, ok := expected[message.Stream]
+		if !ok || message.Data.Symbol != config.Instrument || message.Data.Kline.Interval != interval {
+			return errors.New("binance WebSocket kline payload is invalid")
+		}
+		if !message.Data.Kline.Closed {
 			continue
 		}
 		raw := mustMarshal([]any{
-			message.Kline.OpenTime, message.Kline.Open, message.Kline.High, message.Kline.Low,
-			message.Kline.Close, message.Kline.Volume, message.Kline.CloseTime,
+			message.Data.Kline.OpenTime, message.Data.Kline.Open, message.Data.Kline.High, message.Data.Kline.Low,
+			message.Data.Kline.Close, message.Data.Kline.Volume, message.Data.Kline.CloseTime,
 		})
-		candle, err := parseQuantKline(config, raw)
-		if err != nil || message.Symbol != config.Instrument || message.Kline.Interval != config.Interval {
+		series := quantSeriesConfig{Market: config.Market, Instrument: config.Instrument, Interval: interval}
+		candle, err := parseQuantKline(series, raw)
+		if err != nil {
 			return errors.New("binance WebSocket kline payload is invalid")
 		}
 		if err := q.broadcastQuantCandle(subscription, candle); err != nil {
@@ -354,4 +396,5 @@ func quantSDKCandle(candle quantCandle) sdk.Candle {
 	}
 }
 
-var _ sdk.TriggerHandler = quantCandleTrigger{}
+var _ sdk.TriggerHandler = quantCandleRealtimeTrigger{}
+var _ sdk.ActionHandler = quantCandleBackfillAction{}

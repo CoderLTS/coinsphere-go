@@ -83,12 +83,19 @@ const MATERIAL_META: Record<string, MaterialMeta> = {
     color: '#0ea5e9',
     iconText: 'AI'
   },
-  'official.quant.binance_candles': {
+  'official.quant.realtime_candles': {
     kind: 'generic',
     group: '行情',
-    description: '采集并发布 Binance 已收盘 K 线',
+    description: '实时采集并发布 Binance 已收盘 K 线',
     color: '#7ec7b7',
     iconText: 'K'
+  },
+  'official.quant.backfill_candles': {
+    kind: 'generic',
+    group: '行情',
+    description: '补充 Binance 历史已收盘 K 线',
+    color: '#0891b2',
+    iconText: '补'
   },
   'official.quant.sync_instruments': {
     kind: 'generic',
@@ -157,6 +164,13 @@ const MATERIAL_META: Record<string, MaterialMeta> = {
     iconText: 'B',
     width: 280,
     height: 112
+  },
+  'official.quant.market_signal': {
+    kind: 'generic',
+    group: '行情',
+    description: '将命中的指标结果输出到 K 线信号',
+    color: '#c07a2d',
+    iconText: '信'
   },
   'official.quant.backtest': {
     kind: 'generic',

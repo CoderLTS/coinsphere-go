@@ -232,6 +232,9 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 	if err := validateWorkflowBindings(nodes, descriptors, adjacency, graph.Edges); err != nil {
 		return validatedWorkflowGraph{}, err
 	}
+	if err := validateWorkflowMarketSignalBindings(nodes, graph.Edges); err != nil {
+		return validatedWorkflowGraph{}, err
+	}
 
 	canonical, err := json.Marshal(graph)
 	if err != nil {
@@ -334,10 +337,44 @@ func validateWorkflowLoop(node workflowGraphNode, catalog map[string]sdk.NodeDes
 	if err := validateWorkflowBindings(nodes, descriptors, adjacency, config.Body.Edges); err != nil {
 		return validatedWorkflowLoop{}, err
 	}
+	if err := validateWorkflowMarketSignalBindings(nodes, config.Body.Edges); err != nil {
+		return validatedWorkflowLoop{}, err
+	}
 	return validatedWorkflowLoop{
 		config: config, itemID: itemID, endID: endID, nodes: nodes,
 		descriptors: descriptors, requiredSecrets: requiredSecrets,
 	}, nil
+}
+
+func validateWorkflowMarketSignalBindings(nodes map[string]workflowGraphNode, edges []workflowGraphEdge) error {
+	expected := map[string]string{
+		"market": "market", "instrument": "instrument", "interval": "interval", "name": "formula",
+		"indicator": "indicator", "candleCloseTime": "candleCloseTime", "summary": "summary", "values": "value",
+	}
+	for nodeID, node := range nodes {
+		if node.NodeType != "official.quant.market_signal" {
+			continue
+		}
+		var incoming []workflowGraphEdge
+		for _, edge := range edges {
+			if edge.TargetNodeInstanceID == nodeID {
+				incoming = append(incoming, edge)
+			}
+		}
+		if len(incoming) != 1 || incoming[0].SourcePort != "true" ||
+			!isWorkflowQuantConditionType(nodes[incoming[0].SourceNodeInstanceID].NodeType) {
+			return fmt.Errorf("node %q must connect to exactly one Quant condition true branch", nodeID)
+		}
+		sourceID := incoming[0].SourceNodeInstanceID
+		for targetField, sourceField := range expected {
+			binding, ok := node.InputBindings[targetField]
+			if !ok || binding.Kind != "field" || binding.NodeInstanceID != sourceID ||
+				len(binding.FieldPath) != 1 || binding.FieldPath[0] != sourceField {
+				return fmt.Errorf("node %q input binding %q must use its Quant condition source", nodeID, targetField)
+			}
+		}
+	}
+	return nil
 }
 
 func workflowLoopNodeID(loopID, bodyID string) (string, error) {

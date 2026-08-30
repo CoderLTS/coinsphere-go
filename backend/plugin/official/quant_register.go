@@ -13,6 +13,9 @@ const quantPluginID = "official.quant"
 var quantCandleSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"market":{"type":"string","enum":["spot","usdm"]},"instrument":{"type":"string","pattern":"^[A-Z0-9]{2,32}$"},"interval":{"type":"string","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"]},"openTime":{"type":"string","format":"date-time"},"closeTime":{"type":"string","format":"date-time"},"open":{"type":"string","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"high":{"type":"string","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"low":{"type":"string","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"close":{"type":"string","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"volume":{"type":"string","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true}},"required":["market","instrument","interval","openTime","closeTime","open","high","low","close","volume"],"additionalProperties":false}`)
 
 var quantSeriesConfigSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"market":{"type":"string","title":"Market","enum":["spot","usdm"]},"instrument":{"type":"string","title":"Instrument","pattern":"^[A-Z0-9]{2,32}$"},"interval":{"type":"string","title":"Interval","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"]}},"required":["market","instrument","interval"],"additionalProperties":false}`)
+var quantCandleStreamConfigSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"market":{"type":"string","title":"Market","enum":["spot","usdm"],"default":"spot"},"instrument":{"type":"string","title":"Instrument","pattern":"^[A-Z0-9]{2,32}$","default":"BTCUSDT"},"intervals":{"type":"array","title":"Intervals","items":{"type":"string","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"]},"minItems":1,"maxItems":14,"uniqueItems":true,"default":["1m"]}},"required":["market","instrument","intervals"],"additionalProperties":false}`)
+var quantCandleBackfillConfigSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"market":{"type":"string","title":"Market","enum":["spot","usdm"],"default":"spot"},"instrument":{"type":"string","title":"Instrument","pattern":"^[A-Z0-9]{2,32}$","default":"BTCUSDT"},"intervals":{"type":"array","title":"Intervals","items":{"type":"string","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"]},"minItems":1,"maxItems":14,"uniqueItems":true,"default":["1m"]},"candleCount":{"type":"integer","title":"Candles per interval","minimum":1,"maximum":10000,"default":500},"endTime":{"type":"string","title":"End time (UTC)","anyOf":[{"const":""},{"format":"date-time","pattern":"(?:Z|[+-]00:00)$"}],"default":""}},"required":["market","instrument","intervals","candleCount"],"additionalProperties":false}`)
+var quantCandleBackfillOutputSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"market":{"type":"string","enum":["spot","usdm"]},"instrument":{"type":"string","pattern":"^[A-Z0-9]{2,32}$"},"intervals":{"type":"array","items":{"type":"string","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"]},"minItems":1,"maxItems":14,"uniqueItems":true},"requestedCountPerInterval":{"type":"integer","minimum":1,"maximum":10000},"fetchedCount":{"type":"integer","minimum":0},"insertedCount":{"type":"integer","minimum":0},"completedAt":{"type":"string","format":"date-time"}},"required":["market","instrument","intervals","requestedCountPerInterval","fetchedCount","insertedCount","completedAt"],"additionalProperties":false}`)
 
 type quantRuntime struct {
 	db       *gorm.DB
@@ -33,7 +36,7 @@ func RegisterQuant(registry *sdk.Registry, database *gorm.DB) error {
 	runtime.hub = newQuantCandleHub(runtime)
 	runtime.quote = runtime.fetchQuantPublicQuote
 	return registry.RegisterPlugin(sdk.PluginDescriptor{
-		ID: quantPluginID, Name: "量化分析", Version: "1.2.0",
+		ID: quantPluginID, Name: "量化分析", Version: "2.1.0",
 		Contributes: []string{"nodes", "triggers", "strategies", "apiRoutes", "pages", "resultPages", "assistantQueries"},
 	}, func(registrar sdk.Registrar) error { return runtime.register(registrar) })
 }
@@ -51,11 +54,20 @@ func (q *quantRuntime) register(registrar sdk.Registrar) error {
 		return err
 	}
 	if err := registrar.Trigger(sdk.NodeDescriptor{
-		Type: "official.quant.binance_candles", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
-		ConfigSchema: quantSeriesConfigSchema, UISchema: json.RawMessage(`{"ui:order":["market","instrument","interval"]}`),
+		Type: "official.quant.realtime_candles", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
+		ConfigSchema: quantCandleStreamConfigSchema, UISchema: json.RawMessage(`{"ui:order":["market","instrument","intervals"]}`),
 		InputSchema: emptyObjectSchema, OutputSchema: quantCandleSchema,
 		Pool: sdk.PoolStream, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
-	}, quantCandleTrigger{runtime: q}); err != nil {
+	}, quantCandleRealtimeTrigger{runtime: q}); err != nil {
+		return err
+	}
+	if err := registrar.Action(sdk.NodeDescriptor{
+		Type: "official.quant.backfill_candles", Version: "1.0.0", Kind: sdk.NodeKindAction,
+		ConfigSchema: quantCandleBackfillConfigSchema,
+		UISchema:     json.RawMessage(`{"ui:order":["market","instrument","intervals","candleCount","endTime"]}`),
+		InputSchema:  emptyObjectSchema, OutputSchema: quantCandleBackfillOutputSchema,
+		Pool: sdk.PoolStream, SideEffect: sdk.SideEffectData, State: sdk.StateStateless,
+	}, quantCandleBackfillAction{runtime: q}); err != nil {
 		return err
 	}
 	if err := registrar.Action(sdk.NodeDescriptor{
@@ -89,6 +101,9 @@ func (q *quantRuntime) register(registrar sdk.Registrar) error {
 			return err
 		}
 	}
+	if err := q.registerMarketSignals(registrar); err != nil {
+		return err
+	}
 	if err := registrar.Action(sdk.NodeDescriptor{
 		Type: "official.quant.backtest", Version: "1.0.0", Kind: sdk.NodeKindAction,
 		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"strategyId":{"type":"string","title":"Strategy","const":"official.quant.sma-crossover"},"market":{"type":"string","title":"Market","enum":["spot","usdm"]},"instrument":{"type":"string","title":"Instrument","pattern":"^[A-Z0-9]{2,32}$"},"interval":{"type":"string","title":"Interval","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"]},"startTime":{"type":"string","title":"Start (UTC)","format":"date-time"},"endTime":{"type":"string","title":"End (UTC)","format":"date-time"},"initialCapital":{"type":"string","title":"Initial capital","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"feeRate":{"type":"string","title":"Fee rate","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"slippageRate":{"type":"string","title":"Slippage rate","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"parameters":{"type":"object","title":"Parameters"}},"required":["strategyId","market","instrument","interval","startTime","endTime","initialCapital","feeRate","slippageRate","parameters"],"additionalProperties":false}`),
@@ -110,6 +125,7 @@ func (q *quantRuntime) register(registrar sdk.Registrar) error {
 		{sdk.RouteDescriptor{Method: "GET", Pattern: "/candles", Scope: sdk.ScopeSystem}, q.handleQuantCandles},
 		{sdk.RouteDescriptor{Method: "GET", Pattern: "/strategies", Scope: sdk.ScopeSystem}, q.handleQuantStrategies},
 		{sdk.RouteDescriptor{Method: "GET", Pattern: "/backtests", Scope: sdk.ScopeSystem}, q.handleQuantBacktests},
+		{sdk.RouteDescriptor{Method: "GET", Pattern: "/market-signals", Scope: sdk.ScopeSystem}, q.handleQuantMarketSignals},
 		{sdk.RouteDescriptor{Method: "GET", Pattern: "/signals", Scope: sdk.ScopeSystem}, q.handleQuantSignals},
 		{sdk.RouteDescriptor{Method: "GET", Pattern: "/paper-accounts", Scope: sdk.ScopeSystem}, q.handleQuantPaperAccounts},
 		{sdk.RouteDescriptor{Method: "POST", Pattern: "/paper-accounts/{accountId}/rebuild", Scope: sdk.ScopeSystem}, q.handleQuantPaperAccountRebuild},

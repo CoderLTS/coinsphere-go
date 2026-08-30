@@ -195,8 +195,10 @@ func workflowNodeTitle(nodeType string) string {
 		return "WebSocket 触发"
 	case "official.ai.model_call":
 		return "AI 模型调用"
-	case "official.quant.binance_candles":
-		return "Binance K 线采集"
+	case "official.quant.realtime_candles":
+		return "Binance K 线实时采集"
+	case "official.quant.backfill_candles":
+		return "Binance K 线补数"
 	case "official.quant.sync_instruments":
 		return "Binance 币种元数据采集"
 	case "official.quant.evaluate":
@@ -213,6 +215,8 @@ func workflowNodeTitle(nodeType string) string {
 		return "RSI 判断"
 	case "official.quant.bollinger_condition":
 		return "布林带判断"
+	case "official.quant.market_signal":
+		return "输出信号"
 	case "official.quant.backtest":
 		return "量化策略回测"
 	case "official.quant.signal":
@@ -254,8 +258,10 @@ func workflowNodeDescription(nodeType string) string {
 		return "Provides the current iteration and carried value inside a loop."
 	case "core.loop_end":
 		return "Returns the carried value from one loop iteration."
-	case "official.quant.binance_candles":
-		return "Collects and publishes closed Binance Spot or USD-M candles."
+	case "official.quant.realtime_candles":
+		return "Streams and publishes closed Binance Spot or USD-M candles."
+	case "official.quant.backfill_candles":
+		return "Backfills closed Binance Spot or USD-M candles without publishing events."
 	case "official.quant.sync_instruments":
 		return "Synchronizes a filtered Binance instrument metadata snapshot."
 	case "official.quant.evaluate":
@@ -263,6 +269,8 @@ func workflowNodeDescription(nodeType string) string {
 	case "official.quant.volume_spike_condition", "official.quant.price_change_condition", "official.quant.macd_condition",
 		"official.quant.kdj_condition", "official.quant.rsi_condition", "official.quant.bollinger_condition":
 		return "Evaluates one indicator rule against closed candles."
+	case "official.quant.market_signal":
+		return "Persists one idempotent market signal for a matched closed candle."
 	case "official.quant.backtest":
 		return "Runs a deterministic next-open backtest over stored candles."
 	case "official.quant.signal":
