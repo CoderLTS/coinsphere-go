@@ -321,7 +321,7 @@
   const getViewportPadding = () => {
     const shell = shellRef.value
     if (!shell || shell.clientWidth <= 980) {
-      return { top: 32, right: 32, bottom: 32, left: 32 }
+      return { top: 80, right: 32, bottom: 32, left: 32 }
     }
 
     const host = shell.parentElement
@@ -334,7 +334,7 @@
         : 0
 
     return {
-      top: 32,
+      top: 80,
       right: sideWidth ? sideWidth + 24 : 32,
       bottom: 32,
       left: materialWidth ? materialWidth + 24 : 32
@@ -1440,7 +1440,7 @@
 
   .workflow-canvas__stencil {
     position: absolute;
-    inset: 10px auto 10px 10px;
+    inset: 64px auto 10px 10px;
     z-index: 30;
     display: flex;
     flex-direction: column;
@@ -1509,7 +1509,7 @@
 
   .workflow-canvas__side-panel {
     position: absolute;
-    inset: 10px 10px 10px auto;
+    inset: 64px 10px 10px auto;
     z-index: 31;
     width: min(320px, calc(100% - 20px));
     min-width: 0;
@@ -1811,13 +1811,13 @@
 
   @media (max-width: 980px) {
     .workflow-canvas__stencil {
-      inset: 8px auto 8px 8px;
+      inset: 60px auto 8px 8px;
       width: min(220px, calc(100% - 16px));
       box-shadow: 0 12px 30px rgb(31 35 48 / 0.16);
     }
 
     .workflow-canvas__side-panel {
-      inset: 8px 8px 8px auto;
+      inset: 60px 8px 8px auto;
       width: min(320px, calc(100% - 16px));
       box-shadow: 0 12px 30px rgb(31 35 48 / 0.16);
     }

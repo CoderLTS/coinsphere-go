@@ -114,14 +114,13 @@
       requestAnimationFrame(() => {
         ;(graph as any).zoomToFit?.({
           padding: {
-            top: 44,
+            top: 96,
             right: 52,
             bottom: 44,
             left: 52
           },
           maxScale: 0.98
         })
-        ;(graph as any).centerContent?.()
       })
     })
   }
@@ -134,14 +133,13 @@
       syncGraphSize()
       ;(graph as any).zoomToFit?.({
         padding: {
-          top: 44,
+          top: 96,
           right: 52,
           bottom: 44,
           left: 52
         },
         maxScale: 0.98
       })
-      ;(graph as any).centerContent?.()
     }, 140)
   }
 
@@ -194,8 +192,8 @@
       const stroke = isActive
         ? 'var(--theme-color, var(--el-color-primary))'
         : 'var(--workflow-edge-color, #98a4b6)'
-      const opacity = selected ? 1 : isActive ? 0.92 : 0.34
-      const strokeWidth = selected ? 2.2 : isActive ? 1.8 : 1.1
+      const opacity = selected || isFlowing ? 1 : isActive ? 0.92 : 0.34
+      const strokeWidth = selected ? 2.2 : isFlowing ? 2.4 : isActive ? 1.8 : 1.1
       const baseLabel = String((edge.getData() || {}).label || '')
 
       edge.setAttrs({
@@ -203,7 +201,7 @@
           stroke,
           strokeWidth,
           opacity,
-          strokeDasharray: isFlowing ? '8 6' : isActive ? '6 4' : '4 5',
+          strokeDasharray: isFlowing ? '10 7' : isActive ? '6 4' : '4 5',
           strokeLinecap: 'round',
           strokeLinejoin: 'round',
           class: `workflow-execution-canvas__edge-line${isFlowing ? ' workflow-execution-canvas__edge-line--flow' : ''}`,
@@ -393,7 +391,17 @@
   }
 
   :deep(.workflow-execution-canvas__edge-line--flow) {
-    animation: workflow-execution-edge-flow 1.7s linear infinite;
+    filter: drop-shadow(0 0 3px color-mix(in srgb, var(--theme-color) 55%, transparent));
+    animation: workflow-execution-edge-flow 1.1s linear infinite;
+  }
+
+  :deep(
+    .wf-node[data-state='running'],
+    .wf-node[data-state='waiting'],
+    .wf-node[data-state='retryWaiting'],
+    .wf-node[data-state='queued']
+  ) {
+    animation: workflow-execution-node-pulse 1.6s ease-in-out infinite;
   }
 
   @keyframes workflow-execution-edge-flow {
@@ -402,7 +410,30 @@
     }
 
     to {
-      stroke-dashoffset: -32;
+      stroke-dashoffset: -34;
+    }
+  }
+
+  @keyframes workflow-execution-node-pulse {
+    0%,
+    100% {
+      filter: drop-shadow(0 0 2px color-mix(in srgb, var(--wf-node-border) 28%, transparent));
+    }
+
+    50% {
+      filter: drop-shadow(0 0 8px color-mix(in srgb, var(--wf-node-border) 58%, transparent));
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    :deep(.workflow-execution-canvas__edge-line--flow),
+    :deep(
+      .wf-node[data-state='running'],
+      .wf-node[data-state='waiting'],
+      .wf-node[data-state='retryWaiting'],
+      .wf-node[data-state='queued']
+    ) {
+      animation: none;
     }
   }
 </style>
