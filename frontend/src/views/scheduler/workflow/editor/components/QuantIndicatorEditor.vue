@@ -6,11 +6,7 @@
     :keys="['market', 'instrument', 'checkInterval', 'name', 'interval']"
     @update="emitUpdate"
   />
-  <WorkflowSchemaFields
-    :schema="parameterSchema"
-    :config="parameters"
-    @update="updateParameter"
-  />
+  <WorkflowSchemaFields :schema="parameterSchema" :config="parameters" @update="updateParameter" />
 </template>
 
 <script setup lang="ts">

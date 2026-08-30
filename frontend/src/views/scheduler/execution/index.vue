@@ -156,7 +156,9 @@
         webhook: 'Webhook 触发',
         failure: '失败触发'
       }) as Record<string, string>
-    )[value] || value || '--'
+    )[value] ||
+    value ||
+    '--'
 
   const statusLabel = (value: string) =>
     (
@@ -169,7 +171,9 @@
         failed: '失败',
         cancelled: '已取消'
       }) as Record<string, string>
-    )[value] || value || '--'
+    )[value] ||
+    value ||
+    '--'
 
   const statusTagType = (status: string) => {
     if (status === 'failed') return 'danger'
@@ -188,7 +192,10 @@
     const date = new Date(value)
     return Number.isNaN(date.getTime())
       ? value
-      : date.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC')
+      : date
+          .toISOString()
+          .replace('T', ' ')
+          .replace(/\.\d{3}Z$/, ' UTC')
   }
 
   const openDetail = (run: WorkflowRun) =>
@@ -223,7 +230,11 @@
       minWidth: 100,
       align: 'center',
       formatter: (row) =>
-        h(ElTag, { type: statusTagType(row.status), effect: 'plain' }, () => statusLabel(row.status))
+        h(
+          ElTag,
+          { type: statusTagType(row.status), effect: 'plain' },
+          () => statusLabel(row.status)
+        )
     },
     {
       prop: 'triggeredAt',
@@ -272,7 +283,9 @@
   ])
 
   const hasInflightRuns = computed(() =>
-    runList.value.records.some((run) => ['queued', 'running', 'waiting', 'retrying'].includes(run.status))
+    runList.value.records.some((run) =>
+      ['queued', 'running', 'waiting', 'retrying'].includes(run.status)
+    )
   )
 
   const clearPollTimer = () => {

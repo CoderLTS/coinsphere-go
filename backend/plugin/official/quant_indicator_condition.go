@@ -22,9 +22,9 @@ const (
 )
 
 var (
-	quantHundred        = decimal.NewFromInt(100)
-	quantFifty          = decimal.NewFromInt(50)
-	quantDecimalPattern = regexp.MustCompile(`^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$`)
+	quantHundred		= decimal.NewFromInt(100)
+	quantFifty		= decimal.NewFromInt(50)
+	quantDecimalPattern	= regexp.MustCompile(`^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$`)
 )
 
 var quantIndicatorInputSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"eventTime":{"type":"string","title":"Event time","format":"date-time"},"pathEntered":{"type":"boolean","title":"Upstream path entered","default":false}},"required":["eventTime"],"additionalProperties":false}`)
@@ -46,8 +46,8 @@ var quantIndicatorOutputSchema = json.RawMessage(`{
 }`)
 
 type quantIndicatorDefinition struct {
-	NodeType  string
-	Indicator string
+	NodeType	string
+	Indicator	string
 }
 
 var quantIndicatorDefinitions = []quantIndicatorDefinition{
@@ -73,45 +73,45 @@ func quantIndicatorConfigSchema(indicator string) json.RawMessage {
 }
 
 type quantIndicatorAction struct {
-	runtime   *quantRuntime
-	indicator string
+	runtime		*quantRuntime
+	indicator	string
 }
 
 type quantIndicatorConfig struct {
-	Market        string
-	Instrument    string
-	CheckInterval string
-	Leaf          *quantIndicatorLeaf
+	Market		string
+	Instrument	string
+	CheckInterval	string
+	Leaf		*quantIndicatorLeaf
 }
 
 type quantIndicatorLeaf struct {
-	Name       string
-	Interval   string
-	Indicator  string
-	Parameters quantIndicatorParameters
+	Name		string
+	Interval	string
+	Indicator	string
+	Parameters	quantIndicatorParameters
 }
 
 type quantIndicatorParameters struct {
-	Lookback          int
-	Multiplier        decimal.Decimal
-	Mode              string
-	Threshold         decimal.Decimal
-	FastPeriod        int
-	SlowPeriod        int
-	SignalPeriod      int
-	Period            int
-	KSmoothing        int
-	DSmoothing        int
-	Signal            string
-	StandardDeviation decimal.Decimal
+	Lookback		int
+	Multiplier		decimal.Decimal
+	Mode			string
+	Threshold		decimal.Decimal
+	FastPeriod		int
+	SlowPeriod		int
+	SignalPeriod		int
+	Period			int
+	KSmoothing		int
+	DSmoothing		int
+	Signal			string
+	StandardDeviation	decimal.Decimal
 }
 
 type quantIndicatorPoint struct {
-	Ready           bool
-	Matched         bool
-	CandleCloseTime string
-	Values          map[string]string
-	Summary         string
+	Ready			bool
+	Matched			bool
+	CandleCloseTime	string
+	Values			map[string]string
+	Summary			string
 }
 
 func (a quantIndicatorAction) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
@@ -120,8 +120,8 @@ func (a quantIndicatorAction) Execute(ctx context.Context, request sdk.ActionReq
 		return sdk.ActionResult{}, err
 	}
 	var input struct {
-		EventTime   string `json:"eventTime"`
-		PathEntered bool   `json:"pathEntered"`
+		EventTime	string `json:"eventTime"`
+		PathEntered	bool   `json:"pathEntered"`
 	}
 	if !decodeQuantStrict(request.Input, &input) {
 		return sdk.ActionResult{}, errors.New("quant indicator condition input is invalid")
@@ -191,12 +191,12 @@ func (a quantIndicatorAction) Execute(ctx context.Context, request sdk.ActionReq
 
 func parseQuantIndicatorConfig(raw json.RawMessage, indicator string) (quantIndicatorConfig, error) {
 	var payload struct {
-		Market        string          `json:"market"`
-		Instrument    string          `json:"instrument"`
-		CheckInterval string          `json:"checkInterval"`
-		Name          string          `json:"name"`
-		Interval      string          `json:"interval"`
-		Parameters    json.RawMessage `json:"parameters"`
+		Market		string          `json:"market"`
+		Instrument	string          `json:"instrument"`
+		CheckInterval	string          `json:"checkInterval"`
+		Name		string          `json:"name"`
+		Interval	string          `json:"interval"`
+		Parameters	json.RawMessage `json:"parameters"`
 	}
 	if !decodeQuantStrict(raw, &payload) {
 		return quantIndicatorConfig{}, errors.New("quant indicator condition configuration is invalid")
@@ -227,8 +227,8 @@ func parseQuantIndicatorParameters(indicator string, raw json.RawMessage) (quant
 	switch indicator {
 	case "volume_spike":
 		value := struct {
-			Lookback   int    `json:"lookback"`
-			Multiplier string `json:"multiplier"`
+			Lookback	int    `json:"lookback"`
+			Multiplier	string `json:"multiplier"`
 		}{Lookback: 20, Multiplier: "2"}
 		if !decodeQuantStrict(raw, &value) || value.Lookback < 1 || value.Lookback > 500 {
 			return parameters, errors.New("volume spike parameters are invalid")
@@ -240,9 +240,9 @@ func parseQuantIndicatorParameters(indicator string, raw json.RawMessage) (quant
 		parameters.Lookback, parameters.Multiplier = value.Lookback, multiplier
 	case "price_change":
 		value := struct {
-			Lookback  int    `json:"lookback"`
-			Mode      string `json:"mode"`
-			Threshold string `json:"threshold"`
+			Lookback	int    `json:"lookback"`
+			Mode		string `json:"mode"`
+			Threshold	string `json:"threshold"`
 		}{Lookback: 5, Mode: "absolute", Threshold: "5"}
 		if !decodeQuantStrict(raw, &value) || value.Lookback < 1 || value.Lookback > 500 ||
 			value.Mode != "rise" && value.Mode != "fall" && value.Mode != "absolute" && value.Mode != "amplitude" {
@@ -255,10 +255,10 @@ func parseQuantIndicatorParameters(indicator string, raw json.RawMessage) (quant
 		parameters.Lookback, parameters.Mode, parameters.Threshold = value.Lookback, value.Mode, threshold
 	case "macd":
 		value := struct {
-			FastPeriod   int    `json:"fastPeriod"`
-			SlowPeriod   int    `json:"slowPeriod"`
-			SignalPeriod int    `json:"signalPeriod"`
-			Signal       string `json:"signal"`
+			FastPeriod	int    `json:"fastPeriod"`
+			SlowPeriod	int    `json:"slowPeriod"`
+			SignalPeriod	int    `json:"signalPeriod"`
+			Signal		string `json:"signal"`
 		}{FastPeriod: 12, SlowPeriod: 26, SignalPeriod: 9, Signal: "golden_cross"}
 		if !decodeQuantStrict(raw, &value) || value.FastPeriod < 1 || value.FastPeriod > 100 || value.SlowPeriod <= value.FastPeriod || value.SlowPeriod > 200 || value.SignalPeriod < 1 || value.SignalPeriod > 100 ||
 			value.Signal != "golden_cross" && value.Signal != "death_cross" && value.Signal != "dif_above_zero" && value.Signal != "dif_below_zero" {
@@ -267,11 +267,11 @@ func parseQuantIndicatorParameters(indicator string, raw json.RawMessage) (quant
 		parameters.FastPeriod, parameters.SlowPeriod, parameters.SignalPeriod, parameters.Signal = value.FastPeriod, value.SlowPeriod, value.SignalPeriod, value.Signal
 	case "kdj":
 		value := struct {
-			Period     int    `json:"period"`
-			KSmoothing int    `json:"kSmoothing"`
-			DSmoothing int    `json:"dSmoothing"`
-			Signal     string `json:"signal"`
-			Threshold  string `json:"threshold"`
+			Period		int    `json:"period"`
+			KSmoothing	int    `json:"kSmoothing"`
+			DSmoothing	int    `json:"dSmoothing"`
+			Signal		string `json:"signal"`
+			Threshold	string `json:"threshold"`
 		}{Period: 9, KSmoothing: 3, DSmoothing: 3, Signal: "golden_cross", Threshold: "80"}
 		if !decodeQuantStrict(raw, &value) || value.Period < 2 || value.Period > 200 || value.KSmoothing < 1 || value.KSmoothing > 50 || value.DSmoothing < 1 || value.DSmoothing > 50 || !quantKDJSignal(value.Signal) {
 			return parameters, errors.New("KDJ parameters are invalid")
@@ -284,9 +284,9 @@ func parseQuantIndicatorParameters(indicator string, raw json.RawMessage) (quant
 		parameters.Signal, parameters.Threshold = value.Signal, threshold
 	case "rsi":
 		value := struct {
-			Period    int    `json:"period"`
-			Direction string `json:"direction"`
-			Threshold string `json:"threshold"`
+			Period		int    `json:"period"`
+			Direction	string `json:"direction"`
+			Threshold	string `json:"threshold"`
 		}{Period: 14, Direction: "below", Threshold: "30"}
 		if !decodeQuantStrict(raw, &value) || value.Period < 2 || value.Period > 200 || value.Direction != "above" && value.Direction != "below" {
 			return parameters, errors.New("RSI parameters are invalid")
@@ -298,9 +298,9 @@ func parseQuantIndicatorParameters(indicator string, raw json.RawMessage) (quant
 		parameters.Period, parameters.Mode, parameters.Threshold = value.Period, value.Direction, threshold
 	case "bollinger":
 		value := struct {
-			Period     int    `json:"period"`
-			Multiplier string `json:"multiplier"`
-			Signal     string `json:"signal"`
+			Period		int    `json:"period"`
+			Multiplier	string `json:"multiplier"`
+			Signal		string `json:"signal"`
 		}{Period: 20, Multiplier: "2", Signal: "close_above_upper"}
 		if !decodeQuantStrict(raw, &value) || value.Period < 2 || value.Period > 500 || value.Signal != "close_above_upper" && value.Signal != "close_below_lower" {
 			return parameters, errors.New("Bollinger parameters are invalid")

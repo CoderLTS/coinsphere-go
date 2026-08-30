@@ -627,14 +627,16 @@ const statusLabel = (status: WorkflowExecutionStatus | string) =>
   })[status] || status
 
 const triggerLabel = (trigger: string) =>
-  (({
-    manual: '手动',
-    schedule: '定时',
-    event: '事件',
-    stream: '流式',
-    webhook: 'Webhook',
-    failure: '失败'
-  }) as Record<string, string>)[trigger] || trigger
+  (
+    ({
+      manual: '手动',
+      schedule: '定时',
+      event: '事件',
+      stream: '流式',
+      webhook: 'Webhook',
+      failure: '失败'
+    }) as Record<string, string>
+  )[trigger] || trigger
 
 const elapsed = (startedAt?: string, completedAt?: string) => {
   if (!startedAt || !completedAt) return 0
