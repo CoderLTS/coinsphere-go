@@ -18,43 +18,18 @@ import (
 )
 
 const (
-	quantIndicatorConditionType = "official.quant.indicator_condition"
-	maxQuantConditionDepth      = 4
-	maxQuantConditionLeaves     = 16
-	quantIndicatorScale         = int32(32)
+	quantIndicatorScale = int32(32)
 )
 
 var (
-	quantHundred            = decimal.NewFromInt(100)
-	quantFifty              = decimal.NewFromInt(50)
-	quantConditionIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
-	quantDecimalPattern     = regexp.MustCompile(`^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$`)
+	quantHundred        = decimal.NewFromInt(100)
+	quantFifty          = decimal.NewFromInt(50)
+	quantDecimalPattern = regexp.MustCompile(`^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$`)
 )
 
-var quantIndicatorConditionConfigSchema = json.RawMessage(`{
-  "$schema":"https://json-schema.org/draft/2020-12/schema",
-  "$defs":{
-    "conditionNode":{
-      "oneOf":[
-        {"type":"object","properties":{"id":{"type":"string","pattern":"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"},"kind":{"const":"group"},"operator":{"type":"string","enum":["AND","OR"]},"children":{"type":"array","minItems":1,"maxItems":16,"items":{"$ref":"#/$defs/conditionNode"}}},"required":["id","kind","operator","children"],"additionalProperties":false},
-        {"type":"object","properties":{"id":{"type":"string","pattern":"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"},"kind":{"const":"condition"},"name":{"type":"string","minLength":1,"maxLength":80},"interval":{"type":"string","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"]},"indicator":{"type":"string","enum":["volume_spike","price_change","macd","kdj","rsi","bollinger"]},"parameters":{"type":"object"}},"required":["id","kind","name","interval","indicator","parameters"],"additionalProperties":false}
-      ]
-    }
-  },
-  "type":"object",
-  "properties":{
-    "market":{"type":"string","title":"Market","enum":["spot","usdm"],"default":"spot"},
-    "instrument":{"type":"string","title":"Instrument","pattern":"^[A-Z0-9]{2,32}$","default":"BTCUSDT"},
-    "checkInterval":{"type":"string","title":"Check interval","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"],"default":"1m"},
-    "conditionTree":{"$ref":"#/$defs/conditionNode","default":{"id":"group_root","kind":"group","operator":"AND","children":[{"id":"condition_1","kind":"condition","name":"放量","interval":"5m","indicator":"volume_spike","parameters":{"lookback":20,"multiplier":"2"}}]}}
-  },
-  "required":["market","instrument","checkInterval","conditionTree"],
-  "additionalProperties":false
-}`)
+var quantIndicatorInputSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"eventTime":{"type":"string","title":"Event time","format":"date-time"},"pathEntered":{"type":"boolean","title":"Upstream path entered","default":false}},"required":["eventTime"],"additionalProperties":false}`)
 
-var quantIndicatorConditionInputSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"eventTime":{"type":"string","title":"Event time","format":"date-time"},"pathEntered":{"type":"boolean","title":"Upstream path entered","default":false}},"required":["eventTime"],"additionalProperties":false}`)
-
-var quantIndicatorConditionOutputSchema = json.RawMessage(`{
+var quantIndicatorOutputSchema = json.RawMessage(`{
   "$schema":"https://json-schema.org/draft/2020-12/schema",
   "type":"object",
   "properties":{
@@ -62,31 +37,54 @@ var quantIndicatorConditionOutputSchema = json.RawMessage(`{
     "branch":{"type":"string","enum":["true","false"]},"entered":{"type":"boolean"},"triggered":{"type":"boolean"},
     "evaluatedAt":{"type":"string","format":"date-time"},"previousEvaluatedAt":{"type":"string","format":"date-time"},
     "businessKey":{"type":"string","minLength":1,"maxLength":256},"summary":{"type":"string","minLength":1,"maxLength":2000},"formula":{"type":"string","minLength":1,"maxLength":2000},
-    "conditions":{"type":"array","maxItems":16,"items":{"type":"object","properties":{"id":{"type":"string"},"name":{"type":"string"},"indicator":{"type":"string"},"interval":{"type":"string"},"ready":{"type":"boolean"},"previousReady":{"type":"boolean"},"matched":{"type":"boolean"},"previousMatched":{"type":"boolean"},"candleCloseTime":{"type":"string"},"previousCandleCloseTime":{"type":"string"},"value":{"type":"object","additionalProperties":{"type":"string"}},"previousValue":{"type":"object","additionalProperties":{"type":"string"}},"summary":{"type":"string"}},"required":["id","name","indicator","interval","ready","previousReady","matched","previousMatched","candleCloseTime","previousCandleCloseTime","value","previousValue","summary"],"additionalProperties":false}}
+    "indicator":{"type":"string"},"interval":{"type":"string"},
+    "candleCloseTime":{"type":"string"},"previousCandleCloseTime":{"type":"string"},
+    "value":{"type":"object","additionalProperties":{"type":"string"}},"previousValue":{"type":"object","additionalProperties":{"type":"string"}}
   },
-  "required":["ready","matched","previousMatched","branch","entered","triggered","evaluatedAt","previousEvaluatedAt","businessKey","summary","formula","conditions"],
+  "required":["ready","matched","previousMatched","branch","entered","triggered","evaluatedAt","previousEvaluatedAt","businessKey","summary","formula","indicator","interval","candleCloseTime","previousCandleCloseTime","value","previousValue"],
   "additionalProperties":false
 }`)
 
-type quantIndicatorConditionAction struct{ runtime *quantRuntime }
+type quantIndicatorDefinition struct {
+	NodeType  string
+	Indicator string
+}
 
-type quantIndicatorConditionConfig struct {
+var quantIndicatorDefinitions = []quantIndicatorDefinition{
+	{NodeType: "official.quant.volume_spike_condition", Indicator: "volume_spike"},
+	{NodeType: "official.quant.price_change_condition", Indicator: "price_change"},
+	{NodeType: "official.quant.macd_condition", Indicator: "macd"},
+	{NodeType: "official.quant.kdj_condition", Indicator: "kdj"},
+	{NodeType: "official.quant.rsi_condition", Indicator: "rsi"},
+	{NodeType: "official.quant.bollinger_condition", Indicator: "bollinger"},
+}
+
+var quantIndicatorParameterSchemas = map[string]string{
+	"volume_spike": `{"type":"object","title":"Parameters","properties":{"lookback":{"type":"integer","title":"Average candles","minimum":1,"maximum":500,"default":20},"multiplier":{"type":"string","title":"Volume multiplier","pattern":"^[0-9]+(?:\\.[0-9]+)?$","default":"2","x-coinsphere-decimal":true}},"required":["lookback","multiplier"],"additionalProperties":false,"default":{"lookback":20,"multiplier":"2"}}`,
+	"price_change": `{"type":"object","title":"Parameters","properties":{"lookback":{"type":"integer","title":"Candles","minimum":1,"maximum":500,"default":1},"mode":{"type":"string","title":"Mode","enum":["rise","fall","absolute","amplitude"],"enumLabels":["Rise","Fall","Absolute change","High-low amplitude"],"default":"absolute"},"threshold":{"type":"string","title":"Threshold (%)","pattern":"^[0-9]+(?:\\.[0-9]+)?$","default":"1","x-coinsphere-decimal":true}},"required":["lookback","mode","threshold"],"additionalProperties":false,"default":{"lookback":1,"mode":"absolute","threshold":"1"}}`,
+	"macd":         `{"type":"object","title":"Parameters","properties":{"fastPeriod":{"type":"integer","title":"Fast period","minimum":1,"maximum":100,"default":12},"slowPeriod":{"type":"integer","title":"Slow period","minimum":2,"maximum":200,"default":26},"signalPeriod":{"type":"integer","title":"Signal period","minimum":1,"maximum":100,"default":9},"signal":{"type":"string","title":"Rule","enum":["golden_cross","death_cross","dif_above_zero","dif_below_zero"],"enumLabels":["Golden cross","Death cross","DIF above zero","DIF below zero"],"default":"golden_cross"}},"required":["fastPeriod","slowPeriod","signalPeriod","signal"],"additionalProperties":false,"default":{"fastPeriod":12,"slowPeriod":26,"signalPeriod":9,"signal":"golden_cross"}}`,
+	"kdj":          `{"type":"object","title":"Parameters","properties":{"period":{"type":"integer","title":"Period","minimum":2,"maximum":200,"default":9},"kSmoothing":{"type":"integer","title":"K smoothing","minimum":1,"maximum":50,"default":3},"dSmoothing":{"type":"integer","title":"D smoothing","minimum":1,"maximum":50,"default":3},"signal":{"type":"string","title":"Rule","enum":["golden_cross","death_cross","k_above","k_below","d_above","d_below","j_above","j_below"],"enumLabels":["K/D golden cross","K/D death cross","K above threshold","K below threshold","D above threshold","D below threshold","J above threshold","J below threshold"],"default":"golden_cross"},"threshold":{"type":"string","title":"Threshold","pattern":"^-?[0-9]+(?:\\.[0-9]+)?$","default":"80","x-coinsphere-decimal":true}},"required":["period","kSmoothing","dSmoothing","signal","threshold"],"additionalProperties":false,"default":{"period":9,"kSmoothing":3,"dSmoothing":3,"signal":"golden_cross","threshold":"80"}}`,
+	"rsi":          `{"type":"object","title":"Parameters","properties":{"period":{"type":"integer","title":"Period","minimum":2,"maximum":200,"default":14},"direction":{"type":"string","title":"Rule","enum":["above","below"],"enumLabels":["Above threshold","Below threshold"],"default":"below"},"threshold":{"type":"string","title":"Threshold","pattern":"^[0-9]+(?:\\.[0-9]+)?$","default":"30","x-coinsphere-decimal":true}},"required":["period","direction","threshold"],"additionalProperties":false,"default":{"period":14,"direction":"below","threshold":"30"}}`,
+	"bollinger":    `{"type":"object","title":"Parameters","properties":{"period":{"type":"integer","title":"Period","minimum":2,"maximum":500,"default":20},"multiplier":{"type":"string","title":"Standard deviations","pattern":"^[0-9]+(?:\\.[0-9]+)?$","default":"2","x-coinsphere-decimal":true},"signal":{"type":"string","title":"Rule","enum":["close_above_upper","close_below_lower"],"enumLabels":["Close above upper band","Close below lower band"],"default":"close_above_upper"}},"required":["period","multiplier","signal"],"additionalProperties":false,"default":{"period":20,"multiplier":"2","signal":"close_above_upper"}}`,
+}
+
+func quantIndicatorConfigSchema(indicator string) json.RawMessage {
+	return json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"market":{"type":"string","title":"Market","enum":["spot","usdm"],"default":"spot"},"instrument":{"type":"string","title":"Instrument","pattern":"^[A-Z0-9]{2,32}$","default":"BTCUSDT"},"checkInterval":{"type":"string","title":"Check interval","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"],"default":"1m"},"name":{"type":"string","title":"Condition name","minLength":1,"maxLength":80},"interval":{"type":"string","title":"Candle interval","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"],"default":"1m"},"parameters":` + quantIndicatorParameterSchemas[indicator] + `},"required":["market","instrument","checkInterval","name","interval","parameters"],"additionalProperties":false}`)
+}
+
+type quantIndicatorAction struct {
+	runtime   *quantRuntime
+	indicator string
+}
+
+type quantIndicatorConfig struct {
 	Market        string
 	Instrument    string
 	CheckInterval string
-	Tree          *quantConditionNode
-}
-
-type quantConditionNode struct {
-	ID       string
-	Kind     string
-	Operator string
-	Children []*quantConditionNode
-	Leaf     *quantIndicatorLeaf
+	Leaf          *quantIndicatorLeaf
 }
 
 type quantIndicatorLeaf struct {
-	ID         string
 	Name       string
 	Interval   string
 	Indicator  string
@@ -116,14 +114,8 @@ type quantIndicatorPoint struct {
 	Summary         string
 }
 
-type quantIndicatorLeafResult struct {
-	Leaf     *quantIndicatorLeaf
-	Current  quantIndicatorPoint
-	Previous quantIndicatorPoint
-}
-
-func (a quantIndicatorConditionAction) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
-	config, err := parseQuantIndicatorConditionConfig(request.Config)
+func (a quantIndicatorAction) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
+	config, err := parseQuantIndicatorConfig(request.Config, a.indicator)
 	if err != nil {
 		return sdk.ActionResult{}, err
 	}
@@ -139,54 +131,37 @@ func (a quantIndicatorConditionAction) Execute(ctx context.Context, request sdk.
 		return sdk.ActionResult{}, err
 	}
 	previousAt := evaluatedAt.Add(-quantIntervals[config.CheckInterval])
-	leaves := quantConditionLeaves(config.Tree)
-	lookbacks := map[string]int{}
-	for _, leaf := range leaves {
-		lookbacks[leaf.Interval] = max(lookbacks[leaf.Interval], quantIndicatorLookback(leaf))
+	leaf, lookback := config.Leaf, quantIndicatorLookback(config.Leaf)
+	duration := quantIntervals[leaf.Interval]
+	extra := int((quantIntervals[config.CheckInterval] + duration - 1) / duration)
+	candles, err := a.runtime.loadQuantCandlesThroughClose(ctx, quantSeriesConfig{
+		Market: config.Market, Instrument: config.Instrument, Interval: leaf.Interval,
+	}, evaluatedAt, lookback+extra+2)
+	if err != nil {
+		return sdk.ActionResult{}, err
 	}
-
-	results := make(map[string]quantIndicatorLeafResult, len(leaves))
-	for interval, lookback := range lookbacks {
-		duration := quantIntervals[interval]
-		extra := int((quantIntervals[config.CheckInterval] + duration - 1) / duration)
-		candles, err := a.runtime.loadQuantCandlesThroughClose(ctx, quantSeriesConfig{
-			Market: config.Market, Instrument: config.Instrument, Interval: interval,
-		}, evaluatedAt, lookback+extra+2)
-		if err != nil {
+	if len(candles) > 0 {
+		if err := validateStrategyCandles(sdk.EvaluateRequest{
+			Market: config.Market, Instrument: config.Instrument, Interval: leaf.Interval,
+			Candles: quantSDKCandles(candles), EvaluatedAt: evaluatedAt,
+		}); err != nil {
 			return sdk.ActionResult{}, err
 		}
-		if len(candles) > 0 {
-			if err := validateStrategyCandles(sdk.EvaluateRequest{
-				Market: config.Market, Instrument: config.Instrument, Interval: interval,
-				Candles: quantSDKCandles(candles), EvaluatedAt: evaluatedAt,
-			}); err != nil {
-				return sdk.ActionResult{}, err
-			}
-			if !candles[len(candles)-1].CloseTime.Add(duration).After(evaluatedAt) {
-				return sdk.ActionResult{}, errors.New("quant indicator candles are stale")
-			}
-		}
-		for _, leaf := range leaves {
-			if leaf.Interval != interval {
-				continue
-			}
-			current, err := evaluateQuantIndicatorLeaf(leaf, quantCandlesAt(candles, evaluatedAt, quantIndicatorLookback(leaf)))
-			if err != nil {
-				return sdk.ActionResult{}, err
-			}
-			previous, err := evaluateQuantIndicatorLeaf(leaf, quantCandlesAt(candles, previousAt, quantIndicatorLookback(leaf)))
-			if err != nil {
-				return sdk.ActionResult{}, err
-			}
-			results[leaf.ID] = quantIndicatorLeafResult{Leaf: leaf, Current: current, Previous: previous}
+		if !candles[len(candles)-1].CloseTime.Add(duration).After(evaluatedAt) {
+			return sdk.ActionResult{}, errors.New("quant indicator candles are stale")
 		}
 	}
-
-	currentReady, currentMatched := evaluateQuantConditionTree(config.Tree, results, false)
-	previousReady, previousMatched := evaluateQuantConditionTree(config.Tree, results, true)
-	ready := currentReady && previousReady
-	matched := ready && currentMatched
-	previousMatched = previousReady && previousMatched
+	current, err := evaluateQuantIndicatorLeaf(leaf, quantCandlesAt(candles, evaluatedAt, lookback))
+	if err != nil {
+		return sdk.ActionResult{}, err
+	}
+	previous, err := evaluateQuantIndicatorLeaf(leaf, quantCandlesAt(candles, previousAt, lookback))
+	if err != nil {
+		return sdk.ActionResult{}, err
+	}
+	ready := current.Ready && previous.Ready
+	matched := ready && current.Matched
+	previousMatched := previous.Ready && previous.Matched
 	branch, previousBranch := "false", "false"
 	if matched {
 		branch = "true"
@@ -196,122 +171,55 @@ func (a quantIndicatorConditionAction) Execute(ctx context.Context, request sdk.
 	}
 	entered := branch != previousBranch || input.PathEntered
 	triggered := matched && entered
-	formula := quantConditionFormula(config.Tree)
+	formula := leaf.Name
 	summary := fmt.Sprintf("%s %s 未命中：%s", strings.ToUpper(config.Market), config.Instrument, formula)
 	if matched {
 		summary = fmt.Sprintf("%s %s 命中：%s", strings.ToUpper(config.Market), config.Instrument, formula)
 	} else if !ready {
 		summary = fmt.Sprintf("%s %s 历史数据不足：%s", strings.ToUpper(config.Market), config.Instrument, formula)
 	}
-	conditionOutputs := make([]map[string]any, 0, len(leaves))
-	for _, leaf := range leaves {
-		result := results[leaf.ID]
-		conditionOutputs = append(conditionOutputs, map[string]any{
-			"id": leaf.ID, "name": leaf.Name, "indicator": leaf.Indicator, "interval": leaf.Interval,
-			"ready": result.Current.Ready, "previousReady": result.Previous.Ready,
-			"matched": result.Current.Matched, "previousMatched": result.Previous.Matched,
-			"candleCloseTime": result.Current.CandleCloseTime, "previousCandleCloseTime": result.Previous.CandleCloseTime,
-			"value": result.Current.Values, "previousValue": result.Previous.Values, "summary": result.Current.Summary,
-		})
-	}
 	return sdk.ActionResult{Output: mustMarshal(map[string]any{
 		"ready": ready, "matched": matched, "previousMatched": previousMatched,
 		"branch": branch, "entered": entered, "triggered": triggered,
 		"evaluatedAt": evaluatedAt.Format(time.RFC3339Nano), "previousEvaluatedAt": previousAt.Format(time.RFC3339Nano),
 		"businessKey": fmt.Sprintf("quant:%s:%s:%s", config.Market, config.Instrument, request.NodeInstanceID),
-		"summary":     summary, "formula": formula, "conditions": conditionOutputs,
+		"summary":     summary, "formula": formula, "indicator": leaf.Indicator, "interval": leaf.Interval,
+		"candleCloseTime": current.CandleCloseTime, "previousCandleCloseTime": previous.CandleCloseTime,
+		"value": current.Values, "previousValue": previous.Values,
 	})}, nil
 }
 
-func parseQuantIndicatorConditionConfig(raw json.RawMessage) (quantIndicatorConditionConfig, error) {
+func parseQuantIndicatorConfig(raw json.RawMessage, indicator string) (quantIndicatorConfig, error) {
 	var payload struct {
 		Market        string          `json:"market"`
 		Instrument    string          `json:"instrument"`
 		CheckInterval string          `json:"checkInterval"`
-		ConditionTree json.RawMessage `json:"conditionTree"`
+		Name          string          `json:"name"`
+		Interval      string          `json:"interval"`
+		Parameters    json.RawMessage `json:"parameters"`
 	}
 	if !decodeQuantStrict(raw, &payload) {
-		return quantIndicatorConditionConfig{}, errors.New("quant indicator condition configuration is invalid")
+		return quantIndicatorConfig{}, errors.New("quant indicator condition configuration is invalid")
 	}
 	series, err := parseQuantSeriesConfig(mustMarshal(map[string]any{
 		"market": payload.Market, "instrument": payload.Instrument, "interval": payload.CheckInterval,
 	}))
 	if err != nil {
-		return quantIndicatorConditionConfig{}, err
+		return quantIndicatorConfig{}, err
 	}
-	seen, leaves := map[string]bool{}, 0
-	tree, err := parseQuantConditionNode(payload.ConditionTree, 1, seen, &leaves)
-	if err != nil || leaves == 0 || leaves > maxQuantConditionLeaves {
-		return quantIndicatorConditionConfig{}, errors.New("quant condition tree is invalid")
+	payload.Name = strings.TrimSpace(payload.Name)
+	if payload.Name == "" || utf8.RuneCountInString(payload.Name) > 80 {
+		return quantIndicatorConfig{}, errors.New("quant indicator condition name is invalid")
 	}
-	return quantIndicatorConditionConfig{
-		Market: series.Market, Instrument: series.Instrument, CheckInterval: series.Interval, Tree: tree,
-	}, nil
-}
-
-func parseQuantConditionNode(raw json.RawMessage, depth int, seen map[string]bool, leaves *int) (*quantConditionNode, error) {
-	if depth > maxQuantConditionDepth {
-		return nil, errors.New("quant condition tree exceeds maximum depth")
+	if _, ok := quantIntervals[payload.Interval]; !ok {
+		return quantIndicatorConfig{}, errors.New("quant indicator interval is unsupported")
 	}
-	var header struct {
-		ID   string `json:"id"`
-		Kind string `json:"kind"`
-	}
-	if json.Unmarshal(raw, &header) != nil || !quantConditionIDPattern.MatchString(header.ID) || seen[header.ID] {
-		return nil, errors.New("quant condition id is invalid or duplicate")
-	}
-	seen[header.ID] = true
-	if header.Kind == "group" {
-		var group struct {
-			ID       string            `json:"id"`
-			Kind     string            `json:"kind"`
-			Operator string            `json:"operator"`
-			Children []json.RawMessage `json:"children"`
-		}
-		if !decodeQuantStrict(raw, &group) || group.Kind != "group" || group.Operator != "AND" && group.Operator != "OR" || len(group.Children) == 0 || len(group.Children) > maxQuantConditionLeaves {
-			return nil, errors.New("quant condition group is invalid")
-		}
-		node := &quantConditionNode{ID: group.ID, Kind: group.Kind, Operator: group.Operator, Children: make([]*quantConditionNode, len(group.Children))}
-		for index, child := range group.Children {
-			parsed, err := parseQuantConditionNode(child, depth+1, seen, leaves)
-			if err != nil {
-				return nil, err
-			}
-			node.Children[index] = parsed
-		}
-		return node, nil
-	}
-	if header.Kind != "condition" {
-		return nil, errors.New("quant condition kind is invalid")
-	}
-	var value struct {
-		ID         string          `json:"id"`
-		Kind       string          `json:"kind"`
-		Name       string          `json:"name"`
-		Interval   string          `json:"interval"`
-		Indicator  string          `json:"indicator"`
-		Parameters json.RawMessage `json:"parameters"`
-	}
-	if !decodeQuantStrict(raw, &value) || value.Kind != "condition" {
-		return nil, errors.New("quant indicator condition is invalid")
-	}
-	value.Name = strings.TrimSpace(value.Name)
-	if value.Name == "" || utf8.RuneCountInString(value.Name) > 80 {
-		return nil, errors.New("quant indicator condition name is invalid")
-	}
-	if _, ok := quantIntervals[value.Interval]; !ok {
-		return nil, errors.New("quant indicator interval is unsupported")
-	}
-	parameters, err := parseQuantIndicatorParameters(value.Indicator, value.Parameters)
+	parameters, err := parseQuantIndicatorParameters(indicator, payload.Parameters)
 	if err != nil {
-		return nil, err
+		return quantIndicatorConfig{}, err
 	}
-	(*leaves)++
-	if *leaves > maxQuantConditionLeaves {
-		return nil, errors.New("quant condition tree exceeds maximum leaves")
-	}
-	leaf := &quantIndicatorLeaf{ID: value.ID, Name: value.Name, Interval: value.Interval, Indicator: value.Indicator, Parameters: parameters}
-	return &quantConditionNode{ID: value.ID, Kind: value.Kind, Leaf: leaf}, nil
+	leaf := &quantIndicatorLeaf{Name: payload.Name, Interval: payload.Interval, Indicator: indicator, Parameters: parameters}
+	return quantIndicatorConfig{Market: series.Market, Instrument: series.Instrument, CheckInterval: series.Interval, Leaf: leaf}, nil
 }
 
 func parseQuantIndicatorParameters(indicator string, raw json.RawMessage) (quantIndicatorParameters, error) {
@@ -437,22 +345,6 @@ func quantKDJSignal(signal string) bool {
 	}
 }
 
-func quantConditionLeaves(root *quantConditionNode) []*quantIndicatorLeaf {
-	result := make([]*quantIndicatorLeaf, 0, maxQuantConditionLeaves)
-	var walk func(*quantConditionNode)
-	walk = func(node *quantConditionNode) {
-		if node.Leaf != nil {
-			result = append(result, node.Leaf)
-			return
-		}
-		for _, child := range node.Children {
-			walk(child)
-		}
-	}
-	walk(root)
-	return result
-}
-
 func quantIndicatorLookback(leaf *quantIndicatorLeaf) int {
 	p := leaf.Parameters
 	switch leaf.Indicator {
@@ -486,41 +378,6 @@ func quantCandlesAt(candles []quantCandle, cutoff time.Time, lookback int) []qua
 		return nil
 	}
 	return candles[end-lookback : end]
-}
-
-func evaluateQuantConditionTree(node *quantConditionNode, results map[string]quantIndicatorLeafResult, previous bool) (bool, bool) {
-	if node.Leaf != nil {
-		point := results[node.Leaf.ID].Current
-		if previous {
-			point = results[node.Leaf.ID].Previous
-		}
-		return point.Ready, point.Matched
-	}
-	ready, matched := true, node.Operator == "AND"
-	for _, child := range node.Children {
-		childReady, childMatched := evaluateQuantConditionTree(child, results, previous)
-		ready = ready && childReady
-		if node.Operator == "AND" {
-			matched = matched && childMatched
-		} else {
-			matched = matched || childMatched
-		}
-	}
-	return ready, ready && matched
-}
-
-func quantConditionFormula(node *quantConditionNode) string {
-	if node.Leaf != nil {
-		return node.Leaf.Name
-	}
-	parts := make([]string, len(node.Children))
-	for index, child := range node.Children {
-		parts[index] = quantConditionFormula(child)
-		if child.Leaf == nil {
-			parts[index] = "(" + parts[index] + ")"
-		}
-	}
-	return strings.Join(parts, " "+node.Operator+" ")
 }
 
 func evaluateQuantIndicatorLeaf(leaf *quantIndicatorLeaf, candles []quantCandle) (quantIndicatorPoint, error) {
@@ -754,4 +611,4 @@ func quantDecimalSqrt(value decimal.Decimal) decimal.Decimal {
 	return estimate
 }
 
-var _ sdk.ActionHandler = quantIndicatorConditionAction{}
+var _ sdk.ActionHandler = quantIndicatorAction{}

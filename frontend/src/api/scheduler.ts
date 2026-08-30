@@ -256,7 +256,12 @@ const nodeLabels: Record<string, string> = {
   'official.quant.binance_candles': 'Binance K 线采集',
   'official.quant.sync_instruments': 'Binance 币种元数据采集',
   'official.quant.evaluate': '量化策略评估',
-  'official.quant.indicator_condition': '量化指标判断',
+  'official.quant.volume_spike_condition': '放量判断',
+  'official.quant.price_change_condition': '价格波动判断',
+  'official.quant.macd_condition': 'MACD 判断',
+  'official.quant.kdj_condition': 'KDJ 判断',
+  'official.quant.rsi_condition': 'RSI 判断',
+  'official.quant.bollinger_condition': '布林带判断',
   'official.quant.backtest': '量化策略回测',
   'official.quant.signal': '量化信号',
   'official.quant.paper_execute': 'Paper 执行',
@@ -308,8 +313,24 @@ const schemaTitleLabels: Record<string, string> = {
   Instrument: '交易对',
   Interval: 'K 线周期',
   'Check interval': '检查周期',
+  'Condition name': '条件名称',
+  'Candle interval': 'K 线周期',
   Strategy: '量化策略',
-  Parameters: '策略参数',
+  Parameters: '参数',
+  'Average candles': '均量周期',
+  'Volume multiplier': '放量倍数',
+  Candles: 'K 线数量',
+  Mode: '判断方式',
+  'Threshold (%)': '阈值（%）',
+  'Fast period': '快线周期',
+  'Slow period': '慢线周期',
+  'Signal period': '信号周期',
+  Rule: '判断规则',
+  Period: '周期',
+  'K smoothing': 'K 平滑周期',
+  'D smoothing': 'D 平滑周期',
+  Threshold: '阈值',
+  'Standard deviations': '标准差倍数',
   'Start (UTC)': '开始时间（UTC）',
   'End (UTC)': '结束时间（UTC）',
   'Initial capital': '初始资金',
@@ -341,6 +362,22 @@ const schemaFieldLabels: Record<string, string> = {
 const schemaEnumLabels: Record<string, Record<string, string>> = {
   decisionMode: { human: '人工确认', auto: '自动执行' },
   market: { spot: '现货', usdm: 'U 本位合约' },
+  mode: { rise: '上涨', fall: '下跌', absolute: '绝对涨跌幅', amplitude: '最高最低振幅' },
+  direction: { above: '高于阈值', below: '低于阈值' },
+  signal: {
+    golden_cross: '金叉',
+    death_cross: '死叉',
+    dif_above_zero: 'DIF 位于零轴上方',
+    dif_below_zero: 'DIF 位于零轴下方',
+    k_above: 'K 高于阈值',
+    k_below: 'K 低于阈值',
+    d_above: 'D 高于阈值',
+    d_below: 'D 低于阈值',
+    j_above: 'J 高于阈值',
+    j_below: 'J 低于阈值',
+    close_above_upper: '收盘价突破上轨',
+    close_below_lower: '收盘价跌破下轨'
+  },
   decisionStatus: {
     approved: '已批准',
     rejected: '已拒绝',
@@ -377,7 +414,9 @@ const graphKind = (definition: WorkflowNodeDefinition): WorkflowNodeGraphKind =>
 const inputProperties = (definition?: WorkflowNodeDefinition) =>
   (definition?.inputSchema?.properties || {}) as Record<string, Record<string, unknown>>
 
-const localizeSchemaProperties = (properties: Record<string, Record<string, unknown>>) =>
+const localizeSchemaProperties = (
+  properties: Record<string, Record<string, unknown>>
+): Record<string, Record<string, unknown>> =>
   Object.fromEntries(
     Object.entries(properties).map(([key, schema]) => {
       const title = String(schema.title || '')
@@ -389,7 +428,14 @@ const localizeSchemaProperties = (properties: Record<string, Record<string, unkn
         {
           ...schema,
           title: schemaTitleLabels[title] || schemaFieldLabels[key] || title || key,
-          ...(enumLabels ? { enumLabels } : {})
+          ...(enumLabels ? { enumLabels } : {}),
+          ...(schema.properties
+            ? {
+                properties: localizeSchemaProperties(
+                  schema.properties as Record<string, Record<string, unknown>>
+                )
+              }
+            : {})
         }
       ]
     })
@@ -581,9 +627,16 @@ const statusLabel = (status: WorkflowExecutionStatus | string) =>
   })[status] || status
 
 const triggerLabel = (trigger: string) =>
-  ({ manual: '手动', schedule: '定时', event: '事件', stream: '流式', webhook: 'Webhook' })[
-    trigger
-  ] || trigger
+  (
+    ({
+      manual: '手动',
+      schedule: '定时',
+      event: '事件',
+      stream: '流式',
+      webhook: 'Webhook',
+      failure: '失败'
+    }) as Record<string, string>
+  )[trigger] || trigger
 
 const elapsed = (startedAt?: string, completedAt?: string) => {
   if (!startedAt || !completedAt) return 0

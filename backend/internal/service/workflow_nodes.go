@@ -10,6 +10,19 @@ import (
 
 const workflowJSONSchema202012 = "https://json-schema.org/draft/2020-12/schema"
 
+var workflowQuantConditionTypes = map[string]bool{
+	"official.quant.volume_spike_condition": true,
+	"official.quant.price_change_condition": true,
+	"official.quant.macd_condition":         true,
+	"official.quant.kdj_condition":          true,
+	"official.quant.rsi_condition":          true,
+	"official.quant.bollinger_condition":    true,
+}
+
+func isWorkflowQuantConditionType(nodeType string) bool {
+	return workflowQuantConditionTypes[nodeType]
+}
+
 type WorkflowSecretFieldView struct {
 	Name        string `json:"name"`
 	Title       string `json:"title"`
@@ -180,8 +193,18 @@ func workflowNodeTitle(nodeType string) string {
 		return "Binance instrument metadata"
 	case "official.quant.evaluate":
 		return "Quant strategy evaluation"
-	case "official.quant.indicator_condition":
-		return "Quant indicator condition"
+	case "official.quant.volume_spike_condition":
+		return "Volume spike condition"
+	case "official.quant.price_change_condition":
+		return "Price change condition"
+	case "official.quant.macd_condition":
+		return "MACD condition"
+	case "official.quant.kdj_condition":
+		return "KDJ condition"
+	case "official.quant.rsi_condition":
+		return "RSI condition"
+	case "official.quant.bollinger_condition":
+		return "Bollinger condition"
 	case "official.quant.backtest":
 		return "Quant strategy backtest"
 	case "official.quant.signal":
@@ -227,8 +250,9 @@ func workflowNodeDescription(nodeType string) string {
 		return "Synchronizes a filtered Binance instrument metadata snapshot."
 	case "official.quant.evaluate":
 		return "Evaluates a compiled Go strategy against closed candles."
-	case "official.quant.indicator_condition":
-		return "Evaluates nested indicator conditions against closed candles."
+	case "official.quant.volume_spike_condition", "official.quant.price_change_condition", "official.quant.macd_condition",
+		"official.quant.kdj_condition", "official.quant.rsi_condition", "official.quant.bollinger_condition":
+		return "Evaluates one indicator rule against closed candles."
 	case "official.quant.backtest":
 		return "Runs a deterministic next-open backtest over stored candles."
 	case "official.quant.signal":

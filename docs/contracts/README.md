@@ -65,7 +65,7 @@
 - 核心执行 `core.manual`、`core.schedule`、`core.event`、`core.constant`、`core.human_approval`、`core.loop` 和 `core.end`，其他 Action/Trigger 从编译期插件注册表调用；执行前后分别校验输入/输出 Schema，修订密钥通过节点范围 `SecretReader` 解密。启动前必须已配置活动修订的全部必需密钥。
 - `core.human_approval` 默认产生 `pending` 任务；显式 `auto` 模式直接输出自动批准。相同工作流、节点和业务键的新任务会把旧任务置为 `superseded`。`approved`、`rejected`、`expired` 和 `superseded` 都只能提交一次并恢复原 Run，决定正文最多 64 KiB。
 - 终态 Run 可创建固定原事件与修订的诊断重放。`notification`、`human_action` 和 `paper` 副作用不再次执行，而是复用原 RunCheckpoint 和制品；缺少原检查点时重放失败。
-- Run 列表支持游标分页、UTC `from/to`、状态、触发类型和最多 200 字符的关键词搜索。详情按执行顺序返回全部 RunNode 尝试、节点多行日志、脱敏输入输出摘要、事件摘要、结果和制品引用。
+- Run 列表支持游标分页、UTC `from/to`、状态、触发类型和最多 200 字符的关键词搜索。详情按执行顺序返回全部 RunNode 尝试、节点多行日志、脱敏输入输出摘要、事件摘要、结果和制品引用。前端按每个 attempt 合成开始、业务和结束记录，开始展示输入摘要，结束展示状态、耗时、输出摘要或受控错误；历史页选择的 Run 固定展示，不跟随后续流式 Run。
 - 核心和插件通过节点范围 `slog.Logger` 写入 `workflow_node_logs`。消息最多 1000 字符，结构化字段最多 4 KiB，只保留受限标量；密钥、令牌、授权头、Cookie、DSN 和原始载荷统一丢弃或脱敏。不提供第二套 Activity API。运行详情 WebSocket 使用 `coinsphere.workflow-runs.v1` 子协议、同源 Origin 和超级管理员 Access Token，只发送轻量更新通知；客户端仍从 HTTP API 读取持久事实。
 - `ArtifactStore` 将最多 1 GiB 的正文用标准库 gzip 压缩并按未压缩正文 SHA-256 寻址。Checkpoint 原子引用清单；Manifest 在服务端重新计算大小和摘要，Web 下载后再次校验摘要。
 - 终态 Run、RunNode、节点日志、RunCheckpoint 和未被其他检查点引用的制品按工作流 `retentionDays` 清理，默认 30 天。制品数据库记录提交后再删除正文；失败最多留下无引用文件，不丢失仍被引用的正文。
@@ -100,11 +100,11 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 
 内置 `official.connector` 提供 HTTP Action、Webhook Trigger、WebSocket Trigger 和运行诊断结果页；`official.ai` 提供 OpenAI-compatible 结构化模型调用和结果页。两者只访问 `workflow.http_allowed_hosts` 的精确公共域名，禁用环境代理，拨号前后解析并拒绝非公网 IP。Binance 只允许明确列出的公共 GET/公共 WebSocket，授权、私有或未知端点一律拒绝。AI 节点只接收/返回 JSON 对象，不能控制工作流生命周期或交易。
 
-内置 `official.quant` 提供 `binance_candles` Trigger、`sync_instruments`/`evaluate`/`indicator_condition`/`backtest`/`signal`/`paper_execute` Action、可信 SMA crossover 策略和移动可用结果页。`sync_instruments` 在所有选中 Spot/USD-M 公共元数据均成功解析后，用事务级 advisory lock 原子替换当前工作流的过滤快照；白名单取交集、黑名单任一命中即排除，全局目录取全部工作流来源并集。应用首次缺少该节点时创建并激活北京时间每六小时运行的默认工作流并立即首跑，后续启动不重新激活已停用工作流。K 线连接只负责补数和实时采集，按 `market + instrument + interval` 合并订阅并发布 `market.candle.closed`；重复 REST/WebSocket 数据由 K 线键和 CloudEvent `(source,id)` 去重。策略只接收升序、连续、UTC 闭合 K 线和已校验参数，返回 `-1` 至 `1` 的 Decimal 目标；实时、回测与 Paper 调用同一 `Evaluate`。
+内置 `official.quant@1.2.0` 提供 `binance_candles` Trigger、`sync_instruments`/`evaluate`/六种指标判断/`backtest`/`signal`/`paper_execute` Action、可信 SMA crossover 策略和移动可用结果页。`sync_instruments` 在所有选中 Spot/USD-M 公共元数据均成功解析后，用事务级 advisory lock 原子替换当前工作流的过滤快照；白名单取交集、黑名单任一命中即排除，全局目录取全部工作流来源并集。应用首次缺少该节点时创建并激活北京时间每六小时运行的默认工作流并立即首跑，后续启动不重新激活已停用工作流。K 线连接只负责补数和实时采集，按 `market + instrument + interval` 合并订阅并发布 `market.candle.closed`；重复 REST/WebSocket 数据由 K 线键和 CloudEvent `(source,id)` 去重。策略只接收升序、连续、UTC 闭合 K 线和已校验参数，返回 `-1` 至 `1` 的 Decimal 目标；实时、回测与 Paper 调用同一 `Evaluate`。
 
-`official.quant.indicator_condition@1.0.0` 固定市场、交易对和检查周期，一个实例保存最多 4 层、16 个叶子的 `AND/OR` 条件树；叶子可分别选择 K 线周期及放量、首尾涨跌/振幅、MACD、KDJ、Wilder RSI 或布林带。每个周期只读取一次所需最大回看，并在当前与上一个检查时点分别截取当时已闭合的 K 线，禁止未来数据；K 线断档、非法参数和数据库错误使节点失败，任一条件历史不足则 `ready=false` 并走 `false`。EMA、RSI、KDJ、布林标准差和有界平方根全部使用确定性 Decimal。
+六种 `1.0.0` 判断节点分别是 `official.quant.volume_spike_condition`、`official.quant.price_change_condition`、`official.quant.macd_condition`、`official.quant.kdj_condition`、`official.quant.rsi_condition` 和 `official.quant.bollinger_condition`。一个节点只保存一种指标规则及市场、交易对、检查周期、K 线周期和名称；每次在当前与上一个检查时点截取当时已闭合的 K 线，禁止未来数据。K 线断档、非法参数和数据库错误使节点失败，历史不足则 `ready=false` 并走 `false`。EMA、Wilder RSI、KDJ、布林标准差和有界平方根全部使用确定性 Decimal。
 
-判断输出包含 `matched`、`previousMatched`、`branch`、`entered`、`triggered`、叶子结果、UTC 时间、业务键和中文摘要。`branch` 始终反映当前组合结果，连续命中仍执行下游；`entered` 会沿判断节点连线传播路径重新进入状态，`triggered` 只在整体重新进入 true 路径时成立。编辑器连接判断节点到任一 `official.notification` 节点时自动附加 `input.triggered == true`，并按节点顺序聚合本次触发的业务键和摘要，因此连续命中只通知一次，恢复后再次命中会重新通知。
+判断输出包含 `ready`、`matched`、`previousMatched`、`branch`、`entered`、`triggered`、当前/上一值、UTC 时间、业务键和中文摘要。`true` 串联表达 AND，并行汇合表达 OR，`false` 可连接任意节点。`branch` 始终反映当前结果，连续命中仍执行下游；`entered` 沿判断连线传播路径重新进入状态，`triggered` 只在整条 true 路径重新进入时成立。编辑器连接判断节点到任一通知节点时自动附加 `input.triggered == true` 并聚合摘要，因此连续命中只通知一次，恢复后再次命中会重新通知。
 
 Paper 账户按 `workflowId + paper nodeInstanceId` 唯一。默认人工审批；自动模式只有在最大总名义价值、单品种名义价值、单次操作名义价值、最大日亏损和最大回撤全部显式配置时有效。批准后重新读取 Binance 公共报价，并在一个数据库事务中检查信号/任务状态、报价新鲜度、品种状态、数量步进、账户状态及五项风险限制。拒绝不会创建账户或账本；成功执行写入不可变订单、成交、费用和账本事实，再更新账户与持仓投影。操作键和唯一约束保证节点重试、进程重启及 Outbox 重投不重复成交或投递。
 

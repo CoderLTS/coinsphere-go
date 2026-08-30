@@ -104,12 +104,57 @@ const MATERIAL_META: Record<string, MaterialMeta> = {
     color: '#9e8cff',
     iconText: 'E'
   },
-  'official.quant.indicator_condition': {
+  'official.quant.volume_spike_condition': {
     kind: 'indicator-condition',
     group: '行情',
-    description: '组合多个 K 线指标并输出 true / false 分支',
+    description: '判断当前成交量是否相对近期均量放大',
     color: '#0f766e',
-    iconText: 'Q',
+    iconText: '量',
+    width: 280,
+    height: 112
+  },
+  'official.quant.price_change_condition': {
+    kind: 'indicator-condition',
+    group: '行情',
+    description: '判断 K 线涨跌幅或区间振幅',
+    color: '#047857',
+    iconText: '%',
+    width: 280,
+    height: 112
+  },
+  'official.quant.macd_condition': {
+    kind: 'indicator-condition',
+    group: '行情',
+    description: '判断 MACD 交叉或 DIF 零轴位置',
+    color: '#0e7490',
+    iconText: 'M',
+    width: 280,
+    height: 112
+  },
+  'official.quant.kdj_condition': {
+    kind: 'indicator-condition',
+    group: '行情',
+    description: '判断 KDJ 交叉或阈值位置',
+    color: '#0369a1',
+    iconText: 'K',
+    width: 280,
+    height: 112
+  },
+  'official.quant.rsi_condition': {
+    kind: 'indicator-condition',
+    group: '行情',
+    description: '判断 RSI 是否越过配置阈值',
+    color: '#4338ca',
+    iconText: 'R',
+    width: 280,
+    height: 112
+  },
+  'official.quant.bollinger_condition': {
+    kind: 'indicator-condition',
+    group: '行情',
+    description: '判断收盘价是否突破布林带',
+    color: '#6d28d9',
+    iconText: 'B',
     width: 280,
     height: 112
   },

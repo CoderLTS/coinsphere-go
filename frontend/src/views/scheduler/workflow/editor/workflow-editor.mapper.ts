@@ -47,7 +47,14 @@ const START_LABELS: Record<string, string> = {
   'start.webhook': 'Webhook 开始'
 }
 
-const INDICATOR_CONDITION_TYPE = 'official.quant.indicator_condition'
+const INDICATOR_CONDITION_TYPES = new Set([
+  'official.quant.volume_spike_condition',
+  'official.quant.price_change_condition',
+  'official.quant.macd_condition',
+  'official.quant.kdj_condition',
+  'official.quant.rsi_condition',
+  'official.quant.bollinger_condition'
+])
 const NOTIFICATION_NODE_TYPES = new Set([
   'official.notification.in_app',
   'official.notification.dingtalk',
@@ -450,7 +457,11 @@ const buildNodeCollapsedSummary = (node: WorkflowDomainNode) => {
     }
 
     case 'indicator-condition':
-      return truncateText(String(config.conditionTree?.operator || 'AND') + ' 条件组合')
+      return truncateText(
+        [String(config.name || '').trim(), String(config.interval || '').trim()]
+          .filter(Boolean)
+          .join(' / ') || '配置指标条件'
+      )
 
     case 'foreach':
       return truncateText(String(config.itemsPath || '遍历数组输入'))
@@ -543,7 +554,7 @@ const createDomainEdge = (
   const sourceNode = nodeMap.get(String(edge.source))
   const targetNode = nodeMap.get(String(edge.target))
   const condition =
-    sourceNode?.data.typeCode === INDICATOR_CONDITION_TYPE &&
+    INDICATOR_CONDITION_TYPES.has(sourceNode?.data.typeCode || '') &&
     NOTIFICATION_NODE_TYPES.has(targetNode?.data.typeCode || '') &&
     branch === 'true'
       ? notificationCondition(edge.condition || '')
@@ -667,7 +678,7 @@ export function mapDomainGraphToServer(graph: WorkflowDomainGraphModel): Workflo
       .filter((edge) => edge.target === targetID && (!branch || edge.data.branch === branch))
       .map((edge) => {
         const source = nodeMap.get(edge.source)
-        return source?.data.typeCode === INDICATOR_CONDITION_TYPE
+        return INDICATOR_CONDITION_TYPES.has(source?.data.typeCode || '')
           ? {
               nodeInstanceId: edge.source,
               ...(edge.data.branch ? { branch: edge.data.branch } : {})
@@ -685,7 +696,7 @@ export function mapDomainGraphToServer(graph: WorkflowDomainGraphModel): Workflo
         ? { ...node.data.config.__inputBindings }
         : {}
     const conditionSources = incomingConditions(node.id)
-    if (node.data.typeCode === INDICATOR_CONDITION_TYPE) {
+    if (INDICATOR_CONDITION_TYPES.has(node.data.typeCode)) {
       if (!existing.eventTime) {
         existing.eventTime = {
           kind: 'cel',
@@ -732,14 +743,14 @@ export function mapDomainGraphToServer(graph: WorkflowDomainGraphModel): Workflo
         edge.data.branch
       ),
       label: buildEdgeDisplayLabel(
-        nodeMap.get(edge.source)?.data.typeCode === INDICATOR_CONDITION_TYPE &&
+        INDICATOR_CONDITION_TYPES.has(nodeMap.get(edge.source)?.data.typeCode || '') &&
           NOTIFICATION_NODE_TYPES.has(nodeMap.get(edge.target)?.data.typeCode || '') &&
           edge.data.branch === 'true'
           ? notificationCondition(edge.data.condition)
           : edge.data.condition || ''
       ),
       condition:
-        nodeMap.get(edge.source)?.data.typeCode === INDICATOR_CONDITION_TYPE &&
+        INDICATOR_CONDITION_TYPES.has(nodeMap.get(edge.source)?.data.typeCode || '') &&
         NOTIFICATION_NODE_TYPES.has(nodeMap.get(edge.target)?.data.typeCode || '') &&
         edge.data.branch === 'true'
           ? notificationCondition(edge.data.condition)

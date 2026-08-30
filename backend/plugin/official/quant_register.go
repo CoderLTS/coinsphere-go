@@ -33,7 +33,7 @@ func RegisterQuant(registry *sdk.Registry, database *gorm.DB) error {
 	runtime.hub = newQuantCandleHub(runtime)
 	runtime.quote = runtime.fetchQuantPublicQuote
 	return registry.RegisterPlugin(sdk.PluginDescriptor{
-		ID: quantPluginID, Name: "CoinSphere Quant", Version: "1.1.0",
+		ID: quantPluginID, Name: "CoinSphere Quant", Version: "1.2.0",
 		Contributes: []string{"nodes", "triggers", "strategies", "apiRoutes", "pages", "resultPages"},
 	}, func(registrar sdk.Registrar) error { return runtime.register(registrar) })
 }
@@ -78,14 +78,16 @@ func (q *quantRuntime) register(registrar sdk.Registrar) error {
 	}, quantEvaluateAction{runtime: q}); err != nil {
 		return err
 	}
-	if err := registrar.Action(sdk.NodeDescriptor{
-		Type: quantIndicatorConditionType, Version: "1.0.0", Kind: sdk.NodeKindAction,
-		Branches: []string{"true", "false"}, ConfigSchema: quantIndicatorConditionConfigSchema,
-		UISchema:    json.RawMessage(`{"ui:order":["market","instrument","checkInterval","conditionTree"]}`),
-		InputSchema: quantIndicatorConditionInputSchema, OutputSchema: quantIndicatorConditionOutputSchema,
-		Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
-	}, quantIndicatorConditionAction{runtime: q}); err != nil {
-		return err
+	for _, indicator := range quantIndicatorDefinitions {
+		if err := registrar.Action(sdk.NodeDescriptor{
+			Type: indicator.NodeType, Version: "1.0.0", Kind: sdk.NodeKindAction,
+			Branches: []string{"true", "false"}, ConfigSchema: quantIndicatorConfigSchema(indicator.Indicator),
+			UISchema:    json.RawMessage(`{"ui:order":["market","instrument","checkInterval","name","interval","parameters"]}`),
+			InputSchema: quantIndicatorInputSchema, OutputSchema: quantIndicatorOutputSchema,
+			Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
+		}, quantIndicatorAction{runtime: q, indicator: indicator.Indicator}); err != nil {
+			return err
+		}
 	}
 	if err := registrar.Action(sdk.NodeDescriptor{
 		Type: "official.quant.backtest", Version: "1.0.0", Kind: sdk.NodeKindAction,
