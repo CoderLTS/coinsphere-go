@@ -58,7 +58,6 @@ const INDICATOR_CONDITION_TYPES = new Set([
 const NOTIFICATION_NODE_TYPES = new Set([
   'official.notification.in_app',
   'official.notification.dingtalk',
-  'official.notification.qq',
   'official.notification.smtp'
 ])
 

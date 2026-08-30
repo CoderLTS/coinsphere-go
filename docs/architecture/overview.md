@@ -11,7 +11,7 @@ CoinSphere 是面向个人自托管场景的工作流驱动量化平台。用户
 - 登录、用户、角色、菜单、系统监控和结构化系统日志。
 - 不可变工作流修订、Schema 工作台、批处理、事件和连续流执行。
 - Run 队列、节点尝试、检查点、人工任务、诊断重放、节点日志和内容寻址制品。
-- 编译期可信插件，以及内置 Connector、AI、Quant 和 Notification 插件。
+- 编译期可信插件，以及内置 Connector、AI、Quant、Notification 和 QQ 插件。
 - Binance Spot/USD-M 公共行情、可信 Go 策略、回测、信号、Paper 账户和通知。
 - 固定范围的共享结果视图及授权操作。
 - 仅超级管理员可用的平台智能助手、全局模型配置和工作流草稿生成。
@@ -75,7 +75,7 @@ sequenceDiagram
     Main->>HTTP: 开始监听
 ```
 
-启动时只校验核心 migration，不自动执行 DDL。插件注册先加载内置 Connector/AI、Quant、Notification，再加载生成的第三方注册表；插件 ID、节点类型、策略、页面和路由冲突都会使启动失败。随后系统初始化结构化日志运行时、确保内置 Quant 品种同步工作流存在，并启动工作流执行器。
+启动时只校验核心 migration，不自动执行 DDL。插件注册先加载内置 Connector/AI、Quant、Notification、QQ，再加载生成的第三方注册表；插件 ID、节点类型、策略、页面和路由冲突都会使启动失败。随后系统初始化结构化日志运行时、确保内置 Quant 品种同步工作流存在，并启动工作流执行器。
 
 收到终止信号后，同一个取消上下文停止新 HTTP 请求、连续流 Trigger 和外部 I/O。HTTP Server 有界关闭，执行器停止领取新 Run，在途 Action 通过 `context.Context` 协作取消并保存可提交的检查点；进程等待 Run 和 Trigger 收尾后关闭日志与数据库连接。
 
@@ -156,7 +156,7 @@ Run WebSocket 只发送工作流 ID、Run ID 和更新时间等轻量更新。�
 
 `core.schedule` 支持固定秒数或带 IANA 时区的六段 Cron，服务恢复后最多补一次漏跑。插件 `TriggerHandler` 用 Emitter 发送事件并必须响应取消与背压；服务启动时扫描 active 连续流并恢复 Trigger。
 
-Connector/AI 的 HTTP 与 WebSocket 访问执行精确域名白名单、公共 DNS 和重定向复核，不继承环境代理。Notification 的钉钉与 QQ 节点只访问固定官方域名，SMTP 只拨号公网域名并强制 TLS 或 STARTTLS；凭据只经 SecretReader 解密。Binance Quant 只访问公共行情接口，通用节点不能调用交易所私有接口。六种 Quant 判断节点各自读取一种周期的 UTC 闭合 K 线，在当前和上一检查时点确定性计算 Decimal 指标；工作流只承担 true/false 端口组合、路径进入传播和通知输入聚合，不参与逐 K 线计算。
+Connector/AI 的 HTTP 与 WebSocket 访问执行精确域名白名单、公共 DNS 和重定向复核，不继承环境代理。Notification 的钉钉节点和独立 QQ 插件只访问固定官方域名，SMTP 只拨号公网域名并强制 TLS 或 STARTTLS；凭据只经 SecretReader 解密。QQ Gateway Trigger 随流式工作流启停，固定订阅群聊 @ 与单聊消息并按 OpenID 分区，不保存原始载荷或鉴权扩展。Binance Quant 只访问公共行情接口，通用节点不能调用交易所私有接口。六种 Quant 判断节点各自读取一种周期的 UTC 闭合 K 线，在当前和上一检查时点确定性计算 Decimal 指标；工作流只承担 true/false 端口组合、路径进入传播和通知输入聚合，不参与逐 K 线计算。
 
 ## 9. 编译期插件
 

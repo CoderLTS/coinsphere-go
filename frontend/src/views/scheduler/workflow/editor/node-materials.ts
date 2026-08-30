@@ -193,10 +193,17 @@ const MATERIAL_META: Record<string, MaterialMeta> = {
     color: '#2563eb',
     iconText: '钉'
   },
-  'official.notification.qq': {
+  'official.qq.receive': {
     kind: 'generic',
-    group: '通知',
-    description: '向 QQ 群或频道发送通知',
+    group: '开始',
+    description: '接收 QQ 群聊 @ 消息或单聊消息',
+    color: '#0891b2',
+    iconText: 'Q'
+  },
+  'official.qq.send': {
+    kind: 'generic',
+    group: '集成',
+    description: '向 QQ 群聊或用户发送消息',
     color: '#0891b2',
     iconText: 'Q'
   },

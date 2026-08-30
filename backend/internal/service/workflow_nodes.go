@@ -215,8 +215,10 @@ func workflowNodeTitle(nodeType string) string {
 		return "In-app notification"
 	case "official.notification.dingtalk":
 		return "DingTalk notification"
-	case "official.notification.qq":
-		return "QQ notification"
+	case "official.qq.receive":
+		return "QQ message received"
+	case "official.qq.send":
+		return "QQ message"
 	case "official.notification.smtp":
 		return "SMTP notification"
 	default:
@@ -263,8 +265,10 @@ func workflowNodeDescription(nodeType string) string {
 		return "Persists one idempotent in-app notification delivery."
 	case "official.notification.dingtalk":
 		return "Sends one idempotent DingTalk robot notification."
-	case "official.notification.qq":
-		return "Sends one idempotent QQ group or channel notification."
+	case "official.qq.receive":
+		return "Starts one run for each QQ group mention or direct message."
+	case "official.qq.send":
+		return "Sends one idempotent QQ group or direct message."
 	case "official.notification.smtp":
 		return "Sends one idempotent TLS-protected SMTP notification."
 	default:

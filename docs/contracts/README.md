@@ -118,9 +118,11 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 
 Paper 账户按 `workflowId + paper nodeInstanceId` 唯一。默认人工审批；自动模式只有在最大总名义价值、单品种名义价值、单次操作名义价值、最大日亏损和最大回撤全部显式配置时有效。批准后重新读取 Binance 公共报价，并在一个数据库事务中检查信号/任务状态、报价新鲜度、品种状态、数量步进、账户状态及五项风险限制。拒绝不会创建账户或账本；成功执行写入不可变订单、成交、费用和账本事实，再更新账户与持仓投影。操作键和唯一约束保证节点重试、进程重启及 Outbox 重投不重复成交或投递。
 
-内置 `official.notification@1.1.0` 提供 `in_app`、`dingtalk`、`qq` 和 `smtp` 四个独立 Action 及统一投递页。四种节点统一接收 `subjectKey/message` 并按稳定操作键幂等；站内节点把用户和当前启用角色成员合并去重，旧配置没有目标时投递给工作流创建者。外部节点失败保存受控错误类别并交给当前节点最多三次重试，已成功操作直接复用。
+内置 `official.notification@2.0.0` 提供 `in_app`、`dingtalk` 和 `smtp` 三个 Action 及统一投递页。三种节点统一接收 `subjectKey/message` 并按稳定操作键幂等；站内节点把用户和当前启用角色成员合并去重，旧配置没有目标时投递给工作流创建者。外部节点失败保存受控错误类别并交给当前节点最多三次重试，已成功操作直接复用。
 
-钉钉和 QQ 只访问固定官方域名，使用 8 秒超时、禁止重定向和 64 KiB 响应上限；QQ Token 按凭据指纹缓存。SMTP 只接受解析到公网地址的域名和 TLS/STARTTLS，STARTTLS 不可用时失败而不降级。Access Token、Client Secret、SMTP 密码及钉钉签名 Secret 均为修订级 `x-coinsphere-secret`，不进入图、日志或投递表。
+内置 `official.qq@1.0.0` 提供 `receive` Trigger 和 `send` Action。接收节点固定订阅 `GROUP_AND_C2C_EVENT`，仅把 `GROUP_AT_MESSAGE_CREATE` 与 `C2C_MESSAGE_CREATE` 归一化为 CloudEvent；事件以 QQ 消息 ID 和 `urn:coinsphere:qq:<appId>` 全局去重，按群或用户 OpenID 分区。相同 AppID 只允许运行一个接收节点；Gateway 会话支持心跳、Resume、重连和取消关闭，但不持久化会话状态。
+
+QQ 发送支持群聊和单聊文本、Markdown、富媒体 URL 上传、键盘模板及被动回复，按稳定操作键写入 Notification 投递事实。钉钉和 QQ 只访问固定官方域名，HTTP 使用 8 秒超时、禁止重定向和 64 KiB 响应上限；QQ Token 按凭据指纹缓存。SMTP 只接受解析到公网地址的域名和 TLS/STARTTLS，STARTTLS 不可用时失败而不降级。Access Token、Client Secret、SMTP 密码及钉钉签名 Secret 均为修订级 `x-coinsphere-secret`，不进入图、日志或投递表。
 
 站内通知按 `recipient_user_id` 隔离，查询和已读操作只影响当前用户。持久投递提交后才发布 `notice.created`；实时 WebSocket 使用 `coinsphere.notifications.v1` 子协议携带 Access Token，要求同源 Origin、有界发送队列和 Ping/Pong，断线或队列满不影响数据库事实。诊断重放复用原 Checkpoint，不再次产生 notification、human_action 或 paper 副作用。
 
