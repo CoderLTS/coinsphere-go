@@ -291,15 +291,12 @@ func (a *App) CreateUser(payload UserUpsertPayload, principal *Principal) (M, er
 }
 
 // UpdateUser 更新用户。
-// 除了字段校验,还带业务规则:内置超管不能在这里改、不能停用当前登录的账号。
+// 除了字段校验,还带业务规则:不能停用当前登录的账号。
 // Updates(fields) 只更新 map 里给出的那几列;密码留空则跳过、不改密码。
 func (a *App) UpdateUser(userID int64, payload UserUpsertPayload, principal *Principal) (M, error) {
 	var user db.SystemUser
 	if err := a.DB.First(&user, userID).Error; err != nil {
 		return nil, bizErr("用户不存在")
-	}
-	if user.Username == protectedSuperUsername {
-		return nil, bizErr("内置超级管理员不能在这里修改")
 	}
 	if payload.Username != user.Username {
 		var count int64
