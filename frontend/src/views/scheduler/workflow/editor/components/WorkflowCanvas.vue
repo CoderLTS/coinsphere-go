@@ -1,14 +1,6 @@
 <!-- 工作流编辑器页面或组件：WorkflowCanvas。 -->
 <template>
-  <div
-    :class="[
-      'workflow-canvas',
-      {
-        'workflow-canvas--materials-hidden': !props.materialsVisible,
-        'workflow-canvas--side-panel-visible': showNodeEditor || props.jsonDefinitionVisible
-      }
-    ]"
-  >
+  <div class="workflow-canvas">
     <div v-show="props.materialsVisible" class="workflow-canvas__stencil">
       <div class="workflow-canvas__stencil-header">节点物料</div>
       <div v-if="!materialCount" class="workflow-canvas__stencil-empty">
@@ -317,18 +309,37 @@
     }
 
     const rect = shell.getBoundingClientRect()
+    const padding = getViewportPadding()
+    const viewportWidth = Math.max(120, shell.clientWidth - padding.left - padding.right)
+    const viewportHeight = Math.max(120, shell.clientHeight - padding.top - padding.bottom)
     return {
-      x: rect.left + shell.clientWidth / 2,
-      y: rect.top + shell.clientHeight / 2
+      x: rect.left + padding.left + viewportWidth / 2,
+      y: rect.top + padding.top + viewportHeight / 2
     }
   }
 
-  const getViewportPadding = () => ({
-    top: 32,
-    right: 32,
-    bottom: 32,
-    left: 32
-  })
+  const getViewportPadding = () => {
+    const shell = shellRef.value
+    if (!shell || shell.clientWidth <= 980) {
+      return { top: 32, right: 32, bottom: 32, left: 32 }
+    }
+
+    const host = shell.parentElement
+    const materialWidth = props.materialsVisible
+      ? host?.querySelector<HTMLElement>('.workflow-canvas__stencil')?.offsetWidth || 0
+      : 0
+    const sideWidth =
+      showNodeEditor.value || props.jsonDefinitionVisible
+        ? host?.querySelector<HTMLElement>('.workflow-canvas__side-panel')?.offsetWidth || 0
+        : 0
+
+    return {
+      top: 32,
+      right: sideWidth ? sideWidth + 24 : 32,
+      bottom: 32,
+      left: materialWidth ? materialWidth + 24 : 32
+    }
+  }
 
   const getContentBounds = (graphModel: WorkflowDomainGraphModel) => {
     if (!graphModel.nodes.length) return null
@@ -1379,27 +1390,12 @@
 
 <style scoped lang="scss">
   .workflow-canvas {
-    --workflow-material-width: 252px;
-    --workflow-side-width: 0px;
-
     position: relative;
-    display: grid;
-    grid-template-columns:
-      var(--workflow-material-width) minmax(0, 1fr)
-      var(--workflow-side-width);
     width: 100%;
     height: 100%;
     min-width: 0;
     min-height: 0;
     overflow: hidden;
-  }
-
-  .workflow-canvas--materials-hidden {
-    --workflow-material-width: 0px;
-  }
-
-  .workflow-canvas--side-panel-visible {
-    --workflow-side-width: 360px;
   }
 
   :deep(.menu-right) {
@@ -1409,7 +1405,8 @@
   }
 
   .workflow-canvas__viewport {
-    position: relative;
+    position: absolute;
+    inset: 0;
     min-width: 0;
     min-height: 0;
     overflow: hidden;
@@ -1442,18 +1439,20 @@
   }
 
   .workflow-canvas__stencil {
+    position: absolute;
+    inset: 10px auto 10px 10px;
+    z-index: 30;
     display: flex;
     flex-direction: column;
     gap: 0;
-    width: 252px;
+    width: 220px;
     min-height: 0;
-    margin-right: 10px;
-    padding: 0 0 0 10px;
+    padding: 0 0 0 8px;
     overflow: hidden;
     background: var(--workflow-overlay-bg, var(--workflow-panel-bg));
     border: 1px solid var(--workflow-overlay-border-soft, var(--workflow-panel-border));
     border-radius: 8px;
-    box-shadow: 0 6px 18px rgb(31 35 48 / 0.08);
+    box-shadow: 0 10px 26px rgb(15 23 42 / 0.14);
   }
 
   .workflow-canvas__stencil-body {
@@ -1466,10 +1465,10 @@
 
   .workflow-canvas__stencil-header {
     display: flex;
-    flex: 0 0 44px;
+    flex: 0 0 40px;
     align-items: center;
-    padding: 0 10px 0 2px;
-    font-size: 13px;
+    padding: 0 8px 0 2px;
+    font-size: 12px;
     font-weight: 700;
     color: var(--workflow-overlay-text, var(--workflow-panel-text));
     border-bottom: 1px solid var(--workflow-overlay-border-subtle, var(--workflow-panel-border));
@@ -1509,10 +1508,18 @@
   }
 
   .workflow-canvas__side-panel {
+    position: absolute;
+    inset: 10px 10px 10px auto;
+    z-index: 31;
+    width: min(320px, calc(100% - 20px));
     min-width: 0;
     min-height: 0;
-    margin-left: 10px;
     overflow: hidden;
+    box-shadow: 0 10px 26px rgb(15 23 42 / 0.14);
+  }
+
+  .workflow-canvas__side-panel :deep(.node-editor-card) {
+    box-shadow: none;
   }
 
   .workflow-canvas__json {
@@ -1524,15 +1531,16 @@
     background: var(--workflow-overlay-bg, var(--workflow-panel-bg));
     border: 1px solid var(--workflow-overlay-border-soft, var(--workflow-panel-border));
     border-radius: 8px;
-    box-shadow: 0 6px 18px rgb(31 35 48 / 0.08);
+    box-shadow: none;
   }
 
   .workflow-canvas__json-head {
     display: flex;
-    flex: 0 0 44px;
+    flex: 0 0 40px;
     align-items: center;
     justify-content: space-between;
-    padding: 0 14px;
+    padding: 0 12px;
+    font-size: 13px;
     color: var(--workflow-overlay-text, var(--workflow-panel-text));
     border-bottom: 1px solid var(--workflow-overlay-border-subtle, var(--workflow-panel-border));
   }
@@ -1541,7 +1549,7 @@
     flex: 1 1 auto;
     min-height: 0;
     margin: 0;
-    padding: 14px;
+    padding: 12px;
     overflow: auto;
     font-family: 'Cascadia Code', SFMono-Regular, Consolas, monospace;
     font-size: 12px;
@@ -1736,9 +1744,9 @@
   :deep(.workflow-stencil-card) {
     box-sizing: border-box;
     display: flex;
-    gap: 10px;
+    gap: 8px;
     align-items: center;
-    padding: 8px 10px;
+    padding: 6px 8px;
     background: var(--workflow-overlay-raised, var(--workflow-panel-raised));
     border: 1px solid var(--workflow-overlay-border-subtle, var(--workflow-panel-border));
     border-radius: 8px;
@@ -1754,12 +1762,12 @@
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 32px;
-    font-size: 12px;
+    width: 28px;
+    height: 28px;
+    font-size: 11px;
     font-weight: 600;
     line-height: 1;
-    border-radius: 7px;
+    border-radius: 6px;
   }
 
   :deep(.workflow-stencil-card__body) {
@@ -1773,9 +1781,9 @@
   :deep(.workflow-stencil-card__title) {
     min-width: 0;
     overflow: hidden;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
-    line-height: 18px;
+    line-height: 17px;
     color: var(--workflow-overlay-text, var(--workflow-panel-text));
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1784,8 +1792,8 @@
   :deep(.workflow-stencil-card__description) {
     display: -webkit-box;
     overflow: hidden;
-    font-size: 12px;
-    line-height: 16px;
+    font-size: 11px;
+    line-height: 15px;
     color: var(--workflow-overlay-muted, var(--workflow-panel-muted));
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
@@ -1802,30 +1810,15 @@
   }
 
   @media (max-width: 980px) {
-    .workflow-canvas {
-      display: block;
-    }
-
-    .workflow-canvas__viewport {
-      width: 100%;
-      height: 100%;
-    }
-
     .workflow-canvas__stencil {
-      position: absolute;
       inset: 8px auto 8px 8px;
-      z-index: 30;
-      width: min(252px, calc(100% - 16px));
-      margin: 0;
+      width: min(220px, calc(100% - 16px));
       box-shadow: 0 12px 30px rgb(31 35 48 / 0.16);
     }
 
     .workflow-canvas__side-panel {
-      position: absolute;
       inset: 8px 8px 8px auto;
-      z-index: 31;
-      width: min(360px, calc(100% - 16px));
-      margin: 0;
+      width: min(320px, calc(100% - 16px));
       box-shadow: 0 12px 30px rgb(31 35 48 / 0.16);
     }
 

@@ -36,8 +36,8 @@ const DEFAULT_NODE_SIZE = {
 }
 
 const STENCIL_NODE_SIZE = {
-  width: 208,
-  height: 66
+  width: 184,
+  height: 58
 }
 
 const START_LABELS: Record<string, string> = {
@@ -897,11 +897,11 @@ const buildPortGroups = () => ({
 
 const buildStencilAttrs = (material: WorkflowMaterialItem) => ({
   body: {
-    stroke: '#5f95ff',
+    stroke: 'var(--workflow-panel-border, #dfe4ec)',
     strokeWidth: 1,
-    fill: '#fff',
-    rx: 8,
-    ry: 8
+    fill: 'var(--workflow-panel-raised, #f9fafc)',
+    rx: 7,
+    ry: 7
   },
   iconRect: {
     fill: `${material.color}16`
@@ -911,10 +911,12 @@ const buildStencilAttrs = (material: WorkflowMaterialItem) => ({
     fill: material.color
   },
   title: {
-    text: material.title
+    text: material.title,
+    fill: 'var(--workflow-panel-text, #263247)'
   },
   desc: {
-    text: material.description
+    text: material.description,
+    fill: 'var(--workflow-panel-muted, #78859a)'
   }
 })
 

@@ -823,7 +823,9 @@
     min-width: 0;
     height: 100%;
     min-height: 0;
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     background: var(--workflow-page-bg);
   }
 
@@ -835,21 +837,19 @@
     gap: 12px;
     width: 100%;
     min-width: 0;
-    height: 100%;
-    min-height: 0;
-    max-height: 100%;
+    min-height: 100%;
     padding: 10px;
-    overflow: hidden;
+    overflow: visible;
   }
 
   .workflow-execution-detail__stage {
     display: flex;
-    flex: 1 1 auto;
+    flex: 0 0 auto;
     flex-direction: column;
     gap: 10px;
     min-width: 0;
-    min-height: 0;
-    overflow: hidden;
+    min-height: 100%;
+    overflow: visible;
   }
 
   .workflow-execution-detail__toolbar,
@@ -972,12 +972,13 @@
 
   .workflow-execution-detail__body {
     display: grid;
-    flex: 1 1 auto;
+    flex: 0 0 auto;
     grid-template-columns: minmax(0, 1fr) 332px;
     gap: 10px;
+    align-items: start;
     min-width: 0;
     min-height: 0;
-    overflow: hidden;
+    overflow: visible;
   }
 
   .workflow-execution-detail__body--inspector-hidden {
@@ -985,19 +986,21 @@
   }
 
   .workflow-execution-detail__main {
-    display: grid;
-    grid-template-rows: minmax(220px, 1fr) minmax(180px, 32%);
+    display: flex;
+    flex-direction: column;
     gap: 10px;
     min-width: 0;
     min-height: 0;
-    overflow: hidden;
+    overflow: visible;
   }
 
   .workflow-execution-detail__canvas-pane {
     position: relative;
     display: block;
+    flex: 0 0 clamp(520px, 62vh, 720px);
+    height: clamp(520px, 62vh, 720px);
     min-width: 0;
-    min-height: 220px;
+    min-height: 520px;
     overflow: hidden;
     isolation: isolate;
   }
@@ -1011,8 +1014,10 @@
 
   .workflow-execution-detail__live-logs {
     display: flex;
+    flex: 0 0 clamp(320px, 38vh, 460px);
     flex-direction: column;
-    min-height: 0;
+    height: clamp(320px, 38vh, 460px);
+    min-height: 320px;
     overflow: hidden;
     background: var(--workflow-overlay-bg);
     border: 1px solid var(--workflow-overlay-border);
@@ -1159,11 +1164,14 @@
     --el-text-color-secondary: var(--workflow-overlay-muted);
     --el-text-color-placeholder: var(--workflow-overlay-placeholder);
 
+    position: sticky;
+    top: 0;
     display: flex;
     flex-direction: column;
     width: 100%;
+    height: clamp(520px, calc(100vh - 160px), 720px);
     min-width: 0;
-    min-height: 0;
+    min-height: 520px;
     overflow: hidden;
     isolation: isolate;
     border-radius: 8px;
@@ -1274,19 +1282,32 @@
     .workflow-execution-detail__body--inspector-hidden {
       display: flex;
       flex-direction: column;
-      overflow: auto;
-    }
-
-    .workflow-execution-detail__main {
-      flex: 0 0 620px;
-      grid-template-rows: minmax(340px, 1fr) 240px;
-      min-height: 620px;
       overflow: visible;
     }
 
+    .workflow-execution-detail__main {
+      flex: 0 0 auto;
+      min-height: 0;
+      overflow: visible;
+    }
+
+    .workflow-execution-detail__canvas-pane {
+      flex-basis: 480px;
+      height: 480px;
+      min-height: 480px;
+    }
+
+    .workflow-execution-detail__live-logs {
+      flex-basis: 360px;
+      height: 360px;
+      min-height: 360px;
+    }
+
     .workflow-execution-detail__inspector {
-      flex: 0 0 380px;
-      min-height: 320px;
+      position: static;
+      flex: 0 0 520px;
+      height: 520px;
+      min-height: 360px;
     }
   }
 
@@ -1299,10 +1320,10 @@
       gap: 8px;
     }
 
-    .workflow-execution-detail__main {
-      flex-basis: 580px;
-      grid-template-rows: 320px 250px;
-      min-height: 580px;
+    .workflow-execution-detail__canvas-pane {
+      flex-basis: 400px;
+      height: 400px;
+      min-height: 400px;
     }
 
     .workflow-execution-detail__live-log-row {
