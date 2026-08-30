@@ -12,11 +12,11 @@ import type { CSSProperties, Ref, ShallowRef } from 'vue'
 import { createStencilNode } from '../workflow-editor.mapper'
 import type { WorkflowMaterialDropPayload, WorkflowMaterialGroup } from '../types'
 
-const STENCIL_GRAPH_WIDTH = 232
-const STENCIL_COLUMN_WIDTH = 216
-const STENCIL_CARD_WIDTH = 208
-const STENCIL_CARD_HEIGHT = 66
-const STENCIL_ROW_HEIGHT = 88
+const STENCIL_GRAPH_WIDTH = 204
+const STENCIL_COLUMN_WIDTH = 188
+const STENCIL_CARD_WIDTH = 184
+const STENCIL_CARD_HEIGHT = 58
+const STENCIL_ROW_HEIGHT = 76
 const STENCIL_SCROLLBAR_TOP_INSET = 6
 const STENCIL_SCROLLBAR_BOTTOM_INSET = 10
 
@@ -40,35 +40,41 @@ export const ensureStencilShapeRegistered = () => {
         { tagName: 'text', selector: 'desc' }
       ],
       attrs: {
-        body: { stroke: '#5f95ff', strokeWidth: 1, fill: '#fff', rx: 8, ry: 8 },
-        iconRect: { width: 32, height: 32, rx: 8, ry: 8, refX: 12, refY: 17, fill: '#f0f5ff' },
+        body: {
+          stroke: 'var(--workflow-panel-border, #dfe4ec)',
+          strokeWidth: 1,
+          fill: 'var(--workflow-panel-raised, #f9fafc)',
+          rx: 7,
+          ry: 7
+        },
+        iconRect: { width: 28, height: 28, rx: 7, ry: 7, refX: 10, refY: 15 },
         iconLabel: {
-          refX: 28,
-          refY: 33,
+          refX: 24,
+          refY: 29,
           textAnchor: 'middle',
           textVerticalAnchor: 'middle',
-          fontSize: 12,
+          fontSize: 11,
           fontWeight: 600,
           fill: '#1d39c4'
         },
         title: {
-          refX: 56,
-          refY: 24,
+          refX: 48,
+          refY: 21,
           textAnchor: 'start',
           textVerticalAnchor: 'middle',
-          fontSize: 14,
+          fontSize: 13,
           fontWeight: 600,
-          fill: '#141414',
-          textWrap: { width: 140, height: 20, ellipsis: '…' }
+          fill: 'var(--workflow-panel-text, #263247)',
+          textWrap: { width: 124, height: 18, ellipsis: '…' }
         },
         desc: {
-          refX: 56,
-          refY: 43,
+          refX: 48,
+          refY: 39,
           textAnchor: 'start',
           textVerticalAnchor: 'middle',
-          fontSize: 12,
-          fill: 'rgba(0,0,0,0.65)',
-          textWrap: { width: 140, height: 28, ellipsis: '…' }
+          fontSize: 11,
+          fill: 'var(--workflow-panel-muted, #78859a)',
+          textWrap: { width: 124, height: 24, ellipsis: '…' }
         }
       }
     },
@@ -231,7 +237,7 @@ export function useWorkflowStencil(options: StencilOptions) {
         columns: 1,
         columnWidth: STENCIL_COLUMN_WIDTH,
         rowHeight: STENCIL_ROW_HEIGHT,
-        dx: 6,
+        dx: 4,
         dy: 0
       }
     })
