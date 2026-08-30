@@ -5,20 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 
-	"coinsphere/backend/internal/db"
 	"coinsphere/backend/plugin/sdk"
 )
 
 var quantAssistantQuerySchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"resource":{"type":"string","enum":["instruments","backtests","signals","paper_accounts"]},"market":{"type":"string","enum":["spot","usdm"]},"instrument":{"type":"string","pattern":"^[A-Z0-9]{2,32}$"},"status":{"type":"string","maxLength":32},"limit":{"type":"integer","minimum":1,"maximum":50,"default":20}},"required":["resource"],"additionalProperties":false}`)
-
-var notificationAssistantQuerySchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"channel":{"type":"string","enum":["in_app","dingtalk","qq","smtp"]},"status":{"type":"string","enum":["pending","delivered","failed"]},"limit":{"type":"integer","minimum":1,"maximum":50,"default":20}},"additionalProperties":false}`)
 
 type assistantDomainQuery struct {
 	Resource   string `json:"resource"`
 	Market     string `json:"market"`
 	Instrument string `json:"instrument"`
 	Status     string `json:"status"`
-	Channel    string `json:"channel"`
 	Limit      int    `json:"limit"`
 }
 
@@ -112,35 +108,6 @@ func (q *quantRuntime) assistantQuery(ctx context.Context, input json.RawMessage
 		return nil, errors.New("unsupported Quant assistant resource")
 	}
 	return json.Marshal(result)
-}
-
-func (n *notificationRuntime) assistantQuery(ctx context.Context, input json.RawMessage, scope sdk.SystemScope) (json.RawMessage, error) {
-	if scope.PluginID != notificationPluginID || scope.UserID <= 0 {
-		return nil, errors.New("invalid Notification assistant scope")
-	}
-	var request assistantDomainQuery
-	if json.Unmarshal(input, &request) != nil {
-		return nil, errors.New("invalid Notification assistant query")
-	}
-	query := n.db.WithContext(ctx).Model(&db.NotificationDelivery{}).Limit(assistantQueryLimit(request.Limit))
-	if request.Channel != "" {
-		query = query.Where("channel = ?", request.Channel)
-	}
-	if request.Status != "" {
-		query = query.Where("status = ?", request.Status)
-	}
-	var rows []struct {
-		ID           int64  `json:"id"`
-		Channel      string `json:"channel"`
-		SubjectKey   string `json:"subjectKey"`
-		Title        string `json:"title"`
-		Status       string `json:"status"`
-		AttemptCount int    `json:"attemptCount"`
-	}
-	if err := query.Select("id, channel, subject_key, title, status, attempt_count").Order("created_at DESC, id DESC").Find(&rows).Error; err != nil {
-		return nil, errors.New("query notification deliveries failed")
-	}
-	return json.Marshal(map[string]any{"items": rows})
 }
 
 func assistantQueryLimit(value int) int {

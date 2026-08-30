@@ -27,7 +27,7 @@ func registerAI(registrar sdk.Registrar, client *safeHTTPClient) error {
 		return err
 	}
 	return registrar.ResultPage(sdk.ResultPageDescriptor{
-		PageKey: "calls", Title: "AI calls",
+		PageKey: "calls", Title: "AI 调用",
 		ComponentEntry: "./official/ai/ResultPage.vue", ScopeSchema: emptyObjectSchema, Mobile: true,
 	})
 }

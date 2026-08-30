@@ -33,7 +33,7 @@ func RegisterQuant(registry *sdk.Registry, database *gorm.DB) error {
 	runtime.hub = newQuantCandleHub(runtime)
 	runtime.quote = runtime.fetchQuantPublicQuote
 	return registry.RegisterPlugin(sdk.PluginDescriptor{
-		ID: quantPluginID, Name: "CoinSphere Quant", Version: "1.2.0",
+		ID: quantPluginID, Name: "量化分析", Version: "1.2.0",
 		Contributes: []string{"nodes", "triggers", "strategies", "apiRoutes", "pages", "resultPages", "assistantQueries"},
 	}, func(registrar sdk.Registrar) error { return runtime.register(registrar) })
 }
@@ -129,13 +129,13 @@ func (q *quantRuntime) register(registrar sdk.Registrar) error {
 		return err
 	}
 	if err := registrar.ResultPage(sdk.ResultPageDescriptor{
-		PageKey: "quant", Title: "Quant results", ComponentEntry: "./official/quant/ResultPage.vue",
+		PageKey: "quant", Title: "量化结果", ComponentEntry: "./official/quant/ResultPage.vue",
 		ScopeSchema: emptyObjectSchema, Mobile: true,
 	}); err != nil {
 		return err
 	}
 	return registrar.ResultPage(sdk.ResultPageDescriptor{
-		PageKey: "paper", Title: "Paper results", ComponentEntry: "./official/quant/PaperResultPage.vue",
+		PageKey: "paper", Title: "Paper 结果", ComponentEntry: "./official/quant/PaperResultPage.vue",
 		ScopeSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"workflowId":{"type":"integer","minimum":1},"signalNodeInstanceId":{"type":"string","minLength":1,"maxLength":128},"paperNodeInstanceId":{"type":"string","minLength":1,"maxLength":128}},"required":["workflowId","signalNodeInstanceId","paperNodeInstanceId"],"additionalProperties":false}`),
 		FilterSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"market":{"type":"string","enum":["spot","usdm"]},"instrument":{"type":"string","pattern":"^[A-Z0-9]{2,32}$"},"status":{"type":"string","enum":["pending","superseded","approved","rejected","executed"]}},"additionalProperties":false}`),
 		Actions:      []string{"approve", "reject", "retry", "cancel", "pause", "export"}, Mobile: true,

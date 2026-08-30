@@ -41,15 +41,11 @@
             @click="selectView(view)"
           >
             <span class="result-row__icon">
-              <ArtSvgIcon
-                :icon="
-                  view.pluginId === 'official.quant' ? 'ri:funds-line' : 'ri:notification-3-line'
-                "
-              />
+              <ArtSvgIcon icon="ri:funds-line" />
             </span>
             <span class="result-row__copy">
               <strong>{{ view.name }}</strong>
-              <small>{{ pageLabel(view) }}</small>
+              <small>{{ pageLabel }}</small>
             </span>
             <ElTag v-if="view.status === 'revoked'" type="info" effect="plain" size="small"
               >撤销</ElTag
@@ -63,7 +59,7 @@
       <section class="results-stage">
         <div v-if="selectedView" class="results-stage__toolbar">
           <div>
-            <span>{{ pageLabel(selectedView) }}</span>
+            <span>{{ pageLabel }}</span>
             <small>{{ formatTime(selectedView.createdAt) }}</small>
           </div>
           <div v-if="isAdmin" class="results-stage__commands">
@@ -94,14 +90,6 @@
           <ElFormItem label="名称">
             <ElInput v-model="createForm.name" maxlength="120" show-word-limit />
           </ElFormItem>
-          <ElFormItem label="结果类型">
-            <ElSelect v-model="createForm.kind" @change="resetCreateScope">
-              <ElOption label="Paper 账户与信号" value="paper" />
-              <ElOption label="通知投递" value="deliveries" />
-            </ElSelect>
-          </ElFormItem>
-        </div>
-        <div class="dialog-grid">
           <ElFormItem label="工作流">
             <ElSelect v-model="createForm.workflowId" filterable @change="loadWorkflowNodes">
               <ElOption
@@ -112,11 +100,11 @@
               />
             </ElSelect>
           </ElFormItem>
-          <ElFormItem v-if="createForm.kind === 'paper'" label="市场">
-            <ElSegmented v-model="createForm.market" :options="marketOptions" />
-          </ElFormItem>
         </div>
-        <div v-if="createForm.kind === 'paper'" class="dialog-grid">
+        <ElFormItem label="市场">
+          <ElSegmented v-model="createForm.market" :options="marketOptions" />
+        </ElFormItem>
+        <div class="dialog-grid">
           <ElFormItem label="信号节点">
             <ElSelect v-model="createForm.signalNodeInstanceId" filterable allow-create>
               <ElOption v-for="node in signalNodes" :key="node" :label="node" :value="node" />
@@ -139,12 +127,7 @@
             </ElSelect>
           </ElFormItem>
         </div>
-        <ElFormItem v-else label="通知节点">
-          <ElSelect v-model="createForm.notificationNodeInstanceId" filterable allow-create>
-            <ElOption v-for="node in notificationNodes" :key="node" :label="node" :value="node" />
-          </ElSelect>
-        </ElFormItem>
-        <ElFormItem v-if="createForm.kind === 'paper'" label="允许操作">
+        <ElFormItem label="允许操作">
           <ElCheckboxGroup v-model="createForm.allowedActions">
             <ElCheckbox value="approve">批准</ElCheckbox>
             <ElCheckbox value="reject">拒绝</ElCheckbox>
@@ -249,7 +232,6 @@
   const workflowOptions = ref<WorkflowItem[]>([])
   const signalNodes = ref<string[]>([])
   const paperNodes = ref<string[]>([])
-  const notificationNodes = ref<string[]>([])
   const loading = ref(false)
   const saving = ref(false)
   const createVisible = ref(false)
@@ -261,14 +243,12 @@
   ]
   const createForm = reactive({
     name: '',
-    kind: 'paper' as 'paper' | 'deliveries',
     workflowId: 1,
     market: 'spot' as 'spot' | 'usdm',
     instrument: 'BTCUSDT',
     status: '',
     signalNodeInstanceId: 'signal',
     paperNodeInstanceId: 'paper',
-    notificationNodeInstanceId: 'notify',
     allowedActions: ['approve', 'reject', 'export'],
     userIds: [] as number[],
     roleCodes: ['R_USER'] as string[]
@@ -279,14 +259,12 @@
     Boolean(
       createForm.name.trim() &&
         workflowOptions.value.some((workflow) => workflow.id === createForm.workflowId) &&
-        (createForm.kind === 'paper'
-          ? createForm.signalNodeInstanceId.trim() && createForm.paperNodeInstanceId.trim()
-          : createForm.notificationNodeInstanceId.trim())
+        createForm.signalNodeInstanceId.trim() &&
+        createForm.paperNodeInstanceId.trim()
     )
   )
 
-  const pageLabel = (view: ResultView) =>
-    view.pluginId === 'official.quant' ? 'Paper 账户与信号' : '通知投递'
+  const pageLabel = 'Paper 账户与信号'
   const loadComponent = async (view: ResultView) => {
     const registration = registeredFrontendPlugins.find((plugin) => plugin.id === view.pluginId)
     if (!registration) {
@@ -314,7 +292,9 @@
   const loadViews = async () => {
     loading.value = true
     try {
-      views.value = (await fetchResultViews()).items
+      views.value = (await fetchResultViews()).items.filter(
+        (view) => view.pluginId === 'official.quant' && view.pageKey === 'paper'
+      )
       const next =
         activeViews.value.find((view) => view.id === selectedView.value?.id) || activeViews.value[0]
       selectedView.value = undefined
@@ -347,44 +327,30 @@
     const revision = await fetchWorkflowRevision(workflow.id, workflow.activeRevisionId)
     signalNodes.value = nodesOfType(revision.graph.nodes, 'official.quant.signal')
     paperNodes.value = nodesOfType(revision.graph.nodes, 'official.quant.paper_execute')
-    notificationNodes.value = nodesOfType(revision.graph.nodes, 'official.notification.in_app')
     createForm.signalNodeInstanceId = signalNodes.value[0] || createForm.signalNodeInstanceId
     createForm.paperNodeInstanceId = paperNodes.value[0] || createForm.paperNodeInstanceId
-    createForm.notificationNodeInstanceId =
-      notificationNodes.value[0] || createForm.notificationNodeInstanceId
-  }
-  const resetCreateScope = () => {
-    createForm.allowedActions = createForm.kind === 'paper' ? ['approve', 'reject', 'export'] : []
   }
   const openCreate = async () => {
     await loadGrantOptions()
     createVisible.value = true
   }
   const submitCreate = async () => {
-    const scope =
-      createForm.kind === 'paper'
-        ? {
-            workflowId: createForm.workflowId,
-            signalNodeInstanceId: createForm.signalNodeInstanceId.trim(),
-            paperNodeInstanceId: createForm.paperNodeInstanceId.trim()
-          }
-        : {
-            workflowId: createForm.workflowId,
-            nodeInstanceId: createForm.notificationNodeInstanceId.trim()
-          }
-    const filters: Record<string, string> = {}
-    if (createForm.kind === 'paper') {
-      filters.market = createForm.market
-      if (createForm.instrument.trim())
-        filters.instrument = createForm.instrument.trim().toUpperCase()
-      if (createForm.status) filters.status = createForm.status
+    const scope = {
+      workflowId: createForm.workflowId,
+      signalNodeInstanceId: createForm.signalNodeInstanceId.trim(),
+      paperNodeInstanceId: createForm.paperNodeInstanceId.trim()
     }
+    const filters: Record<string, string> = {}
+    filters.market = createForm.market
+    if (createForm.instrument.trim())
+      filters.instrument = createForm.instrument.trim().toUpperCase()
+    if (createForm.status) filters.status = createForm.status
     saving.value = true
     try {
       const created = await createResultView({
         name: createForm.name.trim(),
-        pluginId: createForm.kind === 'paper' ? 'official.quant' : 'official.notification',
-        pageKey: createForm.kind,
+        pluginId: 'official.quant',
+        pageKey: 'paper',
         scope,
         filters,
         allowedActions: [...createForm.allowedActions],

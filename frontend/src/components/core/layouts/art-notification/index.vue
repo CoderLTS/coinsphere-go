@@ -34,134 +34,118 @@
       </li>
     </ul>
 
-    <div class="w-full h-[calc(100%-95px)]">
-      <div class="h-[calc(100%-60px)] overflow-y-auto scrollbar-thin">
-        <div v-if="loading && barActiveIndex === 0 && !noticeList.length" class="px-3.5 pt-3.5">
-          <ElSkeleton animated :rows="4" />
-        </div>
+    <div class="w-full h-[calc(100%-95px)] overflow-y-auto scrollbar-thin">
+      <div v-if="loading && barActiveIndex === 0 && !noticeList.length" class="px-3.5 pt-3.5">
+        <ElSkeleton animated :rows="4" />
+      </div>
 
-        <ul v-show="barActiveIndex === 0 && noticeList.length">
-          <li
-            v-for="item in noticeList"
-            :key="item.id"
-            class="box-border flex-c px-3.5 py-3.5 c-p last:border-b-0 hover:bg-g-200/60"
-            :class="{ 'opacity-70': item.isRead }"
-            @click="handleOpenRecord(item)"
+      <ul v-show="barActiveIndex === 0 && noticeList.length">
+        <li
+          v-for="item in noticeList"
+          :key="item.id"
+          class="box-border flex-c px-3.5 py-3.5 c-p last:border-b-0 hover:bg-g-200/60"
+          :class="{ 'opacity-70': item.isRead }"
+          @click="handleOpenRecord(item)"
+        >
+          <div
+            class="relative size-9 leading-9 text-center rounded-lg flex-cc bg-theme/12 text-theme"
           >
+            <ArtSvgIcon class="text-lg !bg-transparent" icon="ri:notification-3-line" />
+            <span v-if="!item.isRead" class="notice-badge-dot"></span>
+          </div>
+          <div class="w-[calc(100%-45px)] ml-3.5 overflow-hidden">
+            <h4 class="text-sm font-normal leading-5.5 text-g-900 line-clamp-2">{{
+              item.messageTitle
+            }}</h4>
+            <p class="mt-1.5 text-xs text-g-500 line-clamp-2">{{
+              item.messageContent || formatDateTime(item.createdAt)
+            }}</p>
+            <p class="mt-1 text-xs text-g-400">{{ formatDateTime(item.createdAt) }}</p>
+          </div>
+        </li>
+      </ul>
+
+      <ul v-show="barActiveIndex === 1 && msgList.length">
+        <li
+          v-for="(item, index) in msgList"
+          :key="index"
+          class="box-border flex-c px-3.5 py-3.5 c-p last:border-b-0 hover:bg-g-200/60"
+        >
+          <div class="size-9 leading-9 text-center rounded-lg flex-cc bg-success/12 text-success">
+            <ArtSvgIcon class="text-lg !bg-transparent" icon="ri:message-3-line" />
+          </div>
+          <div class="w-[calc(100%-45px)] ml-3.5 overflow-hidden">
+            <h4 class="text-sm font-normal leading-5.5 text-g-900 line-clamp-2">{{
+              item.title
+            }}</h4>
+            <p class="mt-1.5 text-xs text-g-500">{{ item.time }}</p>
+          </div>
+        </li>
+      </ul>
+
+      <ul v-show="barActiveIndex === 2 && pendingList.length">
+        <li
+          v-for="item in pendingList"
+          :key="item.id"
+          class="box-border px-3.5 py-3.5 last:border-b-0"
+        >
+          <div class="flex items-start gap-3">
             <div
-              class="relative size-9 leading-9 text-center rounded-lg flex-cc bg-theme/12 text-theme"
+              class="size-9 shrink-0 leading-9 text-center rounded-lg flex-cc bg-warning/12 text-warning"
             >
-              <ArtSvgIcon class="text-lg !bg-transparent" icon="ri:notification-3-line" />
-              <span v-if="!item.isRead" class="notice-badge-dot"></span>
+              <ArtSvgIcon class="text-lg !bg-transparent" icon="ri:exchange-dollar-line" />
             </div>
-            <div class="w-[calc(100%-45px)] ml-3.5 overflow-hidden">
+            <div class="min-w-0 flex-1">
               <h4 class="text-sm font-normal leading-5.5 text-g-900 line-clamp-2">{{
                 item.messageTitle
               }}</h4>
-              <p class="mt-1.5 text-xs text-g-500 line-clamp-2">{{
-                item.messageContent || formatDateTime(item.createdAt)
-              }}</p>
-              <p class="mt-1 text-xs text-g-400">{{ formatDateTime(item.createdAt) }}</p>
+              <p class="mt-1 text-xs text-g-500 line-clamp-2">{{ item.messageContent }}</p>
+              <p class="mt-1 text-xs text-g-400">
+                {{ formatDateTime(item.strategySignalExpiresAt || item.createdAt) }}
+              </p>
             </div>
-          </li>
-        </ul>
+          </div>
+          <div class="mt-3 grid grid-cols-2 gap-2">
+            <ElButton
+              size="small"
+              type="primary"
+              :icon="Check"
+              :loading="decisionLoading === `${item.strategySignalId}:approved`"
+              :disabled="Boolean(decisionLoading)"
+              @click.stop="handleSignalDecision(item, 'approved')"
+            >
+              {{ t('notice.decision.approve') }}
+            </ElButton>
+            <ElButton
+              size="small"
+              type="danger"
+              plain
+              :icon="Close"
+              :loading="decisionLoading === `${item.strategySignalId}:rejected`"
+              :disabled="Boolean(decisionLoading)"
+              @click.stop="handleSignalDecision(item, 'rejected')"
+            >
+              {{ t('notice.decision.reject') }}
+            </ElButton>
+          </div>
+        </li>
+      </ul>
 
-        <ul v-show="barActiveIndex === 1 && msgList.length">
-          <li
-            v-for="(item, index) in msgList"
-            :key="index"
-            class="box-border flex-c px-3.5 py-3.5 c-p last:border-b-0 hover:bg-g-200/60"
-          >
-            <div class="size-9 leading-9 text-center rounded-lg flex-cc bg-success/12 text-success">
-              <ArtSvgIcon class="text-lg !bg-transparent" icon="ri:message-3-line" />
-            </div>
-            <div class="w-[calc(100%-45px)] ml-3.5 overflow-hidden">
-              <h4 class="text-sm font-normal leading-5.5 text-g-900 line-clamp-2">{{
-                item.title
-              }}</h4>
-              <p class="mt-1.5 text-xs text-g-500">{{ item.time }}</p>
-            </div>
-          </li>
-        </ul>
-
-        <ul v-show="barActiveIndex === 2 && pendingList.length">
-          <li
-            v-for="item in pendingList"
-            :key="item.id"
-            class="box-border px-3.5 py-3.5 last:border-b-0"
-          >
-            <div class="flex items-start gap-3">
-              <div
-                class="size-9 shrink-0 leading-9 text-center rounded-lg flex-cc bg-warning/12 text-warning"
-              >
-                <ArtSvgIcon class="text-lg !bg-transparent" icon="ri:exchange-dollar-line" />
-              </div>
-              <div class="min-w-0 flex-1">
-                <h4 class="text-sm font-normal leading-5.5 text-g-900 line-clamp-2">{{
-                  item.messageTitle
-                }}</h4>
-                <p class="mt-1 text-xs text-g-500 line-clamp-2">{{ item.messageContent }}</p>
-                <p class="mt-1 text-xs text-g-400">
-                  {{ formatDateTime(item.strategySignalExpiresAt || item.createdAt) }}
-                </p>
-              </div>
-            </div>
-            <div class="mt-3 grid grid-cols-2 gap-2">
-              <ElButton
-                size="small"
-                type="primary"
-                :icon="Check"
-                :loading="decisionLoading === `${item.strategySignalId}:approved`"
-                :disabled="Boolean(decisionLoading)"
-                @click.stop="handleSignalDecision(item, 'approved')"
-              >
-                {{ t('notice.decision.approve') }}
-              </ElButton>
-              <ElButton
-                size="small"
-                type="danger"
-                plain
-                :icon="Close"
-                :loading="decisionLoading === `${item.strategySignalId}:rejected`"
-                :disabled="Boolean(decisionLoading)"
-                @click.stop="handleSignalDecision(item, 'rejected')"
-              >
-                {{ t('notice.decision.reject') }}
-              </ElButton>
-            </div>
-          </li>
-        </ul>
-
-        <div
-          v-show="currentTabIsEmpty && !(loading && barActiveIndex === 0)"
-          class="relative top-25 h-full text-g-500 text-center !bg-transparent"
-        >
-          <ArtSvgIcon icon="system-uicons:inbox" class="text-5xl" />
-          <p class="mt-3.5 text-xs !bg-transparent">
-            {{ $t('notice.text[0]') }}{{ barList[barActiveIndex].name }}
-          </p>
-        </div>
-      </div>
-
-      <div class="relative box-border w-full px-3.5">
-        <ElButton
-          class="w-full mt-3"
-          :disabled="footerDisabled"
-          :loading="loading"
-          @click="handleFooterAction"
-        >
-          {{ footerLabel }}
-        </ElButton>
+      <div
+        v-show="currentTabIsEmpty && !(loading && barActiveIndex === 0)"
+        class="relative top-25 h-full text-g-500 text-center !bg-transparent"
+      >
+        <ArtSvgIcon icon="system-uicons:inbox" class="text-5xl" />
+        <p class="mt-3.5 text-xs !bg-transparent">
+          {{ $t('notice.text[0]') }}{{ barList[barActiveIndex].name }}
+        </p>
       </div>
     </div>
-
-    <div class="h-25"></div>
   </div>
 </template>
 
 <script setup lang="ts">
   import { useI18n } from 'vue-i18n'
-  import { useRouter } from 'vue-router'
   import { Check, Close } from '@element-plus/icons-vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { fetchReauth } from '@/api/auth'
@@ -175,12 +159,7 @@
     value: boolean
   }>()
 
-  const emit = defineEmits<{
-    'update:value': [value: boolean]
-  }>()
-
   const { t } = useI18n()
-  const router = useRouter()
   const notificationStore = useNotificationStore()
   const { records, loading, unreadCount } = storeToRefs(notificationStore)
 
@@ -213,10 +192,6 @@
     }
     return pendingList.value.length === 0
   })
-
-  const footerLabel = computed(() => t('notice.viewAll'))
-
-  const footerDisabled = computed(() => false)
 
   watch(
     () => props.value,
@@ -314,11 +289,6 @@
     } finally {
       decisionLoading.value = null
     }
-  }
-
-  const handleFooterAction = async () => {
-    emit('update:value', false)
-    await router.push('/plugins/official.notification/deliveries')
   }
 </script>
 

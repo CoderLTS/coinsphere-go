@@ -21,13 +21,13 @@ func RegisterAll(registry *sdk.Registry, allowedHosts []string) error {
 		return err
 	}
 	if err := registry.RegisterPlugin(sdk.PluginDescriptor{
-		ID: connectorPluginID, Name: "CoinSphere Connector", Version: "1.0.0",
+		ID: connectorPluginID, Name: "连接器", Version: "1.0.0",
 		Contributes: []string{"nodes", "triggers", "resultPages"},
 	}, func(registrar sdk.Registrar) error { return registerConnector(registrar, client) }); err != nil {
 		return err
 	}
 	return registry.RegisterPlugin(sdk.PluginDescriptor{
-		ID: aiPluginID, Name: "CoinSphere AI", Version: "1.0.0",
+		ID: aiPluginID, Name: "人工智能", Version: "1.0.0",
 		Contributes: []string{"nodes", "resultPages"},
 	}, func(registrar sdk.Registrar) error { return registerAI(registrar, client) })
 }

@@ -244,6 +244,17 @@ declare namespace Api {
       version: string
       contributes: string[]
       status: 'loaded'
+      nodes: Array<{
+        type: string
+        title: string
+        version: string
+        kind: 'action' | 'trigger'
+      }>
+      pages: Array<{
+        pageKey: string
+        title: string
+        kind: 'page' | 'resultPage'
+      }>
     }
 
     type I18nTexts = Api.Config.I18nTexts

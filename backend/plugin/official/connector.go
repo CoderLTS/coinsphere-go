@@ -49,7 +49,7 @@ func registerConnector(registrar sdk.Registrar, client *safeHTTPClient) error {
 		return err
 	}
 	return registrar.ResultPage(sdk.ResultPageDescriptor{
-		PageKey: "connections", Title: "Connector diagnostics",
+		PageKey: "connections", Title: "连接诊断",
 		ComponentEntry: "./official/connector/ResultPage.vue", ScopeSchema: emptyObjectSchema, Mobile: true,
 	})
 }
