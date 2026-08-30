@@ -23,7 +23,7 @@ func (a *App) ListInstalledPlugins() []M {
 		for _, node := range a.Plugins.PluginNodes(plugin.ID) {
 			nodes = append(nodes, M{
 				"type": node.Type, "title": workflowNodeTitle(node.Type),
-				"version": node.Version, "kind": node.Kind,
+				"version": node.Version, "kind": node.Kind, "configSchema": node.ConfigSchema,
 			})
 		}
 		pages := make([]M, 0)
