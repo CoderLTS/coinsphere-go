@@ -16,11 +16,28 @@ func (a *App) GetHomeMeta() M {
 
 func (a *App) ListInstalledPlugins() []M {
 	plugins := a.Plugins.Plugins()
+	registeredPages := a.Plugins.Pages()
 	result := make([]M, 0, len(plugins))
 	for _, plugin := range plugins {
+		nodes := make([]M, 0)
+		for _, node := range a.Plugins.PluginNodes(plugin.ID) {
+			nodes = append(nodes, M{
+				"type": node.Type, "title": workflowNodeTitle(node.Type),
+				"version": node.Version, "kind": node.Kind,
+			})
+		}
+		pages := make([]M, 0)
+		for _, page := range registeredPages {
+			if page.PluginID == plugin.ID {
+				pages = append(pages, M{"pageKey": page.PageKey, "title": page.Title, "kind": "page"})
+			}
+		}
+		for _, page := range a.Plugins.PluginResultPages(plugin.ID) {
+			pages = append(pages, M{"pageKey": page.PageKey, "title": page.Title, "kind": "resultPage"})
+		}
 		result = append(result, M{
 			"id": plugin.ID, "name": plugin.Name, "version": plugin.Version,
-			"contributes": plugin.Contributes, "status": "loaded",
+			"contributes": plugin.Contributes, "status": "loaded", "nodes": nodes, "pages": pages,
 		})
 	}
 	return result

@@ -187,40 +187,48 @@ func workflowNodeTitle(nodeType string) string {
 		return "Loop item"
 	case "core.loop_end":
 		return "Loop end"
+	case "official.connector.http":
+		return "HTTP 请求"
+	case "official.connector.webhook":
+		return "Webhook 触发"
+	case "official.connector.websocket":
+		return "WebSocket 触发"
+	case "official.ai.model_call":
+		return "AI 模型调用"
 	case "official.quant.binance_candles":
-		return "Binance closed candles"
+		return "Binance K 线采集"
 	case "official.quant.sync_instruments":
-		return "Binance instrument metadata"
+		return "Binance 币种元数据采集"
 	case "official.quant.evaluate":
-		return "Quant strategy evaluation"
+		return "量化策略评估"
 	case "official.quant.volume_spike_condition":
-		return "Volume spike condition"
+		return "放量判断"
 	case "official.quant.price_change_condition":
-		return "Price change condition"
+		return "价格波动判断"
 	case "official.quant.macd_condition":
-		return "MACD condition"
+		return "MACD 判断"
 	case "official.quant.kdj_condition":
-		return "KDJ condition"
+		return "KDJ 判断"
 	case "official.quant.rsi_condition":
-		return "RSI condition"
+		return "RSI 判断"
 	case "official.quant.bollinger_condition":
-		return "Bollinger condition"
+		return "布林带判断"
 	case "official.quant.backtest":
-		return "Quant strategy backtest"
+		return "量化策略回测"
 	case "official.quant.signal":
-		return "Quant signal"
+		return "量化信号"
 	case "official.quant.paper_execute":
-		return "Paper execution"
+		return "Paper 执行"
 	case "official.notification.in_app":
-		return "In-app notification"
+		return "站内通知"
 	case "official.notification.dingtalk":
-		return "DingTalk notification"
+		return "钉钉通知"
 	case "official.qq.receive":
-		return "QQ message received"
+		return "QQ 消息接收"
 	case "official.qq.send":
-		return "QQ message"
+		return "QQ 消息发送"
 	case "official.notification.smtp":
-		return "SMTP notification"
+		return "邮件通知"
 	default:
 		return nodeType
 	}

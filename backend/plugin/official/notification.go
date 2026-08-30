@@ -51,17 +51,12 @@ func RegisterNotification(registry *sdk.Registry, database *gorm.DB, publish fun
 	client.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	runtime := &notificationRuntime{db: database, publish: publish, http: client}
 	return registry.RegisterPlugin(sdk.PluginDescriptor{
-		ID: notificationPluginID, Name: "CoinSphere Notification", Version: "2.0.0",
-		Contributes: []string{"nodes", "apiRoutes", "pages", "assistantQueries"},
+		ID: notificationPluginID, Name: "通知", Version: "3.0.0",
+		Contributes: []string{"nodes"},
 	}, runtime.register)
 }
 
 func (n *notificationRuntime) register(registrar sdk.Registrar) error {
-	if err := registrar.Page(sdk.PageDescriptor{
-		PageKey: "deliveries", Title: "通知投递", Icon: "ri:notification-3-line", KeepAlive: true,
-	}); err != nil {
-		return err
-	}
 	descriptors := []sdk.NodeDescriptor{
 		{
 			Type: "official.notification.in_app", Version: "1.0.0", Kind: sdk.NodeKindAction,
@@ -91,16 +86,7 @@ func (n *notificationRuntime) register(registrar sdk.Registrar) error {
 			return err
 		}
 	}
-	if err := registrar.Route(
-		sdk.RouteDescriptor{Method: "GET", Pattern: "/deliveries", Scope: sdk.ScopeSystem},
-		n.handleDeliveries,
-	); err != nil {
-		return err
-	}
-	return registrar.AssistantQuery(sdk.AssistantQueryDescriptor{
-		Name: "deliveries", Description: "查询通知投递状态和标题摘要，不返回消息正文或收件人信息。",
-		InputSchema: notificationAssistantQuerySchema,
-	}, sdk.AssistantQueryHandlerFunc(n.assistantQuery))
+	return nil
 }
 
 func notificationInputSchema() json.RawMessage {
@@ -394,58 +380,6 @@ func notificationResult(deliveries []db.NotificationDelivery, recipientCount int
 		"channel": deliveries[0].Channel, "status": "delivered",
 		"deliveredAt": deliveredAt.UTC().Format(time.RFC3339Nano),
 	})}
-}
-
-func (n *notificationRuntime) handleDeliveries(w http.ResponseWriter, r *http.Request, scope sdk.RouteScope) {
-	value, ok := scope.(sdk.SystemScope)
-	if !ok || value.PluginID != notificationPluginID || !quantQueryKeys(r, "channel", "status", "limit") {
-		writeQuantProblem(w, http.StatusBadRequest, "invalid notification delivery query")
-		return
-	}
-	channel, status := strings.TrimSpace(r.URL.Query().Get("channel")), strings.TrimSpace(r.URL.Query().Get("status"))
-	if channel != "" && channel != "in_app" && channel != "dingtalk" && channel != "qq" && channel != "smtp" {
-		writeQuantProblem(w, http.StatusBadRequest, "notification channel is invalid")
-		return
-	}
-	if status != "" && status != "pending" && status != "delivered" && status != "failed" {
-		writeQuantProblem(w, http.StatusBadRequest, "notification status is invalid")
-		return
-	}
-	limit, err := quantQueryLimit(r, 100, 200)
-	if err != nil {
-		writeQuantProblem(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	query := n.db.WithContext(r.Context()).Order("created_at DESC, id DESC").Limit(limit)
-	if channel != "" {
-		query = query.Where("channel = ?", channel)
-	}
-	if status != "" {
-		query = query.Where("status = ?", status)
-	}
-	var deliveries []db.NotificationDelivery
-	if err := query.Find(&deliveries).Error; err != nil {
-		writeQuantProblem(w, http.StatusInternalServerError, "list notification deliveries failed")
-		return
-	}
-	items := make([]map[string]any, len(deliveries))
-	for index := range deliveries {
-		var deliveredAt any
-		if deliveries[index].DeliveredAt != nil {
-			deliveredAt = deliveries[index].DeliveredAt.UTC().Format(time.RFC3339Nano)
-		}
-		items[index] = map[string]any{
-			"id": deliveries[index].ID, "channel": deliveries[index].Channel,
-			"recipientUserId": deliveries[index].RecipientUserID,
-			"subjectKey":      deliveries[index].SubjectKey, "title": deliveries[index].Title,
-			"message": deliveries[index].Message, "status": deliveries[index].Status,
-			"attemptCount":      deliveries[index].AttemptCount,
-			"lastErrorCategory": deliveries[index].LastErrorCategory,
-			"deliveredAt":       deliveredAt,
-			"createdAt":         deliveries[index].CreatedAt.UTC().Format(time.RFC3339Nano),
-		}
-	}
-	writeQuantOK(w, map[string]any{"items": items})
 }
 
 var _ sdk.ActionHandler = notificationAction{}

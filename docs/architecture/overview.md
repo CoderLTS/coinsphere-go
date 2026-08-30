@@ -20,7 +20,7 @@ CoinSphere 是面向个人自托管场景的工作流驱动量化平台。用户
 
 平台助手位于 Core，而不是插件。HTTP 层只向 `R_SUPER` 暴露模型配置、会话、流式对话和工作流确认接口；Service 层负责有界上下文、OpenAI-compatible 工具循环、核心只读查询、插件查询调度和工作流方案校验。PostgreSQL 保存全局模型配置、用户会话与消息，提案随助手消息元数据保存。
 
-插件仍拥有自身领域数据。Quant 与 Notification 通过 SDK `assistantQueries` 暴露有界只读摘要，Connector 与 `official.ai` 没有独立持久数据，因此不注册查询。工作流方案使用实时 Core/插件节点目录，确认时再次校验目录摘要和完整图，并在同一事务创建 `inactive` 工作流、初始修订与运行时；平台不会自动激活或运行。
+插件仍拥有自身领域数据。Quant 通过 SDK `assistantQueries` 暴露有界只读摘要；Connector、Notification 与 `official.ai` 不注册查询。工作流方案使用实时 Core/插件节点目录，确认时再次校验目录摘要和完整图，并在同一事务创建 `inactive` 工作流、初始修订与运行时；平台不会自动激活或运行。
 
 ## 2. 系统上下文
 

@@ -202,6 +202,21 @@ func (r *Registry) ResultPage(pluginID, pageKey string) (ResultPageDescriptor, b
 	return page, ok
 }
 
+func (r *Registry) PluginResultPages(pluginID string) []ResultPageDescriptor {
+	pages := make([]ResultPageDescriptor, 0)
+	for key, page := range r.resultPages {
+		if !strings.HasPrefix(key, pluginID+"/") {
+			continue
+		}
+		page.ScopeSchema = append(json.RawMessage(nil), page.ScopeSchema...)
+		page.FilterSchema = append(json.RawMessage(nil), page.FilterSchema...)
+		page.Actions = append([]string(nil), page.Actions...)
+		pages = append(pages, page)
+	}
+	sort.Slice(pages, func(i, j int) bool { return pages[i].PageKey < pages[j].PageKey })
+	return pages
+}
+
 func (r *Registry) Pages() []RegisteredPage {
 	pages := make([]RegisteredPage, 0, len(r.pages))
 	for key, page := range r.pages {
@@ -303,6 +318,16 @@ func (r *Registry) Nodes() []NodeDescriptor {
 		nodes = append(nodes, desc)
 	}
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Type < nodes[j].Type })
+	return nodes
+}
+
+func (r *Registry) PluginNodes(pluginID string) []NodeDescriptor {
+	nodes := make([]NodeDescriptor, 0)
+	for _, node := range r.Nodes() {
+		if r.nodes[node.Type].pluginID == pluginID {
+			nodes = append(nodes, node)
+		}
+	}
 	return nodes
 }
 

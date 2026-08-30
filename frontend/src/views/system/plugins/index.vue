@@ -22,7 +22,17 @@
     </header>
 
     <section v-if="plugins.length" class="plugin-grid" aria-label="已安装插件">
-      <article v-for="plugin in plugins" :key="plugin.id" class="plugin-card">
+      <article
+        v-for="plugin in plugins"
+        :key="plugin.id"
+        class="plugin-card"
+        role="button"
+        tabindex="0"
+        :aria-label="`查看${pluginLabel(plugin)}详情`"
+        @click="openPlugin(plugin)"
+        @keydown.enter="openPlugin(plugin)"
+        @keydown.space.prevent="openPlugin(plugin)"
+      >
         <div class="plugin-card__head">
           <span class="plugin-mark"><ArtSvgIcon :icon="pluginIcon(plugin.id)" /></span>
           <div>
@@ -38,6 +48,7 @@
         <div class="plugin-meta">
           <span><ArtSvgIcon icon="ri:checkbox-circle-line" /> 已加载</span>
           <span><ArtSvgIcon icon="ri:apps-line" /> {{ plugin.contributes.length }} 类能力</span>
+          <ArtSvgIcon class="detail-arrow" icon="ri:arrow-right-s-line" />
         </div>
 
         <div class="contribution-list">
@@ -50,6 +61,63 @@
     </section>
 
     <ElEmpty v-else-if="!loading" description="当前没有已加载插件" />
+
+    <ElDrawer
+      v-model="detailVisible"
+      :title="selectedPlugin ? pluginLabel(selectedPlugin) : '插件详情'"
+      size="min(520px, 94vw)"
+    >
+      <div v-if="selectedPlugin" class="plugin-detail">
+        <div class="plugin-detail__summary">
+          <span class="plugin-mark"><ArtSvgIcon :icon="pluginIcon(selectedPlugin.id)" /></span>
+          <div>
+            <code>{{ selectedPlugin.id }}</code>
+            <span>v{{ selectedPlugin.version }} · 已加载</span>
+          </div>
+        </div>
+
+        <section>
+          <h3>
+            注册节点
+            <small>{{ selectedPlugin.nodes.length }}</small>
+          </h3>
+          <div v-if="selectedPlugin.nodes.length" class="detail-list">
+            <div v-for="node in selectedPlugin.nodes" :key="node.type" class="detail-row">
+              <div>
+                <strong>{{ node.title }}</strong>
+                <code>{{ node.type }}</code>
+              </div>
+              <div class="detail-tags">
+                <ElTag size="small" effect="plain">{{ nodeKindLabel(node.kind) }}</ElTag>
+                <span>v{{ node.version }}</span>
+              </div>
+            </div>
+          </div>
+          <ElEmpty v-else :image-size="52" description="未注册节点" />
+        </section>
+
+        <section>
+          <h3>
+            注册页面
+            <small>{{ selectedPlugin.pages.length }}</small>
+          </h3>
+          <div v-if="selectedPlugin.pages.length" class="detail-list">
+            <div
+              v-for="page in selectedPlugin.pages"
+              :key="`${page.kind}:${page.pageKey}`"
+              class="detail-row"
+            >
+              <div>
+                <strong>{{ page.title }}</strong>
+                <code>{{ page.pageKey }}</code>
+              </div>
+              <ElTag size="small" effect="plain">{{ pageKindLabel(page.kind) }}</ElTag>
+            </div>
+          </div>
+          <ElEmpty v-else :image-size="52" description="未注册页面" />
+        </section>
+      </div>
+    </ElDrawer>
   </div>
 </template>
 
@@ -60,10 +128,13 @@
 
   const loading = ref(false)
   const plugins = ref<Api.System.InstalledPlugin[]>([])
+  const selectedPlugin = ref<Api.System.InstalledPlugin>()
+  const detailVisible = ref(false)
 
   const pluginIcon = (id: string) => {
     if (id.includes('quant')) return 'ri:line-chart-line'
     if (id.includes('notification')) return 'ri:notification-3-line'
+    if (id.includes('qq')) return 'ri:qq-line'
     if (id.includes('connector')) return 'ri:links-line'
     if (id.includes('ai')) return 'ri:sparkling-2-line'
     return 'ri:puzzle-2-line'
@@ -76,18 +147,16 @@
     apiRoutes: '接口路由',
     pages: '页面',
     resultPages: '结果页',
+    assistantQueries: '助手查询',
     migrations: '数据库迁移'
   }
 
   const pluginNames: Record<string, string> = {
-    'official.connector': '连接器插件',
-    'official.ai': '人工智能插件',
-    'official.quant': '量化分析插件',
-    'official.notification': '通知插件',
-    'CoinSphere Connector': '连接器插件',
-    'CoinSphere AI': '人工智能插件',
-    'CoinSphere Quant': '量化分析插件',
-    'CoinSphere Notification': '通知插件'
+    'official.connector': '连接器',
+    'official.ai': '人工智能',
+    'official.quant': '量化分析',
+    'official.notification': '通知',
+    'official.qq': 'QQ机器人'
   }
 
   const icons: Record<string, string> = {
@@ -97,15 +166,20 @@
     apiRoutes: 'ri:route-line',
     pages: 'ri:layout-grid-line',
     resultPages: 'ri:file-chart-line',
+    assistantQueries: 'ri:question-answer-line',
     migrations: 'ri:database-2-line'
   }
 
   const pluginLabel = (plugin: Api.System.InstalledPlugin) =>
-    pluginNames[plugin.id] ||
-    pluginNames[plugin.name] ||
-    (/[一-鿿]/.test(plugin.name) ? plugin.name : '扩展插件')
+    pluginNames[plugin.id] || plugin.name || plugin.id
   const contributionLabel = (value: string) => labels[value] || value
   const contributionIcon = (value: string) => icons[value] || 'ri:add-circle-line'
+  const nodeKindLabel = (kind: 'action' | 'trigger') => (kind === 'trigger' ? '触发器' : '动作')
+  const pageKindLabel = (kind: 'page' | 'resultPage') => (kind === 'resultPage' ? '结果页' : '页面')
+  const openPlugin = (plugin: Api.System.InstalledPlugin) => {
+    selectedPlugin.value = plugin
+    detailVisible.value = true
+  }
 
   const loadPlugins = async () => {
     loading.value = true
@@ -239,9 +313,17 @@
   .plugin-card {
     min-width: 0;
     padding: 18px;
+    cursor: pointer;
     background: var(--default-box-color);
     border: 1px solid var(--art-gray-300);
     border-radius: 8px;
+  }
+
+  .plugin-card:hover,
+  .plugin-card:focus-visible {
+    border-color: #7aa7c7;
+    outline: none;
+    box-shadow: 0 4px 14px rgb(30 61 80 / 0.08);
   }
 
   .plugin-card__head {
@@ -322,6 +404,12 @@
     color: #16a86b;
   }
 
+  .detail-arrow {
+    margin-left: auto;
+    font-size: 18px;
+    color: var(--art-gray-500);
+  }
+
   .contribution-list {
     display: flex;
     flex-wrap: wrap;
@@ -335,6 +423,91 @@
     color: var(--art-gray-800);
     background: var(--art-gray-200);
     border-radius: 5px;
+  }
+
+  .plugin-detail__summary {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--art-gray-300);
+  }
+
+  .plugin-detail__summary > div {
+    min-width: 0;
+  }
+
+  .plugin-detail__summary code,
+  .plugin-detail__summary span,
+  .detail-row code,
+  .detail-tags span {
+    display: block;
+    font-size: 12px;
+    color: var(--art-gray-600);
+  }
+
+  .plugin-detail__summary code,
+  .detail-row code {
+    overflow: hidden;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .plugin-detail__summary span {
+    margin-top: 4px;
+  }
+
+  .plugin-detail section {
+    margin-top: 24px;
+  }
+
+  .plugin-detail h3 {
+    margin: 0 0 8px;
+    font-size: 14px;
+    letter-spacing: 0;
+  }
+
+  .plugin-detail h3 small {
+    margin-left: 5px;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--art-gray-500);
+  }
+
+  .detail-list {
+    border-top: 1px solid var(--art-gray-300);
+  }
+
+  .detail-row,
+  .detail-tags {
+    display: flex;
+    align-items: center;
+  }
+
+  .detail-row {
+    gap: 16px;
+    justify-content: space-between;
+    min-height: 64px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--art-gray-300);
+  }
+
+  .detail-row > div:first-child {
+    min-width: 0;
+  }
+
+  .detail-row strong {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 13px;
+    font-weight: 650;
+  }
+
+  .detail-tags {
+    flex: 0 0 auto;
+    gap: 8px;
   }
 
   @media (max-width: 1100px) {

@@ -75,7 +75,7 @@ func RegisterQQ(registry *sdk.Registry, database *gorm.DB) error {
 		db: database, http: client, tokens: map[string]qqAccessToken{}, receivers: map[string]struct{}{},
 	}
 	return registry.RegisterPlugin(sdk.PluginDescriptor{
-		ID: qqPluginID, Name: "CoinSphere QQ", Version: "1.0.0", Contributes: []string{"nodes", "triggers"},
+		ID: qqPluginID, Name: "QQ机器人", Version: "1.0.0", Contributes: []string{"nodes", "triggers"},
 	}, runtime.register)
 }
 
