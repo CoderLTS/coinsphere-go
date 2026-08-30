@@ -23,11 +23,7 @@
               <div class="workflow-execution-detail__canvas-pane">
                 <section class="workflow-execution-detail__toolbar">
                   <ElTooltip content="返回工作流定义" placement="bottom">
-                    <ElButton
-                      plain
-                      class="workflow-execution-detail__icon-btn"
-                      @click="handleBack"
-                    >
+                    <ElButton plain class="workflow-execution-detail__icon-btn" @click="handleBack">
                       <ElIcon><ArrowLeft /></ElIcon>
                     </ElButton>
                   </ElTooltip>
