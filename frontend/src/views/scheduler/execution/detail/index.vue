@@ -92,9 +92,12 @@
                     {{ liveLogRows.length }} 条
                   </span>
                 </div>
-                <ElTag :type="statusTagType(executionDetail.status)" effect="plain" size="small">
-                  {{ statusLabel(executionDetail.status) }}
-                </ElTag>
+                <div class="workflow-execution-detail__live-logs-actions">
+                  <ElButton size="small" :icon="Clock" @click="handleHistory">历史日志</ElButton>
+                  <ElTag :type="statusTagType(executionDetail.status)" effect="plain" size="small">
+                    {{ statusLabel(executionDetail.status) }}
+                  </ElTag>
+                </div>
               </div>
               <div ref="liveLogViewport" class="workflow-execution-detail__live-logs-body">
                 <ElEmpty v-if="!liveLogRows.length" description="等待节点日志" />
@@ -111,9 +114,9 @@
                   <span class="workflow-execution-detail__live-log-message">{{
                     line.message
                   }}</span>
-                  <code v-if="line.fields" class="workflow-execution-detail__live-log-fields">
-                    {{ line.fields }}
-                  </code>
+                  <pre v-if="line.fields" class="workflow-execution-detail__live-log-fields">{{
+                    line.fields
+                  }}</pre>
                 </div>
               </div>
             </section>
@@ -202,20 +205,6 @@
                         <div class="workflow-execution-detail__json-block">
                           <div class="workflow-execution-detail__json-title">输出摘要</div>
                           <pre>{{ formatJSON(attempt.outputSummary) }}</pre>
-                        </div>
-                      </div>
-
-                      <div class="workflow-execution-detail__section-title">节点日志</div>
-                      <ElEmpty v-if="!attempt.logs.length" description="暂无节点日志" />
-                      <div v-else class="workflow-execution-detail__timeline">
-                        <div
-                          v-for="line in attempt.logs"
-                          :key="line.id"
-                          class="workflow-execution-detail__timeline-item"
-                        >
-                          <span>{{ formatDateTime(line.loggedAt) }}</span>
-                          <strong>{{ line.level.toUpperCase() }} · {{ line.message }}</strong>
-                          <small>{{ formatLogFields(line.fields) }}</small>
                         </div>
                       </div>
                     </div>
@@ -346,7 +335,7 @@
 </template>
 
 <script setup lang="ts">
-  import { ArrowLeft, Hide, View } from '@element-plus/icons-vue'
+  import { ArrowLeft, Clock, Hide, View } from '@element-plus/icons-vue'
   import { ElMessage } from 'element-plus'
   import type { WorkflowNodeDefinitionItem } from '@/api/scheduler'
   import {
@@ -462,6 +451,16 @@
     router.push('/scheduler/definition')
   }
 
+  const handleHistory = () => {
+    router.push({
+      path: '/scheduler/execution',
+      query: {
+        workflowId: String(activeWorkflowId.value),
+        workflowName: executionDetail.value?.workflowDefinitionName || ''
+      }
+    })
+  }
+
   const clearSelection = () => {
     selectedCellId.value = null
     selectedCellType.value = null
@@ -508,7 +507,8 @@
         schedule: '定时触发',
         event: '事件触发',
         stream: '流式触发',
-        webhook: 'Webhook 触发'
+        webhook: 'Webhook 触发',
+        failure: '失败触发'
       }) as Record<string, string>
     )[value] ||
     value ||
@@ -523,7 +523,7 @@
   const formatJSON = (value: Record<string, unknown>) => JSON.stringify(value || {}, null, 2)
 
   const formatLogFields = (value: Record<string, unknown>) => {
-    const text = JSON.stringify(value || {})
+    const text = JSON.stringify(value || {}, null, 2)
     return text === '{}' ? '' : text
   }
 
@@ -534,38 +534,66 @@
     nodeName: string
     message: string
     fields: string
+    order: number
   }
 
   const liveLogRows = ref<LiveLogRow[]>([])
 
   const appendLiveLogs = (detail: WorkflowExecutionDetail) => {
-    const nodeNames = new Map(detail.nodeAttempts.map((attempt) => [attempt.id, attempt.nodeName]))
-    const rows = new Map<number, (typeof detail.logs)[number]>()
-    detail.logs.forEach((line) => rows.set(line.id, line))
+    const genericMessages = new Set(['节点开始执行', '节点执行成功'])
+    const businessLogs = new Map<number, (typeof detail.logs)[number]>()
+    detail.logs.forEach((line) => businessLogs.set(line.id, line))
     detail.nodeAttempts.forEach((attempt) =>
-      attempt.logs.forEach((line) => rows.set(line.id, line))
+      attempt.logs.forEach((line) => businessLogs.set(line.id, line))
     )
-
-    const merged = new Map(liveLogRows.value.map((line) => [line.key, line]))
-    rows.forEach((line) =>
-      merged.set(`run-${detail.id}-log-${line.id}`, {
+    const rows: LiveLogRow[] = []
+    detail.nodeAttempts.forEach((attempt) => {
+      const suffix = `第 ${attempt.attempt} 次尝试 · 循环 ${attempt.loopIteration}`
+      rows.push({
+        key: `run-${detail.id}-attempt-${attempt.id}-start`,
+        time: attempt.startedAt,
+        level: 'info',
+        nodeName: attempt.nodeName,
+        message: `开始 · ${suffix}`,
+        fields: formatLogFields(attempt.inputSummary),
+        order: 0
+      })
+      if (attempt.finishedAt) {
+        const errorFields = attempt.error
+          ? { category: attempt.error.category, summary: attempt.error.summary }
+          : attempt.outputSummary
+        rows.push({
+          key: `run-${detail.id}-attempt-${attempt.id}-end`,
+          time: attempt.finishedAt,
+          level: attempt.error ? 'error' : 'info',
+          nodeName: attempt.nodeName,
+          message: `结束 · ${statusLabel(attempt.status)} · ${formatDuration(attempt.durationMs)}`,
+          fields: formatLogFields(errorFields),
+          order: 2
+        })
+      }
+    })
+    const nodeNames = new Map(detail.nodeAttempts.map((attempt) => [attempt.id, attempt.nodeName]))
+    businessLogs.forEach((line) => {
+      if (genericMessages.has(line.message)) return
+      rows.push({
         key: `run-${detail.id}-log-${line.id}`,
         time: line.loggedAt,
         level: line.level,
         nodeName: nodeNames.get(line.runNodeId) || '工作流',
         message: line.message,
-        fields: formatLogFields(line.fields)
+        fields: formatLogFields(line.fields),
+        order: 1
       })
-    )
-    liveLogRows.value = [...merged.values()].sort((left, right) => {
+    })
+    liveLogRows.value = rows.sort((left, right) => {
       const timeDiff = Date.parse(left.time || '') - Date.parse(right.time || '')
-      return timeDiff || left.key.localeCompare(right.key)
+      return timeDiff || left.order - right.order || left.key.localeCompare(right.key)
     })
   }
 
   const shouldFollowLatest = computed(() => {
-    if (route.query.followLatest === '1') return true
-    return executionDetail.value?.triggerType === 'stream'
+    return route.query.followLatest === '1'
   })
 
   const activeWorkflowId = computed(() =>
@@ -1015,6 +1043,12 @@
     color: var(--workflow-overlay-text);
   }
 
+  .workflow-execution-detail__live-logs-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
   .workflow-execution-detail__live-logs-dot {
     width: 7px;
     height: 7px;
@@ -1055,9 +1089,9 @@
 
   .workflow-execution-detail__live-log-row {
     display: grid;
-    grid-template-columns: 142px 48px 150px minmax(0, 1fr) minmax(0, 260px);
+    grid-template-columns: 142px 48px 150px minmax(180px, 1fr) minmax(240px, 360px);
     gap: 10px;
-    align-items: baseline;
+    align-items: start;
     min-height: 30px;
     padding: 6px 14px;
     font-family: 'Cascadia Code', SFMono-Regular, Consolas, monospace;
@@ -1070,8 +1104,7 @@
   }
 
   .workflow-execution-detail__live-log-row time,
-  .workflow-execution-detail__live-log-node,
-  .workflow-execution-detail__live-log-fields {
+  .workflow-execution-detail__live-log-node {
     overflow: hidden;
     color: var(--workflow-overlay-muted);
     text-overflow: ellipsis;
@@ -1094,14 +1127,22 @@
 
   .workflow-execution-detail__live-log-message {
     min-width: 0;
-    overflow: hidden;
     color: var(--workflow-overlay-text);
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    word-break: break-word;
   }
 
   .workflow-execution-detail__live-log-fields {
+    max-height: 180px;
+    margin: 0;
+    padding: 6px 8px;
+    overflow: auto;
     font-size: 11px;
+    line-height: 16px;
+    color: var(--workflow-overlay-muted);
+    word-break: break-word;
+    white-space: pre-wrap;
+    background: var(--workflow-overlay-soft);
+    border-radius: 4px;
   }
 
   .workflow-execution-detail__inspector {
@@ -1191,31 +1232,6 @@
     border: 1px solid var(--workflow-overlay-border-subtle);
     border-radius: 8px;
     box-shadow: none;
-  }
-
-  .workflow-execution-detail__timeline {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .workflow-execution-detail__timeline-item {
-    display: grid;
-    grid-template-columns: 132px minmax(0, 1fr);
-    gap: 4px 10px;
-    padding: 10px;
-    background: var(--workflow-overlay-soft);
-    border-left: 3px solid var(--el-color-primary);
-  }
-
-  .workflow-execution-detail__timeline-item span,
-  .workflow-execution-detail__timeline-item small {
-    font-size: 12px;
-    color: var(--workflow-overlay-muted);
-  }
-
-  .workflow-execution-detail__timeline-item small {
-    grid-column: 2;
   }
 
   .workflow-execution-detail__json-group {
@@ -1310,7 +1326,8 @@
     }
 
     .workflow-execution-detail__live-log-fields {
-      display: none;
+      display: block;
+      grid-column: 3;
     }
 
     .workflow-execution-detail__panel-toggle {

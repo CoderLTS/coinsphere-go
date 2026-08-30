@@ -80,7 +80,7 @@ sequenceDiagram
 
 Web 负责登录、导航、权限感知页面、系统管理、工作流编辑与运行观察，以及插件页面和共享结果页的呈现。API 模块只负责传输和类型映射，领域状态仍由 Backend 与数据库拥有。
 
-工作流编辑器从 `/api/v1/workflows/node-definitions` 获取核心和插件节点的 JSON Schema/UI Schema 及固定分支端口；Quant 指标判断使用紧凑的嵌套条件树编辑器，通知凭据使用修订级 Secret 输入，普通节点仍使用 Schema 表单。运行详情和个人通知先读取持久 API，再分别使用 `coinsphere.workflow-runs.v1` 与 `coinsphere.notifications.v1` WebSocket 接收更新。WebSocket 是进程内实时提示，不是第二份事实源。
+工作流编辑器从 `/api/v1/workflows/node-definitions` 获取核心和插件节点的 JSON Schema/UI Schema 及固定分支端口；六种 Quant 单指标节点使用同一逐项参数编辑器并通过连线组合，通知凭据使用修订级 Secret 输入，普通节点仍使用 Schema 表单。运行详情从持久 RunNode attempt 合成开始/业务/结束记录，历史页固定选择的 Run；运行详情和个人通知分别使用 `coinsphere.workflow-runs.v1` 与 `coinsphere.notifications.v1` WebSocket 接收更新。WebSocket 是进程内实时提示，不是第二份事实源。
 
 前端插件通过生成的 `registry.generated.ts` 与内置插件表静态加入 Vite 构建。普通页面和结果页均是主应用 Vue 组件，不使用 iframe、Web Component 或运行时远程模块。
 
@@ -151,7 +151,7 @@ Run WebSocket 只发送工作流 ID、Run ID 和更新时间等轻量更新。�
 
 `core.schedule` 支持固定秒数或带 IANA 时区的六段 Cron，服务恢复后最多补一次漏跑。插件 `TriggerHandler` 用 Emitter 发送事件并必须响应取消与背压；服务启动时扫描 active 连续流并恢复 Trigger。
 
-Connector/AI 的 HTTP 与 WebSocket 访问执行精确域名白名单、公共 DNS 和重定向复核，不继承环境代理。Notification 的钉钉与 QQ 节点只访问固定官方域名，SMTP 只拨号公网域名并强制 TLS 或 STARTTLS；凭据只经 SecretReader 解密。Binance Quant 只访问公共行情接口，通用节点不能调用交易所私有接口。Quant 指标判断按周期合并读取 UTC 闭合 K 线，在当前和上一检查时点确定性计算 Decimal 指标；工作流只承担端口路由、路径进入传播和通知输入聚合，不参与逐 K 线计算。
+Connector/AI 的 HTTP 与 WebSocket 访问执行精确域名白名单、公共 DNS 和重定向复核，不继承环境代理。Notification 的钉钉与 QQ 节点只访问固定官方域名，SMTP 只拨号公网域名并强制 TLS 或 STARTTLS；凭据只经 SecretReader 解密。Binance Quant 只访问公共行情接口，通用节点不能调用交易所私有接口。六种 Quant 判断节点各自读取一种周期的 UTC 闭合 K 线，在当前和上一检查时点确定性计算 Decimal 指标；工作流只承担 true/false 端口组合、路径进入传播和通知输入聚合，不参与逐 K 线计算。
 
 ## 9. 编译期插件
 
@@ -198,7 +198,7 @@ flowchart LR
     PAPER --> NOTIFY["幂等多渠道通知"]
 ```
 
-Quant 将相同 `market + instrument + interval` 的公共行情订阅合并，使用 UTC 和 Decimal 保存已闭合 K 线。品种同步节点按工作流保存过滤后的来源快照，全局目录是所有工作流来源的并集。实时策略评估与回测调用同一个无状态 Go `Strategy.Evaluate`；回测按下一根 K 线开盘应用费用和滑点，大明细写入内容寻址制品。
+Quant 将相同 `market + instrument + interval` 的公共行情订阅合并，使用 UTC 和 Decimal 保存已闭合 K 线。品种同步节点按工作流保存过滤后的来源快照，全局目录是所有工作流来源的并集。放量、价格波动、MACD、KDJ、RSI 和布林带分别由独立判断节点执行，串行 true 表达 AND、并行汇合表达 OR、false 表达反向路径。实时策略评估与回测调用同一个无状态 Go `Strategy.Evaluate`；回测按下一根 K 线开盘应用费用和滑点，大明细写入内容寻址制品。
 
 策略目标先持久化为 Signal。默认需要人工决定；自动模式只有在总名义价值、单品种名义价值、单次操作名义价值、最大日亏损和最大回撤全部明确配置后才能启用。决定后重新取得公共报价并复核时效、步进、账户状态和全部风险上限。
 

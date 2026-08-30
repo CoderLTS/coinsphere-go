@@ -516,7 +516,7 @@ func validateWorkflowConditionBinding(nodeID, field string, binding workflowInpu
 	seen := map[string]bool{}
 	for _, source := range binding.Sources {
 		if source.NodeInstanceID == "" || seen[source.NodeInstanceID+"\x00"+source.Branch] || nodes[source.NodeInstanceID].NodeInstanceID == "" ||
-			descriptors[source.NodeInstanceID].Type != "official.quant.indicator_condition" {
+			!isWorkflowQuantConditionType(descriptors[source.NodeInstanceID].Type) {
 			return fmt.Errorf("node %q input binding %q has an invalid condition source", nodeID, field)
 		}
 		if !containsString(descriptors[source.NodeInstanceID].Branches, source.Branch) ||

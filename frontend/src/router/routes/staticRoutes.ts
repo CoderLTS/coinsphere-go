@@ -100,6 +100,18 @@ export const staticRoutes: AppRouteRecordRaw[] = [
         }
       },
       {
+        path: '/scheduler/execution',
+        name: 'SchedulerWorkflowExecutions',
+        component: () => import('@views/scheduler/execution/index.vue'),
+        beforeEnter: createPermissionGuard('scheduler.workflow_definitions.view'),
+        meta: {
+          title: '历史运行日志',
+          isHideTab: true,
+          isHide: true,
+          activePath: '/scheduler/definition'
+        }
+      },
+      {
         path: '/scheduler/execution/:executionId/detail',
         name: 'SchedulerWorkflowExecutionDetail',
         component: () => import('@views/scheduler/execution/detail/index.vue'),

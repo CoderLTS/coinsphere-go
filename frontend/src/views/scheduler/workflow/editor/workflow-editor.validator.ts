@@ -38,6 +38,23 @@ const dedupeIssues = (issues: WorkflowEditorIssue[]) => {
 
 const isStartNode = (node: WorkflowDomainNode) => getNodeGraphKind(node.data.typeCode) === 'start'
 
+const quantIntervals = new Set([
+  '1m',
+  '3m',
+  '5m',
+  '15m',
+  '30m',
+  '1h',
+  '2h',
+  '4h',
+  '6h',
+  '8h',
+  '12h',
+  '1d',
+  '3d',
+  '1w'
+])
+
 /** foreach 的 NEXT 连线：循环全部跑完后才走的后继边（BODY 连的才是循环体）。 */
 const isForeachNextEdge = (edge: WorkflowDomainEdge) =>
   edge.data.branch === 'next' || edge.sourcePort === 'next'
@@ -532,36 +549,10 @@ export function validateNodeFormDraft(
       if (!['spot', 'usdm'].includes(String(config.market || ''))) errors.push('请选择市场。')
       if (!/^[A-Z0-9]{2,32}$/.test(String(config.instrument || '')))
         errors.push('交易对必须使用 2 至 32 位大写字母或数字。')
-      const ids = new Set<string>()
-      let leaves = 0
-      const walk = (item: Record<string, any>, depth: number) => {
-        if (!item || depth > 4) {
-          errors.push('条件树最多嵌套 4 层。')
-          return
-        }
-        const id = String(item.id || '')
-        if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id) || ids.has(id)) {
-          errors.push('每个条件和分组必须具有唯一标识。')
-        }
-        ids.add(id)
-        if (item.kind === 'condition') {
-          leaves += 1
-          if (!String(item.name || '').trim()) errors.push('指标条件名称不能为空。')
-          return
-        }
-        if (
-          item.kind !== 'group' ||
-          !['AND', 'OR'].includes(String(item.operator || '')) ||
-          !Array.isArray(item.children) ||
-          !item.children.length
-        ) {
-          errors.push('条件分组必须选择“全部”或“任一”，并至少包含一项。')
-          return
-        }
-        item.children.forEach((child: Record<string, any>) => walk(child, depth + 1))
-      }
-      walk(config.conditionTree, 1)
-      if (leaves < 1 || leaves > 16) errors.push('一个判断节点必须包含 1 至 16 个指标条件。')
+      if (!quantIntervals.has(String(config.checkInterval || ''))) errors.push('请选择检查周期。')
+      if (!quantIntervals.has(String(config.interval || ''))) errors.push('请选择 K 线周期。')
+      if (!String(config.name || '').trim()) errors.push('条件名称不能为空。')
+      if (!config.parameters || typeof config.parameters !== 'object') errors.push('指标参数无效。')
       break
     }
 

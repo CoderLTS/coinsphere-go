@@ -264,16 +264,11 @@
           </template>
 
           <template v-else-if="localForm.kind === 'indicator-condition'">
-            <WorkflowSchemaFields
+            <QuantIndicatorEditor
               :schema="configSchema"
               :ui-schema="uiSchema"
               :config="localForm.config"
-              :keys="['market', 'instrument', 'checkInterval']"
               @update="handleSchemaFieldUpdate"
-            />
-            <QuantConditionTreeEditor
-              :model-value="localForm.config.conditionTree"
-              @update:model-value="handleIndicatorTreeUpdate"
             />
           </template>
 
@@ -468,8 +463,8 @@
     WorkflowNotifyTargetOption
   } from '../types'
   import { getNodeConfigSchema, getNodeUISchema } from '../node-registry'
+  import QuantIndicatorEditor from './QuantIndicatorEditor.vue'
   import WorkflowSchemaFields from './WorkflowSchemaFields.vue'
-  import QuantConditionTreeEditor from './QuantConditionTreeEditor.vue'
 
   interface Props {
     node: WorkflowDomainNode
@@ -511,7 +506,12 @@
     'start.event': '开始节点（事件触发）',
     'start.webhook': '开始节点（Webhook 触发）',
     'condition.branch': '条件判断节点',
-    'official.quant.indicator_condition': '量化指标判断节点',
+    'official.quant.volume_spike_condition': '放量判断节点',
+    'official.quant.price_change_condition': '价格波动判断节点',
+    'official.quant.macd_condition': 'MACD 判断节点',
+    'official.quant.kdj_condition': 'KDJ 判断节点',
+    'official.quant.rsi_condition': 'RSI 判断节点',
+    'official.quant.bollinger_condition': '布林带判断节点',
     'official.notification.in_app': '站内通知节点',
     'official.notification.dingtalk': '钉钉通知节点',
     'official.notification.qq': 'QQ 通知节点',
@@ -763,11 +763,6 @@
   /** schema 驱动的字段改动统一走这里写回草稿：子组件不直接改 config，改动来源单一好追。 */
   const handleSchemaFieldUpdate = (key: string, value: any) => {
     localForm.config[key] = value
-    emitModel()
-  }
-
-  const handleIndicatorTreeUpdate = (value: Record<string, any>) => {
-    localForm.config.conditionTree = value
     emitModel()
   }
 
