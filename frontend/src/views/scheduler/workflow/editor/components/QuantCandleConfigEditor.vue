@@ -59,7 +59,13 @@
   )
 
   const updateInstrument = (value: unknown) =>
-    emit('update', 'instrument', String(value || '').trim().toUpperCase())
+    emit(
+      'update',
+      'instrument',
+      String(value || '')
+        .trim()
+        .toUpperCase()
+    )
   const emitUpdate = (key: string, value: any) => emit('update', key, value)
 
   watch(

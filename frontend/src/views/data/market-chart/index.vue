@@ -319,7 +319,9 @@
       const queryInstrumentId = String(route.query.instrumentId || '')
       const queryInterval = String(route.query.interval || '') as CandleInterval
       selectedInstrumentId.value =
-        symbols.value.find((item) => item.id === queryInstrumentId)?.id || symbols.value[0]?.id || ''
+        symbols.value.find((item) => item.id === queryInstrumentId)?.id ||
+        symbols.value[0]?.id ||
+        ''
       selectedInterval.value = intervals.includes(queryInterval) ? queryInterval : '1h'
     } finally {
       loading.value = false
