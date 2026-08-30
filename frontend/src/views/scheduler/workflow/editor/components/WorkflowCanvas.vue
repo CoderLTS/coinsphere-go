@@ -1,20 +1,16 @@
 <!-- 工作流编辑器页面或组件：WorkflowCanvas。 -->
 <template>
   <div
-    ref="shellRef"
-    :class="['workflow-canvas', { 'workflow-canvas--materials-hidden': !props.materialsVisible }]"
+    :class="[
+      'workflow-canvas',
+      {
+        'workflow-canvas--materials-hidden': !props.materialsVisible,
+        'workflow-canvas--side-panel-visible': showNodeEditor || props.jsonDefinitionVisible
+      }
+    ]"
   >
-    <div
-      ref="graphRef"
-      class="workflow-canvas__graph"
-      @pointerdown.capture="handleGraphPointerDown"
-    ></div>
-
-    <div class="workflow-canvas__toolbar-slot">
-      <slot name="toolbar" />
-    </div>
-
     <div v-show="props.materialsVisible" class="workflow-canvas__stencil">
+      <div class="workflow-canvas__stencil-header">节点物料</div>
       <div v-if="!materialCount" class="workflow-canvas__stencil-empty">
         <ElEmpty description="暂无可用物料" :image-size="40" />
       </div>
@@ -29,11 +25,66 @@
     </div>
 
     <div
-      v-if="showNodeEditor && selectedNode && nodeEditorStyle"
-      class="workflow-canvas__overlay"
-      :style="nodeEditorStyle"
+      ref="shellRef"
+      class="workflow-canvas__viewport"
+      @pointerdown.capture="handleGraphPointerDown"
     >
+      <div ref="graphRef" class="workflow-canvas__graph"></div>
+
+      <div
+        v-if="showEdgeBubble && selectedEdge && edgeBubbleStyle"
+        class="workflow-canvas__overlay"
+        :style="edgeBubbleStyle"
+      >
+        <WorkflowEdgeBubble
+          :edge="selectedEdge"
+          @confirm="$emit('commit-edge-draft', $event)"
+          @cancel="$emit('request-close-edge-editor')"
+        />
+      </div>
+
+      <div
+        v-if="nodeContextMenu.visible && nodeContextMenuStyle"
+        class="workflow-canvas__overlay"
+        :style="nodeContextMenuStyle"
+      >
+        <div class="workflow-canvas__context-menu" @pointerdown.stop @contextmenu.prevent>
+          <div class="workflow-canvas__context-menu-title">
+            {{ nodeContextMenuNode?.data.title || '节点菜单' }}
+          </div>
+          <button
+            type="button"
+            class="workflow-canvas__context-menu-item"
+            @click="emitNodeContextAction('edit')"
+          >
+            编辑属性
+          </button>
+          <button
+            type="button"
+            class="workflow-canvas__context-menu-item workflow-canvas__context-menu-item--danger"
+            @click="emitNodeContextAction('delete')"
+          >
+            删除节点
+          </button>
+        </div>
+      </div>
+
+      <div v-if="!ready" class="workflow-canvas__loading">
+        <ElSkeleton animated :rows="4" />
+      </div>
+    </div>
+
+    <aside v-if="showNodeEditor || props.jsonDefinitionVisible" class="workflow-canvas__side-panel">
+      <section v-if="props.jsonDefinitionVisible" class="workflow-canvas__json">
+        <div class="workflow-canvas__json-head">
+          <strong>JSON 定义</strong>
+          <ElButton link type="primary" @click="$emit('request-close-json')">关闭</ElButton>
+        </div>
+        <pre class="workflow-canvas__json-pre">{{ props.jsonDefinitionText }}</pre>
+      </section>
+
       <WorkflowNodeEditorCard
+        v-else-if="showNodeEditor && selectedNode"
         :node="selectedNode"
         :model="nodeDraftModel"
         :agent-options="agentOptions"
@@ -48,49 +99,7 @@
         @request-close="$emit('request-close-node-editor')"
         @request-remove="$emit('request-remove-selection')"
       />
-    </div>
-
-    <div
-      v-if="showEdgeBubble && selectedEdge && edgeBubbleStyle"
-      class="workflow-canvas__overlay"
-      :style="edgeBubbleStyle"
-    >
-      <WorkflowEdgeBubble
-        :edge="selectedEdge"
-        @confirm="$emit('commit-edge-draft', $event)"
-        @cancel="$emit('request-close-edge-editor')"
-      />
-    </div>
-
-    <div
-      v-if="nodeContextMenu.visible && nodeContextMenuStyle"
-      class="workflow-canvas__overlay"
-      :style="nodeContextMenuStyle"
-    >
-      <div class="workflow-canvas__context-menu" @pointerdown.stop @contextmenu.prevent>
-        <div class="workflow-canvas__context-menu-title">
-          {{ nodeContextMenuNode?.data.title || '节点菜单' }}
-        </div>
-        <button
-          type="button"
-          class="workflow-canvas__context-menu-item"
-          @click="emitNodeContextAction('edit')"
-        >
-          编辑属性
-        </button>
-        <button
-          type="button"
-          class="workflow-canvas__context-menu-item workflow-canvas__context-menu-item--danger"
-          @click="emitNodeContextAction('delete')"
-        >
-          删除节点
-        </button>
-      </div>
-    </div>
-
-    <div v-if="!ready" class="workflow-canvas__loading">
-      <ElSkeleton animated :rows="4" />
-    </div>
+    </aside>
 
     <ArtMenuRight
       ref="nodeContextMenuRef"
@@ -111,7 +120,7 @@
 </template>
 
 <script setup lang="ts">
-  import { ElEmpty, ElSkeleton } from 'element-plus'
+  import { ElButton, ElEmpty, ElSkeleton } from 'element-plus'
   import { Edge, Graph, History, Keyboard, Selection, Snapline } from '@antv/x6'
   import type { CSSProperties } from 'vue'
   import type { WorkflowAgentOption } from '@/api/scheduler'
@@ -132,11 +141,7 @@
     mapDomainGraphToX6,
     mapX6GraphToDomain
   } from '../workflow-editor.mapper'
-  import {
-    STENCIL_PANEL_WIDTH,
-    ensureStencilShapeRegistered,
-    useWorkflowStencil
-  } from './useWorkflowStencil'
+  import { ensureStencilShapeRegistered, useWorkflowStencil } from './useWorkflowStencil'
   import { useCanvasContextMenu } from './useCanvasContextMenu'
   import type {
     WorkflowActiveCellType,
@@ -167,6 +172,7 @@
     notifyRoleOptions: WorkflowNotifyTargetOption[]
     notifyOptionsLoading: boolean
     jsonDefinitionVisible: boolean
+    jsonDefinitionText: string
     dirtyNodeIds: string[]
     draftState: WorkflowEditorDraftState
     materialsVisible: boolean
@@ -191,6 +197,7 @@
     (e: 'request-discard-node-draft'): void
     (e: 'request-close-node-editor'): void
     (e: 'request-close-edge-editor'): void
+    (e: 'request-close-json'): void
     (e: 'request-remove-selection'): void
     (e: 'request-node-context-action', payload: WorkflowNodeContextActionPayload): void
     (e: 'request-open-edge-editor', cellId: string): void
@@ -202,9 +209,6 @@
   const emit = defineEmits<Emits>()
 
   let shapeRegistered = false
-  // JSON 定义面板的宽度，算画布可视区内边距时要减掉它。
-  const SIDE_PANEL_WIDTH = 360
-
   const ensureShapesRegistered = () => {
     if (shapeRegistered) return
 
@@ -227,7 +231,6 @@
   const applyingExternalGraph = ref(false)
   const localRenderSnapshot = ref('')
   const suppressRemovedCellId = ref<string | null>(null)
-  const nodeEditorStyle = ref<CSSProperties | null>(null)
   const edgeBubbleStyle = ref<CSSProperties | null>(null)
   const positionDirty = ref(false)
   const suppressBlankClick = ref(false)
@@ -245,6 +248,7 @@
   })
   let blankPanHoldTimer: number | null = null
   let detachBlankPanListeners: (() => void) | null = null
+  let viewportResizeObserver: ResizeObserver | null = null
 
   // 右键菜单与物料面板各自成体系，逻辑放在同目录的两个 composable 里，
   // 本组件只负责把画布相关的引用接过去。
@@ -313,21 +317,17 @@
     }
 
     const rect = shell.getBoundingClientRect()
-    const padding = getViewportPadding()
-    const viewportWidth = Math.max(120, shell.clientWidth - padding.left - padding.right)
-    const viewportHeight = Math.max(120, shell.clientHeight - padding.top - padding.bottom)
-
     return {
-      x: rect.left + padding.left + viewportWidth / 2,
-      y: rect.top + padding.top + viewportHeight / 2
+      x: rect.left + shell.clientWidth / 2,
+      y: rect.top + shell.clientHeight / 2
     }
   }
 
   const getViewportPadding = () => ({
-    top: 132,
-    right: selectedNode.value || props.jsonDefinitionVisible ? 16 + SIDE_PANEL_WIDTH + 36 : 56,
-    bottom: 80,
-    left: props.materialsVisible ? 20 + STENCIL_PANEL_WIDTH + 36 : 20
+    top: 32,
+    right: 32,
+    bottom: 32,
+    left: 32
   })
 
   const getContentBounds = (graphModel: WorkflowDomainGraphModel) => {
@@ -585,31 +585,18 @@
     emit('zoom-change', scale)
   }
 
+  const syncGraphSize = () => {
+    const graph = graphInstance.value
+    const shell = shellRef.value
+    if (!graph || !shell || !shell.clientWidth || !shell.clientHeight) return
+    graph.resize(shell.clientWidth, shell.clientHeight)
+    updateOverlayPositions()
+  }
+
   const updateOverlayPositions = () => {
     const graph = graphInstance.value
     const shell = shellRef.value
     if (!graph || !shell) return
-
-    if (selectedNode.value) {
-      const cell = graph.getCellById(selectedNode.value.id)
-      if (cell?.isNode()) {
-        const shellRect = shell.getBoundingClientRect()
-        const mobile = shellRect.width <= 768
-        const panelWidth = mobile ? Math.max(280, shellRect.width - 16) : SIDE_PANEL_WIDTH
-        const panelHeight = mobile
-          ? Math.max(320, shellRect.height - 76)
-          : Math.max(320, shellRect.height - 88)
-
-        nodeEditorStyle.value = {
-          right: mobile ? '8px' : '16px',
-          top: mobile ? '68px' : '72px',
-          width: `${panelWidth}px`,
-          height: `${panelHeight}px`
-        }
-      }
-    } else {
-      nodeEditorStyle.value = null
-    }
 
     if (selectedEdge.value) {
       const edge = graph.getCellById(selectedEdge.value.id)
@@ -627,7 +614,7 @@
         const height = 180
         edgeBubbleStyle.value = {
           left: `${Math.max(12, Math.min(center.x - shellRect.left - width / 2, shellRect.width - width - 12))}px`,
-          top: `${Math.max(76, Math.min(center.y - shellRect.top - height / 2, shellRect.height - height - 12))}px`
+          top: `${Math.max(12, Math.min(center.y - shellRect.top - height / 2, shellRect.height - height - 12))}px`
         }
       }
     } else {
@@ -748,7 +735,6 @@
       target.closest('.x6-edge') ||
       target.closest('.x6-port') ||
       target.closest('.workflow-canvas__overlay') ||
-      target.closest('.workflow-canvas__toolbar-slot') ||
       target.closest('.workflow-canvas__stencil')
     ) {
       return
@@ -1080,6 +1066,7 @@
 
     graphInstance.value = graph
     selectionPlugin.value = selection
+    syncGraphSize()
 
     graph.on('node:click', ({ node, e }) => {
       const target = e?.target as HTMLElement | null
@@ -1373,13 +1360,17 @@
     syncPortVisibility()
     updateZoomText()
     emit('rendered')
+    viewportResizeObserver = new ResizeObserver(() => {
+      syncGraphSize()
+      updateStencilScrollbar()
+    })
+    if (shellRef.value) viewportResizeObserver.observe(shellRef.value)
     window.addEventListener('pointerdown', handleWindowPointerDown)
-    window.addEventListener('resize', updateOverlayPositions)
   })
 
   onBeforeUnmount(() => {
     window.removeEventListener('pointerdown', handleWindowPointerDown)
-    window.removeEventListener('resize', updateOverlayPositions)
+    viewportResizeObserver?.disconnect()
     stopBlankPanning()
     destroyStencil()
     graphInstance.value?.dispose()
@@ -1388,15 +1379,47 @@
 
 <style scoped lang="scss">
   .workflow-canvas {
+    --workflow-material-width: 252px;
+    --workflow-side-width: 0px;
+
     position: relative;
+    display: grid;
+    grid-template-columns:
+      var(--workflow-material-width) minmax(0, 1fr)
+      var(--workflow-side-width);
     width: 100%;
     height: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .workflow-canvas--materials-hidden {
+    --workflow-material-width: 0px;
+  }
+
+  .workflow-canvas--side-panel-visible {
+    --workflow-side-width: 360px;
+  }
+
+  :deep(.menu-right) {
+    position: absolute;
+    width: 0;
+    height: 0;
+  }
+
+  .workflow-canvas__viewport {
+    position: relative;
+    min-width: 0;
+    min-height: 0;
     overflow: hidden;
     background-color: var(--workflow-canvas-bg);
     background-image:
       linear-gradient(var(--workflow-canvas-grid) 1px, transparent 1px),
       linear-gradient(90deg, var(--workflow-canvas-grid) 1px, transparent 1px);
     background-size: 24px 24px;
+    border: 1px solid var(--workflow-overlay-border-soft, var(--workflow-panel-border));
+    border-radius: 8px;
   }
 
   .workflow-canvas--panning {
@@ -1418,36 +1441,19 @@
     display: none !important;
   }
 
-  .workflow-canvas__toolbar-slot {
-    position: absolute;
-    top: 12px;
-    right: 16px;
-    left: 16px;
-    z-index: 20;
-    pointer-events: none;
-  }
-
   .workflow-canvas__stencil {
-    position: absolute;
-    top: 72px;
-    bottom: 16px;
-    left: 16px;
-    z-index: 18;
     display: flex;
     flex-direction: column;
     gap: 0;
     width: 252px;
+    min-height: 0;
+    margin-right: 10px;
     padding: 0 0 0 10px;
-    overflow: visible;
+    overflow: hidden;
     background: var(--workflow-overlay-bg, var(--workflow-panel-bg));
     border: 1px solid var(--workflow-overlay-border-soft, var(--workflow-panel-border));
     border-radius: 8px;
-    box-shadow: 0 12px 30px rgb(31 35 48 / 0.12);
-    transition:
-      width 0.2s ease,
-      height 0.2s ease,
-      padding 0.2s ease,
-      transform 0.2s ease;
+    box-shadow: 0 6px 18px rgb(31 35 48 / 0.08);
   }
 
   .workflow-canvas__stencil-body {
@@ -1456,6 +1462,17 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
+  }
+
+  .workflow-canvas__stencil-header {
+    display: flex;
+    flex: 0 0 44px;
+    align-items: center;
+    padding: 0 10px 0 2px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--workflow-overlay-text, var(--workflow-panel-text));
+    border-bottom: 1px solid var(--workflow-overlay-border-subtle, var(--workflow-panel-border));
   }
 
   .workflow-canvas__stencil-scrollbar {
@@ -1489,6 +1506,50 @@
   .workflow-canvas__stencil-empty {
     flex: 0 0 auto;
     padding: 2px 0 0;
+  }
+
+  .workflow-canvas__side-panel {
+    min-width: 0;
+    min-height: 0;
+    margin-left: 10px;
+    overflow: hidden;
+  }
+
+  .workflow-canvas__json {
+    display: flex;
+    height: 100%;
+    min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--workflow-overlay-bg, var(--workflow-panel-bg));
+    border: 1px solid var(--workflow-overlay-border-soft, var(--workflow-panel-border));
+    border-radius: 8px;
+    box-shadow: 0 6px 18px rgb(31 35 48 / 0.08);
+  }
+
+  .workflow-canvas__json-head {
+    display: flex;
+    flex: 0 0 44px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 14px;
+    color: var(--workflow-overlay-text, var(--workflow-panel-text));
+    border-bottom: 1px solid var(--workflow-overlay-border-subtle, var(--workflow-panel-border));
+  }
+
+  .workflow-canvas__json-pre {
+    flex: 1 1 auto;
+    min-height: 0;
+    margin: 0;
+    padding: 14px;
+    overflow: auto;
+    font-family: 'Cascadia Code', SFMono-Regular, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.65;
+    color: var(--workflow-overlay-regular, var(--workflow-panel-text));
+    word-break: break-word;
+    white-space: pre-wrap;
+    scrollbar-width: thin;
   }
 
   .workflow-canvas__overlay {
@@ -1552,7 +1613,7 @@
 
   .workflow-canvas__loading {
     position: absolute;
-    inset: 88px 24px 24px;
+    inset: 0;
     z-index: 24;
     display: grid;
     place-items: center;
@@ -1740,16 +1801,32 @@
     display: none !important;
   }
 
-  @media (max-width: 768px) {
-    .workflow-canvas__toolbar-slot {
-      top: 8px;
-      right: 8px;
-      left: 8px;
+  @media (max-width: 980px) {
+    .workflow-canvas {
+      display: block;
+    }
+
+    .workflow-canvas__viewport {
+      width: 100%;
+      height: 100%;
     }
 
     .workflow-canvas__stencil {
-      inset: 68px 8px 8px;
-      width: auto;
+      position: absolute;
+      inset: 8px auto 8px 8px;
+      z-index: 30;
+      width: min(252px, calc(100% - 16px));
+      margin: 0;
+      box-shadow: 0 12px 30px rgb(31 35 48 / 0.16);
+    }
+
+    .workflow-canvas__side-panel {
+      position: absolute;
+      inset: 8px 8px 8px auto;
+      z-index: 31;
+      width: min(360px, calc(100% - 16px));
+      margin: 0;
+      box-shadow: 0 12px 30px rgb(31 35 48 / 0.16);
     }
 
     .workflow-canvas__overlay {

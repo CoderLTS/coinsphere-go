@@ -13,18 +13,13 @@
 
       <template v-else-if="executionDetail && domainGraph">
         <div class="workflow-execution-detail__stage">
-          <div class="workflow-execution-detail__back-wrap">
+          <section class="workflow-execution-detail__toolbar">
             <ElTooltip content="返回工作流定义" placement="bottom">
               <ElButton plain class="workflow-execution-detail__icon-btn" @click="handleBack">
                 <ElIcon><ArrowLeft /></ElIcon>
               </ElButton>
             </ElTooltip>
-          </div>
 
-          <section
-            class="workflow-execution-detail__toolbar workflow-execution-detail__overlay-card"
-            :style="toolbarStyle"
-          >
             <div class="workflow-execution-detail__header-main">
               <div class="workflow-execution-detail__header-copy">
                 <div class="workflow-execution-detail__title">{{
@@ -44,13 +39,7 @@
                 </ElTag>
               </div>
             </div>
-          </section>
 
-          <!-- 详情面板只保留这一个开关。早先标题栏里还有一个可点的 Tag 控制同一个状态，
-               两处文案还不一样（"隐藏执行总览" / "收起面板"），看着像两个功能。 -->
-          <div
-            class="workflow-execution-detail__panel-toggle workflow-execution-detail__overlay-card"
-          >
             <ElTooltip
               :content="inspectorVisible ? '隐藏详情面板' : '显示详情面板'"
               placement="bottom"
@@ -66,65 +55,80 @@
                 <span>{{ inspectorVisible ? '收起面板' : '展开面板' }}</span>
               </ElButton>
             </ElTooltip>
-          </div>
+          </section>
 
-          <div class="workflow-execution-detail__body">
-            <div class="workflow-execution-detail__canvas-pane">
-              <WorkflowExecutionCanvas
-                :graph="domainGraph"
-                :node-attempts="executionDetail.nodeAttempts"
-                :start-node-id="executionDetail.startNodeId"
-                @selection-change="handleSelectionChange"
-              />
+          <div
+            class="workflow-execution-detail__body"
+            :class="{
+              'workflow-execution-detail__body--inspector-hidden': !inspectorVisible
+            }"
+          >
+            <div class="workflow-execution-detail__main">
+              <div class="workflow-execution-detail__canvas-pane">
+                <WorkflowExecutionCanvas
+                  :graph="domainGraph"
+                  :node-attempts="executionDetail.nodeAttempts"
+                  :start-node-id="executionDetail.startNodeId"
+                  @selection-change="handleSelectionChange"
+                />
+              </div>
+
+              <section class="workflow-execution-detail__live-logs" aria-label="实时运行日志">
+                <div class="workflow-execution-detail__live-logs-header">
+                  <div class="workflow-execution-detail__live-logs-title">
+                    <span
+                      class="workflow-execution-detail__live-logs-dot"
+                      :class="{
+                        'workflow-execution-detail__live-logs-dot--active': realtimeConnected
+                      }"
+                    />
+                    <span>实时运行日志</span>
+                    <span class="workflow-execution-detail__live-logs-count">
+                      {{ liveLogRows.length }} 条
+                    </span>
+                  </div>
+                  <div class="workflow-execution-detail__live-logs-actions">
+                    <ElButton size="small" :icon="Clock" @click="handleHistory">历史日志</ElButton>
+                    <ElTag
+                      :type="statusTagType(executionDetail.status)"
+                      effect="plain"
+                      size="small"
+                    >
+                      {{ statusLabel(executionDetail.status) }}
+                    </ElTag>
+                  </div>
+                </div>
+                <div ref="liveLogViewport" class="workflow-execution-detail__live-logs-body">
+                  <ElEmpty v-if="!liveLogRows.length" description="等待节点日志" />
+                  <div
+                    v-for="line in liveLogRows"
+                    :key="line.key"
+                    class="workflow-execution-detail__live-log-row"
+                  >
+                    <time>{{ formatDateTime(line.time) }}</time>
+                    <span
+                      class="workflow-execution-detail__live-log-level"
+                      :data-level="line.level"
+                    >
+                      {{ line.level.toUpperCase() }}
+                    </span>
+                    <span class="workflow-execution-detail__live-log-node">{{
+                      line.nodeName
+                    }}</span>
+                    <div class="workflow-execution-detail__live-log-content">
+                      <span class="workflow-execution-detail__live-log-message">{{
+                        line.message
+                      }}</span>
+                      <pre v-if="line.fields" class="workflow-execution-detail__live-log-fields">{{
+                        line.fields
+                      }}</pre>
+                    </div>
+                  </div>
+                </div>
+              </section>
             </div>
 
-            <section class="workflow-execution-detail__live-logs" aria-label="实时运行日志">
-              <div class="workflow-execution-detail__live-logs-header">
-                <div class="workflow-execution-detail__live-logs-title">
-                  <span
-                    class="workflow-execution-detail__live-logs-dot"
-                    :class="{
-                      'workflow-execution-detail__live-logs-dot--active': realtimeConnected
-                    }"
-                  />
-                  <span>实时运行日志</span>
-                  <span class="workflow-execution-detail__live-logs-count">
-                    {{ liveLogRows.length }} 条
-                  </span>
-                </div>
-                <div class="workflow-execution-detail__live-logs-actions">
-                  <ElButton size="small" :icon="Clock" @click="handleHistory">历史日志</ElButton>
-                  <ElTag :type="statusTagType(executionDetail.status)" effect="plain" size="small">
-                    {{ statusLabel(executionDetail.status) }}
-                  </ElTag>
-                </div>
-              </div>
-              <div ref="liveLogViewport" class="workflow-execution-detail__live-logs-body">
-                <ElEmpty v-if="!liveLogRows.length" description="等待节点日志" />
-                <div
-                  v-for="line in liveLogRows"
-                  :key="line.key"
-                  class="workflow-execution-detail__live-log-row"
-                >
-                  <time>{{ formatDateTime(line.time) }}</time>
-                  <span class="workflow-execution-detail__live-log-level" :data-level="line.level">
-                    {{ line.level.toUpperCase() }}
-                  </span>
-                  <span class="workflow-execution-detail__live-log-node">{{ line.nodeName }}</span>
-                  <span class="workflow-execution-detail__live-log-message">{{
-                    line.message
-                  }}</span>
-                  <pre v-if="line.fields" class="workflow-execution-detail__live-log-fields">{{
-                    line.fields
-                  }}</pre>
-                </div>
-              </div>
-            </section>
-
-            <aside
-              v-show="inspectorVisible"
-              class="workflow-execution-detail__inspector workflow-execution-detail__inspector--left workflow-execution-detail__overlay-card"
-            >
+            <aside v-show="inspectorVisible" class="workflow-execution-detail__inspector">
               <div class="workflow-execution-detail__inspector-header">
                 <div class="workflow-execution-detail__inspector-title">{{ inspectorTitle }}</div>
                 <ElButton v-if="selectedCellId" link type="primary" @click="clearSelection">
@@ -388,10 +392,6 @@
   const pageStyle = computed(() => ({
     height: containerMinHeight.value,
     minHeight: containerMinHeight.value
-  }))
-
-  const toolbarStyle = computed(() => ({
-    width: '720px'
   }))
 
   const nodeMap = computed(
@@ -843,8 +843,10 @@
   }
 
   .workflow-execution-detail__stage {
-    position: relative;
+    display: flex;
     flex: 1 1 auto;
+    flex-direction: column;
+    gap: 10px;
     min-width: 0;
     min-height: 0;
     overflow: hidden;
@@ -854,36 +856,19 @@
   .workflow-execution-detail__inspector {
     background: var(--workflow-overlay-bg);
     border: 1px solid var(--workflow-overlay-border);
-    box-shadow: 0 12px 30px rgb(31 35 48 / 0.12);
-  }
-
-  .workflow-execution-detail__overlay-card {
-    position: absolute;
-    z-index: 6;
-  }
-
-  .workflow-execution-detail__back-wrap {
-    position: absolute;
-    top: 12px;
-    left: 0;
-    z-index: 6;
+    box-shadow: 0 6px 18px rgb(31 35 48 / 0.08);
   }
 
   .workflow-execution-detail__toolbar {
-    top: 12px;
-    left: 50%;
     box-sizing: border-box;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    max-width: calc(100% - 184px);
-    padding: 8px 10px 10px;
+    display: grid;
+    flex: 0 0 auto;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    width: 100%;
+    padding: 8px 10px;
     border-radius: 8px;
-    transform: translateX(-50%);
-  }
-
-  .workflow-execution-detail__panel-toggle {
-    display: none;
   }
 
   .workflow-execution-detail__panel-btn {
@@ -894,7 +879,7 @@
     background: var(--workflow-overlay-bg);
     border-color: transparent;
     border-radius: 7px;
-    box-shadow: 0 6px 16px rgb(31 35 48 / 0.08);
+    box-shadow: none;
   }
 
   .workflow-execution-detail__icon-btn {
@@ -986,10 +971,22 @@
   }
 
   .workflow-execution-detail__body {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    flex: 1 1 auto;
+    grid-template-columns: minmax(0, 1fr) 332px;
+    gap: 10px;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .workflow-execution-detail__body--inspector-hidden {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workflow-execution-detail__main {
+    display: grid;
+    grid-template-rows: minmax(220px, 1fr) minmax(180px, 32%);
     gap: 10px;
     min-width: 0;
     min-height: 0;
@@ -999,7 +996,6 @@
   .workflow-execution-detail__canvas-pane {
     position: relative;
     display: block;
-    flex: 1 1 auto;
     min-width: 0;
     min-height: 220px;
     overflow: hidden;
@@ -1015,9 +1011,8 @@
 
   .workflow-execution-detail__live-logs {
     display: flex;
-    flex: 0 0 218px;
     flex-direction: column;
-    min-height: 150px;
+    min-height: 0;
     overflow: hidden;
     background: var(--workflow-overlay-bg);
     border: 1px solid var(--workflow-overlay-border);
@@ -1089,7 +1084,7 @@
 
   .workflow-execution-detail__live-log-row {
     display: grid;
-    grid-template-columns: 142px 48px 150px minmax(180px, 1fr) minmax(240px, 360px);
+    grid-template-columns: 142px 48px 150px minmax(180px, 1fr);
     gap: 10px;
     align-items: start;
     min-height: 30px;
@@ -1126,9 +1121,16 @@
   }
 
   .workflow-execution-detail__live-log-message {
-    min-width: 0;
+    display: block;
     color: var(--workflow-overlay-text);
     word-break: break-word;
+  }
+
+  .workflow-execution-detail__live-log-content {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 6px;
   }
 
   .workflow-execution-detail__live-log-fields {
@@ -1157,25 +1159,14 @@
     --el-text-color-secondary: var(--workflow-overlay-muted);
     --el-text-color-placeholder: var(--workflow-overlay-placeholder);
 
-    bottom: 12px;
     display: flex;
     flex-direction: column;
-    width: 332px;
-    min-width: 332px;
-    max-width: 332px;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
     overflow: hidden;
     isolation: isolate;
     border-radius: 8px;
-  }
-
-  .workflow-execution-detail__inspector--left {
-    inset: 82px 8px 240px auto;
-  }
-
-  .workflow-execution-detail__inspector--right {
-    top: 108px;
-    right: 0;
-    left: auto;
   }
 
   .workflow-execution-detail__inspector-header {
@@ -1269,14 +1260,33 @@
   }
 
   @media (max-width: 1280px) {
-    .workflow-execution-detail__toolbar {
-      max-width: calc(100% - 164px);
+    .workflow-execution-detail__body {
+      grid-template-columns: minmax(0, 1fr) 304px;
+    }
+
+    .workflow-execution-detail__body--inspector-hidden {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  @media (max-width: 980px) {
+    .workflow-execution-detail__body,
+    .workflow-execution-detail__body--inspector-hidden {
+      display: flex;
+      flex-direction: column;
+      overflow: auto;
+    }
+
+    .workflow-execution-detail__main {
+      flex: 0 0 620px;
+      grid-template-rows: minmax(340px, 1fr) 240px;
+      min-height: 620px;
+      overflow: visible;
     }
 
     .workflow-execution-detail__inspector {
-      width: 304px;
-      min-width: 304px;
-      max-width: 304px;
+      flex: 0 0 380px;
+      min-height: 320px;
     }
   }
 
@@ -1286,34 +1296,13 @@
     }
 
     .workflow-execution-detail__toolbar {
-      top: 8px;
-      right: 8px;
-      left: 52px;
-      width: auto !important;
-      max-width: none;
-      transform: none;
+      gap: 8px;
     }
 
-    .workflow-execution-detail__summary {
-      flex-wrap: wrap;
-    }
-
-    .workflow-execution-detail__body {
-      position: absolute;
-      min-height: 0;
-    }
-
-    .workflow-execution-detail__inspector {
-      inset: auto 8px 206px;
-      width: auto;
-      min-width: 0;
-      max-width: none;
-      height: min(38%, 320px);
-      min-height: 260px;
-    }
-
-    .workflow-execution-detail__live-logs {
-      flex-basis: 190px;
+    .workflow-execution-detail__main {
+      flex-basis: 580px;
+      grid-template-rows: 320px 250px;
+      min-height: 580px;
     }
 
     .workflow-execution-detail__live-log-row {
@@ -1321,25 +1310,18 @@
       gap: 8px;
     }
 
-    .workflow-execution-detail__live-log-message {
+    .workflow-execution-detail__live-log-content {
       grid-column: 3;
-    }
-
-    .workflow-execution-detail__live-log-fields {
-      display: block;
-      grid-column: 3;
-    }
-
-    .workflow-execution-detail__panel-toggle {
-      position: absolute;
-      top: 74px;
-      right: 8px;
-      z-index: 8;
-      display: block;
     }
 
     .workflow-execution-detail__header-status {
       display: none;
+    }
+
+    .workflow-execution-detail__live-logs-header {
+      gap: 8px;
+      min-height: 44px;
+      padding: 6px 10px;
     }
   }
 </style>

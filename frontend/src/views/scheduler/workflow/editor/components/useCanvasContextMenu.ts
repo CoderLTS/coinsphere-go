@@ -55,7 +55,7 @@ export function useCanvasContextMenu(options: ContextMenuOptions) {
     const shellHeight = options.shellRef.value.clientHeight
     return {
       left: `${Math.max(12, Math.min(nodeMenu.x, shellWidth - menuWidth - 12))}px`,
-      top: `${Math.max(76, Math.min(nodeMenu.y, shellHeight - menuHeight - 12))}px`
+      top: `${Math.max(12, Math.min(nodeMenu.y, shellHeight - menuHeight - 12))}px`
     }
   })
 
@@ -75,16 +75,29 @@ export function useCanvasContextMenu(options: ContextMenuOptions) {
     hideEdgeMenu()
   }
 
+  const boundEventToCanvas = (event: MouseEvent, menuHeight: number) => {
+    const rect = options.shellRef.value?.getBoundingClientRect()
+    if (!rect) return event
+    const margin = 8
+    return new MouseEvent('contextmenu', {
+      clientX: Math.max(rect.left + margin, Math.min(event.clientX, rect.right - 144 - margin)),
+      clientY: Math.max(
+        rect.top + margin,
+        Math.min(event.clientY, rect.bottom - menuHeight - margin)
+      )
+    })
+  }
+
   const openNodeMenu = (cellId: string, event: MouseEvent) => {
     nodeMenu.visible = false
     nodeMenu.cellId = cellId
-    options.nodeMenuRef.value?.show(event)
+    options.nodeMenuRef.value?.show(boundEventToCanvas(event, 74))
   }
 
   const openEdgeMenu = (cellId: string, event: MouseEvent) => {
     edgeMenuCellId.value = cellId
     options.onActivateCell(cellId, 'edge')
-    options.edgeMenuRef.value?.show(event)
+    options.edgeMenuRef.value?.show(boundEventToCanvas(event, 42))
   }
 
   const emitNodeAction = (action: WorkflowNodeContextActionPayload['action']) => {

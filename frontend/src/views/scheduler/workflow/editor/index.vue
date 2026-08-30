@@ -1,6 +1,29 @@
 <!-- 工作流编辑器页面或组件：index。 -->
 <template>
   <div v-loading="loading" class="workflow-editor-page art-full-height">
+    <WorkflowEditorToolbar
+      :mode="mode"
+      :saving="saving"
+      :validating="validating"
+      :status-text="statusText"
+      :status-type="statusType"
+      :zoom-text="zoomText"
+      :materials-visible="materialsVisible"
+      :json-visible="jsonDefinitionVisible"
+      @back="handleBack"
+      @toggle-materials="handleToggleMaterials"
+      @toggle-json="handleToggleJsonDefinition"
+      @undo="void handleUndo()"
+      @redo="void handleRedo()"
+      @zoom-out="handleZoomOut"
+      @zoom-in="handleZoomIn"
+      @center-content="handleCenterContent"
+      @fit-view="handleFitView"
+      @validate="void handleValidate()"
+      @save="void handleSave()"
+      @open-meta="void openMetaPopover()"
+    />
+
     <WorkflowCanvas
       class="workflow-editor-page__canvas"
       ref="canvasRef"
@@ -14,6 +37,7 @@
       :notify-role-options="notifyRoleOptions"
       :notify-options-loading="notifyOptionsLoading"
       :json-definition-visible="jsonDefinitionVisible"
+      :json-definition-text="jsonDefinitionText"
       :dirty-node-ids="dirtyNodeIds"
       :draft-state="draftState"
       :active-cell-id="selection.activeCellId"
@@ -31,50 +55,13 @@
       @request-discard-node-draft="discardNodeDraft"
       @request-close-node-editor="void closeNodeEditor()"
       @request-close-edge-editor="handleCloseEdgeEditor"
+      @request-close-json="handleCloseJsonDefinition"
       @request-remove-selection="void removeSelection()"
       @request-node-context-action="void handleNodeContextAction($event)"
       @request-open-edge-editor="void handleOpenEdgeEditor($event)"
       @create-pending-edge-draft="handlePendingEdgeDraftCreate"
       @commit-edge-draft="handleEdgeDraftCommit"
-    >
-      <template #toolbar>
-        <WorkflowEditorToolbar
-          :mode="mode"
-          :saving="saving"
-          :validating="validating"
-          :status-text="statusText"
-          :status-type="statusType"
-          :zoom-text="zoomText"
-          :materials-visible="materialsVisible"
-          :json-visible="jsonDefinitionVisible"
-          @back="handleBack"
-          @toggle-materials="handleToggleMaterials"
-          @toggle-json="handleToggleJsonDefinition"
-          @undo="void handleUndo()"
-          @redo="void handleRedo()"
-          @zoom-out="handleZoomOut"
-          @zoom-in="handleZoomIn"
-          @center-content="handleCenterContent"
-          @fit-view="handleFitView"
-          @validate="void handleValidate()"
-          @save="void handleSave()"
-          @open-meta="void openMetaPopover()"
-        />
-      </template>
-    </WorkflowCanvas>
-
-    <div
-      v-if="jsonDefinitionVisible"
-      class="workflow-editor-page__json"
-      @pointerdown.stop
-      @click.stop
-      @contextmenu.prevent
-    >
-      <div class="workflow-editor-page__json-head">JSON 定义</div>
-      <div class="workflow-editor-page__json-body">
-        <pre class="workflow-editor-page__json-pre">{{ jsonDefinitionText }}</pre>
-      </div>
-    </div>
+    />
 
     <div v-if="metaVisible" class="workflow-editor-page__meta">
       <WorkflowMetaPopover
@@ -90,6 +77,7 @@
 
 <script setup lang="ts">
   import { ElMessage, ElMessageBox } from 'element-plus'
+  import { useMediaQuery } from '@vueuse/core'
   import { storeToRefs } from 'pinia'
   import { fetchGetRoleList, fetchGetUserList } from '@/api/system'
   import {
@@ -166,6 +154,7 @@
   const metaVisible = ref(false)
   const materialsVisible = ref(true)
   const jsonDefinitionVisible = ref(false)
+  const isCompactViewport = useMediaQuery('(max-width: 980px)')
   const autoOpenedMeta = ref(false)
   const metaDraft = ref<WorkflowEditorMetaForm>(normalizeDefinitionMeta(null))
   const pendingEdgeDraft = ref<WorkflowEdgeFormModel | null>(null)
@@ -712,8 +701,13 @@
     if (
       payload.cellId === previousSelection.cellId &&
       payload.cellType === previousSelection.cellType
-    )
+    ) {
+      if (payload.cellType === 'node' && payload.cellId) {
+        jsonDefinitionVisible.value = false
+        if (!draftState.value.model) openNodeEditorDraft(payload.cellId)
+      }
       return
+    }
 
     const canLeave = await tryCommitActiveNodeDraft()
     if (!canLeave) {
@@ -722,6 +716,12 @@
     }
 
     syncSelection(payload.cellId, payload.cellType)
+    if (payload.cellType === 'node' && payload.cellId) {
+      jsonDefinitionVisible.value = false
+      const opened = openNodeEditorDraft(payload.cellId)
+      const node = domainGraph.value.nodes.find((item) => item.id === payload.cellId) || null
+      if (opened && node?.data.kind === 'notify') void ensureNotifyTargetOptions()
+    }
   }
 
   const closeNodeEditor = async () => {
@@ -935,10 +935,28 @@
   }
 
   const handleToggleJsonDefinition = async () => {
+    if (!jsonDefinitionVisible.value) {
+      if (!(await requirePendingEdgeResolved())) return
+      if (!(await tryCommitActiveNodeDraft())) return
+    }
     jsonDefinitionVisible.value = !jsonDefinitionVisible.value
     await nextTick()
     canvasRef.value?.centerContent()
   }
+
+  const handleCloseJsonDefinition = async () => {
+    jsonDefinitionVisible.value = false
+    await nextTick()
+    canvasRef.value?.centerContent()
+  }
+
+  watch(
+    isCompactViewport,
+    (compact) => {
+      if (compact) materialsVisible.value = false
+    },
+    { immediate: true }
+  )
 
   const handleCenterContent = () => {
     canvasRef.value?.centerContent()
@@ -1281,11 +1299,14 @@
     position: relative;
     display: flex;
     flex-direction: column;
+    gap: 10px;
+    box-sizing: border-box;
     width: 100%;
     height: 100%;
     min-height: 0;
     overflow: hidden;
     background: var(--workflow-page-bg);
+    padding: 10px;
   }
 
   .workflow-editor-page__canvas {
@@ -1293,77 +1314,18 @@
     min-height: 0;
   }
 
-  .workflow-editor-page__json {
-    position: absolute;
-    top: 72px;
-    right: 16px;
-    bottom: 16px;
-    z-index: 18;
-    display: flex;
-    flex-direction: column;
-    width: 360px;
-    padding: 10px 0 10px 10px;
-    overflow: hidden;
-    background: var(--workflow-overlay-bg);
-    border: 1px solid var(--workflow-overlay-border-soft);
-    border-radius: 8px;
-    box-shadow: 0 12px 30px rgb(31 35 48 / 0.12);
-  }
-
-  .workflow-editor-page__json-head {
-    flex: 0 0 auto;
-    padding: 2px 14px 8px 6px;
-    font-size: 13px;
-    font-weight: 600;
-    line-height: 20px;
-    color: var(--workflow-overlay-text);
-  }
-
-  .workflow-editor-page__json-body {
-    flex: 1;
-    min-height: 0;
-    padding: 0 14px 8px 6px;
-    overflow: auto;
-  }
-
-  .workflow-editor-page__json-pre {
-    min-height: 100%;
-    margin: 0;
-    font-family: 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace;
-    font-size: 12px;
-    line-height: 1.65;
-    color: var(--workflow-overlay-regular);
-    word-break: break-word;
-    white-space: pre-wrap;
-  }
-
-  .workflow-editor-page__json-body::-webkit-scrollbar {
-    width: 8px;
-  }
-
-  .workflow-editor-page__json-body::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  .workflow-editor-page__json-body::-webkit-scrollbar-thumb {
-    background: var(--workflow-overlay-muted);
-    border-radius: 4px;
-  }
-
   .workflow-editor-page__meta {
     position: absolute;
-    top: 88px;
+    top: 76px;
     left: 50%;
     z-index: 30;
     transform: translateX(-50%);
   }
 
   @media (max-width: 768px) {
-    .workflow-editor-page__json {
-      top: 68px;
-      right: 8px;
-      bottom: 8px;
-      width: calc(100% - 16px);
+    .workflow-editor-page {
+      gap: 8px;
+      padding: 8px;
     }
 
     .workflow-editor-page__meta {
