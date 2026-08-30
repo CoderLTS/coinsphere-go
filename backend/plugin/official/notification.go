@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -26,8 +25,6 @@ type notificationRuntime struct {
 	db      *gorm.DB
 	publish func(context.Context, int64, int64)
 	http    *safeHTTPClient
-	qqMu    sync.Mutex
-	qqToken map[string]qqAccessToken
 }
 
 type notificationAction struct {
@@ -46,15 +43,15 @@ type notificationTarget struct {
 }
 
 func RegisterNotification(registry *sdk.Registry, database *gorm.DB, publish func(context.Context, int64, int64)) error {
-	client, err := newSafeHTTPClient([]string{"oapi.dingtalk.com", "bots.qq.com", "api.sgroup.qq.com"})
+	client, err := newSafeHTTPClient([]string{"oapi.dingtalk.com"})
 	if err != nil {
 		return err
 	}
 	client.client.Timeout = notificationTimeout
 	client.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	runtime := &notificationRuntime{db: database, publish: publish, http: client, qqToken: map[string]qqAccessToken{}}
+	runtime := &notificationRuntime{db: database, publish: publish, http: client}
 	return registry.RegisterPlugin(sdk.PluginDescriptor{
-		ID: notificationPluginID, Name: "CoinSphere Notification", Version: "1.1.0",
+		ID: notificationPluginID, Name: "CoinSphere Notification", Version: "2.0.0",
 		Contributes: []string{"nodes", "apiRoutes", "pages", "assistantQueries"},
 	}, runtime.register)
 }
@@ -75,11 +72,6 @@ func (n *notificationRuntime) register(registrar sdk.Registrar) error {
 			Type: "official.notification.dingtalk", Version: "1.0.0", Kind: sdk.NodeKindAction,
 			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"title":{"type":"string","title":"通知标题","minLength":1,"maxLength":160},"format":{"type":"string","title":"消息格式","enum":["text","markdown"],"enumLabels":["纯文本","Markdown"],"default":"markdown"},"signed":{"type":"boolean","title":"启用加签","default":false},"accessToken":{"type":"string","title":"Access Token","x-coinsphere-secret":true},"signingSecret":{"type":"string","title":"加签 Secret","x-coinsphere-secret":true}},"required":["title","format","signed","accessToken"],"additionalProperties":false}`),
 			UISchema:     json.RawMessage(`{"ui:order":["title","format","signed","accessToken","signingSecret"]}`),
-		},
-		{
-			Type: "official.notification.qq", Version: "1.0.0", Kind: sdk.NodeKindAction,
-			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"title":{"type":"string","title":"通知标题","minLength":1,"maxLength":160},"appId":{"type":"string","title":"AppID","minLength":1,"maxLength":128},"targetType":{"type":"string","title":"目标类型","enum":["group","channel"],"enumLabels":["群","频道"]},"targetId":{"type":"string","title":"目标 ID","minLength":1,"maxLength":128},"clientSecret":{"type":"string","title":"Client Secret","x-coinsphere-secret":true}},"required":["title","appId","targetType","targetId","clientSecret"],"additionalProperties":false}`),
-			UISchema:     json.RawMessage(`{"ui:order":["title","appId","targetType","targetId","clientSecret"]}`),
 		},
 		{
 			Type: "official.notification.smtp", Version: "1.0.0", Kind: sdk.NodeKindAction,
@@ -203,7 +195,7 @@ func (a notificationAction) executeExternal(ctx context.Context, request sdk.Act
 	if err != nil {
 		return sdk.ActionResult{}, err
 	}
-	delivery, err := a.runtime.beginExternalDelivery(ctx, request, workflowID, revisionID, a.channel, title, input)
+	delivery, err := beginExternalDelivery(ctx, a.runtime.db, request, workflowID, revisionID, a.channel, title, input)
 	if err != nil {
 		return sdk.ActionResult{}, err
 	}
@@ -212,12 +204,12 @@ func (a notificationAction) executeExternal(ctx context.Context, request sdk.Act
 	}
 	category, sendErr := a.runtime.sendExternal(ctx, a.channel, request, title, input.Message)
 	if sendErr != nil {
-		if updateErr := a.runtime.finishExternalDelivery(ctx, delivery.ID, "failed", category); updateErr != nil {
+		if updateErr := finishExternalDelivery(ctx, a.runtime.db, delivery.ID, "failed", category); updateErr != nil {
 			return sdk.ActionResult{}, updateErr
 		}
 		return sdk.ActionResult{}, errors.New("notification provider delivery failed: " + category)
 	}
-	if err := a.runtime.finishExternalDelivery(ctx, delivery.ID, "delivered", ""); err != nil {
+	if err := finishExternalDelivery(ctx, a.runtime.db, delivery.ID, "delivered", ""); err != nil {
 		return sdk.ActionResult{}, err
 	}
 	if err := a.runtime.db.WithContext(ctx).First(&delivery, delivery.ID).Error; err != nil {
@@ -287,14 +279,14 @@ func int64SetValues(values map[int64]struct{}) []int64 {
 	return result
 }
 
-func (n *notificationRuntime) beginExternalDelivery(ctx context.Context, request sdk.ActionRequest, workflowID, revisionID int64, channel, title string, input notificationInput) (db.NotificationDelivery, error) {
+func beginExternalDelivery(ctx context.Context, database *gorm.DB, request sdk.ActionRequest, workflowID, revisionID int64, channel, title string, input notificationInput) (db.NotificationDelivery, error) {
 	now := time.Now().UTC()
 	delivery := db.NotificationDelivery{
 		OperationKey: request.OperationKey, WorkflowID: workflowID, RevisionID: revisionID,
 		NodeInstanceID: request.NodeInstanceID, Channel: channel, SubjectKey: input.SubjectKey,
 		Title: title, Message: input.Message, Status: "pending", AttemptCount: 1, CreatedAt: now, UpdatedAt: now,
 	}
-	if err := n.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	if err := database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&delivery)
 		if result.Error != nil {
 			return errors.New("persist notification delivery failed")
@@ -322,7 +314,7 @@ func (n *notificationRuntime) beginExternalDelivery(ctx context.Context, request
 	return delivery, nil
 }
 
-func (n *notificationRuntime) finishExternalDelivery(ctx context.Context, deliveryID int64, status, category string) error {
+func finishExternalDelivery(ctx context.Context, database *gorm.DB, deliveryID int64, status, category string) error {
 	now := time.Now().UTC()
 	updates := map[string]any{"status": status, "updated_at": now}
 	if status == "delivered" {
@@ -332,7 +324,7 @@ func (n *notificationRuntime) finishExternalDelivery(ctx context.Context, delive
 		updates["delivered_at"] = nil
 		updates["last_error_category"] = category
 	}
-	if err := n.db.WithContext(ctx).Model(&db.NotificationDelivery{}).Where("id = ?", deliveryID).Updates(updates).Error; err != nil {
+	if err := database.WithContext(ctx).Model(&db.NotificationDelivery{}).Where("id = ?", deliveryID).Updates(updates).Error; err != nil {
 		return errors.New("finish notification delivery failed")
 	}
 	return nil
@@ -344,8 +336,6 @@ func (n *notificationRuntime) sendExternal(ctx context.Context, channel string, 
 	switch channel {
 	case "dingtalk":
 		return n.sendDingTalk(sendCtx, request, title, message)
-	case "qq":
-		return n.sendQQ(sendCtx, request, title, message)
 	case "smtp":
 		return n.sendSMTP(sendCtx, request, title, message)
 	default:

@@ -267,7 +267,8 @@ const nodeLabels: Record<string, string> = {
   'official.quant.paper_execute': 'Paper 执行',
   'official.notification.in_app': '站内通知',
   'official.notification.dingtalk': '钉钉通知',
-  'official.notification.qq': 'QQ 通知',
+  'official.qq.receive': 'QQ 消息接收',
+  'official.qq.send': 'QQ 消息发送',
   'official.notification.smtp': '邮件通知'
 }
 
@@ -576,7 +577,9 @@ const toCurrentRevision = (graph: WorkflowGraph) => {
       }
       Object.keys(inputProperties(definition)).forEach((name) => {
         if (!(name in rawConfig)) return
-        if (!(name in bindings)) bindings[name] = { kind: 'literal', value: rawConfig[name] }
+        if (!(name in bindings) && rawConfig[name] !== '') {
+          bindings[name] = { kind: 'literal', value: rawConfig[name] }
+        }
         delete rawConfig[name]
       })
       return {
