@@ -184,7 +184,7 @@ func (a quantIndicatorAction) Execute(ctx context.Context, request sdk.ActionReq
 		"branch": branch, "entered": entered, "triggered": triggered,
 		"evaluatedAt": evaluatedAt.Format(time.RFC3339Nano), "previousEvaluatedAt": previousAt.Format(time.RFC3339Nano),
 		"businessKey": fmt.Sprintf("quant:%s:%s:%s", config.Market, config.Instrument, request.NodeInstanceID),
-		"summary": summary, "formula": formula, "market": config.Market, "instrument": config.Instrument,
+		"summary":     summary, "formula": formula, "market": config.Market, "instrument": config.Instrument,
 		"indicator": leaf.Indicator, "interval": leaf.Interval,
 		"candleCloseTime": current.CandleCloseTime, "previousCandleCloseTime": previous.CandleCloseTime,
 		"value": current.Values, "previousValue": previous.Values,

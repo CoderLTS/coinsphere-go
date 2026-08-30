@@ -49,7 +49,7 @@ func (q *quantRuntime) registerMarketSignals(registrar sdk.Registrar) error {
 func (a quantMarketSignalAction) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
 	var input struct {
 		Market, Instrument, Interval, Name, Indicator, CandleCloseTime, Summary string
-		Values map[string]string `json:"values"`
+		Values                                                                  map[string]string `json:"values"`
 	}
 	if !decodeQuantStrict(request.Input, &input) {
 		return sdk.ActionResult{}, errors.New("quant market signal input is invalid")
@@ -168,7 +168,7 @@ func (q *quantRuntime) handleQuantMarketSignals(w http.ResponseWriter, r *http.R
 			"id": signal.ID, "market": signal.Market, "instrument": signal.Instrument,
 			"interval": signal.Interval, "name": signal.Name, "indicator": signal.Indicator,
 			"candleCloseTime": signal.CandleCloseTime.UTC().Format(time.RFC3339Nano),
-			"summary": signal.Summary, "values": json.RawMessage(signal.Values),
+			"summary":         signal.Summary, "values": json.RawMessage(signal.Values),
 			"createdAt": signal.CreatedAt.UTC().Format(time.RFC3339Nano),
 		}
 	}
