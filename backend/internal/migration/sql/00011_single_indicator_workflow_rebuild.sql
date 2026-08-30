@@ -282,6 +282,8 @@ WHERE workflow_id IN (SELECT old_workflow_id FROM quant_indicator_workflow_rebui
 DELETE FROM workflows
 WHERE id IN (SELECT old_workflow_id FROM quant_indicator_workflow_rebuild);
 
+SET CONSTRAINTS ALL IMMEDIATE;
+
 ALTER TABLE workflow_node_logs ENABLE TRIGGER trg_workflow_node_logs_immutable;
 ALTER TABLE workflow_run_nodes ENABLE TRIGGER trg_workflow_run_nodes_terminal_immutable;
 ALTER TABLE workflow_run_checkpoints ENABLE TRIGGER trg_workflow_run_checkpoints_immutable;
