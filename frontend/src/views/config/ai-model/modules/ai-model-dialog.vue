@@ -8,6 +8,22 @@
     destroy-on-close
   >
     <ElForm ref="formRef" :model="formData" :rules="rules" label-width="108px">
+      <ElFormItem v-if="!isEdit" :label="t('aiConfig.form.preset')">
+        <ElSelect
+          v-model="selectedPresetKey"
+          clearable
+          :placeholder="t('aiConfig.form.presetPlaceholder')"
+          @change="handlePresetChange"
+        >
+          <ElOption
+            v-for="preset in modelPresets"
+            :key="preset.key"
+            :label="`${preset.provider} / ${preset.displayName}`"
+            :value="preset.key"
+          />
+        </ElSelect>
+      </ElFormItem>
+
       <ElRow :gutter="16">
         <ElCol :xs="24" :sm="12">
           <ElFormItem :label="t('aiConfig.form.displayName')" prop="displayName">
@@ -82,6 +98,73 @@
     submitting?: boolean
   }
 
+  interface ModelPreset {
+    key: string
+    provider: string
+    displayName: string
+    modelName: string
+    baseUrl: string
+  }
+
+  const modelPresets: ModelPreset[] = [
+    {
+      key: 'openai',
+      provider: 'OpenAI',
+      displayName: 'OpenAI GPT-4o-mini',
+      modelName: 'gpt-4o-mini',
+      baseUrl: 'https://api.openai.com/v1'
+    },
+    {
+      key: 'deepseek',
+      provider: 'DeepSeek',
+      displayName: 'DeepSeek Chat',
+      modelName: 'deepseek-chat',
+      baseUrl: 'https://api.deepseek.com/v1'
+    },
+    {
+      key: 'dashscope',
+      provider: '阿里百炼',
+      displayName: '通义千问 / DeepSeek',
+      modelName: 'deepseek-v3.2-exp',
+      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+    },
+    {
+      key: 'zhipu',
+      provider: '智谱 AI',
+      displayName: 'GLM-4-Flash',
+      modelName: 'glm-4-flash',
+      baseUrl: 'https://open.bigmodel.cn/api/paas/v4'
+    },
+    {
+      key: 'moonshot',
+      provider: 'Moonshot',
+      displayName: 'Kimi K2',
+      modelName: 'kimi-k2-0711-preview',
+      baseUrl: 'https://api.moonshot.cn/v1'
+    },
+    {
+      key: 'openrouter',
+      provider: 'OpenRouter',
+      displayName: 'OpenRouter 自定义模型',
+      modelName: 'openai/gpt-4o-mini',
+      baseUrl: 'https://openrouter.ai/api/v1'
+    },
+    {
+      key: 'siliconflow',
+      provider: 'SiliconFlow',
+      displayName: 'SiliconFlow 自定义模型',
+      modelName: 'Qwen/Qwen2.5-72B-Instruct',
+      baseUrl: 'https://api.siliconflow.cn/v1'
+    },
+    {
+      key: 'custom',
+      provider: 'OpenAI Compatible',
+      displayName: '自定义兼容模型',
+      modelName: '',
+      baseUrl: ''
+    }
+  ]
+
   const props = withDefaults(defineProps<Props>(), {
     visible: false,
     modelData: null,
@@ -93,6 +176,7 @@
   }>()
   const { t } = useI18n()
   const formRef = ref<FormInstance>()
+  const selectedPresetKey = ref('')
 
   const dialogVisible = computed({
     get: () => props.visible,
@@ -128,6 +212,7 @@
 
   const loadForm = () => {
     Object.assign(formData, defaults())
+    selectedPresetKey.value = ''
     if (props.modelData) {
       Object.assign(formData, {
         displayName: props.modelData.displayName,
@@ -139,6 +224,16 @@
       })
     }
     nextTick(() => formRef.value?.clearValidate())
+  }
+
+  const handlePresetChange = (key?: string) => {
+    const preset = modelPresets.find((item) => item.key === key)
+    if (!preset) return
+    Object.assign(formData, {
+      displayName: preset.displayName,
+      modelName: preset.modelName,
+      baseUrl: preset.baseUrl
+    })
   }
 
   watch(

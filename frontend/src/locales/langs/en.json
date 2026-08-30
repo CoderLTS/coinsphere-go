@@ -355,6 +355,8 @@
       "editTitle": "Edit AI Model"
     },
     "form": {
+      "preset": "Provider Preset",
+      "presetPlaceholder": "Select a provider preset",
       "displayName": "Display Name",
       "modelName": "Model Name",
       "baseUrl": "Base URL",

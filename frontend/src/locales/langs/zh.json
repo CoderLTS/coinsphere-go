@@ -355,6 +355,8 @@
       "editTitle": "编辑 AI 模型"
     },
     "form": {
+      "preset": "厂商预设",
+      "presetPlaceholder": "请选择厂商预设",
       "displayName": "展示名称",
       "modelName": "模型名称",
       "baseUrl": "接口地址",
