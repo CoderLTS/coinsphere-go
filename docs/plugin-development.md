@@ -93,9 +93,26 @@ manifest 中的路径使用 `/`，必须是插件根目录内的相对路径。�
 - `apiRoutes`
 - `pages`
 - `resultPages`
+- `assistantQueries`
 - `migrations`
 
 注册未声明的贡献或声明后没有注册都会失败。重复插件 ID、节点类型、策略 ID、页面 key、结果页 key 或路由也会失败。
+
+### 助手只读查询
+
+插件拥有需要被平台助手查询的领域数据时，可在 manifest 的 `contributes` 增加 `assistantQueries`，并通过 `Registrar.AssistantQuery` 注册查询：
+
+```go
+err := registrar.AssistantQuery(sdk.AssistantQueryDescriptor{
+    Name:        "summary",
+    Description: "查询插件领域状态的有界摘要。",
+    InputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false}`),
+}, sdk.AssistantQueryHandlerFunc(func(ctx context.Context, input json.RawMessage, scope sdk.SystemScope) (json.RawMessage, error) {
+    return json.Marshal(map[string]any{"status": "ready"})
+}))
+```
+
+查询名使用小写字母、数字和下划线；平台会用插件 ID 命名空间化最终工具名。输入在调用前按 Schema 校验，Handler 只接收 Core 注入的 `SystemScope`，不得从输入扩大用户或插件范围。结果必须是 64 KiB 内的合法 JSON，不得包含密钥、令牌、原始载荷或个人数据。只在插件确有独立持久数据时注册查询；平台知识、核心数据和工作流生成留在 Core。
 
 ## 4. Backend Go module
 

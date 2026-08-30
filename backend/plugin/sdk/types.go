@@ -178,6 +178,28 @@ type SystemScope struct {
 
 func (SystemScope) routeScope() {}
 
+type AssistantQueryDescriptor struct {
+	Name        string
+	Description string
+	InputSchema json.RawMessage
+}
+
+type AssistantQueryHandler interface {
+	Query(context.Context, json.RawMessage, SystemScope) (json.RawMessage, error)
+}
+
+type AssistantQueryHandlerFunc func(context.Context, json.RawMessage, SystemScope) (json.RawMessage, error)
+
+func (f AssistantQueryHandlerFunc) Query(ctx context.Context, input json.RawMessage, scope SystemScope) (json.RawMessage, error) {
+	return f(ctx, input, scope)
+}
+
+type RegisteredAssistantQuery struct {
+	PluginID   string
+	ToolName   string
+	Descriptor AssistantQueryDescriptor
+}
+
 type ScopedRouteHandler func(http.ResponseWriter, *http.Request, RouteScope)
 
 type RouteDescriptor struct {

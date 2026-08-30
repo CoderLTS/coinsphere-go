@@ -2,6 +2,15 @@
 
 本文按当前仓库说明代码入口、模块职责和常见修改位置。系统设计见[当前架构](architecture/overview.md)，跨模块语义见[公共契约](contracts/README.md)。目录中存在源码不等于能力已对外开放；实际运行面同时受 Backend 路由、种子菜单、权限和插件注册表约束。
 
+平台助手的主要修改入口如下：
+
+- `backend/internal/service/ai_models.go`：全局模型配置、加密密钥和受限 HTTP 客户端。
+- `backend/internal/service/assistant*.go`：会话、SSE、模型工具循环、核心查询及工作流提案确认。
+- `backend/internal/api/handlers_assistant.go`：模型和助手 HTTP 接口。
+- `backend/plugin/sdk/{types,registry}.go`：插件 `assistantQueries` 注册、Schema 校验和结果上限。
+- `frontend/src/components/core/layouts/art-chat-window/`：平台助手抽屉与富文本展示。
+- `frontend/src/views/config/ai-model/`：系统管理下的模型配置页面。
+
 ## 1. 仓库根目录
 
 ```text

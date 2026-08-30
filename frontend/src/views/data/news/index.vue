@@ -47,25 +47,21 @@
 </template>
 
 <script setup lang="ts">
-  import { Delete, Edit, TrendCharts } from '@element-plus/icons-vue'
-  import { ElButton, ElImage, ElLink, ElMessage, ElMessageBox } from 'element-plus'
+  import { Delete, Edit } from '@element-plus/icons-vue'
+  import { ElButton, ElImage, ElLink, ElMessageBox } from 'element-plus'
   import type { Component } from 'vue'
   import { useI18n } from 'vue-i18n'
-  import { fetchAssistantModelOptions } from '@/api/assistant'
   import { fetchCreateNews, fetchDeleteNews, fetchNewsList, fetchUpdateNews } from '@/api/data'
   import { useAuth } from '@/hooks/core/useAuth'
   import { useCursorPagination } from '@/hooks/core/useCursorPagination'
   import { useTableColumns } from '@/hooks/core/useTableColumns'
   import { formatDateTime } from '@/utils/date'
-  import { mittBus } from '@/utils/sys'
   import NewsDialog, { type NewsFormPayload } from './modules/news-dialog.vue'
 
   defineOptions({ name: 'NewsDataPage' })
 
   const { t } = useI18n()
   const { hasAuth } = useAuth()
-  const router = useRouter()
-  const route = useRoute()
   const loading = ref(false)
   const searchForm = reactive({
     keyword: ''
@@ -87,16 +83,6 @@
       }
     }
   ])
-
-  const ensureNewsAssistantReady = async () => {
-    const options = await fetchAssistantModelOptions('news_analysis')
-    if (options.models.length) {
-      return true
-    }
-    ElMessage.warning(t('data.news.analysisNoModel'))
-    router.push('/config/ai-model')
-    return false
-  }
 
   const renderIconAction = (options: {
     icon: Component
@@ -130,14 +116,6 @@
             title: t('permissions.delete'),
             type: 'danger',
             onClick: () => handleDelete(row)
-          })
-        : null,
-      hasAuth('data.news.analyze')
-        ? renderIconAction({
-            icon: TrendCharts,
-            title: t('data.news.analysis'),
-            type: 'primary',
-            onClick: () => void goAnalysis(row)
           })
         : null
     ])
@@ -291,54 +269,7 @@
     loadNews()
   }
 
-  const consumeAssistantQuery = () => {
-    if (route.query.assistantAgent !== 'news_analysis') return
-
-    const newsId = Number(route.query.newsId)
-    if (!Number.isFinite(newsId) || newsId <= 0) return
-
-    const nextQuery = { ...route.query }
-    delete nextQuery.assistantAgent
-    delete nextQuery.newsId
-
-    const target = records.value.find((item) => item.id === newsId)
-    void ensureNewsAssistantReady().then((ready) => {
-      if (ready) {
-        mittBus.emit('openChat', {
-          agentCode: 'news_analysis',
-          newsId,
-          newsTitle: target?.title,
-          autoRun: true
-        })
-      }
-      router.replace({
-        path: route.path,
-        query: nextQuery
-      })
-    })
-  }
-
-  const goAnalysis = async (row: Api.Data.NewsListItem) => {
-    if (!(await ensureNewsAssistantReady())) return
-    mittBus.emit('openChat', {
-      agentCode: 'news_analysis',
-      newsId: row.id,
-      newsTitle: row.title,
-      autoRun: true
-    })
-  }
-
-  onMounted(async () => {
-    await loadNews()
-    consumeAssistantQuery()
-  })
-
-  watch(
-    () => route.fullPath,
-    () => {
-      consumeAssistantQuery()
-    }
-  )
+  onMounted(loadNews)
 </script>
 
 <style scoped lang="scss">

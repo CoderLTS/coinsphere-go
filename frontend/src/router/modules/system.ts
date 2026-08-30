@@ -56,6 +56,17 @@ export const systemRoutes: AppRouteRecord = {
           { title: '删除', permissionCode: 'system.menus.delete' }
         ]
       }
+    },
+    {
+      path: 'ai-models',
+      name: 'AiModelConfig',
+      component: '/config/ai-model',
+      meta: {
+        title: 'menus.system.aiModels',
+        icon: 'ri:brain-line',
+        keepAlive: true,
+        roles: ['R_SUPER']
+      }
     }
   ]
 }

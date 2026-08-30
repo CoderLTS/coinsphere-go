@@ -34,7 +34,7 @@ func RegisterQuant(registry *sdk.Registry, database *gorm.DB) error {
 	runtime.quote = runtime.fetchQuantPublicQuote
 	return registry.RegisterPlugin(sdk.PluginDescriptor{
 		ID: quantPluginID, Name: "CoinSphere Quant", Version: "1.2.0",
-		Contributes: []string{"nodes", "triggers", "strategies", "apiRoutes", "pages", "resultPages"},
+		Contributes: []string{"nodes", "triggers", "strategies", "apiRoutes", "pages", "resultPages", "assistantQueries"},
 	}, func(registrar sdk.Registrar) error { return runtime.register(registrar) })
 }
 
@@ -121,6 +121,12 @@ func (q *quantRuntime) register(registrar sdk.Registrar) error {
 		if err := registrar.Route(route.desc, route.handler); err != nil {
 			return err
 		}
+	}
+	if err := registrar.AssistantQuery(sdk.AssistantQueryDescriptor{
+		Name: "query", Description: "查询 Quant 币种、回测、信号或 Paper 账户的有界摘要。",
+		InputSchema: quantAssistantQuerySchema,
+	}, sdk.AssistantQueryHandlerFunc(q.assistantQuery)); err != nil {
+		return err
 	}
 	if err := registrar.ResultPage(sdk.ResultPageDescriptor{
 		PageKey: "quant", Title: "Quant results", ComponentEntry: "./official/quant/ResultPage.vue",

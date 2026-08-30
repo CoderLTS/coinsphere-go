@@ -18,6 +18,14 @@
 - `/health/live` 只报告进程存活；`/health/ready` 和 `/health` 在一秒预算内检查 PostgreSQL；`/metrics` 要求登录。
 - 旧行情、策略、回测、信号、全局通知渠道/规则和交易路由已移除，不提供别名或兼容响应。
 
+## 平台智能助手
+
+- `/api/v1/config/ai-models` 提供全局模型 CRUD，`/{modelId}/validations` 执行连接检查；`PATCH` 只切换启用状态。模型字段固定为展示名、Base URL、模型名、可选 API Key、启用状态、优先级和超时，响应仅返回 Key 掩码。已被会话引用的模型删除返回 `409 Conflict`。
+- `GET /api/v1/assistant/models` 列出可用模型；`GET/POST /api/v1/assistant/sessions`、`GET/DELETE /api/v1/assistant/sessions/{sessionId}` 和 `GET /api/v1/assistant/sessions/{sessionId}/messages` 管理当前超级管理员的会话。
+- `POST /api/v1/assistant/sessions/{sessionId}/stream` 返回 SSE，事件名固定为 `user`、`tool`、`content`、`proposal`、`done`、`error`。`tool` 只包含工具名及 `running/completed/failed` 状态。
+- `POST /api/v1/assistant/messages/{messageId}/workflow` 确认工作流方案，返回 `workflowId`、`inactive` 状态和编辑地址。重复确认返回同一工作流；节点目录变化或方案失效返回 `409`，失败不留下工作流、修订或运行时记录。
+- 上述模型和助手接口全部要求 `R_SUPER`。模型上下文、工具结果与日志不得暴露密钥、工具原始参数、个人数据或原始载荷。
+
 ## 工作流
 
 | 路由                                                            | 语义                                   |
@@ -78,7 +86,7 @@
 - `id` 是稳定的小写点分名称；`version` 是严格 SemVer。
 - `sdkMajor` 必须等于当前 SDK major，`requiresCore` 必须包含当前 Core 版本。
 - Backend 入口必须是拥有匹配 module 名的 Go module；Frontend 和 migration 路径必须留在插件根目录内。
-- `contributes` 只接受 `nodes`、`triggers`、`strategies`、`apiRoutes`、`pages`、`resultPages` 和 `migrations`，声明的非 migration 贡献必须实际注册。
+- `contributes` 只接受 `nodes`、`triggers`、`strategies`、`apiRoutes`、`pages`、`resultPages`、`assistantQueries` 和 `migrations`，声明的非 migration 贡献必须实际注册。
 
 `plugin validate` 只读校验一个或多个目录。应用启动只执行生成的 Go 注册表，不扫描插件目录或动态加载共享库。
 
@@ -95,6 +103,8 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 - `SystemScope`：插件安装状态和系统级健康范围。
 
 插件不得从查询参数扩大核心注入的范围。不存在、未授权或已撤销 ResultView 统一返回 `404`；操作先解析 active 视图，再检查白名单、RBAC 和领域状态。
+
+`assistantQueries` 通过 `AssistantQueryDescriptor`、`AssistantQueryHandler` 和 `Registrar.AssistantQuery` 注册。工具名由插件 ID 与查询名组成稳定命名空间；输入必须匹配 JSON Schema 2020-12，Handler 只接收 Core 注入的 `SystemScope`，返回值必须是 64 KiB 内的合法 JSON。该扩展只允许查询拥有插件的数据，不授予写入、交易或扩大作用域的能力。
 
 页面描述符通过 `pages` 注册插件内唯一的 `pageKey`、标题、图标和缓存设置，并生成独立顶级菜单；前端 `FrontendPluginModule.pages` 必须导出同名页面。`resultPages` 只渲染服务端固定 ResultView 范围，不生成菜单。
 

@@ -1,9 +1,12 @@
 package sdk
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path"
 	"regexp"
 	"sort"
@@ -14,9 +17,11 @@ import (
 )
 
 const jsonSchema202012 = "https://json-schema.org/draft/2020-12/schema"
+const assistantQueryResultLimit = 64 << 10
 
 var contributionKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$`)
 var windowsAbsolutePathPattern = regexp.MustCompile(`^[A-Za-z]:/`)
+var assistantQueryNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,47}$`)
 
 type PluginDescriptor struct {
 	ID          string
@@ -34,15 +39,17 @@ type Registrar interface {
 	Page(PageDescriptor) error
 	ResultPage(ResultPageDescriptor) error
 	Route(RouteDescriptor, ScopedRouteHandler) error
+	AssistantQuery(AssistantQueryDescriptor, AssistantQueryHandler) error
 }
 
 type Registry struct {
-	plugins     map[string]PluginDescriptor
-	nodes       map[string]registeredNode
-	strategies  map[string]registeredStrategy
-	pages       map[string]PageDescriptor
-	resultPages map[string]ResultPageDescriptor
-	routes      map[string]registeredRoute
+	plugins          map[string]PluginDescriptor
+	nodes            map[string]registeredNode
+	strategies       map[string]registeredStrategy
+	pages            map[string]PageDescriptor
+	resultPages      map[string]ResultPageDescriptor
+	routes           map[string]registeredRoute
+	assistantQueries map[string]registeredAssistantQuery
 }
 
 type registeredNode struct {
@@ -63,12 +70,20 @@ type registeredRoute struct {
 	handler ScopedRouteHandler
 }
 
+type registeredAssistantQuery struct {
+	pluginID string
+	toolName string
+	desc     AssistantQueryDescriptor
+	handler  AssistantQueryHandler
+	schema   *jsonschema.Schema
+}
+
 func NewRegistry() *Registry {
 	return &Registry{
 		plugins: make(map[string]PluginDescriptor), nodes: make(map[string]registeredNode),
 		strategies: make(map[string]registeredStrategy),
 		pages:      make(map[string]PageDescriptor), resultPages: make(map[string]ResultPageDescriptor),
-		routes: make(map[string]registeredRoute),
+		routes: make(map[string]registeredRoute), assistantQueries: make(map[string]registeredAssistantQuery),
 	}
 }
 
@@ -115,6 +130,11 @@ func (r *Registry) RegisterPlugin(plugin PluginDescriptor, register RegisterFunc
 			return fmt.Errorf("duplicate plugin route %q", key)
 		}
 	}
+	for key := range collector.assistantQueries {
+		if previous, exists := r.assistantQueries[key]; exists {
+			return fmt.Errorf("assistant query %q conflicts between plugins %q and %q", key, previous.pluginID, plugin.ID)
+		}
+	}
 
 	r.plugins[plugin.ID] = plugin
 	for _, node := range collector.nodes {
@@ -131,6 +151,9 @@ func (r *Registry) RegisterPlugin(plugin PluginDescriptor, register RegisterFunc
 	}
 	for key, route := range collector.routes {
 		r.routes[key] = route
+	}
+	for key, query := range collector.assistantQueries {
+		r.assistantQueries[key] = query
 	}
 	return nil
 }
@@ -221,6 +244,42 @@ func (r *Registry) Routes() []RegisteredRoute {
 	return routes
 }
 
+func (r *Registry) AssistantQueries() []RegisteredAssistantQuery {
+	queries := make([]RegisteredAssistantQuery, 0, len(r.assistantQueries))
+	for _, query := range r.assistantQueries {
+		desc := query.desc
+		desc.InputSchema = append(json.RawMessage(nil), desc.InputSchema...)
+		queries = append(queries, RegisteredAssistantQuery{PluginID: query.pluginID, ToolName: query.toolName, Descriptor: desc})
+	}
+	sort.Slice(queries, func(i, j int) bool { return queries[i].ToolName < queries[j].ToolName })
+	return queries
+}
+
+func (r *Registry) RunAssistantQuery(ctx context.Context, toolName string, input json.RawMessage, scope SystemScope) (json.RawMessage, error) {
+	query, ok := r.assistantQueries[toolName]
+	if !ok {
+		return nil, fmt.Errorf("unknown assistant query %q", toolName)
+	}
+	var value any
+	decoder := json.NewDecoder(bytes.NewReader(input))
+	decoder.UseNumber()
+	if decoder.Decode(&value) != nil {
+		return nil, errors.New("assistant query input does not match its JSON Schema")
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) || query.schema.Validate(value) != nil {
+		return nil, errors.New("assistant query input does not match its JSON Schema")
+	}
+	scope.PluginID = query.pluginID
+	result, err := query.handler.Query(ctx, input, scope)
+	if err != nil {
+		return nil, err
+	}
+	if len(result) > assistantQueryResultLimit || !json.Valid(result) {
+		return nil, errors.New("assistant query result must be valid JSON within 64 KiB")
+	}
+	return append(json.RawMessage(nil), result...), nil
+}
+
 func (r *Registry) Plugins() []PluginDescriptor {
 	plugins := make([]PluginDescriptor, 0, len(r.plugins))
 	for _, plugin := range r.plugins {
@@ -248,14 +307,15 @@ func (r *Registry) Nodes() []NodeDescriptor {
 }
 
 type registrationCollector struct {
-	plugin      PluginDescriptor
-	declared    map[string]bool
-	used        map[string]bool
-	nodes       []registeredNode
-	strategies  []registeredStrategy
-	pages       map[string]PageDescriptor
-	resultPages map[string]ResultPageDescriptor
-	routes      map[string]registeredRoute
+	plugin           PluginDescriptor
+	declared         map[string]bool
+	used             map[string]bool
+	nodes            []registeredNode
+	strategies       []registeredStrategy
+	pages            map[string]PageDescriptor
+	resultPages      map[string]ResultPageDescriptor
+	routes           map[string]registeredRoute
+	assistantQueries map[string]registeredAssistantQuery
 }
 
 func (c *registrationCollector) Action(desc NodeDescriptor, handler ActionHandler) error {
@@ -399,6 +459,51 @@ func (c *registrationCollector) Route(desc RouteDescriptor, handler ScopedRouteH
 	}
 	c.markUsed("apiRoutes")
 	c.routes[key] = registeredRoute{desc: desc, handler: handler}
+	return nil
+}
+
+func (c *registrationCollector) AssistantQuery(desc AssistantQueryDescriptor, handler AssistantQueryHandler) error {
+	desc.Name = strings.TrimSpace(desc.Name)
+	desc.Description = strings.TrimSpace(desc.Description)
+	if !assistantQueryNamePattern.MatchString(desc.Name) || desc.Description == "" || len(desc.Description) > 512 {
+		return errors.New("assistant query requires a lowercase name and description")
+	}
+	if handler == nil {
+		return errors.New("assistant query handler is required")
+	}
+	if err := validateSchema("inputSchema", desc.InputSchema, true); err != nil {
+		return fmt.Errorf("assistant query %q: %w", desc.Name, err)
+	}
+	var schemaValue any
+	decoder := json.NewDecoder(bytes.NewReader(desc.InputSchema))
+	decoder.UseNumber()
+	if decoder.Decode(&schemaValue) != nil {
+		return fmt.Errorf("assistant query %q input schema is invalid", desc.Name)
+	}
+	compiler := jsonschema.NewCompiler()
+	compiler.DefaultDraft(jsonschema.Draft2020)
+	resource := c.plugin.ID + "-" + desc.Name + ".json"
+	if err := compiler.AddResource(resource, schemaValue); err != nil {
+		return fmt.Errorf("assistant query %q input schema is invalid", desc.Name)
+	}
+	compiled, err := compiler.Compile(resource)
+	if err != nil {
+		return fmt.Errorf("assistant query %q input schema is invalid", desc.Name)
+	}
+	toolName := strings.ReplaceAll(c.plugin.ID, ".", "_") + "_" + desc.Name
+	if len(toolName) > 64 {
+		return fmt.Errorf("assistant query %q produces a tool name longer than 64 characters", desc.Name)
+	}
+	if c.assistantQueries == nil {
+		c.assistantQueries = make(map[string]registeredAssistantQuery)
+	}
+	if _, exists := c.assistantQueries[toolName]; exists {
+		return fmt.Errorf("duplicate assistant query %q", toolName)
+	}
+	c.markUsed("assistantQueries")
+	c.assistantQueries[toolName] = registeredAssistantQuery{
+		pluginID: c.plugin.ID, toolName: toolName, desc: desc, handler: handler, schema: compiled,
+	}
 	return nil
 }
 

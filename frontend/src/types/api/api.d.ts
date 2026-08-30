@@ -113,116 +113,28 @@ declare namespace Api {
       en: Record<string, string>
     }
 
-    type AiProviderType = 'openai_compatible' | 'anthropic' | 'gemini'
-    type AssistantAgentDataSourceType = 'none' | 'system_context' | 'news_context'
-
     interface AiModelConfig {
       id: number
-      provider: AiProviderType
-      providerName: string
       displayName: string
-      modelIdentifier: string
       baseUrl: string
+      modelName: string
       apiKeyMasked: string
       isEnabled: boolean
       priority: number
-      requestHeadersJson: string
-      requestBodyJson: string
       timeoutMs: number
-      remark: string
-      boundAgents: Array<{
-        id: number
-        code: string
-        displayName: string
-      }>
-      lastValidationStatus: string
-      lastValidationMessage: string
-      lastValidatedAt: string
-      updatedAt: string
-      createdAt: string
       sessionCount: number
+      createdAt: string
+      updatedAt: string
     }
 
     interface AiModelUpsertPayload {
-      provider: AiProviderType
-      providerName: string
       displayName: string
-      modelIdentifier: string
       baseUrl: string
+      modelName: string
       apiKey?: string
       isEnabled: boolean
       priority: number
-      requestHeadersJson: string
-      requestBodyJson: string
       timeoutMs: number
-      remark: string
-    }
-
-    interface AiModelAgentBindingPayload {
-      agentIds: number[]
-    }
-
-    interface AiProviderMeta {
-      providerOptions: Array<{
-        value: AiProviderType
-        label: string
-        description: string
-        fields: string[]
-      }>
-      presets: Array<{
-        provider: AiProviderType
-        providerName: string
-        displayName: string
-        modelIdentifier: string
-        baseUrl: string
-        requestHeadersJson: string
-        requestBodyJson: string
-      }>
-    }
-
-    interface AssistantAgentItem {
-      id: number
-      code: string
-      displayName: string
-      avatar: string
-      description: string
-      systemPrompt: string
-      welcomeMessage: string
-      starterPrompts: string[]
-      dataSourceType: AssistantAgentDataSourceType
-      isEnabled: boolean
-      sort: number
-      bindingCount: number
-      sessionCount: number
-      createdAt: string
-      updatedAt: string
-    }
-
-    interface AssistantAgentUpsertPayload {
-      code: string
-      displayName: string
-      avatar: string
-      description: string
-      systemPrompt: string
-      welcomeMessage: string
-      starterPrompts: string[]
-      dataSourceType: AssistantAgentDataSourceType
-      isEnabled: boolean
-      sort: number
-    }
-
-    interface AssistantAgentMeta {
-      dataSourceOptions: Array<{
-        value: AssistantAgentDataSourceType
-        label: string
-      }>
-      agentOptions: Array<{
-        id: number
-        code: string
-        displayName: string
-        isEnabled: boolean
-      }>
-      builtinAgentCodes: string[]
     }
 
     /** 用户列表 */
@@ -448,97 +360,59 @@ declare namespace Api {
   }
 
   namespace Assistant {
-    type AgentCode = string
-    type StreamMode = 'chat' | 'analyze' | 'retry'
     type MessageRole = 'user' | 'assistant'
 
-    interface AgentSummary {
+    interface ModelOption {
       id: number
-      code: AgentCode
       displayName: string
-      avatar: string
-      description: string
-      welcomeMessage: string
-      starterPrompts: string[]
-      dataSourceType: Api.Config.AssistantAgentDataSourceType
-      isEnabled: boolean
-      sort: number
-      defaultModelId?: number | null
-      hasUsableModel: boolean
+      modelName: string
+      priority: number
     }
 
     interface Session {
       id: number
-      agentId: number
-      agentCode: AgentCode
-      agentName: string
-      agentAvatar: string
-      agentDescription: string
+      modelId: number
+      modelName: string
       title: string
-      newsId?: number | null
-      modelConfigId?: number | null
-      modelDisplayName?: string
-      providerName?: string
+      messageCount: number
+      latestPreview: string
       createdAt: string
       updatedAt: string
       lastMessageAt: string
     }
 
-    interface SessionHistoryItem extends Session {
-      messageCount: number
-      latestPreview: string
-    }
-
-    interface SessionHistoryResponse {
-      records: SessionHistoryItem[]
-      nextCursor: string
-      total: number
-      hasMore: boolean
+    interface WorkflowProposal {
+      name: string
+      description: string
+      nodeCount: number
+      edgeCount: number
+      nodeTypes: string[]
+      missingSecrets: string[]
+      workflowId?: number
+      editUrl?: string
     }
 
     interface Message {
       id: number
       role: MessageRole
-      contentType: string
       content: string
-      reasoning: string
+      proposal?: WorkflowProposal
       createdAt: string
     }
 
-    interface ModelOption {
-      id: number
-      displayName: string
-      providerName: string
-      provider: string
-      modelIdentifier: string
-      priority: number
-    }
-
-    interface ModelOptions {
-      agentCode: AgentCode
-      defaultModelId?: number | null
-      models: ModelOption[]
-    }
-
-    interface SessionQuery {
-      agentCode: AgentCode
-      newsId?: number
-      modelConfigId?: number
-      forceNew?: boolean
-    }
-
-    interface SessionHistoryQuery {
-      agentCode: AgentCode
-      cursor?: string
-      limit?: number
+    interface SessionCreateRequest {
+      modelId: number
+      title?: string
     }
 
     interface StreamRequest {
-      agentCode: AgentCode
-      mode: StreamMode
-      text?: string
-      newsId?: number
-      enableReasoning?: boolean
+      text: string
+    }
+
+    interface WorkflowCreateResult {
+      workflowId: number
+      status: 'inactive'
+      editUrl: string
     }
   }
 
