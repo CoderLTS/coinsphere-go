@@ -571,7 +571,7 @@
     gap: 12px;
     min-height: 56px;
     padding-bottom: 16px;
-    border-bottom: 1px solid rgb(226 232 240 / 0.78);
+    border-bottom: 1px solid var(--el-border-color-lighter);
   }
 
   .assistant-header > div:first-child {
@@ -599,7 +599,7 @@
     color: var(--el-text-color-primary);
     text-overflow: ellipsis;
     white-space: nowrap;
-    background: rgb(248 250 252 / 0.88);
+    background: var(--el-fill-color-light);
     border-radius: 10px;
   }
 
@@ -629,7 +629,7 @@
 
   .icon-button:hover {
     color: var(--el-text-color-primary);
-    background: rgb(148 163 184 / 0.12);
+    background: var(--el-fill-color);
   }
 
   .icon-button:disabled {
@@ -670,9 +670,9 @@
     min-width: 84px;
     height: 34px;
     margin-top: 8px;
-    color: #3b82f6;
-    background: rgb(239 246 255 / 0.8);
-    border-color: rgb(125 166 255 / 0.28);
+    color: var(--el-color-primary);
+    background: var(--el-color-primary-light-9);
+    border-color: var(--el-color-primary-light-5);
     border-radius: 10px;
   }
 
@@ -715,12 +715,12 @@
     font-size: 13px;
     line-height: 1.7;
     white-space: pre-wrap;
-    background: rgb(15 23 42 / 0.06);
+    background: var(--el-fill-color-light);
     border-radius: 16px;
   }
 
   .assistant-message--user .assistant-message__bubble {
-    background: rgb(77 140 255 / 0.16);
+    background: var(--el-color-primary-light-9);
   }
 
   .assistant-message__bubble :deep(p),
@@ -748,7 +748,7 @@
     padding: 3px 8px;
     font-size: 11px;
     color: var(--el-text-color-secondary);
-    background: rgb(148 163 184 / 0.1);
+    background: var(--el-fill-color-light);
     border-radius: 10px;
   }
 
@@ -826,7 +826,7 @@
   .stream-loading span {
     width: 7px;
     height: 7px;
-    background: rgb(77 140 255 / 0.72);
+    background: var(--el-color-primary);
     border-radius: 999px;
     animation: assistant-loading 1.1s infinite ease-in-out;
   }
@@ -848,8 +848,8 @@
     flex-direction: column;
     gap: 12px;
     padding: 14px 14px 12px;
-    background: rgb(255 255 255 / 0.96);
-    border: 1px solid rgb(203 213 225 / 0.88);
+    background: var(--default-box-color);
+    border: 1px solid var(--el-border-color);
     border-radius: 16px;
     transition:
       border-color 0.18s ease,
@@ -857,12 +857,12 @@
   }
 
   .assistant-composer:hover {
-    border-color: rgb(148 163 184 / 0.92);
+    border-color: var(--el-border-color-darker);
   }
 
   .assistant-composer:focus-within {
-    border-color: rgb(77 140 255 / 0.42);
-    box-shadow: 0 0 0 4px rgb(77 140 255 / 0.08);
+    border-color: var(--el-color-primary-light-5);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--el-color-primary) 8%, transparent);
   }
 
   .assistant-composer :deep(.el-textarea__inner) {
@@ -877,7 +877,7 @@
   }
 
   .assistant-composer :deep(.el-textarea__inner::placeholder) {
-    color: rgb(148 163 184 / 0.95);
+    color: var(--el-text-color-placeholder);
   }
 
   .assistant-composer__toolbar {
@@ -890,12 +890,12 @@
     max-width: calc(100% - 52px);
     min-height: 30px;
     padding: 0 6px;
-    background: rgb(248 250 252 / 0.88);
+    background: var(--el-fill-color-light);
     border-radius: 10px;
   }
 
   .assistant-composer__toolbar .el-select:hover {
-    background: rgb(241 245 249 / 0.96);
+    background: var(--el-fill-color);
   }
 
   .assistant-composer__toolbar .el-select :deep(.el-select__wrapper) {
@@ -910,7 +910,7 @@
     width: 40px;
     height: 40px;
     padding: 0;
-    box-shadow: 0 8px 18px rgb(77 140 255 / 0.18);
+    box-shadow: 0 8px 18px color-mix(in srgb, var(--el-color-primary) 18%, transparent);
   }
 
   .assistant-composer__toolbar > .el-button :deep(.el-icon) {
@@ -921,7 +921,7 @@
     gap: 12px;
     justify-content: space-between;
     padding-bottom: 16px;
-    border-bottom: 1px solid rgb(226 232 240 / 0.78);
+    border-bottom: 1px solid var(--el-border-color-lighter);
   }
 
   .history-panel__body {
@@ -943,8 +943,8 @@
   }
 
   .history-item--active {
-    background: rgb(77 140 255 / 0.06);
-    border-color: rgb(77 140 255 / 0.36);
+    background: var(--el-color-primary-light-9);
+    border-color: var(--el-color-primary-light-5);
   }
 
   .history-item__main {
