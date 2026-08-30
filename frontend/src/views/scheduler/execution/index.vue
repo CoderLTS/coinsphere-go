@@ -230,10 +230,8 @@
       minWidth: 100,
       align: 'center',
       formatter: (row) =>
-        h(
-          ElTag,
-          { type: statusTagType(row.status), effect: 'plain' },
-          () => statusLabel(row.status)
+        h(ElTag, { type: statusTagType(row.status), effect: 'plain' }, () =>
+          statusLabel(row.status)
         )
     },
     {

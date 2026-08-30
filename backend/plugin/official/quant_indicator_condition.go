@@ -22,9 +22,9 @@ const (
 )
 
 var (
-	quantHundred		= decimal.NewFromInt(100)
-	quantFifty		= decimal.NewFromInt(50)
-	quantDecimalPattern	= regexp.MustCompile(`^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$`)
+	quantHundred        = decimal.NewFromInt(100)
+	quantFifty          = decimal.NewFromInt(50)
+	quantDecimalPattern = regexp.MustCompile(`^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$`)
 )
 
 var quantIndicatorInputSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"eventTime":{"type":"string","title":"Event time","format":"date-time"},"pathEntered":{"type":"boolean","title":"Upstream path entered","default":false}},"required":["eventTime"],"additionalProperties":false}`)
@@ -46,8 +46,8 @@ var quantIndicatorOutputSchema = json.RawMessage(`{
 }`)
 
 type quantIndicatorDefinition struct {
-	NodeType	string
-	Indicator	string
+	NodeType  string
+	Indicator string
 }
 
 var quantIndicatorDefinitions = []quantIndicatorDefinition{
@@ -62,10 +62,10 @@ var quantIndicatorDefinitions = []quantIndicatorDefinition{
 var quantIndicatorParameterSchemas = map[string]string{
 	"volume_spike": `{"type":"object","title":"Parameters","properties":{"lookback":{"type":"integer","title":"Average candles","minimum":1,"maximum":500,"default":20},"multiplier":{"type":"string","title":"Volume multiplier","pattern":"^[0-9]+(?:\\.[0-9]+)?$","default":"2","x-coinsphere-decimal":true}},"required":["lookback","multiplier"],"additionalProperties":false,"default":{"lookback":20,"multiplier":"2"}}`,
 	"price_change": `{"type":"object","title":"Parameters","properties":{"lookback":{"type":"integer","title":"Candles","minimum":1,"maximum":500,"default":1},"mode":{"type":"string","title":"Mode","enum":["rise","fall","absolute","amplitude"],"enumLabels":["Rise","Fall","Absolute change","High-low amplitude"],"default":"absolute"},"threshold":{"type":"string","title":"Threshold (%)","pattern":"^[0-9]+(?:\\.[0-9]+)?$","default":"1","x-coinsphere-decimal":true}},"required":["lookback","mode","threshold"],"additionalProperties":false,"default":{"lookback":1,"mode":"absolute","threshold":"1"}}`,
-	"macd": `{"type":"object","title":"Parameters","properties":{"fastPeriod":{"type":"integer","title":"Fast period","minimum":1,"maximum":100,"default":12},"slowPeriod":{"type":"integer","title":"Slow period","minimum":2,"maximum":200,"default":26},"signalPeriod":{"type":"integer","title":"Signal period","minimum":1,"maximum":100,"default":9},"signal":{"type":"string","title":"Rule","enum":["golden_cross","death_cross","dif_above_zero","dif_below_zero"],"enumLabels":["Golden cross","Death cross","DIF above zero","DIF below zero"],"default":"golden_cross"}},"required":["fastPeriod","slowPeriod","signalPeriod","signal"],"additionalProperties":false,"default":{"fastPeriod":12,"slowPeriod":26,"signalPeriod":9,"signal":"golden_cross"}}`,
-	"kdj": `{"type":"object","title":"Parameters","properties":{"period":{"type":"integer","title":"Period","minimum":2,"maximum":200,"default":9},"kSmoothing":{"type":"integer","title":"K smoothing","minimum":1,"maximum":50,"default":3},"dSmoothing":{"type":"integer","title":"D smoothing","minimum":1,"maximum":50,"default":3},"signal":{"type":"string","title":"Rule","enum":["golden_cross","death_cross","k_above","k_below","d_above","d_below","j_above","j_below"],"enumLabels":["K/D golden cross","K/D death cross","K above threshold","K below threshold","D above threshold","D below threshold","J above threshold","J below threshold"],"default":"golden_cross"},"threshold":{"type":"string","title":"Threshold","pattern":"^-?[0-9]+(?:\\.[0-9]+)?$","default":"80","x-coinsphere-decimal":true}},"required":["period","kSmoothing","dSmoothing","signal","threshold"],"additionalProperties":false,"default":{"period":9,"kSmoothing":3,"dSmoothing":3,"signal":"golden_cross","threshold":"80"}}`,
-	"rsi": `{"type":"object","title":"Parameters","properties":{"period":{"type":"integer","title":"Period","minimum":2,"maximum":200,"default":14},"direction":{"type":"string","title":"Rule","enum":["above","below"],"enumLabels":["Above threshold","Below threshold"],"default":"below"},"threshold":{"type":"string","title":"Threshold","pattern":"^[0-9]+(?:\\.[0-9]+)?$","default":"30","x-coinsphere-decimal":true}},"required":["period","direction","threshold"],"additionalProperties":false,"default":{"period":14,"direction":"below","threshold":"30"}}`,
-	"bollinger": `{"type":"object","title":"Parameters","properties":{"period":{"type":"integer","title":"Period","minimum":2,"maximum":500,"default":20},"multiplier":{"type":"string","title":"Standard deviations","pattern":"^[0-9]+(?:\\.[0-9]+)?$","default":"2","x-coinsphere-decimal":true},"signal":{"type":"string","title":"Rule","enum":["close_above_upper","close_below_lower"],"enumLabels":["Close above upper band","Close below lower band"],"default":"close_above_upper"}},"required":["period","multiplier","signal"],"additionalProperties":false,"default":{"period":20,"multiplier":"2","signal":"close_above_upper"}}`,
+	"macd":         `{"type":"object","title":"Parameters","properties":{"fastPeriod":{"type":"integer","title":"Fast period","minimum":1,"maximum":100,"default":12},"slowPeriod":{"type":"integer","title":"Slow period","minimum":2,"maximum":200,"default":26},"signalPeriod":{"type":"integer","title":"Signal period","minimum":1,"maximum":100,"default":9},"signal":{"type":"string","title":"Rule","enum":["golden_cross","death_cross","dif_above_zero","dif_below_zero"],"enumLabels":["Golden cross","Death cross","DIF above zero","DIF below zero"],"default":"golden_cross"}},"required":["fastPeriod","slowPeriod","signalPeriod","signal"],"additionalProperties":false,"default":{"fastPeriod":12,"slowPeriod":26,"signalPeriod":9,"signal":"golden_cross"}}`,
+	"kdj":          `{"type":"object","title":"Parameters","properties":{"period":{"type":"integer","title":"Period","minimum":2,"maximum":200,"default":9},"kSmoothing":{"type":"integer","title":"K smoothing","minimum":1,"maximum":50,"default":3},"dSmoothing":{"type":"integer","title":"D smoothing","minimum":1,"maximum":50,"default":3},"signal":{"type":"string","title":"Rule","enum":["golden_cross","death_cross","k_above","k_below","d_above","d_below","j_above","j_below"],"enumLabels":["K/D golden cross","K/D death cross","K above threshold","K below threshold","D above threshold","D below threshold","J above threshold","J below threshold"],"default":"golden_cross"},"threshold":{"type":"string","title":"Threshold","pattern":"^-?[0-9]+(?:\\.[0-9]+)?$","default":"80","x-coinsphere-decimal":true}},"required":["period","kSmoothing","dSmoothing","signal","threshold"],"additionalProperties":false,"default":{"period":9,"kSmoothing":3,"dSmoothing":3,"signal":"golden_cross","threshold":"80"}}`,
+	"rsi":          `{"type":"object","title":"Parameters","properties":{"period":{"type":"integer","title":"Period","minimum":2,"maximum":200,"default":14},"direction":{"type":"string","title":"Rule","enum":["above","below"],"enumLabels":["Above threshold","Below threshold"],"default":"below"},"threshold":{"type":"string","title":"Threshold","pattern":"^[0-9]+(?:\\.[0-9]+)?$","default":"30","x-coinsphere-decimal":true}},"required":["period","direction","threshold"],"additionalProperties":false,"default":{"period":14,"direction":"below","threshold":"30"}}`,
+	"bollinger":    `{"type":"object","title":"Parameters","properties":{"period":{"type":"integer","title":"Period","minimum":2,"maximum":500,"default":20},"multiplier":{"type":"string","title":"Standard deviations","pattern":"^[0-9]+(?:\\.[0-9]+)?$","default":"2","x-coinsphere-decimal":true},"signal":{"type":"string","title":"Rule","enum":["close_above_upper","close_below_lower"],"enumLabels":["Close above upper band","Close below lower band"],"default":"close_above_upper"}},"required":["period","multiplier","signal"],"additionalProperties":false,"default":{"period":20,"multiplier":"2","signal":"close_above_upper"}}`,
 }
 
 func quantIndicatorConfigSchema(indicator string) json.RawMessage {
@@ -73,45 +73,45 @@ func quantIndicatorConfigSchema(indicator string) json.RawMessage {
 }
 
 type quantIndicatorAction struct {
-	runtime		*quantRuntime
-	indicator	string
+	runtime   *quantRuntime
+	indicator string
 }
 
 type quantIndicatorConfig struct {
-	Market		string
-	Instrument	string
-	CheckInterval	string
-	Leaf		*quantIndicatorLeaf
+	Market        string
+	Instrument    string
+	CheckInterval string
+	Leaf          *quantIndicatorLeaf
 }
 
 type quantIndicatorLeaf struct {
-	Name		string
-	Interval	string
-	Indicator	string
-	Parameters	quantIndicatorParameters
+	Name       string
+	Interval   string
+	Indicator  string
+	Parameters quantIndicatorParameters
 }
 
 type quantIndicatorParameters struct {
-	Lookback		int
-	Multiplier		decimal.Decimal
-	Mode			string
-	Threshold		decimal.Decimal
-	FastPeriod		int
-	SlowPeriod		int
-	SignalPeriod		int
-	Period			int
-	KSmoothing		int
-	DSmoothing		int
-	Signal			string
-	StandardDeviation	decimal.Decimal
+	Lookback          int
+	Multiplier        decimal.Decimal
+	Mode              string
+	Threshold         decimal.Decimal
+	FastPeriod        int
+	SlowPeriod        int
+	SignalPeriod      int
+	Period            int
+	KSmoothing        int
+	DSmoothing        int
+	Signal            string
+	StandardDeviation decimal.Decimal
 }
 
 type quantIndicatorPoint struct {
-	Ready			bool
-	Matched			bool
-	CandleCloseTime	string
-	Values			map[string]string
-	Summary			string
+	Ready           bool
+	Matched         bool
+	CandleCloseTime string
+	Values          map[string]string
+	Summary         string
 }
 
 func (a quantIndicatorAction) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
@@ -120,8 +120,8 @@ func (a quantIndicatorAction) Execute(ctx context.Context, request sdk.ActionReq
 		return sdk.ActionResult{}, err
 	}
 	var input struct {
-		EventTime	string `json:"eventTime"`
-		PathEntered	bool   `json:"pathEntered"`
+		EventTime   string `json:"eventTime"`
+		PathEntered bool   `json:"pathEntered"`
 	}
 	if !decodeQuantStrict(request.Input, &input) {
 		return sdk.ActionResult{}, errors.New("quant indicator condition input is invalid")
@@ -183,7 +183,7 @@ func (a quantIndicatorAction) Execute(ctx context.Context, request sdk.ActionReq
 		"branch": branch, "entered": entered, "triggered": triggered,
 		"evaluatedAt": evaluatedAt.Format(time.RFC3339Nano), "previousEvaluatedAt": previousAt.Format(time.RFC3339Nano),
 		"businessKey": fmt.Sprintf("quant:%s:%s:%s", config.Market, config.Instrument, request.NodeInstanceID),
-		"summary": summary, "formula": formula, "indicator": leaf.Indicator, "interval": leaf.Interval,
+		"summary":     summary, "formula": formula, "indicator": leaf.Indicator, "interval": leaf.Interval,
 		"candleCloseTime": current.CandleCloseTime, "previousCandleCloseTime": previous.CandleCloseTime,
 		"value": current.Values, "previousValue": previous.Values,
 	})}, nil
@@ -191,12 +191,12 @@ func (a quantIndicatorAction) Execute(ctx context.Context, request sdk.ActionReq
 
 func parseQuantIndicatorConfig(raw json.RawMessage, indicator string) (quantIndicatorConfig, error) {
 	var payload struct {
-		Market		string          `json:"market"`
-		Instrument	string          `json:"instrument"`
-		CheckInterval	string          `json:"checkInterval"`
-		Name		string          `json:"name"`
-		Interval	string          `json:"interval"`
-		Parameters	json.RawMessage `json:"parameters"`
+		Market        string          `json:"market"`
+		Instrument    string          `json:"instrument"`
+		CheckInterval string          `json:"checkInterval"`
+		Name          string          `json:"name"`
+		Interval      string          `json:"interval"`
+		Parameters    json.RawMessage `json:"parameters"`
 	}
 	if !decodeQuantStrict(raw, &payload) {
 		return quantIndicatorConfig{}, errors.New("quant indicator condition configuration is invalid")
@@ -227,8 +227,8 @@ func parseQuantIndicatorParameters(indicator string, raw json.RawMessage) (quant
 	switch indicator {
 	case "volume_spike":
 		value := struct {
-			Lookback	int    `json:"lookback"`
-			Multiplier	string `json:"multiplier"`
+			Lookback   int    `json:"lookback"`
+			Multiplier string `json:"multiplier"`
 		}{Lookback: 20, Multiplier: "2"}
 		if !decodeQuantStrict(raw, &value) || value.Lookback < 1 || value.Lookback > 500 {
 			return parameters, errors.New("volume spike parameters are invalid")
@@ -240,9 +240,9 @@ func parseQuantIndicatorParameters(indicator string, raw json.RawMessage) (quant
 		parameters.Lookback, parameters.Multiplier = value.Lookback, multiplier
 	case "price_change":
 		value := struct {
-			Lookback	int    `json:"lookback"`
-			Mode		string `json:"mode"`
-			Threshold	string `json:"threshold"`
+			Lookback  int    `json:"lookback"`
+			Mode      string `json:"mode"`
+			Threshold string `json:"threshold"`
 		}{Lookback: 5, Mode: "absolute", Threshold: "5"}
 		if !decodeQuantStrict(raw, &value) || value.Lookback < 1 || value.Lookback > 500 ||
 			value.Mode != "rise" && value.Mode != "fall" && value.Mode != "absolute" && value.Mode != "amplitude" {
@@ -255,10 +255,10 @@ func parseQuantIndicatorParameters(indicator string, raw json.RawMessage) (quant
 		parameters.Lookback, parameters.Mode, parameters.Threshold = value.Lookback, value.Mode, threshold
 	case "macd":
 		value := struct {
-			FastPeriod	int    `json:"fastPeriod"`
-			SlowPeriod	int    `json:"slowPeriod"`
-			SignalPeriod	int    `json:"signalPeriod"`
-			Signal		string `json:"signal"`
+			FastPeriod   int    `json:"fastPeriod"`
+			SlowPeriod   int    `json:"slowPeriod"`
+			SignalPeriod int    `json:"signalPeriod"`
+			Signal       string `json:"signal"`
 		}{FastPeriod: 12, SlowPeriod: 26, SignalPeriod: 9, Signal: "golden_cross"}
 		if !decodeQuantStrict(raw, &value) || value.FastPeriod < 1 || value.FastPeriod > 100 || value.SlowPeriod <= value.FastPeriod || value.SlowPeriod > 200 || value.SignalPeriod < 1 || value.SignalPeriod > 100 ||
 			value.Signal != "golden_cross" && value.Signal != "death_cross" && value.Signal != "dif_above_zero" && value.Signal != "dif_below_zero" {
@@ -267,11 +267,11 @@ func parseQuantIndicatorParameters(indicator string, raw json.RawMessage) (quant
 		parameters.FastPeriod, parameters.SlowPeriod, parameters.SignalPeriod, parameters.Signal = value.FastPeriod, value.SlowPeriod, value.SignalPeriod, value.Signal
 	case "kdj":
 		value := struct {
-			Period		int    `json:"period"`
-			KSmoothing	int    `json:"kSmoothing"`
-			DSmoothing	int    `json:"dSmoothing"`
-			Signal		string `json:"signal"`
-			Threshold	string `json:"threshold"`
+			Period     int    `json:"period"`
+			KSmoothing int    `json:"kSmoothing"`
+			DSmoothing int    `json:"dSmoothing"`
+			Signal     string `json:"signal"`
+			Threshold  string `json:"threshold"`
 		}{Period: 9, KSmoothing: 3, DSmoothing: 3, Signal: "golden_cross", Threshold: "80"}
 		if !decodeQuantStrict(raw, &value) || value.Period < 2 || value.Period > 200 || value.KSmoothing < 1 || value.KSmoothing > 50 || value.DSmoothing < 1 || value.DSmoothing > 50 || !quantKDJSignal(value.Signal) {
 			return parameters, errors.New("KDJ parameters are invalid")
@@ -284,9 +284,9 @@ func parseQuantIndicatorParameters(indicator string, raw json.RawMessage) (quant
 		parameters.Signal, parameters.Threshold = value.Signal, threshold
 	case "rsi":
 		value := struct {
-			Period		int    `json:"period"`
-			Direction	string `json:"direction"`
-			Threshold	string `json:"threshold"`
+			Period    int    `json:"period"`
+			Direction string `json:"direction"`
+			Threshold string `json:"threshold"`
 		}{Period: 14, Direction: "below", Threshold: "30"}
 		if !decodeQuantStrict(raw, &value) || value.Period < 2 || value.Period > 200 || value.Direction != "above" && value.Direction != "below" {
 			return parameters, errors.New("RSI parameters are invalid")
@@ -298,9 +298,9 @@ func parseQuantIndicatorParameters(indicator string, raw json.RawMessage) (quant
 		parameters.Period, parameters.Mode, parameters.Threshold = value.Period, value.Direction, threshold
 	case "bollinger":
 		value := struct {
-			Period		int    `json:"period"`
-			Multiplier	string `json:"multiplier"`
-			Signal		string `json:"signal"`
+			Period     int    `json:"period"`
+			Multiplier string `json:"multiplier"`
+			Signal     string `json:"signal"`
 		}{Period: 20, Multiplier: "2", Signal: "close_above_upper"}
 		if !decodeQuantStrict(raw, &value) || value.Period < 2 || value.Period > 500 || value.Signal != "close_above_upper" && value.Signal != "close_below_lower" {
 			return parameters, errors.New("Bollinger parameters are invalid")
