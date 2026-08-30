@@ -1008,7 +1008,7 @@
     isolation: isolate;
   }
 
-  .workflow-execution-detail__canvas-pane > * {
+  .workflow-execution-detail__canvas-pane > .workflow-execution-canvas {
     width: 100%;
     min-width: 0;
     height: 100%;
