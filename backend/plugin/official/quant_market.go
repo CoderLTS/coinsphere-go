@@ -119,14 +119,22 @@ func (h *quantCandleHub) subscribe(ctx context.Context, config quantCandleStream
 }
 
 func (h *quantCandleHub) run(key string, subscription *quantCandleSubscription) {
-	for subscription.ctx.Err() == nil {
-		_ = h.runtime.streamQuantCandles(subscription.ctx, subscription)
-		select {
-		case <-subscription.ctx.Done():
-			return
-		case <-time.After(time.Second):
-		}
+	var workers sync.WaitGroup
+	for _, interval := range subscription.config.Intervals {
+		workers.Add(1)
+		go func(interval string) {
+			defer workers.Done()
+			for subscription.ctx.Err() == nil {
+				_ = h.runtime.streamQuantCandles(subscription.ctx, subscription, interval)
+				select {
+				case <-subscription.ctx.Done():
+					return
+				case <-time.After(time.Second):
+				}
+			}
+		}(interval)
 	}
+	workers.Wait()
 	h.mu.Lock()
 	if h.subscriptions[key] == subscription && len(subscription.subscribers) == 0 {
 		delete(h.subscriptions, key)
@@ -274,19 +282,13 @@ func parseQuantKline(config quantSeriesConfig, raw json.RawMessage) (quantCandle
 	}, nil
 }
 
-func (q *quantRuntime) streamQuantCandles(ctx context.Context, subscription *quantCandleSubscription) error {
+func (q *quantRuntime) streamQuantCandles(ctx context.Context, subscription *quantCandleSubscription, interval string) error {
 	config := subscription.config
 	host := "data-stream.binance.vision:9443"
 	if config.Market == "usdm" {
 		host = "fstream.binance.com"
 	}
-	streams := make([]string, len(config.Intervals))
-	expected := make(map[string]string, len(config.Intervals))
-	for index, interval := range config.Intervals {
-		streams[index] = strings.ToLower(config.Instrument) + "@kline_" + interval
-		expected[streams[index]] = interval
-	}
-	target, _ := url.Parse("wss://" + host + "/stream?streams=" + strings.Join(streams, "/"))
+	target, _ := url.Parse("wss://" + host + "/ws/" + strings.ToLower(config.Instrument) + "@kline_" + interval)
 	if err := q.client.validateWebSocketURL(ctx, target, false); err != nil {
 		return err
 	}
@@ -311,35 +313,31 @@ func (q *quantRuntime) streamQuantCandles(ctx context.Context, subscription *qua
 	defer connection.Close()
 	for {
 		var message struct {
-			Stream string `json:"stream"`
-			Data   struct {
-				Symbol string `json:"s"`
-				Kline  struct {
-					OpenTime  int64  `json:"t"`
-					CloseTime int64  `json:"T"`
-					Interval  string `json:"i"`
-					Open      string `json:"o"`
-					High      string `json:"h"`
-					Low       string `json:"l"`
-					Close     string `json:"c"`
-					Volume    string `json:"v"`
-					Closed    bool   `json:"x"`
-				} `json:"k"`
-			} `json:"data"`
+			Symbol string `json:"s"`
+			Kline  struct {
+				OpenTime  int64  `json:"t"`
+				CloseTime int64  `json:"T"`
+				Interval  string `json:"i"`
+				Open      string `json:"o"`
+				High      string `json:"h"`
+				Low       string `json:"l"`
+				Close     string `json:"c"`
+				Volume    string `json:"v"`
+				Closed    bool   `json:"x"`
+			} `json:"k"`
 		}
 		if err := connection.ReadJSON(&message); err != nil {
 			return err
 		}
-		interval, ok := expected[message.Stream]
-		if !ok || message.Data.Symbol != config.Instrument || message.Data.Kline.Interval != interval {
+		if message.Symbol != config.Instrument || message.Kline.Interval != interval {
 			return errors.New("binance WebSocket kline payload is invalid")
 		}
-		if !message.Data.Kline.Closed {
+		if !message.Kline.Closed {
 			continue
 		}
 		raw := mustMarshal([]any{
-			message.Data.Kline.OpenTime, message.Data.Kline.Open, message.Data.Kline.High, message.Data.Kline.Low,
-			message.Data.Kline.Close, message.Data.Kline.Volume, message.Data.Kline.CloseTime,
+			message.Kline.OpenTime, message.Kline.Open, message.Kline.High, message.Kline.Low,
+			message.Kline.Close, message.Kline.Volume, message.Kline.CloseTime,
 		})
 		series := quantSeriesConfig{Market: config.Market, Instrument: config.Instrument, Interval: interval}
 		candle, err := parseQuantKline(series, raw)
