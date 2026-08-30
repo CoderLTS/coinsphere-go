@@ -261,11 +261,18 @@ func parseQuantKline(config quantSeriesConfig, raw json.RawMessage) (quantCandle
 	}
 	var openMillis, closeMillis int64
 	var values [5]string
-	if json.Unmarshal(fields[0], &openMillis) != nil || json.Unmarshal(fields[6], &closeMillis) != nil ||
-		json.Unmarshal(fields[1], &values[0]) != nil || json.Unmarshal(fields[2], &values[1]) != nil ||
-		json.Unmarshal(fields[3], &values[2]) != nil || json.Unmarshal(fields[4], &values[3]) != nil ||
-		json.Unmarshal(fields[5], &values[4]) != nil {
+	if json.Unmarshal(fields[0], &openMillis) != nil || json.Unmarshal(fields[6], &closeMillis) != nil {
 		return quantCandle{}, errors.New("binance kline fields are invalid")
+	}
+	for index, field := range fields[1:6] {
+		if json.Unmarshal(field, &values[index]) == nil {
+			continue
+		}
+		var number json.Number
+		if json.Unmarshal(field, &number) != nil || number == "" {
+			return quantCandle{}, errors.New("binance kline fields are invalid")
+		}
+		values[index] = number.String()
 	}
 	decimals := make([]decimal.Decimal, len(values))
 	for index, value := range values {
@@ -323,15 +330,15 @@ func (q *quantRuntime) streamQuantCandles(ctx context.Context, subscription *qua
 		var message struct {
 			Symbol string `json:"s"`
 			Kline  struct {
-				OpenTime  int64  `json:"t"`
-				CloseTime int64  `json:"T"`
-				Interval  string `json:"i"`
-				Open      string `json:"o"`
-				High      string `json:"h"`
-				Low       string `json:"l"`
-				Close     string `json:"c"`
-				Volume    string `json:"v"`
-				Closed    bool   `json:"x"`
+				OpenTime  int64           `json:"t"`
+				CloseTime int64           `json:"T"`
+				Interval  string          `json:"i"`
+				Open      json.RawMessage `json:"o"`
+				High      json.RawMessage `json:"h"`
+				Low       json.RawMessage `json:"l"`
+				Close     json.RawMessage `json:"c"`
+				Volume    json.RawMessage `json:"v"`
+				Closed    bool            `json:"x"`
 			} `json:"k"`
 		}
 		if err := connection.ReadJSON(&message); err != nil {
