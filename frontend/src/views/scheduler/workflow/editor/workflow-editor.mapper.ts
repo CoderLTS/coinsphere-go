@@ -60,6 +60,17 @@ const NOTIFICATION_NODE_TYPES = new Set([
   'official.notification.dingtalk',
   'official.notification.smtp'
 ])
+const MARKET_SIGNAL_NODE_TYPE = 'official.quant.market_signal'
+const MARKET_SIGNAL_BINDINGS: Record<string, string> = {
+  market: 'market',
+  instrument: 'instrument',
+  interval: 'interval',
+  name: 'formula',
+  indicator: 'indicator',
+  candleCloseTime: 'candleCloseTime',
+  summary: 'summary',
+  values: 'value'
+}
 
 const LEGACY_NODE_LABELS: Record<string, Record<string, string>> = {
   'start.manual': {
@@ -715,6 +726,20 @@ export function mapDomainGraphToServer(graph: WorkflowDomainGraphModel): Workflo
     } else if (NOTIFICATION_NODE_TYPES.has(node.data.typeCode)) {
       if (existing.subjectKey?.kind === 'condition_subject') delete existing.subjectKey
       if (existing.message?.kind === 'condition_message') delete existing.message
+    }
+    if (node.data.typeCode === MARKET_SIGNAL_NODE_TYPE) {
+      const source = notificationSources[0]?.nodeInstanceId
+      Object.entries(MARKET_SIGNAL_BINDINGS).forEach(([targetField, sourceField]) => {
+        if (source) {
+          existing[targetField] = {
+            kind: 'field',
+            nodeInstanceId: source,
+            fieldPath: [sourceField]
+          }
+        } else {
+          delete existing[targetField]
+        }
+      })
     }
     return existing
   }

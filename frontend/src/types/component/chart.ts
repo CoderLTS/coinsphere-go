@@ -225,15 +225,13 @@ export interface KLineDataItem {
   low: number
   /** 成交量 */
   volume?: number
-  /** 该根 K 线结束后的目标仓位 */
-  target?: number | null
 }
 
 export interface KLineSignalItem {
   time: string
-  action: 'buy' | 'sell' | 'flat' | 'hold'
-  target: number
-  previousTarget: number
+  name: string
+  summary: string
+  values: Record<string, string>
 }
 
 // K线图 Props 接口 - 统一K线图配置
@@ -244,8 +242,6 @@ export interface KLineChartProps extends BaseChartProps {
   signals?: KLineSignalItem[]
   /** 显示成交量区域 */
   showVolume?: boolean
-  /** 显示目标仓位区域 */
-  showTarget?: boolean
   /** 是否显示数据缩放控件 */
   showDataZoom?: boolean
   /** 数据缩放初始开始位置 */

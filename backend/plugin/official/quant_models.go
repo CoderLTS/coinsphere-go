@@ -75,6 +75,25 @@ type quantBacktest struct {
 
 func (quantBacktest) TableName() string { return "plugin_quant.backtests" }
 
+type quantMarketSignal struct {
+	ID              int64
+	OperationKey    string
+	WorkflowID      int64
+	RevisionID      int64
+	NodeInstanceID  string
+	Market          string
+	Instrument      string
+	Interval        string
+	Name            string
+	Indicator       string
+	CandleCloseTime time.Time
+	Summary         string
+	Values          string
+	CreatedAt       time.Time
+}
+
+func (quantMarketSignal) TableName() string { return "plugin_quant.market_signals" }
+
 type quantSignal struct {
 	ID                int64
 	OperationKey      string

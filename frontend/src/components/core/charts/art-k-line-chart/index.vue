@@ -22,7 +22,6 @@
     data: () => [],
     signals: () => [],
     showVolume: true,
-    showTarget: true,
     showDataZoom: true,
     dataZoomStart: 25,
     dataZoomEnd: 100
@@ -33,12 +32,8 @@
     return value.toLocaleString('zh-CN', { maximumFractionDigits: 8 })
   }
 
-  const actionLabel: Record<string, string> = {
-    buy: 'BUY',
-    sell: 'SELL',
-    flat: 'FLAT',
-    hold: 'HOLD'
-  }
+  const htmlText = (value: string) =>
+    value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
 
   const {
     chartRef,
@@ -56,7 +51,6 @@
       () => props.signals,
       () => props.colors,
       () => props.showVolume,
-      () => props.showTarget,
       () => props.showDataZoom,
       () => props.dataZoomStart,
       () => props.dataZoomEnd
@@ -65,18 +59,17 @@
       const chartTheme = useChartOps()
       const upColor = props.colors[0] || chartTheme.colors[3] || '#13deb9'
       const downColor = props.colors[1] || chartTheme.colors[5] || '#fa896b'
-      const targetColor = chartTheme.themeColor || '#5d87ff'
-      const flatColor = chartTheme.colors[4] || '#ffae1f'
+      const signalColor = chartTheme.themeColor || '#5d87ff'
       const times = props.data.map((item) => item.time)
-      const signalByTime = new Map(props.signals.map((item) => [item.time, item]))
       const closeByTime = new Map(props.data.map((item) => [item.time, item.close]))
-      let lastTarget: number | null = null
-      const targetData = props.data.map((item) => {
-        if (item.target !== null && item.target !== undefined) lastTarget = item.target
-        return lastTarget
+      const signalsByTime = new Map<string, typeof props.signals>()
+      props.signals.forEach((signal) => {
+        const items = signalsByTime.get(signal.time) || []
+        items.push(signal)
+        signalsByTime.set(signal.time, items)
       })
-      const visibleTracks = Number(props.showVolume) + Number(props.showTarget)
-      const priceBottom = visibleTracks === 2 ? '42%' : visibleTracks === 1 ? '27%' : '12%'
+      const visibleTracks = Number(props.showVolume)
+      const priceBottom = visibleTracks ? '27%' : '12%'
       const xAxes: any[] = [
         {
           type: 'category',
@@ -114,30 +107,25 @@
             borderWidth: 1
           },
           markPoint: {
-            symbolSize: 42,
-            data: props.signals
-              .filter((item) => item.action !== 'hold' && closeByTime.has(item.time))
-              .map((item) => ({
-                name: actionLabel[item.action],
-                coord: [item.time, closeByTime.get(item.time)],
-                symbol: item.action === 'flat' ? 'diamond' : 'triangle',
-                symbolRotate: item.action === 'sell' ? 180 : 0,
-                symbolOffset: item.action === 'sell' ? [0, -22] : [0, 22],
+            symbol: 'pin',
+            symbolSize: 40,
+            data: Array.from(signalsByTime.entries())
+              .filter(([time]) => closeByTime.has(time))
+              .map(([time, items]) => ({
+                name: '信号',
+                value: items.length,
+                coord: [time, closeByTime.get(time)],
+                symbolOffset: [0, -22],
                 itemStyle: {
-                  color:
-                    item.action === 'buy'
-                      ? upColor
-                      : item.action === 'sell'
-                        ? downColor
-                        : flatColor,
+                  color: signalColor,
                   borderColor: isDark.value ? '#161618' : '#ffffff',
                   borderWidth: 1
                 },
                 label: {
                   show: true,
-                  formatter: actionLabel[item.action],
-                  color: item.action === 'flat' ? '#684400' : '#ffffff',
-                  fontSize: 9,
+                  formatter: String(items.length),
+                  color: '#ffffff',
+                  fontSize: 10,
                   fontWeight: 700
                 }
               }))
@@ -145,12 +133,11 @@
         }
       ]
 
-      let nextGridIndex = 1
       if (props.showVolume) {
-        grids.push({ top: '64%', right: 58, height: '11%', left: 12, containLabel: true })
+        grids.push({ top: '72%', right: 58, height: '13%', left: 12, containLabel: true })
         xAxes.push({
           type: 'category',
-          gridIndex: nextGridIndex,
+          gridIndex: 1,
           data: times,
           boundaryGap: true,
           axisTick: { show: false },
@@ -159,7 +146,7 @@
         })
         yAxes.push({
           type: 'value',
-          gridIndex: nextGridIndex,
+          gridIndex: 1,
           scale: true,
           axisLabel: {
             ...getAxisLabelStyle(true),
@@ -170,49 +157,13 @@
         series.push({
           name: '成交量',
           type: 'bar',
-          xAxisIndex: nextGridIndex,
-          yAxisIndex: nextGridIndex,
+          xAxisIndex: 1,
+          yAxisIndex: 1,
           barMaxWidth: 8,
           data: props.data.map((item) => ({
             value: item.volume || 0,
             itemStyle: { color: item.close >= item.open ? `${upColor}a6` : `${downColor}a6` }
           }))
-        })
-        nextGridIndex += 1
-      }
-
-      if (props.showTarget) {
-        grids.push({ top: '80%', right: 58, height: '10%', left: 12, containLabel: true })
-        xAxes.push({
-          type: 'category',
-          gridIndex: nextGridIndex,
-          data: times,
-          boundaryGap: true,
-          axisTick: getAxisTickStyle(),
-          axisLine: getAxisLineStyle(true),
-          axisLabel: getAxisLabelStyle(true)
-        })
-        yAxes.push({
-          type: 'value',
-          gridIndex: nextGridIndex,
-          min: -1,
-          max: 1,
-          interval: 1,
-          axisLabel: getAxisLabelStyle(true),
-          splitLine: getSplitLineStyle(true)
-        })
-        series.push({
-          name: '目标仓位',
-          type: 'line',
-          xAxisIndex: nextGridIndex,
-          yAxisIndex: nextGridIndex,
-          data: targetData,
-          step: 'end',
-          showSymbol: false,
-          connectNulls: false,
-          lineStyle: { color: targetColor, width: 2 },
-          itemStyle: { color: targetColor },
-          areaStyle: { color: targetColor, opacity: 0.08 }
         })
       }
 
@@ -226,15 +177,16 @@
             const index = Number(params?.[0]?.dataIndex ?? -1)
             const item = props.data[index]
             if (!item) return ''
-            const signal = signalByTime.get(item.time)
+            const signalLines = (signalsByTime.get(item.time) || []).flatMap((signal) => [
+              `<strong>${htmlText(signal.name)}</strong>`,
+              htmlText(signal.summary)
+            ])
             return [
               `<strong>${item.time}</strong>`,
               `开 ${numberText(item.open)} · 高 ${numberText(item.high)}`,
               `低 ${numberText(item.low)} · 收 ${numberText(item.close)}`,
               `量 ${numberText(item.volume)}`,
-              signal
-                ? `${actionLabel[signal.action]} · 目标 ${numberText(signal.target)}`
-                : `目标 ${numberText(targetData[index])}`
+              ...(signalLines.length ? ['<strong>信号</strong>', ...signalLines] : [])
             ].join('<br>')
           }
         }),
@@ -258,9 +210,9 @@
                 end: props.dataZoomEnd,
                 borderColor: isDark.value ? '#353b48' : '#dfe4ec',
                 backgroundColor: isDark.value ? '#202226' : '#f2f4f5',
-                fillerColor: `${targetColor}1f`,
+                fillerColor: `${signalColor}1f`,
                 handleStyle: {
-                  color: targetColor,
+                  color: signalColor,
                   borderColor: isDark.value ? '#161618' : '#ffffff'
                 }
               }

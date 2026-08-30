@@ -112,13 +112,15 @@ COINSPHERE_WORKFLOW__HTTP_ALLOWED_HOSTS='[api.example.com,models.example.com]'
 
 应用首次启动且尚无币种同步节点时，会创建并激活“Binance 币种元数据采集”：立即运行一次，之后在北京时间 `00:00 / 06:00 / 12:00 / 18:00` 运行。`official.quant.sync_instruments` 可选择 Spot/USD-M，并配置报价资产、基础资产和交易对的黑白名单；输入会转大写、去空格和去重，空白名单不限，所有白名单取交集，任一黑名单命中即排除。多个元数据工作流各自保存成功快照，币种目录显示全部来源并集；停用只停止调度并保留上次成功快照。币种数据页不再提供代理或同步设置，采集状态和实时日志从“查看采集工作流”进入工作流画布查看。
 
-Quant 只连接 Binance Spot 和 USD-M 公共 REST/WebSocket。先创建并激活 `quant-market-data`，选择市场、品种和固定周期；同一 `market + instrument + interval` 的订阅共享连接，断线后 REST 补数，数据库与 CloudEvent 身份共同去重。每根闭合 K 线保存一条 Quant 行情和 CloudEvent，并为命中的工作流创建一条包含完整节点路径的 Run；Run 不复制 OHLCV 正文。月线不属于当前固定周期集合。
+Quant 只连接 Binance Spot 和 USD-M 公共 REST/WebSocket。先创建并激活 `quant-market-data`，在 `official.quant.realtime_candles` 中选择市场、单个品种和一个或多个固定周期；同一 `market + instrument + 规范化周期集合` 的订阅共享一条 combined-stream WebSocket。断线只重连，不隐式补数。每根实时闭合 K 线保存一条 Quant 行情和 CloudEvent，并为命中的工作流创建一条包含完整节点路径的 Run；Run 不复制 OHLCV 正文。月线不属于当前固定周期集合。
 
-K 线连接启动和重连只执行缺口补数与 WebSocket 采集，不触发币种元数据刷新。元数据节点只有在全部选中市场都抓取并解析成功后才替换快照；失败时目录保持不变，过滤后为空则保存为空快照。
+缺口修复使用独立的 `official.quant.backfill_candles` Action，可接手动或定时开始节点。它为单个品种的每个选中周期抓取指定 UTC 结束时间之前最近 N 根闭合 K 线；结束时间留空时使用执行时间，每周期最多 10000 根。补数只写入 K 线表并返回抓取/新增数量，不发布 `market.candle.closed`，重复执行由数据库主键去重。元数据节点只有在全部选中市场都抓取并解析成功后才替换快照；失败时目录保持不变，过滤后为空则保存为空快照。
 
 `quant-strategy` 消费 `market.candle.closed` 并调用已编译的 SMA crossover Go 策略。`quant-backtest` 读取已落库的闭合 K 线，在下一根 K 线开盘成交并应用 Decimal 手续费和滑点；日期必须是 UTC。运行结果中的 Quant 页面可查看品种、K 线、策略和回测摘要，并下载后校验完整明细 SHA-256。
 
 量化判断拆分为放量、价格波动、MACD、KDJ、RSI 和布林带六种独立节点，每个节点只配置一种指标和一种规则，并独立选择市场、交易对、检查周期和 K 线周期。当前支持 N 根 K 线首尾上涨/下跌/绝对涨跌、期间振幅、MACD 金叉/死叉/零轴位置、KDJ 金叉/死叉及 K/D/J 阈值、Wilder RSI 阈值和布林带突破。节点只使用已经闭合且连续的 K 线；历史不足时走 false，不发送通知。
+
+需要在 K 线页展示命中结果时，将指标判断节点的 `true` 分支连接到“输出信号”。市场、交易对、周期、名称、指标、命中时间、摘要和值由编辑器自动绑定，无需重复填写。每根命中的闭合 K 线都会生成一条普通行情信号；同一根 K 线的多个信号在图上合并标记，并在右侧逐条展示。普通行情信号不触发审批、Paper 下单或真实交易。
 
 判断节点提供 `true / false` 两个出口，每个出口都可扇出、串联、汇合或连接普通节点。串联判断可表达跨节点 AND，并联汇入同一后继可表达 OR，false 出口可表达反向条件。连续命中仍会执行后续判断；直接把一个或多个判断节点连接到任一通知节点时，编辑器自动只在整条 true 路径刚刚成立时通知，并聚合本次命中的摘要。路径恢复为 false 后再次成立，会再次发送通知。
 

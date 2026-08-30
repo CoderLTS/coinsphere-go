@@ -110,11 +110,13 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 
 内置 `official.connector` 提供 HTTP Action、Webhook Trigger、WebSocket Trigger 和运行诊断结果页；`official.ai` 提供 OpenAI-compatible 结构化模型调用和结果页。两者只访问 `workflow.http_allowed_hosts` 的精确公共域名，禁用环境代理，拨号前后解析并拒绝非公网 IP。Binance 只允许明确列出的公共 GET/公共 WebSocket，授权、私有或未知端点一律拒绝。AI 节点只接收/返回 JSON 对象，不能控制工作流生命周期或交易。
 
-内置 `official.quant@1.2.0` 提供 `binance_candles` Trigger、`sync_instruments`/`evaluate`/六种指标判断/`backtest`/`signal`/`paper_execute` Action、可信 SMA crossover 策略和移动可用结果页。`sync_instruments` 在所有选中 Spot/USD-M 公共元数据均成功解析后，用事务级 advisory lock 原子替换当前工作流的过滤快照；白名单取交集、黑名单任一命中即排除，全局目录取全部工作流来源并集。应用首次缺少该节点时创建并激活北京时间每六小时运行的默认工作流并立即首跑，后续启动不重新激活已停用工作流。K 线连接只负责补数和实时采集，按 `market + instrument + interval` 合并订阅并发布 `market.candle.closed`；重复 REST/WebSocket 数据由 K 线键和 CloudEvent `(source,id)` 去重。策略只接收升序、连续、UTC 闭合 K 线和已校验参数，返回 `-1` 至 `1` 的 Decimal 目标；实时、回测与 Paper 调用同一 `Evaluate`。
+内置 `official.quant@2.1.0` 提供 `realtime_candles` Trigger、`backfill_candles`/`sync_instruments`/`evaluate`/六种指标判断/`market_signal`/`backtest`/`signal`/`paper_execute` Action、可信 SMA crossover 策略和移动可用结果页。`sync_instruments` 在所有选中 Spot/USD-M 公共元数据均成功解析后，用事务级 advisory lock 原子替换当前工作流的过滤快照；白名单取交集、黑名单任一命中即排除，全局目录取全部工作流来源并集。应用首次缺少该节点时创建并激活北京时间每六小时运行的默认工作流并立即首跑，后续启动不重新激活已停用工作流。`realtime_candles` 在一条 Binance combined-stream WebSocket 上订阅单币种的多个固定周期，按 `market + instrument + 规范化周期集合` 合并进程内订阅，断线只重连；每根闭合 K 线落库并发布 `market.candle.closed`。`backfill_candles` 按可选 UTC 结束时间向前获取每周期最近 `1-10000` 根闭合 K 线，只写库并返回汇总，不发布事件。重复 REST/WebSocket 数据由 K 线主键和 CloudEvent `(source,id)` 去重。策略只接收升序、连续、UTC 闭合 K 线和已校验参数，返回 `-1` 至 `1` 的 Decimal 目标；实时、回测与 Paper 调用同一 `Evaluate`。
 
 六种 `1.0.0` 判断节点分别是 `official.quant.volume_spike_condition`、`official.quant.price_change_condition`、`official.quant.macd_condition`、`official.quant.kdj_condition`、`official.quant.rsi_condition` 和 `official.quant.bollinger_condition`。一个节点只保存一种指标规则及市场、交易对、检查周期、K 线周期和名称；每次在当前与上一个检查时点截取当时已闭合的 K 线，禁止未来数据。K 线断档、非法参数和数据库错误使节点失败，历史不足则 `ready=false` 并走 `false`。EMA、Wilder RSI、KDJ、布林标准差和有界平方根全部使用确定性 Decimal。
 
-判断输出包含 `ready`、`matched`、`previousMatched`、`branch`、`entered`、`triggered`、当前/上一值、UTC 时间、业务键和中文摘要。`true` 串联表达 AND，并行汇合表达 OR，`false` 可连接任意节点。`branch` 始终反映当前结果，连续命中仍执行下游；`entered` 沿判断连线传播路径重新进入状态，`triggered` 只在整条 true 路径重新进入时成立。编辑器连接判断节点到任一通知节点时自动附加 `input.triggered == true` 并聚合摘要，因此连续命中只通知一次，恢复后再次命中会重新通知。
+`official.quant.market_signal@1.0.0` 只能接收一个指标判断节点的 `true` 分支，保存时由编辑器生成且由后端校验 `market`、`instrument`、`interval`、`formula -> name`、`indicator`、`candleCloseTime`、`summary` 和 `value -> values` 的直接字段绑定。每根命中的闭合 K 线写入一条 `plugin_quant.market_signals` 行；稳定 `operation_key` 使节点重试幂等。该表及查询接口只表示行情信号，不进入现有 `plugin_quant.signals`、审批或 Paper 交易链路。
+
+判断输出包含 `ready`、`matched`、`previousMatched`、`branch`、`entered`、`triggered`、市场、交易对、当前/上一值、UTC 时间、业务键和中文摘要。`true` 串联表达 AND，并行汇合表达 OR，`false` 可连接任意节点。`branch` 始终反映当前结果，连续命中仍执行下游；`entered` 沿判断连线传播路径重新进入状态，`triggered` 只在整条 true 路径重新进入时成立。编辑器连接判断节点到任一通知节点时自动附加 `input.triggered == true` 并聚合摘要，因此连续命中只通知一次，恢复后再次命中会重新通知。
 
 Paper 账户按 `workflowId + paper nodeInstanceId` 唯一。默认人工审批；自动模式只有在最大总名义价值、单品种名义价值、单次操作名义价值、最大日亏损和最大回撤全部显式配置时有效。批准后重新读取 Binance 公共报价，并在一个数据库事务中检查信号/任务状态、报价新鲜度、品种状态、数量步进、账户状态及五项风险限制。拒绝不会创建账户或账本；成功执行写入不可变订单、成交、费用和账本事实，再更新账户与持仓投影。操作键和唯一约束保证节点重试、进程重启及 Outbox 重投不重复成交或投递。
 
@@ -126,7 +128,7 @@ QQ 发送支持群聊和单聊文本、Markdown、富媒体 URL 上传、键盘�
 
 站内通知按 `recipient_user_id` 隔离，查询和已读操作只影响当前用户。持久投递提交后才发布 `notice.created`；实时 WebSocket 使用 `coinsphere.notifications.v1` 子协议携带 Access Token，要求同源 Origin、有界发送队列和 Ping/Pong，断线或队列满不影响数据库事实。诊断重放复用原 Checkpoint，不再次产生 notification、human_action 或 paper 副作用。
 
-`GET /api/v1/plugins/official.quant/{instruments|candles|strategies|backtests|signals|paper-accounts}`、Paper 账户重建和 Notification 系统查询是 `SystemScope` 路由，只允许超级管理员。ResultView 插件路由只接受核心注入的固定范围，查询参数不能扩大范围。金融值均返回十进制字符串。
+`GET /api/v1/plugins/official.quant/{instruments|candles|strategies|backtests|market-signals|signals|paper-accounts}`、Paper 账户重建和 Notification 系统查询是 `SystemScope` 路由，只允许超级管理员。`market-signals` 必须指定 `market`、`instrument`、`interval`，可用 UTC RFC3339 `startTime`、`endTime` 和不超过 500 的 `limit` 限定范围，按 K 线收盘时间倒序返回。ResultView 插件路由只接受核心注入的固定范围，查询参数不能扩大范围。金融值均返回十进制字符串。
 
 匿名 Webhook 要求 `X-CoinSphere-Webhook-Secret`、`Idempotency-Key` 和 `X-CoinSphere-Partition-Key` 各出现一次，正文必须是不超过 1 MiB 的 JSON 对象。错误 Secret、非运行工作流和非 Webhook 主触发器统一返回不可发现响应。
 

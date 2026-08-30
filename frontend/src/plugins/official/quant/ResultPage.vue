@@ -140,7 +140,8 @@
   const nodeTitle = computed(
     () =>
       ({
-        'official.quant.binance_candles': 'Binance 闭合行情',
+        'official.quant.realtime_candles': 'Binance 实时闭合行情',
+        'official.quant.backfill_candles': 'Binance K 线补数',
         'official.quant.sync_instruments': 'Binance 币种元数据采集',
         'official.quant.evaluate': '策略评估',
         'official.quant.backtest': '策略回测'

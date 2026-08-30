@@ -19,6 +19,15 @@ import type { Graph } from '@antv/x6'
 import { LOOP_NEXT_BRANCH, getNodeBranches, getNodeGraphKind } from './node-registry'
 
 const cellTypeCode = (cell: any) => String(cell?.getData?.()?.typeCode || '')
+const MARKET_SIGNAL_NODE_TYPE = 'official.quant.market_signal'
+const INDICATOR_CONDITION_TYPES = new Set([
+  'official.quant.volume_spike_condition',
+  'official.quant.price_change_condition',
+  'official.quant.macd_condition',
+  'official.quant.kdj_condition',
+  'official.quant.rsi_condition',
+  'official.quant.bollinger_condition'
+])
 
 export const graphKindOfCell = (cell: any) => getNodeGraphKind(cellTypeCode(cell))
 
@@ -101,6 +110,15 @@ export const createConnectionValidator =
     if (graphKindOfCell(sourceCell) === 'terminal') return false
 
     const graph = getGraph()
+    if (cellTypeCode(targetCell) === MARKET_SIGNAL_NODE_TYPE) {
+      if (!INDICATOR_CONDITION_TYPES.has(cellTypeCode(sourceCell)) || sourcePort !== 'true') {
+        return false
+      }
+      const occupied = (graph?.getIncomingEdges(targetCell.id) || []).some(
+        (incoming) => incoming.id !== edge?.id && incoming.id !== getDraftEdgeId()
+      )
+      if (occupied) return false
+    }
     if (wouldIntroduceCycle(graph, sourceCell.id, targetCell.id, edge?.id, getDraftEdgeId()))
       return false
 

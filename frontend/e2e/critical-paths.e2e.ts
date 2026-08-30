@@ -564,6 +564,10 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
       })
       return
     }
+    if (method === 'GET' && path === '/api/v1/plugins/official.quant/market-signals') {
+      await fulfillApi(route, { items: [] })
+      return
+    }
     if (method === 'GET' && path === '/api/v1/home/overview') {
       await fulfillApi(route, {
         process: {
@@ -743,7 +747,8 @@ test('超级管理员可以使用原 K 线详情页面', async ({ page }) => {
   const calls = await installBackendMocks(page, 'authenticated')
   await loginAsTestUser(page, '/data/market-chart')
 
-  await expect(page.getByRole('heading', { name: 'K 线与策略信号', exact: true })).toBeVisible()
+  await expect(page.getByLabel('图表筛选')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '信号', exact: true })).toBeVisible()
   await expect(page.getByText('BTCUSDT', { exact: true }).first()).toBeVisible()
   expect(calls.unexpectedApiCalls).toEqual([])
 })

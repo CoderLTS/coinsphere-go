@@ -37,11 +37,12 @@ var quantIndicatorOutputSchema = json.RawMessage(`{
     "branch":{"type":"string","enum":["true","false"]},"entered":{"type":"boolean"},"triggered":{"type":"boolean"},
     "evaluatedAt":{"type":"string","format":"date-time"},"previousEvaluatedAt":{"type":"string","format":"date-time"},
     "businessKey":{"type":"string","minLength":1,"maxLength":256},"summary":{"type":"string","minLength":1,"maxLength":2000},"formula":{"type":"string","minLength":1,"maxLength":2000},
+    "market":{"type":"string","enum":["spot","usdm"]},"instrument":{"type":"string","pattern":"^[A-Z0-9]{2,32}$"},
     "indicator":{"type":"string"},"interval":{"type":"string"},
     "candleCloseTime":{"type":"string"},"previousCandleCloseTime":{"type":"string"},
     "value":{"type":"object","additionalProperties":{"type":"string"}},"previousValue":{"type":"object","additionalProperties":{"type":"string"}}
   },
-  "required":["ready","matched","previousMatched","branch","entered","triggered","evaluatedAt","previousEvaluatedAt","businessKey","summary","formula","indicator","interval","candleCloseTime","previousCandleCloseTime","value","previousValue"],
+  "required":["ready","matched","previousMatched","branch","entered","triggered","evaluatedAt","previousEvaluatedAt","businessKey","summary","formula","market","instrument","indicator","interval","candleCloseTime","previousCandleCloseTime","value","previousValue"],
   "additionalProperties":false
 }`)
 
@@ -183,7 +184,8 @@ func (a quantIndicatorAction) Execute(ctx context.Context, request sdk.ActionReq
 		"branch": branch, "entered": entered, "triggered": triggered,
 		"evaluatedAt": evaluatedAt.Format(time.RFC3339Nano), "previousEvaluatedAt": previousAt.Format(time.RFC3339Nano),
 		"businessKey": fmt.Sprintf("quant:%s:%s:%s", config.Market, config.Instrument, request.NodeInstanceID),
-		"summary":     summary, "formula": formula, "indicator": leaf.Indicator, "interval": leaf.Interval,
+		"summary": summary, "formula": formula, "market": config.Market, "instrument": config.Instrument,
+		"indicator": leaf.Indicator, "interval": leaf.Interval,
 		"candleCloseTime": current.CandleCloseTime, "previousCandleCloseTime": previous.CandleCloseTime,
 		"value": current.Values, "previousValue": previous.Values,
 	})}, nil

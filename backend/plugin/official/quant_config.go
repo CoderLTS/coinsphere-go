@@ -20,6 +20,18 @@ type quantSeriesConfig struct {
 	Interval   string `json:"interval"`
 }
 
+type quantCandleStreamConfig struct {
+	Market     string   `json:"market"`
+	Instrument string   `json:"instrument"`
+	Intervals  []string `json:"intervals"`
+}
+
+type quantCandleBackfillConfig struct {
+	quantCandleStreamConfig
+	CandleCount int
+	EndTime     time.Time
+}
+
 type quantInstrumentSyncConfig struct {
 	Markets            []string `json:"markets"`
 	QuoteAssets        []string `json:"quoteAssets"`
@@ -111,6 +123,67 @@ func parseQuantSeriesConfig(raw json.RawMessage) (quantSeriesConfig, error) {
 	}
 	if _, ok := quantIntervals[config.Interval]; !ok {
 		return config, errors.New("quant interval is unsupported")
+	}
+	return config, nil
+}
+
+func parseQuantCandleStreamConfig(raw json.RawMessage) (quantCandleStreamConfig, error) {
+	var config quantCandleStreamConfig
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&config) != nil {
+		return config, errors.New("quant candle stream configuration is invalid")
+	}
+	return normalizeQuantCandleStreamConfig(config)
+}
+
+func parseQuantCandleBackfillConfig(raw json.RawMessage, now time.Time) (quantCandleBackfillConfig, error) {
+	var payload struct {
+		Market, Instrument, EndTime string
+		Intervals                   []string `json:"intervals"`
+		CandleCount                 int      `json:"candleCount"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&payload) != nil || payload.CandleCount < 1 || payload.CandleCount > 10000 {
+		return quantCandleBackfillConfig{}, errors.New("quant candle backfill configuration is invalid")
+	}
+	stream, err := normalizeQuantCandleStreamConfig(quantCandleStreamConfig{
+		Market: payload.Market, Instrument: payload.Instrument, Intervals: payload.Intervals,
+	})
+	if err != nil {
+		return quantCandleBackfillConfig{}, err
+	}
+	endTime := now.UTC()
+	if value := strings.TrimSpace(payload.EndTime); value != "" {
+		endTime, err = parseQuantUTCTime(value)
+		if err != nil || endTime.After(now) {
+			return quantCandleBackfillConfig{}, errors.New("quant candle backfill end time is invalid")
+		}
+	}
+	return quantCandleBackfillConfig{quantCandleStreamConfig: stream, CandleCount: payload.CandleCount, EndTime: endTime}, nil
+}
+
+func normalizeQuantCandleStreamConfig(config quantCandleStreamConfig) (quantCandleStreamConfig, error) {
+	config.Market = strings.ToLower(strings.TrimSpace(config.Market))
+	config.Instrument = strings.ToUpper(strings.TrimSpace(config.Instrument))
+	if config.Market != "spot" && config.Market != "usdm" || !quantInstrumentPattern.MatchString(config.Instrument) ||
+		len(config.Intervals) == 0 || len(config.Intervals) > len(quantIntervalOrder) {
+		return config, errors.New("quant candle stream market, instrument, or intervals are invalid")
+	}
+	selected := make(map[string]bool, len(config.Intervals))
+	for _, interval := range config.Intervals {
+		interval = strings.TrimSpace(interval)
+		if _, ok := quantIntervals[interval]; !ok || selected[interval] {
+			return config, errors.New("quant candle stream interval is unsupported or duplicated")
+		}
+		selected[interval] = true
+	}
+	config.Intervals = config.Intervals[:0]
+	for _, interval := range quantIntervalOrder {
+		if selected[interval] {
+			config.Intervals = append(config.Intervals, interval)
+		}
 	}
 	return config, nil
 }
