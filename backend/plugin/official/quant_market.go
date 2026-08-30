@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -124,8 +125,15 @@ func (h *quantCandleHub) run(key string, subscription *quantCandleSubscription) 
 		workers.Add(1)
 		go func(interval string) {
 			defer workers.Done()
+			lastError := ""
 			for subscription.ctx.Err() == nil {
-				_ = h.runtime.streamQuantCandles(subscription.ctx, subscription, interval)
+				err := h.runtime.streamQuantCandles(subscription.ctx, subscription, interval)
+				if err != nil && !errors.Is(err, context.Canceled) && err.Error() != lastError {
+					lastError = err.Error()
+					slog.Warn("Quant K line stream disconnected", "component", "plugin.quant",
+						"market", subscription.config.Market, "instrument", subscription.config.Instrument,
+						"interval", interval, "error_category", "stream_read", "error", lastError)
+				}
 				select {
 				case <-subscription.ctx.Done():
 					return
