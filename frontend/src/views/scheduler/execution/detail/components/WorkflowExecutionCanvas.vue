@@ -332,9 +332,7 @@
     { deep: true }
   )
 
-  watch([graphHostWidth, graphHostHeight], () => {
-    syncGraphSize()
-  })
+  watch([graphHostWidth, graphHostHeight], scheduleFitGraphView)
 
   onMounted(() => {
     ensureGraph()

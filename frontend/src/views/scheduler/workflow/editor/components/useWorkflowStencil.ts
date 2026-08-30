@@ -12,8 +12,6 @@ import type { CSSProperties, Ref, ShallowRef } from 'vue'
 import { createStencilNode } from '../workflow-editor.mapper'
 import type { WorkflowMaterialDropPayload, WorkflowMaterialGroup } from '../types'
 
-/** 物料面板的尺寸常量。PANEL_WIDTH 画布那边算工具栏偏移也要用，所以导出。 */
-export const STENCIL_PANEL_WIDTH = 252
 const STENCIL_GRAPH_WIDTH = 232
 const STENCIL_COLUMN_WIDTH = 216
 const STENCIL_CARD_WIDTH = 208

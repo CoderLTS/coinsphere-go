@@ -178,34 +178,29 @@
 
 <style scoped lang="scss">
   .editor-toolbar {
-    position: relative;
+    display: grid;
+    flex: 0 0 auto;
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
     width: 100%;
-    min-height: 48px;
-    pointer-events: none;
+    min-height: 44px;
   }
 
   .editor-toolbar__back,
   .editor-toolbar__tools,
   .editor-toolbar__actions {
-    position: absolute;
-    top: 0;
-    pointer-events: auto;
-  }
-
-  .editor-toolbar__back {
-    left: 0;
+    min-width: 0;
   }
 
   .editor-toolbar__tools {
-    left: 50%;
     display: inline-flex;
     gap: 6px;
     align-items: center;
-    transform: translateX(-50%);
+    justify-self: center;
   }
 
   .editor-toolbar__actions {
-    right: 0;
     display: inline-flex;
     gap: 12px;
     align-items: center;
@@ -332,9 +327,7 @@
     .editor-toolbar__back,
     .editor-toolbar__tools,
     .editor-toolbar__actions {
-      position: static;
       flex: 0 0 auto;
-      transform: none;
     }
 
     .editor-toolbar__actions {
