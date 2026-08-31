@@ -74,15 +74,18 @@ type quantCandleHub struct {
 }
 
 type quantCandleSubscription struct {
-	config      quantCandleStreamConfig
+	market      string
+	instrument  string
 	ctx         context.Context
 	cancel      context.CancelFunc
+	changed     chan struct{}
 	subscribers map[uint64]quantCandleSubscriber
 }
 
 type quantCandleSubscriber struct {
-	ctx     context.Context
-	emitter sdk.Emitter
+	ctx       context.Context
+	emitter   sdk.Emitter
+	intervals map[string]bool
 }
 
 func newQuantCandleHub(runtime *quantRuntime) *quantCandleHub {
@@ -90,21 +93,34 @@ func newQuantCandleHub(runtime *quantRuntime) *quantCandleHub {
 }
 
 func (h *quantCandleHub) subscribe(ctx context.Context, config quantCandleStreamConfig, emitter sdk.Emitter) error {
-	key := config.Market + ":" + config.Instrument + ":" + strings.Join(config.Intervals, ",")
+	key := config.Market + ":" + config.Instrument
 	h.mu.Lock()
 	subscription := h.subscriptions[key]
+	start := false
 	if subscription == nil {
 		workerCtx, cancel := context.WithCancel(context.Background())
 		subscription = &quantCandleSubscription{
-			config: config, ctx: workerCtx, cancel: cancel, subscribers: map[uint64]quantCandleSubscriber{},
+			market: config.Market, instrument: config.Instrument, ctx: workerCtx, cancel: cancel,
+			changed: make(chan struct{}, 1), subscribers: map[uint64]quantCandleSubscriber{},
 		}
 		h.subscriptions[key] = subscription
-		go h.run(key, subscription)
+		start = true
 	}
 	h.nextSubscriber++
 	subscriberID := h.nextSubscriber
-	subscription.subscribers[subscriberID] = quantCandleSubscriber{ctx: ctx, emitter: emitter}
+	intervals := make(map[string]bool, len(config.Intervals))
+	for _, interval := range config.Intervals {
+		intervals[interval] = true
+	}
+	subscription.subscribers[subscriberID] = quantCandleSubscriber{ctx: ctx, emitter: emitter, intervals: intervals}
+	select {
+	case subscription.changed <- struct{}{}:
+	default:
+	}
 	h.mu.Unlock()
+	if start {
+		go h.run(key, subscription)
+	}
 
 	<-ctx.Done()
 	h.mu.Lock()
@@ -113,6 +129,11 @@ func (h *quantCandleHub) subscribe(ctx context.Context, config quantCandleStream
 		if len(subscription.subscribers) == 0 {
 			delete(h.subscriptions, key)
 			subscription.cancel()
+		} else {
+			select {
+			case subscription.changed <- struct{}{}:
+			default:
+			}
 		}
 	}
 	h.mu.Unlock()
@@ -120,34 +141,51 @@ func (h *quantCandleHub) subscribe(ctx context.Context, config quantCandleStream
 }
 
 func (h *quantCandleHub) run(key string, subscription *quantCandleSubscription) {
-	var workers sync.WaitGroup
-	for _, interval := range subscription.config.Intervals {
-		workers.Add(1)
-		go func(interval string) {
-			defer workers.Done()
-			lastError := ""
-			for subscription.ctx.Err() == nil {
-				err := h.runtime.streamQuantCandles(subscription.ctx, subscription, interval)
-				if err != nil && !errors.Is(err, context.Canceled) && err.Error() != lastError {
-					lastError = err.Error()
-					slog.Warn("Quant K line stream disconnected", "component", "plugin.quant",
-						"market", subscription.config.Market, "instrument", subscription.config.Instrument,
-						"interval", interval, "error_category", "stream_read", "error", lastError)
-				}
-				select {
-				case <-subscription.ctx.Done():
-					return
-				case <-time.After(time.Second):
-				}
-			}
-		}(interval)
+	lastError := ""
+	for subscription.ctx.Err() == nil {
+		intervals := h.subscriptionIntervals(subscription)
+		if len(intervals) == 0 {
+			break
+		}
+		err := h.runtime.streamQuantCandles(subscription.ctx, subscription, intervals)
+		if err != nil && !errors.Is(err, context.Canceled) && err.Error() != lastError {
+			lastError = err.Error()
+			slog.Warn("Quant K line stream disconnected", "component", "plugin.quant",
+				"market", subscription.market, "instrument", subscription.instrument,
+				"intervals", strings.Join(intervals, ","), "error_category", "stream_read", "error", lastError)
+		}
+		select {
+		case <-subscription.ctx.Done():
+			break
+		case <-time.After(time.Second):
+		}
 	}
-	workers.Wait()
 	h.mu.Lock()
 	if h.subscriptions[key] == subscription && len(subscription.subscribers) == 0 {
 		delete(h.subscriptions, key)
 	}
 	h.mu.Unlock()
+}
+
+func (h *quantCandleHub) subscriptionIntervals(subscription *quantCandleSubscription) []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	selected := make(map[string]bool)
+	for _, subscriber := range subscription.subscribers {
+		if subscriber.ctx.Err() != nil {
+			continue
+		}
+		for interval := range subscriber.intervals {
+			selected[interval] = true
+		}
+	}
+	intervals := make([]string, 0, len(selected))
+	for _, interval := range quantIntervalOrder {
+		if selected[interval] {
+			intervals = append(intervals, interval)
+		}
+	}
+	return intervals
 }
 
 func (q *quantRuntime) broadcastQuantCandle(subscription *quantCandleSubscription, candle quantCandle) error {
@@ -168,7 +206,9 @@ func (q *quantRuntime) broadcastQuantCandle(subscription *quantCandleSubscriptio
 	q.hub.mu.Lock()
 	subscribers := make([]quantCandleSubscriber, 0, len(subscription.subscribers))
 	for _, subscriber := range subscription.subscribers {
-		subscribers = append(subscribers, subscriber)
+		if subscriber.intervals[candle.Interval] {
+			subscribers = append(subscribers, subscriber)
+		}
 	}
 	q.hub.mu.Unlock()
 	for _, subscriber := range subscribers {
@@ -297,13 +337,17 @@ func parseQuantKline(config quantSeriesConfig, raw json.RawMessage) (quantCandle
 	}, nil
 }
 
-func (q *quantRuntime) streamQuantCandles(ctx context.Context, subscription *quantCandleSubscription, interval string) error {
-	config := subscription.config
+func (q *quantRuntime) streamQuantCandles(ctx context.Context, subscription *quantCandleSubscription, intervals []string) error {
 	host := "data-stream.binance.vision:9443"
-	if config.Market == "usdm" {
+	if subscription.market == "usdm" {
 		host = "fstream.binance.com"
 	}
-	target, _ := url.Parse("wss://" + host + "/ws/" + strings.ToLower(config.Instrument) + "@kline_" + interval)
+	streams := make([]string, len(intervals))
+	for index, interval := range intervals {
+		streams[index] = strings.ToLower(subscription.instrument) + "@kline_" + interval
+	}
+	target, _ := url.Parse("wss://" + host + "/stream")
+	target.RawQuery = "streams=" + strings.Join(streams, "/")
 	if err := q.client.validateWebSocketURL(ctx, target, false); err != nil {
 		return err
 	}
@@ -317,16 +361,85 @@ func (q *quantRuntime) streamQuantCandles(ctx context.Context, subscription *qua
 	}
 	connection.SetReadLimit(maxConnectorPayloadBytes)
 	closed := make(chan struct{})
+	updatesDone := make(chan struct{})
+	updateErrors := make(chan error, 1)
+	active := make(map[string]bool, len(intervals))
+	for _, interval := range intervals {
+		active[interval] = true
+	}
+	// 单写协程在不中断行情连接的情况下同步所有工作流需要的周期并集。
 	go func() {
-		select {
-		case <-ctx.Done():
-			connection.Close()
-		case <-closed:
+		defer close(updatesDone)
+		requestID := int64(1)
+		for {
+			select {
+			case <-ctx.Done():
+				connection.Close()
+				return
+			case <-closed:
+				return
+			case <-subscription.changed:
+				desiredIntervals := q.hub.subscriptionIntervals(subscription)
+				desired := make(map[string]bool, len(desiredIntervals))
+				additions, removals := []string{}, []string{}
+				for _, interval := range desiredIntervals {
+					desired[interval] = true
+					if !active[interval] {
+						additions = append(additions, interval)
+					}
+				}
+				for _, interval := range quantIntervalOrder {
+					if active[interval] && !desired[interval] {
+						removals = append(removals, interval)
+					}
+				}
+				for _, update := range []struct {
+					method    string
+					intervals []string
+				}{{"SUBSCRIBE", additions}, {"UNSUBSCRIBE", removals}} {
+					if len(update.intervals) == 0 {
+						continue
+					}
+					if err := writeQuantCandleSubscription(connection, update.method, subscription.instrument, update.intervals, requestID); err != nil {
+						updateErrors <- err
+						connection.Close()
+						return
+					}
+					requestID++
+				}
+				active = desired
+			}
 		}
 	}()
-	defer close(closed)
-	defer connection.Close()
+	defer func() {
+		close(closed)
+		connection.Close()
+		<-updatesDone
+	}()
 	for {
+		var envelope struct {
+			Stream string          `json:"stream"`
+			Data   json.RawMessage `json:"data"`
+			ID     *int64          `json:"id"`
+			Code   *int            `json:"code"`
+		}
+		if err := connection.ReadJSON(&envelope); err != nil {
+			select {
+			case updateErr := <-updateErrors:
+				return updateErr
+			default:
+				return err
+			}
+		}
+		if envelope.Code != nil {
+			return errors.New("Binance WebSocket subscription rejected")
+		}
+		if envelope.Stream == "" {
+			if envelope.ID == nil {
+				return errors.New("binance WebSocket payload is invalid")
+			}
+			continue
+		}
 		var message struct {
 			Symbol string `json:"s"`
 			Kline  struct {
@@ -341,10 +454,14 @@ func (q *quantRuntime) streamQuantCandles(ctx context.Context, subscription *qua
 				Closed    bool            `json:"x"`
 			} `json:"k"`
 		}
-		if err := connection.ReadJSON(&message); err != nil {
-			return err
+		if json.Unmarshal(envelope.Data, &message) != nil {
+			return errors.New("binance WebSocket payload is invalid")
 		}
-		if message.Symbol != config.Instrument || message.Kline.Interval != interval {
+		if message.Symbol != subscription.instrument ||
+			envelope.Stream != strings.ToLower(subscription.instrument)+"@kline_"+message.Kline.Interval {
+			return errors.New("binance WebSocket kline payload is invalid")
+		}
+		if _, ok := quantIntervals[message.Kline.Interval]; !ok {
 			return errors.New("binance WebSocket kline payload is invalid")
 		}
 		if !message.Kline.Closed {
@@ -354,7 +471,7 @@ func (q *quantRuntime) streamQuantCandles(ctx context.Context, subscription *qua
 			message.Kline.OpenTime, message.Kline.Open, message.Kline.High, message.Kline.Low,
 			message.Kline.Close, message.Kline.Volume, message.Kline.CloseTime,
 		})
-		series := quantSeriesConfig{Market: config.Market, Instrument: config.Instrument, Interval: interval}
+		series := quantSeriesConfig{Market: subscription.market, Instrument: subscription.instrument, Interval: message.Kline.Interval}
 		candle, err := parseQuantKline(series, raw)
 		if err != nil {
 			return errors.New("binance WebSocket kline payload is invalid")
@@ -363,6 +480,26 @@ func (q *quantRuntime) streamQuantCandles(ctx context.Context, subscription *qua
 			return err
 		}
 	}
+}
+
+func writeQuantCandleSubscription(connection *websocket.Conn, method, instrument string, intervals []string, requestID int64) error {
+	streams := make([]string, len(intervals))
+	for index, interval := range intervals {
+		streams[index] = strings.ToLower(instrument) + "@kline_" + interval
+	}
+	if err := connection.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return errors.New("update Binance K line subscription failed")
+	}
+	err := connection.WriteJSON(struct {
+		Method string   `json:"method"`
+		Params []string `json:"params"`
+		ID     int64    `json:"id"`
+	}{Method: method, Params: streams, ID: requestID})
+	_ = connection.SetWriteDeadline(time.Time{})
+	if err != nil {
+		return errors.New("update Binance K line subscription failed")
+	}
+	return nil
 }
 
 func (q *quantRuntime) getQuantJSON(ctx context.Context, target string, destination any) error {
