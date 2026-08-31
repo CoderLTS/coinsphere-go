@@ -1,4 +1,4 @@
-# coinsphere-go V2 开发栈：Web 与 Go App 共用一个内部 PostgreSQL，schema 只由一次性 migration 建立。
+# coinsphere-go V2 开发栈：Go App 内置 Web 产物并使用内部 PostgreSQL，schema 只由一次性 migration 建立。
 # 一键启动：docker compose up -d --build，然后访问 http://localhost:8080
 services:
   postgresql:
@@ -42,7 +42,8 @@ services:
 
   backend:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
     image: coinsphere-go-backend
     container_name: coinsphere-go-backend
     restart: unless-stopped
@@ -63,6 +64,8 @@ services:
       - backend-uploads:/app/volumes/uploads
       - backend-static:/app/volumes/static
       - backend-artifacts:/app/volumes/artifacts
+    ports:
+      - "${COINSPHERE_WEB_PORT:-8080}:6987"
     networks:
       - default
       - database
@@ -76,17 +79,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
-
-  web:
-    build:
-      context: ./frontend
-    image: coinsphere-go-web
-    container_name: coinsphere-go-web
-    restart: unless-stopped
-    depends_on:
-      - backend
-    ports:
-      - "${COINSPHERE_WEB_PORT:-8080}:80"
 
 volumes:
   backend-artifacts:

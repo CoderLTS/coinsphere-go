@@ -5,109 +5,112 @@ import (
 	"net/http"
 
 	"coinsphere/backend/internal/service"
+	"github.com/gin-gonic/gin"
 )
 
-func (s *Server) handleListResultViews(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	items, err := s.App.ListResultViews(r.Context(), principal)
-	respond(w, M{"items": items}, err, "")
+func (s *Server) handleListResultViews(c *gin.Context) {
+	items, err := s.App.ListResultViews(c.Request.Context(), currentPrincipal(c))
+	respond(c, M{"items": items}, err, "")
 }
 
-func (s *Server) handleCreateResultView(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxWorkflowRequestBytes)
-	payload, err := decodeBody[service.ResultViewCreatePayload](r)
+func (s *Server) handleCreateResultView(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxWorkflowRequestBytes)
+	payload, err := decodeBody[service.ResultViewCreatePayload](c)
 	if err != nil {
-		writeProblem(w, r, http.StatusBadRequest, err.Error())
+		writeProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	view, err := s.App.CreateResultView(r.Context(), *payload, principal)
-	respond(w, view, err, "")
+	view, err := s.App.CreateResultView(c.Request.Context(), *payload, currentPrincipal(c))
+	respond(c, view, err, "")
 }
 
-func (s *Server) handleGetResultView(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	viewID, err := pathInt64(r, "viewId")
+func (s *Server) handleGetResultView(c *gin.Context) {
+	viewID, err := pathInt64(c, "viewId")
 	if err != nil {
-		writeProblem(w, r, http.StatusBadRequest, err.Error())
+		writeProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	view, err := s.App.GetResultView(r.Context(), viewID, principal)
-	respond(w, view, err, "")
+	view, err := s.App.GetResultView(c.Request.Context(), viewID, currentPrincipal(c))
+	respond(c, view, err, "")
 }
 
-func (s *Server) handleReplaceResultViewGrants(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	viewID, err := pathInt64(r, "viewId")
+func (s *Server) handleReplaceResultViewGrants(c *gin.Context) {
+	viewID, err := pathInt64(c, "viewId")
 	if err != nil {
-		writeProblem(w, r, http.StatusBadRequest, err.Error())
+		writeProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxWorkflowRequestBytes)
-	payload, err := decodeBody[service.ResultViewGrantPayload](r)
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxWorkflowRequestBytes)
+	payload, err := decodeBody[service.ResultViewGrantPayload](c)
 	if err != nil {
-		writeProblem(w, r, http.StatusBadRequest, err.Error())
+		writeProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	view, err := s.App.ReplaceResultViewGrants(r.Context(), viewID, *payload, principal)
-	respond(w, view, err, "")
+	view, err := s.App.ReplaceResultViewGrants(c.Request.Context(), viewID, *payload, currentPrincipal(c))
+	respond(c, view, err, "")
 }
 
-func (s *Server) handleRevokeResultView(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	viewID, err := pathInt64(r, "viewId")
+func (s *Server) handleRevokeResultView(c *gin.Context) {
+	viewID, err := pathInt64(c, "viewId")
 	if err != nil {
-		writeProblem(w, r, http.StatusBadRequest, err.Error())
+		writeProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	view, err := s.App.RevokeResultView(r.Context(), viewID, principal)
-	respond(w, view, err, "")
+	view, err := s.App.RevokeResultView(c.Request.Context(), viewID, currentPrincipal(c))
+	respond(c, view, err, "")
 }
 
-func (s *Server) handleListResultViewRuns(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	viewID, err := pathInt64(r, "viewId")
+func (s *Server) handleListResultViewRuns(c *gin.Context) {
+	viewID, err := pathInt64(c, "viewId")
 	if err != nil {
-		writeProblem(w, r, http.StatusNotFound, service.ErrNotFound.Error())
+		writeProblem(c, http.StatusNotFound, service.ErrNotFound.Error())
 		return
 	}
-	scope, err := s.App.ResolveResultScope(r.Context(), viewID, "", principal)
+	scope, err := s.App.ResolveResultScope(c.Request.Context(), viewID, "", currentPrincipal(c))
 	if err != nil {
-		respond(w, nil, fmt.Errorf("%w: result view", service.ErrNotFound), "")
+		respond(c, nil, fmt.Errorf("%w: result view", service.ErrNotFound), "")
 		return
 	}
-	runs, err := s.App.ListResultScopeRuns(r.Context(), scope)
-	respond(w, M{"items": runs}, err, "")
+	runs, err := s.App.ListResultScopeRuns(c.Request.Context(), scope)
+	respond(c, M{"items": runs}, err, "")
 }
 
-func (s *Server) handleResultViewRunAction(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	action := r.PathValue("action")
-	viewID, viewErr := pathInt64(r, "viewId")
-	runID, runErr := pathInt64(r, "runId")
+func (s *Server) handleResultViewRunAction(c *gin.Context) {
+	action := c.Param("action")
+	viewID, viewErr := pathInt64(c, "viewId")
+	runID, runErr := pathInt64(c, "runId")
 	if viewErr != nil || runErr != nil {
-		writeProblem(w, r, http.StatusNotFound, service.ErrNotFound.Error())
+		writeProblem(c, http.StatusNotFound, service.ErrNotFound.Error())
 		return
 	}
-	scope, err := s.App.ResolveResultScope(r.Context(), viewID, action, principal)
+	principal := currentPrincipal(c)
+	scope, err := s.App.ResolveResultScope(c.Request.Context(), viewID, action, principal)
 	if err != nil {
-		respond(w, nil, fmt.Errorf("%w: result view", service.ErrNotFound), "")
+		respond(c, nil, fmt.Errorf("%w: result view", service.ErrNotFound), "")
 		return
 	}
-	if !authorizeResultAction(w, r, principal, action) {
+	if !authorizeResultAction(c, principal, action) {
 		return
 	}
-	run, err := s.App.ApplyResultScopeRunAction(r.Context(), scope, runID, action)
-	respond(w, run, err, "")
+	run, err := s.App.ApplyResultScopeRunAction(c.Request.Context(), scope, runID, action)
+	respond(c, run, err, "")
 }
 
-func (s *Server) handleResultViewWorkflowPause(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	viewID, err := pathInt64(r, "viewId")
+func (s *Server) handleResultViewWorkflowPause(c *gin.Context) {
+	viewID, err := pathInt64(c, "viewId")
 	if err != nil {
-		writeProblem(w, r, http.StatusNotFound, service.ErrNotFound.Error())
+		writeProblem(c, http.StatusNotFound, service.ErrNotFound.Error())
 		return
 	}
-	scope, err := s.App.ResolveResultScope(r.Context(), viewID, "pause", principal)
+	principal := currentPrincipal(c)
+	scope, err := s.App.ResolveResultScope(c.Request.Context(), viewID, "pause", principal)
 	if err != nil {
-		respond(w, nil, fmt.Errorf("%w: result view", service.ErrNotFound), "")
+		respond(c, nil, fmt.Errorf("%w: result view", service.ErrNotFound), "")
 		return
 	}
-	if !authorizeResultAction(w, r, principal, "pause") {
+	if !authorizeResultAction(c, principal, "pause") {
 		return
 	}
-	workflow, err := s.App.PauseResultScopeWorkflow(r.Context(), scope)
-	respond(w, workflow, err, "")
+	workflow, err := s.App.PauseResultScopeWorkflow(c.Request.Context(), scope)
+	respond(c, workflow, err, "")
 }

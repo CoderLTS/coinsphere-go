@@ -7,70 +7,71 @@ import (
 	"strings"
 
 	"coinsphere/backend/internal/service"
+	"github.com/gin-gonic/gin"
 )
 
-func (s *Server) handleListSystemLogs(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
-	page, ok := cursorPage(w, r)
+func (s *Server) handleListSystemLogs(c *gin.Context) {
+	page, ok := cursorPage(c)
 	if !ok {
 		return
 	}
-	query, err := systemLogQuery(r)
+	query, err := systemLogQuery(c)
 	if err != nil {
-		writeProblem(w, r, http.StatusBadRequest, err.Error())
+		writeProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	query.Page = page
-	data, err := s.App.ListSystemLogs(r.Context(), query)
-	respond(w, data, err, "")
+	data, err := s.App.ListSystemLogs(c.Request.Context(), query)
+	respond(c, data, err, "")
 }
 
-func (s *Server) handleGetSystemLogRuntime(w http.ResponseWriter, _ *http.Request, _ *service.Principal) {
+func (s *Server) handleGetSystemLogRuntime(c *gin.Context) {
 	data, err := s.App.GetSystemLogRuntime()
-	respond(w, data, err, "")
+	respond(c, data, err, "")
 }
 
-func (s *Server) handleUpdateSystemLogRuntime(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	payload, err := decodeBody[service.SystemLogSettingsPayload](r)
+func (s *Server) handleUpdateSystemLogRuntime(c *gin.Context) {
+	payload, err := decodeBody[service.SystemLogSettingsPayload](c)
 	if err != nil {
-		writeProblem(w, r, http.StatusBadRequest, err.Error())
+		writeProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	data, err := s.App.UpdateSystemLogRuntime(r.Context(), *payload, principal.User.ID)
-	respond(w, data, err, "日志配置已应用")
+	data, err := s.App.UpdateSystemLogRuntime(c.Request.Context(), *payload, currentPrincipal(c).User.ID)
+	respond(c, data, err, "日志配置已应用")
 }
 
-func systemLogQuery(r *http.Request) (service.SystemLogQuery, error) {
-	startTime, err := workflowRunQueryTime(r, "startTime")
+func systemLogQuery(c *gin.Context) (service.SystemLogQuery, error) {
+	startTime, err := workflowRunQueryTime(c, "startTime")
 	if err != nil {
 		return service.SystemLogQuery{}, err
 	}
-	endTime, err := workflowRunQueryTime(r, "endTime")
+	endTime, err := workflowRunQueryTime(c, "endTime")
 	if err != nil {
 		return service.SystemLogQuery{}, err
 	}
-	userID, err := systemLogPositiveInt64(r, "userId")
+	userID, err := systemLogPositiveInt64(c, "userId")
 	if err != nil {
 		return service.SystemLogQuery{}, err
 	}
-	statusCode, err := systemLogStatusCode(r)
+	statusCode, err := systemLogStatusCode(c)
 	if err != nil {
 		return service.SystemLogQuery{}, err
 	}
-	level := strings.ToLower(queryStr(r, "level"))
+	level := strings.ToLower(queryStr(c, "level"))
 	if level != "" && level != "debug" && level != "info" && level != "warn" && level != "error" {
 		return service.SystemLogQuery{}, errors.New("level must be debug, info, warn, or error")
 	}
-	method := strings.ToUpper(queryStr(r, "method"))
+	method := strings.ToUpper(queryStr(c, "method"))
 	if method != "" && !map[string]bool{
 		"GET": true, "POST": true, "PUT": true, "PATCH": true,
 		"DELETE": true, "HEAD": true, "OPTIONS": true,
 	}[method] {
 		return service.SystemLogQuery{}, errors.New("method is invalid")
 	}
-	component := queryStr(r, "component")
-	requestID := queryStr(r, "requestId")
-	route := queryStr(r, "route")
-	keyword := queryStr(r, "keyword")
+	component := queryStr(c, "component")
+	requestID := queryStr(c, "requestId")
+	route := queryStr(c, "route")
+	keyword := queryStr(c, "keyword")
 	if len(component) > 64 || len(requestID) > 64 || len(route) > 255 || len(keyword) > 100 {
 		return service.SystemLogQuery{}, errors.New("log filter is too long")
 	}
@@ -87,8 +88,8 @@ func systemLogQuery(r *http.Request) (service.SystemLogQuery, error) {
 	}, nil
 }
 
-func systemLogPositiveInt64(r *http.Request, name string) (*int64, error) {
-	raw := queryStr(r, name)
+func systemLogPositiveInt64(c *gin.Context, name string) (*int64, error) {
+	raw := queryStr(c, name)
 	if raw == "" {
 		return nil, nil
 	}
@@ -99,8 +100,8 @@ func systemLogPositiveInt64(r *http.Request, name string) (*int64, error) {
 	return &value, nil
 }
 
-func systemLogStatusCode(r *http.Request) (*int, error) {
-	raw := queryStr(r, "statusCode")
+func systemLogStatusCode(c *gin.Context) (*int, error) {
+	raw := queryStr(c, "statusCode")
 	if raw == "" {
 		return nil, nil
 	}

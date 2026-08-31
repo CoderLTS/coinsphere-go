@@ -9,7 +9,7 @@
 | 环境 | |
 | UTC 开始/结束 | |
 | 发布标签与 commit | |
-| Backend/Web 镜像 digest | |
+| 应用镜像 digest | |
 | migration 版本与 freeze commit | |
 | Paper 工作流/修订 | |
 | 市场、品种、周期 | |

@@ -1,6 +1,5 @@
 package api
 
-// import:标准库(net/http、os、path/filepath)在上,本项目内部包(perm 权限码、service 业务逻辑)在下。
 import (
 	"context"
 	"fmt"
@@ -13,147 +12,143 @@ import (
 	"coinsphere/backend/internal/perm"
 	"coinsphere/backend/internal/service"
 	"coinsphere/backend/plugin/sdk"
+	"github.com/gin-gonic/gin"
 )
 
-// registerRoutes 把每个 URL 登记到路由表 mux。理解一行就理解全部:
-//
-//	mux.HandleFunc("方法 /路径", 处理函数) —— 例如 "GET /api/v1/..."。这是 Go 1.22+ net/http 的新路由写法(见 GO入门笔记『框架:net/http』)。
-//	路径里的 {definitionId} 之类是"路径参数",处理函数用 r.PathValue("definitionId") 取出。
-//	处理函数外面套一层 s.requireAuth / s.requirePermission(...),就是给这个接口加上"登录/权限"检查(中间件,见 api.go)。
-//
 // registerRoutes 只暴露 V2 基线仍保留的认证、监控与系统管理边界。
-func (s *Server) registerRoutes(mux *http.ServeMux) {
-	// 处理函数的固定签名是 func(w http.ResponseWriter, r *http.Request);这里直接写了一个匿名函数当处理器。
-	// /health 保留为数据库就绪别名，供既有 Compose 与发布脚本平滑切换。
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		s.handleReady(w, r)
+func (s *Server) registerRoutes(router *gin.Engine) {
+	get(router, "/health", s.handleReady)
+	get(router, "/health/live", func(c *gin.Context) {
+		writeJSON(c, http.StatusOK, M{"status": "alive"})
 	})
-	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, M{"status": "alive"})
-	})
-	mux.HandleFunc("GET /health/ready", s.handleReady)
-	mux.HandleFunc("GET /metrics", s.requireAuth(func(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
-		s.handleMetrics(w, r)
-	}))
+	get(router, "/health/ready", s.handleReady)
+	get(router, "/metrics", s.requireAuth(), s.handleMetrics)
 
-	// 静态目录。
-	// os.MkdirAll 建目录(已存在也不报错);0o755 是八进制的目录权限;开头的 _ = 忽略返回的 error。
 	_ = os.MkdirAll(s.StaticDir, 0o755)
 	_ = os.MkdirAll(filepath.Join(s.UploadsDir, "avatars"), 0o755)
-	// mux.Handle 与 HandleFunc 类似,但收的是 http.Handler 对象;FileServer 把磁盘目录当静态资源伺服,StripPrefix 先去掉 URL 前缀再找文件。
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir(s.StaticDir))))
-	mux.Handle("GET /uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(s.UploadsDir))))
+	router.StaticFS("/static", http.Dir(s.StaticDir))
+	router.StaticFS("/uploads", http.Dir(s.UploadsDir))
 
-	// 认证。
-	// 登录套一层 s.rateLimit(...) 限流，登出撤销当前 access-token 会话。
-	mux.HandleFunc("POST /api/v1/auth/login", s.rateLimit(s.handleLogin))
-	mux.HandleFunc("POST /api/v1/auth/logout", s.requireAuth(s.handleLogout))
-	mux.HandleFunc("POST /api/v1/auth/reauth", s.requireAuth(s.handleReauth))
-	mux.HandleFunc("GET /api/v1/me", s.requireAuth(s.handleMe))
+	api := router.Group("/api/v1")
+	authenticated := api.Group("", s.requireAuth())
+	super := authenticated.Group("", s.requireRole("R_SUPER"))
+	auth := api.Group("/auth")
+	auth.POST("/login", s.rateLimit(), s.handleLogin)
+	auth.POST("/logout", s.requireAuth(), s.handleLogout)
+	auth.POST("/reauth", s.requireAuth(), s.handleReauth)
+	get(authenticated, "/me", s.handleMe)
 
-	// 首页。
-	mux.HandleFunc("GET /api/v1/home/meta", s.requireAuth(func(w http.ResponseWriter, r *http.Request, p *service.Principal) {
-		ok(w, s.App.GetHomeMeta())
-	}))
-	mux.HandleFunc("GET /api/v1/home/overview", s.requireAuth(func(w http.ResponseWriter, r *http.Request, p *service.Principal) {
-		data, err := s.App.GetHomeOverview(r.Context())
+	get(authenticated, "/home/meta", func(c *gin.Context) {
+		ok(c, s.App.GetHomeMeta())
+	})
+	get(authenticated, "/home/overview", func(c *gin.Context) {
+		data, err := s.App.GetHomeOverview(c.Request.Context())
 		if err == nil {
 			for key, value := range s.metrics.snapshot() {
 				data[key] = value
 			}
 		}
-		respond(w, data, err, "")
-	}))
+		respond(c, data, err, "")
+	})
 
-	// 平台智能助手和全局 OpenAI-compatible 模型配置仅向超级管理员开放。
-	mux.HandleFunc("GET /api/v1/config/ai-models", s.requireRole("R_SUPER", s.handleListAIModels))
-	mux.HandleFunc("POST /api/v1/config/ai-models", s.requireRole("R_SUPER", s.handleCreateAIModel))
-	mux.HandleFunc("PUT /api/v1/config/ai-models/{modelId}", s.requireRole("R_SUPER", s.handleUpdateAIModel))
-	mux.HandleFunc("PATCH /api/v1/config/ai-models/{modelId}", s.requireRole("R_SUPER", s.handlePatchAIModel))
-	mux.HandleFunc("DELETE /api/v1/config/ai-models/{modelId}", s.requireRole("R_SUPER", s.handleDeleteAIModel))
-	mux.HandleFunc("POST /api/v1/config/ai-models/{modelId}/validations", s.requireRole("R_SUPER", s.handleValidateAIModel))
-	mux.HandleFunc("GET /api/v1/assistant/models", s.requireRole("R_SUPER", s.handleListAssistantModels))
-	mux.HandleFunc("GET /api/v1/assistant/sessions", s.requireRole("R_SUPER", s.handleListAssistantSessions))
-	mux.HandleFunc("POST /api/v1/assistant/sessions", s.requireRole("R_SUPER", s.handleCreateAssistantSession))
-	mux.HandleFunc("GET /api/v1/assistant/sessions/{sessionId}", s.requireRole("R_SUPER", s.handleGetAssistantSession))
-	mux.HandleFunc("DELETE /api/v1/assistant/sessions/{sessionId}", s.requireRole("R_SUPER", s.handleDeleteAssistantSession))
-	mux.HandleFunc("GET /api/v1/assistant/sessions/{sessionId}/messages", s.requireRole("R_SUPER", s.handleListAssistantMessages))
-	mux.HandleFunc("POST /api/v1/assistant/sessions/{sessionId}/stream", s.requireRole("R_SUPER", s.handleStreamAssistantSession))
-	mux.HandleFunc("POST /api/v1/assistant/messages/{messageId}/workflow", s.requireRole("R_SUPER", s.handleConfirmAssistantWorkflow))
+	get(super, "/config/ai-models", s.handleListAIModels)
+	super.POST("/config/ai-models", s.handleCreateAIModel)
+	super.PUT("/config/ai-models/:modelId", s.handleUpdateAIModel)
+	super.PATCH("/config/ai-models/:modelId", s.handlePatchAIModel)
+	super.DELETE("/config/ai-models/:modelId", s.handleDeleteAIModel)
+	super.POST("/config/ai-models/:modelId/validations", s.handleValidateAIModel)
+	get(super, "/assistant/models", s.handleListAssistantModels)
+	get(super, "/assistant/sessions", s.handleListAssistantSessions)
+	super.POST("/assistant/sessions", s.handleCreateAssistantSession)
+	get(super, "/assistant/sessions/:sessionId", s.handleGetAssistantSession)
+	super.DELETE("/assistant/sessions/:sessionId", s.handleDeleteAssistantSession)
+	get(super, "/assistant/sessions/:sessionId/messages", s.handleListAssistantMessages)
+	super.POST("/assistant/sessions/:sessionId/stream", s.handleStreamAssistantSession)
+	super.POST("/assistant/messages/:messageId/workflow", s.handleConfirmAssistantWorkflow)
 
-	// P2 workflow execution, events, and Schema-driven workbench.
-	mux.HandleFunc("POST /api/v1/webhooks/{workflowId}", s.handlePublishWorkflowWebhook)
-	mux.HandleFunc("GET /api/v1/workflows/templates", s.requireRole("R_SUPER", s.handleListWorkflowTemplates))
-	mux.HandleFunc("POST /api/v1/events", s.requireRole("R_SUPER", s.handlePublishWorkflowEvent))
-	mux.HandleFunc("GET /api/v1/human-tasks", s.requireRole("R_SUPER", s.handleListWorkflowHumanTasks))
-	mux.HandleFunc("POST /api/v1/human-tasks/{taskId}", s.requireRole("R_SUPER", s.handleDecideWorkflowHumanTask))
-	mux.HandleFunc("GET /api/v1/workflows/node-definitions", s.requireRole("R_SUPER", s.handleListWorkflowNodeDefinitions))
-	mux.HandleFunc("POST /api/v1/workflows/validate", s.requireRole("R_SUPER", s.handleValidateWorkflowGraph))
-	mux.HandleFunc("GET /api/v1/workflows", s.requireRole("R_SUPER", s.handleListWorkflows))
-	mux.HandleFunc("POST /api/v1/workflows", s.requireRole("R_SUPER", s.handleCreateWorkflow))
-	mux.HandleFunc("GET /api/v1/workflows/{workflowId}", s.requireRole("R_SUPER", s.handleGetWorkflow))
-	mux.HandleFunc("PATCH /api/v1/workflows/{workflowId}", s.requireRole("R_SUPER", s.handleUpdateWorkflow))
-	mux.HandleFunc("GET /api/v1/workflows/{workflowId}/revisions", s.requireRole("R_SUPER", s.handleListWorkflowRevisions))
-	mux.HandleFunc("POST /api/v1/workflows/{workflowId}/revisions", s.requireRole("R_SUPER", s.handleSaveWorkflowRevision))
-	mux.HandleFunc("GET /api/v1/workflows/{workflowId}/revisions/{revisionId}", s.requireRole("R_SUPER", s.handleGetWorkflowRevision))
-	mux.HandleFunc("POST /api/v1/workflows/{workflowId}/lifecycle", s.requireRole("R_SUPER", s.handleWorkflowLifecycle))
-	mux.HandleFunc("GET /api/v1/workflows/{workflowId}/runs", s.requireRole("R_SUPER", s.handleListWorkflowRuns))
-	mux.HandleFunc("POST /api/v1/workflows/{workflowId}/runs", s.requireRole("R_SUPER", s.handleCreateWorkflowRun))
-	mux.HandleFunc("GET /api/v1/ws/workflows/{workflowId}/runs", s.handleWorkflowRunsWebSocket)
-	mux.HandleFunc("GET /api/v1/notification-deliveries", s.requireAuth(s.handleListInAppNotifications))
-	mux.HandleFunc("POST /api/v1/notification-deliveries/{deliveryId}/read", s.requireAuth(s.handleReadInAppNotification))
-	mux.HandleFunc("POST /api/v1/notification-deliveries/read-all", s.requireAuth(s.handleReadAllInAppNotifications))
-	mux.HandleFunc("GET /api/v1/ws/notifications", s.handleNotificationWebSocket)
-	mux.HandleFunc("GET /api/v1/workflow-runs/{runId}", s.requireRole("R_SUPER", s.handleGetWorkflowRun))
-	mux.HandleFunc("POST /api/v1/workflow-runs/{runId}", s.requireRole("R_SUPER", s.handleWorkflowRunAction))
-	mux.HandleFunc("GET /api/v1/artifacts/{sha256}/manifest", s.requireRole("R_SUPER", s.handleGetWorkflowArtifactManifest))
-	mux.HandleFunc("GET /api/v1/artifacts/{sha256}/download", s.requireRole("R_SUPER", s.handleDownloadWorkflowArtifact))
-	mux.HandleFunc("GET /api/v1/result-views", s.requirePermission(perm.ResultViewsAccess, s.handleListResultViews))
-	mux.HandleFunc("POST /api/v1/result-views", s.requireRole("R_SUPER", s.handleCreateResultView))
-	mux.HandleFunc("GET /api/v1/result-views/{viewId}", s.requirePermission(perm.ResultViewsAccess, s.handleGetResultView))
-	mux.HandleFunc("PUT /api/v1/result-views/{viewId}/grants", s.requireRole("R_SUPER", s.handleReplaceResultViewGrants))
-	mux.HandleFunc("POST /api/v1/result-views/{viewId}/revoke", s.requireRole("R_SUPER", s.handleRevokeResultView))
-	mux.HandleFunc("GET /api/v1/result-views/{viewId}/runs", s.requireAuth(s.handleListResultViewRuns))
-	mux.HandleFunc("POST /api/v1/result-views/{viewId}/runs/{runId}/{action}", s.requireAuth(s.handleResultViewRunAction))
-	mux.HandleFunc("POST /api/v1/result-views/{viewId}/workflow/pause", s.requireAuth(s.handleResultViewWorkflowPause))
-	s.registerSystemPluginRoutes(mux)
-	s.registerResultPluginRoutes(mux)
+	api.POST("/webhooks/:workflowId", s.handlePublishWorkflowWebhook)
+	get(super, "/workflows/templates", s.handleListWorkflowTemplates)
+	super.POST("/events", s.handlePublishWorkflowEvent)
+	get(super, "/human-tasks", s.handleListWorkflowHumanTasks)
+	super.POST("/human-tasks/:taskId", s.handleDecideWorkflowHumanTask)
+	get(super, "/workflows/node-definitions", s.handleListWorkflowNodeDefinitions)
+	super.POST("/workflows/validate", s.handleValidateWorkflowGraph)
+	get(super, "/workflows", s.handleListWorkflows)
+	super.POST("/workflows", s.handleCreateWorkflow)
+	get(super, "/workflows/:workflowId", s.handleGetWorkflow)
+	super.PATCH("/workflows/:workflowId", s.handleUpdateWorkflow)
+	get(super, "/workflows/:workflowId/revisions", s.handleListWorkflowRevisions)
+	super.POST("/workflows/:workflowId/revisions", s.handleSaveWorkflowRevision)
+	get(super, "/workflows/:workflowId/revisions/:revisionId", s.handleGetWorkflowRevision)
+	super.POST("/workflows/:workflowId/lifecycle", s.handleWorkflowLifecycle)
+	get(super, "/workflows/:workflowId/runs", s.handleListWorkflowRuns)
+	super.POST("/workflows/:workflowId/runs", s.handleCreateWorkflowRun)
+	get(api, "/ws/workflows/:workflowId/runs", s.handleWorkflowRunsWebSocket)
+	get(authenticated, "/notification-deliveries", s.handleListInAppNotifications)
+	authenticated.POST("/notification-deliveries/:deliveryId/read", s.handleReadInAppNotification)
+	authenticated.POST("/notification-deliveries/read-all", s.handleReadAllInAppNotifications)
+	get(api, "/ws/notifications", s.handleNotificationWebSocket)
+	get(super, "/workflow-runs/:runId", s.handleGetWorkflowRun)
+	super.POST("/workflow-runs/:runId", s.handleWorkflowRunAction)
+	get(super, "/artifacts/:sha256/manifest", s.handleGetWorkflowArtifactManifest)
+	get(super, "/artifacts/:sha256/download", s.handleDownloadWorkflowArtifact)
+	get(authenticated, "/result-views", s.requirePermission(perm.ResultViewsAccess), s.handleListResultViews)
+	super.POST("/result-views", s.handleCreateResultView)
+	get(authenticated, "/result-views/:viewId", s.requirePermission(perm.ResultViewsAccess), s.handleGetResultView)
+	super.PUT("/result-views/:viewId/grants", s.handleReplaceResultViewGrants)
+	super.POST("/result-views/:viewId/revoke", s.handleRevokeResultView)
+	get(authenticated, "/result-views/:viewId/runs", s.handleListResultViewRuns)
+	authenticated.POST("/result-views/:viewId/runs/:runId/:action", s.handleResultViewRunAction)
+	authenticated.POST("/result-views/:viewId/workflow/pause", s.handleResultViewWorkflowPause)
+	s.registerSystemPluginRoutes(authenticated)
+	s.registerResultPluginRoutes(authenticated)
 
-	// 系统管理。
-	mux.HandleFunc("GET /api/v1/admin/users", s.requirePermission(perm.SystemUsersView, s.handleListUsers))
-	mux.HandleFunc("POST /api/v1/admin/users", s.requirePermission(perm.SystemUsersCreate, s.handleCreateUser))
-	mux.HandleFunc("PUT /api/v1/admin/users/{userId}", s.requirePermission(perm.SystemUsersUpdate, s.handleUpdateUser))
-	mux.HandleFunc("DELETE /api/v1/admin/users/{userId}", s.requirePermission(perm.SystemUsersDelete, s.handleDeleteUser))
-	mux.HandleFunc("POST /api/v1/system/uploads/avatars", s.requireAuth(s.handleUploadAvatar))
-	mux.HandleFunc("GET /api/v1/system/roles", s.requirePermission(perm.SystemRolesView, s.handleListRoles))
-	mux.HandleFunc("POST /api/v1/system/roles", s.requirePermission(perm.SystemRolesCreate, s.handleCreateRole))
-	mux.HandleFunc("PUT /api/v1/system/roles/{roleId}", s.requirePermission(perm.SystemRolesUpdate, s.handleUpdateRole))
-	mux.HandleFunc("DELETE /api/v1/system/roles/{roleId}", s.requirePermission(perm.SystemRolesDelete, s.handleDeleteRole))
-	mux.HandleFunc("PUT /api/v1/system/roles/{roleId}/permissions", s.requirePermission(perm.SystemRolesAssignPermissions, s.handleSaveRolePermissions))
-	mux.HandleFunc("GET /api/v1/system/menus", s.requireAuth(s.handleGetMenus))
-	mux.HandleFunc("GET /api/v1/system/menus/manage-tree", s.requirePermission(perm.SystemRolesAssignPermissions, s.handleGetManageMenus))
-	mux.HandleFunc("GET /api/v1/system/i18n-dictionaries", s.requireAuth(s.handleGetI18nDict))
-	mux.HandleFunc("POST /api/v1/system/menus", s.requirePermission(perm.SystemMenusCreate, s.handleCreateMenu))
-	mux.HandleFunc("PUT /api/v1/system/menus/{menuId}", s.requirePermission(perm.SystemMenusUpdate, s.handleUpdateMenu))
-	mux.HandleFunc("DELETE /api/v1/system/menus/{menuId}", s.requirePermission(perm.SystemMenusDelete, s.handleDeleteMenu))
-	mux.HandleFunc("POST /api/v1/system/menu-buttons", s.requirePermission(perm.SystemMenusCreate, s.handleCreateMenuButton))
-	mux.HandleFunc("PUT /api/v1/system/menu-buttons/{buttonId}", s.requirePermission(perm.SystemMenusUpdate, s.handleUpdateMenuButton))
-	mux.HandleFunc("DELETE /api/v1/system/menu-buttons/{buttonId}", s.requirePermission(perm.SystemMenusDelete, s.handleDeleteMenuButton))
-	mux.HandleFunc("GET /api/v1/system/plugins", s.requirePermission(perm.SystemPluginsView, func(w http.ResponseWriter, _ *http.Request, _ *service.Principal) {
-		ok(w, s.App.ListInstalledPlugins())
-	}))
-	mux.HandleFunc("GET /api/v1/system/proxies", s.requirePermission(perm.SystemProxiesView, s.handleListOutboundProxies))
-	mux.HandleFunc("POST /api/v1/system/proxies", s.requirePermission(perm.SystemProxiesCreate, s.handleCreateOutboundProxy))
-	mux.HandleFunc("PUT /api/v1/system/proxies/{proxyId}", s.requirePermission(perm.SystemProxiesUpdate, s.handleUpdateOutboundProxy))
-	mux.HandleFunc("PATCH /api/v1/system/proxies/{proxyId}", s.requirePermission(perm.SystemProxiesUpdate, s.handlePatchOutboundProxy))
-	mux.HandleFunc("DELETE /api/v1/system/proxies/{proxyId}", s.requirePermission(perm.SystemProxiesDelete, s.handleDeleteOutboundProxy))
-	mux.HandleFunc("POST /api/v1/system/proxies/{proxyId}/validations", s.requirePermission(perm.SystemProxiesValidate, s.handleValidateOutboundProxy))
-	mux.HandleFunc("GET /api/v1/system/logs", s.requirePermission(perm.SystemLogsView, s.handleListSystemLogs))
-	mux.HandleFunc("GET /api/v1/system/logs/runtime", s.requirePermission(perm.SystemLogsView, s.handleGetSystemLogRuntime))
-	mux.HandleFunc("PUT /api/v1/system/logs/runtime", s.requirePermission(perm.SystemLogsConfigure, s.handleUpdateSystemLogRuntime))
+	get(authenticated, "/admin/users", s.requirePermission(perm.SystemUsersView), s.handleListUsers)
+	authenticated.POST("/admin/users", s.requirePermission(perm.SystemUsersCreate), s.handleCreateUser)
+	authenticated.PUT("/admin/users/:userId", s.requirePermission(perm.SystemUsersUpdate), s.handleUpdateUser)
+	authenticated.DELETE("/admin/users/:userId", s.requirePermission(perm.SystemUsersDelete), s.handleDeleteUser)
+	authenticated.POST("/system/uploads/avatars", s.handleUploadAvatar)
+	get(authenticated, "/system/roles", s.requirePermission(perm.SystemRolesView), s.handleListRoles)
+	authenticated.POST("/system/roles", s.requirePermission(perm.SystemRolesCreate), s.handleCreateRole)
+	authenticated.PUT("/system/roles/:roleId", s.requirePermission(perm.SystemRolesUpdate), s.handleUpdateRole)
+	authenticated.DELETE("/system/roles/:roleId", s.requirePermission(perm.SystemRolesDelete), s.handleDeleteRole)
+	authenticated.PUT("/system/roles/:roleId/permissions", s.requirePermission(perm.SystemRolesAssignPermissions), s.handleSaveRolePermissions)
+	get(authenticated, "/system/menus", s.handleGetMenus)
+	get(authenticated, "/system/menus/manage-tree", s.requirePermission(perm.SystemRolesAssignPermissions), s.handleGetManageMenus)
+	get(authenticated, "/system/i18n-dictionaries", s.handleGetI18nDict)
+	authenticated.POST("/system/menus", s.requirePermission(perm.SystemMenusCreate), s.handleCreateMenu)
+	authenticated.PUT("/system/menus/:menuId", s.requirePermission(perm.SystemMenusUpdate), s.handleUpdateMenu)
+	authenticated.DELETE("/system/menus/:menuId", s.requirePermission(perm.SystemMenusDelete), s.handleDeleteMenu)
+	authenticated.POST("/system/menu-buttons", s.requirePermission(perm.SystemMenusCreate), s.handleCreateMenuButton)
+	authenticated.PUT("/system/menu-buttons/:buttonId", s.requirePermission(perm.SystemMenusUpdate), s.handleUpdateMenuButton)
+	authenticated.DELETE("/system/menu-buttons/:buttonId", s.requirePermission(perm.SystemMenusDelete), s.handleDeleteMenuButton)
+	get(authenticated, "/system/plugins", s.requirePermission(perm.SystemPluginsView), func(c *gin.Context) {
+		ok(c, s.App.ListInstalledPlugins())
+	})
+	get(authenticated, "/system/proxies", s.requirePermission(perm.SystemProxiesView), s.handleListOutboundProxies)
+	authenticated.POST("/system/proxies", s.requirePermission(perm.SystemProxiesCreate), s.handleCreateOutboundProxy)
+	authenticated.PUT("/system/proxies/:proxyId", s.requirePermission(perm.SystemProxiesUpdate), s.handleUpdateOutboundProxy)
+	authenticated.PATCH("/system/proxies/:proxyId", s.requirePermission(perm.SystemProxiesUpdate), s.handlePatchOutboundProxy)
+	authenticated.DELETE("/system/proxies/:proxyId", s.requirePermission(perm.SystemProxiesDelete), s.handleDeleteOutboundProxy)
+	authenticated.POST("/system/proxies/:proxyId/validations", s.requirePermission(perm.SystemProxiesValidate), s.handleValidateOutboundProxy)
+	get(authenticated, "/system/logs", s.requirePermission(perm.SystemLogsView), s.handleListSystemLogs)
+	get(authenticated, "/system/logs/runtime", s.requirePermission(perm.SystemLogsView), s.handleGetSystemLogRuntime)
+	authenticated.PUT("/system/logs/runtime", s.requirePermission(perm.SystemLogsConfigure), s.handleUpdateSystemLogRuntime)
 }
 
-func (s *Server) registerResultPluginRoutes(mux *http.ServeMux) {
+func get(routes gin.IRoutes, path string, handlers ...gin.HandlerFunc) {
+	routes.GET(path, handlers...)
+	routes.HEAD(path, handlers...)
+}
+
+func registerPluginRoute(routes gin.IRoutes, method, path string, handlers ...gin.HandlerFunc) {
+	routes.Handle(method, path, handlers...)
+	if method == http.MethodGet {
+		routes.Handle(http.MethodHead, path, handlers...)
+	}
+}
+
+func (s *Server) registerResultPluginRoutes(routes gin.IRoutes) {
 	if s.App == nil || s.App.Plugins == nil {
 		return
 	}
@@ -162,23 +157,24 @@ func (s *Server) registerResultPluginRoutes(mux *http.ServeMux) {
 			continue
 		}
 		registered := route
-		pattern := registered.Descriptor.Method + " /api/v1/result-views/{viewId}/plugins/" + registered.PluginID + registered.Descriptor.Pattern
-		mux.HandleFunc(pattern, s.requireAuth(func(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-			viewID, err := pathInt64(r, "viewId")
+		pattern := "/result-views/:viewId/plugins/" + registered.PluginID + registered.Descriptor.Pattern
+		registerPluginRoute(routes, registered.Descriptor.Method, pattern, func(c *gin.Context) {
+			principal := currentPrincipal(c)
+			viewID, err := pathInt64(c, "viewId")
 			if err != nil {
-				writeProblem(w, r, http.StatusNotFound, service.ErrNotFound.Error())
+				writeProblem(c, http.StatusNotFound, service.ErrNotFound.Error())
 				return
 			}
-			scope, err := s.App.ResolveResultScope(r.Context(), viewID, registered.Descriptor.Action, principal)
+			scope, err := s.App.ResolveResultScope(c.Request.Context(), viewID, registered.Descriptor.Action, principal)
 			if err != nil || scope.PluginID != registered.PluginID {
-				respond(w, nil, fmt.Errorf("%w: result view", service.ErrNotFound), "")
+				respond(c, nil, fmt.Errorf("%w: result view", service.ErrNotFound), "")
 				return
 			}
-			if !authorizeResultAction(w, r, principal, registered.Descriptor.Action) {
+			if !authorizeResultAction(c, principal, registered.Descriptor.Action) {
 				return
 			}
-			registered.Handler(w, r, scope)
-		}))
+			registered.Handler(c, scope)
+		})
 	}
 }
 
@@ -188,7 +184,7 @@ var resultActionPermissions = map[string]string{
 	"pause": perm.ResultViewsPause, "export": perm.ResultViewsExport,
 }
 
-func authorizeResultAction(w http.ResponseWriter, r *http.Request, principal *service.Principal, action string) bool {
+func authorizeResultAction(c *gin.Context, principal *service.Principal, action string) bool {
 	if action == "" {
 		return true
 	}
@@ -196,11 +192,11 @@ func authorizeResultAction(w http.ResponseWriter, r *http.Request, principal *se
 	if known && (principal.HasRole("R_SUPER") || principal.HasPermission(permission)) {
 		return true
 	}
-	writeProblem(w, r, http.StatusForbidden, service.ErrPermission.Error())
+	writeProblem(c, http.StatusForbidden, service.ErrPermission.Error())
 	return false
 }
 
-func (s *Server) registerSystemPluginRoutes(mux *http.ServeMux) {
+func (s *Server) registerSystemPluginRoutes(routes gin.IRoutes) {
 	if s.App == nil || s.App.Plugins == nil {
 		return
 	}
@@ -209,22 +205,23 @@ func (s *Server) registerSystemPluginRoutes(mux *http.ServeMux) {
 			continue
 		}
 		registered := route
-		pattern := registered.Descriptor.Method + " /api/v1/plugins/" + registered.PluginID + registered.Descriptor.Pattern
-		mux.HandleFunc(pattern, s.requireRole("R_SUPER", func(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-			registered.Handler(w, r, sdk.SystemScope{
+		pattern := "/plugins/" + registered.PluginID + registered.Descriptor.Pattern
+		registerPluginRoute(routes, registered.Descriptor.Method, pattern, s.requireRole("R_SUPER"), func(c *gin.Context) {
+			principal := currentPrincipal(c)
+			registered.Handler(c, sdk.SystemScope{
 				PluginID: registered.PluginID, UserID: principal.User.ID,
 				RoleCodes: slices.Clone(principal.RoleCodes),
 			})
-		}))
+		})
 	}
 }
 
-func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), time.Second)
+func (s *Server) handleReady(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), time.Second)
 	defer cancel()
 	if err := s.App.DatabaseReady(ctx); err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, M{"status": "unavailable"})
+		writeJSON(c, http.StatusServiceUnavailable, M{"status": "unavailable"})
 		return
 	}
-	writeJSON(w, http.StatusOK, M{"status": "ready"})
+	writeJSON(c, http.StatusOK, M{"status": "ready"})
 }

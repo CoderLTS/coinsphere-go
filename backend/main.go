@@ -147,7 +147,12 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	runEngineErr := make(chan error, 1)
 	go func() { runEngineErr <- app.RunWorkflowEngine(ctx) }()
 
-	mux := api.NewServer(app, filepath.Join(baseDir, "volumes", "static"), filepath.Join(baseDir, "volumes", "uploads"))
+	mux := api.NewServer(
+		app,
+		filepath.Join(baseDir, "web"),
+		filepath.Join(baseDir, "volumes", "static"),
+		filepath.Join(baseDir, "volumes", "uploads"),
+	)
 	server := &http.Server{
 		Addr:              fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 		Handler:           mux,

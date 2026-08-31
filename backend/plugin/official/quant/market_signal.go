@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"coinsphere/backend/plugin/sdk"
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
@@ -121,34 +122,34 @@ func quantMarketSignalResult(signal quantMarketSignal) sdk.ActionResult {
 	})}
 }
 
-func (q *quantRuntime) handleQuantMarketSignals(w http.ResponseWriter, r *http.Request, scope sdk.RouteScope) {
-	if !validQuantSystemScope(scope) || !quantQueryKeys(r, "market", "instrument", "interval", "startTime", "endTime", "limit") {
-		writeQuantProblem(w, http.StatusBadRequest, "invalid Quant market signal query")
+func (q *quantRuntime) handleQuantMarketSignals(c *gin.Context, scope sdk.RouteScope) {
+	if !validQuantSystemScope(scope) || !quantQueryKeys(c.Request, "market", "instrument", "interval", "startTime", "endTime", "limit") {
+		writeQuantProblem(c, http.StatusBadRequest, "invalid Quant market signal query")
 		return
 	}
 	series, err := parseQuantSeriesConfig(mustMarshal(map[string]any{
-		"market": r.URL.Query().Get("market"), "instrument": r.URL.Query().Get("instrument"), "interval": r.URL.Query().Get("interval"),
+		"market": c.Query("market"), "instrument": c.Query("instrument"), "interval": c.Query("interval"),
 	}))
 	if err != nil {
-		writeQuantProblem(w, http.StatusBadRequest, err.Error())
+		writeQuantProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	limit, err := quantQueryLimit(r, 200, 500)
+	limit, err := quantQueryLimit(c.Request, 200, 500)
 	if err != nil {
-		writeQuantProblem(w, http.StatusBadRequest, err.Error())
+		writeQuantProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	query := q.db.WithContext(r.Context()).Where(
+	query := q.db.WithContext(c.Request.Context()).Where(
 		"market = ? AND instrument = ? AND interval = ?", series.Market, series.Instrument, series.Interval,
 	)
-	start, startSet, err := quantMarketSignalQueryTime(r, "startTime")
+	start, startSet, err := quantMarketSignalQueryTime(c.Request, "startTime")
 	if err != nil {
-		writeQuantProblem(w, http.StatusBadRequest, err.Error())
+		writeQuantProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	end, endSet, err := quantMarketSignalQueryTime(r, "endTime")
+	end, endSet, err := quantMarketSignalQueryTime(c.Request, "endTime")
 	if err != nil || startSet && endSet && start.After(end) {
-		writeQuantProblem(w, http.StatusBadRequest, "Quant market signal time range is invalid")
+		writeQuantProblem(c, http.StatusBadRequest, "Quant market signal time range is invalid")
 		return
 	}
 	if startSet {
@@ -159,7 +160,7 @@ func (q *quantRuntime) handleQuantMarketSignals(w http.ResponseWriter, r *http.R
 	}
 	var signals []quantMarketSignal
 	if err := query.Order("candle_close_time DESC, id DESC").Limit(limit).Find(&signals).Error; err != nil {
-		writeQuantProblem(w, http.StatusInternalServerError, "list Quant market signals failed")
+		writeQuantProblem(c, http.StatusInternalServerError, "list Quant market signals failed")
 		return
 	}
 	items := make([]map[string]any, len(signals))
@@ -172,7 +173,7 @@ func (q *quantRuntime) handleQuantMarketSignals(w http.ResponseWriter, r *http.R
 			"createdAt": signal.CreatedAt.UTC().Format(time.RFC3339Nano),
 		}
 	}
-	writeQuantOK(w, map[string]any{"items": items})
+	writeQuantOK(c, map[string]any{"items": items})
 }
 
 func quantMarketSignalQueryTime(r *http.Request, key string) (time.Time, bool, error) {

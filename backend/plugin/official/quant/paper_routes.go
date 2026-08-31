@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"coinsphere/backend/plugin/sdk"
+	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -26,149 +27,149 @@ type quantPaperResultFilters struct {
 	Status     string `json:"status"`
 }
 
-func (q *quantRuntime) handleQuantSignals(w http.ResponseWriter, r *http.Request, scope sdk.RouteScope) {
-	if !validQuantSystemScope(scope) || !quantQueryKeys(r, "market", "instrument", "status", "limit") {
-		writeQuantProblem(w, http.StatusBadRequest, "invalid Quant signal query")
+func (q *quantRuntime) handleQuantSignals(c *gin.Context, scope sdk.RouteScope) {
+	if !validQuantSystemScope(scope) || !quantQueryKeys(c.Request, "market", "instrument", "status", "limit") {
+		writeQuantProblem(c, http.StatusBadRequest, "invalid Quant signal query")
 		return
 	}
-	limit, err := quantQueryLimit(r, 100, 200)
+	limit, err := quantQueryLimit(c.Request, 100, 200)
 	if err != nil {
-		writeQuantProblem(w, http.StatusBadRequest, err.Error())
+		writeQuantProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	filters := quantPaperResultFilters{
-		Market:     strings.ToLower(strings.TrimSpace(r.URL.Query().Get("market"))),
-		Instrument: strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("instrument"))),
-		Status:     strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status"))),
+		Market:     strings.ToLower(strings.TrimSpace(c.Query("market"))),
+		Instrument: strings.ToUpper(strings.TrimSpace(c.Query("instrument"))),
+		Status:     strings.ToLower(strings.TrimSpace(c.Query("status"))),
 	}
-	items, err := q.listQuantSignals(r, 0, "", filters, limit)
+	items, err := q.listQuantSignals(c.Request, 0, "", filters, limit)
 	if err != nil {
-		writeQuantProblem(w, http.StatusInternalServerError, err.Error())
+		writeQuantProblem(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeQuantOK(w, map[string]any{"items": items})
+	writeQuantOK(c, map[string]any{"items": items})
 }
 
-func (q *quantRuntime) handleQuantPaperAccounts(w http.ResponseWriter, r *http.Request, scope sdk.RouteScope) {
-	if !validQuantSystemScope(scope) || !quantQueryKeys(r, "limit") {
-		writeQuantProblem(w, http.StatusBadRequest, "invalid Quant Paper account query")
+func (q *quantRuntime) handleQuantPaperAccounts(c *gin.Context, scope sdk.RouteScope) {
+	if !validQuantSystemScope(scope) || !quantQueryKeys(c.Request, "limit") {
+		writeQuantProblem(c, http.StatusBadRequest, "invalid Quant Paper account query")
 		return
 	}
-	limit, err := quantQueryLimit(r, 100, 200)
+	limit, err := quantQueryLimit(c.Request, 100, 200)
 	if err != nil {
-		writeQuantProblem(w, http.StatusBadRequest, err.Error())
+		writeQuantProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	items, err := q.listQuantPaperAccounts(r, 0, "", limit)
+	items, err := q.listQuantPaperAccounts(c.Request, 0, "", limit)
 	if err != nil {
-		writeQuantProblem(w, http.StatusInternalServerError, err.Error())
+		writeQuantProblem(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeQuantOK(w, map[string]any{"items": items})
+	writeQuantOK(c, map[string]any{"items": items})
 }
 
-func (q *quantRuntime) handleQuantPaperAccountRebuild(w http.ResponseWriter, r *http.Request, scope sdk.RouteScope) {
-	if !validQuantSystemScope(scope) || !quantQueryKeys(r) {
-		writeQuantProblem(w, http.StatusBadRequest, "invalid Quant Paper rebuild request")
+func (q *quantRuntime) handleQuantPaperAccountRebuild(c *gin.Context, scope sdk.RouteScope) {
+	if !validQuantSystemScope(scope) || !quantQueryKeys(c.Request) {
+		writeQuantProblem(c, http.StatusBadRequest, "invalid Quant Paper rebuild request")
 		return
 	}
-	accountID, err := quantPathInt64(r.PathValue("accountId"))
+	accountID, err := quantPathInt64(c.Param("accountId"))
 	if err != nil {
-		writeQuantProblem(w, http.StatusBadRequest, err.Error())
+		writeQuantProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := q.rebuildQuantPaperAccount(r.Context(), accountID); err != nil {
-		writeQuantProblem(w, http.StatusConflict, err.Error())
+	if err := q.rebuildQuantPaperAccount(c.Request.Context(), accountID); err != nil {
+		writeQuantProblem(c, http.StatusConflict, err.Error())
 		return
 	}
-	writeQuantOK(w, map[string]any{"accountId": accountID, "rebuilt": true})
+	writeQuantOK(c, map[string]any{"accountId": accountID, "rebuilt": true})
 }
 
-func (q *quantRuntime) handleQuantPaperResult(w http.ResponseWriter, r *http.Request, routeScope sdk.RouteScope) {
+func (q *quantRuntime) handleQuantPaperResult(c *gin.Context, routeScope sdk.RouteScope) {
 	scope, filters, ok := quantPaperScope(routeScope)
-	if !ok || !quantQueryKeys(r) {
-		writeQuantProblem(w, http.StatusBadRequest, "invalid Quant Paper result scope")
+	if !ok || !quantQueryKeys(c.Request) {
+		writeQuantProblem(c, http.StatusBadRequest, "invalid Quant Paper result scope")
 		return
 	}
-	signals, err := q.listQuantSignals(r, scope.WorkflowID, scope.SignalNodeInstanceID, filters, 200)
+	signals, err := q.listQuantSignals(c.Request, scope.WorkflowID, scope.SignalNodeInstanceID, filters, 200)
 	if err != nil {
-		writeQuantProblem(w, http.StatusInternalServerError, err.Error())
+		writeQuantProblem(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	accounts, err := q.listQuantPaperAccounts(r, scope.WorkflowID, scope.PaperNodeInstanceID, 20)
+	accounts, err := q.listQuantPaperAccounts(c.Request, scope.WorkflowID, scope.PaperNodeInstanceID, 20)
 	if err != nil {
-		writeQuantProblem(w, http.StatusInternalServerError, err.Error())
+		writeQuantProblem(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeQuantOK(w, map[string]any{"signals": signals, "accounts": accounts})
+	writeQuantOK(c, map[string]any{"signals": signals, "accounts": accounts})
 }
 
-func (q *quantRuntime) handleQuantSignalApprove(w http.ResponseWriter, r *http.Request, scope sdk.RouteScope) {
-	q.handleQuantSignalDecision(w, r, scope, "approve")
+func (q *quantRuntime) handleQuantSignalApprove(c *gin.Context, scope sdk.RouteScope) {
+	q.handleQuantSignalDecision(c, scope, "approve")
 }
 
-func (q *quantRuntime) handleQuantSignalReject(w http.ResponseWriter, r *http.Request, scope sdk.RouteScope) {
-	q.handleQuantSignalDecision(w, r, scope, "reject")
+func (q *quantRuntime) handleQuantSignalReject(c *gin.Context, scope sdk.RouteScope) {
+	q.handleQuantSignalDecision(c, scope, "reject")
 }
 
-func (q *quantRuntime) handleQuantSignalDecision(w http.ResponseWriter, r *http.Request, routeScope sdk.RouteScope, action string) {
+func (q *quantRuntime) handleQuantSignalDecision(c *gin.Context, routeScope sdk.RouteScope, action string) {
 	scope, filters, ok := quantPaperScope(routeScope)
 	resultScope, scopeOK := routeScope.(sdk.ResultScope)
-	if !ok || !scopeOK || !quantQueryKeys(r) || resultScope.HumanTasks == nil {
-		writeQuantProblem(w, http.StatusBadRequest, "invalid Quant signal decision scope")
+	if !ok || !scopeOK || !quantQueryKeys(c.Request) || resultScope.HumanTasks == nil {
+		writeQuantProblem(c, http.StatusBadRequest, "invalid Quant signal decision scope")
 		return
 	}
-	signalID, err := quantPathInt64(r.PathValue("signalId"))
+	signalID, err := quantPathInt64(c.Param("signalId"))
 	if err != nil {
-		writeQuantProblem(w, http.StatusBadRequest, err.Error())
+		writeQuantProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	var signal quantSignal
-	query := q.db.WithContext(r.Context()).Where(
+	query := q.db.WithContext(c.Request.Context()).Where(
 		"id = ? AND workflow_id = ? AND node_instance_id = ? AND status = 'pending'",
 		signalID, scope.WorkflowID, scope.SignalNodeInstanceID,
 	)
 	query = applyQuantSignalFilters(query, filters)
 	if err := query.First(&signal).Error; err != nil {
-		writeQuantProblem(w, http.StatusNotFound, "Quant signal is unavailable")
+		writeQuantProblem(c, http.StatusNotFound, "Quant signal is unavailable")
 		return
 	}
 	var task struct {
 		ID int64
 	}
-	if err := q.db.WithContext(r.Context()).Table("workflow_human_tasks tasks").Select("tasks.id").
+	if err := q.db.WithContext(c.Request.Context()).Table("workflow_human_tasks tasks").Select("tasks.id").
 		Joins("JOIN workflow_run_nodes signal_run ON signal_run.run_id = tasks.run_id").Where(
 		"signal_run.operation_key = ? AND tasks.workflow_id = ? AND tasks.task_type = 'paper_signal' AND tasks.business_key = ? AND tasks.status = 'pending'",
 		signal.OperationKey, signal.WorkflowID, signal.BusinessKey,
 	).Order("tasks.created_at DESC, tasks.id DESC").First(&task).Error; err != nil {
-		writeQuantProblem(w, http.StatusConflict, "Quant signal has no pending approval task")
+		writeQuantProblem(c, http.StatusConflict, "Quant signal has no pending approval task")
 		return
 	}
-	if err := resultScope.HumanTasks.Decide(r.Context(), task.ID, action, resultScope.UserID); err != nil {
-		writeQuantProblem(w, http.StatusConflict, "Quant signal decision is no longer available")
+	if err := resultScope.HumanTasks.Decide(c.Request.Context(), task.ID, action, resultScope.UserID); err != nil {
+		writeQuantProblem(c, http.StatusConflict, "Quant signal decision is no longer available")
 		return
 	}
-	writeQuantOK(w, map[string]any{"signalId": signal.ID, "taskId": task.ID, "decision": action})
+	writeQuantOK(c, map[string]any{"signalId": signal.ID, "taskId": task.ID, "decision": action})
 }
 
-func (q *quantRuntime) handleQuantPaperExport(w http.ResponseWriter, r *http.Request, routeScope sdk.RouteScope) {
+func (q *quantRuntime) handleQuantPaperExport(c *gin.Context, routeScope sdk.RouteScope) {
 	scope, filters, ok := quantPaperScope(routeScope)
-	if !ok || !quantQueryKeys(r) {
-		writeQuantProblem(w, http.StatusBadRequest, "invalid Quant Paper export scope")
+	if !ok || !quantQueryKeys(c.Request) {
+		writeQuantProblem(c, http.StatusBadRequest, "invalid Quant Paper export scope")
 		return
 	}
-	signals, err := q.listQuantSignals(r, scope.WorkflowID, scope.SignalNodeInstanceID, filters, 200)
+	signals, err := q.listQuantSignals(c.Request, scope.WorkflowID, scope.SignalNodeInstanceID, filters, 200)
 	if err != nil {
-		writeQuantProblem(w, http.StatusInternalServerError, err.Error())
+		writeQuantProblem(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	accounts, err := q.listQuantPaperAccounts(r, scope.WorkflowID, scope.PaperNodeInstanceID, 20)
+	accounts, err := q.listQuantPaperAccounts(c.Request, scope.WorkflowID, scope.PaperNodeInstanceID, 20)
 	if err != nil {
-		writeQuantProblem(w, http.StatusInternalServerError, err.Error())
+		writeQuantProblem(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	w.Header().Set("Content-Disposition", `attachment; filename="paper-results.json"`)
-	writeQuantJSON(w, http.StatusOK, map[string]any{
+	c.Header("Content-Disposition", `attachment; filename="paper-results.json"`)
+	writeQuantJSON(c, http.StatusOK, map[string]any{
 		"schemaVersion": 1, "exportedAt": time.Now().UTC().Format(time.RFC3339Nano),
 		"signals": signals, "accounts": accounts,
 	})

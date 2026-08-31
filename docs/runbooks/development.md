@@ -61,7 +61,7 @@ go run ./cmd/coinsphere plugin uninstall --config ./config.yml --backend-root . 
 go run ./cmd/coinsphere plugin purge-data --config ./config.yml --backend-root . --confirm "PURGE official.connector" official.connector
 ```
 
-`install` 和兼容 `upgrade` 复制源码、执行插件独立 migration、生成注册表、更新 Go 依赖并构建 Backend/Web Compose 镜像；构建失败会恢复源码输入和插件 migration。major 升级默认拒绝。`uninstall` 有活动引用时拒绝，成功后重建镜像但保留插件 schema；只有无任何活动或历史引用、已卸载且确认文本完全匹配时，`purge-data` 才在一个事务中删除 schema 和安装记录。命令不启动新镜像、不重启服务，也不接触不可信或远程插件。
+`install` 和兼容 `upgrade` 复制源码、执行插件独立 migration、生成注册表、更新 Go 依赖并构建包含前后端的 Compose 应用镜像；构建失败会恢复源码输入和插件 migration。major 升级默认拒绝。`uninstall` 有活动引用时拒绝，成功后重建镜像但保留插件 schema；只有无任何活动或历史引用、已卸载且确认文本完全匹配时，`purge-data` 才在一个事务中删除 schema 和安装记录。命令不启动新镜像、不重启服务，也不接触不可信或远程插件。
 
 ## 运行时诊断
 

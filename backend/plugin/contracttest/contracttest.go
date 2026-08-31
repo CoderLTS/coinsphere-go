@@ -14,6 +14,7 @@ import (
 	"coinsphere/backend/plugin/manifest"
 	"coinsphere/backend/plugin/sdk"
 	"coinsphere/backend/version"
+	"github.com/gin-gonic/gin"
 )
 
 type Contract struct {
@@ -61,7 +62,11 @@ func (c *Contract) ServeRoute(desc sdk.RouteDescriptor, request *http.Request, s
 		c.t.Fatalf("route %s %s is not registered", desc.Method, desc.Pattern)
 	}
 	response := httptest.NewRecorder()
-	handler(response, request, scope)
+	router := gin.New()
+	router.Handle(strings.ToUpper(strings.TrimSpace(desc.Method)), desc.Pattern, func(ctx *gin.Context) {
+		handler(ctx, scope)
+	})
+	router.ServeHTTP(response, request)
 	return response
 }
 

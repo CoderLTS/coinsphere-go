@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-CACHE_MAX_AGE=${COINSPHERE_BUILD_CACHE_MAX_AGE:-168h}
+CACHE_MAX_SIZE=${COINSPHERE_BUILD_CACHE_MAX_SIZE:-4gb}
 STALE_TEMP_MINUTES=${COINSPHERE_RUNNER_TEMP_MAX_AGE_MINUTES:-1440}
 BUILDER=${COINSPHERE_BUILDER:-coinsphere-release}
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 
-if [[ ! $CACHE_MAX_AGE =~ ^[1-9][0-9]*[smhd]$ ]]; then
-  echo "Build Cache 保留时长无效: $CACHE_MAX_AGE" >&2
+if [[ ! $CACHE_MAX_SIZE =~ ^[1-9][0-9]*(kb|mb|gb|tb)$ ]]; then
+  echo "Build Cache 大小上限无效: $CACHE_MAX_SIZE" >&2
   exit 2
 fi
 if [[ ! $STALE_TEMP_MINUTES =~ ^[1-9][0-9]*$ ]]; then
@@ -27,7 +27,7 @@ fi
 
 if docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
   cleanup_status=0
-  docker buildx prune --builder "$BUILDER" --force --filter "until=$CACHE_MAX_AGE" || cleanup_status=$?
+  docker buildx prune --builder "$BUILDER" --all --force --max-used-space "$CACHE_MAX_SIZE" || cleanup_status=$?
   docker buildx stop "$BUILDER" >/dev/null || cleanup_status=$?
   if ((cleanup_status != 0)); then
     echo "Buildx Builder 清理未完整完成" >&2

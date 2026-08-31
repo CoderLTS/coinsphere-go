@@ -22,12 +22,12 @@ CoinSphere 是以可视化工作流为核心、由编译期可信插件提供业
 
 ```mermaid
 flowchart LR
-    WEB["Vue Web"] --> APP["单实例 Go App"]
+    BROWSER["Browser"] --> APP["单实例 Go App + Vue dist"]
     APP --> DB["PostgreSQL 16"]
     MIGRATE["一次性 migration"] --> DB
 ```
 
-生产部署只包含 Web、Go App 和一次性 migration，连接服务器现有 PostgreSQL 16 的独立 `coinsphere_go` 数据库，不依赖 Redis、消息中间件或 Kubernetes。核心 schema 保存认证、RBAC、菜单、审计、插件生命周期、工作流执行历史和制品引用；压缩制品保存在 Backend 持久目录。
+生产部署只运行一个包含 Vue 静态产物的 Go App 容器；一次性 migration 复用同一镜像，并连接服务器现有 PostgreSQL 16 的独立 `coinsphere_go` 数据库。系统不依赖 Redis、消息中间件或 Kubernetes。核心 schema 保存认证、RBAC、菜单、审计、插件生命周期、工作流执行历史和制品引用；压缩制品保存在 Backend 持久目录。
 
 ## 快速启动
 
@@ -53,7 +53,7 @@ docker compose ps
 
 浏览器打开 <http://localhost:8080>。初始超级管理员是 `coinsphere` / `coinsphere`；首次登录后立即在“用户管理”中修改密码。`COINSPHERE_AUTH__SECRET_KEY` 必须长期保持一致，变更后已有登录令牌会失效。
 
-本地 Compose 会启动 `postgresql`、一次性 `migrate`、`backend` 和 `web`。停止服务不会删除数据：
+本地 Compose 会启动 `postgresql`、一次性 `migrate` 和内置 Web 产物的 `backend`。停止服务不会删除数据：
 
 ```bash
 docker compose down

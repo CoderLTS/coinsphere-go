@@ -23,7 +23,7 @@ coinsphere-go/
 ├─ scripts/             本地验证及发布、部署辅助脚本
 ├─ AGENTS.md            仓库开发硬约束
 ├─ README.md            项目入口与快速启动
-├─ docker-compose.yml   本地 PostgreSQL、migration、Backend、Web
+├─ docker-compose.yml   本地 PostgreSQL、migration、单应用容器
 └─ renovate.json        依赖更新策略
 ```
 
@@ -174,7 +174,7 @@ frontend/src/
 ```text
 deploy/
 ├─ production/
-│  ├─ compose.yaml          生产 Backend/Web 拓扑
+│  ├─ compose.yaml          生产单应用容器拓扑
 │  ├─ deploy.sh             固定 digest 部署、migration、健康检查和回滚
 │  ├─ runtime.env.example   非敏感运行配置模板
 │  └─ README.md

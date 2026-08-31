@@ -11,12 +11,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"coinsphere/backend/internal/service"
+	"github.com/gin-gonic/gin"
 )
 
 // map[键类型]值类型 是 Go 的字典;any 表示"任意类型"(见 GO入门笔记『复合类型』)。
@@ -32,6 +34,7 @@ type M = map[string]any
 // Server HTTP 服务。
 type Server struct {
 	App          *service.App
+	WebDir       string
 	StaticDir    string
 	UploadsDir   string
 	loginLimiter *rateLimiter // 登录限流(见评审 #6)
@@ -41,41 +44,99 @@ type Server struct {
 // NewServer 是本项目约定的"构造函数":新建 Server,把所有 URL 与处理函数登记到路由表,返回给 main 启动 HTTP 服务。
 // 返回 http.Handler，使全部路由统一经过可观测性中间件。
 // NewServer 创建服务并注册全部路由。
-func NewServer(app *service.App, staticDir, uploadsDir string) http.Handler {
+func NewServer(app *service.App, webDir, staticDir, uploadsDir string) http.Handler {
 	// &Server{...} 新建 Server 并用 & 取地址得到指针;:= 是函数内的短变量声明,自动推断类型(见 GO入门笔记『变量声明』)。
 	s := &Server{
 		App:          app,
+		WebDir:       webDir,
 		StaticDir:    staticDir,
 		UploadsDir:   uploadsDir,
 		loginLimiter: newRateLimiter(app.Cfg.Auth.LoginRateLimitPerMinute),
 		metrics:      &httpMetrics{startedAt: time.Now()},
 	}
-	// http.NewServeMux() 创建标准库的路由表(见 GO入门笔记『框架:net/http』)。
-	mux := http.NewServeMux()
-	// s.registerRoutes(mux):用 . 调用 s 上的方法;s 是指针,Go 会自动解引用。
-	s.registerRoutes(mux)
-	return s.observe(mux)
+	gin.SetMode(gin.ReleaseMode)
+	router := gin.New()
+	router.RedirectTrailingSlash = false
+	router.RedirectFixedPath = false
+	router.HandleMethodNotAllowed = true
+	_ = router.SetTrustedProxies(nil)
+	router.Use(s.observe(), recoverHTTP())
+	router.NoRoute(func(c *gin.Context) {
+		if (c.Request.Method == http.MethodGet || c.Request.Method == http.MethodHead) &&
+			(c.Request.URL.Path == "/static" || c.Request.URL.Path == "/uploads") {
+			location := c.Request.URL.Path + "/"
+			if c.Request.URL.RawQuery != "" {
+				location += "?" + c.Request.URL.RawQuery
+			}
+			c.Redirect(http.StatusMovedPermanently, location)
+			return
+		}
+		path := c.Request.URL.Path
+		if (c.Request.Method == http.MethodGet || c.Request.Method == http.MethodHead) &&
+			path != "/api" && !strings.HasPrefix(path, "/api/") &&
+			path != "/health" && !strings.HasPrefix(path, "/health/") &&
+			path != "/metrics" && !strings.HasPrefix(path, "/metrics/") &&
+			s.serveWeb(c) {
+			return
+		}
+		writeProblem(c, http.StatusNotFound, http.StatusText(http.StatusNotFound))
+	})
+	router.NoMethod(func(c *gin.Context) {
+		writeProblem(c, http.StatusMethodNotAllowed, http.StatusText(http.StatusMethodNotAllowed))
+	})
+	s.registerRoutes(router)
+	return router
+}
+
+const webContentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws://%s wss://%s https://api.iconify.design https://api.unisvg.com https://api.simplesvg.com; media-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; frame-src 'self'"
+
+func (s *Server) serveWeb(c *gin.Context) bool {
+	name := strings.TrimPrefix(c.Request.URL.Path, "/")
+	if name != "" && s.serveWebFile(c, name, name == "index.html") {
+		return true
+	}
+	return s.serveWebFile(c, "index.html", true)
+}
+
+func (s *Server) serveWebFile(c *gin.Context, name string, index bool) bool {
+	if s.WebDir == "" {
+		return false
+	}
+	file, err := http.Dir(s.WebDir).Open(name)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || info.IsDir() {
+		return false
+	}
+	c.Header("Content-Security-Policy", fmt.Sprintf(webContentSecurityPolicy, c.Request.Host, c.Request.Host))
+	if index {
+		c.Header("Cache-Control", "public, no-transform, max-age=0, must-revalidate")
+	}
+	http.ServeContent(c.Writer, c.Request, info.Name(), info.ModTime(), file)
+	return true
 }
 
 // ---------- 统一响应 ----------
 
 // writeJSON 把任意数据编码成 JSON 写回客户端,是所有响应的底层出口。
-// 参数 w http.ResponseWriter 是"用来写响应的对象",几乎每个处理函数都靠它输出(见 GO入门笔记『框架:net/http』)。
-func writeJSON(w http.ResponseWriter, status int, payload any) {
+func writeJSON(c *gin.Context, status int, payload any) {
 	if object, ok := payload.(map[string]any); ok {
 		if code, ok := object["code"].(int); ok && code >= http.StatusBadRequest {
 			detail, _ := object["detail"].(string)
 			if detail == "" {
 				detail, _ = object["msg"].(string)
 			}
-			writeProblemResponse(w, statusForProblem(status, code), detail, "")
+			writeProblemResponse(c, statusForProblem(status, code), detail)
 			return
 		}
 	}
 	// 顺序不能乱:先设响应头,再写状态码,最后写 body。WriteHeader 一旦调用,响应头就发出去了。
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	encoder := json.NewEncoder(w)
+	c.Header("Content-Type", "application/json; charset=utf-8")
+	c.Status(status)
+	encoder := json.NewEncoder(c.Writer)
 	encoder.SetEscapeHTML(false)
 	// _ = ... 表示故意丢弃返回值(这里丢弃 Encode 的 error),见 GO入门笔记『其它会撞见的小语法』。
 	_ = encoder.Encode(payload)
@@ -83,43 +144,37 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 
 // ok 返回成功响应。成功响应沿用 {code, msg, data} 信封。
 // M{...} 是上面定义的 map 别名,这里现场拼出一个 JSON 对象。
-func ok(w http.ResponseWriter, data any) {
-	writeJSON(w, http.StatusOK, M{"code": 200, "msg": "success", "data": data})
+func ok(c *gin.Context, data any) {
+	writeJSON(c, http.StatusOK, M{"code": 200, "msg": "success", "data": data})
 }
 
-func okMsg(w http.ResponseWriter, data any, msg string) {
-	writeJSON(w, http.StatusOK, M{"code": 200, "msg": msg, "data": data})
+func okMsg(c *gin.Context, data any, msg string) {
+	writeJSON(c, http.StatusOK, M{"code": 200, "msg": msg, "data": data})
 }
 
 // fail 返回 HTTP 400 Problem Details。
-func fail(w http.ResponseWriter, msg string) {
-	writeJSON(w, http.StatusBadRequest, M{"code": http.StatusBadRequest, "msg": msg})
+func fail(c *gin.Context, msg string) {
+	writeJSON(c, http.StatusBadRequest, M{"code": http.StatusBadRequest, "msg": msg})
 }
 
 // failStatus 返回指定状态的 Problem Details。
-func failStatus(w http.ResponseWriter, status int, detail string) {
-	writeJSON(w, status, M{"code": status, "detail": detail})
+func failStatus(c *gin.Context, status int, detail string) {
+	writeJSON(c, status, M{"code": status, "detail": detail})
 }
 
-func writeProblem(w http.ResponseWriter, r *http.Request, status int, detail string) {
-	requestID := ""
-	if state, ok := r.Context().Value(requestStateKey{}).(*requestState); ok {
-		requestID = state.requestID
-	}
-	if requestID == "" {
-		requestID = incomingRequestID(r.Header.Get(requestIDHeader))
-	}
-	writeProblemResponse(w, status, detail, requestID)
+func writeProblem(c *gin.Context, status int, detail string) {
+	writeProblemResponse(c, status, detail)
 }
 
-func writeProblemResponse(w http.ResponseWriter, status int, detail, requestID string) {
+func writeProblemResponse(c *gin.Context, status int, detail string) {
+	requestID := requestIDFrom(c)
 	if requestID == "" {
-		requestID = incomingRequestID(w.Header().Get(requestIDHeader))
+		requestID = incomingRequestID(c.GetHeader(requestIDHeader))
 	}
-	markResponseFailed(w)
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(status)
-	encoder := json.NewEncoder(w)
+	c.Set(responseFailedContextKey, true)
+	c.Header("Content-Type", "application/problem+json")
+	c.Status(status)
+	encoder := json.NewEncoder(c.Writer)
 	encoder.SetEscapeHTML(false)
 	_ = encoder.Encode(M{
 		"type":      "about:blank",
@@ -143,43 +198,43 @@ func statusForProblem(status, code int) int {
 // respond 业务结果统一出口:多数处理函数拿到 (data, err) 后直接交给它,由它决定成功/失败怎么回。
 // Go 不用异常,而是把"出错了吗"作为最后一个返回值 err 传出来;err != nil 即代表出错(见 GO入门笔记『错误处理』)。
 // respond 业务结果统一出口:权限错误 403,其余业务错误 400。
-func respond(w http.ResponseWriter, data any, err error, successMsg string) {
+func respond(c *gin.Context, data any, err error, successMsg string) {
 	if err != nil {
 		// errors.Is 判断 err 是否就是(或包裹了)指定的哨兵错误 ErrPermission;是权限问题就回 403。
 		if errors.Is(err, service.ErrPermission) {
-			failStatus(w, http.StatusForbidden, err.Error())
+			failStatus(c, http.StatusForbidden, err.Error())
 			return
 		}
 		if errors.Is(err, service.ErrNotFound) {
-			failStatus(w, http.StatusNotFound, err.Error())
+			failStatus(c, http.StatusNotFound, err.Error())
 			return
 		}
 		if errors.Is(err, service.ErrConflict) {
-			failStatus(w, http.StatusConflict, err.Error())
+			failStatus(c, http.StatusConflict, err.Error())
 			return
 		}
-		fail(w, err.Error())
+		fail(c, err.Error())
 		return
 	}
 	if successMsg == "" {
-		ok(w, data)
+		ok(c, data)
 		return
 	}
-	okMsg(w, data, successMsg)
+	okMsg(c, data, successMsg)
 }
 
 // ---------- 请求解析 ----------
 
 // decodeBody 是泛型函数:[T any] 表示"对任意类型 T"。
 // 作用:把请求体里的 JSON 解析成一个 *T(指向 T 的指针)。返回两个值:结果指针 + error。
-func decodeBody[T any](r *http.Request) (*T, error) {
+func decodeBody[T any](c *gin.Context) (*T, error) {
 	// var payload T 声明一个 T 类型的零值变量。
 	var payload T
-	if r.Body == nil {
+	if c.Request.Body == nil {
 		// &payload 取它的地址返回;nil 表示"没有错误"(见 GO入门笔记『错误处理』)。
 		return &payload, nil
 	}
-	decoder := json.NewDecoder(r.Body)
+	decoder := json.NewDecoder(c.Request.Body)
 	decoder.DisallowUnknownFields()
 	// if err := f(); err != nil {} 是常见写法:调用、接住 err、当场判断,err 只在这个 if 内可见。
 	if err := decoder.Decode(&payload); err != nil {
@@ -191,13 +246,13 @@ func decodeBody[T any](r *http.Request) (*T, error) {
 	return &payload, nil
 }
 
-func queryStr(r *http.Request, name string) string {
-	return strings.TrimSpace(r.URL.Query().Get(name))
+func queryStr(c *gin.Context, name string) string {
+	return strings.TrimSpace(c.Query(name))
 }
 
 // queryInt64Ptr 返回 *int64(指针):没传该参数时返回 nil,以此区分"没填"和"填了 0"。这是 Go 表示可选值的常用手法。
-func queryInt64Ptr(r *http.Request, name string) *int64 {
-	raw := strings.TrimSpace(r.URL.Query().Get(name))
+func queryInt64Ptr(c *gin.Context, name string) *int64 {
+	raw := strings.TrimSpace(c.Query(name))
 	if raw == "" {
 		return nil
 	}
@@ -208,8 +263,8 @@ func queryInt64Ptr(r *http.Request, name string) *int64 {
 	return &value
 }
 
-func queryBoolPtr(r *http.Request, name string) *bool {
-	raw := strings.ToLower(strings.TrimSpace(r.URL.Query().Get(name)))
+func queryBoolPtr(c *gin.Context, name string) *bool {
+	raw := strings.ToLower(strings.TrimSpace(c.Query(name)))
 	if raw == "" {
 		return nil
 	}
@@ -217,40 +272,40 @@ func queryBoolPtr(r *http.Request, name string) *bool {
 	return &value
 }
 
-// pathInt64 取 URL 路径参数并转成 int64。r.PathValue("userId") 对应路由里 {userId} 那一段(见 GO入门笔记『框架:net/http』)。
+// pathInt64 取 Gin URL 路径参数并转成 int64。
 // 返回 (int64, error):调用处先判断 err,不合法就直接回错。
-func pathInt64(r *http.Request, name string) (int64, error) {
-	value, err := strconv.ParseInt(r.PathValue(name), 10, 64)
+func pathInt64(c *gin.Context, name string) (int64, error) {
+	value, err := strconv.ParseInt(c.Param(name), 10, 64)
 	if err != nil || value <= 0 {
 		return 0, errors.New("路径参数不合法: " + name)
 	}
 	return value, nil
 }
 
-func queryCursorPage(r *http.Request) (service.CursorPage, error) {
+func queryCursorPage(c *gin.Context) (service.CursorPage, error) {
 	limit := 50
-	if raw := queryStr(r, "limit"); raw != "" {
+	if raw := queryStr(c, "limit"); raw != "" {
 		value, err := strconv.Atoi(raw)
 		if err != nil || value < 1 || value > 200 {
 			return service.CursorPage{}, errors.New("limit must be between 1 and 200")
 		}
 		limit = value
 	}
-	values := r.URL.Query()
+	values := c.Request.URL.Query()
 	values.Del("cursor")
 	values.Del("limit")
-	pattern := r.Pattern
+	pattern := routePattern(c)
 	if pattern == "" {
-		pattern = r.Method + " " + r.URL.Path
+		pattern = c.Request.Method + " " + c.Request.URL.Path
 	}
 	scope := fmt.Sprintf("%x", sha256.Sum256([]byte(pattern+"?"+values.Encode())))
-	return service.ParseCursorPage(queryStr(r, "cursor"), limit, scope)
+	return service.ParseCursorPage(queryStr(c, "cursor"), limit, scope)
 }
 
-func cursorPage(w http.ResponseWriter, r *http.Request) (service.CursorPage, bool) {
-	page, err := queryCursorPage(r)
+func cursorPage(c *gin.Context) (service.CursorPage, bool) {
+	page, err := queryCursorPage(c)
 	if err != nil {
-		writeProblem(w, r, http.StatusBadRequest, err.Error())
+		writeProblem(c, http.StatusBadRequest, err.Error())
 		return service.CursorPage{}, false
 	}
 	return page, true
@@ -258,13 +313,10 @@ func cursorPage(w http.ResponseWriter, r *http.Request) (service.CursorPage, boo
 
 // ---------- 认证中间件 ----------
 
-// authedHandler 是一个"函数类型":凡是签名为 (w, r, principal) 的函数都算这种类型。
-// 它比标准处理函数多一个 principal(当前登录用户),鉴权中间件校验通过后会把它传进来。
-// 函数在 Go 里是"一等公民",可以像值一样作为参数传递、作为返回值返回(见下面的中间件)。
-type authedHandler func(w http.ResponseWriter, r *http.Request, principal *service.Principal)
+const principalContextKey = "principal"
 
-func extractBearerToken(r *http.Request) string {
-	raw := strings.TrimSpace(r.Header.Get("Authorization"))
+func extractBearerToken(c *gin.Context) string {
+	raw := strings.TrimSpace(c.GetHeader("Authorization"))
 	if raw == "" {
 		return ""
 	}
@@ -274,50 +326,73 @@ func extractBearerToken(r *http.Request) string {
 	return strings.TrimSpace(raw[7:])
 }
 
-// requireAuth 是"中间件":接收一个处理函数 next,返回一个包了鉴权逻辑的新处理函数——"包一层"就是中间件模式。
-// 新函数先取 token 并验证,通过才调用 next(w, r, principal),否则直接回 401。于是各业务接口自己不用再写鉴权。
-// return func(w, r){...} 返回的是匿名函数(闭包):它"记住"了外层的 s 和 next,每次请求都能用。
-// (s *Server) 是方法接收者:表示这是 Server 的方法,方法内用 s 指代当前对象(见 GO入门笔记『方法与接收者』)。
-// 返回类型 http.HandlerFunc 是标准库的处理函数类型,可直接登记到路由表(见 GO入门笔记『框架:net/http』)。
 // requireAuth 必须登录。
-func (s *Server) requireAuth(next authedHandler) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		token := extractBearerToken(r)
+func (s *Server) requireAuth() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		token := extractBearerToken(c)
 		if token == "" {
-			writeProblem(w, r, http.StatusUnauthorized, "missing authorization header")
+			writeProblem(c, http.StatusUnauthorized, "missing authorization header")
+			c.Abort()
 			return
 		}
 		// 一次接住两个返回值:principal 是解析出的用户,err 是错误。这就是 Go 的多返回值(见 GO入门笔记『函数 & 多返回值』)。
 		principal, err := s.App.AuthenticateAccessToken(token)
 		if err != nil {
-			writeProblem(w, r, http.StatusUnauthorized, "invalid access token")
+			writeProblem(c, http.StatusUnauthorized, "invalid access token")
+			c.Abort()
 			return
 		}
-		setAuditActor(r, principal.User.ID)
-		next(w, r, principal)
+		c.Set(principalContextKey, principal)
+		setAuditActor(c, principal.User.ID)
+		c.Next()
 	}
 }
 
-// requirePermission 在 requireAuth 之上再包一层:先要求登录,再检查用户是否持有权限码 code,没有就回 403。
-// 它把"检查权限再调 next"做成一个函数,当作 next 传给 requireAuth —— 中间件可以这样层层嵌套组合。
-// code 形如 "system:users:view",是前后端约定的权限标识;principal.HasPermission(code) 判断当前用户有没有它。
-// requirePermission 必须持有权限码。
-func (s *Server) requirePermission(code string, next authedHandler) http.HandlerFunc {
-	return s.requireAuth(func(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-		if !principal.HasPermission(code) {
-			writeProblem(w, r, http.StatusForbidden, "permission denied")
-			return
-		}
-		next(w, r, principal)
-	})
+func currentPrincipal(c *gin.Context) *service.Principal {
+	principal, _ := c.Get(principalContextKey)
+	value, _ := principal.(*service.Principal)
+	return value
 }
 
-func (s *Server) requireRole(code string, next authedHandler) http.HandlerFunc {
-	return s.requireAuth(func(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-		if !principal.HasRole(code) {
-			writeProblem(w, r, http.StatusForbidden, "permission denied")
+// code 形如 "system:users:view",是前后端约定的权限标识;principal.HasPermission(code) 判断当前用户有没有它。
+// requirePermission 必须持有权限码。
+func (s *Server) requirePermission(code string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		principal := currentPrincipal(c)
+		if principal == nil || !principal.HasPermission(code) {
+			writeProblem(c, http.StatusForbidden, "permission denied")
+			c.Abort()
 			return
 		}
-		next(w, r, principal)
-	})
+		c.Next()
+	}
+}
+
+func (s *Server) requireRole(code string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		principal := currentPrincipal(c)
+		if principal == nil || !principal.HasRole(code) {
+			writeProblem(c, http.StatusForbidden, "permission denied")
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+func recoverHTTP() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		defer func() {
+			if recover() == nil {
+				return
+			}
+			c.Set(responseFailedContextKey, true)
+			slog.ErrorContext(c.Request.Context(), "http panic recovered", "component", "http", "error_category", "panic")
+			if !c.Writer.Written() {
+				writeProblem(c, http.StatusInternalServerError, "internal server error")
+			}
+			c.Abort()
+		}()
+		c.Next()
+	}
 }

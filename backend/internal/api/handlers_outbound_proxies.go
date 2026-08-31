@@ -1,70 +1,69 @@
 package api
 
 import (
-	"net/http"
-
 	"coinsphere/backend/internal/service"
+	"github.com/gin-gonic/gin"
 )
 
-func (s *Server) handleListOutboundProxies(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
-	data, err := s.App.ListOutboundProxies(r.Context())
-	respond(w, data, err, "")
+func (s *Server) handleListOutboundProxies(c *gin.Context) {
+	data, err := s.App.ListOutboundProxies(c.Request.Context())
+	respond(c, data, err, "")
 }
 
-func (s *Server) handleCreateOutboundProxy(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	payload, err := decodeBody[service.OutboundProxyUpsertPayload](r)
+func (s *Server) handleCreateOutboundProxy(c *gin.Context) {
+	payload, err := decodeBody[service.OutboundProxyUpsertPayload](c)
 	if err != nil {
-		respond(w, nil, err, "")
+		respond(c, nil, err, "")
 		return
 	}
-	data, err := s.App.CreateOutboundProxy(r.Context(), *payload, principal)
-	respond(w, data, err, "")
+	data, err := s.App.CreateOutboundProxy(c.Request.Context(), *payload, currentPrincipal(c))
+	respond(c, data, err, "")
 }
 
-func (s *Server) handleUpdateOutboundProxy(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	proxyID, err := pathInt64(r, "proxyId")
+func (s *Server) handleUpdateOutboundProxy(c *gin.Context) {
+	proxyID, err := pathInt64(c, "proxyId")
 	if err != nil {
-		respond(w, nil, err, "")
+		respond(c, nil, err, "")
 		return
 	}
-	payload, err := decodeBody[service.OutboundProxyUpsertPayload](r)
+	payload, err := decodeBody[service.OutboundProxyUpsertPayload](c)
 	if err != nil {
-		respond(w, nil, err, "")
+		respond(c, nil, err, "")
 		return
 	}
-	data, err := s.App.UpdateOutboundProxy(r.Context(), proxyID, *payload, principal)
-	respond(w, data, err, "")
+	data, err := s.App.UpdateOutboundProxy(c.Request.Context(), proxyID, *payload, currentPrincipal(c))
+	respond(c, data, err, "")
 }
 
-func (s *Server) handlePatchOutboundProxy(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	proxyID, err := pathInt64(r, "proxyId")
+func (s *Server) handlePatchOutboundProxy(c *gin.Context) {
+	proxyID, err := pathInt64(c, "proxyId")
 	if err != nil {
-		respond(w, nil, err, "")
+		respond(c, nil, err, "")
 		return
 	}
-	payload, err := decodeBody[service.OutboundProxyPatchPayload](r)
+	payload, err := decodeBody[service.OutboundProxyPatchPayload](c)
 	if err != nil {
-		respond(w, nil, err, "")
+		respond(c, nil, err, "")
 		return
 	}
-	data, err := s.App.PatchOutboundProxy(r.Context(), proxyID, *payload, principal)
-	respond(w, data, err, "")
+	data, err := s.App.PatchOutboundProxy(c.Request.Context(), proxyID, *payload, currentPrincipal(c))
+	respond(c, data, err, "")
 }
 
-func (s *Server) handleDeleteOutboundProxy(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
-	proxyID, err := pathInt64(r, "proxyId")
+func (s *Server) handleDeleteOutboundProxy(c *gin.Context) {
+	proxyID, err := pathInt64(c, "proxyId")
 	if err == nil {
-		err = s.App.DeleteOutboundProxy(r.Context(), proxyID)
+		err = s.App.DeleteOutboundProxy(c.Request.Context(), proxyID)
 	}
-	respond(w, map[string]int64{"id": proxyID}, err, "")
+	respond(c, map[string]int64{"id": proxyID}, err, "")
 }
 
-func (s *Server) handleValidateOutboundProxy(w http.ResponseWriter, r *http.Request, _ *service.Principal) {
-	proxyID, err := pathInt64(r, "proxyId")
+func (s *Server) handleValidateOutboundProxy(c *gin.Context) {
+	proxyID, err := pathInt64(c, "proxyId")
 	if err != nil {
-		respond(w, nil, err, "")
+		respond(c, nil, err, "")
 		return
 	}
-	data, err := s.App.ValidateOutboundProxy(r.Context(), proxyID)
-	respond(w, data, err, "")
+	data, err := s.App.ValidateOutboundProxy(c.Request.Context(), proxyID)
+	respond(c, data, err, "")
 }

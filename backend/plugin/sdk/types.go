@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
-	"net/http"
 	"time"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2"
+	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
 )
 
@@ -222,7 +222,7 @@ type RegisteredAssistantQuery struct {
 	Descriptor AssistantQueryDescriptor
 }
 
-type ScopedRouteHandler func(http.ResponseWriter, *http.Request, RouteScope)
+type ScopedRouteHandler func(*gin.Context, RouteScope)
 
 type RouteDescriptor struct {
 	Method  string

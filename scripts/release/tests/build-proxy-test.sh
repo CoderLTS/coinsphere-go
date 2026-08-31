@@ -74,7 +74,7 @@ if [[ ${1:-} == buildx && ${2:-} == build ]]; then
           "$destination/coinsphere-server" \
           "$destination/coinsphere-migrate"
         ;;
-      assets)
+      web-assets)
         touch \
           "$destination/index.html" \
           "$destination/app.js.gz" \
@@ -168,12 +168,12 @@ else:
     raise AssertionError("额外 TAR 零记录必须被拒绝")
 PY
 
-if [[ $(wc -l <"$BUILD_DOCKER_BUILD_LOG") -ne 5 ]]; then
-  echo "应执行五次 Buildx 构建" >&2
+if [[ $(wc -l <"$BUILD_DOCKER_BUILD_LOG") -ne 4 ]]; then
+  echo "应执行四次 Buildx 构建" >&2
   exit 1
 fi
 for proxy_name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy; do
-  if [[ $(grep -o -- "--build-arg $proxy_name" "$BUILD_DOCKER_BUILD_LOG" | wc -l) -ne 5 ]]; then
+  if [[ $(grep -o -- "--build-arg $proxy_name" "$BUILD_DOCKER_BUILD_LOG" | wc -l) -ne 4 ]]; then
     echo "每次构建都应传入代理变量名: $proxy_name" >&2
     exit 1
   fi
@@ -196,8 +196,8 @@ COINSPHERE_BUILDER_MEMORY=$EXPECTED_BUILDER_MEMORY \
 bash "$ROOT_DIR/scripts/release/build.sh" \
   v1.2.3 0123456789abcdef0123456789abcdef01234567 "$images_only_output" images-only
 
-if [[ $(wc -l <"$BUILD_DOCKER_BUILD_LOG") -ne 2 ]]; then
-  echo "images-only should run two Buildx image builds" >&2
+if [[ $(wc -l <"$BUILD_DOCKER_BUILD_LOG") -ne 1 ]]; then
+  echo "images-only should run one Buildx image build" >&2
   exit 1
 fi
 if [[ $(find "$images_only_output" -maxdepth 1 -type f | wc -l) -ne 1 ]] ||
@@ -210,7 +210,7 @@ jq -e '
   .version == "v1.2.3" and
   .commit == "0123456789abcdef0123456789abcdef01234567" and
   (.backendDigest | test("@sha256:[0-9]{64}$")) and
-  (.webDigest | test("@sha256:[0-9]{64}$"))
+  (keys == ["backendDigest", "backendImage", "commit", "version"])
 ' "$images_only_output/release-manifest.json" >/dev/null
 
 mkdir -p "$TEST_DIR/docker-global"

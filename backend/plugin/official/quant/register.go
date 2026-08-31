@@ -135,10 +135,10 @@ func (q *quantRuntime) register(registrar sdk.Registrar) error {
 		{sdk.RouteDescriptor{Method: "GET", Pattern: "/market-signals", Scope: sdk.ScopeSystem}, q.handleQuantMarketSignals},
 		{sdk.RouteDescriptor{Method: "GET", Pattern: "/signals", Scope: sdk.ScopeSystem}, q.handleQuantSignals},
 		{sdk.RouteDescriptor{Method: "GET", Pattern: "/paper-accounts", Scope: sdk.ScopeSystem}, q.handleQuantPaperAccounts},
-		{sdk.RouteDescriptor{Method: "POST", Pattern: "/paper-accounts/{accountId}/rebuild", Scope: sdk.ScopeSystem}, q.handleQuantPaperAccountRebuild},
+		{sdk.RouteDescriptor{Method: "POST", Pattern: "/paper-accounts/:accountId/rebuild", Scope: sdk.ScopeSystem}, q.handleQuantPaperAccountRebuild},
 		{sdk.RouteDescriptor{Method: "GET", Pattern: "/paper", Scope: sdk.ScopeResult}, q.handleQuantPaperResult},
-		{sdk.RouteDescriptor{Method: "POST", Pattern: "/signals/{signalId}/approve", Scope: sdk.ScopeResult, Action: "approve"}, q.handleQuantSignalApprove},
-		{sdk.RouteDescriptor{Method: "POST", Pattern: "/signals/{signalId}/reject", Scope: sdk.ScopeResult, Action: "reject"}, q.handleQuantSignalReject},
+		{sdk.RouteDescriptor{Method: "POST", Pattern: "/signals/:signalId/approve", Scope: sdk.ScopeResult, Action: "approve"}, q.handleQuantSignalApprove},
+		{sdk.RouteDescriptor{Method: "POST", Pattern: "/signals/:signalId/reject", Scope: sdk.ScopeResult, Action: "reject"}, q.handleQuantSignalReject},
 		{sdk.RouteDescriptor{Method: "GET", Pattern: "/paper/export", Scope: sdk.ScopeResult, Action: "export"}, q.handleQuantPaperExport},
 	} {
 		if err := registrar.Route(route.desc, route.handler); err != nil {
