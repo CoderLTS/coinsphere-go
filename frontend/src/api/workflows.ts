@@ -84,6 +84,13 @@ export interface WorkflowDetail extends WorkflowItem {
   stateNodeInstanceIds: string[]
 }
 
+export interface WorkflowTemplate {
+  key: string
+  name: string
+  mode: 'batch' | 'event' | 'stream'
+  description: string
+}
+
 export interface WorkflowRevision {
   id: number
   workflowId: number
@@ -268,6 +275,9 @@ export const fetchWorkflowNodeDefinitions = () =>
   request.get<ItemList<WorkflowNodeDefinition>>({
     url: '/api/v1/workflows/node-definitions'
   })
+
+export const fetchWorkflowTemplates = () =>
+  request.get<ItemList<WorkflowTemplate>>({ url: '/api/v1/workflows/templates' })
 
 export const validateWorkflowGraph = (graph: WorkflowGraph) =>
   request.post<{

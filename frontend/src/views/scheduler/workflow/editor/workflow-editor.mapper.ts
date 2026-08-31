@@ -291,12 +291,15 @@ export function buildPortsForType(
 
   if (typeCode === 'official.quant.backtest_start') {
     const branches = getNodeBranches(typeCode, config)
-    return branches.map((branch, index) => ({
-      id: branch,
-      group: resolveBranchPortGroup(branch, index, branches.length),
-      role: 'out',
-      label: branch.toUpperCase()
-    }))
+    return [
+      inPort,
+      ...branches.map((branch, index) => ({
+        id: branch,
+        group: resolveBranchPortGroup(branch, index, branches.length),
+        role: 'out' as const,
+        label: branch.toUpperCase()
+      }))
+    ]
   }
 
   switch (getNodeGraphKind(typeCode)) {

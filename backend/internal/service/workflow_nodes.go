@@ -159,9 +159,6 @@ func workflowPorts(desc sdk.NodeDescriptor) ([]string, []string) {
 	if desc.Type == "core.loop_item" {
 		return []string{}, []string{"out"}
 	}
-	if desc.Type == "official.quant.backtest_start" {
-		return []string{}, append([]string(nil), desc.Branches...)
-	}
 	if desc.Type == "core.end" || desc.Type == "core.loop_end" {
 		return []string{"in"}, []string{}
 	}

@@ -18,10 +18,7 @@
       >
         <template #left>
           <ElSpace v-if="hasAuth('scheduler.workflow_definitions.create')">
-            <ElButton type="primary" @click="router.push('/scheduler/workflow/create')">
-              新增工作流定义
-            </ElButton>
-            <ElButton :icon="TrendCharts" @click="createQuantWorkflow">新建量化策略</ElButton>
+            <ElButton type="primary" @click="openCreateWorkflow">新建工作流</ElButton>
           </ElSpace>
         </template>
       </ArtTableHeader>
@@ -113,6 +110,31 @@
         </ElTableColumn>
       </ArtTable>
     </ElCard>
+
+    <ElDialog v-model="createVisible" title="新建工作流" width="min(520px, calc(100vw - 32px))">
+      <ElForm label-position="top">
+        <ElFormItem label="工作流名称">
+          <ElInput v-model="createForm.name" maxlength="120" show-word-limit />
+        </ElFormItem>
+        <ElFormItem label="模板">
+          <ElSelect v-model="createForm.templateKey" class="backtest-form__full">
+            <ElOption
+              v-for="template in workflowTemplates"
+              :key="template.key"
+              :label="template.name"
+              :value="template.key"
+            />
+          </ElSelect>
+        </ElFormItem>
+        <div v-if="selectedTemplate?.description" class="create-template-description">
+          {{ selectedTemplate.description }}
+        </div>
+      </ElForm>
+      <template #footer>
+        <ElButton @click="createVisible = false">取消</ElButton>
+        <ElButton type="primary" :loading="creating" @click="submitCreateWorkflow">创建</ElButton>
+      </template>
+    </ElDialog>
 
     <ElDialog
       v-model="versionDialogVisible"
@@ -228,7 +250,6 @@
     Collection,
     Edit,
     SwitchButton,
-    TrendCharts,
     VideoPlay
   } from '@element-plus/icons-vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
@@ -241,7 +262,13 @@
     type WorkflowDefinitionItem,
     type WorkflowDefinitionVersionItem
   } from '@/api/scheduler'
-  import { createWorkflow, fetchWorkflowRuns, type WorkflowStatus } from '@/api/workflows'
+  import {
+    createWorkflow,
+    fetchWorkflowRuns,
+    fetchWorkflowTemplates,
+    type WorkflowStatus,
+    type WorkflowTemplate
+  } from '@/api/workflows'
   import { formatDateTime } from '@/utils/date'
 
   defineOptions({ name: 'SchedulerWorkflowDefinitionsPage' })
@@ -251,6 +278,13 @@
   const loading = ref(false)
   const actingId = ref<number>()
   const runningId = ref<number>()
+  const creating = ref(false)
+  const createVisible = ref(false)
+  const workflowTemplates = ref<WorkflowTemplate[]>([])
+  const createForm = reactive({ name: '', templateKey: 'blank' })
+  const selectedTemplate = computed(() =>
+    workflowTemplates.value.find((item) => item.key === createForm.templateKey)
+  )
   const definitions = ref<WorkflowDefinitionItem[]>([])
   const versionDialogVisible = ref(false)
   const versionDetail = ref<WorkflowDefinitionItem | null>(null)
@@ -396,17 +430,33 @@
   const isQuantWorkflow = (row: WorkflowDefinitionItem) =>
     row.graph.schemaVersion === 2 && Boolean(row.graph.entryPoints?.backtest)
 
-  const createQuantWorkflow = async () => {
-    const { value } = await ElMessageBox.prompt('请输入策略工作流名称', '新建量化策略', {
-      inputPattern: /^.{1,120}$/,
-      inputErrorMessage: '名称需要 1 至 120 个字符'
-    })
-    const workflow = await createWorkflow({
-      name: String(value).trim(),
-      description: '',
-      templateKey: 'quant-workflow'
-    })
-    await router.push(`/scheduler/workflow/${workflow.id}/edit`)
+  const openCreateWorkflow = async () => {
+    if (!workflowTemplates.value.length) {
+      workflowTemplates.value = (await fetchWorkflowTemplates()).items
+    }
+    createForm.name = ''
+    createForm.templateKey = 'blank'
+    createVisible.value = true
+  }
+
+  const submitCreateWorkflow = async () => {
+    const name = createForm.name.trim()
+    if (!name) {
+      ElMessage.warning('请输入工作流名称')
+      return
+    }
+    creating.value = true
+    try {
+      const workflow = await createWorkflow({
+        name,
+        description: '',
+        templateKey: createForm.templateKey as Parameters<typeof createWorkflow>[0]['templateKey']
+      })
+      createVisible.value = false
+      await router.push(`/scheduler/workflow/${workflow.id}/edit`)
+    } finally {
+      creating.value = false
+    }
   }
 
   const runWorkflow = async (row: WorkflowDefinitionItem) => {
@@ -502,6 +552,11 @@
 
   .backtest-form__full {
     width: 100%;
+  }
+
+  .create-template-description {
+    margin-top: -6px;
+    color: var(--el-text-color-secondary);
   }
 
   .backtest-form__times,

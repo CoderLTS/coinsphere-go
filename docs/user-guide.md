@@ -116,7 +116,7 @@ COINSPHERE_WORKFLOW__HTTP_ALLOWED_HOSTS='[api.example.com,models.example.com]'
 
 Quant 只连接 Binance Spot 和 USD-M 公共 REST/WebSocket。先创建并激活 `quant-market-data`，在 `official.quant.realtime_candles` 中选择市场、代理、单个品种和一个或多个固定周期；同一 `market + instrument + proxyId` 使用一条 combined-stream WebSocket，并在连接内合并所需周期。断线只重连，不隐式补数。每根实时闭合 K 线保存一条 Quant 行情和 CloudEvent，并为命中的工作流创建一条包含完整节点路径的 Run；Run 不复制 OHLCV 正文。月线不属于当前固定周期集合。
 
-缺口修复使用独立的 `official.quant.backfill_candles` Action，可接手动或定时开始节点，并可选择直连或已启用代理。它为单个品种的每个选中周期抓取指定 UTC 结束时间之前最近 N 根闭合 K 线；结束时间留空时使用执行时间，每周期最多 10000 根。补数只写入 K 线表并返回抓取/新增数量，不发布 `market.candle.closed`，重复执行由数据库主键去重。元数据节点只有在全部选中市场都抓取并解析成功后才替换快照；失败时目录保持不变，过滤后为空则保存为空快照。代理只供上述三类 Binance 公共行情节点显式选择，不会自动作用于 Connector、AI、通知、QQ、Paper 报价或其他 Quant 节点。
+缺口修复使用独立的 `official.quant.backfill_candles` Action，可接手动、定时或节点化回测入口，并可选择直连或已启用代理。普通运行会为单个品种的每个选中周期抓取指定 UTC 结束时间之前最近 N 根闭合 K 线；作为回测入口时先检查回测区间及前置根数，完整则直接进入回测，不足才补数。结束时间留空时使用执行时间，每周期最多 10000 根。补数只写入 K 线表并返回抓取/新增数量，不发布 `market.candle.closed`，重复执行由数据库主键去重。元数据节点只有在全部选中市场都抓取并解析成功后才替换快照；失败时目录保持不变，过滤后为空则保存为空快照。代理只供上述三类 Binance 公共行情节点显式选择，不会自动作用于 Connector、AI、通知、QQ、Paper 报价或其他 Quant 节点。
 
 `quant-strategy` 消费 `market.candle.closed` 并调用已编译的 SMA crossover Go 策略。`quant-backtest` 读取已落库的闭合 K 线，在下一根 K 线开盘成交并应用 Decimal 手续费和滑点；日期必须是 UTC。运行结果中的 Quant 页面可查看品种、K 线、策略和回测摘要，并下载后校验完整明细 SHA-256。
 
