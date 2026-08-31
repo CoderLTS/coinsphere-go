@@ -108,11 +108,7 @@ export const createConnectionValidator =
     if (!sourceCell || !targetCell || !sourcePort || !targetPort) return false
     if (sourceCell.id === targetCell.id) return false
     if (targetPort !== 'in') return false
-    if (
-      graphKindOfCell(targetCell) === 'start' ||
-      cellTypeCode(targetCell) === BACKTEST_START_NODE_TYPE
-    )
-      return false
+    if (graphKindOfCell(targetCell) === 'start') return false
     if (graphKindOfCell(sourceCell) === 'terminal') return false
 
     const graph = getGraph()

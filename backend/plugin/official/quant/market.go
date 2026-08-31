@@ -43,10 +43,38 @@ func (a quantCandleBackfillAction) Execute(ctx context.Context, request sdk.Acti
 	if err != nil {
 		return sdk.ActionResult{}, err
 	}
+	var input struct {
+		StartTime, EndTime, InitialCapital, FeeRate, SlippageRate string
+	}
+	if !decodeQuantStrict(request.Input, &input) {
+		return sdk.ActionResult{}, errors.New("quant candle backfill input is invalid")
+	}
+	requestedCount := config.CandleCount
+	backtestInput := input.StartTime != "" || input.EndTime != "" || input.InitialCapital != "" || input.FeeRate != "" || input.SlippageRate != ""
+	if backtestInput {
+		start, startErr := parseQuantUTCTime(input.StartTime)
+		end, endErr := parseQuantUTCTime(input.EndTime)
+		if startErr != nil || endErr != nil || !start.Before(end) || input.InitialCapital == "" || input.FeeRate == "" || input.SlippageRate == "" {
+			return sdk.ActionResult{}, errors.New("quant candle backfill backtest input is invalid")
+		}
+		duration := quantIntervals[config.Intervals[0]]
+		requestedCount = int((end.Sub(start)+duration-1)/duration) + config.CandleCount
+		if requestedCount > 10000 {
+			return sdk.ActionResult{}, errors.New("quant candle backfill range exceeds the 10000 candle limit")
+		}
+		config.EndTime = end
+		complete, err := a.runtime.quantBackfillRangeComplete(ctx, config, start, end, requestedCount)
+		if err != nil {
+			return sdk.ActionResult{}, err
+		}
+		if complete {
+			return quantCandleBackfillResult(config, input, requestedCount, 0, 0, now), nil
+		}
+	}
 	fetchedCount, insertedCount := 0, int64(0)
 	for _, interval := range config.Intervals {
 		series := quantSeriesConfig{Market: config.Market, Instrument: config.Instrument, Interval: interval, ProxyID: config.ProxyID}
-		candles, err := a.runtime.fetchQuantKlinesBefore(ctx, series, config.EndTime, config.CandleCount)
+		candles, err := a.runtime.fetchQuantKlinesBefore(ctx, series, config.EndTime, requestedCount)
 		if err != nil {
 			return sdk.ActionResult{}, err
 		}
@@ -58,15 +86,54 @@ func (a quantCandleBackfillAction) Execute(ctx context.Context, request sdk.Acti
 		insertedCount += inserted
 	}
 	completedAt := time.Now().UTC()
+	if backtestInput {
+		start, _ := parseQuantUTCTime(input.StartTime)
+		end, _ := parseQuantUTCTime(input.EndTime)
+		complete, err := a.runtime.quantBackfillRangeComplete(ctx, config, start, end, requestedCount)
+		if err != nil || !complete {
+			return sdk.ActionResult{}, errors.New("quant candle backfill could not complete the requested backtest range")
+		}
+	}
 	request.Logger.Info("Binance K 线补数完成",
 		"market", config.Market, "instrument", config.Instrument, "intervals", strings.Join(config.Intervals, ","),
-		"requested_count_per_interval", config.CandleCount, "fetched_count", fetchedCount, "inserted_count", insertedCount,
+		"requested_count_per_interval", requestedCount, "fetched_count", fetchedCount, "inserted_count", insertedCount,
 	)
-	return sdk.ActionResult{Output: mustMarshal(map[string]any{
+	return quantCandleBackfillResult(config, input, requestedCount, fetchedCount, insertedCount, completedAt), nil
+}
+
+func (q *quantRuntime) quantBackfillRangeComplete(ctx context.Context, config quantCandleBackfillConfig, start, end time.Time, count int) (bool, error) {
+	for _, interval := range config.Intervals {
+		series := quantSeriesConfig{Market: config.Market, Instrument: config.Instrument, Interval: interval}
+		candles, err := q.loadQuantCandles(ctx, series, time.Time{}, end, count)
+		if err != nil {
+			return false, err
+		}
+		duration := quantIntervals[interval]
+		if len(candles) < count || candles[0].OpenTime.After(start.Add(-duration*time.Duration(config.CandleCount))) {
+			return false, nil
+		}
+		for index := 1; index < len(candles); index++ {
+			if !candles[index].OpenTime.Equal(candles[index-1].OpenTime.Add(duration)) {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
+}
+
+func quantCandleBackfillResult(config quantCandleBackfillConfig, input struct {
+	StartTime, EndTime, InitialCapital, FeeRate, SlippageRate string
+}, requestedCount, fetchedCount int, insertedCount int64, completedAt time.Time) sdk.ActionResult {
+	output := map[string]any{
 		"market": config.Market, "instrument": config.Instrument, "intervals": config.Intervals,
-		"requestedCountPerInterval": config.CandleCount, "fetchedCount": fetchedCount,
+		"requestedCountPerInterval": requestedCount, "fetchedCount": fetchedCount,
 		"insertedCount": insertedCount, "completedAt": completedAt.Format(time.RFC3339Nano),
-	})}, nil
+	}
+	if input.StartTime != "" {
+		output["startTime"], output["endTime"] = input.StartTime, input.EndTime
+		output["initialCapital"], output["feeRate"], output["slippageRate"] = input.InitialCapital, input.FeeRate, input.SlippageRate
+	}
+	return sdk.ActionResult{Output: mustMarshal(output)}
 }
 
 type quantCandleHub struct {

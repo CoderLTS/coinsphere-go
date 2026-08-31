@@ -194,6 +194,7 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 		return validatedWorkflowGraph{}, errors.New("workflow graph must contain exactly one main trigger")
 	}
 	entryPoints := map[string]string{"realtime": triggerID}
+	backtestStartID := ""
 	if graph.SchemaVersion == 2 {
 		if len(graph.EntryPoints) != 2 || graph.EntryPoints["realtime"] == "" || graph.EntryPoints["backtest"] == "" {
 			return validatedWorkflowGraph{}, errors.New("schema version 2 requires realtime and backtest entryPoints")
@@ -203,8 +204,13 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 				return validatedWorkflowGraph{}, fmt.Errorf("workflow entryPoint %q is unsupported", key)
 			}
 		}
-		if graph.EntryPoints["realtime"] != triggerID || nodes[graph.EntryPoints["backtest"]].NodeType != "official.quant.backtest_start" {
-			return validatedWorkflowGraph{}, errors.New("workflow entryPoints must reference the main trigger and a Quant backtest start node")
+		if graph.EntryPoints["realtime"] != triggerID {
+			return validatedWorkflowGraph{}, errors.New("workflow realtime entryPoint must reference the main trigger")
+		}
+		var err error
+		backtestStartID, err = validateWorkflowBacktestEntry(graph, nodes, graph.EntryPoints["backtest"])
+		if err != nil {
+			return validatedWorkflowGraph{}, err
 		}
 		entryPoints = map[string]string{"realtime": graph.EntryPoints["realtime"], "backtest": graph.EntryPoints["backtest"]}
 	}
@@ -266,14 +272,14 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 	if err := validateWorkflowMarketSignalBindings(nodes, graph.Edges); err != nil {
 		return validatedWorkflowGraph{}, err
 	}
-	if err := validateWorkflowQuantStrategyIdentity(graph, nodes, entryPoints["backtest"]); err != nil {
+	if err := validateWorkflowQuantStrategyIdentity(graph, nodes, backtestStartID); err != nil {
 		return validatedWorkflowGraph{}, err
 	}
 	if err := validateWorkflowOutputSignalBoundary(graph, nodes, descriptors); err != nil {
 		return validatedWorkflowGraph{}, err
 	}
 	if graph.SchemaVersion == 2 {
-		if err := validateWorkflowBacktestSubgraph(graph, nodes, descriptors, entryPoints["backtest"]); err != nil {
+		if err := validateWorkflowBacktestSubgraph(graph, nodes, descriptors, backtestStartID); err != nil {
 			return validatedWorkflowGraph{}, err
 		}
 	}
@@ -290,6 +296,44 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 		graphJSON: string(canonical), nodeVersionsJSON: string(nodeVersions), mainTriggerID: triggerID, entryPoints: entryPoints,
 		nodes: nodes, nodeTypes: nodeTypes, nodeVersions: versions, descriptors: descriptors, requiredSecrets: requiredSecrets,
 	}, nil
+}
+
+func validateWorkflowBacktestEntry(graph workflowGraph, nodes map[string]workflowGraphNode, entryID string) (string, error) {
+	entry := nodes[entryID]
+	if entry.NodeType == "official.quant.backtest_start" {
+		return entryID, nil
+	}
+	if entry.NodeType != "official.quant.backfill_candles" {
+		return "", errors.New("workflow backtest entryPoint must reference a Quant backfill or backtest start node")
+	}
+	startID := ""
+	for _, edge := range graph.Edges {
+		if edge.SourceNodeInstanceID != entryID {
+			continue
+		}
+		if startID != "" || edge.SourcePort != "out" || nodes[edge.TargetNodeInstanceID].NodeType != "official.quant.backtest_start" {
+			return "", errors.New("Quant backfill entry must only connect to one backtest start node")
+		}
+		startID = edge.TargetNodeInstanceID
+	}
+	if startID == "" {
+		return "", errors.New("Quant backfill entry must connect to a backtest start node")
+	}
+	for _, edge := range graph.Edges {
+		if edge.TargetNodeInstanceID == startID && edge.SourceNodeInstanceID != entryID {
+			return "", errors.New("Quant backtest start must only follow its backfill entry")
+		}
+	}
+	var backfill struct {
+		Market, Instrument string
+		Intervals          []string `json:"intervals"`
+	}
+	var start struct{ Market, Instrument, Interval string }
+	if json.Unmarshal(entry.Config, &backfill) != nil || json.Unmarshal(nodes[startID].Config, &start) != nil ||
+		backfill.Market != start.Market || backfill.Instrument != start.Instrument || !containsString(backfill.Intervals, start.Interval) {
+		return "", errors.New("Quant backfill entry must include the backtest main series")
+	}
+	return startID, nil
 }
 
 func validateWorkflowLoop(node workflowGraphNode, catalog map[string]sdk.NodeDescriptor) (validatedWorkflowLoop, error) {
@@ -646,7 +690,8 @@ func validateWorkflowOutputSignalBoundary(graph workflowGraph, nodes map[string]
 		}
 		seen[current] = true
 		node := nodes[current.nodeID]
-		if node.NodeType != "official.quant.output_signal" && descriptors[current.nodeID].SideEffect != sdk.SideEffectNone && !current.realtime {
+		backtestBackfill := current.nodeID == graph.EntryPoints["backtest"] && node.NodeType == "official.quant.backfill_candles"
+		if node.NodeType != "official.quant.output_signal" && descriptors[current.nodeID].SideEffect != sdk.SideEffectNone && !current.realtime && !backtestBackfill {
 			return fmt.Errorf("node %q with side effects must only follow an output signal realtime branch", current.nodeID)
 		}
 		for _, edge := range adjacency[current.nodeID] {
@@ -702,7 +747,14 @@ func validateWorkflowQuantStrategyIdentity(graph workflowGraph, nodes map[string
 func validateWorkflowBindings(nodes map[string]workflowGraphNode, descriptors map[string]sdk.NodeDescriptor, adjacency map[string][]string, edges []workflowGraphEdge) error {
 	for nodeID, node := range nodes {
 		targetProperties, required := workflowSchemaProperties(descriptors[nodeID].InputSchema)
-		if node.NodeType != "official.quant.backtest_start" {
+		backtestRoot := node.NodeType == "official.quant.backtest_start" || node.NodeType == "official.quant.backfill_candles"
+		for _, edge := range edges {
+			if edge.TargetNodeInstanceID == nodeID {
+				backtestRoot = false
+				break
+			}
+		}
+		if !backtestRoot {
 			for field := range required {
 				if _, ok := node.InputBindings[field]; !ok {
 					return fmt.Errorf("node %q requires input binding %q", nodeID, field)

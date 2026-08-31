@@ -430,7 +430,7 @@ WITH candidate AS (
     JOIN workflow_runtimes wr ON wr.workflow_id = eb.workflow_id
     WHERE eb.status IN ('queued', 'retrying')
       AND eb.not_before <= ?
-      AND w.status = 'active'
+      AND (w.status = 'active' OR eb.entry_point = 'backtest')
       AND (SELECT COUNT(*) FROM workflow_runs active
            WHERE active.workflow_id = eb.workflow_id AND active.status = 'running') < wr.max_concurrent_runs
       AND (eb.partition_key = '' OR NOT EXISTS (

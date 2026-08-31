@@ -143,18 +143,20 @@ const quantBacktestWorkflowGraph = `{
 
 const quantWorkflowGraph = `{
   "schemaVersion": 2,
-  "entryPoints": {"realtime":"candle-close","backtest":"backtest-start"},
+  "entryPoints": {"realtime":"candle-close","backtest":"backfill"},
   "nodes": [
     {"nodeInstanceId":"candle-close","nodeType":"core.event","nodeVersion":"1.0.0","config":{"types":["market.candle.closed"],"source":"urn:coinsphere:plugin:official.quant","subject":"binance:spot:BTCUSDT:1h"},"position":{"x":80,"y":120}},
-    {"nodeInstanceId":"backtest-start","nodeType":"official.quant.backtest_start","nodeVersion":"1.0.0","config":{"market":"spot","instrument":"BTCUSDT","interval":"1h"},"position":{"x":80,"y":360}},
-    {"nodeInstanceId":"macd","nodeType":"official.quant.macd_condition","nodeVersion":"1.0.0","config":{"market":"spot","instrument":"BTCUSDT","checkInterval":"1h","name":"MACD 金叉","interval":"1h","parameters":{"fastPeriod":12,"slowPeriod":26,"signalPeriod":9,"signal":"golden_cross"}},"inputBindings":{"eventTime":{"kind":"cel","expression":"event.time"}},"position":{"x":380,"y":120}},
-    {"nodeInstanceId":"code","nodeType":"official.quant.code_strategy","nodeVersion":"1.0.0","config":{"series":[{"alias":"main","market":"spot","instrument":"BTCUSDT","interval":"1h","lookback":30}],"parameters":{"target":"1"},"source":"{\"long\": decimalGt(last(ohlcv.main.close), sma(ohlcv.main.close, 20)), \"target\": params.target}","booleanOutputs":["long"],"decimalOutputs":["target"],"branchField":"long"},"inputBindings":{"eventTime":{"kind":"cel","expression":"event.time"}},"position":{"x":380,"y":360}},
-    {"nodeInstanceId":"position","nodeType":"official.quant.position","nodeVersion":"1.0.0","config":{"market":"spot","targetMode":"fixed","fixedTarget":"1","decimalField":"target"},"inputBindings":{"evaluatedAt":{"kind":"field","nodeInstanceId":"code","fieldPath":["evaluatedAt"]}},"position":{"x":700,"y":240}},
-    {"nodeInstanceId":"signal","nodeType":"official.quant.output_signal","nodeVersion":"1.0.0","config":{"market":"spot","instrument":"BTCUSDT","interval":"1h"},"position":{"x":980,"y":240}},
-    {"nodeInstanceId":"realtime-end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":1280,"y":160}},
-    {"nodeInstanceId":"backtest-end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":1280,"y":400}}
+    {"nodeInstanceId":"backfill","nodeType":"official.quant.backfill_candles","nodeVersion":"1.0.0","config":{"market":"spot","instrument":"BTCUSDT","intervals":["1h"],"candleCount":500,"endTime":""},"position":{"x":80,"y":360}},
+    {"nodeInstanceId":"backtest-start","nodeType":"official.quant.backtest_start","nodeVersion":"1.0.0","config":{"market":"spot","instrument":"BTCUSDT","interval":"1h"},"inputBindings":{"startTime":{"kind":"field","nodeInstanceId":"backfill","fieldPath":["startTime"]},"endTime":{"kind":"field","nodeInstanceId":"backfill","fieldPath":["endTime"]},"initialCapital":{"kind":"field","nodeInstanceId":"backfill","fieldPath":["initialCapital"]},"feeRate":{"kind":"field","nodeInstanceId":"backfill","fieldPath":["feeRate"]},"slippageRate":{"kind":"field","nodeInstanceId":"backfill","fieldPath":["slippageRate"]}},"position":{"x":380,"y":360}},
+    {"nodeInstanceId":"macd","nodeType":"official.quant.macd_condition","nodeVersion":"1.0.0","config":{"market":"spot","instrument":"BTCUSDT","checkInterval":"1h","name":"MACD 金叉","interval":"1h","parameters":{"fastPeriod":12,"slowPeriod":26,"signalPeriod":9,"signal":"golden_cross"}},"inputBindings":{"eventTime":{"kind":"cel","expression":"event.time"}},"position":{"x":680,"y":120}},
+    {"nodeInstanceId":"code","nodeType":"official.quant.code_strategy","nodeVersion":"1.0.0","config":{"series":[{"alias":"main","market":"spot","instrument":"BTCUSDT","interval":"1h","lookback":30}],"parameters":{"target":"1"},"source":"{\"long\": decimalGt(last(ohlcv.main.close), sma(ohlcv.main.close, 20)), \"target\": params.target}","booleanOutputs":["long"],"decimalOutputs":["target"],"branchField":"long"},"inputBindings":{"eventTime":{"kind":"cel","expression":"event.time"}},"position":{"x":680,"y":360}},
+    {"nodeInstanceId":"position","nodeType":"official.quant.position","nodeVersion":"1.0.0","config":{"market":"spot","targetMode":"fixed","fixedTarget":"1","decimalField":"target"},"inputBindings":{"evaluatedAt":{"kind":"field","nodeInstanceId":"code","fieldPath":["evaluatedAt"]}},"position":{"x":1000,"y":240}},
+    {"nodeInstanceId":"signal","nodeType":"official.quant.output_signal","nodeVersion":"1.0.0","config":{"market":"spot","instrument":"BTCUSDT","interval":"1h"},"position":{"x":1280,"y":240}},
+    {"nodeInstanceId":"realtime-end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":1580,"y":160}},
+    {"nodeInstanceId":"backtest-end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":1580,"y":400}}
   ],
   "edges": [
+    {"edgeId":"backfill-to-backtest","sourceNodeInstanceId":"backfill","sourcePort":"out","targetNodeInstanceId":"backtest-start","targetPort":"in"},
     {"edgeId":"realtime-macd","sourceNodeInstanceId":"candle-close","sourcePort":"out","targetNodeInstanceId":"macd","targetPort":"in"},
     {"edgeId":"realtime-code","sourceNodeInstanceId":"candle-close","sourcePort":"out","targetNodeInstanceId":"code","targetPort":"in"},
     {"edgeId":"backtest-macd","sourceNodeInstanceId":"backtest-start","sourcePort":"each","targetNodeInstanceId":"macd","targetPort":"in"},
@@ -260,17 +262,17 @@ type WorkflowRevisionView struct {
 
 func (a *App) ListWorkflowTemplates() []WorkflowTemplate {
 	return []WorkflowTemplate{
-		{Key: WorkflowTemplateBlank, Name: "Blank batch workflow", Mode: WorkflowModeBatch, Description: "Manual trigger connected to an end node."},
-		{Key: WorkflowTemplateSchedule, Name: "Scheduled batch workflow", Mode: WorkflowModeBatch, Description: "UTC interval trigger connected to an end node."},
-		{Key: WorkflowTemplateEvent, Name: "Event workflow", Mode: WorkflowModeEvent, Description: "CloudEvent trigger connected to an end node."},
-		{Key: WorkflowTemplateFailure, Name: "Failure handler", Mode: WorkflowModeEvent, Description: "Standard workflow failure trigger connected to an end node."},
-		{Key: WorkflowTemplateWebhook, Name: "Connector webhook", Mode: WorkflowModeBatch, Description: "Authenticated webhook trigger connected to an end node."},
-		{Key: WorkflowTemplateWebSocket, Name: "Connector WebSocket", Mode: WorkflowModeStream, Description: "Public WebSocket stream trigger connected to an end node."},
-		{Key: WorkflowTemplateQuantData, Name: "Shared Binance market data", Mode: WorkflowModeStream, Description: "Shared public real-time closed-candle collection for Spot or USD-M."},
-		{Key: WorkflowTemplateQuantLive, Name: "Live strategy evaluation", Mode: WorkflowModeEvent, Description: "Evaluate a trusted Go strategy for each matching closed candle."},
-		{Key: WorkflowTemplateBacktest, Name: "Strategy backtest", Mode: WorkflowModeBatch, Description: "Run a deterministic closed-candle backtest in the compute pool."},
+		{Key: WorkflowTemplateBlank, Name: "空白工作流", Mode: WorkflowModeBatch, Description: "从手动开始节点创建空白流程。"},
+		{Key: WorkflowTemplateSchedule, Name: "定时工作流", Mode: WorkflowModeBatch, Description: "按固定间隔或 Cron 调度流程。"},
+		{Key: WorkflowTemplateEvent, Name: "事件工作流", Mode: WorkflowModeEvent, Description: "接收匹配的 CloudEvent 后运行。"},
+		{Key: WorkflowTemplateFailure, Name: "失败处理", Mode: WorkflowModeEvent, Description: "处理标准工作流失败事件。"},
+		{Key: WorkflowTemplateWebhook, Name: "Webhook 工作流", Mode: WorkflowModeBatch, Description: "通过认证 Webhook 启动流程。"},
+		{Key: WorkflowTemplateWebSocket, Name: "WebSocket 工作流", Mode: WorkflowModeStream, Description: "订阅公开 WebSocket 消息。"},
+		{Key: WorkflowTemplateQuantData, Name: "Binance 行情采集", Mode: WorkflowModeStream, Description: "共享采集 Spot 或 USD-M 闭合 K 线。"},
+		{Key: WorkflowTemplateQuantLive, Name: "可信策略评估", Mode: WorkflowModeEvent, Description: "按闭合 K 线运行内置 Go 策略。"},
+		{Key: WorkflowTemplateBacktest, Name: "可信策略回测", Mode: WorkflowModeBatch, Description: "对内置 Go 策略执行确定性回测。"},
 		{Key: WorkflowTemplateQuantFlow, Name: "量化策略与回测", Mode: WorkflowModeEvent, Description: "同一 revision 复用实时 K 线与节点化回测计算子图。"},
-		{Key: WorkflowTemplatePaper, Name: "Paper strategy pair", Mode: WorkflowModeEvent, Description: "Create shared market data and an approval-first Paper strategy workflow."},
+		{Key: WorkflowTemplatePaper, Name: "Paper 策略", Mode: WorkflowModeEvent, Description: "创建行情采集及审批优先的 Paper 策略流程。"},
 	}
 }
 

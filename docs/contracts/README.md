@@ -30,7 +30,7 @@
 
 - `/api/v1/system/proxies` 提供 HTTP/SOCKS5 代理的列表、新增、更新、启停和删除，`/{proxyId}/validations` 通过 Binance Spot 公共 Ping 检查连通性。接口只允许拥有对应系统代理权限的管理员使用。
 - 代理密码使用服务端 SecretCipher 加密保存，列表和编辑响应只返回是否已配置；编辑时密码留空表示保留，显式清除后删除密文。已被任一工作流修订引用的代理删除返回 `409 Conflict`。
-- `official.quant.sync_instruments`、`official.quant.backfill_candles` 和 `official.quant.realtime_candles` 的 `proxyId` 为 `0` 或缺省时直连；选择正数 ID 时，运行时必须解析到仍存在且已启用的代理，否则节点失败。代理只改变 Binance 公共 REST/WebSocket 的传输路径，不扩大固定主机和公共端点白名单。
+- `official.quant.sync_instruments`、`official.quant.backfill_candles` 和 `official.quant.realtime_candles` 的 `proxyId` 为 `0` 或缺省时直连；选择正数 ID 时，运行时必须解析到仍存在且已启用的代理，否则节点失败。代理只改变 Binance 公共 REST/WebSocket 的传输路径，不扩大固定主机和公共端点白名单。节点化回测可将 `backfill_candles` 作为 `backtest` 入口；它只在回测区间及配置的前置根数不完整时补数，并将运行参数透传给唯一的 `backtest_start`。
 - `official.connector`、`official.ai`、通知、QQ、Paper 报价和其他 Quant 节点不读取系统代理池，也不继承上述节点的代理选择。
 
 ## 工作流
