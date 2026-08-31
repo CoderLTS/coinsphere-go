@@ -1,4 +1,4 @@
-package official
+package quant
 
 import (
 	"bytes"
@@ -19,12 +19,14 @@ type quantSeriesConfig struct {
 	Market     string `json:"market"`
 	Instrument string `json:"instrument"`
 	Interval   string `json:"interval"`
+	ProxyID    int64  `json:"proxyId"`
 }
 
 type quantCandleStreamConfig struct {
 	Market     string   `json:"market"`
 	Instrument string   `json:"instrument"`
 	Intervals  []string `json:"intervals"`
+	ProxyID    int64    `json:"proxyId"`
 }
 
 type quantCandleBackfillConfig struct {
@@ -40,6 +42,7 @@ type quantInstrumentSyncConfig struct {
 	BaseAssetDenylist  []string `json:"baseAssetDenylist"`
 	SymbolAllowlist    []string `json:"symbolAllowlist"`
 	SymbolDenylist     []string `json:"symbolDenylist"`
+	ProxyID            int64    `json:"proxyId"`
 }
 
 func parseQuantInstrumentSyncConfig(raw json.RawMessage) (quantInstrumentSyncConfig, error) {
@@ -55,7 +58,7 @@ func parseQuantInstrumentSyncConfig(raw json.RawMessage) (quantInstrumentSyncCon
 	config.BaseAssetDenylist = normalizeQuantFilter(config.BaseAssetDenylist, false)
 	config.SymbolAllowlist = normalizeQuantFilter(config.SymbolAllowlist, false)
 	config.SymbolDenylist = normalizeQuantFilter(config.SymbolDenylist, false)
-	if len(config.Markets) == 0 || len(config.QuoteAssets) == 0 {
+	if len(config.Markets) == 0 || len(config.QuoteAssets) == 0 || config.ProxyID < 0 {
 		return config, errors.New("quant instrument sync markets and quote assets are required")
 	}
 	for _, market := range config.Markets {
@@ -122,7 +125,7 @@ func parseQuantSeriesConfig(raw json.RawMessage) (quantSeriesConfig, error) {
 	if config.Market != "spot" && config.Market != "usdm" || !quantSeriesInstrumentPattern.MatchString(config.Instrument) {
 		return config, errors.New("quant market or instrument is invalid")
 	}
-	if _, ok := quantIntervals[config.Interval]; !ok {
+	if _, ok := quantIntervals[config.Interval]; !ok || config.ProxyID < 0 {
 		return config, errors.New("quant interval is unsupported")
 	}
 	return config, nil
@@ -143,6 +146,7 @@ func parseQuantCandleBackfillConfig(raw json.RawMessage, now time.Time) (quantCa
 		Market, Instrument, EndTime string
 		Intervals                   []string `json:"intervals"`
 		CandleCount                 int      `json:"candleCount"`
+		ProxyID                     int64    `json:"proxyId"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -150,7 +154,7 @@ func parseQuantCandleBackfillConfig(raw json.RawMessage, now time.Time) (quantCa
 		return quantCandleBackfillConfig{}, errors.New("quant candle backfill configuration is invalid")
 	}
 	stream, err := normalizeQuantCandleStreamConfig(quantCandleStreamConfig{
-		Market: payload.Market, Instrument: payload.Instrument, Intervals: payload.Intervals,
+		Market: payload.Market, Instrument: payload.Instrument, Intervals: payload.Intervals, ProxyID: payload.ProxyID,
 	})
 	if err != nil {
 		return quantCandleBackfillConfig{}, err
@@ -169,7 +173,7 @@ func normalizeQuantCandleStreamConfig(config quantCandleStreamConfig) (quantCand
 	config.Market = strings.ToLower(strings.TrimSpace(config.Market))
 	config.Instrument = strings.ToUpper(strings.TrimSpace(config.Instrument))
 	if config.Market != "spot" && config.Market != "usdm" || !quantSeriesInstrumentPattern.MatchString(config.Instrument) ||
-		len(config.Intervals) == 0 || len(config.Intervals) > len(quantIntervalOrder) {
+		len(config.Intervals) == 0 || len(config.Intervals) > len(quantIntervalOrder) || config.ProxyID < 0 {
 		return config, errors.New("quant candle stream market, instrument, or intervals are invalid")
 	}
 	selected := make(map[string]bool, len(config.Intervals))
@@ -251,4 +255,9 @@ func quantInt64(value string) (int64, error) {
 		return 0, errors.New("positive integer is required")
 	}
 	return parsed, nil
+}
+
+func mustMarshal(value any) json.RawMessage {
+	raw, _ := json.Marshal(value)
+	return raw
 }

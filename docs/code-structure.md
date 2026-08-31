@@ -54,7 +54,7 @@ backend/
 ├─ plugin/
 │  ├─ contracttest/                第三方插件契约测试助手
 │  ├─ manifest/                    coinsphere-plugin.json 校验
-│  ├─ official/                    Connector、AI、Quant、Notification
+│  ├─ official/                    Connector、AI、Quant、Notification、QQ
 │  └─ sdk/                         插件公共 Go 接口与 Registry
 ├─ version/                        Core 与 SDK 兼容版本
 ├─ config.yml                      默认配置
@@ -112,6 +112,19 @@ API 层可以校验 ID、枚举、时间、分页、文件和请求体等外部�
 ### 2.5 插件代码
 
 `plugin/sdk` 和 `plugin/manifest` 是外部插件作者可依赖的公共边界；`internal/*` 不属于插件 API。`plugin/official` 使用同一 Registry 注册内置插件，但其 migration 随核心版本发布。外部插件的安装代码、生成文件和依赖替换由 `internal/pluginlifecycle` 与 `internal/pluginbuild` 管理。
+
+`plugin/official` 的根包只负责编排注册，各插件实现按目录隔离：
+
+```text
+official/
+├─ register.go
+├─ ai/
+├─ connector/
+├─ notification/
+├─ qq/
+├─ quant/
+└─ internal/safehttp/    官方插件共享的公网访问与 SSRF 防护
+```
 
 以下文件由工具生成，不应手工编辑：
 

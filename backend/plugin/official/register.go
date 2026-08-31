@@ -2,32 +2,37 @@
 package official
 
 import (
-	"encoding/json"
+	"context"
 
+	"coinsphere/backend/plugin/official/ai"
+	"coinsphere/backend/plugin/official/connector"
+	"coinsphere/backend/plugin/official/internal/safehttp"
+	"coinsphere/backend/plugin/official/notification"
+	"coinsphere/backend/plugin/official/qq"
+	"coinsphere/backend/plugin/official/quant"
 	"coinsphere/backend/plugin/sdk"
+	"gorm.io/gorm"
 )
-
-const (
-	connectorPluginID = "official.connector"
-	aiPluginID        = "official.ai"
-)
-
-var emptyObjectSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false}`)
-var dynamicObjectSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object"}`)
 
 func RegisterAll(registry *sdk.Registry, allowedHosts []string) error {
-	client, err := newSafeHTTPClient(allowedHosts)
+	client, err := safehttp.New(allowedHosts)
 	if err != nil {
 		return err
 	}
-	if err := registry.RegisterPlugin(sdk.PluginDescriptor{
-		ID: connectorPluginID, Name: "连接器", Version: "1.0.0",
-		Contributes: []string{"nodes", "triggers", "resultPages"},
-	}, func(registrar sdk.Registrar) error { return registerConnector(registrar, client) }); err != nil {
+	if err := connector.Register(registry, client); err != nil {
 		return err
 	}
-	return registry.RegisterPlugin(sdk.PluginDescriptor{
-		ID: aiPluginID, Name: "人工智能", Version: "1.0.0",
-		Contributes: []string{"nodes", "resultPages"},
-	}, func(registrar sdk.Registrar) error { return registerAI(registrar, client) })
+	return ai.Register(registry, client)
+}
+
+func RegisterQuant(registry *sdk.Registry, database *gorm.DB, resolveProxy func(context.Context, int64) (string, error)) error {
+	return quant.Register(registry, database, resolveProxy)
+}
+
+func RegisterNotification(registry *sdk.Registry, database *gorm.DB, publish func(context.Context, int64, int64)) error {
+	return notification.Register(registry, database, publish)
+}
+
+func RegisterQQ(registry *sdk.Registry, database *gorm.DB) error {
+	return qq.Register(registry, database)
 }

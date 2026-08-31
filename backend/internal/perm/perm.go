@@ -27,6 +27,11 @@ const (
 	SystemMenusUpdate            = "system.menus.update"
 	SystemMenusDelete            = "system.menus.delete"
 	SystemPluginsView            = "system.plugins.view"
+	SystemProxiesView            = "system.proxies.view"
+	SystemProxiesCreate          = "system.proxies.create"
+	SystemProxiesUpdate          = "system.proxies.update"
+	SystemProxiesDelete          = "system.proxies.delete"
+	SystemProxiesValidate        = "system.proxies.validate"
 	SystemLogsView               = "system.logs.view"
 	SystemLogsConfigure          = "system.logs.configure"
 	ResultViewsAccess            = "result.views.access"
@@ -42,7 +47,7 @@ var MenuPermissionCodes = map[string]string{
 	"Home": HomeView, "SchedulerCenter": "",
 	"WorkflowDefinitions": SchedulerWorkflowDefinitionsView,
 	"System":              "", "User": SystemUsersView, "Role": SystemRolesView,
-	"Menus": SystemMenusView, "Plugins": SystemPluginsView, "UserCenter": "",
+	"Menus": SystemMenusView, "Plugins": SystemPluginsView, "OutboundProxies": SystemProxiesView, "UserCenter": "",
 }
 
 type ButtonSpec struct {
@@ -76,6 +81,12 @@ var ButtonSpecs = map[string][]ButtonSpec{
 		{"create", SystemMenusCreate, "新增"},
 		{"update", SystemMenusUpdate, "编辑"},
 		{"delete", SystemMenusDelete, "删除"},
+	},
+	"OutboundProxies": {
+		{"create", SystemProxiesCreate, "新增"},
+		{"update", SystemProxiesUpdate, "编辑"},
+		{"delete", SystemProxiesDelete, "删除"},
+		{"validate", SystemProxiesValidate, "检测"},
 	},
 	"Home": {
 		{"logs", SystemLogsView, "查看系统日志"},

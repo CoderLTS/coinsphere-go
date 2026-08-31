@@ -235,7 +235,8 @@
       "role": "Role Manage",
       "userCenter": "User Center",
       "menu": "Menu Manage",
-      "aiModels": "AI Models"
+      "aiModels": "AI Models",
+      "proxies": "Proxy Configuration"
     },
     "trading": {
       "title": "Trading",

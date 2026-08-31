@@ -1,38 +1,41 @@
-package official
+package quant
 
 import (
 	"context"
 	"encoding/json"
 
+	"coinsphere/backend/plugin/official/internal/safehttp"
 	"coinsphere/backend/plugin/sdk"
 	"gorm.io/gorm"
 )
 
 const quantPluginID = "official.quant"
 
+var emptyObjectSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false}`)
 var quantCandleSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"market":{"type":"string","enum":["spot","usdm"]},"instrument":{"type":"string","pattern":"^[A-Z0-9]{2,32}$"},"interval":{"type":"string","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"]},"openTime":{"type":"string","format":"date-time"},"closeTime":{"type":"string","format":"date-time"},"open":{"type":"string","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"high":{"type":"string","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"low":{"type":"string","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"close":{"type":"string","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"volume":{"type":"string","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true}},"required":["market","instrument","interval","openTime","closeTime","open","high","low","close","volume"],"additionalProperties":false}`)
 
 var quantSeriesConfigSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"market":{"type":"string","title":"Market","enum":["spot","usdm"]},"instrument":{"type":"string","title":"Instrument","pattern":"^[A-Z0-9]{2,32}$"},"interval":{"type":"string","title":"Interval","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"]}},"required":["market","instrument","interval"],"additionalProperties":false}`)
-var quantCandleStreamConfigSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"market":{"type":"string","title":"Market","enum":["spot","usdm"],"default":"spot"},"instrument":{"type":"string","title":"Instrument","pattern":"^[A-Z0-9]{2,32}$","default":"BTCUSDT"},"intervals":{"type":"array","title":"Intervals","items":{"type":"string","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"]},"minItems":1,"maxItems":14,"uniqueItems":true,"default":["1m"]}},"required":["market","instrument","intervals"],"additionalProperties":false}`)
-var quantCandleBackfillConfigSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"market":{"type":"string","title":"Market","enum":["spot","usdm"],"default":"spot"},"instrument":{"type":"string","title":"Instrument","pattern":"^[A-Z0-9]{2,32}$","default":"BTCUSDT"},"intervals":{"type":"array","title":"Intervals","items":{"type":"string","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"]},"minItems":1,"maxItems":14,"uniqueItems":true,"default":["1m"]},"candleCount":{"type":"integer","title":"Candles per interval","minimum":1,"maximum":10000,"default":500},"endTime":{"type":"string","title":"End time (UTC)","anyOf":[{"const":""},{"format":"date-time","pattern":"(?:Z|[+-]00:00)$"}],"default":""}},"required":["market","instrument","intervals","candleCount"],"additionalProperties":false}`)
+var quantCandleStreamConfigSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"market":{"type":"string","title":"Market","enum":["spot","usdm"],"default":"spot"},"proxyId":{"type":"integer","title":"Proxy","minimum":0,"default":0,"x-coinsphere-proxy":true},"instrument":{"type":"string","title":"Instrument","pattern":"^[A-Z0-9]{2,32}$","default":"BTCUSDT"},"intervals":{"type":"array","title":"Intervals","items":{"type":"string","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"]},"minItems":1,"maxItems":14,"uniqueItems":true,"default":["1m"]}},"required":["market","instrument","intervals"],"additionalProperties":false}`)
+var quantCandleBackfillConfigSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"market":{"type":"string","title":"Market","enum":["spot","usdm"],"default":"spot"},"proxyId":{"type":"integer","title":"Proxy","minimum":0,"default":0,"x-coinsphere-proxy":true},"instrument":{"type":"string","title":"Instrument","pattern":"^[A-Z0-9]{2,32}$","default":"BTCUSDT"},"intervals":{"type":"array","title":"Intervals","items":{"type":"string","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"]},"minItems":1,"maxItems":14,"uniqueItems":true,"default":["1m"]},"candleCount":{"type":"integer","title":"Candles per interval","minimum":1,"maximum":10000,"default":500},"endTime":{"type":"string","title":"End time (UTC)","anyOf":[{"const":""},{"format":"date-time","pattern":"(?:Z|[+-]00:00)$"}],"default":""}},"required":["market","instrument","intervals","candleCount"],"additionalProperties":false}`)
 var quantCandleBackfillOutputSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"market":{"type":"string","enum":["spot","usdm"]},"instrument":{"type":"string","pattern":"^[A-Z0-9]{2,32}$"},"intervals":{"type":"array","items":{"type":"string","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"]},"minItems":1,"maxItems":14,"uniqueItems":true},"requestedCountPerInterval":{"type":"integer","minimum":1,"maximum":10000},"fetchedCount":{"type":"integer","minimum":0},"insertedCount":{"type":"integer","minimum":0},"completedAt":{"type":"string","format":"date-time"}},"required":["market","instrument","intervals","requestedCountPerInterval","fetchedCount","insertedCount","completedAt"],"additionalProperties":false}`)
 
 type quantRuntime struct {
-	db       *gorm.DB
-	client   *safeHTTPClient
-	registry *sdk.Registry
-	hub      *quantCandleHub
-	quote    func(context.Context, quantSeriesConfig) (quantPublicQuote, error)
+	db           *gorm.DB
+	client       *safehttp.Client
+	registry     *sdk.Registry
+	hub          *quantCandleHub
+	quote        func(context.Context, quantSeriesConfig) (quantPublicQuote, error)
+	resolveProxy func(context.Context, int64) (string, error)
 }
 
-func RegisterQuant(registry *sdk.Registry, database *gorm.DB) error {
-	client, err := newSafeHTTPClient([]string{
+func Register(registry *sdk.Registry, database *gorm.DB, resolveProxy func(context.Context, int64) (string, error)) error {
+	client, err := safehttp.New([]string{
 		"data-api.binance.vision", "fapi.binance.com", "data-stream.binance.vision", "fstream.binance.com",
 	})
 	if err != nil {
 		return err
 	}
-	runtime := &quantRuntime{db: database, client: client, registry: registry}
+	runtime := &quantRuntime{db: database, client: client, registry: registry, resolveProxy: resolveProxy}
 	runtime.hub = newQuantCandleHub(runtime)
 	runtime.quote = runtime.fetchQuantPublicQuote
 	return registry.RegisterPlugin(sdk.PluginDescriptor{
@@ -55,7 +58,7 @@ func (q *quantRuntime) register(registrar sdk.Registrar) error {
 	}
 	if err := registrar.Trigger(sdk.NodeDescriptor{
 		Type: "official.quant.realtime_candles", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
-		ConfigSchema: quantCandleStreamConfigSchema, UISchema: json.RawMessage(`{"ui:order":["market","instrument","intervals"]}`),
+		ConfigSchema: quantCandleStreamConfigSchema, UISchema: json.RawMessage(`{"ui:order":["market","proxyId","instrument","intervals"]}`),
 		InputSchema: emptyObjectSchema, OutputSchema: quantCandleSchema,
 		Pool: sdk.PoolStream, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
 	}, quantCandleRealtimeTrigger{runtime: q}); err != nil {
@@ -64,7 +67,7 @@ func (q *quantRuntime) register(registrar sdk.Registrar) error {
 	if err := registrar.Action(sdk.NodeDescriptor{
 		Type: "official.quant.backfill_candles", Version: "1.0.0", Kind: sdk.NodeKindAction,
 		ConfigSchema: quantCandleBackfillConfigSchema,
-		UISchema:     json.RawMessage(`{"ui:order":["market","instrument","intervals","candleCount","endTime"]}`),
+		UISchema:     json.RawMessage(`{"ui:order":["market","proxyId","instrument","intervals","candleCount","endTime"]}`),
 		InputSchema:  emptyObjectSchema, OutputSchema: quantCandleBackfillOutputSchema,
 		Pool: sdk.PoolStream, SideEffect: sdk.SideEffectData, State: sdk.StateStateless,
 	}, quantCandleBackfillAction{runtime: q}); err != nil {
@@ -72,8 +75,8 @@ func (q *quantRuntime) register(registrar sdk.Registrar) error {
 	}
 	if err := registrar.Action(sdk.NodeDescriptor{
 		Type: "official.quant.sync_instruments", Version: "1.0.0", Kind: sdk.NodeKindAction,
-		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"markets":{"type":"array","title":"Markets","items":{"type":"string","enum":["spot","usdm"],"enumLabels":["Spot","USD-M"]},"minItems":1,"maxItems":2,"uniqueItems":true,"default":["spot","usdm"]},"quoteAssets":{"type":"array","title":"Quote assets","items":{"type":"string","minLength":1,"maxLength":64},"minItems":1,"maxItems":100,"default":["USDT","USDC"]},"baseAssetAllowlist":{"type":"array","title":"Base asset allowlist","items":{"type":"string","minLength":1,"maxLength":64},"maxItems":1000,"default":[]},"baseAssetDenylist":{"type":"array","title":"Base asset denylist","items":{"type":"string","minLength":1,"maxLength":64},"maxItems":1000,"default":[]},"symbolAllowlist":{"type":"array","title":"Symbol allowlist","items":{"type":"string","minLength":1,"maxLength":64},"maxItems":1000,"default":[]},"symbolDenylist":{"type":"array","title":"Symbol denylist","items":{"type":"string","minLength":1,"maxLength":64},"maxItems":1000,"default":[]}},"required":["markets","quoteAssets","baseAssetAllowlist","baseAssetDenylist","symbolAllowlist","symbolDenylist"],"additionalProperties":false}`),
-		UISchema:     json.RawMessage(`{"ui:order":["markets","quoteAssets","baseAssetAllowlist","baseAssetDenylist","symbolAllowlist","symbolDenylist"]}`),
+		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"markets":{"type":"array","title":"Markets","items":{"type":"string","enum":["spot","usdm"],"enumLabels":["Spot","USD-M"]},"minItems":1,"maxItems":2,"uniqueItems":true,"default":["spot","usdm"]},"proxyId":{"type":"integer","title":"Proxy","minimum":0,"default":0,"x-coinsphere-proxy":true},"quoteAssets":{"type":"array","title":"Quote assets","items":{"type":"string","minLength":1,"maxLength":64},"minItems":1,"maxItems":100,"default":["USDT","USDC"]},"baseAssetAllowlist":{"type":"array","title":"Base asset allowlist","items":{"type":"string","minLength":1,"maxLength":64},"maxItems":1000,"default":[]},"baseAssetDenylist":{"type":"array","title":"Base asset denylist","items":{"type":"string","minLength":1,"maxLength":64},"maxItems":1000,"default":[]},"symbolAllowlist":{"type":"array","title":"Symbol allowlist","items":{"type":"string","minLength":1,"maxLength":64},"maxItems":1000,"default":[]},"symbolDenylist":{"type":"array","title":"Symbol denylist","items":{"type":"string","minLength":1,"maxLength":64},"maxItems":1000,"default":[]}},"required":["markets","quoteAssets","baseAssetAllowlist","baseAssetDenylist","symbolAllowlist","symbolDenylist"],"additionalProperties":false}`),
+		UISchema:     json.RawMessage(`{"ui:order":["markets","proxyId","quoteAssets","baseAssetAllowlist","baseAssetDenylist","symbolAllowlist","symbolDenylist"]}`),
 		InputSchema:  emptyObjectSchema,
 		OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"fetchedCount":{"type":"integer","minimum":0},"matchedCount":{"type":"integer","minimum":0},"upsertedCount":{"type":"integer","minimum":0},"deletedCount":{"type":"integer","minimum":0},"syncedAt":{"type":"string","format":"date-time"}},"required":["fetchedCount","matchedCount","upsertedCount","deletedCount","syncedAt"],"additionalProperties":false}`),
 		Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectData, State: sdk.StateStateless,

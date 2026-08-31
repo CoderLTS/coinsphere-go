@@ -72,7 +72,7 @@ docker compose down
 | K 线详情   | 使用 `official.quant` 独立页面，以原形式查看闭合 K 线      |
 | 插件管理   | 查看编译进当前应用的插件、注册节点及节点配置参数           |
 | 系统日志   | 按级别、组件、请求和用户查询结构化运行日志                 |
-| 系统管理   | 维护用户、角色、菜单与权限码                               |
+| 系统管理   | 维护用户、角色、菜单、权限码与出站代理                     |
 
 导航和页面布局沿用 `/scheduler/*`、`/data/*` 形态，底层工作流、修订、Run 和插件接口统一使用当前 `/api/v1` 契约。旧交易、新闻和模型配置接口未恢复，因此对应菜单不展示。
 
@@ -110,11 +110,13 @@ COINSPHERE_WORKFLOW__HTTP_ALLOWED_HOSTS='[api.example.com,models.example.com]'
 
 ### 5.3 Quant 与回测
 
-应用首次启动且尚无币种同步节点时，会创建并激活“Binance 币种元数据采集”：立即运行一次，之后在北京时间 `00:00 / 06:00 / 12:00 / 18:00` 运行。`official.quant.sync_instruments` 可选择 Spot/USD-M，并配置报价资产、基础资产和交易对的黑白名单；输入会转大写、去空格和去重，空白名单不限，所有白名单取交集，任一黑名单命中即排除。多个元数据工作流各自保存成功快照，币种目录显示全部来源并集；停用只停止调度并保留上次成功快照。币种数据页不再提供代理或同步设置，采集状态和实时日志从“查看采集工作流”进入工作流画布查看。
+服务器直连 Binance 受限时，先在“系统管理 / 代理配置”新增 HTTP 或 SOCKS5 代理并执行连接检测。密码只写入服务端加密存储，编辑时留空会保留原密码。代理仍被任一工作流历史修订引用时不能删除；需要下线时先停用，使用它的节点会明确失败。
 
-Quant 只连接 Binance Spot 和 USD-M 公共 REST/WebSocket。先创建并激活 `quant-market-data`，在 `official.quant.realtime_candles` 中选择市场、单个品种和一个或多个固定周期；同一 `market + instrument + 规范化周期集合` 的订阅共享一条 combined-stream WebSocket。断线只重连，不隐式补数。每根实时闭合 K 线保存一条 Quant 行情和 CloudEvent，并为命中的工作流创建一条包含完整节点路径的 Run；Run 不复制 OHLCV 正文。月线不属于当前固定周期集合。
+应用首次启动且尚无币种同步节点时，会创建并激活“Binance 币种元数据采集”：立即运行一次，之后在北京时间 `00:00 / 06:00 / 12:00 / 18:00` 运行。`official.quant.sync_instruments` 可选择 Spot/USD-M、直连或一个已启用代理，并配置报价资产、基础资产和交易对的黑白名单；输入会转大写、去空格和去重，空白名单不限，所有白名单取交集，任一黑名单命中即排除。多个元数据工作流各自保存成功快照，币种目录显示全部来源并集；停用只停止调度并保留上次成功快照。采集状态和实时日志从“查看采集工作流”进入工作流画布查看。
 
-缺口修复使用独立的 `official.quant.backfill_candles` Action，可接手动或定时开始节点。它为单个品种的每个选中周期抓取指定 UTC 结束时间之前最近 N 根闭合 K 线；结束时间留空时使用执行时间，每周期最多 10000 根。补数只写入 K 线表并返回抓取/新增数量，不发布 `market.candle.closed`，重复执行由数据库主键去重。元数据节点只有在全部选中市场都抓取并解析成功后才替换快照；失败时目录保持不变，过滤后为空则保存为空快照。
+Quant 只连接 Binance Spot 和 USD-M 公共 REST/WebSocket。先创建并激活 `quant-market-data`，在 `official.quant.realtime_candles` 中选择市场、代理、单个品种和一个或多个固定周期；同一 `market + instrument + proxyId` 使用一条 combined-stream WebSocket，并在连接内合并所需周期。断线只重连，不隐式补数。每根实时闭合 K 线保存一条 Quant 行情和 CloudEvent，并为命中的工作流创建一条包含完整节点路径的 Run；Run 不复制 OHLCV 正文。月线不属于当前固定周期集合。
+
+缺口修复使用独立的 `official.quant.backfill_candles` Action，可接手动或定时开始节点，并可选择直连或已启用代理。它为单个品种的每个选中周期抓取指定 UTC 结束时间之前最近 N 根闭合 K 线；结束时间留空时使用执行时间，每周期最多 10000 根。补数只写入 K 线表并返回抓取/新增数量，不发布 `market.candle.closed`，重复执行由数据库主键去重。元数据节点只有在全部选中市场都抓取并解析成功后才替换快照；失败时目录保持不变，过滤后为空则保存为空快照。代理只供上述三类 Binance 公共行情节点显式选择，不会自动作用于 Connector、AI、通知、QQ、Paper 报价或其他 Quant 节点。
 
 `quant-strategy` 消费 `market.candle.closed` 并调用已编译的 SMA crossover Go 策略。`quant-backtest` 读取已落库的闭合 K 线，在下一根 K 线开盘成交并应用 Decimal 手续费和滑点；日期必须是 UTC。运行结果中的 Quant 页面可查看品种、K 线、策略和回测摘要，并下载后校验完整明细 SHA-256。
 
@@ -199,6 +201,7 @@ docker compose logs --tail=200 migrate backend web
 | 插件无法卸载             | CLI 输出的活动引用，先在拥有模块解除引用                |
 | 工作流返回 `409`         | 修订指针过期、状态冲突、事件内容冲突或积压达到上限      |
 | 连续流变为“需处理”       | Trigger 配置、域名白名单、DNS、凭据或远端握手状态       |
+| Binance 目标解析为非公网地址 | 在系统管理配置并检测服务器可用代理，再在采集节点选择该代理 |
 | Paper 信号被拒绝         | 结果页拒绝原因、报价时效、数量步进、账户状态及五项上限  |
 | Paper 投影不一致         | 先保留事实和备份，再按 Paper 恢复 Runbook 执行重建      |
 

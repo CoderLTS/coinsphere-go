@@ -1,4 +1,4 @@
-package official
+package qq
 
 import (
 	"bytes"
@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"coinsphere/backend/internal/db"
+	"coinsphere/backend/plugin/official/internal/safehttp"
 	"coinsphere/backend/plugin/sdk"
 	"gorm.io/gorm"
 )
@@ -25,7 +27,10 @@ const (
 	qqAPIBase        = "https://api.sgroup.qq.com"
 	qqAccessTokenURL = "https://bots.qq.com/app/getAppAccessToken"
 	qqRequestTimeout = 8 * time.Second
+	qqResponseLimit  = 64 << 10
 )
+
+var emptyObjectSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false}`)
 
 type qqAccessToken struct {
 	Value     string
@@ -35,7 +40,7 @@ type qqAccessToken struct {
 type qqRuntime struct {
 	db *gorm.DB
 
-	http    *safeHTTPClient
+	http    *safehttp.Client
 	tokenMu sync.Mutex
 	tokens  map[string]qqAccessToken
 
@@ -64,13 +69,13 @@ type qqSendInput struct {
 
 type qqSendAction struct{ runtime *qqRuntime }
 
-func RegisterQQ(registry *sdk.Registry, database *gorm.DB) error {
-	client, err := newSafeHTTPClient([]string{"bots.qq.com", "api.sgroup.qq.com", "api.bot.qq.com"})
+func Register(registry *sdk.Registry, database *gorm.DB) error {
+	client, err := safehttp.New([]string{"bots.qq.com", "api.sgroup.qq.com", "api.bot.qq.com"})
 	if err != nil {
 		return err
 	}
-	client.client.Timeout = qqRequestTimeout
-	client.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	client.SetTimeout(qqRequestTimeout)
+	client.DisableRedirects()
 	runtime := &qqRuntime{
 		db: database, http: client, tokens: map[string]qqAccessToken{}, receivers: map[string]struct{}{},
 	}
@@ -120,8 +125,8 @@ func (a qqSendAction) Execute(ctx context.Context, request sdk.ActionRequest) (s
 	if err != nil {
 		return sdk.ActionResult{}, err
 	}
-	workflowID, workflowErr := quantInt64(request.Revision.WorkflowID)
-	revisionID, revisionErr := quantInt64(request.Revision.RevisionID)
+	workflowID, workflowErr := strconv.ParseInt(request.Revision.WorkflowID, 10, 64)
+	revisionID, revisionErr := strconv.ParseInt(request.Revision.RevisionID, 10, 64)
 	if workflowErr != nil || revisionErr != nil {
 		return sdk.ActionResult{}, errors.New("QQ workflow identity is invalid")
 	}
@@ -391,10 +396,10 @@ func (q *qqRuntime) doJSON(ctx context.Context, method, target, appID, token str
 	}
 	response, err := q.http.Do(request)
 	if err != nil {
-		return 0, nil, notificationRequestCategory(callCtx, err), err
+		return 0, nil, qqRequestCategory(callCtx, err), err
 	}
 	defer response.Body.Close()
-	body, err := readNotificationResponse(response.Body)
+	body, err := readQQResponse(response.Body)
 	if err != nil {
 		return response.StatusCode, nil, "invalid_response", err
 	}
@@ -425,6 +430,32 @@ func qqTokenTTL(raw json.RawMessage) (int64, error) {
 		}
 	}
 	return strconv.ParseInt(strings.TrimSpace(text), 10, 64)
+}
+
+func readQQResponse(reader io.Reader) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(reader, qqResponseLimit+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > qqResponseLimit {
+		return nil, errors.New("QQ response is too large")
+	}
+	return body, nil
+}
+
+func qqRequestCategory(ctx context.Context, err error) string {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	if errors.Is(err, safehttp.ErrUnsafeEndpoint) {
+		return "network_policy"
+	}
+	return "network"
+}
+
+func mustMarshal(value any) json.RawMessage {
+	raw, _ := json.Marshal(value)
+	return raw
 }
 
 var _ sdk.ActionHandler = qqSendAction{}

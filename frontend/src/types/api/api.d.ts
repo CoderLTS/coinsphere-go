@@ -319,6 +319,44 @@ declare namespace Api {
       level: SystemLogLevel
       retentionDays: number
     }
+
+    type OutboundProxyProtocol = 'http' | 'socks5'
+    type OutboundProxyCheckStatus = 'unchecked' | 'healthy' | 'failed'
+
+    interface OutboundProxyItem {
+      id: number
+      name: string
+      protocol: OutboundProxyProtocol
+      host: string
+      port: number
+      username: string
+      passwordConfigured: boolean
+      isEnabled: boolean
+      lastCheckStatus: OutboundProxyCheckStatus
+      lastCheckedAt: string
+      lastLatencyMs?: number | null
+      createdAt: string
+      updatedAt: string
+    }
+
+    interface OutboundProxyUpsertPayload {
+      name: string
+      protocol: OutboundProxyProtocol
+      host: string
+      port: number
+      username: string
+      password?: string
+      clearPassword?: boolean
+      isEnabled: boolean
+    }
+
+    interface OutboundProxyValidationResult {
+      success: boolean
+      status: OutboundProxyCheckStatus
+      message: string
+      checkedAt: string
+      latencyMs?: number | null
+    }
   }
 
   namespace Notifications {

@@ -1,4 +1,4 @@
-package official
+package notification
 
 import (
 	"context"
@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"coinsphere/backend/plugin/official/internal/safehttp"
 	"coinsphere/backend/plugin/sdk"
 )
 
@@ -40,7 +41,7 @@ func (n *notificationRuntime) sendSMTP(ctx context.Context, request sdk.ActionRe
 	config.FromEmail = strings.TrimSpace(config.FromEmail)
 	config.FromName = strings.TrimSpace(config.FromName)
 	config.Password = string(password)
-	host, validHost := normalizeDomain(config.Host)
+	host, validHost := safehttp.NormalizeDomain(config.Host)
 	if err != nil || !validHost || config.Port < 1 || config.Port > 65535 ||
 		config.Security != "implicit_tls" && config.Security != "starttls" ||
 		config.Username == "" || config.Password == "" || len(config.Recipients) == 0 || len(config.Recipients) > 100 {
@@ -64,7 +65,7 @@ func (n *notificationRuntime) sendSMTP(ctx context.Context, request sdk.ActionRe
 		}
 	}
 	sort.Strings(recipients)
-	addresses, err := n.http.resolvePublicDomain(ctx, config.Host)
+	addresses, err := n.http.ResolvePublicDomain(ctx, config.Host)
 	if err != nil {
 		return notificationRequestCategory(ctx, err), err
 	}

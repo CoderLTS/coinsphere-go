@@ -156,7 +156,7 @@ Run WebSocket 只发送工作流 ID、Run ID 和更新时间等轻量更新。�
 
 `core.schedule` 支持固定秒数或带 IANA 时区的六段 Cron，服务恢复后最多补一次漏跑。插件 `TriggerHandler` 用 Emitter 发送事件并必须响应取消与背压；服务启动时扫描 active 连续流并恢复 Trigger。
 
-Connector/AI 的 HTTP 与 WebSocket 访问执行精确域名白名单、公共 DNS 和重定向复核，不继承环境代理。Notification 的钉钉节点和独立 QQ 插件只访问固定官方域名，SMTP 只拨号公网域名并强制 TLS 或 STARTTLS；凭据只经 SecretReader 解密。QQ Gateway Trigger 随流式工作流启停，固定订阅群聊 @ 与单聊消息并按 OpenID 分区，不保存原始载荷或鉴权扩展。Binance Quant 只访问公共行情接口，通用节点不能调用交易所私有接口。六种 Quant 判断节点各自读取一种周期的 UTC 闭合 K 线，在当前和上一检查时点确定性计算 Decimal 指标；工作流只承担 true/false 端口组合、路径进入传播和通知输入聚合，不参与逐 K 线计算。
+Connector/AI 的 HTTP 与 WebSocket 访问执行精确域名白名单、公共 DNS 和重定向复核，不继承环境代理。系统代理池由 Service 拥有，密码通过 SecretCipher 加密；只有 Quant 的元数据同步、K 线补数和实时 K 线节点能在修订配置中显式选择 HTTP/SOCKS5 代理。直连继续执行公共 DNS 校验；代理模式由代理解析目标域名，但仍固定 Binance 主机及公共 REST/WebSocket 端点，禁用重定向，并按 `proxyId` 隔离实时订阅。Notification 的钉钉节点和独立 QQ 插件只访问固定官方域名，SMTP 只拨号公网域名并强制 TLS 或 STARTTLS；凭据只经 SecretReader 解密。QQ Gateway Trigger 随流式工作流启停，固定订阅群聊 @ 与单聊消息并按 OpenID 分区，不保存原始载荷或鉴权扩展。Binance Quant 只访问公共行情接口，通用节点不能调用交易所私有接口。六种 Quant 判断节点各自读取一种周期的 UTC 闭合 K 线，在当前和上一检查时点确定性计算 Decimal 指标；工作流只承担 true/false 端口组合、路径进入传播和通知输入聚合，不参与逐 K 线计算。
 
 ## 9. 编译期插件
 
@@ -237,6 +237,7 @@ Paper 订单、成交、费用和账本事实不可变，账户与持仓是可�
 - 密码使用迭代哈希；节点密钥独立加密；Access Token 可按会话撤销。
 - WebSocket 要求同源 Origin、专用子协议和有效 Access Token；工作流运行订阅另要求超级管理员权限。
 - Connector/AI 默认拒绝全部外部主机，且拒绝私网、IP、通配符和交易所私有目标。
+- 系统代理不能被 Connector/AI 或交易所私有接口使用；被工作流历史修订引用时不能删除，停用或缺失的已选代理会使节点失败。
 - 只有状态拥有模块记录对应结构化日志，日志以 request ID、workflow ID、run ID 或 node ID 关联。
 - `/health/live` 只报告进程存活；`/health/ready` 和 `/health` 检查 PostgreSQL；`/metrics` 需要登录。
 - 系统日志和节点日志均限制消息、字段类型与大小，并过滤敏感字段。

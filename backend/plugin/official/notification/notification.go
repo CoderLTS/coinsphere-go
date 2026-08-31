@@ -1,16 +1,17 @@
-package official
+package notification
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"coinsphere/backend/internal/db"
+	"coinsphere/backend/plugin/official/internal/safehttp"
 	"coinsphere/backend/plugin/sdk"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -24,7 +25,7 @@ const (
 type notificationRuntime struct {
 	db      *gorm.DB
 	publish func(context.Context, int64, int64)
-	http    *safeHTTPClient
+	http    *safehttp.Client
 }
 
 type notificationAction struct {
@@ -42,13 +43,13 @@ type notificationTarget struct {
 	TargetID   int64  `json:"targetId"`
 }
 
-func RegisterNotification(registry *sdk.Registry, database *gorm.DB, publish func(context.Context, int64, int64)) error {
-	client, err := newSafeHTTPClient([]string{"oapi.dingtalk.com"})
+func Register(registry *sdk.Registry, database *gorm.DB, publish func(context.Context, int64, int64)) error {
+	client, err := safehttp.New([]string{"oapi.dingtalk.com"})
 	if err != nil {
 		return err
 	}
-	client.client.Timeout = notificationTimeout
-	client.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	client.SetTimeout(notificationTimeout)
+	client.DisableRedirects()
 	runtime := &notificationRuntime{db: database, publish: publish, http: client}
 	return registry.RegisterPlugin(sdk.PluginDescriptor{
 		ID: notificationPluginID, Name: "通知", Version: "3.0.0",
@@ -121,8 +122,8 @@ func (a notificationAction) Execute(ctx context.Context, request sdk.ActionReque
 		return sdk.ActionResult{}, errors.New("notification input is invalid")
 	}
 	input.SubjectKey, input.Message = strings.TrimSpace(input.SubjectKey), strings.TrimSpace(input.Message)
-	workflowID, workflowErr := quantInt64(request.Revision.WorkflowID)
-	revisionID, revisionErr := quantInt64(request.Revision.RevisionID)
+	workflowID, workflowErr := strconv.ParseInt(request.Revision.WorkflowID, 10, 64)
+	revisionID, revisionErr := strconv.ParseInt(request.Revision.RevisionID, 10, 64)
 	if workflowErr != nil || revisionErr != nil || input.SubjectKey == "" || input.Message == "" ||
 		utf8.RuneCountInString(input.SubjectKey) > 256 || utf8.RuneCountInString(input.Message) > 2000 {
 		return sdk.ActionResult{}, errors.New("notification identity or text is invalid")
@@ -383,3 +384,8 @@ func notificationResult(deliveries []db.NotificationDelivery, recipientCount int
 }
 
 var _ sdk.ActionHandler = notificationAction{}
+
+func mustMarshal(value any) json.RawMessage {
+	raw, _ := json.Marshal(value)
+	return raw
+}

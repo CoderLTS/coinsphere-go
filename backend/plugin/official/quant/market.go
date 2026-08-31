@@ -1,4 +1,4 @@
-package official
+package quant
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"coinsphere/backend/plugin/official/internal/safehttp"
 	"coinsphere/backend/plugin/sdk"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/gorilla/websocket"
@@ -21,7 +22,10 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-const maxQuantResponseBytes = 32 << 20
+const (
+	maxQuantResponseBytes         = 32 << 20
+	maxQuantWebSocketPayloadBytes = 1 << 20
+)
 
 type quantCandleRealtimeTrigger struct{ runtime *quantRuntime }
 type quantCandleBackfillAction struct{ runtime *quantRuntime }
@@ -42,7 +46,7 @@ func (a quantCandleBackfillAction) Execute(ctx context.Context, request sdk.Acti
 	}
 	fetchedCount, insertedCount := 0, int64(0)
 	for _, interval := range config.Intervals {
-		series := quantSeriesConfig{Market: config.Market, Instrument: config.Instrument, Interval: interval}
+		series := quantSeriesConfig{Market: config.Market, Instrument: config.Instrument, Interval: interval, ProxyID: config.ProxyID}
 		candles, err := a.runtime.fetchQuantKlinesBefore(ctx, series, config.EndTime, config.CandleCount)
 		if err != nil {
 			return sdk.ActionResult{}, err
@@ -76,6 +80,7 @@ type quantCandleHub struct {
 type quantCandleSubscription struct {
 	market      string
 	instrument  string
+	proxyID     int64
 	ctx         context.Context
 	cancel      context.CancelFunc
 	changed     chan struct{}
@@ -93,14 +98,14 @@ func newQuantCandleHub(runtime *quantRuntime) *quantCandleHub {
 }
 
 func (h *quantCandleHub) subscribe(ctx context.Context, config quantCandleStreamConfig, emitter sdk.Emitter) error {
-	key := config.Market + ":" + config.Instrument
+	key := fmt.Sprintf("%s:%s:%d", config.Market, config.Instrument, config.ProxyID)
 	h.mu.Lock()
 	subscription := h.subscriptions[key]
 	start := false
 	if subscription == nil {
 		workerCtx, cancel := context.WithCancel(context.Background())
 		subscription = &quantCandleSubscription{
-			market: config.Market, instrument: config.Instrument, ctx: workerCtx, cancel: cancel,
+			market: config.Market, instrument: config.Instrument, proxyID: config.ProxyID, ctx: workerCtx, cancel: cancel,
 			changed: make(chan struct{}, 1), subscribers: map[uint64]quantCandleSubscriber{},
 		}
 		h.subscriptions[key] = subscription
@@ -280,7 +285,7 @@ func (q *quantRuntime) fetchQuantKlinePage(ctx context.Context, config quantSeri
 		"endTime": {strconv.FormatInt(end.UnixMilli(), 10)}, "limit": {strconv.Itoa(limit)},
 	}
 	var rows []json.RawMessage
-	if err := q.getQuantJSON(ctx, base+path+"?"+values.Encode(), &rows); err != nil {
+	if err := q.getQuantJSON(ctx, base+path+"?"+values.Encode(), config.ProxyID, &rows); err != nil {
 		return nil, err
 	}
 	candles := make([]quantCandle, 0, len(rows))
@@ -348,10 +353,22 @@ func (q *quantRuntime) streamQuantCandles(ctx context.Context, subscription *qua
 	}
 	target, _ := url.Parse("wss://" + host + "/stream")
 	target.RawQuery = "streams=" + strings.Join(streams, "/")
-	if err := q.client.validateWebSocketURL(ctx, target, false); err != nil {
+	proxyURL, err := q.outboundProxyURL(ctx, subscription.proxyID)
+	if err != nil {
 		return err
 	}
-	dialer := websocket.Dialer{Proxy: nil, NetDialContext: q.client.dialContext, HandshakeTimeout: 10 * time.Second}
+	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second}
+	if proxyURL == nil {
+		if err := q.client.ValidateWebSocketURL(ctx, target, false); err != nil {
+			return err
+		}
+		dialer.NetDialContext = q.client.DialContext
+	} else {
+		if err := q.client.ValidateProxiedWebSocketURL(target, false); err != nil {
+			return err
+		}
+		dialer.Proxy = http.ProxyURL(proxyURL)
+	}
 	connection, response, err := dialer.DialContext(ctx, target.String(), http.Header{"User-Agent": []string{"CoinSphere-Quant/1.0"}})
 	if response != nil && response.Body != nil {
 		response.Body.Close()
@@ -359,7 +376,7 @@ func (q *quantRuntime) streamQuantCandles(ctx context.Context, subscription *qua
 	if err != nil {
 		return err
 	}
-	connection.SetReadLimit(maxConnectorPayloadBytes)
+	connection.SetReadLimit(maxQuantWebSocketPayloadBytes)
 	closed := make(chan struct{})
 	updatesDone := make(chan struct{})
 	updateErrors := make(chan error, 1)
@@ -502,7 +519,7 @@ func writeQuantCandleSubscription(connection *websocket.Conn, method, instrument
 	return nil
 }
 
-func (q *quantRuntime) getQuantJSON(ctx context.Context, target string, destination any) error {
+func (q *quantRuntime) getQuantJSON(ctx context.Context, target string, proxyID int64, destination any) error {
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	request, err := http.NewRequestWithContext(callCtx, http.MethodGet, target, nil)
@@ -511,7 +528,11 @@ func (q *quantRuntime) getQuantJSON(ctx context.Context, target string, destinat
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", "CoinSphere-Quant/1.0")
-	response, err := q.client.Do(request)
+	proxyURL, err := q.outboundProxyURL(callCtx, proxyID)
+	if err != nil {
+		return err
+	}
+	response, err := q.client.DoProxied(request, proxyURL)
 	if err != nil {
 		return err
 	}
@@ -527,6 +548,27 @@ func (q *quantRuntime) getQuantJSON(ctx context.Context, target string, destinat
 		return errors.New("decode Binance public response failed")
 	}
 	return nil
+}
+
+func (q *quantRuntime) outboundProxyURL(ctx context.Context, proxyID int64) (*url.URL, error) {
+	if proxyID == 0 {
+		return nil, nil
+	}
+	if q.resolveProxy == nil {
+		return nil, errors.New("outbound proxy resolver is unavailable")
+	}
+	raw, err := q.resolveProxy(ctx, proxyID)
+	if err != nil {
+		return nil, err
+	}
+	proxyURL, err := url.Parse(raw)
+	if err != nil || !proxyURL.IsAbs() || proxyURL.Opaque != "" || proxyURL.Hostname() == "" ||
+		proxyURL.Port() == "" || proxyURL.Scheme != "http" && proxyURL.Scheme != "socks5" ||
+		proxyURL.Path != "" || proxyURL.RawPath != "" || proxyURL.RawQuery != "" ||
+		proxyURL.ForceQuery || proxyURL.Fragment != "" {
+		return nil, errors.New("outbound proxy configuration is invalid")
+	}
+	return proxyURL, nil
 }
 
 func quantCandleData(candle quantCandle) map[string]any {

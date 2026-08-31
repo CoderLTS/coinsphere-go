@@ -175,3 +175,51 @@ export function fetchUpdateSystemLogRuntime(params: Api.System.SystemLogSettings
     showSuccessMessage: true
   })
 }
+
+export function fetchGetOutboundProxies() {
+  return request.get<Api.System.OutboundProxyItem[]>({
+    url: '/api/v1/system/proxies'
+  })
+}
+
+export function fetchCreateOutboundProxy(params: Api.System.OutboundProxyUpsertPayload) {
+  return request.post<Api.System.OutboundProxyItem>({
+    url: '/api/v1/system/proxies',
+    params,
+    showSuccessMessage: true
+  })
+}
+
+export function fetchUpdateOutboundProxy(
+  proxyId: number,
+  params: Api.System.OutboundProxyUpsertPayload
+) {
+  return request.put<Api.System.OutboundProxyItem>({
+    url: `/api/v1/system/proxies/${proxyId}`,
+    params,
+    showSuccessMessage: true
+  })
+}
+
+export function fetchSetOutboundProxyEnabled(proxyId: number, isEnabled: boolean) {
+  return request.request<Api.System.OutboundProxyItem>({
+    url: `/api/v1/system/proxies/${proxyId}`,
+    method: 'PATCH',
+    data: { isEnabled },
+    showSuccessMessage: true
+  })
+}
+
+export function fetchDeleteOutboundProxy(proxyId: number) {
+  return request.del<{ id: number }>({
+    url: `/api/v1/system/proxies/${proxyId}`,
+    showSuccessMessage: true
+  })
+}
+
+export function fetchValidateOutboundProxy(proxyId: number) {
+  return request.post<Api.System.OutboundProxyValidationResult>({
+    url: `/api/v1/system/proxies/${proxyId}/validations`,
+    showSuccessMessage: false
+  })
+}

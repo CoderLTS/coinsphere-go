@@ -98,17 +98,15 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	}
 
 	plugins := sdk.NewRegistry()
+	app := service.NewApp(gdb, cfg, plugins)
 	if err := official.RegisterAll(plugins, cfg.Workflow.HTTPAllowedHosts); err != nil {
 		return fmt.Errorf("register official plugins: %w", err)
 	}
-	if err := official.RegisterQuant(plugins, gdb); err != nil {
+	if err := official.RegisterQuant(plugins, gdb, app.ResolveOutboundProxy); err != nil {
 		return fmt.Errorf("register Quant plugin: %w", err)
 	}
-	var app *service.App
 	if err := official.RegisterNotification(plugins, gdb, func(ctx context.Context, userID, deliveryID int64) {
-		if app != nil {
-			app.PublishInAppNotification(ctx, userID, deliveryID)
-		}
+		app.PublishInAppNotification(ctx, userID, deliveryID)
 	}); err != nil {
 		return fmt.Errorf("register Notification plugin: %w", err)
 	}
@@ -120,7 +118,6 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	}
 	executable, _ := os.Executable()
 	baseDir := filepath.Dir(executable)
-	app = service.NewApp(gdb, cfg, plugins)
 	app.ArtifactRoot = filepath.Join(baseDir, "volumes", "artifacts")
 	if err := db.Seed(ctx, gdb, app.Hasher, cfg.Auth.BootstrapAdminPassword, plugins.Pages()); err != nil {
 		return fmt.Errorf("seed database: %w", err)

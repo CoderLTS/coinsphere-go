@@ -1,4 +1,4 @@
-package official
+package notification
 
 import (
 	"bytes"
@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"coinsphere/backend/plugin/official/internal/safehttp"
 	"coinsphere/backend/plugin/sdk"
 )
 
@@ -95,7 +96,7 @@ func notificationRequestCategory(ctx context.Context, err error) string {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
 		return "timeout"
 	}
-	if errors.Is(err, errUnsafeEndpoint) {
+	if errors.Is(err, safehttp.ErrUnsafeEndpoint) {
 		return "network_policy"
 	}
 	return "network"

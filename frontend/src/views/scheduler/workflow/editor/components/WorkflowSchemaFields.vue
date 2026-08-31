@@ -92,6 +92,7 @@
 <script setup lang="ts">
   import WorkflowSchemaField from './WorkflowSchemaField.vue'
   import { buildSchemaFields, type SchemaFieldMeta } from './workflow-schema-field'
+  import { fetchGetOutboundProxies } from '@/api/system'
 
   interface Props {
     /** 后端下发的该节点类型的 configSchema。 */
@@ -110,6 +111,26 @@
 
   const props = defineProps<Props>()
   const emit = defineEmits<Emits>()
+  const proxyOptions = ref<Array<{ value: number; label: string }>>([{ value: 0, label: '直连' }])
+
+  watch(
+    () => Boolean(props.schema?.properties?.proxyId?.['x-coinsphere-proxy']),
+    async (required) => {
+      if (!required) return
+      try {
+        const proxies = await fetchGetOutboundProxies()
+        proxyOptions.value = [
+          { value: 0, label: '直连' },
+          ...proxies
+            .filter((proxy) => proxy.isEnabled)
+            .map((proxy) => ({ value: proxy.id, label: proxy.name }))
+        ]
+      } catch {
+        proxyOptions.value = [{ value: 0, label: '直连' }]
+      }
+    },
+    { immediate: true }
+  )
 
   const fields = computed(() => {
     const order = Array.isArray(props.uiSchema?.['ui:order']) ? props.uiSchema['ui:order'] : []
@@ -117,8 +138,12 @@
     const built = buildSchemaFields(props.schema?.properties || {})
       .map((field) => {
         const ui = props.uiSchema?.[field.key] || {}
+        const schema = props.schema?.properties?.[field.key] || {}
         return {
           ...field,
+          ...(schema['x-coinsphere-proxy']
+            ? { control: 'enum' as const, options: proxyOptions.value }
+            : {}),
           multiline: ui['ui:widget'] === 'textarea' || field.multiline,
           placeholder: String(ui['ui:placeholder'] || field.placeholder)
         }

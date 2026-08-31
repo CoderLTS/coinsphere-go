@@ -1,4 +1,4 @@
-package official
+package quant
 
 import (
 	"context"
@@ -448,7 +448,7 @@ func (q *quantRuntime) fetchQuantPublicQuote(ctx context.Context, config quantSe
 	var payload struct {
 		Price string `json:"price"`
 	}
-	if err := q.getQuantJSON(ctx, base+path+"?"+url.Values{"symbol": {config.Instrument}}.Encode(), &payload); err != nil {
+	if err := q.getQuantJSON(ctx, base+path+"?"+url.Values{"symbol": {config.Instrument}}.Encode(), 0, &payload); err != nil {
 		return quantPublicQuote{}, err
 	}
 	price, err := decimal.NewFromString(payload.Price)
