@@ -39,7 +39,7 @@ docker compose up -d --build
 docker compose ps
 ```
 
-本地 Compose 依次启动 `postgresql`、一次性 `migrate`、`backend` 和 `web`。浏览器打开 <http://localhost:8080>。
+本地 Compose 依次启动 `postgresql`、一次性 `migrate` 和内置 Web 产物的 `backend`。浏览器打开 <http://localhost:8080>。
 
 停止服务不会删除数据：
 
@@ -159,7 +159,7 @@ go run ./cmd/coinsphere plugin uninstall --config ./config.yml --backend-root . 
 go run ./cmd/coinsphere plugin purge-data --config ./config.yml --backend-root . --confirm "PURGE official.connector" official.connector
 ```
 
-- `install`/`upgrade` 执行插件 migration、生成注册表并构建 Backend/Web 镜像，但不启动候选镜像。
+- `install`/`upgrade` 执行插件 migration、生成注册表并构建包含前后端的应用镜像，但不启动候选镜像。
 - 同 major 升级必须保留所有旧 migration 字节不变；major 升级当前拒绝。
 - 有活动工作流、修订或结果视图引用时不能卸载。
 - 卸载保留插件 schema；`purge-data` 只有在无任何活动或历史引用时才删除 schema。
@@ -177,7 +177,7 @@ go run ./cmd/coinsphere plugin purge-data --config ./config.yml --backend-root .
 - 当前应用版本、Compose 配置和镜像 digest。
 - `COINSPHERE_AUTH__SECRET_KEY` 的安全离线副本。
 
-升级使用最新固定版本镜像先运行 migration，再启动 Backend/Web。应用启动只校验 schema，不自动建表。失败时停止候选版本并按[发布 Runbook](runbooks/release.md)恢复匹配的应用镜像；不要手工改 migration 账本或自动执行 Down。
+升级使用最新固定版本应用镜像先运行 migration，再启动单应用容器。应用启动只校验 schema，不自动建表。失败时停止候选版本并按[发布 Runbook](runbooks/release.md)恢复匹配的应用镜像；不要手工改 migration 账本或自动执行 Down。
 
 开始正式 Paper 观察前必须记录 migration freeze 提交；从该提交开始，已有 migration 只能保持字节不变并追加新版本。任何数据重置都必须按[数据库迁移 Runbook](runbooks/database-migrations.md)确认目标、备份和是否已有 Paper 观察证据。
 
@@ -187,7 +187,7 @@ go run ./cmd/coinsphere plugin purge-data --config ./config.yml --backend-root .
 curl --fail http://127.0.0.1:8080/health/live
 curl --fail http://127.0.0.1:8080/health/ready
 docker compose ps
-docker compose logs --tail=200 migrate backend web
+docker compose logs --tail=200 migrate backend
 ```
 
 | 现象                     | 优先检查                                                |

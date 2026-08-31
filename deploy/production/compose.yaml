@@ -11,6 +11,8 @@ services:
       COINSPHERE_DATABASE__DSN: postgresql://coinsphere_go:${COINSPHERE_DATABASE_PASSWORD}@postgresql:5432/coinsphere_go?sslmode=disable&options=-csearch_path%3Dpublic
     volumes:
       - ./data/backend:/app/volumes
+    ports:
+      - "${COINSPHERE_WEB_BIND:-127.0.0.1}:${COINSPHERE_WEB_PORT:-8080}:6987"
     networks:
       - default
       - dpanel_stack
@@ -24,15 +26,6 @@ services:
       timeout: 5s
       retries: 6
       start_period: 15s
-
-  web:
-    image: ${COINSPHERE_WEB_IMAGE:?请设置 COINSPHERE_WEB_IMAGE}
-    restart: unless-stopped
-    depends_on:
-      backend:
-        condition: service_healthy
-    ports:
-      - "${COINSPHERE_WEB_BIND:-127.0.0.1}:${COINSPHERE_WEB_PORT:-8080}:80"
 
 networks:
   dpanel_stack:

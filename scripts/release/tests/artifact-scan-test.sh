@@ -8,7 +8,6 @@ VERSION=v1.2.3
 COMMIT=0123456789abcdef0123456789abcdef01234567
 REGISTRY=127.0.0.1:5000
 BACKEND_DIGEST=$(printf 'a%.0s' {1..64})
-WEB_DIGEST=$(printf 'b%.0s' {1..64})
 
 cleanup() {
   rm -rf -- "$TEST_DIR"
@@ -47,11 +46,6 @@ case "$repository" in
     component=backend
     image_id=$(printf 'c%.0s' {1..64})
     ;;
-  */web)
-    digest=$TEST_WEB_DIGEST
-    component=web
-    image_id=$(printf 'd%.0s' {1..64})
-    ;;
   *)
     echo "测试 Docker 收到未预期镜像: $reference" >&2
     exit 1
@@ -77,13 +71,12 @@ export PATH="$TEST_DIR/bin:$PATH"
 export TEST_VERSION=$VERSION
 export TEST_COMMIT=$COMMIT
 export TEST_BACKEND_DIGEST=$BACKEND_DIGEST
-export TEST_WEB_DIGEST=$WEB_DIGEST
 
 create_fixture() {
   local output_dir=$1
   local mode=${2:-valid}
   "$PYTHON" - "$output_dir" "$mode" "$VERSION" "$COMMIT" "$REGISTRY" \
-    "$BACKEND_DIGEST" "$WEB_DIGEST" <<'PY'
+    "$BACKEND_DIGEST" <<'PY'
 import gzip
 import io
 import json
@@ -95,7 +88,7 @@ from pathlib import Path
 
 
 output_dir = Path(sys.argv[1])
-mode, version, commit, registry, backend_digest, web_digest = sys.argv[2:]
+mode, version, commit, registry, backend_digest = sys.argv[2:]
 packages_dir = output_dir.parent / f"{output_dir.name}-packages"
 shutil.rmtree(output_dir, ignore_errors=True)
 shutil.rmtree(packages_dir, ignore_errors=True)
@@ -345,8 +338,6 @@ manifest = {
     "commit": commit,
     "backendImage": f"{registry}/coinsphere/backend:{version}",
     "backendDigest": f"{registry}/coinsphere/backend@sha256:{backend_digest}",
-    "webImage": f"{registry}/coinsphere/web:{version}",
-    "webDigest": f"{registry}/coinsphere/web@sha256:{web_digest}",
 }
 if mode == "manifest-extra":
     manifest["unexpected"] = "blocked"
@@ -360,10 +351,7 @@ else:
 
 
 def sbom(component):
-    digest = {
-        "backend": backend_digest,
-        "web": web_digest,
-    }[component]
+    digest = backend_digest
     checksum_digest = "e" * 64 if mode == "sbom-digest" and component == "backend" else digest
     repository = f"{registry}/coinsphere/{component}"
     if mode == "sbom-unbound" and component == "backend":
@@ -397,7 +385,7 @@ def sbom(component):
     }
 
 
-for component in ("backend", "web"):
+for component in ("backend",):
     path = output_dir / f"coinsphere-{version}-{component}.spdx.json"
     path.write_text(json.dumps(sbom(component)), encoding="utf-8")
 PY
@@ -409,8 +397,7 @@ PY
       "./coinsphere-$VERSION-linux-amd64.tar.gz" \
       "./coinsphere-$VERSION-docker.tar.gz" \
       ./release-manifest.json \
-      "./coinsphere-$VERSION-backend.spdx.json" \
-      "./coinsphere-$VERSION-web.spdx.json" >SHA256SUMS
+      "./coinsphere-$VERSION-backend.spdx.json" >SHA256SUMS
   )
 }
 
@@ -478,7 +465,7 @@ if [[ $status -eq 0 ]] || ! grep -Fq "最终文件清单" "$TEST_DIR/extra.log";
 fi
 
 create_fixture "$TEST_DIR/checksum"
-printf 'tampered' >>"$TEST_DIR/checksum/coinsphere-$VERSION-web.spdx.json"
+printf 'tampered' >>"$TEST_DIR/checksum/coinsphere-$VERSION-backend.spdx.json"
 status=0
 run_scan "$TEST_DIR/checksum" "$TEST_DIR/checksum.log" || status=$?
 if [[ $status -eq 0 ]] || ! grep -Fq "SHA256SUMS 校验失败" "$TEST_DIR/checksum.log"; then

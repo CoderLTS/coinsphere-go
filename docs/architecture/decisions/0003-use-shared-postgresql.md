@@ -13,7 +13,7 @@ CoinSphere 是个人自用的单实例系统。当前只有 `plugin_quant.candle
 
 - 生产 Backend 通过外部 `dpanel_stack` 网络连接服务器现有 PostgreSQL 16。
 - CoinSphere 使用独立 `coinsphere_go` 数据库和用户，不复用已有 `coinsphere` 旧库，也不访问其他应用数据库。
-- 生产 Compose 只运行 Backend 和 Web；migration 仍由目标 Backend 镜像在启动前执行。
+- 生产 Compose 只运行内置 Vue 静态产物的 Go App；migration 仍由同一目标镜像在启动前执行。
 - Quant K 线使用普通表以及 `(market, instrument, interval, open_time DESC)` 联合索引。
 - 本地 Compose 自带普通 PostgreSQL 16，避免依赖服务器环境。
 

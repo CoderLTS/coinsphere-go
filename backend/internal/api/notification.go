@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"coinsphere/backend/internal/service"
+	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
 
@@ -28,46 +28,46 @@ type notificationWSEnvelope struct {
 	Data       M      `json:"data"`
 }
 
-func (s *Server) handleListInAppNotifications(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	page, ok := cursorPage(w, r)
+func (s *Server) handleListInAppNotifications(c *gin.Context) {
+	page, ok := cursorPage(c)
 	if !ok {
 		return
 	}
-	data, err := s.App.ListInAppNotifications(r.Context(), principal.User.ID, page)
-	respond(w, data, err, "")
+	data, err := s.App.ListInAppNotifications(c.Request.Context(), currentPrincipal(c).User.ID, page)
+	respond(c, data, err, "")
 }
 
-func (s *Server) handleReadInAppNotification(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	deliveryID, err := pathInt64(r, "deliveryId")
+func (s *Server) handleReadInAppNotification(c *gin.Context) {
+	deliveryID, err := pathInt64(c, "deliveryId")
 	if err != nil {
-		writeProblem(w, r, http.StatusBadRequest, err.Error())
+		writeProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	unreadCount, err := s.App.MarkInAppRead(r.Context(), principal.User.ID, deliveryID)
-	respond(w, M{"unreadCount": unreadCount}, err, "")
+	unreadCount, err := s.App.MarkInAppRead(c.Request.Context(), currentPrincipal(c).User.ID, deliveryID)
+	respond(c, M{"unreadCount": unreadCount}, err, "")
 }
 
-func (s *Server) handleReadAllInAppNotifications(w http.ResponseWriter, r *http.Request, principal *service.Principal) {
-	data, err := s.App.MarkAllInAppRead(r.Context(), principal.User.ID)
-	respond(w, data, err, "")
+func (s *Server) handleReadAllInAppNotifications(c *gin.Context) {
+	data, err := s.App.MarkAllInAppRead(c.Request.Context(), currentPrincipal(c).User.ID)
+	respond(c, data, err, "")
 }
 
-func (s *Server) handleNotificationWebSocket(w http.ResponseWriter, r *http.Request) {
-	token, ok := notificationWebSocketToken(r)
+func (s *Server) handleNotificationWebSocket(c *gin.Context) {
+	token, ok := notificationWebSocketToken(c.Request)
 	if !ok {
-		writeProblem(w, r, http.StatusUnauthorized, "invalid websocket authentication")
+		writeProblem(c, http.StatusUnauthorized, "invalid websocket authentication")
 		return
 	}
 	principal, err := s.App.AuthenticateAccessToken(token)
 	if err != nil || principal == nil {
-		writeProblem(w, r, http.StatusUnauthorized, "invalid access token")
+		writeProblem(c, http.StatusUnauthorized, "invalid access token")
 		return
 	}
-	connection, err := notificationWSUpgrader.Upgrade(w, r, nil)
+	connection, err := notificationWSUpgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		return
 	}
-	events, unsubscribe := s.App.SubscribeNotificationEvents(r.Context(), principal.User.ID)
+	events, unsubscribe := s.App.SubscribeNotificationEvents(c.Request.Context(), principal.User.ID)
 	defer unsubscribe()
 	defer connection.Close()
 	const pongWait = 70 * time.Second

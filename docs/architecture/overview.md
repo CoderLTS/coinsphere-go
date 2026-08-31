@@ -34,7 +34,7 @@ flowchart LR
     APP -->|显式白名单| PUBLIC["公共 HTTP / WebSocket"]
     SOURCE["可信本地插件源码"] --> CLI["Plugin CLI"]
     CLI --> DB
-    CLI --> BUILD["Go / Vue 静态注册表与镜像"]
+    CLI --> BUILD["Go / Vue 静态注册表与应用镜像"]
     MIGRATE["一次性 migration"] --> DB
 ```
 
@@ -42,14 +42,14 @@ flowchart LR
 
 ## 3. 运行与部署拓扑
 
-本地 `docker-compose.yml` 包含 PostgreSQL、一次性 migration、Backend 和 Web，便于在独立开发数据库上启动。生产 `deploy/production/compose.yaml` 只运行 Backend 和 Web，通过外部 Docker 网络连接服务器 PostgreSQL 16 中独立的 `coinsphere_go` 数据库；migration 在启动应用前由目标 Backend 镜像执行。
+本地 `docker-compose.yml` 包含 PostgreSQL、一次性 migration 和单应用容器，便于在独立开发数据库上启动。生产 `deploy/production/compose.yaml` 只运行内置 Vue 静态产物的 Go App，通过外部 Docker 网络连接服务器 PostgreSQL 16 中独立的 `coinsphere_go` 数据库；migration 在启动应用前由同一目标镜像执行。
 
-Web 是唯一面向浏览器的入口，反向代理 `/api`、健康检查和 WebSocket 到 Backend。Backend 的持久目录保存上传文件和按 SHA-256 寻址的 gzip 制品；数据库保存制品清单与引用。停止或回滚应用不会自动执行 migration Down，也不会删除数据库、上传或制品。
+Go App 同时提供 SPA、`/api`、健康检查和 WebSocket；生产宿主 Nginx 只需反向代理到回环地址 `127.0.0.1:8080`。Backend 的持久目录保存上传文件和按 SHA-256 寻址的 gzip 制品；数据库保存制品清单与引用。停止或回滚应用不会自动执行 migration Down，也不会删除数据库、上传或制品。
 
 ```mermaid
 flowchart TB
-    BROWSER["Browser"] --> WEB["Nginx + Vue 静态文件"]
-    WEB --> APP["Go App :6987"]
+    BROWSER["Browser"] --> NGINX["宿主 Nginx"]
+    NGINX --> APP["Go App + Vue dist :8080"]
     APP --> PG["共享 PostgreSQL 16 / coinsphere_go"]
     APP --> DATA["data/backend"]
     MIGRATE["coinsphere-migrate"] --> PG
@@ -91,7 +91,7 @@ Web 负责登录、导航、权限感知页面、系统管理、工作流编辑�
 
 ### 5.2 API 与权限
 
-Backend 使用 Go 标准库 `net/http` 路由。除登录、健康检查、静态资源和持有工作流 Secret 的 Webhook 外，接口均要求 Access Token；管理接口再检查角色或细粒度权限。
+Backend 使用 Gin 路由并由 Go 标准库 `http.Server` 承载。除登录、健康检查、静态资源和持有工作流 Secret 的 Webhook 外，接口均要求 Access Token；管理接口再检查角色或细粒度权限。
 
 - `/api/v1/auth/*` 管理登录、登出和短时一次性重新认证。
 - `/api/v1/workflows/*`、`/api/v1/events`、`/api/v1/human-tasks` 管理工作流与运行。

@@ -1,10 +1,10 @@
 # CoinSphere 生产 Compose
 
-该目录是 CoinSphere 唯一的生产 Compose 模板。它以独立项目 `coinsphere-go` 运行 Backend 和 Web，并通过外部 `dpanel_stack` 网络连接服务器现有 PostgreSQL 16 的独立 `coinsphere_go` 数据库。
+该目录是 CoinSphere 唯一的生产 Compose 模板。它以独立项目 `coinsphere-go` 运行一个内置 Vue 静态产物的 Go App 容器，并通过外部 `dpanel_stack` 网络连接服务器现有 PostgreSQL 16 的独立 `coinsphere_go` 数据库。服务器现有 Nginx 反向代理到 `127.0.0.1:8080` 即可。
 
 ## 文件
 
-- `compose.yaml`：Backend/Web 两服务拓扑与共享 PostgreSQL 网络。
+- `compose.yaml`：单应用容器与共享 PostgreSQL 网络。
 - `deploy.sh`：固定 digest 部署、migration、健康检查、旧 CoinSphere 服务清理和失败回滚。
 - `runtime.env.example`：Backend 运行 Secret 模板，不包含数据库 DSN。
 - `data/`：上传文件、静态文件和工作流制品的持久目录。

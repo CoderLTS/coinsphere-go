@@ -23,11 +23,11 @@ go run ./cmd/migrate -config ./config.yml -direction down -steps 1
 
 旧独立数据库从 PostgreSQL 17/TimescaleDB 迁入服务器 PostgreSQL 16 时，必须在发布维护窗口执行一次逻辑迁移：
 
-1. 停止 CoinSphere Backend/Web，并保存旧数据库和 `data/backend` 的一致恢复点。
+1. 停止 CoinSphere 应用容器，并保存旧数据库和 `data/backend` 的一致恢复点。
 2. 在旧数据库中把 `plugin_quant.candles` 无损转换为具有相同约束和索引的普通表，再卸载 TimescaleDB 扩展。
 3. 在共享 PostgreSQL 中创建独立 `coinsphere_go` 用户和空数据库，不覆盖已有 `coinsphere` 旧库或其他应用数据库。
 4. 使用 PostgreSQL 17 客户端逻辑导出并恢复到 PostgreSQL 16；先在隔离目标验证版本兼容，再切换生产连接。
-5. 对比 migration 版本、schema、关键表行数和数据库大小，运行目标 Backend/Web 健康检查。
+5. 对比 migration 版本、schema、关键表行数和数据库大小，运行目标应用镜像健康检查。
 6. 保留旧数据库目录作为人工回滚备份；只有共享数据库备份完成恢复演练后才清理。
 
 任何一步失败都停止候选服务并恢复旧 Compose，不删除旧数据库目录，也不修改其他共享数据库。
@@ -41,7 +41,7 @@ go run ./cmd/migrate -config ./config.yml -direction down -steps 1
 3. 用户对目标环境和目标 CoinSphere 数据目录给出明确重置授权。
 4. 已只读确认目标 Compose 项目、数据库服务和数据目录，不影响共享服务。
 
-满足条件后，停止 CoinSphere Backend/Web，备份并定向重建共享 PostgreSQL 中的 `coinsphere_go` 数据库，清空该部署独占的 `data/backend/artifacts` 目录，再由目标镜像执行 `coinsphere-migrate -direction up`。删除前必须分别解析并核对数据库名和制品绝对路径；禁止手工改写 `schema_migrations` 来伪装重置，也不得触及已有 `coinsphere` 旧库、其他应用数据库、上传目录或真实交易凭据。
+满足条件后，停止 CoinSphere 应用容器，备份并定向重建共享 PostgreSQL 中的 `coinsphere_go` 数据库，清空该部署独占的 `data/backend/artifacts` 目录，再由目标镜像执行 `coinsphere-migrate -direction up`。删除前必须分别解析并核对数据库名和制品绝对路径；禁止手工改写 `schema_migrations` 来伪装重置，也不得触及已有 `coinsphere` 旧库、其他应用数据库、上传目录或真实交易凭据。
 
 ## 变更规则
 

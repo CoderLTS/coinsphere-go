@@ -1,12 +1,10 @@
 package api
 
 import (
-	"bufio"
 	"context"
 	"crypto/rand"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"runtime"
 	"strings"
@@ -15,11 +13,14 @@ import (
 	"time"
 
 	"coinsphere/backend/internal/service"
+	"github.com/gin-gonic/gin"
 )
 
-const requestIDHeader = "X-Request-ID"
-
-type requestStateKey struct{}
+const (
+	requestIDHeader          = "X-Request-ID"
+	requestStateContextKey   = "requestState"
+	responseFailedContextKey = "responseFailed"
+)
 
 type requestState struct {
 	requestID   string
@@ -43,99 +44,53 @@ type httpMetricBucket struct {
 	durationMillis uint64
 }
 
-type observedResponseWriter struct {
-	http.ResponseWriter
-	statusCode int
-	failed     bool
-}
-
-func (w *observedResponseWriter) WriteHeader(statusCode int) {
-	if w.statusCode == 0 {
-		w.statusCode = statusCode
-	}
-	w.ResponseWriter.WriteHeader(statusCode)
-}
-
-func (w *observedResponseWriter) Write(body []byte) (int, error) {
-	if w.statusCode == 0 {
-		w.WriteHeader(http.StatusOK)
-	}
-	return w.ResponseWriter.Write(body)
-}
-
-func (w *observedResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
-
-func (w *observedResponseWriter) Flush() {
-	if w.statusCode == 0 {
-		w.WriteHeader(http.StatusOK)
-	}
-	_ = http.NewResponseController(w.ResponseWriter).Flush()
-}
-
-func (w *observedResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	if w.statusCode == 0 {
-		w.statusCode = http.StatusSwitchingProtocols
-	}
-	return http.NewResponseController(w.ResponseWriter).Hijack()
-}
-
-func (w *observedResponseWriter) Push(target string, options *http.PushOptions) error {
-	if pusher, ok := w.ResponseWriter.(http.Pusher); ok {
-		return pusher.Push(target, options)
-	}
-	return http.ErrNotSupported
-}
-
-func (s *Server) observe(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func (s *Server) observe() gin.HandlerFunc {
+	return func(c *gin.Context) {
 		startedAt := time.Now()
-		state := &requestState{requestID: incomingRequestID(r.Header.Get(requestIDHeader))}
-		r = r.WithContext(context.WithValue(r.Context(), requestStateKey{}, state))
-		w.Header().Set(requestIDHeader, state.requestID)
+		state := &requestState{requestID: incomingRequestID(c.GetHeader(requestIDHeader))}
+		c.Set(requestStateContextKey, state)
+		c.Header(requestIDHeader, state.requestID)
 
 		s.metrics.requestsTotal.Add(1)
 		s.metrics.requestsInFlight.Add(1)
 		defer s.metrics.requestsInFlight.Add(-1)
 
-		observed := &observedResponseWriter{ResponseWriter: w}
-		next.ServeHTTP(observed, r)
-		if observed.statusCode == 0 {
-			observed.statusCode = http.StatusOK
-		}
-		failed := observed.failed || observed.statusCode >= http.StatusBadRequest
+		c.Next()
+		statusCode := c.Writer.Status()
+		markedFailed, _ := c.Get(responseFailedContextKey)
+		failed := markedFailed == true || statusCode >= http.StatusBadRequest
 		if failed {
 			s.metrics.requestsFailed.Add(1)
 		}
 		duration := time.Since(startedAt)
 		s.metrics.observeBucket(startedAt, failed, duration)
 
-		route := r.Pattern
+		pattern := routePattern(c)
+		route := strings.TrimPrefix(pattern, c.Request.Method+" ")
 		if route == "" {
 			route = "unmatched"
-		} else {
-			route = strings.TrimPrefix(route, r.Method+" ")
 		}
-		if isMutation(r.Method) && r.Pattern != "" {
-			s.recordAudit(r, state, observed, failed)
+		if isMutation(c.Request.Method) && pattern != "" {
+			s.recordAudit(c, state, pattern, statusCode, failed)
 		}
 
 		attrs := []any{
 			"component", "http.access",
 			"request_id", state.requestID,
-			"method", r.Method,
+			"method", c.Request.Method,
 			"route", route,
-			"status", observed.statusCode,
+			"status", statusCode,
 			"duration_ms", duration.Milliseconds(),
 		}
 		if state.actorUserID > 0 {
 			attrs = append(attrs, "user_id", state.actorUserID)
 		}
 		if failed {
-			slog.WarnContext(r.Context(), "http request completed", attrs...)
+			slog.WarnContext(c.Request.Context(), "http request completed", attrs...)
 			return
 		}
-		slog.InfoContext(r.Context(), "http request completed", attrs...)
-	})
+		slog.InfoContext(c.Request.Context(), "http request completed", attrs...)
+	}
 }
 
 func (m *httpMetrics) observeBucket(startedAt time.Time, failed bool, duration time.Duration) {
@@ -194,8 +149,8 @@ func (m *httpMetrics) snapshot() M {
 	}
 }
 
-func (s *Server) recordAudit(r *http.Request, state *requestState, response *observedResponseWriter, failed bool) {
-	resourcePath := r.URL.EscapedPath()
+func (s *Server) recordAudit(c *gin.Context, state *requestState, pattern string, statusCode int, failed bool) {
+	resourcePath := c.Request.URL.EscapedPath()
 	if len(resourcePath) > 500 {
 		resourcePath = resourcePath[:500]
 	}
@@ -207,25 +162,25 @@ func (s *Server) recordAudit(r *http.Request, state *requestState, response *obs
 	if failed {
 		outcome = "failure"
 	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 2*time.Second)
 	defer cancel()
 	if err := s.App.RecordAudit(ctx, service.AuditRecordInput{
 		RequestID: state.requestID, ActorUserID: actorUserID,
-		Action: r.Pattern, ResourcePath: resourcePath,
-		Outcome: outcome, StatusCode: response.statusCode,
+		Action: pattern, ResourcePath: resourcePath,
+		Outcome: outcome, StatusCode: statusCode,
 	}); err != nil {
 		s.metrics.auditWriteFailures.Add(1)
 		slog.ErrorContext(ctx, "audit write failed",
 			"component", "audit",
 			"request_id", state.requestID,
-			"action", r.Pattern,
+			"action", pattern,
 			"error_category", "database")
 	}
 }
 
-func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
-	_, _ = fmt.Fprintf(w, `# TYPE coinsphere_http_requests_total counter
+func (s *Server) handleMetrics(c *gin.Context) {
+	c.Header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	_, _ = fmt.Fprintf(c.Writer, `# TYPE coinsphere_http_requests_total counter
 coinsphere_http_requests_total %d
 # TYPE coinsphere_http_requests_failed_total counter
 coinsphere_http_requests_failed_total %d
@@ -263,14 +218,45 @@ func isMutation(method string) bool {
 		method == http.MethodPatch || method == http.MethodDelete
 }
 
-func setAuditActor(r *http.Request, userID int64) {
-	if state, ok := r.Context().Value(requestStateKey{}).(*requestState); ok && userID > 0 {
+func setAuditActor(c *gin.Context, userID int64) {
+	if state, ok := requestStateFrom(c); ok && userID > 0 {
 		state.actorUserID = userID
 	}
 }
 
-func markResponseFailed(w http.ResponseWriter) {
-	if observed, ok := w.(*observedResponseWriter); ok {
-		observed.failed = true
+func requestStateFrom(c *gin.Context) (*requestState, bool) {
+	value, ok := c.Get(requestStateContextKey)
+	if !ok {
+		return nil, false
 	}
+	state, ok := value.(*requestState)
+	return state, ok
+}
+
+func requestIDFrom(c *gin.Context) string {
+	state, _ := requestStateFrom(c)
+	if state == nil {
+		return ""
+	}
+	return state.requestID
+}
+
+func routePattern(c *gin.Context) string {
+	path := c.FullPath()
+	if path == "" {
+		return ""
+	}
+	parts := strings.Split(path, "/")
+	for index, part := range parts {
+		if strings.HasPrefix(part, ":") {
+			parts[index] = "{" + strings.TrimPrefix(part, ":") + "}"
+		} else if strings.HasPrefix(part, "*") {
+			parts[index] = ""
+		}
+	}
+	method := c.Request.Method
+	if method == http.MethodHead {
+		method = http.MethodGet
+	}
+	return method + " " + strings.Join(parts, "/")
 }

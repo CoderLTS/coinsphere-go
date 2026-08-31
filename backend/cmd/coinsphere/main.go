@@ -163,7 +163,7 @@ func rebuildApplication(ctx context.Context, layout pluginlifecycle.Layout, outp
 		dir  string
 	}{
 		{name: "go", args: []string{"mod", "tidy"}, dir: layout.BackendRoot},
-		{name: "docker", args: []string{"compose", "build", "backend", "web"}, dir: filepath.Dir(layout.BackendRoot)},
+		{name: "docker", args: []string{"compose", "build", "backend"}, dir: filepath.Dir(layout.BackendRoot)},
 	}
 	for _, command := range commands {
 		cmd := exec.CommandContext(ctx, command.name, command.args...)

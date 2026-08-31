@@ -46,15 +46,13 @@ jobs:
             exit 1
           fi
 
-      - name: Build packages and push images
+      - name: Build and push application image
         shell: bash
         run: |
           set -Eeuo pipefail
           bash scripts/release/build.sh "$VERSION" "$GITHUB_SHA" dist images-only
           backend_digest=$(jq -er '.backendDigest' dist/release-manifest.json)
-          web_digest=$(jq -er '.webDigest' dist/release-manifest.json)
           [[ $backend_digest =~ ^127\.0\.0\.1:5000/coinsphere/backend@sha256:[0-9a-f]{64}$ ]] || exit 1
-          [[ $web_digest =~ ^127\.0\.0\.1:5000/coinsphere/web@sha256:[0-9a-f]{64}$ ]] || exit 1
 
       - name: Deploy independent CoinSphere Compose
         shell: bash
@@ -72,6 +70,6 @@ jobs:
         continue-on-error: true
         shell: bash
         env:
-          COINSPHERE_BUILD_CACHE_MAX_AGE: 168h
+          COINSPHERE_BUILD_CACHE_MAX_SIZE: 4gb
           COINSPHERE_RUNNER_TEMP_MAX_AGE_MINUTES: "1440"
         run: bash scripts/release/cleanup-runner.sh

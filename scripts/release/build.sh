@@ -82,7 +82,6 @@ work_dir=$(mktemp -d)
 trap 'rm -rf "$work_dir"' EXIT
 
 backend_image="$REGISTRY/coinsphere/backend:$VERSION"
-web_image="$REGISTRY/coinsphere/web:$VERSION"
 sha_tag="sha-${COMMIT_SHA:0:12}"
 proxy_build_args=(
   --build-arg HTTP_PROXY
@@ -112,24 +111,21 @@ docker buildx inspect --bootstrap "$BUILDER" >/dev/null
 run_buildx --load \
   --label "org.opencontainers.image.version=$VERSION" \
   --label "org.opencontainers.image.revision=$COMMIT_SHA" \
-  --build-arg TARGETOS=linux --build-arg TARGETARCH=amd64 --build-arg "GOPROXY=$GO_PROXY" \
+  --build-arg TARGETOS=linux --build-arg TARGETARCH=amd64 --build-arg "GOPROXY=$GO_PROXY" --build-arg "VITE_VERSION=$VERSION" \
   -t "$backend_image" -t "$REGISTRY/coinsphere/backend:$sha_tag" \
-  "$ROOT_DIR/backend"
-run_buildx --load \
-  --label "org.opencontainers.image.version=$VERSION" \
-  --label "org.opencontainers.image.revision=$COMMIT_SHA" \
-  --build-arg "VITE_VERSION=$VERSION" \
-  -t "$web_image" -t "$REGISTRY/coinsphere/web:$sha_tag" \
-  "$ROOT_DIR/frontend"
+  -f "$ROOT_DIR/backend/Dockerfile" "$ROOT_DIR"
 if [[ $BUILD_MODE == release ]]; then
 run_buildx \
   --build-arg TARGETOS=linux --build-arg TARGETARCH=amd64 --build-arg "GOPROXY=$GO_PROXY" \
-  --target binaries --output "type=local,dest=$work_dir/linux" "$ROOT_DIR/backend"
+  --target binaries --output "type=local,dest=$work_dir/linux" \
+  -f "$ROOT_DIR/backend/Dockerfile" "$ROOT_DIR"
 run_buildx \
   --build-arg TARGETOS=windows --build-arg TARGETARCH=386 --build-arg "GOPROXY=$GO_PROXY" \
-  --target binaries --output "type=local,dest=$work_dir/windows" "$ROOT_DIR/backend"
+  --target binaries --output "type=local,dest=$work_dir/windows" \
+  -f "$ROOT_DIR/backend/Dockerfile" "$ROOT_DIR"
 run_buildx --build-arg "VITE_VERSION=$VERSION" \
-  --target assets --output "type=local,dest=$work_dir/web" "$ROOT_DIR/frontend"
+  --target web-assets --output "type=local,dest=$work_dir/web" \
+  -f "$ROOT_DIR/backend/Dockerfile" "$ROOT_DIR"
 find "$work_dir/web" -type f -name '*.gz' -delete
 
 windows_name="coinsphere-$VERSION-windows-x86"
@@ -163,18 +159,13 @@ fi
 
 docker push "$backend_image"
 docker push "$REGISTRY/coinsphere/backend:$sha_tag"
-docker push "$web_image"
-docker push "$REGISTRY/coinsphere/web:$sha_tag"
 backend_digest=$(docker image inspect "$backend_image" --format '{{range .RepoDigests}}{{println .}}{{end}}' | grep -F "$REGISTRY/coinsphere/backend@" | head -n 1)
-web_digest=$(docker image inspect "$web_image" --format '{{range .RepoDigests}}{{println .}}{{end}}' | grep -F "$REGISTRY/coinsphere/web@" | head -n 1)
 cat >"$OUTPUT_DIR/release-manifest.json" <<EOF
 {
   "version": "$VERSION",
   "commit": "$COMMIT_SHA",
   "backendImage": "$backend_image",
-  "backendDigest": "$backend_digest",
-  "webImage": "$web_image",
-  "webDigest": "$web_digest"
+  "backendDigest": "$backend_digest"
 }
 EOF
 

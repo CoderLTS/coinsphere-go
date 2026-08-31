@@ -5,8 +5,8 @@
 生产默认使用独立 Compose 项目 `coinsphere-go`：
 
 - `postgresql`：服务器数据栈中的共享 PostgreSQL 16；CoinSphere 独占 `coinsphere_go` 数据库和用户。
-- `backend`：认证、RBAC、工作流执行、系统管理和监控 API，文件位于部署目录 `data/backend`。
-- `web`：唯一对外 Web 入口。
+- `backend`：内置 Vue 静态产物，同时提供认证、RBAC、工作流执行、系统管理和监控 API；文件位于部署目录 `data/backend`。
+- 宿主 Nginx：服务器现有入口，反向代理到 Compose 暴露的 `127.0.0.1:8080`，不运行 CoinSphere Web 容器。
 
 Migration 由目标 Backend 镜像中的 `coinsphere-migrate` 在启动服务前一次性执行，不是常驻服务。Python Worker、Worker 卷和 Private Executor 不属于当前部署拓扑。
 
@@ -14,7 +14,7 @@ CoinSphere 不再部署到 sub2api 或其他应用的 Compose 项目。发布只
 
 ## 服务器准备
 
-自托管 Runner 需要 Docker Compose v2、`jq`、`curl`、`openssl` 和本机 Registry。部署目录按以下顺序确定：
+自托管 Runner 需要 Docker Compose v2、`jq`、`curl`、`openssl` 和本机 Registry。宿主 Nginx 必须已把站点请求反向代理到 `127.0.0.1:8080`；自定义端口时同步设置 `COINSPHERE_WEB_PORT` 和 Nginx upstream。部署目录按以下顺序确定：
 
 - `COINSPHERE_DEPLOY_DIR`：独立部署目录。
 - `COINSPHERE_STACK_ROOT`：部署脚本使用其 `compose/coinsphere-go` 子目录，并读取既有 CoinSphere runtime Secret。
@@ -27,9 +27,9 @@ CoinSphere 不再部署到 sub2api 或其他应用的 Compose 项目。发布只
 1. 目标 PR 合并到最新 `main`，CI 和最终只读复审通过。
 2. 涉及 Paper 时，按[数据库迁移手册](database-migrations.md)保存一致备份；只有首次进入正式 Paper 观察时，才在发布记录中把目标 commit 记为 migration freeze 提交。
 3. 在 GitHub Actions 手工运行 `Release and deploy`，输入未使用的 `vX.Y.Z`。
-4. 工作流构建并推送 Backend/Web 固定 digest。
+4. 工作流构建并推送包含前后端的应用镜像固定 digest。
 5. `deploy/production/deploy.sh` 拉取镜像，停止 CoinSphere 旧服务，并对共享 PostgreSQL 执行目标镜像内 migration。
-6. 脚本启动 Backend/Web，检查容器健康和 `/health`；全部通过后保存新的 `.env`。
+6. 脚本启动单应用容器，检查容器健康和 `/health`；全部通过后保存新的 `.env`。
 
 直接在已扫描 Manifest 上手工执行同一部署器：
 

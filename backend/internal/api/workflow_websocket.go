@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"coinsphere/backend/internal/service"
+	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
 
@@ -24,19 +25,19 @@ type workflowRunWSMessage struct {
 	Data       service.WorkflowRunUpdate `json:"data"`
 }
 
-func (s *Server) handleWorkflowRunsWebSocket(w http.ResponseWriter, r *http.Request) {
-	workflowID, err := pathInt64(r, "workflowId")
+func (s *Server) handleWorkflowRunsWebSocket(c *gin.Context) {
+	workflowID, err := pathInt64(c, "workflowId")
 	if err != nil {
-		writeProblem(w, r, http.StatusBadRequest, err.Error())
+		writeProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	token := workflowWebSocketToken(r)
+	token := workflowWebSocketToken(c.Request)
 	principal, err := s.App.AuthenticateAccessToken(token)
 	if err != nil || principal == nil || !principal.HasRole("R_SUPER") {
-		writeProblem(w, r, http.StatusUnauthorized, "invalid access token")
+		writeProblem(c, http.StatusUnauthorized, "invalid access token")
 		return
 	}
-	conn, err := workflowRunsUpgrader.Upgrade(w, r, http.Header{
+	conn, err := workflowRunsUpgrader.Upgrade(c.Writer, c.Request, http.Header{
 		"Sec-WebSocket-Protocol": []string{workflowRunsWSProtocol},
 	})
 	if err != nil {

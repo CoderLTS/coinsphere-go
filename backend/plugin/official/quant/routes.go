@@ -9,21 +9,22 @@ import (
 	"time"
 
 	"coinsphere/backend/plugin/sdk"
+	"github.com/gin-gonic/gin"
 )
 
-func (q *quantRuntime) handleQuantInstruments(w http.ResponseWriter, r *http.Request, scope sdk.RouteScope) {
-	if !validQuantSystemScope(scope) || !quantQueryKeys(r, "market") {
-		writeQuantProblem(w, http.StatusBadRequest, "invalid Quant instrument query")
+func (q *quantRuntime) handleQuantInstruments(c *gin.Context, scope sdk.RouteScope) {
+	if !validQuantSystemScope(scope) || !quantQueryKeys(c.Request, "market") {
+		writeQuantProblem(c, http.StatusBadRequest, "invalid Quant instrument query")
 		return
 	}
-	market := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("market")))
+	market := strings.ToLower(strings.TrimSpace(c.Query("market")))
 	if market != "spot" && market != "usdm" {
-		writeQuantProblem(w, http.StatusBadRequest, "market must be spot or usdm")
+		writeQuantProblem(c, http.StatusBadRequest, "market must be spot or usdm")
 		return
 	}
 	var instruments []quantInstrument
-	if err := q.db.WithContext(r.Context()).Where("market = ?", market).Order("symbol").Limit(5000).Find(&instruments).Error; err != nil {
-		writeQuantProblem(w, http.StatusInternalServerError, "list Quant instruments failed")
+	if err := q.db.WithContext(c.Request.Context()).Where("market = ?", market).Order("symbol").Limit(5000).Find(&instruments).Error; err != nil {
+		writeQuantProblem(c, http.StatusInternalServerError, "list Quant instruments failed")
 		return
 	}
 	items := make([]map[string]any, len(instruments))
@@ -35,50 +36,49 @@ func (q *quantRuntime) handleQuantInstruments(w http.ResponseWriter, r *http.Req
 			"minQuantity": instrument.MinQuantity.String(), "updatedAt": instrument.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		}
 	}
-	writeQuantOK(w, map[string]any{"items": items})
+	writeQuantOK(c, map[string]any{"items": items})
 }
 
-func (q *quantRuntime) handleQuantCandles(w http.ResponseWriter, r *http.Request, scope sdk.RouteScope) {
-	if !validQuantSystemScope(scope) || !quantQueryKeys(r, "market", "instrument", "interval", "before", "limit") {
-		writeQuantProblem(w, http.StatusBadRequest, "invalid Quant candle query")
+func (q *quantRuntime) handleQuantCandles(c *gin.Context, scope sdk.RouteScope) {
+	if !validQuantSystemScope(scope) || !quantQueryKeys(c.Request, "market", "instrument", "interval", "before", "limit") {
+		writeQuantProblem(c, http.StatusBadRequest, "invalid Quant candle query")
 		return
 	}
 	config, err := parseQuantSeriesConfig(mustMarshal(map[string]any{
-		"market": r.URL.Query().Get("market"), "instrument": r.URL.Query().Get("instrument"),
-		"interval": r.URL.Query().Get("interval"),
+		"market": c.Query("market"), "instrument": c.Query("instrument"), "interval": c.Query("interval"),
 	}))
 	if err != nil {
-		writeQuantProblem(w, http.StatusBadRequest, err.Error())
+		writeQuantProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	limit, err := quantQueryLimit(r, 200, 500)
+	limit, err := quantQueryLimit(c.Request, 200, 500)
 	if err != nil {
-		writeQuantProblem(w, http.StatusBadRequest, err.Error())
+		writeQuantProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	end := time.Now().UTC().Add(quantIntervals[config.Interval])
-	if raw := strings.TrimSpace(r.URL.Query().Get("before")); raw != "" {
+	if raw := strings.TrimSpace(c.Query("before")); raw != "" {
 		end, err = parseQuantUTCTime(raw)
 		if err != nil {
-			writeQuantProblem(w, http.StatusBadRequest, err.Error())
+			writeQuantProblem(c, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
-	candles, err := q.loadQuantCandles(r.Context(), config, time.Time{}, end, limit)
+	candles, err := q.loadQuantCandles(c.Request.Context(), config, time.Time{}, end, limit)
 	if err != nil {
-		writeQuantProblem(w, http.StatusInternalServerError, err.Error())
+		writeQuantProblem(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	items := make([]map[string]any, len(candles))
 	for index, candle := range candles {
 		items[index] = quantCandleData(candle)
 	}
-	writeQuantOK(w, map[string]any{"items": items})
+	writeQuantOK(c, map[string]any{"items": items})
 }
 
-func (q *quantRuntime) handleQuantStrategies(w http.ResponseWriter, r *http.Request, scope sdk.RouteScope) {
-	if !validQuantSystemScope(scope) || !quantQueryKeys(r) {
-		writeQuantProblem(w, http.StatusBadRequest, "invalid Quant strategy query")
+func (q *quantRuntime) handleQuantStrategies(c *gin.Context, scope sdk.RouteScope) {
+	if !validQuantSystemScope(scope) || !quantQueryKeys(c.Request) {
+		writeQuantProblem(c, http.StatusBadRequest, "invalid Quant strategy query")
 		return
 	}
 	strategies := q.registry.Strategies()
@@ -92,44 +92,44 @@ func (q *quantRuntime) handleQuantStrategies(w http.ResponseWriter, r *http.Requ
 			"minimumLookback": strategy.MinimumLookback, "parameterSchema": json.RawMessage(strategy.ParameterSchema),
 		})
 	}
-	writeQuantOK(w, map[string]any{"items": items})
+	writeQuantOK(c, map[string]any{"items": items})
 }
 
-func (q *quantRuntime) handleQuantBacktests(w http.ResponseWriter, r *http.Request, scope sdk.RouteScope) {
-	if !validQuantSystemScope(scope) || !quantQueryKeys(r, "market", "instrument", "limit") {
-		writeQuantProblem(w, http.StatusBadRequest, "invalid Quant backtest query")
+func (q *quantRuntime) handleQuantBacktests(c *gin.Context, scope sdk.RouteScope) {
+	if !validQuantSystemScope(scope) || !quantQueryKeys(c.Request, "market", "instrument", "limit") {
+		writeQuantProblem(c, http.StatusBadRequest, "invalid Quant backtest query")
 		return
 	}
-	limit, err := quantQueryLimit(r, 50, 200)
+	limit, err := quantQueryLimit(c.Request, 50, 200)
 	if err != nil {
-		writeQuantProblem(w, http.StatusBadRequest, err.Error())
+		writeQuantProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	query := q.db.WithContext(r.Context()).Order("created_at DESC, id DESC").Limit(limit)
-	if market := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("market"))); market != "" {
+	query := q.db.WithContext(c.Request.Context()).Order("created_at DESC, id DESC").Limit(limit)
+	if market := strings.ToLower(strings.TrimSpace(c.Query("market"))); market != "" {
 		if market != "spot" && market != "usdm" {
-			writeQuantProblem(w, http.StatusBadRequest, "market must be spot or usdm")
+			writeQuantProblem(c, http.StatusBadRequest, "market must be spot or usdm")
 			return
 		}
 		query = query.Where("market = ?", market)
 	}
-	if instrument := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("instrument"))); instrument != "" {
+	if instrument := strings.ToUpper(strings.TrimSpace(c.Query("instrument"))); instrument != "" {
 		if !quantInstrumentPattern.MatchString(instrument) {
-			writeQuantProblem(w, http.StatusBadRequest, "instrument is invalid")
+			writeQuantProblem(c, http.StatusBadRequest, "instrument is invalid")
 			return
 		}
 		query = query.Where("instrument = ?", instrument)
 	}
 	var backtests []quantBacktest
 	if err := query.Find(&backtests).Error; err != nil {
-		writeQuantProblem(w, http.StatusInternalServerError, "list Quant backtests failed")
+		writeQuantProblem(c, http.StatusInternalServerError, "list Quant backtests failed")
 		return
 	}
 	items := make([]map[string]any, len(backtests))
 	for index, backtest := range backtests {
 		items[index] = quantBacktestView(backtest)
 	}
-	writeQuantOK(w, map[string]any{"items": items})
+	writeQuantOK(c, map[string]any{"items": items})
 }
 
 func validQuantSystemScope(scope sdk.RouteScope) bool {
@@ -162,24 +162,24 @@ func quantQueryLimit(r *http.Request, fallback, maximum int) (int, error) {
 	return value, nil
 }
 
-func writeQuantOK(w http.ResponseWriter, data any) {
-	writeQuantJSON(w, http.StatusOK, map[string]any{"code": 200, "msg": "success", "data": data})
+func writeQuantOK(c *gin.Context, data any) {
+	writeQuantJSON(c, http.StatusOK, map[string]any{"code": 200, "msg": "success", "data": data})
 }
 
-func writeQuantProblem(w http.ResponseWriter, status int, detail string) {
-	w.Header().Set("Content-Type", "application/problem+json")
-	writeQuantJSON(w, status, map[string]any{
+func writeQuantProblem(c *gin.Context, status int, detail string) {
+	c.Header("Content-Type", "application/problem+json")
+	writeQuantJSON(c, status, map[string]any{
 		"type": "about:blank", "title": http.StatusText(status), "status": status, "detail": detail,
-		"requestId": w.Header().Get("X-Request-ID"),
+		"requestId": c.Writer.Header().Get("X-Request-ID"),
 	})
 }
 
-func writeQuantJSON(w http.ResponseWriter, status int, value any) {
-	if w.Header().Get("Content-Type") == "" {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+func writeQuantJSON(c *gin.Context, status int, value any) {
+	if c.Writer.Header().Get("Content-Type") == "" {
+		c.Header("Content-Type", "application/json; charset=utf-8")
 	}
-	w.WriteHeader(status)
-	encoder := json.NewEncoder(w)
+	c.Status(status)
+	encoder := json.NewEncoder(c.Writer)
 	encoder.SetEscapeHTML(false)
 	_ = encoder.Encode(value)
 }

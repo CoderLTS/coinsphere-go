@@ -91,7 +91,7 @@
 
 - `schemaVersion` 当前固定为 `1`。
 - `id` 是稳定的小写点分名称；`version` 是严格 SemVer。
-- `sdkMajor` 必须等于当前 SDK major，`requiresCore` 必须包含当前 Core 版本。
+- `sdkMajor` 必须等于当前 SDK major `2`，`requiresCore` 必须包含当前 Core `2.0.0`。
 - Backend 入口必须是拥有匹配 module 名的 Go module；Frontend 和 migration 路径必须留在插件根目录内。
 - `contributes` 只接受 `nodes`、`triggers`、`strategies`、`apiRoutes`、`pages`、`resultPages`、`assistantQueries` 和 `migrations`，声明的非 migration 贡献必须实际注册。
 
@@ -104,6 +104,8 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 `ActionRequest` 包含固定工作流/修订、节点实例 ID、稳定操作键、已解析输入和配置，以及 SecretReader、StateStore、ArtifactStore 和结构化 Logger。`ActionResult` 只返回 JSON 输出和制品引用。契约测试和工作流运行时使用同一 Registry 与 Handler 接口。
 
 插件作用域路由必须声明一种上下文：
+
+路由 Handler 使用 `func(*gin.Context, RouteScope)`；相对 `Pattern` 的动态参数使用 Gin `:param` 语法，并通过 `c.Param` 读取。
 
 - `WorkflowScope`：SDK 已定义的工作流和节点范围；当前公共 HTTP 未挂载该作用域，插件不得假定存在可调用 URL。
 - `ResultScope`：固定视图、插件、页面、服务端 scope/filter、操作白名单和当前用户；普通响应不返回固定 scope/filter 或源 workflow ID。
@@ -141,7 +143,7 @@ QQ 发送支持群聊和单聊文本、Markdown、富媒体 URL 上传、键盘�
 
 ## 生命周期与数据
 
-- `plugin install` 校验源码、执行插件 migration、复制源码、生成 Go/Vue 注册表、更新 Go module 并构建 Backend/Web 镜像。
+- `plugin install` 校验源码、执行插件 migration、复制源码、生成 Go/Vue 注册表、更新 Go module 并构建包含前后端的应用镜像。
 - `plugin upgrade` 只接受版本递增的同 major 升级；既有 migration 文件必须字节不变，新 migration 版本只能追加。
 - 安装或升级失败恢复构建输入和操作前插件 migration 版本；构建命令不启动或切换运行容器。
 - `plugin uninstall` 有活动引用时拒绝；成功后移除静态源码和注册并保留插件 schema。

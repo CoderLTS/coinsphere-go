@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 // rateLimiter 进程内按 key(客户端 IP)的固定窗口限流,用于挡住登录暴力尝试(见评审 #6)。
@@ -65,12 +67,13 @@ func clientIP(r *http.Request) string {
 }
 
 // rateLimit 给登录接口套一层限流:同一 IP 在窗口内尝试过多返回 429。
-func (s *Server) rateLimit(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !s.loginLimiter.allow(clientIP(r)) {
-			failStatus(w, http.StatusTooManyRequests, "尝试过于频繁,请稍后再试")
+func (s *Server) rateLimit() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !s.loginLimiter.allow(clientIP(c.Request)) {
+			failStatus(c, http.StatusTooManyRequests, "尝试过于频繁,请稍后再试")
+			c.Abort()
 			return
 		}
-		next(w, r)
+		c.Next()
 	}
 }

@@ -3,5 +3,5 @@ package version
 
 const (
 	Core     = "2.0.0"
-	SDKMajor = 1
+	SDKMajor = 2
 )

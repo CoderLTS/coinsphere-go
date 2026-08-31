@@ -4,7 +4,7 @@
 
 ## 1. 先理解插件模型
 
-CoinSphere 插件不是运行时扩展包。安装会把源码复制进主仓库的 Backend/Frontend 安装目录，生成静态注册表，更新 Go module 依赖，执行插件 migration，并重新构建 Backend/Web 镜像。应用启动只加载已经编译进二进制和前端产物的插件，不扫描外部目录。
+CoinSphere 插件不是运行时扩展包。安装会把源码复制进主仓库的 Backend/Frontend 安装目录，生成静态注册表，更新 Go module 依赖，执行插件 migration，并重新构建包含前后端的应用镜像。应用启动只加载已经编译进二进制和前端产物的插件，不扫描外部目录。
 
 插件与 Go App 运行在同一进程，Vue 页面也运行在主 Web 应用中，因此：
 
@@ -19,7 +19,7 @@ CoinSphere 插件不是运行时扩展包。安装会把源码复制进主仓库
 | 项目 | 当前值 |
 | --- | --- |
 | Core | `2.0.0` |
-| SDK major | `1` |
+| SDK major | `2` |
 | manifest `schemaVersion` | `1` |
 | Go | `1.26.6` |
 | JSON Schema | Draft 2020-12 |
@@ -54,7 +54,7 @@ manifest 中的路径使用 `/`，必须是插件根目录内的相对路径。�
   "id": "example.hello",
   "name": "Hello Plugin",
   "version": "1.0.0",
-  "sdkMajor": 1,
+  "sdkMajor": 2,
   "requiresCore": ">=2.0.0 <3.0.0",
   "backend": {
     "module": "example.com/coinsphere/hello",
@@ -78,7 +78,7 @@ manifest 中的路径使用 `/`，必须是插件根目录内的相对路径。�
 | `id` | 至少两个小写点分段，可包含数字和段内连字符；同时决定插件 schema 名 |
 | `name` | 非空显示名 |
 | `version` | 严格 SemVer，例如 `1.2.3` |
-| `sdkMajor` | 必须等于当前 SDK major `1` |
+| `sdkMajor` | 必须等于当前 SDK major `2` |
 | `requiresCore` | 合法 SemVer constraint，必须包含当前 Core `2.0.0` |
 | `backend.module` | 必须与 `backend.package` 目录内 `go.mod` 的 module 完全一致 |
 | `frontend.entry` | 插件根内存在的 TypeScript 入口文件 |
@@ -123,13 +123,19 @@ module example.com/coinsphere/hello
 
 go 1.26.6
 
-require coinsphere/backend v0.0.0
+require (
+    coinsphere/backend v0.0.0
+    github.com/gin-gonic/gin v1.12.0
+)
 ```
 
 插件只应导入公开包：
 
 ```go
-import "coinsphere/backend/plugin/sdk"
+import (
+    "coinsphere/backend/plugin/sdk"
+    "github.com/gin-gonic/gin"
+)
 ```
 
 不要导入 `coinsphere/backend/internal/*`。Go 的 `internal` 规则会阻止外部 module 使用它们，即使插件安装后位于主仓库中。
@@ -267,7 +273,18 @@ type Strategy interface {
 
 ## 9. RouteScope
 
-路由通过 `registrar.Route` 注册，并在 manifest 声明 `apiRoutes`。`Method` 使用 HTTP 方法，`Pattern` 必须以 `/` 开头；插件只提供相对 pattern，核心决定最终 URL 和授权。
+路由通过 `registrar.Route` 注册，并在 manifest 声明 `apiRoutes`。`Method` 使用 HTTP 方法，`Pattern` 必须以 `/` 开头，路径参数使用 Gin 的 `:param` 语法；插件只提供相对 pattern，核心决定最终 URL 和授权。Handler 签名为 `func(*gin.Context, sdk.RouteScope)`，使用 `c.Param`、`c.Query` 和 `c.Request.Context()` 读取请求数据与传递取消信号。
+
+```go
+err := registrar.Route(sdk.RouteDescriptor{
+    Method:  http.MethodPost,
+    Pattern: "/accounts/:accountId/rebuild",
+    Scope:   sdk.ScopeSystem,
+}, func(c *gin.Context, scope sdk.RouteScope) {
+    accountID := c.Param("accountId")
+    // 校验 accountID 后调用领域服务，并通过 c 写入响应。
+})
+```
 
 | Scope | 当前状态 | 最终入口与语义 |
 | --- | --- | --- |

@@ -464,6 +464,9 @@ func (c *registrationCollector) Route(desc RouteDescriptor, handler ScopedRouteH
 	if method == "" || strings.TrimSpace(desc.Pattern) == "" || !strings.HasPrefix(desc.Pattern, "/") {
 		return errors.New("route requires an HTTP method and absolute pattern")
 	}
+	if strings.ContainsAny(desc.Pattern, "{}") {
+		return errors.New("route parameters must use Gin :name syntax")
+	}
 	if desc.Scope != ScopeWorkflow && desc.Scope != ScopeResult && desc.Scope != ScopeSystem {
 		return fmt.Errorf("route %s %s has invalid scope %q", method, desc.Pattern, desc.Scope)
 	}

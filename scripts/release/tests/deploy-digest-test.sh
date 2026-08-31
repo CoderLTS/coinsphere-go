@@ -7,7 +7,6 @@ VERSION=v1.2.3
 COMMIT=0123456789abcdef0123456789abcdef01234567
 REGISTRY=127.0.0.1:5000
 BACKEND_DIGEST=$(printf 'a%.0s' {1..64})
-WEB_DIGEST=$(printf 'b%.0s' {1..64})
 POSTGRES_DSN='postgresql://coinsphere:test-only-password@timescaledb:5432/coinsphere?sslmode=disable&options=-csearch_path%3Dpublic'
 
 cleanup() {
@@ -26,9 +25,7 @@ cat >"$TEST_DIR/release-manifest.json" <<EOF
   "version": "$VERSION",
   "commit": "$COMMIT",
   "backendImage": "$REGISTRY/coinsphere/backend:$VERSION",
-  "backendDigest": "$REGISTRY/coinsphere/backend@sha256:$BACKEND_DIGEST",
-  "webImage": "$REGISTRY/coinsphere/web:$VERSION",
-  "webDigest": "$REGISTRY/coinsphere/web@sha256:$WEB_DIGEST"
+  "backendDigest": "$REGISTRY/coinsphere/backend@sha256:$BACKEND_DIGEST"
 }
 EOF
 
@@ -80,8 +77,8 @@ bash "$ROOT_DIR/deploy/production/deploy.sh" "$VERSION" "$TEST_DIR/release-manif
   >"$TEST_DIR/deploy.log" 2>&1
 
 if ! grep -Fxq "COINSPHERE_BACKEND_IMAGE=$REGISTRY/coinsphere/backend@sha256:$BACKEND_DIGEST" "$DEPLOY_DIR/.env" \
-  || ! grep -Fxq "COINSPHERE_WEB_IMAGE=$REGISTRY/coinsphere/web@sha256:$WEB_DIGEST" "$DEPLOY_DIR/.env"; then
-  echo "自动部署必须使用 Manifest 中的不可变镜像 digest" >&2
+  || grep -Fq "COINSPHERE_WEB_IMAGE=" "$DEPLOY_DIR/.env"; then
+  echo "自动部署必须只使用 Manifest 中的单应用镜像 digest" >&2
   exit 1
 fi
 if ! grep -Fxq "COINSPHERE_DATABASE__DSN=$POSTGRES_DSN" "$DEPLOY_DIR/runtime.env"; then
@@ -120,8 +117,8 @@ DOCKER_CONFIG="$TEST_DIR/docker-config" \
 COINSPHERE_REGISTRY=$REGISTRY \
 bash "$ROOT_DIR/deploy/production/deploy.sh" "$VERSION" "$TEST_DIR/release-manifest.json" \
   >"$TEST_DIR/upgrade.log" 2>&1
-if ! grep -Fq "rm -f worker executor" "$DEPLOY_DOCKER_LOG"; then
-  echo "升级到 V2 拓扑后必须移除已撤下的 Worker 与 Executor 容器" >&2
+if ! grep -Fq "rm -f worker web executor" "$DEPLOY_DOCKER_LOG"; then
+  echo "升级到单容器拓扑后必须移除已撤下的 Web、Worker 与 Executor 容器" >&2
   exit 1
 fi
 
@@ -139,4 +136,4 @@ if [[ $status -ne 2 || -e $TEST_DIR/rejected ]]; then
   exit 1
 fi
 
-echo "生产部署镜像 digest 绑定测试通过"
+echo "生产部署单镜像 digest 绑定测试通过"

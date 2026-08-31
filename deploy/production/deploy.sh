@@ -46,37 +46,32 @@ if [[ ! $WEB_PORT =~ ^[0-9]+$ ]] || ((WEB_PORT < 1 || WEB_PORT > 65535)); then
 fi
 
 BACKEND_IMAGE=$REGISTRY/coinsphere/backend:$VERSION
-WEB_IMAGE=$REGISTRY/coinsphere/web:$VERSION
 if [[ -n $MANIFEST_FILE ]]; then
   command -v jq >/dev/null || { echo "缺少命令: jq" >&2; exit 3; }
   if [[ ! -f $MANIFEST_FILE || -L $MANIFEST_FILE ]]; then
     echo "发布 Manifest 不是普通文件" >&2
     exit 2
   fi
-  if ! manifest_images=$(jq -er --arg version "$VERSION" \
-    --arg backend "$REGISTRY/coinsphere/backend" --arg web "$REGISTRY/coinsphere/web" '
+  if ! manifest_image=$(jq -er --arg version "$VERSION" \
+    --arg backend "$REGISTRY/coinsphere/backend" '
     def digest($repository):
       type == "string"
       and startswith($repository + "@sha256:")
       and (ltrimstr($repository + "@sha256:") | test("^[0-9a-f]{64}$"));
     if type == "object"
-      and (keys == ["backendDigest", "backendImage", "commit", "version", "webDigest", "webImage"])
+      and (keys == ["backendDigest", "backendImage", "commit", "version"])
       and .version == $version
       and (.commit | type == "string" and test("^[0-9a-f]{40}$"))
       and .backendImage == ($backend + ":" + $version)
-      and .webImage == ($web + ":" + $version)
       and (.backendDigest | digest($backend))
-      and (.webDigest | digest($web))
-    then .backendDigest, .webDigest
+    then .backendDigest
     else error("invalid release manifest")
     end
   ' "$MANIFEST_FILE" 2>/dev/null); then
     echo "发布 Manifest 与版本或 Registry 不匹配" >&2
     exit 2
   fi
-  mapfile -t release_images <<<"$manifest_images"
-  BACKEND_IMAGE=${release_images[0]}
-  WEB_IMAGE=${release_images[1]}
+  BACKEND_IMAGE=$manifest_image
 fi
 
 if [[ -f $DOCKER_CONFIG_FILE ]]; then
@@ -154,7 +149,6 @@ fi
 cat >"$next_env" <<EOF
 COINSPHERE_VERSION=$VERSION
 COINSPHERE_BACKEND_IMAGE=$BACKEND_IMAGE
-COINSPHERE_WEB_IMAGE=$WEB_IMAGE
 COINSPHERE_WEB_BIND=$WEB_BIND
 COINSPHERE_WEB_PORT=$WEB_PORT
 EOF
@@ -173,8 +167,8 @@ obsolete_services=()
 if $had_previous; then
   while IFS= read -r service; do
     case "$service" in
-      backend|web) previous_services+=("$service") ;;
-      timescaledb|worker|executor)
+      backend) previous_services+=("$service") ;;
+      web|timescaledb|worker|executor)
         previous_services+=("$service")
         obsolete_services+=("$service")
         ;;
@@ -212,7 +206,7 @@ docker run --rm --network none --user 0:0 \
 compose_with "$next_env" "$DEPLOY_DIR/compose.yaml" run --rm --no-deps backend \
   /app/coinsphere-migrate -config /app/config.yml -direction up
 
-compose_with "$next_env" "$DEPLOY_DIR/compose.yaml" up -d --wait --wait-timeout 180 backend web
+compose_with "$next_env" "$DEPLOY_DIR/compose.yaml" up -d --wait --wait-timeout 180 backend
 curl --fail --show-error --retry 10 --retry-all-errors --retry-delay 3 \
   "http://127.0.0.1:$WEB_PORT/health" >/dev/null
 if ((${#obsolete_services[@]} > 0)); then
@@ -221,4 +215,4 @@ fi
 
 install -m 0600 "$next_env" "$DEPLOY_DIR/.env"
 trap - ERR INT TERM
-echo "CoinSphere $VERSION 已发布到独立 Compose 项目 coinsphere-go"
+echo "CoinSphere $VERSION 单容器已发布到独立 Compose 项目 coinsphere-go"

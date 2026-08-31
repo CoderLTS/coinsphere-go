@@ -133,11 +133,11 @@ func (a *App) StartRuntime(ctx context.Context) {
 接口是一组方法签名。**任何类型只要实现了这些方法,就自动算"是"这个接口**(不需要显式声明 implements)。
 ```go
 // 标准库里:http.Handler 接口只要求一个方法 ServeHTTP(...)
-// 所以我们的 mux(*http.ServeMux)天然就是一个 http.Handler,能直接交给 http.Server 用。
+// Gin 的 Engine 实现了 http.Handler,能直接交给 http.Server 用。
 ```
 本项目你会遇到的接口:
 - `gorm.Dialector` —— "数据库方言"接口。本项目的 `db.go` 固定使用 `postgres.Open(...)`，避免为非目标数据库维护不同事务和约束语义。
-- `http.Handler` —— HTTP 处理器,见『框架:net/http』。
+- `http.Handler` —— HTTP 服务器接收的处理器接口；本项目的 Gin Engine 实现了它。
 
 ---
 
@@ -210,7 +210,7 @@ func (a *App) spawn(ctx context.Context, loop func(context.Context)) {
 
 `internal/api/api.go` 里有:
 ```go
-func decodeBody[T any](r *http.Request) (*T, error)   // T 是"类型参数",调用时替换成具体类型
+func decodeBody[T any](c *gin.Context) (*T, error)   // T 是"类型参数",调用时替换成具体类型
 ```
 意思是“对任意类型 T，把请求体 JSON 解析成一个 *T”。调用时 T 替换成 handler 声明的请求结构体，因此不用为每种请求重写解析函数。
 
@@ -230,7 +230,8 @@ func decodeBody[T any](r *http.Request) (*T, error)   // T 是"类型参数",调
 
 | 库 | 干什么的 | 在哪看 |
 |---|---|---|
-| **net/http**(标准库) | HTTP 服务器与路由 | `internal/api/api.go`、`routes.go` |
+| **Gin** | HTTP 路由与中间件 | `internal/api/api.go`、`routes.go` |
+| **net/http**(标准库) | HTTP 服务器与通用接口 | `main.go`、`internal/api/api.go` |
 | **GORM**(gorm.io/gorm) | ORM,把 struct 当数据库表操作,不用手写大部分 SQL | `internal/db/*.go`、各 service |
 | **gorilla/websocket** | WebSocket 长连接(实时通知) | `internal/service/realtime.go` |
 | **robfig/cron** | 解析 cron 表达式,算下次触发时间 | `internal/service/cronx.go` |
@@ -238,13 +239,13 @@ func decodeBody[T any](r *http.Request) (*T, error)   // T 是"类型参数",调
 | **x/crypto/pbkdf2** | 密码哈希(和 Python 版兼容) | `internal/security/security.go` |
 | **yaml.v3** | 解析 `config.yml` | `internal/config/config.go` |
 
-### 框架:net/http(Go 1.22+ 新路由)
+### 框架:Gin
 ```go
-mux := http.NewServeMux()                          // 路由表
-mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin) // 方法+路径 → 处理函数(1.22 新语法)
-mux.HandleFunc("PUT /api/v1/admin/users/{userId}", ...) // {userId} 是路径参数
-// 处理函数签名固定:func(w http.ResponseWriter, r *http.Request)
-//   w 用来写响应,r 是请求。r.PathValue("userId") 取路径参数。
+router := gin.New()                                      // 路由表
+router.POST("/api/v1/auth/login", s.handleLogin)        // 方法+路径 → 处理函数
+router.PUT("/api/v1/admin/users/:userId", s.handleUser) // :userId 是路径参数
+// 处理函数签名:func(c *gin.Context)
+//   c.Param("userId") 取路径参数,c.Request.Context() 传递取消信号。
 ```
 
 ### 框架:GORM(把 struct 当表)
