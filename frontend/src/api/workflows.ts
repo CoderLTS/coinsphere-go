@@ -53,7 +53,8 @@ export interface WorkflowGraphEdge {
 }
 
 export interface WorkflowGraph {
-  schemaVersion: 1
+  schemaVersion: 1 | 2
+  entryPoints?: { realtime: string; backtest: string }
   nodes: WorkflowGraphNode[]
   edges: WorkflowGraphEdge[]
 }
@@ -130,6 +131,8 @@ export interface WorkflowRun {
   id: number
   workflowId: number
   revisionId: number
+  entryPoint: 'realtime' | 'backtest'
+  input: Record<string, unknown>
   triggerType: 'manual' | 'schedule' | 'event' | 'stream' | 'webhook' | 'failure'
   status: 'queued' | 'running' | 'waiting' | 'retrying' | 'succeeded' | 'failed' | 'cancelled'
   currentNodeInstanceId?: string
@@ -285,6 +288,7 @@ export const createWorkflow = (params: {
     | 'quant-market-data'
     | 'quant-strategy'
     | 'quant-backtest'
+    | 'quant-workflow'
     | 'quant-paper'
 }) => request.post<WorkflowDetail>({ url: '/api/v1/workflows', params })
 
@@ -304,8 +308,14 @@ export const applyWorkflowLifecycle = (workflowId: number, action: 'activate' | 
     params: { action }
   })
 
-export const createWorkflowRun = (workflowId: number) =>
-  request.post<WorkflowRun>({ url: `/api/v1/workflows/${workflowId}/runs` })
+export interface WorkflowRunCreatePayload {
+  entryPoint?: 'realtime' | 'backtest'
+  revisionId?: number
+  input?: Record<string, unknown>
+}
+
+export const createWorkflowRun = (workflowId: number, params: WorkflowRunCreatePayload = {}) =>
+  request.post<WorkflowRun>({ url: `/api/v1/workflows/${workflowId}/runs`, params })
 
 export const fetchWorkflowRuns = (workflowId: number, params: WorkflowRunQuery = {}) =>
   request.get<Api.Common.PaginatedResponse<WorkflowRun>>({

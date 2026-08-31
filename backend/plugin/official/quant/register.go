@@ -104,6 +104,9 @@ func (q *quantRuntime) register(registrar sdk.Registrar) error {
 			return err
 		}
 	}
+	if err := q.registerWorkflowStrategyNodes(registrar); err != nil {
+		return err
+	}
 	if err := q.registerMarketSignals(registrar); err != nil {
 		return err
 	}

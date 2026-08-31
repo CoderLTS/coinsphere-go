@@ -255,6 +255,9 @@ func (q *quantRuntime) loadQuantCandles(ctx context.Context, config quantSeriesC
 }
 
 func (q *quantRuntime) loadQuantCandlesThroughClose(ctx context.Context, config quantSeriesConfig, closeTime time.Time, limit int) ([]quantCandle, error) {
+	if cache, ok := ctx.Value(quantBacktestCandleCacheContextKey{}).(*quantBacktestCandleCache); ok {
+		return cache.candlesThroughClose(ctx, q, config, closeTime.UTC(), limit)
+	}
 	var candles []quantCandle
 	if err := q.db.WithContext(ctx).Where(
 		"market = ? AND instrument = ? AND interval = ? AND close_time <= ?",

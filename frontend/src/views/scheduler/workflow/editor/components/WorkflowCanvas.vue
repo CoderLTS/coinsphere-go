@@ -820,7 +820,12 @@
           cells: (graphJson.cells || []).filter((cell) => cell.id !== props.pendingEdgeDraft?.id)
         }
       : graphJson
-    const nextGraph = mapX6GraphToDomain(filteredGraphJson as any, [], props.materials)
+    const mappedGraph = mapX6GraphToDomain(filteredGraphJson as any, [], props.materials)
+    const nextGraph = {
+      ...props.graph,
+      nodes: mappedGraph.nodes,
+      edges: mappedGraph.edges
+    }
     localRenderSnapshot.value = buildRenderSnapshot(nextGraph)
     if (props.activeCellId && props.activeCellType) {
       const activeCellExists =

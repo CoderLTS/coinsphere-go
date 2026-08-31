@@ -250,7 +250,7 @@ func (a *App) deliverWorkflowEventTx(tx *gorm.DB, record db.WorkflowEventRecord,
 			triggerType = "failure"
 		}
 		run := db.WorkflowRun{
-			WorkflowID: workflow.ID, RevisionID: revision.ID, TriggerType: triggerType,
+			WorkflowID: workflow.ID, RevisionID: revision.ID, EntryPoint: "realtime", InputJSON: `{}`, TriggerType: triggerType,
 			TriggerKey: fmt.Sprint(record.ID), EventRecordID: &record.ID, PartitionKey: record.PartitionKey,
 			Status: RunStatusQueued, NotBefore: now, TriggeredAt: event.Time().UTC(), ResultSummary: `{}`, CreatedAt: now, UpdatedAt: now,
 		}

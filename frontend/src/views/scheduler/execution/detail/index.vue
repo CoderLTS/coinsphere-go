@@ -325,6 +325,18 @@
                         <ElDescriptionsItem label="SHA-256">{{
                           artifact.sha256
                         }}</ElDescriptionsItem>
+                        <ElDescriptionsItem label="操作">
+                          <ElTooltip content="下载并校验制品" placement="top">
+                            <ElButton
+                              circle
+                              plain
+                              size="small"
+                              :icon="Download"
+                              :loading="downloadingArtifact === artifact.sha256"
+                              @click="downloadArtifact(artifact.sha256)"
+                            />
+                          </ElTooltip>
+                        </ElDescriptionsItem>
                       </ElDescriptions>
                     </div>
                   </template>
@@ -339,7 +351,7 @@
 </template>
 
 <script setup lang="ts">
-  import { ArrowLeft, Clock, Hide, View } from '@element-plus/icons-vue'
+  import { ArrowLeft, Clock, Download, Hide, View } from '@element-plus/icons-vue'
   import { ElMessage } from 'element-plus'
   import type { WorkflowNodeDefinitionItem } from '@/api/scheduler'
   import {
@@ -349,6 +361,8 @@
   } from '@/api/scheduler'
   import {
     buildWorkflowRunsWsUrl,
+    downloadWorkflowArtifact,
+    fetchWorkflowArtifactManifest,
     fetchWorkflowRuns,
     WORKFLOW_RUNS_WS_PROTOCOL
   } from '@/api/workflows'
@@ -384,10 +398,34 @@
   const { containerMinHeight } = useAutoLayoutHeight(undefined, { updateCssVar: false })
   const userStore = useUserStore()
   const realtimeConnected = ref(false)
+  const downloadingArtifact = ref('')
   let workflowSocket: WebSocket | null = null
   let workflowReconnectTimer: ReturnType<typeof setTimeout> | null = null
   let realtimeRefreshRunning = false
   let realtimeRefreshPending = false
+
+  const downloadArtifact = async (sha256: string) => {
+    downloadingArtifact.value = sha256
+    try {
+      const manifest = await fetchWorkflowArtifactManifest(sha256)
+      const blob = await downloadWorkflowArtifact(manifest.downloadUrl)
+      const digest = Array.from(
+        new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer()))
+      )
+        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .join('')
+      if (digest !== sha256) throw new Error('digest mismatch')
+      const link = document.createElement('a')
+      link.href = URL.createObjectURL(blob)
+      link.download = `workflow-artifact-${sha256.slice(0, 12)}.json`
+      link.click()
+      URL.revokeObjectURL(link.href)
+    } catch {
+      ElMessage.error('制品下载或校验失败')
+    } finally {
+      downloadingArtifact.value = ''
+    }
+  }
 
   const pageStyle = computed(() => ({
     height: containerMinHeight.value,

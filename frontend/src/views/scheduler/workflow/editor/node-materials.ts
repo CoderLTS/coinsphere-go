@@ -179,6 +179,36 @@ const MATERIAL_META: Record<string, MaterialMeta> = {
     color: '#7c6ee6',
     iconText: 'B'
   },
+  'official.quant.backtest_start': {
+    kind: 'generic',
+    group: '开始',
+    description: '逐根驱动共享量化子图并汇总回测结果',
+    color: '#2563eb',
+    iconText: '测'
+  },
+  'official.quant.code_strategy': {
+    kind: 'generic',
+    group: '策略',
+    description: '使用受限 CEL 与 Decimal 函数计算命名输出',
+    color: '#6d5bd0',
+    iconText: 'C',
+    width: 280,
+    height: 112
+  },
+  'official.quant.position': {
+    kind: 'generic',
+    group: '策略',
+    description: '把命中路径转换为目标仓位候选',
+    color: '#047857',
+    iconText: '仓'
+  },
+  'official.quant.output_signal': {
+    kind: 'generic',
+    group: '策略',
+    description: '合并仓位候选并输出目标变化信号',
+    color: '#c07a2d',
+    iconText: '信'
+  },
   'official.quant.signal': {
     kind: 'generic',
     group: '策略',

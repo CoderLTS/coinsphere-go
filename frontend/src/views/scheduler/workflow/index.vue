@@ -17,13 +17,12 @@
         @refresh="loadPageData"
       >
         <template #left>
-          <ElButton
-            v-if="hasAuth('scheduler.workflow_definitions.create')"
-            type="primary"
-            @click="router.push('/scheduler/workflow/create')"
-          >
-            新增工作流定义
-          </ElButton>
+          <ElSpace v-if="hasAuth('scheduler.workflow_definitions.create')">
+            <ElButton type="primary" @click="router.push('/scheduler/workflow/create')">
+              新增工作流定义
+            </ElButton>
+            <ElButton :icon="TrendCharts" @click="createQuantWorkflow">新建量化策略</ElButton>
+          </ElSpace>
         </template>
       </ArtTableHeader>
 
@@ -97,14 +96,14 @@
                   @click="toggleLifecycle(row)"
                 />
               </ElTooltip>
-              <ElTooltip content="手动运行" placement="top">
+              <ElTooltip :content="isQuantWorkflow(row) ? '运行回测' : '手动运行'" placement="top">
                 <ElButton
                   circle
                   plain
                   size="small"
                   type="primary"
                   :icon="VideoPlay"
-                  :disabled="row.workflowStatus !== 'active'"
+                  :disabled="!isQuantWorkflow(row) && row.workflowStatus !== 'active'"
                   :loading="runningId === row.id"
                   @click="runWorkflow(row)"
                 />
@@ -176,11 +175,62 @@
         </ElTable>
       </div>
     </ElDialog>
+
+    <ElDialog v-model="backtestVisible" title="运行回测" width="min(560px, calc(100vw - 32px))">
+      <ElForm label-position="top">
+        <ElFormItem label="策略 revision">
+          <ElSelect v-model="backtestForm.definitionId" class="backtest-form__full">
+            <ElOption
+              v-for="revision in backtestWorkflow?.versions || []"
+              :key="revision.id"
+              :label="`v${revision.version}${revision.isActive ? '（当前激活）' : ''}`"
+              :value="revision.id"
+            />
+          </ElSelect>
+        </ElFormItem>
+        <div class="backtest-form__times">
+          <ElFormItem label="开始时间（UTC+8）">
+            <ElDatePicker
+              v-model="backtestForm.startTime"
+              type="datetime"
+              class="backtest-form__full"
+            />
+          </ElFormItem>
+          <ElFormItem label="结束时间（UTC+8）">
+            <ElDatePicker
+              v-model="backtestForm.endTime"
+              type="datetime"
+              class="backtest-form__full"
+            />
+          </ElFormItem>
+        </div>
+        <div class="backtest-form__numbers">
+          <ElFormItem label="初始资金"
+            ><ElInput v-model="backtestForm.initialCapital"
+          /></ElFormItem>
+          <ElFormItem label="手续费率"><ElInput v-model="backtestForm.feeRate" /></ElFormItem>
+          <ElFormItem label="滑点率"><ElInput v-model="backtestForm.slippageRate" /></ElFormItem>
+        </div>
+      </ElForm>
+      <template #footer>
+        <ElButton @click="backtestVisible = false">取消</ElButton>
+        <ElButton type="primary" :loading="Boolean(runningId)" @click="submitBacktest"
+          >开始回测</ElButton
+        >
+      </template>
+    </ElDialog>
   </div>
 </template>
 
 <script setup lang="ts">
-  import { Clock, Collection, Edit, SwitchButton, VideoPlay } from '@element-plus/icons-vue'
+  import {
+    Clock,
+    Collection,
+    Edit,
+    SwitchButton,
+    TrendCharts,
+    VideoPlay
+  } from '@element-plus/icons-vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { useAuth } from '@/hooks/core/useAuth'
   import {
@@ -191,8 +241,7 @@
     type WorkflowDefinitionItem,
     type WorkflowDefinitionVersionItem
   } from '@/api/scheduler'
-  import { fetchWorkflowRuns } from '@/api/workflows'
-  import type { WorkflowStatus } from '@/api/workflows'
+  import { createWorkflow, fetchWorkflowRuns, type WorkflowStatus } from '@/api/workflows'
   import { formatDateTime } from '@/utils/date'
 
   defineOptions({ name: 'SchedulerWorkflowDefinitionsPage' })
@@ -206,6 +255,40 @@
   const versionDialogVisible = ref(false)
   const versionDetail = ref<WorkflowDefinitionItem | null>(null)
   const versionRows = computed(() => versionDetail.value?.versions || [])
+  const utc8OffsetMs = 8 * 60 * 60 * 1000
+  const utc8PickerDate = (timestamp = Date.now()) => {
+    const shifted = new Date(timestamp + utc8OffsetMs)
+    return new Date(
+      shifted.getUTCFullYear(),
+      shifted.getUTCMonth(),
+      shifted.getUTCDate(),
+      shifted.getUTCHours(),
+      shifted.getUTCMinutes(),
+      shifted.getUTCSeconds()
+    )
+  }
+  const utc8PickerISOString = (value: Date) =>
+    new Date(
+      Date.UTC(
+        value.getFullYear(),
+        value.getMonth(),
+        value.getDate(),
+        value.getHours(),
+        value.getMinutes(),
+        value.getSeconds(),
+        value.getMilliseconds()
+      ) - utc8OffsetMs
+    ).toISOString()
+  const backtestVisible = ref(false)
+  const backtestWorkflow = ref<WorkflowDefinitionItem | null>(null)
+  const backtestForm = reactive({
+    definitionId: 0,
+    startTime: utc8PickerDate(Date.now() - 30 * 24 * 60 * 60 * 1000),
+    endTime: utc8PickerDate(),
+    initialCapital: '10000',
+    feeRate: '0.001',
+    slippageRate: '0.0005'
+  })
   const initialFilters = { keyword: '', status: '' }
   const formFilters = reactive({ ...initialFilters })
   const appliedFilters = reactive({ ...initialFilters })
@@ -310,12 +393,72 @@
     }
   }
 
+  const isQuantWorkflow = (row: WorkflowDefinitionItem) =>
+    row.graph.schemaVersion === 2 && Boolean(row.graph.entryPoints?.backtest)
+
+  const createQuantWorkflow = async () => {
+    const { value } = await ElMessageBox.prompt('请输入策略工作流名称', '新建量化策略', {
+      inputPattern: /^.{1,120}$/,
+      inputErrorMessage: '名称需要 1 至 120 个字符'
+    })
+    const workflow = await createWorkflow({
+      name: String(value).trim(),
+      description: '',
+      templateKey: 'quant-workflow'
+    })
+    await router.push(`/scheduler/workflow/${workflow.id}/edit`)
+  }
+
   const runWorkflow = async (row: WorkflowDefinitionItem) => {
+    if (isQuantWorkflow(row)) {
+      backtestWorkflow.value = row
+      backtestForm.definitionId =
+        row.versions?.find((revision) => revision.isActive)?.id || row.versions?.[0]?.id || row.id
+      backtestForm.endTime = utc8PickerDate()
+      backtestForm.startTime = utc8PickerDate(Date.now() - 30 * 24 * 60 * 60 * 1000)
+      backtestVisible.value = true
+      return
+    }
     runningId.value = row.id
     try {
       const result = await fetchRunWorkflowDefinition(row.id, { startEntryKeys: [] })
       const run = result.executions[0]
       ElMessage.success('运行已加入队列')
+      if (run) {
+        await router.push({
+          path: `/scheduler/execution/${run.id}/detail`,
+          query: { workflowId: row.code, workflowName: row.displayName }
+        })
+      }
+    } finally {
+      runningId.value = undefined
+    }
+  }
+
+  const submitBacktest = async () => {
+    const row = backtestWorkflow.value
+    if (!row || !backtestForm.definitionId || !backtestForm.startTime || !backtestForm.endTime)
+      return
+    if (backtestForm.startTime >= backtestForm.endTime) {
+      ElMessage.warning('开始时间必须早于结束时间')
+      return
+    }
+    runningId.value = row.id
+    try {
+      const result = await fetchRunWorkflowDefinition(backtestForm.definitionId, {
+        startEntryKeys: ['backtest'],
+        entryPoint: 'backtest',
+        inputs: {
+          startTime: utc8PickerISOString(backtestForm.startTime),
+          endTime: utc8PickerISOString(backtestForm.endTime),
+          initialCapital: backtestForm.initialCapital,
+          feeRate: backtestForm.feeRate,
+          slippageRate: backtestForm.slippageRate
+        }
+      })
+      backtestVisible.value = false
+      const run = result.executions[0]
+      ElMessage.success('回测已加入队列')
       if (run) {
         await router.push({
           path: `/scheduler/execution/${run.id}/detail`,
@@ -355,5 +498,27 @@
     margin-top: 6px;
     font-size: 12px;
     color: var(--el-text-color-secondary);
+  }
+
+  .backtest-form__full {
+    width: 100%;
+  }
+
+  .backtest-form__times,
+  .backtest-form__numbers {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .backtest-form__numbers {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  @media (width <= 640px) {
+    .backtest-form__times,
+    .backtest-form__numbers {
+      grid-template-columns: 1fr;
+    }
   }
 </style>

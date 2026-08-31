@@ -278,7 +278,17 @@ func (s *Server) handleCreateWorkflowRun(w http.ResponseWriter, r *http.Request,
 		writeProblem(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
-	data, err := s.App.CreateWorkflowRun(r.Context(), workflowID, principal)
+	r.Body = http.MaxBytesReader(w, r.Body, maxWorkflowRequestBytes)
+	payload := service.WorkflowRunCreatePayload{}
+	if r.ContentLength != 0 {
+		decoded, decodeErr := decodeBody[service.WorkflowRunCreatePayload](r)
+		if decodeErr != nil {
+			writeProblem(w, r, http.StatusBadRequest, decodeErr.Error())
+			return
+		}
+		payload = *decoded
+	}
+	data, err := s.App.CreateWorkflowRun(r.Context(), workflowID, payload, principal)
 	respond(w, data, err, "")
 }
 

@@ -38,6 +38,8 @@ type WorkflowRunView struct {
 	ID                    int64           `json:"id"`
 	WorkflowID            int64           `json:"workflowId"`
 	RevisionID            int64           `json:"revisionId"`
+	EntryPoint            string          `json:"entryPoint"`
+	Input                 json.RawMessage `json:"input"`
 	EventRecordID         int64           `json:"eventRecordId,omitempty"`
 	TriggerType           string          `json:"triggerType"`
 	Status                string          `json:"status"`
@@ -58,6 +60,12 @@ type WorkflowRunActionPayload struct {
 	Action string `json:"action"`
 }
 
+type WorkflowRunCreatePayload struct {
+	EntryPoint string          `json:"entryPoint"`
+	RevisionID int64           `json:"revisionId"`
+	Input      json.RawMessage `json:"input"`
+}
+
 type workflowRunGraph struct {
 	graph       workflowGraph
 	nodes       map[string]workflowGraphNode
@@ -75,7 +83,7 @@ type bufferedNodeState struct {
 	pending    json.RawMessage
 }
 
-func (a *App) CreateWorkflowRun(ctx context.Context, workflowID int64, principal *Principal) (WorkflowRunView, error) {
+func (a *App) CreateWorkflowRun(ctx context.Context, workflowID int64, payload WorkflowRunCreatePayload, principal *Principal) (WorkflowRunView, error) {
 	if principal == nil || principal.User == nil || principal.User.ID <= 0 {
 		return WorkflowRunView{}, ErrPermission
 	}
@@ -89,23 +97,50 @@ func (a *App) CreateWorkflowRun(ctx context.Context, workflowID int64, principal
 			}
 			return errors.New("lock workflow failed")
 		}
-		if workflow.Status != WorkflowStatusActive || workflow.ActiveRevisionID == nil {
+		entryPoint := strings.TrimSpace(payload.EntryPoint)
+		if entryPoint == "" {
+			entryPoint = "realtime"
+		}
+		if entryPoint != "realtime" && entryPoint != "backtest" {
+			return errors.New("workflow entryPoint must be realtime or backtest")
+		}
+		if entryPoint == "realtime" && (workflow.Status != WorkflowStatusActive || workflow.ActiveRevisionID == nil) {
 			return fmt.Errorf("%w: workflow is not accepting runs", ErrConflict)
 		}
-		var revision db.WorkflowRevision
-		if err := tx.First(&revision, *workflow.ActiveRevisionID).Error; err != nil {
-			return errors.New("load active workflow revision failed")
+		revisionID := payload.RevisionID
+		if entryPoint == "realtime" {
+			revisionID = *workflow.ActiveRevisionID
+		} else if revisionID <= 0 {
+			return errors.New("backtest revisionId is required")
 		}
-		graph, err := a.buildWorkflowRunGraph(revision.GraphJSON)
-		if err != nil || graph.nodes[revision.MainTriggerNodeID].NodeType != "core.manual" {
+		var revision db.WorkflowRevision
+		if err := tx.Where("workflow_id = ? AND id = ?", workflowID, revisionID).First(&revision).Error; err != nil {
+			return errors.New("load workflow revision failed")
+		}
+		graph, err := a.buildWorkflowRunGraphAt(revision.GraphJSON, entryPoint)
+		if err != nil {
+			return fmt.Errorf("%w: workflow entryPoint is unavailable", ErrConflict)
+		}
+		if entryPoint == "realtime" && graph.nodes[graph.order[0]].NodeType != "core.manual" {
 			return fmt.Errorf("%w: workflow does not use a manual trigger", ErrConflict)
 		}
 		if err := enforceWorkflowBacklog(tx, workflowID); err != nil {
 			return err
 		}
 		ownerID := principal.User.ID
+		input := payload.Input
+		if len(input) == 0 {
+			input = json.RawMessage(`{}`)
+		}
+		var inputObject map[string]any
+		if json.Unmarshal(input, &inputObject) != nil || inputObject == nil {
+			return errors.New("workflow run input must be a JSON object")
+		}
+		if entryPoint == "backtest" && validateWorkflowSchemaValue(graph.descriptors[graph.order[0]].InputSchema, inputObject) != nil {
+			return errors.New("workflow backtest input does not match its JSON Schema")
+		}
 		run = db.WorkflowRun{
-			WorkflowID: workflowID, RevisionID: revision.ID, TriggerType: "manual",
+			WorkflowID: workflowID, RevisionID: revision.ID, EntryPoint: entryPoint, InputJSON: string(input), TriggerType: "manual",
 			TriggerKey: security.RandomToken(), Status: RunStatusQueued, NotBefore: now,
 			TriggeredAt: now, CreatedBy: &ownerID, ResultSummary: `{}`, CreatedAt: now, UpdatedAt: now,
 		}
@@ -448,7 +483,7 @@ func (a *App) executeWorkflowRun(parent context.Context, run db.WorkflowRun) {
 		a.failWorkflowRun(run.ID, "revision")
 		return
 	}
-	graph, err := a.buildWorkflowRunGraph(revision.GraphJSON)
+	graph, err := a.buildWorkflowRunGraphAt(revision.GraphJSON, run.EntryPoint)
 	if err != nil {
 		a.failWorkflowRun(run.ID, "graph")
 		return
@@ -483,7 +518,7 @@ func (a *App) executeWorkflowRun(parent context.Context, run db.WorkflowRun) {
 			return
 		}
 		node := graph.nodes[nodeID]
-		if nodeID != revision.MainTriggerNodeID {
+		if nodeID != graph.order[0] {
 			reachable, err := workflowNodeReachable(graph.incoming[nodeID], outputs, event)
 			if err != nil {
 				a.failWorkflowRun(run.ID, "condition")
@@ -493,10 +528,23 @@ func (a *App) executeWorkflowRun(parent context.Context, run db.WorkflowRun) {
 				continue
 			}
 		}
+		if !workflowQuantPositionInputReady(node, outputs) {
+			continue
+		}
 		input, err := resolveWorkflowNodeInput(node, graph.incoming[nodeID], outputs, event)
 		if err != nil {
 			a.failWorkflowRun(run.ID, "input")
 			return
+		}
+		if err := injectWorkflowQuantInput(node, graph.incoming[nodeID], outputs, event, input); err != nil {
+			a.failWorkflowRun(run.ID, "input")
+			return
+		}
+		if nodeID == graph.order[0] && run.EntryPoint == "backtest" {
+			if json.Unmarshal([]byte(run.InputJSON), &input) != nil || input == nil {
+				a.failWorkflowRun(run.ID, "input")
+				return
+			}
 		}
 		outcome := a.executeWorkflowNode(ctx, run, revision, graph, node, input, event, 0)
 		if outcome.waiting {
@@ -595,8 +643,14 @@ func (a *App) executeWorkflowNode(ctx context.Context, run db.WorkflowRun, revis
 		NodeInstanceID: node.NodeInstanceID, OperationKey: operationKey,
 		Input: mustJSON(input), Config: append(json.RawMessage(nil), node.Config...),
 		Secrets: workflowSecretReader{app: a, revisionID: revision.ID, nodeInstanceID: node.NodeInstanceID},
-		State:   state, Artifacts: workflowArtifactStore{app: a},
+		State:   state, Artifacts: workflowArtifactStore{app: a}, ExecutionMode: sdk.ExecutionModeWorkflow,
 		Logger: a.workflowNodeLogger(run.WorkflowID, run.ID, runNode.ID, node.NodeType),
+	}
+	if node.NodeType == "official.quant.backtest_start" {
+		request.Frames = workflowFrameExecutor{
+			app: a, run: run, revision: revision, graph: graph, sourceNodeID: node.NodeInstanceID,
+			frameNodeIDs: workflowBacktestFrameNodeIDs(graph, node.NodeInstanceID),
+		}
 	}
 	result, category, executeErr := a.callWorkflowNode(ctx, run, revision, node, request, event)
 	if errors.Is(executeErr, errWorkflowWaiting) {
@@ -759,6 +813,10 @@ func (a *App) workflowEventTriggerNode(nodeType string) bool {
 func mustJSONString(value any) string { return string(mustJSON(value)) }
 
 func (a *App) buildWorkflowRunGraph(raw string) (workflowRunGraph, error) {
+	return a.buildWorkflowRunGraphAt(raw, "realtime")
+}
+
+func (a *App) buildWorkflowRunGraphAt(raw, entryPoint string) (workflowRunGraph, error) {
 	validated, err := a.validateWorkflowGraph(json.RawMessage(raw))
 	if err != nil {
 		return workflowRunGraph{}, err
@@ -767,7 +825,11 @@ func (a *App) buildWorkflowRunGraph(raw string) (workflowRunGraph, error) {
 	if json.Unmarshal([]byte(validated.graphJSON), &graph) != nil {
 		return workflowRunGraph{}, errors.New("decode workflow graph failed")
 	}
-	return buildWorkflowRunGraph(graph, validated.nodes, validated.descriptors, validated.mainTriggerID), nil
+	startID := validated.entryPoints[entryPoint]
+	if startID == "" {
+		return workflowRunGraph{}, errors.New("workflow entryPoint is unavailable")
+	}
+	return buildWorkflowRunGraph(graph, validated.nodes, validated.descriptors, startID), nil
 }
 
 func buildWorkflowRunGraph(graph workflowGraph, nodes map[string]workflowGraphNode, descriptors map[string]sdk.NodeDescriptor, startID string) workflowRunGraph {
@@ -781,9 +843,24 @@ func buildWorkflowRunGraph(graph workflowGraph, nodes map[string]workflowGraphNo
 	for _, edge := range graph.Edges {
 		incoming[edge.TargetNodeInstanceID] = append(incoming[edge.TargetNodeInstanceID], edge)
 		adjacency[edge.SourceNodeInstanceID] = append(adjacency[edge.SourceNodeInstanceID], edge.TargetNodeInstanceID)
-		degrees[edge.TargetNodeInstanceID]++
 	}
+	reachable := map[string]bool{}
 	queue := []string{startID}
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		if reachable[id] {
+			continue
+		}
+		reachable[id] = true
+		queue = append(queue, adjacency[id]...)
+	}
+	for _, edge := range graph.Edges {
+		if reachable[edge.SourceNodeInstanceID] && reachable[edge.TargetNodeInstanceID] {
+			degrees[edge.TargetNodeInstanceID]++
+		}
+	}
+	queue = []string{startID}
 	order := make([]string, 0, len(graph.Nodes))
 	for len(queue) > 0 {
 		id := queue[0]
@@ -972,6 +1049,9 @@ func workflowNodeReachable(edges []workflowGraphEdge, outputs map[string]map[str
 func workflowEdgeReached(edge workflowGraphEdge, outputs map[string]map[string]any, event map[string]string) (bool, error) {
 	output, completed := outputs[edge.SourceNodeInstanceID]
 	if !completed {
+		return false, nil
+	}
+	if ready, declared := output["ready"].(bool); declared && !ready {
 		return false, nil
 	}
 	if edge.SourcePort != "out" {
@@ -1264,7 +1344,7 @@ func (a *App) finishWorkflowRun(runID int64, status, category string) {
 			return err
 		}
 		workflowID = run.WorkflowID
-		updates["result_summary"] = workflowRunResultSummary(tx, runID)
+		updates["result_summary"] = workflowRunResultSummary(tx, runID, run.EntryPoint)
 		if category == "" {
 			updates["error_message"] = nil
 		} else {
@@ -1285,12 +1365,16 @@ func (a *App) finishWorkflowRun(runID int64, status, category string) {
 	a.PublishWorkflowRunUpdated(workflowID, runID)
 }
 
-func workflowRunResultSummary(tx *gorm.DB, runID int64) string {
+func workflowRunResultSummary(tx *gorm.DB, runID int64, entryPoint string) string {
 	var attempts int64
 	_ = tx.Model(&db.WorkflowRunNode{}).Where("run_id = ?", runID).Count(&attempts).Error
 	summary := map[string]any{"nodeAttempts": attempts}
 	var last db.WorkflowRunNode
-	if err := tx.Where("run_id = ?", runID).Order("id DESC").First(&last).Error; err == nil {
+	query := tx.Where("run_id = ?", runID)
+	if entryPoint == "backtest" {
+		query = query.Where("node_type = ?", "official.quant.backtest_start")
+	}
+	if err := query.Order("id DESC").First(&last).Error; err == nil {
 		summary["lastNodeInstanceId"] = last.NodeInstanceID
 		summary["lastNodeStatus"] = last.Status
 		var output map[string]any
@@ -1399,7 +1483,7 @@ ORDER BY w.id`, now).Scan(&due).Error; err != nil {
 				return nil
 			}
 			run := db.WorkflowRun{
-				WorkflowID: item.WorkflowID, RevisionID: item.RevisionID, TriggerType: "schedule",
+				WorkflowID: item.WorkflowID, RevisionID: item.RevisionID, EntryPoint: "realtime", InputJSON: `{}`, TriggerType: "schedule",
 				TriggerKey: dueAt.Format(time.RFC3339Nano), Status: RunStatusQueued,
 				NotBefore: now, TriggeredAt: dueAt, ResultSummary: `{}`, CreatedAt: now, UpdatedAt: now,
 			}
@@ -1452,12 +1536,15 @@ func workflowOperationKey(runID int64, nodeID string, iteration int) string {
 func workflowRunView(run db.WorkflowRun) WorkflowRunView {
 	view := WorkflowRunView{
 		ID: run.ID, WorkflowID: run.WorkflowID, RevisionID: run.RevisionID,
-		TriggerType: run.TriggerType, Status: run.Status,
+		EntryPoint: run.EntryPoint, Input: json.RawMessage(run.InputJSON), TriggerType: run.TriggerType, Status: run.Status,
 		CurrentNodeInstanceID: run.CurrentNodeInstanceID, TriggeredAt: formatWorkflowTime(run.TriggeredAt),
 		PartitionKey: run.PartitionKey, Diagnostic: run.Diagnostic, ResultSummary: json.RawMessage(run.ResultSummary),
 	}
 	if len(view.ResultSummary) == 0 {
 		view.ResultSummary = json.RawMessage(`{}`)
+	}
+	if len(view.Input) == 0 {
+		view.Input = json.RawMessage(`{}`)
 	}
 	if run.EventRecordID != nil {
 		view.EventRecordID = *run.EventRecordID
@@ -1501,7 +1588,7 @@ func (a *App) createDiagnosticReplay(ctx context.Context, runID int64) (Workflow
 			return err
 		}
 		replay = db.WorkflowRun{
-			WorkflowID: original.WorkflowID, RevisionID: original.RevisionID, TriggerType: original.TriggerType,
+			WorkflowID: original.WorkflowID, RevisionID: original.RevisionID, EntryPoint: original.EntryPoint, InputJSON: original.InputJSON, TriggerType: original.TriggerType,
 			TriggerKey: "replay:" + security.RandomToken(), EventRecordID: original.EventRecordID,
 			PartitionKey: original.PartitionKey, Diagnostic: true, OriginalRunID: &original.ID,
 			Status: RunStatusQueued, NotBefore: now, TriggeredAt: original.TriggeredAt, ResultSummary: `{}`,

@@ -17,6 +17,7 @@ var workflowQuantConditionTypes = map[string]bool{
 	"official.quant.kdj_condition":          true,
 	"official.quant.rsi_condition":          true,
 	"official.quant.bollinger_condition":    true,
+	"official.quant.code_strategy":          true,
 }
 
 func isWorkflowQuantConditionType(nodeType string) bool {
@@ -158,6 +159,9 @@ func workflowPorts(desc sdk.NodeDescriptor) ([]string, []string) {
 	if desc.Type == "core.loop_item" {
 		return []string{}, []string{"out"}
 	}
+	if desc.Type == "official.quant.backtest_start" {
+		return []string{}, append([]string(nil), desc.Branches...)
+	}
 	if desc.Type == "core.end" || desc.Type == "core.loop_end" {
 		return []string{"in"}, []string{}
 	}
@@ -219,6 +223,14 @@ func workflowNodeTitle(nodeType string) string {
 		return "输出信号"
 	case "official.quant.backtest":
 		return "量化策略回测"
+	case "official.quant.backtest_start":
+		return "回测开始"
+	case "official.quant.code_strategy":
+		return "代码策略"
+	case "official.quant.position":
+		return "仓位计算"
+	case "official.quant.output_signal":
+		return "输出策略信号"
 	case "official.quant.signal":
 		return "量化信号"
 	case "official.quant.paper_execute":
@@ -273,6 +285,14 @@ func workflowNodeDescription(nodeType string) string {
 		return "Persists one idempotent market signal for a matched closed candle."
 	case "official.quant.backtest":
 		return "Runs a deterministic next-open backtest over stored candles."
+	case "official.quant.backtest_start":
+		return "Drives the shared Quant subgraph candle by candle with run-time backtest parameters."
+	case "official.quant.code_strategy":
+		return "Evaluates restricted CEL over closed OHLCV series and Decimal functions."
+	case "official.quant.position":
+		return "Converts one reached path into a market-bounded target position."
+	case "official.quant.output_signal":
+		return "Merges position candidates and persists only real-time target changes."
 	case "official.quant.signal":
 		return "Persists a replaceable strategy signal fact."
 	case "official.quant.paper_execute":

@@ -109,6 +109,8 @@ export interface WorkflowDomainEdge {
 }
 
 export interface WorkflowDomainGraphModel {
+  schemaVersion?: 1 | 2
+  entryPoints?: { realtime: string; backtest: string }
   nodes: WorkflowDomainNode[]
   edges: WorkflowDomainEdge[]
 }
