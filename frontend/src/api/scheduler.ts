@@ -313,6 +313,7 @@ const schemaTitleLabels: Record<string, string> = {
   'Structured data': '结构化数据',
   Title: '通知标题',
   Market: '市场类型',
+  Proxy: '代理',
   Instrument: '交易对',
   Interval: 'K 线周期',
   'Check interval': '检查周期',

@@ -235,7 +235,8 @@
       "role": "角色管理",
       "userCenter": "个人中心",
       "menu": "菜单管理",
-      "aiModels": "模型配置"
+      "aiModels": "模型配置",
+      "proxies": "代理配置"
     },
     "trading": {
       "title": "交易管理",

@@ -1,4 +1,4 @@
-package official
+package safehttp
 
 import (
 	"context"
@@ -9,14 +9,15 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+	"time"
 )
 
-var errUnsafeEndpoint = errors.New("endpoint blocked by network policy")
+var ErrUnsafeEndpoint = errors.New("endpoint blocked by network policy")
 
 type lookupNetIPFunc func(context.Context, string, string) ([]netip.Addr, error)
 type dialContextFunc func(context.Context, string, string) (net.Conn, error)
 
-type safeHTTPClient struct {
+type Client struct {
 	client       *http.Client
 	allowedHosts map[string]struct{}
 	lookup       lookupNetIPFunc
@@ -40,24 +41,20 @@ var nonPublicPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("ff00::/8"),
 }
 
-func newSafeHTTPClient(allowedHosts []string) (*safeHTTPClient, error) {
+func New(allowedHosts []string) (*Client, error) {
 	dialer := &net.Dialer{}
-	return newSafeHTTPClientWithDeps(allowedHosts, net.DefaultResolver.LookupNetIP, dialer.DialContext)
-}
-
-func newSafeHTTPClientWithDeps(allowedHosts []string, lookup lookupNetIPFunc, dial dialContextFunc) (*safeHTTPClient, error) {
 	allowed := make(map[string]struct{}, len(allowedHosts))
 	for _, raw := range allowedHosts {
-		host, ok := normalizeDomain(raw)
+		host, ok := NormalizeDomain(raw)
 		if !ok {
 			return nil, unsafeEndpoint("invalid allowed host %q", raw)
 		}
 		allowed[host] = struct{}{}
 	}
-	client := &safeHTTPClient{allowedHosts: allowed, lookup: lookup, dial: dial}
+	client := &Client{allowedHosts: allowed, lookup: net.DefaultResolver.LookupNetIP, dial: dialer.DialContext}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
-	transport.DialContext = client.dialContext
+	transport.DialContext = client.DialContext
 	transport.DisableKeepAlives = true
 	client.client = &http.Client{
 		Transport: transport,
@@ -72,35 +69,96 @@ func newSafeHTTPClientWithDeps(allowedHosts []string, lookup lookupNetIPFunc, di
 	return client, nil
 }
 
-func (c *safeHTTPClient) Do(request *http.Request) (*http.Response, error) {
+func (c *Client) Do(request *http.Request) (*http.Response, error) {
 	if err := c.validateHTTPURL(request.Context(), request.Method, request.URL); err != nil {
 		return nil, err
 	}
 	return c.client.Do(request)
 }
 
-func (c *safeHTTPClient) validateHTTPURL(ctx context.Context, method string, target *url.URL) error {
+// DoProxied keeps the fixed-host and public-endpoint checks while letting the configured proxy resolve the target.
+func (c *Client) DoProxied(request *http.Request, proxyURL *url.URL) (*http.Response, error) {
+	if proxyURL == nil {
+		return c.Do(request)
+	}
+	if err := c.validateProxiedHTTPURL(request.Method, request.URL); err != nil {
+		return nil, err
+	}
+	if err := validateProxyURL(proxyURL); err != nil {
+		return nil, err
+	}
+	transport := c.client.Transport.(*http.Transport).Clone()
+	transport.Proxy = http.ProxyURL(proxyURL)
+	transport.DialContext = (&net.Dialer{}).DialContext
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   c.client.Timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return errors.New("proxied redirects are disabled")
+		},
+	}
+	return client.Do(request)
+}
+
+func (c *Client) SetTimeout(timeout time.Duration) {
+	c.client.Timeout = timeout
+}
+
+func (c *Client) DisableRedirects() {
+	c.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+}
+
+func (c *Client) validateHTTPURL(ctx context.Context, method string, target *url.URL) error {
 	if err := c.validateURL(ctx, target, "http", "https"); err != nil {
 		return err
 	}
-	if isBinanceDomain(target.Hostname()) && !isBinancePublicHTTP(method, target.Path) {
+	if IsBinanceDomain(target.Hostname()) && !isBinancePublicHTTP(method, target.Path) {
 		return unsafeEndpoint("Binance private or unknown endpoint is not available to generic connectors")
 	}
 	return nil
 }
 
-func (c *safeHTTPClient) validateWebSocketURL(ctx context.Context, target *url.URL, usesAuthorization bool) error {
+func (c *Client) validateProxiedHTTPURL(method string, target *url.URL) error {
+	if err := c.validateURLWithoutResolution(target, "http", "https"); err != nil {
+		return err
+	}
+	if IsBinanceDomain(target.Hostname()) && !isBinancePublicHTTP(method, target.Path) {
+		return unsafeEndpoint("Binance private or unknown endpoint is not available to generic connectors")
+	}
+	return nil
+}
+
+func (c *Client) ValidateWebSocketURL(ctx context.Context, target *url.URL, usesAuthorization bool) error {
 	if err := c.validateURL(ctx, target, "ws", "wss"); err != nil {
 		return err
 	}
-	if isBinanceDomain(target.Hostname()) && (usesAuthorization ||
+	if IsBinanceDomain(target.Hostname()) && (usesAuthorization ||
 		!(strings.HasPrefix(target.Path, "/ws/") || target.Path == "/stream")) {
 		return unsafeEndpoint("Binance WebSocket connector is limited to public streams")
 	}
 	return nil
 }
 
-func (c *safeHTTPClient) validateURL(ctx context.Context, target *url.URL, schemes ...string) error {
+func (c *Client) ValidateProxiedWebSocketURL(target *url.URL, usesAuthorization bool) error {
+	if err := c.validateURLWithoutResolution(target, "ws", "wss"); err != nil {
+		return err
+	}
+	if IsBinanceDomain(target.Hostname()) && (usesAuthorization ||
+		!(strings.HasPrefix(target.Path, "/ws/") || target.Path == "/stream")) {
+		return unsafeEndpoint("Binance WebSocket connector is limited to public streams")
+	}
+	return nil
+}
+
+func (c *Client) validateURL(ctx context.Context, target *url.URL, schemes ...string) error {
+	if err := c.validateURLWithoutResolution(target, schemes...); err != nil {
+		return err
+	}
+	_, err := c.resolvePublic(ctx, target.Hostname())
+	return err
+}
+
+func (c *Client) validateURLWithoutResolution(target *url.URL, schemes ...string) error {
 	if target == nil || target.Host == "" || target.User != nil {
 		return unsafeEndpoint("an absolute URL without userinfo is required")
 	}
@@ -111,11 +169,26 @@ func (c *safeHTTPClient) validateURL(ctx context.Context, target *url.URL, schem
 	if !allowedScheme {
 		return unsafeEndpoint("URL scheme is not allowed")
 	}
-	_, err := c.resolvePublic(ctx, target.Hostname())
-	return err
+	host, ok := NormalizeDomain(target.Hostname())
+	if !ok {
+		return unsafeEndpoint("target host must be a domain name")
+	}
+	if _, ok := c.allowedHosts[host]; !ok {
+		return unsafeEndpoint("target host %q is not allowed", host)
+	}
+	return nil
 }
 
-func (c *safeHTTPClient) dialContext(ctx context.Context, network, address string) (net.Conn, error) {
+func validateProxyURL(proxyURL *url.URL) error {
+	if proxyURL == nil || !proxyURL.IsAbs() || proxyURL.Opaque != "" || proxyURL.Hostname() == "" || proxyURL.Port() == "" ||
+		proxyURL.Scheme != "http" && proxyURL.Scheme != "socks5" || proxyURL.RawQuery != "" ||
+		proxyURL.Fragment != "" || proxyURL.Path != "" || proxyURL.RawPath != "" || proxyURL.ForceQuery {
+		return unsafeEndpoint("configured proxy URL is invalid")
+	}
+	return nil
+}
+
+func (c *Client) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
 		return nil, err
@@ -141,16 +214,16 @@ func (c *safeHTTPClient) dialContext(ctx context.Context, network, address strin
 	return nil, fmt.Errorf("no resolved address supports network %s", network)
 }
 
-func (c *safeHTTPClient) resolvePublic(ctx context.Context, rawHost string) ([]netip.Addr, error) {
+func (c *Client) resolvePublic(ctx context.Context, rawHost string) ([]netip.Addr, error) {
 	return c.resolveDomain(ctx, rawHost, true)
 }
 
-func (c *safeHTTPClient) resolvePublicDomain(ctx context.Context, rawHost string) ([]netip.Addr, error) {
+func (c *Client) ResolvePublicDomain(ctx context.Context, rawHost string) ([]netip.Addr, error) {
 	return c.resolveDomain(ctx, rawHost, false)
 }
 
-func (c *safeHTTPClient) resolveDomain(ctx context.Context, rawHost string, requireAllowed bool) ([]netip.Addr, error) {
-	host, ok := normalizeDomain(rawHost)
+func (c *Client) resolveDomain(ctx context.Context, rawHost string, requireAllowed bool) ([]netip.Addr, error) {
+	host, ok := NormalizeDomain(rawHost)
 	if !ok {
 		return nil, unsafeEndpoint("target host must be a domain name")
 	}
@@ -174,7 +247,7 @@ func (c *safeHTTPClient) resolveDomain(ctx context.Context, rawHost string, requ
 	return addresses, nil
 }
 
-func normalizeDomain(raw string) (string, bool) {
+func NormalizeDomain(raw string) (string, bool) {
 	host := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(raw)), ".")
 	if host == "" || len(host) > 253 || net.ParseIP(host) != nil {
 		return "", false
@@ -210,7 +283,7 @@ func isPublicAddress(address netip.Addr) bool {
 	return true
 }
 
-func isBinanceDomain(host string) bool {
+func IsBinanceDomain(host string) bool {
 	host = strings.ToLower(host)
 	return host == "binance.com" || strings.HasSuffix(host, ".binance.com") ||
 		host == "binance.vision" || strings.HasSuffix(host, ".binance.vision")
@@ -237,6 +310,14 @@ func isBinancePublicHTTP(method, path string) bool {
 	return false
 }
 
+func PermanentWebSocketStatus(status int) bool {
+	return status >= 400 && status < 500 && status != http.StatusRequestTimeout && status != http.StatusTooManyRequests
+}
+
+func Blocked(reason string) error {
+	return fmt.Errorf("%w: %s", ErrUnsafeEndpoint, reason)
+}
+
 func unsafeEndpoint(format string, args ...any) error {
-	return fmt.Errorf("%w: %s", errUnsafeEndpoint, fmt.Sprintf(format, args...))
+	return Blocked(fmt.Sprintf(format, args...))
 }

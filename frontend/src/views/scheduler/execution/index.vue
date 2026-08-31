@@ -52,6 +52,7 @@
   import { ElButton, ElTag } from 'element-plus'
   import { useCursorPagination } from '@/hooks/core/useCursorPagination'
   import { useTableColumns } from '@/hooks/core/useTableColumns'
+  import { formatDateTime } from '@/utils/date'
   import {
     fetchWorkflow,
     fetchWorkflowRuns,
@@ -120,7 +121,7 @@
       }
     },
     {
-      label: 'UTC 时间',
+      label: 'UTC+8 时间',
       key: 'timeRange',
       type: 'datetimerange',
       span: 8,
@@ -187,17 +188,6 @@
     return `${Math.max(0, Date.parse(run.completedAt) - Date.parse(run.startedAt))} ms`
   }
 
-  const formatUTC = (value?: string) => {
-    if (!value) return '--'
-    const date = new Date(value)
-    return Number.isNaN(date.getTime())
-      ? value
-      : date
-          .toISOString()
-          .replace('T', ' ')
-          .replace(/\.\d{3}Z$/, ' UTC')
-  }
-
   const openDetail = (run: WorkflowRun) =>
     router.push({
       path: `/scheduler/execution/${run.id}/detail`,
@@ -236,17 +226,17 @@
     },
     {
       prop: 'triggeredAt',
-      label: '触发时间（UTC）',
+      label: '触发时间（UTC+8）',
       minWidth: 180,
       align: 'center',
-      formatter: (row) => formatUTC(row.triggeredAt)
+      formatter: (row) => formatDateTime(row.triggeredAt)
     },
     {
       prop: 'completedAt',
-      label: '结束时间（UTC）',
+      label: '结束时间（UTC+8）',
       minWidth: 180,
       align: 'center',
-      formatter: (row) => formatUTC(row.completedAt)
+      formatter: (row) => formatDateTime(row.completedAt)
     },
     {
       prop: 'duration',

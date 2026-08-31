@@ -167,6 +167,26 @@ type SystemLogSettings struct {
 
 func (SystemLogSettings) TableName() string { return "system_log_settings" }
 
+type OutboundProxy struct {
+	ID                 int64  `gorm:"primaryKey;autoIncrement"`
+	Name               string `gorm:"size:120"`
+	Protocol           string `gorm:"size:8"`
+	Host               string `gorm:"size:253"`
+	Port               int
+	Username           string `gorm:"size:255"`
+	PasswordCiphertext string `gorm:"column:password_ciphertext;type:text"`
+	IsEnabled          bool   `gorm:"column:is_enabled"`
+	LastCheckStatus    string `gorm:"column:last_check_status;size:16"`
+	LastCheckedAt      *time.Time
+	LastLatencyMS      *int `gorm:"column:last_latency_ms"`
+	CreatedBy          int64
+	UpdatedBy          int64
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+func (OutboundProxy) TableName() string { return "outbound_proxies" }
+
 type AIModelConfig struct {
 	ID               int64  `gorm:"primaryKey;autoIncrement"`
 	DisplayName      string `gorm:"size:120"`

@@ -74,7 +74,7 @@ internal/pluginregistry 编译进应用的 Go 插件注册表
 internal/perm        基线权限码与菜单映射
 internal/security    密码哈希、访问令牌和认证随机值
 internal/service     认证、系统管理、工作流执行、结果视图、监控、日志和审计服务
-plugin/official      Connector、AI、Quant 和 Notification 内置插件
+plugin/official      Connector、AI、Quant、Notification 和 QQ 内置插件
 plugin/manifest      严格插件清单、兼容性和源码路径校验
 plugin/sdk           插件节点、处理器、作用域和注册协议
 version              Core 与 SDK 兼容版本

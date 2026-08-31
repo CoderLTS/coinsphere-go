@@ -1,4 +1,4 @@
-package official
+package ai
 
 import (
 	"bytes"
@@ -12,10 +12,25 @@ import (
 	"strings"
 	"time"
 
+	"coinsphere/backend/plugin/official/internal/safehttp"
 	"coinsphere/backend/plugin/sdk"
 )
 
-func registerAI(registrar sdk.Registrar, client *safeHTTPClient) error {
+const (
+	pluginID           = "official.ai"
+	maxAIResponseBytes = 1 << 20
+)
+
+var emptyObjectSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false}`)
+
+func Register(registry *sdk.Registry, client *safehttp.Client) error {
+	return registry.RegisterPlugin(sdk.PluginDescriptor{
+		ID: pluginID, Name: "人工智能", Version: "1.0.0",
+		Contributes: []string{"nodes", "resultPages"},
+	}, func(registrar sdk.Registrar) error { return register(registrar, client) })
+}
+
+func register(registrar sdk.Registrar, client *safehttp.Client) error {
 	if err := registrar.Action(sdk.NodeDescriptor{
 		Type: "official.ai.model_call", Version: "1.0.0", Kind: sdk.NodeKindAction,
 		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"endpoint":{"type":"string","title":"OpenAI-compatible endpoint","format":"uri","maxLength":2048},"model":{"type":"string","title":"Model","minLength":1,"maxLength":200},"timeoutSeconds":{"type":"integer","title":"Timeout (seconds)","minimum":1,"maximum":120,"default":30},"apiKey":{"type":"string","title":"API key","x-coinsphere-secret":true}},"required":["endpoint","model","timeoutSeconds","apiKey"],"additionalProperties":false}`),
@@ -32,7 +47,7 @@ func registerAI(registrar sdk.Registrar, client *safeHTTPClient) error {
 	})
 }
 
-type aiModelCallAction struct{ client *safeHTTPClient }
+type aiModelCallAction struct{ client *safehttp.Client }
 
 func (a aiModelCallAction) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
 	var config struct {
@@ -49,11 +64,11 @@ func (a aiModelCallAction) Execute(ctx context.Context, request sdk.ActionReques
 		return sdk.ActionResult{}, errors.New("AI model call configuration or input is invalid")
 	}
 	target, err := url.ParseRequestURI(config.Endpoint)
-	if err != nil || !target.IsAbs() || isBinanceDomain(target.Hostname()) {
-		return sdk.ActionResult{}, unsafeEndpoint("AI endpoint is invalid or prohibited")
+	if err != nil || !target.IsAbs() || safehttp.IsBinanceDomain(target.Hostname()) {
+		return sdk.ActionResult{}, safehttp.Blocked("AI endpoint is invalid or prohibited")
 	}
 	content, err := json.Marshal(map[string]any{"prompt": input.Prompt, "data": input.Data})
-	if err != nil || len(content) > maxConnectorPayloadBytes {
+	if err != nil || len(content) > maxAIResponseBytes {
 		return sdk.ActionResult{}, errors.New("AI model input exceeds the 1 MiB limit")
 	}
 	payload, err := json.Marshal(map[string]any{
@@ -84,8 +99,8 @@ func (a aiModelCallAction) Execute(ctx context.Context, request sdk.ActionReques
 		return sdk.ActionResult{}, err
 	}
 	defer response.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(response.Body, maxConnectorPayloadBytes+1))
-	if err != nil || len(raw) > maxConnectorPayloadBytes {
+	raw, err := io.ReadAll(io.LimitReader(response.Body, maxAIResponseBytes+1))
+	if err != nil || len(raw) > maxAIResponseBytes {
 		return sdk.ActionResult{}, errors.New("AI model response exceeds the 1 MiB limit")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
@@ -116,3 +131,8 @@ func (a aiModelCallAction) Execute(ctx context.Context, request sdk.ActionReques
 }
 
 var _ sdk.ActionHandler = aiModelCallAction{}
+
+func mustMarshal(value any) json.RawMessage {
+	raw, _ := json.Marshal(value)
+	return raw
+}

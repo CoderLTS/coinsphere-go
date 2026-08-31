@@ -50,6 +50,7 @@ var coreMenuItems = []menuItem{
 	{"Role", "角色管理", "role", "/system/role", "ri:team-line", "System", true, false, false},
 	{"Menus", "菜单管理", "menu", "/system/menu", "ri:menu-line", "System", true, false, false},
 	{"Plugins", "插件管理", "plugins", "/system/plugins", "ri:puzzle-2-line", "System", true, false, false},
+	{"OutboundProxies", "代理配置", "proxies", "/system/proxy", "ri:route-line", "System", true, false, false},
 	{"AiModelConfig", "模型配置", "ai-models", "/config/ai-model", "ri:brain-line", "System", true, false, false},
 	{"UserCenter", "个人中心", "/profile", "/system/user-center", "", "", true, false, true},
 }
@@ -66,6 +67,7 @@ var menuI18n = map[string][2]string{
 	"Role":                {"角色管理", "Role Management"},
 	"Menus":               {"菜单管理", "Menu Management"},
 	"Plugins":             {"插件管理", "Plugins"},
+	"OutboundProxies":     {"代理配置", "Proxy Configuration"},
 	"AiModelConfig":       {"模型配置", "AI Models"},
 	"UserCenter":          {"个人中心", "Profile"},
 }

@@ -1,4 +1,4 @@
-package official
+package qq
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"coinsphere/backend/plugin/official/internal/safehttp"
 	"coinsphere/backend/plugin/sdk"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/gorilla/websocket"
@@ -140,7 +141,7 @@ func (q *qqRuntime) runGateway(ctx context.Context, emitter sdk.Emitter, credent
 	if err != nil {
 		return false, err
 	}
-	dialer := websocket.Dialer{Proxy: nil, NetDialContext: q.http.dialContext, HandshakeTimeout: 10 * time.Second}
+	dialer := websocket.Dialer{Proxy: nil, NetDialContext: q.http.DialContext, HandshakeTimeout: 10 * time.Second}
 	connection, response, err := dialer.DialContext(ctx, gatewayURL.String(), http.Header{"User-Agent": []string{"CoinSphere-QQ/1.0"}})
 	status := 0
 	if response != nil {
@@ -150,7 +151,7 @@ func (q *qqRuntime) runGateway(ctx context.Context, emitter sdk.Emitter, credent
 		}
 	}
 	if err != nil {
-		if permanentWebSocketStatus(status) {
+		if safehttp.PermanentWebSocketStatus(status) {
 			return false, fmt.Errorf("%w: status %d", errQQPermanentGateway, status)
 		}
 		return false, err
@@ -300,7 +301,7 @@ func (q *qqRuntime) gatewayURL(ctx context.Context, appID, token string) (*url.U
 	if err != nil || !target.IsAbs() || target.Scheme != "wss" || !isQQGatewayHost(target.Hostname()) {
 		return nil, errors.New("QQ gateway endpoint is invalid")
 	}
-	if err := q.http.validateWebSocketURL(ctx, target, false); err != nil {
+	if err := q.http.ValidateWebSocketURL(ctx, target, false); err != nil {
 		return nil, err
 	}
 	return target, nil

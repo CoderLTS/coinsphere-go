@@ -1,4 +1,4 @@
-package official
+package connector
 
 import (
 	"bytes"
@@ -12,16 +12,29 @@ import (
 	"strings"
 	"time"
 
+	"coinsphere/backend/plugin/official/internal/safehttp"
 	"coinsphere/backend/plugin/sdk"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/gorilla/websocket"
 )
 
-const maxConnectorPayloadBytes = 1 << 20
+const (
+	pluginID                 = "official.connector"
+	maxConnectorPayloadBytes = 1 << 20
+)
 
 var errPermanentWebSocketHandshake = errors.New("permanent WebSocket handshake failure")
+var emptyObjectSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false}`)
+var dynamicObjectSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object"}`)
 
-func registerConnector(registrar sdk.Registrar, client *safeHTTPClient) error {
+func Register(registry *sdk.Registry, client *safehttp.Client) error {
+	return registry.RegisterPlugin(sdk.PluginDescriptor{
+		ID: pluginID, Name: "连接器", Version: "1.0.0",
+		Contributes: []string{"nodes", "triggers", "resultPages"},
+	}, func(registrar sdk.Registrar) error { return register(registrar, client) })
+}
+
+func register(registrar sdk.Registrar, client *safehttp.Client) error {
 	if err := registrar.Action(sdk.NodeDescriptor{
 		Type: "official.connector.http", Version: "1.0.0", Kind: sdk.NodeKindAction,
 		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"url":{"type":"string","title":"URL","format":"uri","maxLength":2048},"method":{"type":"string","title":"Method","enum":["GET","POST","PUT","PATCH"],"default":"GET"},"timeoutSeconds":{"type":"integer","title":"Timeout (seconds)","minimum":1,"maximum":60,"default":15},"useAuthorization":{"type":"boolean","title":"Use Authorization secret","default":false},"authorization":{"type":"string","title":"Authorization","x-coinsphere-secret":true}},"required":["url","method","timeoutSeconds","useAuthorization"],"additionalProperties":false}`),
@@ -54,7 +67,7 @@ func registerConnector(registrar sdk.Registrar, client *safeHTTPClient) error {
 	})
 }
 
-type connectorHTTPAction struct{ client *safeHTTPClient }
+type connectorHTTPAction struct{ client *safehttp.Client }
 
 func (a connectorHTTPAction) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
 	var config struct {
@@ -73,8 +86,8 @@ func (a connectorHTTPAction) Execute(ctx context.Context, request sdk.ActionRequ
 	if err != nil || !target.IsAbs() {
 		return sdk.ActionResult{}, errors.New("connector HTTP URL is invalid")
 	}
-	if config.UseAuthorization && isBinanceDomain(target.Hostname()) {
-		return sdk.ActionResult{}, unsafeEndpoint("generic connectors cannot authorize Binance requests")
+	if config.UseAuthorization && safehttp.IsBinanceDomain(target.Hostname()) {
+		return sdk.ActionResult{}, safehttp.Blocked("generic connectors cannot authorize Binance requests")
 	}
 	var body io.Reader
 	if config.Method != http.MethodGet && input.Body != nil {
@@ -129,7 +142,7 @@ func (webhookTrigger) Run(ctx context.Context, _ sdk.TriggerRequest, _ sdk.Emitt
 	return ctx.Err()
 }
 
-type websocketTrigger struct{ client *safeHTTPClient }
+type websocketTrigger struct{ client *safehttp.Client }
 
 func (t websocketTrigger) Run(ctx context.Context, request sdk.TriggerRequest, emitter sdk.Emitter) error {
 	var config struct {
@@ -143,7 +156,7 @@ func (t websocketTrigger) Run(ctx context.Context, request sdk.TriggerRequest, e
 	if err != nil || !target.IsAbs() {
 		return errors.New("connector WebSocket URL is invalid")
 	}
-	if err := t.client.validateWebSocketURL(ctx, target, config.UseAuthorization); err != nil {
+	if err := t.client.ValidateWebSocketURL(ctx, target, config.UseAuthorization); err != nil {
 		return err
 	}
 	headers := http.Header{"User-Agent": []string{"CoinSphere-Connector/1.0"}}
@@ -175,10 +188,10 @@ func (t websocketTrigger) Run(ctx context.Context, request sdk.TriggerRequest, e
 }
 
 func (t websocketTrigger) readWebSocket(ctx context.Context, request sdk.TriggerRequest, emitter sdk.Emitter, target *url.URL, headers http.Header, eventType, idField, partitionField string) error {
-	if err := t.client.validateWebSocketURL(ctx, target, headers.Get("Authorization") != ""); err != nil {
+	if err := t.client.ValidateWebSocketURL(ctx, target, headers.Get("Authorization") != ""); err != nil {
 		return err
 	}
-	dialer := websocket.Dialer{Proxy: nil, NetDialContext: t.client.dialContext, HandshakeTimeout: 10 * time.Second}
+	dialer := websocket.Dialer{Proxy: nil, NetDialContext: t.client.DialContext, HandshakeTimeout: 10 * time.Second}
 	connection, response, err := dialer.DialContext(ctx, target.String(), headers)
 	status := 0
 	if response != nil {
@@ -188,7 +201,7 @@ func (t websocketTrigger) readWebSocket(ctx context.Context, request sdk.Trigger
 		}
 	}
 	if err != nil {
-		if permanentWebSocketStatus(status) {
+		if safehttp.PermanentWebSocketStatus(status) {
 			return fmt.Errorf("%w: status %d", errPermanentWebSocketHandshake, status)
 		}
 		return err
@@ -230,10 +243,6 @@ func (t websocketTrigger) readWebSocket(ctx context.Context, request sdk.Trigger
 			return err
 		}
 	}
-}
-
-func permanentWebSocketStatus(status int) bool {
-	return status >= 400 && status < 500 && status != http.StatusRequestTimeout && status != http.StatusTooManyRequests
 }
 
 func connectorStringField(data map[string]any, field string, limit int) (string, bool) {

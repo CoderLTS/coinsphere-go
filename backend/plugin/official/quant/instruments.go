@@ -1,4 +1,4 @@
-package official
+package quant
 
 import (
 	"context"
@@ -30,7 +30,7 @@ func (a quantInstrumentSyncAction) Execute(ctx context.Context, request sdk.Acti
 	fetchedCount := 0
 	instruments := make([]quantInstrument, 0, 4096)
 	for _, market := range config.Markets {
-		fetched, err := a.runtime.fetchQuantInstruments(ctx, market, now)
+		fetched, err := a.runtime.fetchQuantInstruments(ctx, market, config.ProxyID, now)
 		if err != nil {
 			return sdk.ActionResult{}, err
 		}
@@ -94,7 +94,7 @@ WHERE NOT EXISTS (
 	})}, nil
 }
 
-func (q *quantRuntime) fetchQuantInstruments(ctx context.Context, market string, now time.Time) ([]quantInstrument, error) {
+func (q *quantRuntime) fetchQuantInstruments(ctx context.Context, market string, proxyID int64, now time.Time) ([]quantInstrument, error) {
 	target := "https://data-api.binance.vision/api/v3/exchangeInfo"
 	if market == "usdm" {
 		target = "https://fapi.binance.com/fapi/v1/exchangeInfo"
@@ -107,7 +107,7 @@ func (q *quantRuntime) fetchQuantInstruments(ctx context.Context, market string,
 			} `json:"filters"`
 		} `json:"symbols"`
 	}
-	if err := q.getQuantJSON(ctx, target, &payload); err != nil {
+	if err := q.getQuantJSON(ctx, target, proxyID, &payload); err != nil {
 		return nil, err
 	}
 	if len(payload.Symbols) == 0 {

@@ -26,6 +26,13 @@
 - `POST /api/v1/assistant/messages/{messageId}/workflow` 确认工作流方案，返回 `workflowId`、`inactive` 状态和编辑地址。重复确认返回同一工作流；节点目录变化或方案失效返回 `409`，失败不留下工作流、修订或运行时记录。
 - 上述模型和助手接口全部要求 `R_SUPER`。模型上下文、工具结果与日志不得暴露密钥、工具原始参数、个人数据或原始载荷。
 
+## 出站代理
+
+- `/api/v1/system/proxies` 提供 HTTP/SOCKS5 代理的列表、新增、更新、启停和删除，`/{proxyId}/validations` 通过 Binance Spot 公共 Ping 检查连通性。接口只允许拥有对应系统代理权限的管理员使用。
+- 代理密码使用服务端 SecretCipher 加密保存，列表和编辑响应只返回是否已配置；编辑时密码留空表示保留，显式清除后删除密文。已被任一工作流修订引用的代理删除返回 `409 Conflict`。
+- `official.quant.sync_instruments`、`official.quant.backfill_candles` 和 `official.quant.realtime_candles` 的 `proxyId` 为 `0` 或缺省时直连；选择正数 ID 时，运行时必须解析到仍存在且已启用的代理，否则节点失败。代理只改变 Binance 公共 REST/WebSocket 的传输路径，不扩大固定主机和公共端点白名单。
+- `official.connector`、`official.ai`、通知、QQ、Paper 报价和其他 Quant 节点不读取系统代理池，也不继承上述节点的代理选择。
+
 ## 工作流
 
 | 路由                                                            | 语义                                   |
@@ -110,7 +117,7 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 
 内置 `official.connector` 提供 HTTP Action、Webhook Trigger、WebSocket Trigger 和运行诊断结果页；`official.ai` 提供 OpenAI-compatible 结构化模型调用和结果页。两者只访问 `workflow.http_allowed_hosts` 的精确公共域名，禁用环境代理，拨号前后解析并拒绝非公网 IP。Binance 只允许明确列出的公共 GET/公共 WebSocket，授权、私有或未知端点一律拒绝。AI 节点只接收/返回 JSON 对象，不能控制工作流生命周期或交易。
 
-内置 `official.quant@2.1.0` 提供 `realtime_candles` Trigger、`backfill_candles`/`sync_instruments`/`evaluate`/六种指标判断/`market_signal`/`backtest`/`signal`/`paper_execute` Action、可信 SMA crossover 策略和移动可用结果页。`sync_instruments` 在所有选中 Spot/USD-M 公共元数据均成功解析后，用事务级 advisory lock 原子替换当前工作流的过滤快照；白名单取交集、黑名单任一命中即排除，全局目录取全部工作流来源并集。应用首次缺少该节点时创建并激活北京时间每六小时运行的默认工作流并立即首跑，后续启动不重新激活已停用工作流。`realtime_candles` 在一条 Binance combined-stream WebSocket 上订阅单币种的多个固定周期，按 `market + instrument + 规范化周期集合` 合并进程内订阅，断线只重连；每根闭合 K 线落库并发布 `market.candle.closed`。`backfill_candles` 按可选 UTC 结束时间向前获取每周期最近 `1-10000` 根闭合 K 线，只写库并返回汇总，不发布事件。重复 REST/WebSocket 数据由 K 线主键和 CloudEvent `(source,id)` 去重。策略只接收升序、连续、UTC 闭合 K 线和已校验参数，返回 `-1` 至 `1` 的 Decimal 目标；实时、回测与 Paper 调用同一 `Evaluate`。
+内置 `official.quant@2.1.0` 提供 `realtime_candles` Trigger、`backfill_candles`/`sync_instruments`/`evaluate`/六种指标判断/`market_signal`/`backtest`/`signal`/`paper_execute` Action、可信 SMA crossover 策略和移动可用结果页。`sync_instruments` 在所有选中 Spot/USD-M 公共元数据均成功解析后，用事务级 advisory lock 原子替换当前工作流的过滤快照；白名单取交集、黑名单任一命中即排除，全局目录取全部工作流来源并集。应用首次缺少该节点时创建并激活北京时间每六小时运行的默认工作流并立即首跑，后续启动不重新激活已停用工作流。`realtime_candles` 在一条 Binance combined-stream WebSocket 上订阅单币种的多个固定周期，按 `market + instrument + proxyId` 隔离连接，并在每条连接内合并规范化周期集合；断线只重连，每根闭合 K 线落库并发布 `market.candle.closed`。`backfill_candles` 按可选 UTC 结束时间向前获取每周期最近 `1-10000` 根闭合 K 线，只写库并返回汇总，不发布事件。重复 REST/WebSocket 数据由 K 线主键和 CloudEvent `(source,id)` 去重。策略只接收升序、连续、UTC 闭合 K 线和已校验参数，返回 `-1` 至 `1` 的 Decimal 目标；实时、回测与 Paper 调用同一 `Evaluate`。
 
 六种 `1.0.0` 判断节点分别是 `official.quant.volume_spike_condition`、`official.quant.price_change_condition`、`official.quant.macd_condition`、`official.quant.kdj_condition`、`official.quant.rsi_condition` 和 `official.quant.bollinger_condition`。一个节点只保存一种指标规则及市场、交易对、检查周期、K 线周期和名称；每次在当前与上一个检查时点截取当时已闭合的 K 线，禁止未来数据。K 线断档、非法参数和数据库错误使节点失败，历史不足则 `ready=false` 并走 `false`。EMA、Wilder RSI、KDJ、布林标准差和有界平方根全部使用确定性 Decimal。
 

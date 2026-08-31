@@ -142,6 +142,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/system/plugins", s.requirePermission(perm.SystemPluginsView, func(w http.ResponseWriter, _ *http.Request, _ *service.Principal) {
 		ok(w, s.App.ListInstalledPlugins())
 	}))
+	mux.HandleFunc("GET /api/v1/system/proxies", s.requirePermission(perm.SystemProxiesView, s.handleListOutboundProxies))
+	mux.HandleFunc("POST /api/v1/system/proxies", s.requirePermission(perm.SystemProxiesCreate, s.handleCreateOutboundProxy))
+	mux.HandleFunc("PUT /api/v1/system/proxies/{proxyId}", s.requirePermission(perm.SystemProxiesUpdate, s.handleUpdateOutboundProxy))
+	mux.HandleFunc("PATCH /api/v1/system/proxies/{proxyId}", s.requirePermission(perm.SystemProxiesUpdate, s.handlePatchOutboundProxy))
+	mux.HandleFunc("DELETE /api/v1/system/proxies/{proxyId}", s.requirePermission(perm.SystemProxiesDelete, s.handleDeleteOutboundProxy))
+	mux.HandleFunc("POST /api/v1/system/proxies/{proxyId}/validations", s.requirePermission(perm.SystemProxiesValidate, s.handleValidateOutboundProxy))
 	mux.HandleFunc("GET /api/v1/system/logs", s.requirePermission(perm.SystemLogsView, s.handleListSystemLogs))
 	mux.HandleFunc("GET /api/v1/system/logs/runtime", s.requirePermission(perm.SystemLogsView, s.handleGetSystemLogRuntime))
 	mux.HandleFunc("PUT /api/v1/system/logs/runtime", s.requirePermission(perm.SystemLogsConfigure, s.handleUpdateSystemLogRuntime))
