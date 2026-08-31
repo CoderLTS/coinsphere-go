@@ -94,6 +94,8 @@ export interface WorkflowEdgeItem {
 }
 
 export interface WorkflowGraph {
+  schemaVersion?: 1 | 2
+  entryPoints?: { realtime: string; backtest: string }
   nodes: WorkflowNodeItem[]
   edges: WorkflowEdgeItem[]
 }
@@ -233,6 +235,8 @@ export interface WorkflowExecutionDetail extends WorkflowExecutionItem {
 export interface WorkflowManualRunPayload {
   startEntryKeys: string[]
   inputs?: Record<string, any>
+  entryPoint?: 'realtime' | 'backtest'
+  revisionId?: number
 }
 
 export interface RunWorkflowDefinitionResponse {
@@ -458,6 +462,8 @@ const legacyConfigSchema = (definition: WorkflowNodeDefinition) => {
 }
 
 const toLegacyGraph = (graph: CurrentWorkflowGraph): WorkflowGraph => ({
+  schemaVersion: graph.schemaVersion,
+  ...(graph.entryPoints ? { entryPoints: graph.entryPoints } : {}),
   nodes: (graph.nodes || []).map((node) => {
     const definition = currentNodeDefinitions.get(node.nodeType)
     const bindings = node.inputBindings || {}
@@ -510,7 +516,8 @@ const toLegacyGraph = (graph: CurrentWorkflowGraph): WorkflowGraph => ({
 const toCurrentRevision = (graph: WorkflowGraph) => {
   const secretChanges: WorkflowSecretChange[] = []
   const currentGraph: CurrentWorkflowGraph = {
-    schemaVersion: 1,
+    schemaVersion: graph.schemaVersion || 1,
+    ...(graph.entryPoints ? { entryPoints: graph.entryPoints } : {}),
     nodes: (graph.nodes || []).map((node) => {
       const rawConfig = { ...(node.config || {}) }
       const type = String(
@@ -660,11 +667,11 @@ const toExecution = (
     workflowDefinitionId: workflow.id,
     workflowDefinitionVersion: revision?.revisionNumber || 1,
     workflowDefinitionName: workflow.name,
-    entryName: workflow.mainTriggerNodeId,
+    entryName: run.entryPoint === 'backtest' ? '回测开始' : workflow.mainTriggerNodeId,
     triggerType: run.triggerType,
     status,
     statusLabel: statusLabel(status),
-    triggerLabel: triggerLabel(run.triggerType),
+    triggerLabel: run.entryPoint === 'backtest' ? '回测' : triggerLabel(run.triggerType),
     queuedAt: run.triggeredAt,
     claimedAt: run.startedAt || '',
     startedAt: run.startedAt || '',
@@ -931,10 +938,14 @@ export async function fetchRunWorkflowDefinition(
   definitionID: number,
   params: WorkflowManualRunPayload
 ): Promise<RunWorkflowDefinitionResponse> {
-  void params
-  const { workflowID } = decodeDefinitionID(definitionID)
+  const decoded = decodeDefinitionID(definitionID)
+  const workflowID = decoded.workflowID
   const [run, workflow, revisions] = await Promise.all([
-    createWorkflowRun(workflowID),
+    createWorkflowRun(workflowID, {
+      entryPoint: params.entryPoint,
+      revisionId: params.revisionId || decoded.revisionID || undefined,
+      input: params.inputs
+    }),
     fetchWorkflow(workflowID),
     fetchWorkflowRevisions(workflowID)
   ])
@@ -963,7 +974,10 @@ export async function fetchWorkflowExecutionDetail(
   return {
     ...execution,
     graph,
-    startNodeId: revision.mainTriggerNodeId,
+    startNodeId:
+      run.entryPoint === 'backtest'
+        ? revision.graph.entryPoints?.backtest || revision.mainTriggerNodeId
+        : revision.mainTriggerNodeId,
     logs: run.logs,
     event: run.event,
     resultSummary: run.resultSummary,

@@ -31,6 +31,7 @@ const (
 	WorkflowTemplateQuantData = "quant-market-data"
 	WorkflowTemplateQuantLive = "quant-strategy"
 	WorkflowTemplateBacktest  = "quant-backtest"
+	WorkflowTemplateQuantFlow = "quant-workflow"
 	WorkflowTemplatePaper     = "quant-paper"
 	maxWorkflowGraphBytes     = 1 << 20
 )
@@ -140,6 +141,33 @@ const quantBacktestWorkflowGraph = `{
   ]
 }`
 
+const quantWorkflowGraph = `{
+  "schemaVersion": 2,
+  "entryPoints": {"realtime":"candle-close","backtest":"backtest-start"},
+  "nodes": [
+    {"nodeInstanceId":"candle-close","nodeType":"core.event","nodeVersion":"1.0.0","config":{"types":["market.candle.closed"],"source":"urn:coinsphere:plugin:official.quant","subject":"binance:spot:BTCUSDT:1h"},"position":{"x":80,"y":120}},
+    {"nodeInstanceId":"backtest-start","nodeType":"official.quant.backtest_start","nodeVersion":"1.0.0","config":{"market":"spot","instrument":"BTCUSDT","interval":"1h"},"position":{"x":80,"y":360}},
+    {"nodeInstanceId":"macd","nodeType":"official.quant.macd_condition","nodeVersion":"1.0.0","config":{"market":"spot","instrument":"BTCUSDT","checkInterval":"1h","name":"MACD 金叉","interval":"1h","parameters":{"fastPeriod":12,"slowPeriod":26,"signalPeriod":9,"signal":"golden_cross"}},"inputBindings":{"eventTime":{"kind":"cel","expression":"event.time"}},"position":{"x":380,"y":120}},
+    {"nodeInstanceId":"code","nodeType":"official.quant.code_strategy","nodeVersion":"1.0.0","config":{"series":[{"alias":"main","market":"spot","instrument":"BTCUSDT","interval":"1h","lookback":30}],"parameters":{"target":"1"},"source":"{\"long\": decimalGt(last(ohlcv.main.close), sma(ohlcv.main.close, 20)), \"target\": params.target}","booleanOutputs":["long"],"decimalOutputs":["target"],"branchField":"long"},"inputBindings":{"eventTime":{"kind":"cel","expression":"event.time"}},"position":{"x":380,"y":360}},
+    {"nodeInstanceId":"position","nodeType":"official.quant.position","nodeVersion":"1.0.0","config":{"market":"spot","targetMode":"fixed","fixedTarget":"1","decimalField":"target"},"inputBindings":{"evaluatedAt":{"kind":"field","nodeInstanceId":"code","fieldPath":["evaluatedAt"]}},"position":{"x":700,"y":240}},
+    {"nodeInstanceId":"signal","nodeType":"official.quant.output_signal","nodeVersion":"1.0.0","config":{"market":"spot","instrument":"BTCUSDT","interval":"1h"},"position":{"x":980,"y":240}},
+    {"nodeInstanceId":"realtime-end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":1280,"y":160}},
+    {"nodeInstanceId":"backtest-end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":1280,"y":400}}
+  ],
+  "edges": [
+    {"edgeId":"realtime-macd","sourceNodeInstanceId":"candle-close","sourcePort":"out","targetNodeInstanceId":"macd","targetPort":"in"},
+    {"edgeId":"realtime-code","sourceNodeInstanceId":"candle-close","sourcePort":"out","targetNodeInstanceId":"code","targetPort":"in"},
+    {"edgeId":"backtest-macd","sourceNodeInstanceId":"backtest-start","sourcePort":"each","targetNodeInstanceId":"macd","targetPort":"in"},
+    {"edgeId":"backtest-code","sourceNodeInstanceId":"backtest-start","sourcePort":"each","targetNodeInstanceId":"code","targetPort":"in"},
+    {"edgeId":"macd-position","sourceNodeInstanceId":"macd","sourcePort":"true","targetNodeInstanceId":"position","targetPort":"in"},
+    {"edgeId":"code-position","sourceNodeInstanceId":"code","sourcePort":"true","targetNodeInstanceId":"position","targetPort":"in"},
+    {"edgeId":"position-signal","sourceNodeInstanceId":"position","sourcePort":"out","targetNodeInstanceId":"signal","targetPort":"in"},
+    {"edgeId":"signal-realtime-end","sourceNodeInstanceId":"signal","sourcePort":"realtime","targetNodeInstanceId":"realtime-end","targetPort":"in"},
+    {"edgeId":"signal-unchanged-end","sourceNodeInstanceId":"signal","sourcePort":"unchanged","targetNodeInstanceId":"realtime-end","targetPort":"in"},
+    {"edgeId":"backtest-completed","sourceNodeInstanceId":"backtest-start","sourcePort":"completed","targetNodeInstanceId":"backtest-end","targetPort":"in"}
+  ]
+}`
+
 const quantPaperWorkflowGraph = `{
   "schemaVersion": 1,
   "nodes": [
@@ -241,6 +269,7 @@ func (a *App) ListWorkflowTemplates() []WorkflowTemplate {
 		{Key: WorkflowTemplateQuantData, Name: "Shared Binance market data", Mode: WorkflowModeStream, Description: "Shared public real-time closed-candle collection for Spot or USD-M."},
 		{Key: WorkflowTemplateQuantLive, Name: "Live strategy evaluation", Mode: WorkflowModeEvent, Description: "Evaluate a trusted Go strategy for each matching closed candle."},
 		{Key: WorkflowTemplateBacktest, Name: "Strategy backtest", Mode: WorkflowModeBatch, Description: "Run a deterministic closed-candle backtest in the compute pool."},
+		{Key: WorkflowTemplateQuantFlow, Name: "量化策略与回测", Mode: WorkflowModeEvent, Description: "同一 revision 复用实时 K 线与节点化回测计算子图。"},
 		{Key: WorkflowTemplatePaper, Name: "Paper strategy pair", Mode: WorkflowModeEvent, Description: "Create shared market data and an approval-first Paper strategy workflow."},
 	}
 }
@@ -262,7 +291,7 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 		templateKey != WorkflowTemplateEvent && templateKey != WorkflowTemplateFailure &&
 		templateKey != WorkflowTemplateWebhook && templateKey != WorkflowTemplateWebSocket &&
 		templateKey != WorkflowTemplateQuantData && templateKey != WorkflowTemplateQuantLive &&
-		templateKey != WorkflowTemplateBacktest && templateKey != WorkflowTemplatePaper {
+		templateKey != WorkflowTemplateBacktest && templateKey != WorkflowTemplateQuantFlow && templateKey != WorkflowTemplatePaper {
 		return WorkflowDetail{}, fmt.Errorf("unknown workflow template %q", templateKey)
 	}
 	if principal == nil || principal.User == nil || principal.User.ID <= 0 {
@@ -285,6 +314,8 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 		templateGraph = quantStrategyWorkflowGraph
 	} else if templateKey == WorkflowTemplateBacktest {
 		templateGraph = quantBacktestWorkflowGraph
+	} else if templateKey == WorkflowTemplateQuantFlow {
+		templateGraph = quantWorkflowGraph
 	} else if templateKey == WorkflowTemplatePaper {
 		templateGraph = quantPaperWorkflowGraph
 	}

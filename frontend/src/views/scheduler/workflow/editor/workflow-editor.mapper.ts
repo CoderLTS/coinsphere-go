@@ -53,7 +53,8 @@ const INDICATOR_CONDITION_TYPES = new Set([
   'official.quant.macd_condition',
   'official.quant.kdj_condition',
   'official.quant.rsi_condition',
-  'official.quant.bollinger_condition'
+  'official.quant.bollinger_condition',
+  'official.quant.code_strategy'
 ])
 const NOTIFICATION_NODE_TYPES = new Set([
   'official.notification.in_app',
@@ -287,6 +288,16 @@ export function buildPortsForType(
   config?: Record<string, any>
 ): WorkflowDomainPort[] {
   const inPort: WorkflowDomainPort = { id: 'in', group: 'in', role: 'in' }
+
+  if (typeCode === 'official.quant.backtest_start') {
+    const branches = getNodeBranches(typeCode, config)
+    return branches.map((branch, index) => ({
+      id: branch,
+      group: resolveBranchPortGroup(branch, index, branches.length),
+      role: 'out',
+      label: branch.toUpperCase()
+    }))
+  }
 
   switch (getNodeGraphKind(typeCode)) {
     case 'start':
@@ -677,12 +688,32 @@ export function mapServerGraphToDomain(
   )
   const nodeMap = new Map(nodes.map((node) => [node.id, node]))
   const edges = (graph.edges || []).map((edge) => createDomainEdge(edge, nodeMap))
-  return { nodes, edges }
+  return {
+    schemaVersion: graph.schemaVersion,
+    ...(graph.entryPoints ? { entryPoints: graph.entryPoints } : {}),
+    nodes,
+    edges
+  }
 }
 
 export function mapDomainGraphToServer(graph: WorkflowDomainGraphModel): WorkflowGraph {
   const nodeMap = new Map(graph.nodes.map((node) => [node.id, node]))
   const nodeOrder = new Map(graph.nodes.map((node, index) => [node.id, index]))
+  const upstreamNode = (targetID: string, typeCode: string) => {
+    const queue = graph.edges.filter((edge) => edge.target === targetID).map((edge) => edge.source)
+    const seen = new Set<string>()
+    while (queue.length) {
+      const nodeID = queue.shift() as string
+      if (seen.has(nodeID)) continue
+      seen.add(nodeID)
+      const node = nodeMap.get(nodeID)
+      if (node?.data.typeCode === typeCode) return node
+      graph.edges
+        .filter((edge) => edge.target === nodeID)
+        .forEach((edge) => queue.push(edge.source))
+    }
+    return undefined
+  }
   const incomingConditions = (targetID: string, branch?: string) =>
     graph.edges
       .filter((edge) => edge.target === targetID && (!branch || edge.data.branch === branch))
@@ -741,9 +772,86 @@ export function mapDomainGraphToServer(graph: WorkflowDomainGraphModel): Workflo
         }
       })
     }
+    if (node.data.typeCode === 'official.quant.position') {
+      const sources = graph.edges
+        .filter((edge) => edge.target === node.id)
+        .map((edge) => nodeMap.get(edge.source))
+        .filter(Boolean) as WorkflowDomainNode[]
+      const source =
+        sources.find((item) => item.data.typeCode === 'official.quant.code_strategy') || sources[0]
+      if (source) {
+        existing.evaluatedAt = {
+          kind: 'field',
+          nodeInstanceId: source.id,
+          fieldPath: ['evaluatedAt']
+        }
+      }
+      if (node.data.config?.targetMode === 'input') {
+        const codeSource = sources.find(
+          (item) => item.data.typeCode === 'official.quant.code_strategy'
+        )
+        if (codeSource) {
+          existing.target = {
+            kind: 'field',
+            nodeInstanceId: codeSource.id,
+            fieldPath: ['decimals', String(node.data.config?.decimalField || 'target')]
+          }
+        }
+      } else {
+        delete existing.target
+      }
+    }
+    const outputSignal = upstreamNode(node.id, 'official.quant.output_signal')
+    if (node.data.typeCode === 'core.human_approval' && outputSignal) {
+      existing.businessKey = {
+        kind: 'field',
+        nodeInstanceId: outputSignal.id,
+        fieldPath: ['businessKey']
+      }
+    }
+    if (node.data.typeCode === 'official.quant.paper_execute' && outputSignal) {
+      existing.signalId = {
+        kind: 'field',
+        nodeInstanceId: outputSignal.id,
+        fieldPath: ['signalId']
+      }
+      if (node.data.config?.decisionMode === 'auto') {
+        existing.decisionTaskId = { kind: 'literal', value: 0 }
+        existing.decisionStatus = { kind: 'literal', value: 'approved' }
+      } else {
+        const approval = upstreamNode(node.id, 'core.human_approval')
+        if (approval) {
+          existing.decisionTaskId = {
+            kind: 'field',
+            nodeInstanceId: approval.id,
+            fieldPath: ['taskId']
+          }
+          existing.decisionStatus = {
+            kind: 'field',
+            nodeInstanceId: approval.id,
+            fieldPath: ['status']
+          }
+        } else {
+          delete existing.decisionTaskId
+          delete existing.decisionStatus
+        }
+      }
+    }
+    if (NOTIFICATION_NODE_TYPES.has(node.data.typeCode) && outputSignal) {
+      existing.subjectKey = {
+        kind: 'field',
+        nodeInstanceId: outputSignal.id,
+        fieldPath: ['businessKey']
+      }
+      if (!existing.message) {
+        existing.message = { kind: 'literal', value: '策略目标仓位已更新。' }
+      }
+    }
     return existing
   }
   return {
+    schemaVersion: graph.schemaVersion,
+    ...(graph.entryPoints ? { entryPoints: graph.entryPoints } : {}),
     nodes: graph.nodes.map((node) => ({
       id: node.id,
       type: node.data.typeCode,

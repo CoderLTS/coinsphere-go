@@ -439,6 +439,23 @@
             />
           </template>
 
+          <template v-else-if="localForm.typeCode === 'official.quant.code_strategy'">
+            <WorkflowSchemaFields
+              :schema="configSchema"
+              :ui-schema="uiSchema"
+              :config="localForm.config"
+              :keys="['series', 'parameters', 'booleanOutputs', 'decimalOutputs', 'branchField']"
+              @update="handleSchemaFieldUpdate"
+            />
+            <ElFormItem label="CEL 代码">
+              <QuantCodeStrategyEditor
+                :model-value="String(localForm.config.source || '')"
+                :config="localForm.config"
+                @update:model-value="handleSchemaFieldUpdate('source', $event)"
+              />
+            </ElFormItem>
+          </template>
+
           <template v-else-if="localForm.kind === 'end'">
             <ElAlert
               type="success"
@@ -473,6 +490,7 @@
   } from '../types'
   import { getNodeConfigSchema, getNodeUISchema } from '../node-registry'
   import QuantCandleConfigEditor from './QuantCandleConfigEditor.vue'
+  import QuantCodeStrategyEditor from './QuantCodeStrategyEditor.vue'
   import QuantIndicatorEditor from './QuantIndicatorEditor.vue'
   import WorkflowSchemaFields from './WorkflowSchemaFields.vue'
 
@@ -523,6 +541,10 @@
     'official.quant.rsi_condition': 'RSI 判断节点',
     'official.quant.bollinger_condition': '布林带判断节点',
     'official.quant.market_signal': '输出信号节点',
+    'official.quant.backtest_start': '回测开始节点',
+    'official.quant.code_strategy': '代码策略节点',
+    'official.quant.position': '仓位计算节点',
+    'official.quant.output_signal': '输出策略信号节点',
     'official.notification.in_app': '站内通知节点',
     'official.notification.dingtalk': '钉钉通知节点',
     'official.qq.receive': 'QQ 消息接收节点',

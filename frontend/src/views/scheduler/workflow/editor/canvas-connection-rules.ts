@@ -20,6 +20,7 @@ import { LOOP_NEXT_BRANCH, getNodeBranches, getNodeGraphKind } from './node-regi
 
 const cellTypeCode = (cell: any) => String(cell?.getData?.()?.typeCode || '')
 const MARKET_SIGNAL_NODE_TYPE = 'official.quant.market_signal'
+const BACKTEST_START_NODE_TYPE = 'official.quant.backtest_start'
 const INDICATOR_CONDITION_TYPES = new Set([
   'official.quant.volume_spike_condition',
   'official.quant.price_change_condition',
@@ -79,6 +80,7 @@ export const wouldIntroduceCycle = (
 
 /** 某种节点合法的出口端口清单。 */
 export const outPortsOfCell = (cell: any): string[] => {
+  if (cellTypeCode(cell) === BACKTEST_START_NODE_TYPE) return getNodeBranches(cellTypeCode(cell))
   switch (graphKindOfCell(cell)) {
     case 'branch':
       return getNodeBranches(cellTypeCode(cell))
@@ -106,7 +108,11 @@ export const createConnectionValidator =
     if (!sourceCell || !targetCell || !sourcePort || !targetPort) return false
     if (sourceCell.id === targetCell.id) return false
     if (targetPort !== 'in') return false
-    if (graphKindOfCell(targetCell) === 'start') return false
+    if (
+      graphKindOfCell(targetCell) === 'start' ||
+      cellTypeCode(targetCell) === BACKTEST_START_NODE_TYPE
+    )
+      return false
     if (graphKindOfCell(sourceCell) === 'terminal') return false
 
     const graph = getGraph()

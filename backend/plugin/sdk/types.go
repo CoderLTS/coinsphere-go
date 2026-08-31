@@ -36,17 +36,18 @@ const (
 )
 
 type NodeDescriptor struct {
-	Type         string
-	Version      string
-	Kind         NodeKind
-	Branches     []string
-	ConfigSchema json.RawMessage
-	UISchema     json.RawMessage
-	InputSchema  json.RawMessage
-	OutputSchema json.RawMessage
-	Pool         ExecutionPool
-	SideEffect   SideEffectClass
-	State        StateMode
+	Type           string
+	Version        string
+	Kind           NodeKind
+	Branches       []string
+	ConfigSchema   json.RawMessage
+	UISchema       json.RawMessage
+	InputSchema    json.RawMessage
+	OutputSchema   json.RawMessage
+	Pool           ExecutionPool
+	SideEffect     SideEffectClass
+	State          StateMode
+	ValidateConfig func(json.RawMessage) error
 }
 
 type RevisionRef struct {
@@ -63,7 +64,28 @@ type ActionRequest struct {
 	Secrets        SecretReader
 	State          StateStore
 	Artifacts      ArtifactStore
+	Frames         FrameExecutor
+	ExecutionMode  string
 	Logger         *slog.Logger
+}
+
+const (
+	ExecutionModeWorkflow      = "workflow"
+	ExecutionModeBacktestFrame = "backtest_frame"
+)
+
+type FrameRequest struct {
+	SourceOutput           json.RawMessage
+	PreviousTargetPosition string
+}
+
+type FrameResult struct {
+	NodeOutputs map[string]json.RawMessage
+	Signals     []json.RawMessage
+}
+
+type FrameExecutor interface {
+	ExecuteFrame(context.Context, FrameRequest) (FrameResult, error)
 }
 
 type ActionResult struct {

@@ -282,6 +282,8 @@ type WorkflowRun struct {
 	ID                    int64  `gorm:"primaryKey;autoIncrement"`
 	WorkflowID            int64  `gorm:"column:workflow_id"`
 	RevisionID            int64  `gorm:"column:revision_id"`
+	EntryPoint            string `gorm:"column:entry_point;size:32"`
+	InputJSON             string `gorm:"column:input_json;type:jsonb"`
 	TriggerType           string `gorm:"column:trigger_type;size:16"`
 	TriggerKey            string `gorm:"column:trigger_key;size:128"`
 	EventRecordID         *int64 `gorm:"column:event_record_id"`

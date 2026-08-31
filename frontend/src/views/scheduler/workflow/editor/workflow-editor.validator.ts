@@ -85,6 +85,8 @@ export function validateWorkflowDraft(graph: WorkflowDomainGraphModel): Workflow
   const nodes = graph.nodes
   const edges = graph.edges
   const { nodeMap, incoming, outgoing, adjacency } = buildAdjacency(graph)
+  const entryNodeIds = new Set(Object.values(graph.entryPoints || {}))
+  const isEntryNode = (node: WorkflowDomainNode) => isStartNode(node) || entryNodeIds.has(node.id)
 
   if (!nodes.length) {
     issues.push(createIssue({ scope: 'graph', level: 'error', message: '至少需要一个节点。' }))
@@ -147,7 +149,7 @@ export function validateWorkflowDraft(graph: WorkflowDomainGraphModel): Workflow
     }
   })
 
-  const startNodes = nodes.filter(isStartNode)
+  const startNodes = nodes.filter(isEntryNode)
   const endNodes = nodes.filter((node) => node.data.typeCode === 'end')
 
   if (!startNodes.length) {
@@ -164,7 +166,8 @@ export function validateWorkflowDraft(graph: WorkflowDomainGraphModel): Workflow
   const entryKeyMap = new Map<string, string>()
   startNodes.forEach((node) => {
     const nodeIncoming = incoming.get(node.id) || []
-    const entryKey = String(node.data.config?.entryKey || '').trim()
+    const declaredStart = isStartNode(node)
+    const entryKey = declaredStart ? String(node.data.config?.entryKey || '').trim() : node.id
     if (nodeIncoming.length > 0) {
       issues.push(
         createIssue({
@@ -175,7 +178,7 @@ export function validateWorkflowDraft(graph: WorkflowDomainGraphModel): Workflow
         })
       )
     }
-    if (!entryKey) {
+    if (declaredStart && !entryKey) {
       issues.push(
         createIssue({
           scope: 'node',
@@ -204,7 +207,7 @@ export function validateWorkflowDraft(graph: WorkflowDomainGraphModel): Workflow
     const nodeIncoming = incoming.get(node.id) || []
     const nodeOutgoing = outgoing.get(node.id) || []
 
-    if (!isStartNode(node) && nodeIncoming.length === 0) {
+    if (!isEntryNode(node) && nodeIncoming.length === 0) {
       issues.push(
         createIssue({
           scope: 'node',
