@@ -1415,13 +1415,14 @@ func (a *App) waitWorkflowRun(runID int64) {
 func (a *App) runShouldStop(ctx context.Context, runID, workflowID int64) (cancelled, paused bool) {
 	var row struct {
 		Status            string
+		EntryPoint        string
 		CancelRequestedAt *time.Time
 	}
-	if err := a.DB.Raw(`SELECT w.status, r.cancel_requested_at FROM workflows w JOIN workflow_runs r ON r.workflow_id = w.id WHERE r.id = ? AND w.id = ?`, runID, workflowID).Scan(&row).Error; err != nil {
+	if err := a.DB.Raw(`SELECT w.status, r.entry_point, r.cancel_requested_at FROM workflows w JOIN workflow_runs r ON r.workflow_id = w.id WHERE r.id = ? AND w.id = ?`, runID, workflowID).Scan(&row).Error; err != nil {
 		return false, true
 	}
 	cancelled = row.CancelRequestedAt != nil
-	return cancelled, !cancelled && (ctx.Err() != nil || row.Status != WorkflowStatusActive)
+	return cancelled, !cancelled && (ctx.Err() != nil || row.Status != WorkflowStatusActive && row.EntryPoint != "backtest")
 }
 
 func (a *App) renewRunLease(ctx context.Context, runID int64, token string, done <-chan struct{}) {
