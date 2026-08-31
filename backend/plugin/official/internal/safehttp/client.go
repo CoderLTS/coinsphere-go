@@ -112,7 +112,7 @@ func (c *Client) validateHTTPURL(ctx context.Context, method string, target *url
 	if err := c.validateURL(ctx, target, "http", "https"); err != nil {
 		return err
 	}
-	if isBinanceDomain(target.Hostname()) && !isBinancePublicHTTP(method, target.Path) {
+	if IsBinanceDomain(target.Hostname()) && !isBinancePublicHTTP(method, target.Path) {
 		return unsafeEndpoint("Binance private or unknown endpoint is not available to generic connectors")
 	}
 	return nil
@@ -122,7 +122,7 @@ func (c *Client) validateProxiedHTTPURL(method string, target *url.URL) error {
 	if err := c.validateURLWithoutResolution(target, "http", "https"); err != nil {
 		return err
 	}
-	if isBinanceDomain(target.Hostname()) && !isBinancePublicHTTP(method, target.Path) {
+	if IsBinanceDomain(target.Hostname()) && !isBinancePublicHTTP(method, target.Path) {
 		return unsafeEndpoint("Binance private or unknown endpoint is not available to generic connectors")
 	}
 	return nil
@@ -132,7 +132,7 @@ func (c *Client) ValidateWebSocketURL(ctx context.Context, target *url.URL, uses
 	if err := c.validateURL(ctx, target, "ws", "wss"); err != nil {
 		return err
 	}
-	if isBinanceDomain(target.Hostname()) && (usesAuthorization ||
+	if IsBinanceDomain(target.Hostname()) && (usesAuthorization ||
 		!(strings.HasPrefix(target.Path, "/ws/") || target.Path == "/stream")) {
 		return unsafeEndpoint("Binance WebSocket connector is limited to public streams")
 	}
@@ -143,7 +143,7 @@ func (c *Client) ValidateProxiedWebSocketURL(target *url.URL, usesAuthorization 
 	if err := c.validateURLWithoutResolution(target, "ws", "wss"); err != nil {
 		return err
 	}
-	if isBinanceDomain(target.Hostname()) && (usesAuthorization ||
+	if IsBinanceDomain(target.Hostname()) && (usesAuthorization ||
 		!(strings.HasPrefix(target.Path, "/ws/") || target.Path == "/stream")) {
 		return unsafeEndpoint("Binance WebSocket connector is limited to public streams")
 	}
@@ -283,7 +283,7 @@ func isPublicAddress(address netip.Addr) bool {
 	return true
 }
 
-func isBinanceDomain(host string) bool {
+func IsBinanceDomain(host string) bool {
 	host = strings.ToLower(host)
 	return host == "binance.com" || strings.HasSuffix(host, ".binance.com") ||
 		host == "binance.vision" || strings.HasSuffix(host, ".binance.vision")

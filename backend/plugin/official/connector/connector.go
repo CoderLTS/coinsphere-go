@@ -86,7 +86,7 @@ func (a connectorHTTPAction) Execute(ctx context.Context, request sdk.ActionRequ
 	if err != nil || !target.IsAbs() {
 		return sdk.ActionResult{}, errors.New("connector HTTP URL is invalid")
 	}
-	if config.UseAuthorization && isBinanceDomain(target.Hostname()) {
+	if config.UseAuthorization && safehttp.IsBinanceDomain(target.Hostname()) {
 		return sdk.ActionResult{}, safehttp.Blocked("generic connectors cannot authorize Binance requests")
 	}
 	var body io.Reader

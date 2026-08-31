@@ -33,7 +33,7 @@ type notificationAction struct {
 	channel string
 }
 
-type notificationInput struct {
+type ExternalDeliveryInput struct {
 	SubjectKey string `json:"subjectKey"`
 	Message    string `json:"message"`
 }
@@ -117,7 +117,7 @@ func notificationOutputSchema(channel string) json.RawMessage {
 }
 
 func (a notificationAction) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
-	var input notificationInput
+	var input ExternalDeliveryInput
 	if json.Unmarshal(request.Input, &input) != nil {
 		return sdk.ActionResult{}, errors.New("notification input is invalid")
 	}
@@ -134,7 +134,7 @@ func (a notificationAction) Execute(ctx context.Context, request sdk.ActionReque
 	return a.executeExternal(ctx, request, workflowID, revisionID, input)
 }
 
-func (a notificationAction) executeInApp(ctx context.Context, request sdk.ActionRequest, workflowID, revisionID int64, input notificationInput) (sdk.ActionResult, error) {
+func (a notificationAction) executeInApp(ctx context.Context, request sdk.ActionRequest, workflowID, revisionID int64, input ExternalDeliveryInput) (sdk.ActionResult, error) {
 	var config struct {
 		Title   string               `json:"title"`
 		Targets []notificationTarget `json:"targets"`
@@ -177,12 +177,12 @@ func (a notificationAction) executeInApp(ctx context.Context, request sdk.Action
 	return notificationResult(deliveries, len(deliveries)), nil
 }
 
-func (a notificationAction) executeExternal(ctx context.Context, request sdk.ActionRequest, workflowID, revisionID int64, input notificationInput) (sdk.ActionResult, error) {
+func (a notificationAction) executeExternal(ctx context.Context, request sdk.ActionRequest, workflowID, revisionID int64, input ExternalDeliveryInput) (sdk.ActionResult, error) {
 	title, err := notificationTitle(request.Config)
 	if err != nil {
 		return sdk.ActionResult{}, err
 	}
-	delivery, err := beginExternalDelivery(ctx, a.runtime.db, request, workflowID, revisionID, a.channel, title, input)
+	delivery, err := BeginExternalDelivery(ctx, a.runtime.db, request, workflowID, revisionID, a.channel, title, input)
 	if err != nil {
 		return sdk.ActionResult{}, err
 	}
@@ -191,12 +191,12 @@ func (a notificationAction) executeExternal(ctx context.Context, request sdk.Act
 	}
 	category, sendErr := a.runtime.sendExternal(ctx, a.channel, request, title, input.Message)
 	if sendErr != nil {
-		if updateErr := finishExternalDelivery(ctx, a.runtime.db, delivery.ID, "failed", category); updateErr != nil {
+		if updateErr := FinishExternalDelivery(ctx, a.runtime.db, delivery.ID, "failed", category); updateErr != nil {
 			return sdk.ActionResult{}, updateErr
 		}
 		return sdk.ActionResult{}, errors.New("notification provider delivery failed: " + category)
 	}
-	if err := finishExternalDelivery(ctx, a.runtime.db, delivery.ID, "delivered", ""); err != nil {
+	if err := FinishExternalDelivery(ctx, a.runtime.db, delivery.ID, "delivered", ""); err != nil {
 		return sdk.ActionResult{}, err
 	}
 	if err := a.runtime.db.WithContext(ctx).First(&delivery, delivery.ID).Error; err != nil {
@@ -266,7 +266,7 @@ func int64SetValues(values map[int64]struct{}) []int64 {
 	return result
 }
 
-func beginExternalDelivery(ctx context.Context, database *gorm.DB, request sdk.ActionRequest, workflowID, revisionID int64, channel, title string, input notificationInput) (db.NotificationDelivery, error) {
+func BeginExternalDelivery(ctx context.Context, database *gorm.DB, request sdk.ActionRequest, workflowID, revisionID int64, channel, title string, input ExternalDeliveryInput) (db.NotificationDelivery, error) {
 	now := time.Now().UTC()
 	delivery := db.NotificationDelivery{
 		OperationKey: request.OperationKey, WorkflowID: workflowID, RevisionID: revisionID,
@@ -301,7 +301,7 @@ func beginExternalDelivery(ctx context.Context, database *gorm.DB, request sdk.A
 	return delivery, nil
 }
 
-func finishExternalDelivery(ctx context.Context, database *gorm.DB, deliveryID int64, status, category string) error {
+func FinishExternalDelivery(ctx context.Context, database *gorm.DB, deliveryID int64, status, category string) error {
 	now := time.Now().UTC()
 	updates := map[string]any{"status": status, "updated_at": now}
 	if status == "delivered" {

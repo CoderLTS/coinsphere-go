@@ -64,7 +64,7 @@ func (a aiModelCallAction) Execute(ctx context.Context, request sdk.ActionReques
 		return sdk.ActionResult{}, errors.New("AI model call configuration or input is invalid")
 	}
 	target, err := url.ParseRequestURI(config.Endpoint)
-	if err != nil || !target.IsAbs() || isBinanceDomain(target.Hostname()) {
+	if err != nil || !target.IsAbs() || safehttp.IsBinanceDomain(target.Hostname()) {
 		return sdk.ActionResult{}, safehttp.Blocked("AI endpoint is invalid or prohibited")
 	}
 	content, err := json.Marshal(map[string]any{"prompt": input.Prompt, "data": input.Data})

@@ -18,6 +18,7 @@ import (
 
 	"coinsphere/backend/internal/db"
 	"coinsphere/backend/plugin/official/internal/safehttp"
+	"coinsphere/backend/plugin/official/notification"
 	"coinsphere/backend/plugin/sdk"
 	"gorm.io/gorm"
 )
@@ -131,7 +132,7 @@ func (a qqSendAction) Execute(ctx context.Context, request sdk.ActionRequest) (s
 		return sdk.ActionResult{}, errors.New("QQ workflow identity is invalid")
 	}
 	title, auditMessage := qqAuditText(input)
-	delivery, err := beginExternalDelivery(ctx, a.runtime.db, request, workflowID, revisionID, "qq", title, notificationInput{
+	delivery, err := notification.BeginExternalDelivery(ctx, a.runtime.db, request, workflowID, revisionID, "qq", title, notification.ExternalDeliveryInput{
 		SubjectKey: input.SubjectKey, Message: auditMessage,
 	})
 	if err != nil {
@@ -142,12 +143,12 @@ func (a qqSendAction) Execute(ctx context.Context, request sdk.ActionRequest) (s
 	}
 	providerMessageID, category, sendErr := a.runtime.send(ctx, credentials, input)
 	if sendErr != nil {
-		if updateErr := finishExternalDelivery(ctx, a.runtime.db, delivery.ID, "failed", category); updateErr != nil {
+		if updateErr := notification.FinishExternalDelivery(ctx, a.runtime.db, delivery.ID, "failed", category); updateErr != nil {
 			return sdk.ActionResult{}, updateErr
 		}
 		return sdk.ActionResult{}, errors.New("QQ provider delivery failed: " + category)
 	}
-	if err := finishExternalDelivery(ctx, a.runtime.db, delivery.ID, "delivered", ""); err != nil {
+	if err := notification.FinishExternalDelivery(ctx, a.runtime.db, delivery.ID, "delivered", ""); err != nil {
 		return sdk.ActionResult{}, err
 	}
 	if err := a.runtime.db.WithContext(ctx).First(&delivery, delivery.ID).Error; err != nil {

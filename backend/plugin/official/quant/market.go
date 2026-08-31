@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"coinsphere/backend/plugin/official/internal/safehttp"
 	"coinsphere/backend/plugin/sdk"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/gorilla/websocket"
