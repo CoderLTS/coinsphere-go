@@ -245,13 +245,7 @@
 </template>
 
 <script setup lang="ts">
-  import {
-    Clock,
-    Collection,
-    Edit,
-    SwitchButton,
-    VideoPlay
-  } from '@element-plus/icons-vue'
+  import { Clock, Collection, Edit, SwitchButton, VideoPlay } from '@element-plus/icons-vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { useAuth } from '@/hooks/core/useAuth'
   import {
