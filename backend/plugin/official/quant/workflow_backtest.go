@@ -1,7 +1,6 @@
 package quant
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -97,17 +96,17 @@ func (a quantWorkflowBacktestAction) Execute(ctx context.Context, request sdk.Ac
 	if err != nil {
 		return sdk.ActionResult{}, err
 	}
+	detailCandles := make([]map[string]any, len(candles))
+	for index, candle := range candles {
+		detailCandles[index] = quantCandleData(candle)
+	}
 	detail, err := json.Marshal(map[string]any{
 		"schemaVersion": 2, "strategyId": "workflow-revision", "strategyVersion": request.Revision.RevisionID,
 		"market": series.Market, "instrument": series.Instrument, "interval": series.Interval,
-		"parameters": input, "points": simulation.Points,
+		"parameters": input, "candles": detailCandles, "points": simulation.Points,
 	})
 	if err != nil {
 		return sdk.ActionResult{}, errors.New("encode Quant workflow backtest detail failed")
-	}
-	artifact, err := request.Artifacts.Put(ctx, quantBacktestMediaType, bytes.NewReader(detail))
-	if err != nil {
-		return sdk.ActionResult{}, errors.New("store Quant workflow backtest detail failed")
 	}
 	workflowID, workflowErr := quantInt64(request.Revision.WorkflowID)
 	revisionID, revisionErr := quantInt64(request.Revision.RevisionID)
@@ -128,7 +127,7 @@ func (a quantWorkflowBacktestAction) Execute(ctx context.Context, request sdk.Ac
 		InitialCapital: capital, FinalEquity: simulation.FinalEquity, TotalReturn: simulation.TotalReturn,
 		MaxDrawdown: simulation.MaxDrawdown, TotalFees: simulation.TotalFees, TradeCount: simulation.TradeCount,
 		CandleCount: len(candles), Parameters: string(parameters), DataManifest: string(manifest),
-		DetailSHA256: artifact.SHA256, DetailSizeBytes: artifact.Size, CreatedAt: time.Now().UTC(),
+		Detail: string(detail), CreatedAt: time.Now().UTC(),
 	}
 	if err := a.runtime.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
 		return sdk.ActionResult{}, errors.New("persist Quant workflow backtest summary failed")
@@ -261,9 +260,7 @@ func executeQuantWorkflowBacktest(ctx context.Context, frames sdk.FrameExecutor,
 func quantWorkflowBacktestResult(backtest quantBacktest) sdk.ActionResult {
 	output := quantBacktestOutput(backtest)
 	output["branch"] = "completed"
-	return sdk.ActionResult{Output: mustMarshal(output), Artifacts: []sdk.Artifact{{
-		SHA256: backtest.DetailSHA256, MediaType: quantBacktestMediaType, Size: backtest.DetailSizeBytes,
-	}}}
+	return sdk.ActionResult{Output: mustMarshal(output)}
 }
 
 var _ sdk.ActionHandler = quantWorkflowBacktestAction{}

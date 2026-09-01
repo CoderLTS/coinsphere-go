@@ -82,19 +82,6 @@
           <ElTableColumn label="完成时间" min-width="150">
             <template #default="scope">{{ formatTime(scope.row.createdAt) }}</template>
           </ElTableColumn>
-          <ElTableColumn width="54" align="right">
-            <template #default="scope">
-              <ElButton
-                circle
-                text
-                title="下载并校验回测明细"
-                :loading="downloading === scope.row.id"
-                @click="downloadDetail(scope.row)"
-              >
-                <ArtSvgIcon icon="ri:download-2-line" />
-              </ElButton>
-            </template>
-          </ElTableColumn>
         </ElTable>
       </ElTabPane>
     </ElTabs>
@@ -113,7 +100,6 @@
     type QuantInstrument,
     type QuantStrategy
   } from '@/api/quant'
-  import { downloadWorkflowArtifact, fetchWorkflowArtifactManifest } from '@/api/workflows'
   import { formatDateTime as formatTime } from '@/utils/date'
   import { decimalPercent } from './decimal'
 
@@ -130,7 +116,6 @@
   const strategies = ref<QuantStrategy[]>([])
   const backtests = ref<QuantBacktest[]>([])
   const marketLoading = ref(false)
-  const downloading = ref<number>()
   const marketOptions = [
     { label: 'Spot', value: 'spot' },
     { label: 'USD-M', value: 'usdm' }
@@ -181,29 +166,6 @@
       marketLoading.value = false
     }
   }
-  const downloadDetail = async (backtest: QuantBacktest) => {
-    downloading.value = backtest.id
-    try {
-      const manifest = await fetchWorkflowArtifactManifest(backtest.detailSha256)
-      const blob = await downloadWorkflowArtifact(manifest.downloadUrl)
-      const digest = Array.from(
-        new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer()))
-      )
-        .map((byte) => byte.toString(16).padStart(2, '0'))
-        .join('')
-      if (digest !== backtest.detailSha256) throw new Error('digest mismatch')
-      const link = document.createElement('a')
-      link.href = URL.createObjectURL(blob)
-      link.download = `backtest-${backtest.id}.json`
-      link.click()
-      URL.revokeObjectURL(link.href)
-    } catch {
-      ElMessage.error('回测明细下载或校验失败')
-    } finally {
-      downloading.value = undefined
-    }
-  }
-
   onMounted(async () => {
     const [strategyResult, backtestResult] = await Promise.allSettled([
       fetchQuantStrategies(),

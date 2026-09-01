@@ -1,7 +1,6 @@
 package quant
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -14,8 +13,6 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
-
-const quantBacktestMediaType = "application/vnd.coinsphere.quant-backtest+json"
 
 type quantEvaluateAction struct{ runtime *quantRuntime }
 
@@ -107,10 +104,6 @@ func (a quantBacktestAction) Execute(ctx context.Context, request sdk.ActionRequ
 	if err != nil {
 		return sdk.ActionResult{}, err
 	}
-	artifact, err := request.Artifacts.Put(ctx, quantBacktestMediaType, bytes.NewReader(detail))
-	if err != nil {
-		return sdk.ActionResult{}, errors.New("store Quant backtest detail failed")
-	}
 	workflowID, err := quantInt64(request.Revision.WorkflowID)
 	if err != nil {
 		return sdk.ActionResult{}, errors.New("quant workflow identity is invalid")
@@ -130,7 +123,7 @@ func (a quantBacktestAction) Execute(ctx context.Context, request sdk.ActionRequ
 		TotalReturn: simulation.TotalReturn, MaxDrawdown: simulation.MaxDrawdown,
 		TotalFees: simulation.TotalFees, TradeCount: simulation.TradeCount, CandleCount: len(candles),
 		Parameters: string(parameters), DataManifest: string(manifestJSON),
-		DetailSHA256: artifact.SHA256, DetailSizeBytes: artifact.Size, CreatedAt: time.Now().UTC(),
+		Detail: string(detail), CreatedAt: time.Now().UTC(),
 	}
 	if err := a.runtime.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
 		return sdk.ActionResult{}, errors.New("persist Quant backtest summary failed")
@@ -345,10 +338,7 @@ func (q *quantRuntime) loadQuantBacktestByOperation(ctx context.Context, operati
 }
 
 func quantBacktestActionResult(backtest quantBacktest) sdk.ActionResult {
-	return sdk.ActionResult{
-		Output:    mustMarshal(quantBacktestOutput(backtest)),
-		Artifacts: []sdk.Artifact{{SHA256: backtest.DetailSHA256, MediaType: quantBacktestMediaType, Size: backtest.DetailSizeBytes}},
-	}
+	return sdk.ActionResult{Output: mustMarshal(quantBacktestOutput(backtest))}
 }
 
 func quantBacktestOutput(backtest quantBacktest) map[string]any {
@@ -356,7 +346,7 @@ func quantBacktestOutput(backtest quantBacktest) map[string]any {
 		"backtestId": backtest.ID, "strategyId": backtest.StrategyID, "strategyVersion": backtest.StrategyVersion,
 		"finalEquity": backtest.FinalEquity.String(), "totalReturn": backtest.TotalReturn.String(),
 		"maxDrawdown": backtest.MaxDrawdown.String(), "totalFees": backtest.TotalFees.String(),
-		"tradeCount": backtest.TradeCount, "candleCount": backtest.CandleCount, "detailSha256": backtest.DetailSHA256,
+		"tradeCount": backtest.TradeCount, "candleCount": backtest.CandleCount,
 	}
 }
 
@@ -369,7 +359,6 @@ func quantBacktestView(backtest quantBacktest) map[string]any {
 	view["endTime"] = backtest.EndTime.UTC().Format(time.RFC3339Nano)
 	view["initialCapital"] = backtest.InitialCapital.String()
 	view["createdAt"] = backtest.CreatedAt.UTC().Format(time.RFC3339Nano)
-	view["detailSizeBytes"] = backtest.DetailSizeBytes
 	return view
 }
 

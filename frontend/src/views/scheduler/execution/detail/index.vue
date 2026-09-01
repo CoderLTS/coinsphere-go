@@ -48,21 +48,36 @@
                     </div>
                   </div>
 
-                  <ElTooltip
-                    :content="inspectorVisible ? '隐藏详情面板' : '显示详情面板'"
-                    placement="bottom"
-                  >
-                    <ElButton
-                      plain
-                      class="workflow-execution-detail__panel-btn"
-                      @click="inspectorVisible = !inspectorVisible"
+                  <div class="workflow-execution-detail__toolbar-actions">
+                    <ElTooltip
+                      v-if="executionDetail.entryPoint === 'backtest'"
+                      content="查看回测分析"
+                      placement="bottom"
                     >
-                      <ElIcon>
-                        <component :is="inspectorVisible ? Hide : View" />
-                      </ElIcon>
-                      <span>{{ inspectorVisible ? '收起面板' : '展开面板' }}</span>
-                    </ElButton>
-                  </ElTooltip>
+                      <ElButton
+                        plain
+                        class="workflow-execution-detail__icon-btn"
+                        @click="handleBacktestAnalysis"
+                      >
+                        <ElIcon><DataAnalysis /></ElIcon>
+                      </ElButton>
+                    </ElTooltip>
+                    <ElTooltip
+                      :content="inspectorVisible ? '隐藏详情面板' : '显示详情面板'"
+                      placement="bottom"
+                    >
+                      <ElButton
+                        plain
+                        class="workflow-execution-detail__panel-btn"
+                        @click="inspectorVisible = !inspectorVisible"
+                      >
+                        <ElIcon>
+                          <component :is="inspectorVisible ? Hide : View" />
+                        </ElIcon>
+                        <span>{{ inspectorVisible ? '收起面板' : '展开面板' }}</span>
+                      </ElButton>
+                    </ElTooltip>
+                  </div>
                 </section>
 
                 <WorkflowExecutionCanvas
@@ -351,7 +366,7 @@
 </template>
 
 <script setup lang="ts">
-  import { ArrowLeft, Clock, Download, Hide, View } from '@element-plus/icons-vue'
+  import { ArrowLeft, Clock, DataAnalysis, Download, Hide, View } from '@element-plus/icons-vue'
   import { ElMessage } from 'element-plus'
   import type { WorkflowNodeDefinitionItem } from '@/api/scheduler'
   import {
@@ -496,6 +511,13 @@
         workflowId: String(activeWorkflowId.value),
         workflowName: executionDetail.value?.workflowDefinitionName || ''
       }
+    })
+  }
+
+  const handleBacktestAnalysis = () => {
+    router.push({
+      path: `/scheduler/execution/${activeExecutionId.value}/backtest`,
+      query: route.query
     })
   }
 
@@ -921,6 +943,12 @@
     border-color: transparent;
     border-radius: 7px;
     box-shadow: none;
+  }
+
+  .workflow-execution-detail__toolbar-actions {
+    display: flex;
+    gap: 4px;
+    align-items: center;
   }
 
   .workflow-execution-detail__icon-btn {

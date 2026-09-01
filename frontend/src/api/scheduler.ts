@@ -205,6 +205,7 @@ export interface WorkflowExecutionItem {
   workflowDefinitionId: number
   workflowDefinitionVersion: number
   workflowDefinitionName: string
+  entryPoint: 'realtime' | 'backtest'
   entryName: string
   triggerType: WorkflowTriggerType | string
   triggeredBy?: number | null
@@ -667,6 +668,7 @@ const toExecution = (
     workflowDefinitionId: workflow.id,
     workflowDefinitionVersion: revision?.revisionNumber || 1,
     workflowDefinitionName: workflow.name,
+    entryPoint: run.entryPoint,
     entryName: run.entryPoint === 'backtest' ? '回测开始' : workflow.mainTriggerNodeId,
     triggerType: run.triggerType,
     status,

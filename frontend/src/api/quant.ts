@@ -53,9 +53,32 @@ export interface QuantBacktest {
   totalFees: string
   tradeCount: number
   candleCount: number
-  detailSha256: string
-  detailSizeBytes: number
   createdAt: string
+}
+
+export interface QuantBacktestPoint {
+  evaluatedAt: string
+  nodeOutputs: Record<string, unknown>
+  previousTargetPosition: string
+  targetPosition: string
+  action: 'buy' | 'sell' | 'hold'
+  executionOpenTime: string
+  executionPrice: string
+  quantityDelta: string
+  fee: string
+  equity: string
+}
+
+export interface QuantBacktestDetail {
+  schemaVersion: 2
+  strategyId: string
+  strategyVersion: string
+  market: 'spot' | 'usdm'
+  instrument: string
+  interval: string
+  parameters: Record<string, unknown>
+  candles: QuantCandle[]
+  points: QuantBacktestPoint[]
 }
 
 export interface QuantMarketSignal {
@@ -80,6 +103,7 @@ export const fetchQuantCandles = (params: {
   market: 'spot' | 'usdm'
   instrument: string
   interval: string
+  before?: string
   limit?: number
 }) => request.get<ItemList<QuantCandle>>({ url: `${quantBase}/candles`, params })
 
@@ -88,6 +112,9 @@ export const fetchQuantStrategies = () =>
 
 export const fetchQuantBacktests = (limit = 50) =>
   request.get<ItemList<QuantBacktest>>({ url: `${quantBase}/backtests`, params: { limit } })
+
+export const fetchQuantBacktestDetail = (backtestId: number) =>
+  request.get<QuantBacktestDetail>({ url: `${quantBase}/backtests/${backtestId}` })
 
 export const fetchQuantMarketSignals = (params: {
   market: 'spot' | 'usdm'
