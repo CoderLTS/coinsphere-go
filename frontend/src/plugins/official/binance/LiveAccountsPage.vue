@@ -79,6 +79,7 @@
 
 <script setup lang="ts">
   import { Lock, Refresh, Unlock } from '@element-plus/icons-vue'
+  import { ElMessageBox } from 'element-plus'
   import {
     fetchBinanceLiveAccounts,
     updateBinanceLiveAccount,

@@ -204,7 +204,7 @@
   type PluginNode = Api.System.InstalledPlugin['nodes'][number]
   type ConfigSchema = Record<string, any>
 
-  const pluginIcon = (_id: string) => 'ri:puzzle-2-line'
+  const pluginIcon = () => 'ri:puzzle-2-line'
 
   const labels: Record<string, string> = {
     nodes: '节点',
