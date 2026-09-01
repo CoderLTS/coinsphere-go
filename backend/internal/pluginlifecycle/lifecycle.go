@@ -120,7 +120,7 @@ func (i Installer) Installed() ([]manifest.Package, error) {
 		}
 		roots = append(roots, filepath.Join(root, entry.Name()))
 	}
-	packages, err := manifest.LoadAll(roots, i.options.CoreVersion, i.options.SDKMajor)
+	packages, err := manifest.LoadAllWithDependencies(roots, i.options.CoreVersion, i.options.SDKMajor, version.BuiltinPlugins)
 	if err != nil {
 		return nil, err
 	}
@@ -171,10 +171,14 @@ func (i Installer) Install(ctx context.Context, source string, upgrade bool) (re
 		}
 	}
 	expected = append(expected, candidate)
-	if _, err := pluginbuild.RenderBackend(expected); err != nil {
+	available, err := i.availableDependencies(ctx)
+	if err != nil {
 		return manifest.Package{}, err
 	}
-	if _, err := pluginbuild.RenderFrontend(expected); err != nil {
+	if _, err := pluginbuild.RenderBackendWithDependencies(expected, available); err != nil {
+		return manifest.Package{}, err
+	}
+	if _, err := pluginbuild.RenderFrontendWithDependencies(expected, available); err != nil {
 		return manifest.Package{}, err
 	}
 
@@ -233,7 +237,7 @@ func (i Installer) Install(ctx context.Context, source string, upgrade bool) (re
 		return manifest.Package{}, err
 	}
 	known := append(append([]manifest.Package(nil), current...), installed...)
-	if err := i.writeBuildInputs(current, known); err != nil {
+	if err := i.writeBuildInputs(current, known, available); err != nil {
 		return manifest.Package{}, err
 	}
 	if i.options.Rebuild != nil {
@@ -265,7 +269,31 @@ func (i Installer) Uninstall(ctx context.Context, pluginID string) (returnErr er
 		}
 	}
 	if target == nil {
+		builtin, err := i.builtinStatus(ctx, pluginID)
+		if err != nil {
+			return err
+		}
+		if builtin == "installed" {
+			dependents, err := i.builtinDependents(ctx, pluginID)
+			if err != nil {
+				return err
+			}
+			for _, plugin := range installed {
+				if _, depends := plugin.Manifest.RequiresPlugins[pluginID]; depends {
+					dependents = append(dependents, plugin.Manifest.ID)
+				}
+			}
+			if len(dependents) != 0 {
+				return fmt.Errorf("plugin %q is required by %s", pluginID, strings.Join(dependents, ", "))
+			}
+			return markUninstalled(ctx, i.options.DB, pluginID)
+		}
 		return fmt.Errorf("plugin %q is not installed", pluginID)
+	}
+	for _, plugin := range installed {
+		if _, depends := plugin.Manifest.RequiresPlugins[pluginID]; depends {
+			return fmt.Errorf("plugin %q is required by %q", pluginID, plugin.Manifest.ID)
+		}
 	}
 	if i.options.DB != nil {
 		refs, err := pluginReferences(ctx, i.options.DB, pluginID, true)
@@ -311,7 +339,12 @@ func (i Installer) Uninstall(ctx context.Context, pluginID string) (returnErr er
 	if err != nil {
 		return err
 	}
-	if err := i.writeBuildInputs(remaining, installed); err != nil {
+	available, err := i.availableDependencies(ctx)
+	if err != nil {
+		return err
+	}
+	delete(available, pluginID)
+	if err := i.writeBuildInputs(remaining, installed, available); err != nil {
 		return err
 	}
 	if i.options.Rebuild != nil {
@@ -328,12 +361,39 @@ func (i Installer) Uninstall(ctx context.Context, pluginID string) (returnErr er
 	return nil
 }
 
+func (i Installer) builtinDependents(ctx context.Context, pluginID string) ([]string, error) {
+	if i.options.DB == nil {
+		return nil, nil
+	}
+	rows, err := i.options.DB.QueryContext(ctx, `SELECT plugin_id FROM plugin_installations WHERE source_path = 'builtin' AND status = 'installed' AND plugin_id <> $1 ORDER BY plugin_id`, pluginID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var dependents []string
+	for rows.Next() {
+		var candidate string
+		if err := rows.Scan(&candidate); err != nil {
+			return nil, err
+		}
+		if _, depends := version.BuiltinPluginDependencies[candidate][pluginID]; depends {
+			dependents = append(dependents, candidate)
+		}
+	}
+	return dependents, rows.Err()
+}
+
 func (i Installer) PurgeData(ctx context.Context, pluginID, confirmation string) error {
 	if confirmation != "PURGE "+pluginID {
 		return errors.New("purge requires --confirm 'PURGE <plugin-id>'")
 	}
 	if i.options.DB == nil {
 		return errors.New("purge-data requires a database connection")
+	}
+	if status, err := i.builtinStatus(ctx, pluginID); err != nil {
+		return err
+	} else if status != "" {
+		return errors.New("built-in plugin data is owned by core migrations and cannot be purged")
 	}
 	if _, err := os.Stat(filepath.Join(i.options.Layout.backendInstalledRoot(), installedDir(pluginID))); err == nil {
 		return errors.New("uninstall the plugin before purge-data")
@@ -373,6 +433,42 @@ func (i Installer) PurgeData(ctx context.Context, pluginID, confirmation string)
 		return err
 	}
 	return tx.Commit()
+}
+
+func (i Installer) EnableBuiltin(ctx context.Context, pluginID string) (bool, error) {
+	status, err := i.builtinStatus(ctx, pluginID)
+	if err != nil || status == "" {
+		return false, err
+	}
+	if status == "installed" {
+		return true, fmt.Errorf("plugin %q is already installed", pluginID)
+	}
+	available, err := i.availableDependencies(ctx)
+	if err != nil {
+		return true, err
+	}
+	for requiredID, constraintText := range version.BuiltinPluginDependencies[pluginID] {
+		requiredVersion, exists := available[requiredID]
+		constraint, constraintErr := semver.NewConstraint(constraintText)
+		parsed, versionErr := semver.StrictNewVersion(requiredVersion)
+		if !exists || constraintErr != nil || versionErr != nil || !constraint.Check(parsed) {
+			return true, fmt.Errorf("plugin %q requires installed plugin %q version %s", pluginID, requiredID, constraintText)
+		}
+	}
+	_, err = i.options.DB.ExecContext(ctx, `UPDATE plugin_installations SET status = 'installed', updated_at = CURRENT_TIMESTAMP WHERE plugin_id = $1 AND source_path = 'builtin'`, pluginID)
+	return true, err
+}
+
+func (i Installer) builtinStatus(ctx context.Context, pluginID string) (string, error) {
+	if i.options.DB == nil {
+		return "", nil
+	}
+	var status string
+	err := i.options.DB.QueryRowContext(ctx, `SELECT status FROM plugin_installations WHERE plugin_id = $1 AND source_path = 'builtin'`, pluginID).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return status, err
 }
 
 type stagedPlugin struct {
@@ -490,12 +586,12 @@ func (i Installer) applyMigrations(ctx context.Context, pkg manifest.Package) (i
 	return before, nil
 }
 
-func (i Installer) writeBuildInputs(packages, known []manifest.Package) error {
-	backend, err := pluginbuild.RenderBackend(packages)
+func (i Installer) writeBuildInputs(packages, known []manifest.Package, available map[string]string) error {
+	backend, err := pluginbuild.RenderBackendWithDependencies(packages, available)
 	if err != nil {
 		return err
 	}
-	frontend, err := pluginbuild.RenderFrontend(packages)
+	frontend, err := pluginbuild.RenderFrontendWithDependencies(packages, available)
 	if err != nil {
 		return err
 	}
@@ -506,6 +602,29 @@ func (i Installer) writeBuildInputs(packages, known []manifest.Package) error {
 		return err
 	}
 	return updateGoMod(i.options.Layout.goModPath(), packages, known)
+}
+
+func (i Installer) availableDependencies(ctx context.Context) (map[string]string, error) {
+	available := make(map[string]string)
+	if i.options.DB == nil {
+		for id, pluginVersion := range version.BuiltinPlugins {
+			available[id] = pluginVersion
+		}
+		return available, nil
+	}
+	rows, err := i.options.DB.QueryContext(ctx, `SELECT plugin_id, version FROM plugin_installations WHERE status = 'installed'`)
+	if err != nil {
+		return nil, fmt.Errorf("list available plugin dependencies: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, pluginVersion string
+		if err := rows.Scan(&id, &pluginVersion); err != nil {
+			return nil, err
+		}
+		available[id] = pluginVersion
+	}
+	return available, rows.Err()
 }
 
 func updateGoMod(path string, packages, known []manifest.Package) error {

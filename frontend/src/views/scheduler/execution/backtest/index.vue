@@ -181,7 +181,7 @@
     type QuantBacktestDetail,
     type QuantBacktestPoint,
     type QuantCandle
-  } from '@/api/quant'
+  } from '@/plugins/official/quant/api'
   import { fetchWorkflowRun, type WorkflowRunDetail } from '@/api/workflows'
   import type { KLineDataItem, KLineSignalItem } from '@/types/component/chart'
   import { formatDateTime } from '@/utils/date'
@@ -206,7 +206,7 @@
   const workflowName = computed(() => String(route.query.workflowName || '工作流回测'))
   const resultSummary = computed<Record<string, unknown>>(() => {
     const node = run.value?.runNodes.find(
-      (item) => item.nodeType === 'official.quant.backtest_start'
+      (item) => isRecord(item.outputSummary) && 'backtestId' in item.outputSummary
     )
     const output = run.value?.resultSummary?.output
     return node?.outputSummary || (isRecord(output) ? output : {})
@@ -223,6 +223,8 @@
   const selectedPoint = computed(
     () => tradePoints.value.find((point) => point.id === selectedPointId.value) || null
   )
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 
   const percentText = (value: unknown) => {
     const raw = String(value ?? '')
@@ -302,9 +304,6 @@
   const backToDetail = () =>
     router.push({ path: `/scheduler/execution/${route.params.runId}/detail`, query: route.query })
 
-  const isRecord = (value: unknown): value is Record<string, unknown> =>
-    Boolean(value) && typeof value === 'object' && !Array.isArray(value)
-
   const loadPage = async () => {
     const runId = Number(route.params.runId)
     if (!Number.isSafeInteger(runId) || runId <= 0) {
@@ -317,7 +316,7 @@
       const currentRun = await fetchWorkflowRun(runId)
       if (currentRun.entryPoint !== 'backtest') throw new Error('该运行不是回测任务')
       const nodeOutput = currentRun.runNodes.find(
-        (item) => item.nodeType === 'official.quant.backtest_start'
+        (item) => isRecord(item.outputSummary) && 'backtestId' in item.outputSummary
       )?.outputSummary
       const resultOutput = currentRun.resultSummary.output
       const backtestId = Number(

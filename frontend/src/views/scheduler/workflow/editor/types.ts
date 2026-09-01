@@ -19,7 +19,6 @@ export type WorkflowNodeFormKind =
   | 'start'
   | 'agent'
   | 'condition'
-  | 'indicator-condition'
   | 'foreach'
   | 'notify'
   | 'event'

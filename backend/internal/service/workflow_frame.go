@@ -17,24 +17,32 @@ type workflowFrameExecutor struct {
 	revision     db.WorkflowRevision
 	graph        workflowRunGraph
 	sourceNodeID string
-	frameNodeIDs map[string]bool
 }
 
 func (e workflowFrameExecutor) ExecuteFrame(ctx context.Context, request sdk.FrameRequest) (sdk.FrameResult, error) {
 	var source map[string]any
-	if json.Unmarshal(request.SourceOutput, &source) != nil || source == nil || source["branch"] != "each" {
-		return sdk.FrameResult{}, errors.New("workflow backtest frame source output is invalid")
+	if json.Unmarshal(request.SourceOutput, &source) != nil || source == nil || request.SourcePort == "" {
+		return sdk.FrameResult{}, errors.New("workflow frame source output is invalid")
+	}
+	if branch, _ := source["branch"].(string); branch != "" && branch != request.SourcePort {
+		return sdk.FrameResult{}, errors.New("workflow frame source port does not match its output branch")
+	}
+	event := request.Event
+	if event == nil {
+		event = map[string]string{}
 	}
 	outputs := map[string]map[string]any{e.sourceNodeID: source}
 	result := sdk.FrameResult{NodeOutputs: map[string]json.RawMessage{e.sourceNodeID: request.SourceOutput}}
-	event := map[string]string{"type": "backtest", "time": fmt.Sprint(source["evaluatedAt"]), "triggeredAt": fmt.Sprint(source["evaluatedAt"])}
+	frameNodes := workflowFrameNodeIDs(e.graph, e.sourceNodeID, request.SourcePort, request.ResultNodeIDs)
+	resultNodes := workflowFrameStringSet(request.ResultNodeIDs)
 	for _, nodeID := range e.graph.order {
-		if nodeID == e.sourceNodeID || !e.frameNodeIDs[nodeID] {
+		if nodeID == e.sourceNodeID || !frameNodes[nodeID] {
 			continue
 		}
 		node := e.graph.nodes[nodeID]
-		if !workflowBacktestFrameNode(node.NodeType) {
-			continue
+		desc := e.graph.descriptors[nodeID]
+		if !desc.Capabilities.FrameSafe {
+			return sdk.FrameResult{}, fmt.Errorf("workflow frame node %q is not frame-safe", nodeID)
 		}
 		reachable, err := workflowNodeReachable(e.graph.incoming[nodeID], outputs, event)
 		if err != nil {
@@ -43,26 +51,16 @@ func (e workflowFrameExecutor) ExecuteFrame(ctx context.Context, request sdk.Fra
 		if !reachable {
 			continue
 		}
-		if !workflowQuantPositionInputReady(node, outputs) {
-			continue
-		}
 		input, err := resolveWorkflowNodeInput(node, e.graph.incoming[nodeID], outputs, event)
 		if err != nil {
 			return sdk.FrameResult{}, err
 		}
-		if err := injectWorkflowQuantInput(node, e.graph.incoming[nodeID], outputs, event, input); err != nil {
-			return sdk.FrameResult{}, err
-		}
-		if node.NodeType == "official.quant.output_signal" {
-			input["previousTargetPosition"] = request.PreviousTargetPosition
-		}
-		desc := e.graph.descriptors[nodeID]
 		if validateWorkflowSchemaValue(desc.InputSchema, input) != nil {
-			return sdk.FrameResult{}, fmt.Errorf("backtest frame node %q input does not match its JSON Schema", nodeID)
+			return sdk.FrameResult{}, fmt.Errorf("workflow frame node %q input does not match its JSON Schema", nodeID)
 		}
 		_, handler, ok := e.app.Plugins.Action(node.NodeType)
 		if !ok {
-			return sdk.FrameResult{}, fmt.Errorf("backtest frame node %q handler is unavailable", nodeID)
+			return sdk.FrameResult{}, fmt.Errorf("workflow frame node %q handler is unavailable", nodeID)
 		}
 		state := &bufferedNodeState{app: e.app, workflowID: e.run.WorkflowID, revisionID: e.revision.ID, node: node, stateMode: desc.State}
 		actionResult, err := handler.Execute(ctx, sdk.ActionRequest{
@@ -71,32 +69,33 @@ func (e workflowFrameExecutor) ExecuteFrame(ctx context.Context, request sdk.Fra
 			Input: mustJSON(input), Config: append(json.RawMessage(nil), node.Config...),
 			Secrets: workflowSecretReader{app: e.app, revisionID: e.revision.ID, nodeInstanceID: nodeID},
 			State:   state, Artifacts: workflowArtifactStore{app: e.app}, ExecutionMode: sdk.ExecutionModeBacktestFrame,
+			Incoming: workflowIncomingOutputs(e.graph.incoming[nodeID], outputs, event), FrameContext: append(json.RawMessage(nil), request.Context...),
 			Logger: slog.Default(),
 		})
 		if err != nil {
-			return sdk.FrameResult{}, fmt.Errorf("backtest frame node %q failed: %w", nodeID, err)
+			return sdk.FrameResult{}, fmt.Errorf("workflow frame node %q failed: %w", nodeID, err)
 		}
 		var output map[string]any
 		if json.Unmarshal(actionResult.Output, &output) != nil || output == nil || validateWorkflowSchemaValue(desc.OutputSchema, output) != nil {
-			return sdk.FrameResult{}, fmt.Errorf("backtest frame node %q output does not match its JSON Schema", nodeID)
+			return sdk.FrameResult{}, fmt.Errorf("workflow frame node %q output does not match its JSON Schema", nodeID)
 		}
 		if branch, _ := output["branch"].(string); len(desc.Branches) > 0 && !containsString(desc.Branches, branch) {
-			return sdk.FrameResult{}, fmt.Errorf("backtest frame node %q returned an invalid branch", nodeID)
+			return sdk.FrameResult{}, fmt.Errorf("workflow frame node %q returned an invalid branch", nodeID)
 		}
 		outputs[nodeID] = output
 		result.NodeOutputs[nodeID] = append(json.RawMessage(nil), actionResult.Output...)
-		if node.NodeType == "official.quant.output_signal" {
-			result.Signals = append(result.Signals, append(json.RawMessage(nil), actionResult.Output...))
+		if resultNodes[nodeID] {
+			result.Results = append(result.Results, append(json.RawMessage(nil), actionResult.Output...))
 		}
 	}
 	return result, nil
 }
 
-func workflowBacktestFrameNodeIDs(graph workflowRunGraph, sourceNodeID string) map[string]bool {
-	result := map[string]bool{}
+func workflowFrameNodeIDs(graph workflowRunGraph, sourceNodeID, sourcePort string, resultNodeIDs []string) map[string]bool {
+	result, terminal := map[string]bool{}, workflowFrameStringSet(resultNodeIDs)
 	queue := []string{}
 	for _, edge := range graph.graph.Edges {
-		if edge.SourceNodeInstanceID == sourceNodeID && edge.SourcePort == "each" {
+		if edge.SourceNodeInstanceID == sourceNodeID && edge.SourcePort == sourcePort {
 			queue = append(queue, edge.TargetNodeInstanceID)
 		}
 	}
@@ -107,7 +106,7 @@ func workflowBacktestFrameNodeIDs(graph workflowRunGraph, sourceNodeID string) m
 			continue
 		}
 		result[nodeID] = true
-		if graph.nodes[nodeID].NodeType == "official.quant.output_signal" {
+		if terminal[nodeID] {
 			continue
 		}
 		for _, edge := range graph.graph.Edges {
@@ -119,61 +118,27 @@ func workflowBacktestFrameNodeIDs(graph workflowRunGraph, sourceNodeID string) m
 	return result
 }
 
-func workflowBacktestFrameNode(nodeType string) bool {
-	return isWorkflowQuantConditionType(nodeType) || nodeType == "official.quant.code_strategy" ||
-		nodeType == "official.quant.position" || nodeType == "official.quant.output_signal"
-}
-
-func workflowQuantPositionInputReady(node workflowGraphNode, outputs map[string]map[string]any) bool {
-	if node.NodeType != "official.quant.position" {
-		return true
-	}
-	var config struct {
-		TargetMode string `json:"targetMode"`
-	}
-	if json.Unmarshal(node.Config, &config) != nil || config.TargetMode != "input" {
-		return true
-	}
-	binding := node.InputBindings["target"]
-	ready, _ := outputs[binding.NodeInstanceID]["ready"].(bool)
-	return ready
-}
-
-func injectWorkflowQuantInput(node workflowGraphNode, incoming []workflowGraphEdge, outputs map[string]map[string]any, event map[string]string, input map[string]any) error {
-	if node.NodeType != "official.quant.output_signal" {
-		return nil
-	}
-	candidates := make([]any, 0, len(incoming))
+func workflowIncomingOutputs(incoming []workflowGraphEdge, outputs map[string]map[string]any, event map[string]string) []sdk.NodeOutput {
+	result := make([]sdk.NodeOutput, 0, len(incoming))
 	for _, edge := range incoming {
-		if output := outputs[edge.SourceNodeInstanceID]; output != nil {
-			reached, err := workflowEdgeReached(edge, outputs, event)
-			if err != nil {
-				return err
-			}
-			if reached && eNodeTarget(output) != nil {
-				candidates = append(candidates, eNodeTarget(output))
-			}
+		output := outputs[edge.SourceNodeInstanceID]
+		if output == nil {
+			continue
+		}
+		reached, err := workflowEdgeReached(edge, outputs, event)
+		if err == nil && reached {
+			result = append(result, sdk.NodeOutput{NodeInstanceID: edge.SourceNodeInstanceID, Output: mustJSON(output)})
 		}
 	}
-	input["candidates"] = candidates
-	nodeValues := make(map[string]any, len(outputs))
-	for nodeID, output := range outputs {
-		if output["ready"] != nil || output["targetPosition"] != nil {
-			nodeValues[nodeID] = output
-		}
-	}
-	input["nodeValues"] = nodeValues
-	return nil
+	return result
 }
 
-func eNodeTarget(output map[string]any) any {
-	if output["targetPosition"] == nil {
-		return nil
+func workflowFrameStringSet(values []string) map[string]bool {
+	result := make(map[string]bool, len(values))
+	for _, value := range values {
+		result[value] = true
 	}
-	return map[string]any{
-		"targetPosition": output["targetPosition"], "evaluatedAt": output["evaluatedAt"],
-		"sourceNodeInstanceId": output["sourceNodeInstanceId"],
-	}
+	return result
 }
 
 var _ sdk.FrameExecutor = workflowFrameExecutor{}

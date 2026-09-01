@@ -3,4 +3,4 @@ package pluginregistry
 
 import "coinsphere/backend/plugin/sdk"
 
-func RegisterAll(*sdk.Registry) error { return nil }
+func RegisterAll(*sdk.Registry, sdk.Host) error { return nil }

@@ -45,7 +45,7 @@
             </span>
             <span class="result-row__copy">
               <strong>{{ view.name }}</strong>
-              <small>{{ pageLabel }}</small>
+              <small>{{ pageLabel(view) }}</small>
             </span>
             <ElTag v-if="view.status === 'revoked'" type="info" effect="plain" size="small"
               >撤销</ElTag
@@ -59,7 +59,7 @@
       <section class="results-stage">
         <div v-if="selectedView" class="results-stage__toolbar">
           <div>
-            <span>{{ pageLabel }}</span>
+            <span>{{ pageLabel(selectedView) }}</span>
             <small>{{ formatTime(selectedView.createdAt) }}</small>
           </div>
           <div v-if="isAdmin" class="results-stage__commands">
@@ -105,11 +105,6 @@
           <ElSegmented v-model="createForm.market" :options="marketOptions" />
         </ElFormItem>
         <div class="dialog-grid">
-          <ElFormItem label="信号节点">
-            <ElSelect v-model="createForm.signalNodeInstanceId" filterable allow-create>
-              <ElOption v-for="node in signalNodes" :key="node" :label="node" :value="node" />
-            </ElSelect>
-          </ElFormItem>
           <ElFormItem label="Paper 节点">
             <ElSelect v-model="createForm.paperNodeInstanceId" filterable allow-create>
               <ElOption v-for="node in paperNodes" :key="node" :label="node" :value="node" />
@@ -120,20 +115,17 @@
           </ElFormItem>
           <ElFormItem label="状态过滤">
             <ElSelect v-model="createForm.status" clearable>
-              <ElOption label="待审批" value="pending" />
-              <ElOption label="已取代" value="superseded" />
+              <ElOption label="待成交" value="new" />
+              <ElOption label="部分成交" value="partially_filled" />
+              <ElOption label="已成交" value="filled" />
+              <ElOption label="已撤单" value="canceled" />
               <ElOption label="已拒绝" value="rejected" />
-              <ElOption label="已执行" value="executed" />
+              <ElOption label="已过期" value="expired" />
             </ElSelect>
           </ElFormItem>
         </div>
         <ElFormItem label="允许操作">
           <ElCheckboxGroup v-model="createForm.allowedActions">
-            <ElCheckbox value="approve">批准</ElCheckbox>
-            <ElCheckbox value="reject">拒绝</ElCheckbox>
-            <ElCheckbox value="retry">重试运行</ElCheckbox>
-            <ElCheckbox value="cancel">取消运行</ElCheckbox>
-            <ElCheckbox value="pause">暂停工作流</ElCheckbox>
             <ElCheckbox value="export">导出</ElCheckbox>
           </ElCheckboxGroup>
         </ElFormItem>
@@ -230,8 +222,8 @@
   const userOptions = ref<Api.System.UserListItem[]>([])
   const roleOptions = ref<Api.System.RoleListItem[]>([])
   const workflowOptions = ref<WorkflowItem[]>([])
-  const signalNodes = ref<string[]>([])
   const paperNodes = ref<string[]>([])
+  const paperPluginId = ref('')
   const loading = ref(false)
   const saving = ref(false)
   const createVisible = ref(false)
@@ -247,9 +239,8 @@
     market: 'spot' as 'spot' | 'usdm',
     instrument: 'BTCUSDT',
     status: '',
-    signalNodeInstanceId: 'signal',
     paperNodeInstanceId: 'paper',
-    allowedActions: ['approve', 'reject', 'export'],
+    allowedActions: ['export'],
     userIds: [] as number[],
     roleCodes: ['R_USER'] as string[]
   })
@@ -259,12 +250,12 @@
     Boolean(
       createForm.name.trim() &&
         workflowOptions.value.some((workflow) => workflow.id === createForm.workflowId) &&
-        createForm.signalNodeInstanceId.trim() &&
-        createForm.paperNodeInstanceId.trim()
+        createForm.paperNodeInstanceId.trim() &&
+        paperPluginId.value
     )
   )
 
-  const pageLabel = 'Paper 账户与信号'
+  const pageLabel = (view: ResultView) => `${view.pluginId} / ${view.pageKey}`
   const loadComponent = async (view: ResultView) => {
     const registration = registeredFrontendPlugins.find((plugin) => plugin.id === view.pluginId)
     if (!registration) {
@@ -292,9 +283,7 @@
   const loadViews = async () => {
     loading.value = true
     try {
-      views.value = (await fetchResultViews()).items.filter(
-        (view) => view.pluginId === 'official.quant' && view.pageKey === 'paper'
-      )
+      views.value = (await fetchResultViews()).items.filter((view) => view.pageKey === 'paper')
       const next =
         activeViews.value.find((view) => view.id === selectedView.value?.id) || activeViews.value[0]
       selectedView.value = undefined
@@ -319,16 +308,22 @@
     }
     await loadWorkflowNodes(createForm.workflowId)
   }
-  const nodesOfType = (nodes: WorkflowGraphNode[], nodeType: string) =>
-    nodes.filter((node) => node.nodeType === nodeType).map((node) => node.nodeInstanceId)
+  const nodesOfType = (nodes: WorkflowGraphNode[], suffix: string) =>
+    nodes
+      .filter((node) => node.nodeType.split('.').at(-1) === suffix)
+      .map((node) => node.nodeInstanceId)
+  const pluginIDForNode = (nodes: WorkflowGraphNode[], nodeID: string) => {
+    const type = nodes.find((node) => node.nodeInstanceId === nodeID)?.nodeType || ''
+    const parts = type.split('.')
+    return parts.length >= 2 ? parts.slice(0, 2).join('.') : ''
+  }
   const loadWorkflowNodes = async (workflowId: number) => {
     const workflow = workflowOptions.value.find((item) => item.id === workflowId)
     if (!workflow) return
     const revision = await fetchWorkflowRevision(workflow.id, workflow.activeRevisionId)
-    signalNodes.value = nodesOfType(revision.graph.nodes, 'official.quant.signal')
-    paperNodes.value = nodesOfType(revision.graph.nodes, 'official.quant.paper_execute')
-    createForm.signalNodeInstanceId = signalNodes.value[0] || createForm.signalNodeInstanceId
+    paperNodes.value = nodesOfType(revision.graph.nodes, 'paper_execute')
     createForm.paperNodeInstanceId = paperNodes.value[0] || createForm.paperNodeInstanceId
+    paperPluginId.value = pluginIDForNode(revision.graph.nodes, createForm.paperNodeInstanceId)
   }
   const openCreate = async () => {
     await loadGrantOptions()
@@ -337,7 +332,6 @@
   const submitCreate = async () => {
     const scope = {
       workflowId: createForm.workflowId,
-      signalNodeInstanceId: createForm.signalNodeInstanceId.trim(),
       paperNodeInstanceId: createForm.paperNodeInstanceId.trim()
     }
     const filters: Record<string, string> = {}
@@ -349,7 +343,7 @@
     try {
       const created = await createResultView({
         name: createForm.name.trim(),
-        pluginId: 'official.quant',
+        pluginId: paperPluginId.value,
         pageKey: 'paper',
         scope,
         filters,

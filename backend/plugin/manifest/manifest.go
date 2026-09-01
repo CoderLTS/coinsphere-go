@@ -29,19 +29,21 @@ var windowsAbsolutePathPattern = regexp.MustCompile(`^[A-Za-z]:/`)
 var contributionTypes = map[string]bool{
 	"nodes": true, "triggers": true, "strategies": true, "apiRoutes": true, "pages": true,
 	"resultPages": true, "assistantQueries": true, "migrations": true,
+	"marketDataProviders": true, "executionProviders": true, "workflowValidators": true, "templates": true,
 }
 
 type Manifest struct {
-	SchemaVersion int        `json:"schemaVersion"`
-	ID            string     `json:"id"`
-	Name          string     `json:"name"`
-	Version       string     `json:"version"`
-	SDKMajor      int        `json:"sdkMajor"`
-	RequiresCore  string     `json:"requiresCore"`
-	Backend       Backend    `json:"backend"`
-	Frontend      Frontend   `json:"frontend"`
-	Migrations    Migrations `json:"migrations"`
-	Contributes   []string   `json:"contributes"`
+	SchemaVersion   int               `json:"schemaVersion"`
+	ID              string            `json:"id"`
+	Name            string            `json:"name"`
+	Version         string            `json:"version"`
+	SDKMajor        int               `json:"sdkMajor"`
+	RequiresCore    string            `json:"requiresCore"`
+	RequiresPlugins map[string]string `json:"requiresPlugins,omitempty"`
+	Backend         Backend           `json:"backend"`
+	Frontend        Frontend          `json:"frontend"`
+	Migrations      Migrations        `json:"migrations"`
+	Contributes     []string          `json:"contributes"`
 }
 
 type Backend struct {
@@ -126,6 +128,10 @@ func Load(root, coreVersion string, sdkMajor int) (Package, error) {
 }
 
 func LoadAll(roots []string, coreVersion string, sdkMajor int) ([]Package, error) {
+	return LoadAllWithDependencies(roots, coreVersion, sdkMajor, nil)
+}
+
+func LoadAllWithDependencies(roots []string, coreVersion string, sdkMajor int, available map[string]string) ([]Package, error) {
 	packages := make([]Package, 0, len(roots))
 	seen := make(map[string]string, len(roots))
 	for _, root := range roots {
@@ -139,8 +145,76 @@ func LoadAll(roots []string, coreVersion string, sdkMajor int) ([]Package, error
 		seen[plugin.Manifest.ID] = plugin.Root
 		packages = append(packages, plugin)
 	}
-	sort.Slice(packages, func(i, j int) bool { return packages[i].Manifest.ID < packages[j].Manifest.ID })
-	return packages, nil
+	return SortByDependenciesWithAvailable(packages, available)
+}
+
+func SortByDependencies(packages []Package) ([]Package, error) {
+	return SortByDependenciesWithAvailable(packages, nil)
+}
+
+func SortByDependenciesWithAvailable(packages []Package, available map[string]string) ([]Package, error) {
+	byID := make(map[string]Package, len(packages))
+	for _, plugin := range packages {
+		byID[plugin.Manifest.ID] = plugin
+	}
+	for _, plugin := range packages {
+		for requiredID, constraintText := range plugin.Manifest.RequiresPlugins {
+			required, exists := byID[requiredID]
+			if !exists {
+				availableVersion := available[requiredID]
+				constraint, _ := semver.NewConstraint(constraintText)
+				version, versionErr := semver.StrictNewVersion(availableVersion)
+				if availableVersion == "" || versionErr != nil || !constraint.Check(version) {
+					return nil, fmt.Errorf("plugin %q requires missing plugin %q", plugin.Manifest.ID, requiredID)
+				}
+				continue
+			}
+			constraint, _ := semver.NewConstraint(constraintText)
+			version, _ := semver.StrictNewVersion(required.Manifest.Version)
+			if !constraint.Check(version) {
+				return nil, fmt.Errorf("plugin %q requires plugin %q version %s", plugin.Manifest.ID, requiredID, constraintText)
+			}
+		}
+	}
+	result := make([]Package, 0, len(packages))
+	state := make(map[string]uint8, len(packages))
+	var visit func(string) error
+	visit = func(id string) error {
+		if state[id] == 1 {
+			return fmt.Errorf("plugin dependency cycle includes %q", id)
+		}
+		if state[id] == 2 {
+			return nil
+		}
+		state[id] = 1
+		plugin := byID[id]
+		dependencies := make([]string, 0, len(plugin.Manifest.RequiresPlugins))
+		for requiredID := range plugin.Manifest.RequiresPlugins {
+			dependencies = append(dependencies, requiredID)
+		}
+		sort.Strings(dependencies)
+		for _, requiredID := range dependencies {
+			if _, exists := byID[requiredID]; exists {
+				if err := visit(requiredID); err != nil {
+					return err
+				}
+			}
+		}
+		state[id] = 2
+		result = append(result, plugin)
+		return nil
+	}
+	ids := make([]string, 0, len(packages))
+	for id := range byID {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if err := visit(id); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
 }
 
 func Validate(value Manifest, coreVersion string, sdkMajor int) error {
@@ -169,6 +243,14 @@ func Validate(value Manifest, coreVersion string, sdkMajor int) error {
 	}
 	if !constraint.Check(core) {
 		return fmt.Errorf("requiresCore %q does not include core %s", value.RequiresCore, coreVersion)
+	}
+	for id, constraintText := range value.RequiresPlugins {
+		if id == value.ID || !pluginIDPattern.MatchString(id) {
+			return fmt.Errorf("requiresPlugins contains invalid plugin id %q", id)
+		}
+		if _, err := semver.NewConstraint(constraintText); err != nil {
+			return fmt.Errorf("requiresPlugins constraint for %q is invalid: %w", id, err)
+		}
 	}
 	if strings.TrimSpace(value.Backend.Module) == "" || strings.TrimSpace(value.Backend.Package) == "" {
 		return errors.New("backend.module and backend.package are required")

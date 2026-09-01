@@ -78,16 +78,16 @@ API 层可以校验 ID、枚举、时间、分页、文件和请求体等外部�
 
 `internal/service` 按状态所有权拆分：
 
-| 文件组 | 职责 |
-| --- | --- |
-| `auth.go` | 登录、登出、重新认证、Token 撤销和 Principal |
-| `system.go`、`home.go`、`observability.go`、`system_logs.go` | 用户/角色/菜单、首页健康、指标和结构化系统日志 |
-| `workflow.go`、`workflow_graph.go`、`workflow_nodes.go`、`workflow_secrets.go` | 工作流定义、图校验、节点目录、不可变修订和密钥 |
-| `workflow_run.go`、`workflow_history.go`、`workflow_logs.go` | Run 队列、执行、重试/取消/重放、检查点、制品和历史 |
-| `workflow_events.go`、`workflow_triggers.go`、`workflow_schedule.go` | CloudEvents、投递、Outbox、连续流和定时触发 |
-| `workflow_human_tasks.go`、`workflow_builtin.go` | 人工等待和核心节点 |
-| `workflow_realtime.go` | 进程内运行更新订阅；数据库仍是事实源 |
-| `result_views.go` | 固定插件结果范围、授权和白名单操作 |
+| 文件组                                                                         | 职责                                               |
+| ------------------------------------------------------------------------------ | -------------------------------------------------- |
+| `auth.go`                                                                      | 登录、登出、重新认证、Token 撤销和 Principal       |
+| `system.go`、`home.go`、`observability.go`、`system_logs.go`                   | 用户/角色/菜单、首页健康、指标和结构化系统日志     |
+| `workflow.go`、`workflow_graph.go`、`workflow_nodes.go`、`workflow_secrets.go` | 工作流定义、图校验、节点目录、不可变修订和密钥     |
+| `workflow_run.go`、`workflow_history.go`、`workflow_logs.go`                   | Run 队列、执行、重试/取消/重放、检查点、制品和历史 |
+| `workflow_events.go`、`workflow_triggers.go`、`workflow_schedule.go`           | CloudEvents、投递、Outbox、连续流和定时触发        |
+| `workflow_human_tasks.go`、`workflow_builtin.go`                               | 人工等待和核心节点                                 |
+| `workflow_realtime.go`                                                         | 进程内运行更新订阅；数据库仍是事实源               |
+| `result_views.go`                                                              | 固定插件结果范围、授权和白名单操作                 |
 
 `service.App` 持有数据库、配置、安全组件、插件 Registry、制品根目录和有界运行资源。跨文件调用仍属于同一模块，不额外引入接口层。
 
@@ -95,17 +95,18 @@ API 层可以校验 ID、枚举、时间、分页、文件和请求体等外部�
 
 `internal/db/models.go` 保存核心 GORM 模型，`seed.go` 幂等写入基础角色、菜单、初始管理员和插件页面。版本化 SQL 位于 `internal/migration/sql/`：
 
-| 版本 | 当前职责 |
-| --- | --- |
-| `00001` | 认证、RBAC、菜单、i18n 和审计 |
-| `00002` | 插件安装与引用 |
-| `00003` | 工作流、修订和运行时 |
-| `00004` | 修订级节点密钥 |
+| 版本    | 当前职责                                                     |
+| ------- | ------------------------------------------------------------ |
+| `00001` | 认证、RBAC、菜单、i18n 和审计                                |
+| `00002` | 插件安装与引用                                               |
+| `00003` | 工作流、修订和运行时                                         |
+| `00004` | 修订级节点密钥                                               |
 | `00005` | 事件、Run、节点、日志、检查点、状态、制品、Outbox 和人工任务 |
-| `00006` | Quant 品种、K 线和回测 |
-| `00007` | ResultView、信号、Paper 和 Notification |
-| `00008` | 工作流级 Quant 品种来源 |
-| `00009` | 结构化系统日志与运行配置 |
+| `00006` | Quant 品种、K 线和回测                                       |
+| `00007` | ResultView、信号、Paper 和 Notification                      |
+| `00008` | 工作流级 Quant 品种来源                                      |
+| `00009` | 结构化系统日志与运行配置                                     |
+| `00017` | Quant/ Binance schema split and Binance trading facts        |
 
 不要在模型初始化或应用启动中加入自动建表。数据库变更应修改新 migration、拥有该状态的 Service 和对应契约文档。
 
@@ -123,6 +124,7 @@ official/
 ├─ notification/
 ├─ qq/
 ├─ quant/
+├─ binance/
 └─ internal/safehttp/    官方插件共享的公网访问与 SSRF 防护
 ```
 
@@ -190,32 +192,32 @@ GitHub Actions 按 Backend、Frontend、插件和发布脚本路径选择检查�
 
 ## 5. 文档职责
 
-| 文档 | 负责内容 |
-| --- | --- |
-| `README.md` | 项目入口、能力、快速启动和文档索引 |
-| `docs/architecture/overview.md` | 当前系统结构、数据流和边界 |
-| `docs/contracts/README.md` | 已实现的跨模块接口与状态语义 |
-| `docs/code-structure.md` | 源码目录、模块职责和修改入口 |
-| `docs/plugin-development.md` | 第三方可信插件开发与生命周期 |
-| `docs/user-guide.md` | 用户和管理员操作 |
-| `docs/runbooks/*` | 可执行的开发、迁移、恢复和发布步骤 |
-| `docs/architecture/decisions/*` | 已接受或被替代的架构决策历史 |
-| `docs/quality/*`、`docs/templates/*` | 稳定门禁和证据模板 |
+| 文档                                 | 负责内容                           |
+| ------------------------------------ | ---------------------------------- |
+| `README.md`                          | 项目入口、能力、快速启动和文档索引 |
+| `docs/architecture/overview.md`      | 当前系统结构、数据流和边界         |
+| `docs/contracts/README.md`           | 已实现的跨模块接口与状态语义       |
+| `docs/code-structure.md`             | 源码目录、模块职责和修改入口       |
+| `docs/plugin-development.md`         | 第三方可信插件开发与生命周期       |
+| `docs/user-guide.md`                 | 用户和管理员操作                   |
+| `docs/runbooks/*`                    | 可执行的开发、迁移、恢复和发布步骤 |
+| `docs/architecture/decisions/*`      | 已接受或被替代的架构决策历史       |
+| `docs/quality/*`、`docs/templates/*` | 稳定门禁和证据模板                 |
 
 当前进度、Issue、PR、验收证据和放行状态只保存在 GitHub，不写回架构或契约文档。
 
 ## 6. 常见修改入口
 
-| 需求 | 首要位置 | 通常同时检查 |
-| --- | --- | --- |
-| 新增或修改 HTTP API | `backend/internal/api` | 拥有状态的 Service、权限码、Frontend API、公共契约 |
-| 修改工作流图或状态机 | `backend/internal/service/workflow*` | migration、API handler、编辑器、契约和恢复语义 |
-| 新增核心控制节点 | `workflow_builtin.go`、`workflow_nodes.go` | 图校验、编辑器材料和契约 |
-| 新增业务节点或策略 | 对应官方/外部插件 | SDK 注册、Schema、结果页、插件指南 |
-| 修改认证或权限 | `security`、`service/auth.go`、`perm` | API 中间件、种子菜单、Frontend 指令和安全文档 |
-| 修改数据库结构 | 新 migration | 模型、Service 事务、Runbook、备份与回滚 |
-| 修改系统页面 | `frontend/src/views` | API、Router、菜单种子、权限与文案 |
-| 修改插件生命周期 | `manifest`、`pluginbuild`、`pluginlifecycle` | CLI、生成文件、migration runner 和插件指南 |
-| 修改部署 | `deploy/production`、`.github/workflows` | Release 脚本、Runbook、回滚与安全边界 |
+| 需求                 | 首要位置                                     | 通常同时检查                                       |
+| -------------------- | -------------------------------------------- | -------------------------------------------------- |
+| 新增或修改 HTTP API  | `backend/internal/api`                       | 拥有状态的 Service、权限码、Frontend API、公共契约 |
+| 修改工作流图或状态机 | `backend/internal/service/workflow*`         | migration、API handler、编辑器、契约和恢复语义     |
+| 新增核心控制节点     | `workflow_builtin.go`、`workflow_nodes.go`   | 图校验、编辑器材料和契约                           |
+| 新增业务节点或策略   | 对应官方/外部插件                            | SDK 注册、Schema、结果页、插件指南                 |
+| 修改认证或权限       | `security`、`service/auth.go`、`perm`        | API 中间件、种子菜单、Frontend 指令和安全文档      |
+| 修改数据库结构       | 新 migration                                 | 模型、Service 事务、Runbook、备份与回滚            |
+| 修改系统页面         | `frontend/src/views`                         | API、Router、菜单种子、权限与文案                  |
+| 修改插件生命周期     | `manifest`、`pluginbuild`、`pluginlifecycle` | CLI、生成文件、migration runner 和插件指南         |
+| 修改部署             | `deploy/production`、`.github/workflows`     | Release 脚本、Runbook、回滚与安全边界              |
 
 先从状态拥有模块修改，再更新调用方。不要为单个调用引入新的共享层，也不要从 API、工作流核心或前端绕过插件和领域边界。

@@ -132,12 +132,7 @@ func (a *App) DeleteOutboundProxy(ctx context.Context, proxyID int64) error {
 		WHERE EXISTS (
 			SELECT 1
 			FROM jsonb_array_elements(COALESCE(revision.graph_json::jsonb -> 'nodes', '[]'::jsonb)) node
-			WHERE node ->> 'nodeType' IN (
-				'official.quant.sync_instruments',
-				'official.quant.backfill_candles',
-				'official.quant.realtime_candles'
-			)
-			AND node -> 'config' ->> 'proxyId' = ?
+			WHERE node -> 'config' ->> 'proxyId' = ?
 		)
 	`, strconv.FormatInt(proxyID, 10)).Scan(&references).Error
 	if err != nil {
@@ -172,7 +167,7 @@ func (a *App) ValidateOutboundProxy(ctx context.Context, proxyID int64) (M, erro
 			return errors.New("proxy validation redirects are disabled")
 		},
 	}
-	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://data-api.binance.vision/api/v3/ping", nil)
+	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://example.com/", nil)
 	request.Header.Set("Accept", "application/json")
 	response, requestErr := client.Do(request)
 	status := "healthy"
@@ -183,12 +178,12 @@ func (a *App) ValidateOutboundProxy(ctx context.Context, proxyID int64) (M, erro
 		if requestErr == nil {
 			_, requestErr = io.ReadAll(io.LimitReader(response.Body, 64<<10))
 			if response.StatusCode != http.StatusOK {
-				requestErr = errors.New("unexpected Binance status")
+				requestErr = errors.New("unexpected proxy validation status")
 			}
 		}
 	}
 	if requestErr != nil {
-		status, message = "failed", "无法通过该代理访问 Binance 公共接口"
+		status, message = "failed", "无法通过该代理访问公共网络"
 	} else {
 		latency := int(time.Since(startedAt).Milliseconds())
 		latencyMS = &latency
@@ -204,7 +199,7 @@ func (a *App) ValidateOutboundProxy(ctx context.Context, proxyID int64) (M, erro
 	}, nil
 }
 
-// ResolveOutboundProxy 只供显式选择代理的可信 Binance 公共行情节点使用。
+// ResolveOutboundProxy 只供显式选择代理的可信插件节点使用。
 func (a *App) ResolveOutboundProxy(ctx context.Context, proxyID int64) (string, error) {
 	if proxyID == 0 {
 		return "", nil

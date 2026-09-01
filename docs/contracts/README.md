@@ -30,43 +30,43 @@
 
 - `/api/v1/system/proxies` 提供 HTTP/SOCKS5 代理的列表、新增、更新、启停和删除，`/{proxyId}/validations` 通过 Binance Spot 公共 Ping 检查连通性。接口只允许拥有对应系统代理权限的管理员使用。
 - 代理密码使用服务端 SecretCipher 加密保存，列表和编辑响应只返回是否已配置；编辑时密码留空表示保留，显式清除后删除密文。已被任一工作流修订引用的代理删除返回 `409 Conflict`。
-- `official.quant.sync_instruments`、`official.quant.backfill_candles` 和 `official.quant.realtime_candles` 的 `proxyId` 为 `0` 或缺省时直连；选择正数 ID 时，运行时必须解析到仍存在且已启用的代理，否则节点失败。代理只改变 Binance 公共 REST/WebSocket 的传输路径，不扩大固定主机和公共端点白名单。节点化回测可将 `backfill_candles` 作为 `backtest` 入口；它只在回测区间及配置的前置根数不完整时补数，并将运行参数透传给唯一的 `backtest_start`。
+- `official.binance` 行情节点的 `proxyId` 为 `0` 或缺省时直连；选择正数 ID 时，运行时必须解析到仍存在且已启用的代理，否则节点失败。代理只改变 Binance 公共 REST/WebSocket 的传输路径，不扩大固定主机和公共端点白名单。Quant 回测不读取代理配置，而是通过 `MarketDataRegistry` 使用 Provider。
 - `official.connector`、`official.ai`、通知、QQ、Paper 报价和其他 Quant 节点不读取系统代理池，也不继承上述节点的代理选择。
 
 ## 工作流
 
-| 路由                                                            | 语义                                   |
-| --------------------------------------------------------------- | -------------------------------------- |
-| `GET /api/v1/workflows/templates`                               | 列出当前可创建的批处理、事件和连续流模板 |
-| `POST /api/v1/events`                                           | 发布 CloudEvents 1.0 结构化 JSON       |
-| `POST /api/v1/webhooks/{workflowId}`                            | 通过工作流 Secret 发布 Webhook 事件    |
-| `GET /api/v1/human-tasks`                                       | 查询待处理人工任务                     |
-| `POST /api/v1/human-tasks/{taskId}`                             | 一次性批准或拒绝人工任务               |
-| `GET /api/v1/workflows/node-definitions`                        | 列出核心与编译期插件节点 Schema        |
-| `POST /api/v1/workflows/validate`                               | 只读校验完整工作流图                   |
-| `GET/POST /api/v1/workflows`                                    | 列表，或从模板创建工作流及初始修订     |
-| `GET /api/v1/workflows/{workflowId}`                            | 读取元数据、活动修订和运行时容量       |
-| `PATCH /api/v1/workflows/{workflowId}`                          | 更新工作流名称和说明，不修改活动修订   |
-| `GET/POST /api/v1/workflows/{workflowId}/revisions`             | 列表，或保存新不可变修订               |
-| `GET /api/v1/workflows/{workflowId}/revisions/{revisionId}`     | 读取固定修订                           |
-| `POST /api/v1/workflows/{workflowId}/lifecycle`                 | 执行 `activate` 或 `deactivate`        |
-| `GET/POST /api/v1/workflows/{workflowId}/runs`                  | 搜索运行日志，或创建手工运行           |
-| `WS /api/v1/ws/workflows/{workflowId}/runs`                    | 超级管理员订阅轻量运行更新通知         |
-| `GET /api/v1/workflow-runs/{runId}`                             | 读取事件、节点尝试、日志和制品引用     |
-| `POST /api/v1/workflow-runs/{runId}`                            | 执行 `cancel`、`retry` 或 `replay`     |
-| `GET /api/v1/notification-deliveries`                          | 查询当前用户的站内通知与未读数         |
-| `POST /api/v1/notification-deliveries/{deliveryId}/read`       | 将当前用户的一条站内通知标为已读       |
-| `POST /api/v1/notification-deliveries/read-all`                | 将当前用户的全部站内通知标为已读       |
-| `WS /api/v1/ws/notifications`                                  | 订阅当前用户的站内通知和未读数更新     |
-| `GET /api/v1/artifacts/{sha256}/manifest`                       | 读取并校验制品清单                     |
-| `GET /api/v1/artifacts/{sha256}/download`                       | 下载解压后的制品正文                   |
-| `GET/POST /api/v1/result-views`                                 | 列出获授权视图，或由管理员创建固定视图 |
-| `GET /api/v1/result-views/{viewId}`                             | 读取授权视图的公开描述                 |
-| `PUT /api/v1/result-views/{viewId}/grants`                      | 管理员原子替换用户与角色授权           |
-| `POST /api/v1/result-views/{viewId}/revoke`                     | 管理员不可逆撤销共享视图               |
-| `GET /api/v1/result-views/{viewId}/runs`                        | 读取固定工作流的脱敏运行摘要           |
-| `POST /api/v1/result-views/{viewId}/runs/{runId}/{action}`      | 按白名单重试或取消范围内运行           |
-| `POST /api/v1/result-views/{viewId}/workflow/pause`             | 按白名单暂停固定工作流                 |
+| 路由                                                        | 语义                                     |
+| ----------------------------------------------------------- | ---------------------------------------- |
+| `GET /api/v1/workflows/templates`                           | 列出当前可创建的批处理、事件和连续流模板 |
+| `POST /api/v1/events`                                       | 发布 CloudEvents 1.0 结构化 JSON         |
+| `POST /api/v1/webhooks/{workflowId}`                        | 通过工作流 Secret 发布 Webhook 事件      |
+| `GET /api/v1/human-tasks`                                   | 查询待处理人工任务                       |
+| `POST /api/v1/human-tasks/{taskId}`                         | 一次性批准或拒绝人工任务                 |
+| `GET /api/v1/workflows/node-definitions`                    | 列出核心与编译期插件节点 Schema          |
+| `POST /api/v1/workflows/validate`                           | 只读校验完整工作流图                     |
+| `GET/POST /api/v1/workflows`                                | 列表，或从模板创建工作流及初始修订       |
+| `GET /api/v1/workflows/{workflowId}`                        | 读取元数据、活动修订和运行时容量         |
+| `PATCH /api/v1/workflows/{workflowId}`                      | 更新工作流名称和说明，不修改活动修订     |
+| `GET/POST /api/v1/workflows/{workflowId}/revisions`         | 列表，或保存新不可变修订                 |
+| `GET /api/v1/workflows/{workflowId}/revisions/{revisionId}` | 读取固定修订                             |
+| `POST /api/v1/workflows/{workflowId}/lifecycle`             | 执行 `activate` 或 `deactivate`          |
+| `GET/POST /api/v1/workflows/{workflowId}/runs`              | 搜索运行日志，或创建手工运行             |
+| `WS /api/v1/ws/workflows/{workflowId}/runs`                 | 超级管理员订阅轻量运行更新通知           |
+| `GET /api/v1/workflow-runs/{runId}`                         | 读取事件、节点尝试、日志和制品引用       |
+| `POST /api/v1/workflow-runs/{runId}`                        | 执行 `cancel`、`retry` 或 `replay`       |
+| `GET /api/v1/notification-deliveries`                       | 查询当前用户的站内通知与未读数           |
+| `POST /api/v1/notification-deliveries/{deliveryId}/read`    | 将当前用户的一条站内通知标为已读         |
+| `POST /api/v1/notification-deliveries/read-all`             | 将当前用户的全部站内通知标为已读         |
+| `WS /api/v1/ws/notifications`                               | 订阅当前用户的站内通知和未读数更新       |
+| `GET /api/v1/artifacts/{sha256}/manifest`                   | 读取并校验制品清单                       |
+| `GET /api/v1/artifacts/{sha256}/download`                   | 下载解压后的制品正文                     |
+| `GET/POST /api/v1/result-views`                             | 列出获授权视图，或由管理员创建固定视图   |
+| `GET /api/v1/result-views/{viewId}`                         | 读取授权视图的公开描述                   |
+| `PUT /api/v1/result-views/{viewId}/grants`                  | 管理员原子替换用户与角色授权             |
+| `POST /api/v1/result-views/{viewId}/revoke`                 | 管理员不可逆撤销共享视图                 |
+| `GET /api/v1/result-views/{viewId}/runs`                    | 读取固定工作流的脱敏运行摘要             |
+| `POST /api/v1/result-views/{viewId}/runs/{runId}/{action}`  | 按白名单重试或取消范围内运行             |
+| `POST /api/v1/result-views/{viewId}/workflow/pause`         | 按白名单暂停固定工作流                   |
 
 - 创建接受批处理、事件、Connector 和 Quant 模板。事件 Trigger 按类型及可选精确 source/subject 过滤；`core.schedule` 配置必须二选一：`everySeconds` 60 至 86400，或六段 `cronExpression` 加 IANA `timeZone`。图 `schemaVersion` 固定为 `1`，节点保存 `nodeInstanceId`、精确节点版本、普通配置、结构化输入映射和位置；边保存两端端口及可选 Boolean CEL 条件。
 - 输入映射只接受 `field`、`literal`、`cel`。字段来源使用上游 `nodeInstanceId` 和字段路径数组；保存校验端口、可达性、DAG、JSON Schema、字段类型和 CEL，并拒绝 Decimal CEL 算术。图级后向边始终拒绝；`core.loop` 只运行内嵌无环子图，并强制 1 至 100 次上限、绝对超时和 Boolean CEL 退出条件。每轮 RunNode、RunCheckpoint 与操作键都包含迭代号，人工等待节点不能嵌入 Loop。
@@ -91,7 +91,7 @@
 
 - `schemaVersion` 当前固定为 `1`。
 - `id` 是稳定的小写点分名称；`version` 是严格 SemVer。
-- `sdkMajor` 必须等于当前 SDK major `2`，`requiresCore` 必须包含当前 Core `2.0.0`。
+- `sdkMajor` 必须等于当前 SDK major `3`，`requiresCore` 必须包含当前 Core `3.0.0`；`requiresPlugins` 按依赖拓扑排序并校验 SemVer。
 - Backend 入口必须是拥有匹配 module 名的 Go module；Frontend 和 migration 路径必须留在插件根目录内。
 - `contributes` 只接受 `nodes`、`triggers`、`strategies`、`apiRoutes`、`pages`、`resultPages`、`assistantQueries` 和 `migrations`，声明的非 migration 贡献必须实际注册。
 
@@ -119,7 +119,9 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 
 内置 `official.connector` 提供 HTTP Action、Webhook Trigger、WebSocket Trigger 和运行诊断结果页；`official.ai` 提供 OpenAI-compatible 结构化模型调用和结果页。两者只访问 `workflow.http_allowed_hosts` 的精确公共域名，禁用环境代理，拨号前后解析并拒绝非公网 IP。Binance 只允许明确列出的公共 GET/公共 WebSocket，授权、私有或未知端点一律拒绝。AI 节点只接收/返回 JSON 对象，不能控制工作流生命周期或交易。
 
-内置 `official.quant@2.1.0` 提供 `realtime_candles` Trigger、`backfill_candles`/`sync_instruments`/`evaluate`/六种指标判断/`market_signal`/`backtest`/`signal`/`paper_execute` Action、可信 SMA crossover 策略和移动可用结果页。`sync_instruments` 在所有选中 Spot/USD-M 公共元数据均成功解析后，用事务级 advisory lock 原子替换当前工作流的过滤快照；白名单取交集、黑名单任一命中即排除，全局目录取全部工作流来源并集。应用首次缺少该节点时创建并激活北京时间每六小时运行的默认工作流并立即首跑，后续启动不重新激活已停用工作流。`realtime_candles` 在一条 Binance combined-stream WebSocket 上订阅单币种的多个固定周期，按 `market + instrument + proxyId` 隔离连接，并在每条连接内合并规范化周期集合；断线只重连，每根闭合 K 线落库并发布 `market.candle.closed`。`backfill_candles` 按可选 UTC 结束时间向前获取每周期最近 `1-10000` 根闭合 K 线，只写库并返回汇总，不发布事件。重复 REST/WebSocket 数据由 K 线主键和 CloudEvent `(source,id)` 去重。策略只接收升序、连续、UTC 闭合 K 线和已校验参数，返回 `-1` 至 `1` 的 Decimal 目标；实时、回测与 Paper 调用同一 `Evaluate`。
+`official.quant@3.0.0` 只提供通用指标、策略、回测、行情信号和 `OrderIntent`。它通过 `MarketDataRegistry` 按 `venue + market + instrument + interval` 读取行情，不包含交易所 URL、签名、行情表或执行账本。策略只接收升序、连续、UTC 闭合 K 线和已校验参数，返回 `-1` 至 `1` 的 Decimal 目标；实时与回测调用同一 `Evaluate`。
+
+`official.binance@3.0.0` 提供 Binance Spot/USD-M 公共行情、交易规则、`MarketDataProvider`、Paper 执行和受门禁保护的市价 `ExecutionProvider`。Binance 节点拥有行情、订单、成交、费用、持仓和账户快照数据；代理由该插件选择，私有请求只能通过 `SecretReader` 签名。未来交易所插件只需实现相同 Provider 契约，Core 与 Quant 不需要修改。
 
 六种 `1.0.0` 判断节点分别是 `official.quant.volume_spike_condition`、`official.quant.price_change_condition`、`official.quant.macd_condition`、`official.quant.kdj_condition`、`official.quant.rsi_condition` 和 `official.quant.bollinger_condition`。一个节点只保存一种指标规则及市场、交易对、检查周期、K 线周期和名称；每次在当前与上一个检查时点截取当时已闭合的 K 线，禁止未来数据。K 线断档、非法参数和数据库错误使节点失败，历史不足则 `ready=false` 并走 `false`。EMA、Wilder RSI、KDJ、布林标准差和有界平方根全部使用确定性 Decimal。
 
@@ -127,7 +129,7 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 
 判断输出包含 `ready`、`matched`、`previousMatched`、`branch`、`entered`、`triggered`、市场、交易对、当前/上一值、UTC 时间、业务键和中文摘要。`true` 串联表达 AND，并行汇合表达 OR，`false` 可连接任意节点。`branch` 始终反映当前结果，连续命中仍执行下游；`entered` 沿判断连线传播路径重新进入状态，`triggered` 只在整条 true 路径重新进入时成立。编辑器连接判断节点到任一通知节点时自动附加 `input.triggered == true` 并聚合摘要，因此连续命中只通知一次，恢复后再次命中会重新通知。
 
-Paper 账户按 `workflowId + paper nodeInstanceId` 唯一。默认人工审批；自动模式只有在最大总名义价值、单品种名义价值、单次操作名义价值、最大日亏损和最大回撤全部显式配置时有效。批准后重新读取 Binance 公共报价，并在一个数据库事务中检查信号/任务状态、报价新鲜度、品种状态、数量步进、账户状态及五项风险限制。拒绝不会创建账户或账本；成功执行写入不可变订单、成交、费用和账本事实，再更新账户与持仓投影。操作键和唯一约束保证节点重试、进程重启及 Outbox 重投不重复成交或投递。
+Paper 由 `official.binance` 执行 `OrderIntent`。默认 Paper；真实执行默认关闭，只有人工确认、全部风险上限和无提现权限 API Key 同时满足时才允许。订单必须携带幂等 `clientOrderId`，订单、成交、费用和账本事实使用 Decimal 与 UTC 保存。
 
 内置 `official.notification@3.0.0` 提供 `in_app`、`dingtalk` 和 `smtp` 三个 Action。三种节点统一接收 `subjectKey/message` 并按稳定操作键幂等；站内节点把用户和当前启用角色成员合并去重，旧配置没有目标时投递给工作流创建者。外部节点失败保存受控错误类别并交给当前节点最多三次重试，已成功操作直接复用。
 
@@ -137,7 +139,7 @@ QQ 发送支持群聊和单聊文本、Markdown、富媒体 URL 上传、键盘�
 
 站内通知按 `recipient_user_id` 隔离，查询和已读操作只影响当前用户。持久投递提交后才发布 `notice.created`；实时 WebSocket 使用 `coinsphere.notifications.v1` 子协议携带 Access Token，要求同源 Origin、有界发送队列和 Ping/Pong，断线或队列满不影响数据库事实。诊断重放复用原 Checkpoint，不再次产生 notification、human_action 或 paper 副作用。
 
-`GET /api/v1/plugins/official.quant/{instruments|candles|strategies|backtests|market-signals|signals|paper-accounts}`、Paper 账户重建和 Notification 系统查询是 `SystemScope` 路由，只允许超级管理员。`market-signals` 必须指定 `market`、`instrument`、`interval`，可用 UTC RFC3339 `startTime`、`endTime` 和不超过 500 的 `limit` 限定范围，按 K 线收盘时间倒序返回。ResultView 插件路由只接受核心注入的固定范围，查询参数不能扩大范围。金融值均返回十进制字符串。
+`official.quant` 的策略、回测、行情信号和信号查询，以及 `official.binance` 的行情、交易规则和订单查询均为 `SystemScope` 路由，只允许超级管理员。Paper 结果页使用 `official.binance` 的固定 `ResultScope`，信号范围仍由 Quant 节点 ID 固定。ResultView 插件路由只接受核心注入的固定范围，查询参数不能扩大范围。金融值均返回十进制字符串。
 
 匿名 Webhook 要求 `X-CoinSphere-Webhook-Secret`、`Idempotency-Key` 和 `X-CoinSphere-Partition-Key` 各出现一次，正文必须是不超过 1 MiB 的 JSON 对象。错误 Secret、非运行工作流和非 Webhook 主触发器统一返回不可发现响应。
 
@@ -149,8 +151,8 @@ QQ 发送支持群聊和单聊文本、Markdown、富媒体 URL 上传、键盘�
 - `plugin uninstall` 有活动引用时拒绝；成功后移除静态源码和注册并保留插件 schema。
 - `plugin purge-data` 要求插件已卸载、无任何活动或历史引用，并精确提供 `PURGE <plugin-id>`；schema 和安装记录在同一事务删除。
 
-核心及随应用发布的内置 Quant/Notification migration 使用 `schema_migrations`；领域数据仍由 `plugin_quant` 和 `plugin_notification` schema 拥有。通过 CLI 安装的插件使用独立 `plugin_<规范化 ID>` schema 和 `<schema>.schema_migrations`，卸载不执行 Down。正式 Paper 观察开始前必须记录 migration freeze 提交；冻结后已有 migration 字节不变，只能追加更高版本。
+核心及随应用发布的内置 Quant/Binance/Notification migration 使用 `schema_migrations`；Quant 研究数据位于 `plugin_quant`，Binance 行情与交易数据位于 `plugin_binance`，通知数据位于 `plugin_notification`。通过 CLI 安装的插件使用独立 `plugin_<规范化 ID>` schema 和 `<schema>.schema_migrations`，卸载不执行 Down。正式 Paper 观察开始前必须记录 migration freeze 提交；冻结后已有 migration 字节不变，只能追加更高版本。
 
 ## 尚未实现
 
-Testnet、Live、私有交易 API、插件市场、签名、沙箱、热加载和多实例集群不属于当前合同。代码合并、发布、部署或 Paper 观察不构成任何真实交易放行。
+Testnet、插件市场、签名、沙箱、热加载和多实例集群不属于当前合同。Live 代码存在于 Binance 插件但默认关闭；代码合并、发布、部署或 Paper 观察不构成真实交易放行。

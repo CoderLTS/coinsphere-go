@@ -194,7 +194,6 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 		return validatedWorkflowGraph{}, errors.New("workflow graph must contain exactly one main trigger")
 	}
 	entryPoints := map[string]string{"realtime": triggerID}
-	backtestStartID := ""
 	if graph.SchemaVersion == 2 {
 		if len(graph.EntryPoints) != 2 || graph.EntryPoints["realtime"] == "" || graph.EntryPoints["backtest"] == "" {
 			return validatedWorkflowGraph{}, errors.New("schema version 2 requires realtime and backtest entryPoints")
@@ -207,10 +206,8 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 		if graph.EntryPoints["realtime"] != triggerID {
 			return validatedWorkflowGraph{}, errors.New("workflow realtime entryPoint must reference the main trigger")
 		}
-		var err error
-		backtestStartID, err = validateWorkflowBacktestEntry(graph, nodes, graph.EntryPoints["backtest"])
-		if err != nil {
-			return validatedWorkflowGraph{}, err
+		if nodes[graph.EntryPoints["backtest"]].NodeInstanceID == "" || graph.EntryPoints["backtest"] == triggerID {
+			return validatedWorkflowGraph{}, errors.New("workflow backtest entryPoint must reference a distinct node")
 		}
 		entryPoints = map[string]string{"realtime": graph.EntryPoints["realtime"], "backtest": graph.EntryPoints["backtest"]}
 	}
@@ -240,16 +237,6 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 			}
 		}
 	}
-	metadataSyncNodes := 0
-	for _, nodeType := range nodeTypes {
-		if nodeType == "official.quant.sync_instruments" {
-			metadataSyncNodes++
-		}
-	}
-	if metadataSyncNodes > 1 {
-		return validatedWorkflowGraph{}, errors.New("workflow graph must not contain more than one instrument metadata sync node")
-	}
-
 	adjacency, reverse, err := validateWorkflowEdges(graph.Edges, nodes, descriptors, triggerID)
 	if err != nil {
 		return validatedWorkflowGraph{}, err
@@ -266,22 +253,12 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 	if err := validateWorkflowTopology(nodes, adjacency, reverse, roots); err != nil {
 		return validatedWorkflowGraph{}, err
 	}
-	if err := validateWorkflowBindings(nodes, descriptors, adjacency, graph.Edges); err != nil {
-		return validatedWorkflowGraph{}, err
+	rootSet := map[string]bool{}
+	for _, root := range roots {
+		rootSet[root] = true
 	}
-	if err := validateWorkflowMarketSignalBindings(nodes, graph.Edges); err != nil {
+	if err := validateWorkflowBindings(nodes, descriptors, adjacency, graph.Edges, rootSet); err != nil {
 		return validatedWorkflowGraph{}, err
-	}
-	if err := validateWorkflowQuantStrategyIdentity(graph, nodes, backtestStartID); err != nil {
-		return validatedWorkflowGraph{}, err
-	}
-	if err := validateWorkflowOutputSignalBoundary(graph, nodes, descriptors); err != nil {
-		return validatedWorkflowGraph{}, err
-	}
-	if graph.SchemaVersion == 2 {
-		if err := validateWorkflowBacktestSubgraph(graph, nodes, descriptors, backtestStartID); err != nil {
-			return validatedWorkflowGraph{}, err
-		}
 	}
 
 	canonical, err := json.Marshal(graph)
@@ -292,48 +269,17 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 	if err != nil {
 		return validatedWorkflowGraph{}, errors.New("encode workflow node versions failed")
 	}
+	if a.Plugins != nil {
+		for _, validator := range a.Plugins.WorkflowValidators() {
+			if err := validator.ValidateWorkflow(sdk.WorkflowValidationContext{Graph: canonical, Nodes: descriptorCatalog}); err != nil {
+				return validatedWorkflowGraph{}, err
+			}
+		}
+	}
 	return validatedWorkflowGraph{
 		graphJSON: string(canonical), nodeVersionsJSON: string(nodeVersions), mainTriggerID: triggerID, entryPoints: entryPoints,
 		nodes: nodes, nodeTypes: nodeTypes, nodeVersions: versions, descriptors: descriptors, requiredSecrets: requiredSecrets,
 	}, nil
-}
-
-func validateWorkflowBacktestEntry(graph workflowGraph, nodes map[string]workflowGraphNode, entryID string) (string, error) {
-	entry := nodes[entryID]
-	if entry.NodeType == "official.quant.backtest_start" {
-		return entryID, nil
-	}
-	if entry.NodeType != "official.quant.backfill_candles" {
-		return "", errors.New("workflow backtest entryPoint must reference a Quant backfill or backtest start node")
-	}
-	startID := ""
-	for _, edge := range graph.Edges {
-		if edge.SourceNodeInstanceID != entryID {
-			continue
-		}
-		if startID != "" || edge.SourcePort != "out" || nodes[edge.TargetNodeInstanceID].NodeType != "official.quant.backtest_start" {
-			return "", errors.New("Quant backfill entry must only connect to one backtest start node")
-		}
-		startID = edge.TargetNodeInstanceID
-	}
-	if startID == "" {
-		return "", errors.New("Quant backfill entry must connect to a backtest start node")
-	}
-	for _, edge := range graph.Edges {
-		if edge.TargetNodeInstanceID == startID && edge.SourceNodeInstanceID != entryID {
-			return "", errors.New("Quant backtest start must only follow its backfill entry")
-		}
-	}
-	var backfill struct {
-		Market, Instrument string
-		Intervals          []string `json:"intervals"`
-	}
-	var start struct{ Market, Instrument, Interval string }
-	if json.Unmarshal(entry.Config, &backfill) != nil || json.Unmarshal(nodes[startID].Config, &start) != nil ||
-		backfill.Market != start.Market || backfill.Instrument != start.Instrument || !containsString(backfill.Intervals, start.Interval) {
-		return "", errors.New("Quant backfill entry must include the backtest main series")
-	}
-	return startID, nil
 }
 
 func validateWorkflowLoop(node workflowGraphNode, catalog map[string]sdk.NodeDescriptor) (validatedWorkflowLoop, error) {
@@ -425,47 +371,13 @@ func validateWorkflowLoop(node workflowGraphNode, catalog map[string]sdk.NodeDes
 			return validatedWorkflowLoop{}, fmt.Errorf("body node %q must lead to core.loop_end", id)
 		}
 	}
-	if err := validateWorkflowBindings(nodes, descriptors, adjacency, config.Body.Edges); err != nil {
-		return validatedWorkflowLoop{}, err
-	}
-	if err := validateWorkflowMarketSignalBindings(nodes, config.Body.Edges); err != nil {
+	if err := validateWorkflowBindings(nodes, descriptors, adjacency, config.Body.Edges, map[string]bool{itemID: true}); err != nil {
 		return validatedWorkflowLoop{}, err
 	}
 	return validatedWorkflowLoop{
 		config: config, itemID: itemID, endID: endID, nodes: nodes,
 		descriptors: descriptors, requiredSecrets: requiredSecrets,
 	}, nil
-}
-
-func validateWorkflowMarketSignalBindings(nodes map[string]workflowGraphNode, edges []workflowGraphEdge) error {
-	expected := map[string]string{
-		"market": "market", "instrument": "instrument", "interval": "interval", "name": "formula",
-		"indicator": "indicator", "candleCloseTime": "candleCloseTime", "summary": "summary", "values": "value",
-	}
-	for nodeID, node := range nodes {
-		if node.NodeType != "official.quant.market_signal" {
-			continue
-		}
-		var incoming []workflowGraphEdge
-		for _, edge := range edges {
-			if edge.TargetNodeInstanceID == nodeID {
-				incoming = append(incoming, edge)
-			}
-		}
-		if len(incoming) != 1 || incoming[0].SourcePort != "true" ||
-			!isWorkflowQuantConditionType(nodes[incoming[0].SourceNodeInstanceID].NodeType) {
-			return fmt.Errorf("node %q must connect to exactly one Quant condition true branch", nodeID)
-		}
-		sourceID := incoming[0].SourceNodeInstanceID
-		for targetField, sourceField := range expected {
-			binding, ok := node.InputBindings[targetField]
-			if !ok || binding.Kind != "field" || binding.NodeInstanceID != sourceID ||
-				len(binding.FieldPath) != 1 || binding.FieldPath[0] != sourceField {
-				return fmt.Errorf("node %q input binding %q must use its Quant condition source", nodeID, targetField)
-			}
-		}
-	}
-	return nil
 }
 
 func workflowLoopNodeID(loopID, bodyID string) (string, error) {
@@ -571,190 +483,10 @@ func validateWorkflowTopology(nodes map[string]workflowGraphNode, adjacency, rev
 	return nil
 }
 
-func validateWorkflowBacktestSubgraph(graph workflowGraph, nodes map[string]workflowGraphNode, descriptors map[string]sdk.NodeDescriptor, startID string) error {
-	allowed := map[string]bool{
-		"official.quant.code_strategy": true,
-		"official.quant.position":      true,
-		"official.quant.output_signal": true,
-	}
-	for nodeType := range workflowQuantConditionTypes {
-		allowed[nodeType] = true
-	}
-	queue := []string{}
-	for _, edge := range graph.Edges {
-		if edge.SourceNodeInstanceID == startID && edge.SourcePort == "each" {
-			queue = append(queue, edge.TargetNodeInstanceID)
-		}
-	}
-	seen, signalFound := map[string]bool{}, false
-	for len(queue) > 0 {
-		id := queue[0]
-		queue = queue[1:]
-		if seen[id] {
-			continue
-		}
-		seen[id] = true
-		if !allowed[nodes[id].NodeType] || descriptors[id].State != sdk.StateStateless {
-			return fmt.Errorf("backtest each subgraph node %q must be a deterministic Quant node", id)
-		}
-		if nodes[id].NodeType == "official.quant.output_signal" {
-			signalFound = true
-			continue
-		}
-		for _, edge := range graph.Edges {
-			if edge.SourceNodeInstanceID == id {
-				queue = append(queue, edge.TargetNodeInstanceID)
-			}
-		}
-	}
-	if !signalFound {
-		return errors.New("backtest each subgraph must reach official.quant.output_signal")
-	}
-	for id, node := range nodes {
-		if allowed[node.NodeType] && !seen[id] {
-			return fmt.Errorf("Quant node %q must belong to the shared backtest each subgraph", id)
-		}
-	}
-	realtimeReachable := map[string]bool{}
-	realtimeQueue := []string{graph.EntryPoints["realtime"]}
-	for len(realtimeQueue) > 0 {
-		id := realtimeQueue[0]
-		realtimeQueue = realtimeQueue[1:]
-		if realtimeReachable[id] {
-			continue
-		}
-		realtimeReachable[id] = true
-		for _, edge := range graph.Edges {
-			if edge.SourceNodeInstanceID == id {
-				realtimeQueue = append(realtimeQueue, edge.TargetNodeInstanceID)
-			}
-		}
-	}
-	for id := range seen {
-		if !realtimeReachable[id] {
-			return fmt.Errorf("backtest each subgraph node %q must also be reachable from the realtime entryPoint", id)
-		}
-	}
-	queue = queue[:0]
-	for _, edge := range graph.Edges {
-		if edge.SourceNodeInstanceID == startID && edge.SourcePort == "completed" {
-			queue = append(queue, edge.TargetNodeInstanceID)
-		}
-	}
-	seen = map[string]bool{}
-	for len(queue) > 0 {
-		id := queue[0]
-		queue = queue[1:]
-		if seen[id] {
-			continue
-		}
-		seen[id] = true
-		if descriptors[id].SideEffect != sdk.SideEffectNone {
-			return fmt.Errorf("backtest completed subgraph node %q must not have side effects", id)
-		}
-		for _, edge := range graph.Edges {
-			if edge.SourceNodeInstanceID == id {
-				queue = append(queue, edge.TargetNodeInstanceID)
-			}
-		}
-	}
-	return nil
-}
-
-func validateWorkflowOutputSignalBoundary(graph workflowGraph, nodes map[string]workflowGraphNode, descriptors map[string]sdk.NodeDescriptor) error {
-	if graph.SchemaVersion != 2 {
-		return nil
-	}
-	type path struct {
-		nodeID   string
-		realtime bool
-	}
-	adjacency := make(map[string][]workflowGraphEdge, len(nodes))
-	degrees := make(map[string]int, len(nodes))
-	for _, edge := range graph.Edges {
-		adjacency[edge.SourceNodeInstanceID] = append(adjacency[edge.SourceNodeInstanceID], edge)
-		degrees[edge.TargetNodeInstanceID]++
-	}
-	queue := []path{}
-	for nodeID := range nodes {
-		if degrees[nodeID] == 0 {
-			queue = append(queue, path{nodeID: nodeID})
-		}
-	}
-	seen := map[path]bool{}
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-		if seen[current] {
-			continue
-		}
-		seen[current] = true
-		node := nodes[current.nodeID]
-		backtestBackfill := current.nodeID == graph.EntryPoints["backtest"] && node.NodeType == "official.quant.backfill_candles"
-		if node.NodeType != "official.quant.output_signal" && descriptors[current.nodeID].SideEffect != sdk.SideEffectNone && !current.realtime && !backtestBackfill {
-			return fmt.Errorf("node %q with side effects must only follow an output signal realtime branch", current.nodeID)
-		}
-		for _, edge := range adjacency[current.nodeID] {
-			realtime := current.realtime
-			if node.NodeType == "official.quant.output_signal" {
-				realtime = edge.SourcePort == "realtime"
-			}
-			queue = append(queue, path{nodeID: edge.TargetNodeInstanceID, realtime: realtime})
-		}
-	}
-	return nil
-}
-
-func validateWorkflowQuantStrategyIdentity(graph workflowGraph, nodes map[string]workflowGraphNode, backtestStartID string) error {
-	type series struct {
-		Market, Instrument, Interval string
-	}
-	backtest := series{}
-	if backtestStartID != "" && json.Unmarshal(nodes[backtestStartID].Config, &backtest) != nil {
-		return errors.New("Quant backtest start identity is invalid")
-	}
-	for nodeID, node := range nodes {
-		if node.NodeType != "official.quant.output_signal" {
-			continue
-		}
-		output := series{}
-		if json.Unmarshal(node.Config, &output) != nil || backtestStartID != "" && output != backtest {
-			return fmt.Errorf("node %q must use the Quant backtest main series", nodeID)
-		}
-		positionFound := false
-		for _, edge := range graph.Edges {
-			if edge.TargetNodeInstanceID != nodeID {
-				continue
-			}
-			if nodes[edge.SourceNodeInstanceID].NodeType != "official.quant.position" {
-				return fmt.Errorf("node %q must only receive Quant position candidates", nodeID)
-			}
-			positionFound = true
-			var position struct {
-				Market string `json:"market"`
-			}
-			if json.Unmarshal(nodes[edge.SourceNodeInstanceID].Config, &position) != nil || position.Market != output.Market {
-				return fmt.Errorf("node %q position market must match its output signal", edge.SourceNodeInstanceID)
-			}
-		}
-		if !positionFound {
-			return fmt.Errorf("node %q requires at least one Quant position candidate", nodeID)
-		}
-	}
-	return nil
-}
-
-func validateWorkflowBindings(nodes map[string]workflowGraphNode, descriptors map[string]sdk.NodeDescriptor, adjacency map[string][]string, edges []workflowGraphEdge) error {
+func validateWorkflowBindings(nodes map[string]workflowGraphNode, descriptors map[string]sdk.NodeDescriptor, adjacency map[string][]string, edges []workflowGraphEdge, roots map[string]bool) error {
 	for nodeID, node := range nodes {
 		targetProperties, required := workflowSchemaProperties(descriptors[nodeID].InputSchema)
-		backtestRoot := node.NodeType == "official.quant.backtest_start" || node.NodeType == "official.quant.backfill_candles"
-		for _, edge := range edges {
-			if edge.TargetNodeInstanceID == nodeID {
-				backtestRoot = false
-				break
-			}
-		}
-		if !backtestRoot {
+		if !roots[nodeID] {
 			for field := range required {
 				if _, ok := node.InputBindings[field]; !ok {
 					return fmt.Errorf("node %q requires input binding %q", nodeID, field)
@@ -777,9 +509,6 @@ func validateWorkflowBindings(nodes map[string]workflowGraphNode, descriptors ma
 				sourceSchema, ok := workflowSchemaField(descriptors[binding.NodeInstanceID].OutputSchema, binding.FieldPath)
 				if !ok || !workflowSchemaTypesCompatible(sourceSchema, targetSchema) {
 					return fmt.Errorf("node %q input binding %q has an unknown or incompatible field path", nodeID, field)
-				}
-				if err := validateWorkflowNamedOutputBinding(nodeID, field, nodes[binding.NodeInstanceID], binding.FieldPath); err != nil {
-					return err
 				}
 			case "literal":
 				if binding.NodeInstanceID != "" || len(binding.Sources) != 0 || len(binding.FieldPath) != 0 || len(binding.Value) == 0 || binding.Expression != "" {
@@ -814,49 +543,6 @@ func validateWorkflowBindings(nodes map[string]workflowGraphNode, descriptors ma
 				return fmt.Errorf("node %q input binding %q has unknown kind %q", nodeID, field, binding.Kind)
 			}
 		}
-		if err := validateWorkflowPositionBinding(nodeID, node, nodes); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func validateWorkflowNamedOutputBinding(nodeID, field string, source workflowGraphNode, path []string) error {
-	if source.NodeType != "official.quant.code_strategy" || len(path) != 2 || path[0] != "booleans" && path[0] != "decimals" {
-		return nil
-	}
-	var config struct {
-		BooleanOutputs []string `json:"booleanOutputs"`
-		DecimalOutputs []string `json:"decimalOutputs"`
-	}
-	if json.Unmarshal(source.Config, &config) != nil {
-		return fmt.Errorf("node %q input binding %q references an invalid code strategy", nodeID, field)
-	}
-	declared := config.BooleanOutputs
-	if path[0] == "decimals" {
-		declared = config.DecimalOutputs
-	}
-	if !containsString(declared, path[1]) {
-		return fmt.Errorf("node %q input binding %q references an undeclared code strategy output", nodeID, field)
-	}
-	return nil
-}
-
-func validateWorkflowPositionBinding(nodeID string, node workflowGraphNode, nodes map[string]workflowGraphNode) error {
-	if node.NodeType != "official.quant.position" {
-		return nil
-	}
-	var config struct {
-		TargetMode   string `json:"targetMode"`
-		DecimalField string `json:"decimalField"`
-	}
-	if json.Unmarshal(node.Config, &config) != nil || config.TargetMode != "input" {
-		return nil
-	}
-	binding, ok := node.InputBindings["target"]
-	if !ok || binding.Kind != "field" || len(binding.FieldPath) != 2 || binding.FieldPath[0] != "decimals" ||
-		binding.FieldPath[1] != config.DecimalField || nodes[binding.NodeInstanceID].NodeType != "official.quant.code_strategy" {
-		return fmt.Errorf("node %q input target must reference its configured code strategy Decimal output", nodeID)
 	}
 	return nil
 }
@@ -872,7 +558,7 @@ func validateWorkflowConditionBinding(nodeID, field string, binding workflowInpu
 	seen := map[string]bool{}
 	for _, source := range binding.Sources {
 		if source.NodeInstanceID == "" || seen[source.NodeInstanceID+"\x00"+source.Branch] || nodes[source.NodeInstanceID].NodeInstanceID == "" ||
-			!isWorkflowQuantConditionType(descriptors[source.NodeInstanceID].Type) {
+			descriptors[source.NodeInstanceID].Capabilities.Deterministic == false {
 			return fmt.Errorf("node %q input binding %q has an invalid condition source", nodeID, field)
 		}
 		if !containsString(descriptors[source.NodeInstanceID].Branches, source.Branch) ||

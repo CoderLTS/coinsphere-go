@@ -1,4 +1,4 @@
-import { fetchQuantCandles, fetchQuantInstruments, type QuantInstrument } from './quant'
+import { fetchBinanceCandles, fetchBinanceInstruments, type BinanceInstrument } from './api'
 
 export type MarketType = 'spot' | 'usd_m'
 export type MarketStatus = 'trading' | 'suspended' | 'all'
@@ -50,7 +50,7 @@ export interface MarketCandleQuery {
   endTime?: string
 }
 
-const toMarketSymbol = (item: QuantInstrument): MarketSymbol => ({
+const toMarketSymbol = (item: BinanceInstrument): MarketSymbol => ({
   id: `${item.market}:${item.symbol}`,
   venue: 'binance',
   market: item.market === 'usdm' ? 'usd_m' : 'spot',
@@ -68,7 +68,7 @@ const toMarketSymbol = (item: QuantInstrument): MarketSymbol => ({
 export async function fetchMarketSymbols(params: MarketSymbolQuery) {
   const markets = params.market ? [params.market] : (['spot', 'usd_m'] as MarketType[])
   const results = await Promise.all(
-    markets.map((market) => fetchQuantInstruments(market === 'usd_m' ? 'usdm' : 'spot'))
+    markets.map((market) => fetchBinanceInstruments(market === 'usd_m' ? 'usdm' : 'spot'))
   )
   const keyword = String(params.keyword || '')
     .trim()
@@ -95,7 +95,7 @@ export async function fetchMarketSymbols(params: MarketSymbolQuery) {
 
 export async function fetchMarketCandles(params: MarketCandleQuery) {
   const [market, instrument] = params.instrumentId.split(':', 2)
-  const result = await fetchQuantCandles({
+  const result = await fetchBinanceCandles({
     market: market === 'usdm' || market === 'usd_m' ? 'usdm' : 'spot',
     instrument,
     interval: params.interval,

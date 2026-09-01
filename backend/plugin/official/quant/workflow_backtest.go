@@ -92,7 +92,7 @@ func (a quantWorkflowBacktestAction) Execute(ctx context.Context, request sdk.Ac
 		series: map[string][]quantCandle{cacheKey: candles}, lookbacks: map[string]int{},
 	}
 	ctx = context.WithValue(ctx, quantBacktestCandleCacheContextKey{}, cache)
-	simulation, err := executeQuantWorkflowBacktest(ctx, request.Frames, series, candles, capital, feeRate, slippageRate)
+	simulation, err := executeQuantWorkflowBacktest(ctx, request.Frames, request.FrameResultNodeIDs, series, candles, capital, feeRate, slippageRate)
 	if err != nil {
 		return sdk.ActionResult{}, err
 	}
@@ -102,7 +102,7 @@ func (a quantWorkflowBacktestAction) Execute(ctx context.Context, request sdk.Ac
 	}
 	detail, err := json.Marshal(map[string]any{
 		"schemaVersion": 2, "strategyId": "workflow-revision", "strategyVersion": request.Revision.RevisionID,
-		"market": series.Market, "instrument": series.Instrument, "interval": series.Interval,
+		"venue": series.Venue, "market": series.Market, "instrument": series.Instrument, "interval": series.Interval,
 		"parameters": input, "candles": detailCandles, "points": simulation.Points,
 	})
 	if err != nil {
@@ -115,14 +115,14 @@ func (a quantWorkflowBacktestAction) Execute(ctx context.Context, request sdk.Ac
 	}
 	parameters, _ := json.Marshal(input)
 	manifest, _ := json.Marshal(map[string]any{
-		"market": series.Market, "instrument": series.Instrument, "interval": series.Interval,
+		"venue": series.Venue, "market": series.Market, "instrument": series.Instrument, "interval": series.Interval,
 		"firstOpenTime": candles[0].OpenTime.UTC().Format(time.RFC3339Nano),
 		"lastCloseTime": candles[len(candles)-1].CloseTime.UTC().Format(time.RFC3339Nano), "candleCount": len(candles),
 	})
 	row := quantBacktest{
 		OperationKey: request.OperationKey, WorkflowID: workflowID, RevisionID: revisionID, NodeInstanceID: request.NodeInstanceID,
 		StrategyID: "workflow-revision", StrategyVersion: request.Revision.RevisionID,
-		Market: series.Market, Instrument: series.Instrument, Interval: series.Interval,
+		Venue: series.Venue, Market: series.Market, Instrument: series.Instrument, Interval: series.Interval,
 		StartTime: candles[0].OpenTime.UTC(), EndTime: candles[len(candles)-1].CloseTime.UTC(),
 		InitialCapital: capital, FinalEquity: simulation.FinalEquity, TotalReturn: simulation.TotalReturn,
 		MaxDrawdown: simulation.MaxDrawdown, TotalFees: simulation.TotalFees, TradeCount: simulation.TradeCount,
@@ -140,7 +140,7 @@ func (a quantWorkflowBacktestAction) Execute(ctx context.Context, request sdk.Ac
 }
 
 func quantCandleSeriesKey(config quantSeriesConfig) string {
-	return config.Market + "\x00" + config.Instrument + "\x00" + config.Interval
+	return config.Venue + "\x00" + config.Market + "\x00" + config.Instrument + "\x00" + config.Interval
 }
 
 func (c *quantBacktestCandleCache) candlesThroughClose(ctx context.Context, runtime *quantRuntime, config quantSeriesConfig, closeTime time.Time, limit int) ([]quantCandle, error) {
@@ -153,18 +153,12 @@ func (c *quantBacktestCandleCache) candlesThroughClose(ctx context.Context, runt
 		}
 		duration := quantIntervals[config.Interval]
 		lowerBound := c.start.Add(-duration * time.Duration(limit+2))
-		var loaded []quantCandle
-		if err := runtime.db.WithContext(ctx).Where(
-			"market = ? AND instrument = ? AND interval = ? AND close_time >= ? AND close_time <= ?",
-			config.Market, config.Instrument, config.Interval, lowerBound.UTC(), c.end.UTC(),
-		).Order("open_time DESC").Limit(available + 1).Find(&loaded).Error; err != nil {
-			return nil, errors.New("preload Quant workflow candles failed")
+		loaded, err := runtime.loadQuantCandles(ctx, config, lowerBound.UTC(), c.end.UTC(), available+1)
+		if err != nil {
+			return nil, err
 		}
 		if len(loaded) > available {
 			return nil, errors.New("Quant workflow backtest exceeds the 1,000,000 candle limit")
-		}
-		for left, right := 0, len(loaded)-1; left < right; left, right = left+1, right-1 {
-			loaded[left], loaded[right] = loaded[right], loaded[left]
 		}
 		c.total += len(loaded) - len(candles)
 		c.series[key] = loaded
@@ -179,7 +173,7 @@ func (c *quantBacktestCandleCache) candlesThroughClose(ctx context.Context, runt
 	return candles[start:end], nil
 }
 
-func executeQuantWorkflowBacktest(ctx context.Context, frames sdk.FrameExecutor, series quantSeriesConfig, candles []quantCandle, capital, feeRate, slippageRate decimal.Decimal) (quantWorkflowBacktestSimulation, error) {
+func executeQuantWorkflowBacktest(ctx context.Context, frames sdk.FrameExecutor, resultNodeIDs []string, series quantSeriesConfig, candles []quantCandle, capital, feeRate, slippageRate decimal.Decimal) (quantWorkflowBacktestSimulation, error) {
 	cash, quantity, target := capital, decimal.Zero, decimal.Zero
 	peak, maxDrawdown, totalFees := capital, decimal.Zero, decimal.Zero
 	points := make([]quantWorkflowBacktestPoint, 0, len(candles)-1)
@@ -190,17 +184,19 @@ func executeQuantWorkflowBacktest(ctx context.Context, frames sdk.FrameExecutor,
 		}
 		current, next := candles[index], candles[index+1]
 		frame, err := frames.ExecuteFrame(ctx, sdk.FrameRequest{
+			SourcePort: "each",
 			SourceOutput: mustMarshal(map[string]any{
 				"branch": "each", "eventTime": current.CloseTime.UTC().Format(time.RFC3339Nano),
 				"evaluatedAt": current.CloseTime.UTC().Format(time.RFC3339Nano),
 			}),
-			PreviousTargetPosition: target.String(),
+			Event:   map[string]string{"type": "backtest", "time": current.CloseTime.UTC().Format(time.RFC3339Nano), "triggeredAt": current.CloseTime.UTC().Format(time.RFC3339Nano)},
+			Context: mustMarshal(map[string]any{"previousTargetPosition": target.String()}), ResultNodeIDs: resultNodeIDs,
 		})
 		if err != nil {
 			return quantWorkflowBacktestSimulation{}, err
 		}
 		previousTarget, nextTarget, action := target, target, "hold"
-		for _, raw := range frame.Signals {
+		for _, raw := range frame.Results {
 			var signal struct {
 				TargetPosition, Action string
 			}

@@ -93,14 +93,17 @@
                   @click="toggleLifecycle(row)"
                 />
               </ElTooltip>
-              <ElTooltip :content="isQuantWorkflow(row) ? '运行回测' : '手动运行'" placement="top">
+              <ElTooltip
+                :content="isBacktestWorkflow(row) ? '运行回测' : '手动运行'"
+                placement="top"
+              >
                 <ElButton
                   circle
                   plain
                   size="small"
                   type="primary"
                   :icon="VideoPlay"
-                  :disabled="!isQuantWorkflow(row) && row.workflowStatus !== 'active'"
+                  :disabled="!isBacktestWorkflow(row) && row.workflowStatus !== 'active'"
                   :loading="runningId === row.id"
                   @click="runWorkflow(row)"
                 />
@@ -421,7 +424,7 @@
     }
   }
 
-  const isQuantWorkflow = (row: WorkflowDefinitionItem) =>
+  const isBacktestWorkflow = (row: WorkflowDefinitionItem) =>
     row.graph.schemaVersion === 2 && Boolean(row.graph.entryPoints?.backtest)
 
   const openCreateWorkflow = async () => {
@@ -454,7 +457,7 @@
   }
 
   const runWorkflow = async (row: WorkflowDefinitionItem) => {
-    if (isQuantWorkflow(row)) {
+    if (isBacktestWorkflow(row)) {
       backtestWorkflow.value = row
       backtestForm.definitionId =
         row.versions?.find((revision) => revision.isActive)?.id || row.versions?.[0]?.id || row.id

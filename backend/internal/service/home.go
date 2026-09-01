@@ -22,7 +22,7 @@ func (a *App) ListInstalledPlugins() []M {
 		nodes := make([]M, 0)
 		for _, node := range a.Plugins.PluginNodes(plugin.ID) {
 			nodes = append(nodes, M{
-				"type": node.Type, "title": workflowNodeTitle(node.Type),
+				"type": node.Type, "title": node.Title,
 				"version": node.Version, "kind": node.Kind, "configSchema": node.ConfigSchema,
 			})
 		}

@@ -1,6 +1,6 @@
 # CoinSphere Go 后端
 
-当前后端提供认证、RBAC、系统管理、监控和结构化系统日志，管理可信插件生命周期，执行批处理、事件与连续流工作流，并提供 Binance 公共行情、可信 Go 策略、回测、信号、Paper、通知和共享结果。Testnet、Live、Private Executor 和 Python Worker 不属于当前运行面。
+当前后端提供认证、RBAC、系统管理、监控和结构化系统日志，管理可信插件生命周期并执行批处理、事件与连续流工作流。`official.quant` 提供通用指标、策略、信号和回测，`official.binance` 提供行情、Paper 及受门禁保护的 Spot/USD-M 市价真实交易；Testnet 和 Python Worker 不属于当前运行面。
 
 ## 启动
 
@@ -25,13 +25,14 @@ go run .
 - `workflows`、`workflow_revisions`、`workflow_secret_bindings`、`workflow_runtimes`
 - `workflow_runs`、`workflow_run_nodes`、`workflow_node_logs`、`workflow_run_checkpoints`、`workflow_node_states`
 - `workflow_event_records`、`workflow_event_deliveries`、`workflow_event_outbox`、`workflow_human_tasks`
-- `plugin_quant.instruments`、`plugin_quant.candles`、`plugin_quant.backtests`
-- `plugin_quant.instrument_sources`、`plugin_quant.signals`、Paper 账户、订单、成交、费用、账本和持仓
+- `plugin_quant.backtests`、`plugin_quant.market_signals`、`plugin_quant.signals`
+- `plugin_binance.instruments`、`plugin_binance.instrument_sources`、`plugin_binance.candles`
+- `plugin_binance.orders`、`plugin_binance.fills`、`plugin_binance.fees`、Paper 账本、持仓和账户快照
 - `result_views` 及用户/角色授权、`plugin_notification.deliveries`
 - `system_log_settings`、`system_logs`
 - Goose 管理的 `schema_migrations`
 
-Quant 闭合 K 线使用普通 PostgreSQL 表和联合索引。项目不提供旧数据库运行时兼容层；重置和回滚步骤见[数据库迁移手册](../docs/runbooks/database-migrations.md)。
+Binance 闭合 K 线使用普通 PostgreSQL 表和联合索引。项目不提供旧数据库运行时兼容层；重置和回滚步骤见[数据库迁移手册](../docs/runbooks/database-migrations.md)。
 
 ## 命令
 
@@ -74,7 +75,7 @@ internal/pluginregistry 编译进应用的 Go 插件注册表
 internal/perm        基线权限码与菜单映射
 internal/security    密码哈希、访问令牌和认证随机值
 internal/service     认证、系统管理、工作流执行、结果视图、监控、日志和审计服务
-plugin/official      Connector、AI、Quant、Notification 和 QQ 内置插件
+plugin/official      Connector、AI、Quant、Binance、Notification 和 QQ 内置插件
 plugin/manifest      严格插件清单、兼容性和源码路径校验
 plugin/sdk           插件节点、处理器、作用域和注册协议
 version              Core 与 SDK 兼容版本

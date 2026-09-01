@@ -41,7 +41,7 @@ type qqAccessToken struct {
 type qqRuntime struct {
 	db *gorm.DB
 
-	http    *safehttp.Client
+	http    sdk.NetworkClient
 	tokenMu sync.Mutex
 	tokens  map[string]qqAccessToken
 
@@ -70,19 +70,17 @@ type qqSendInput struct {
 
 type qqSendAction struct{ runtime *qqRuntime }
 
-func Register(registry *sdk.Registry, database *gorm.DB) error {
-	client, err := safehttp.New([]string{"bots.qq.com", "api.sgroup.qq.com", "api.bot.qq.com"})
+func Register(registrar sdk.Registrar, host sdk.Host) error {
+	client, err := host.Network.New([]string{"bots.qq.com", "api.sgroup.qq.com", "api.bot.qq.com"})
 	if err != nil {
 		return err
 	}
 	client.SetTimeout(qqRequestTimeout)
 	client.DisableRedirects()
 	runtime := &qqRuntime{
-		db: database, http: client, tokens: map[string]qqAccessToken{}, receivers: map[string]struct{}{},
+		db: host.Store.DB(), http: client, tokens: map[string]qqAccessToken{}, receivers: map[string]struct{}{},
 	}
-	return registry.RegisterPlugin(sdk.PluginDescriptor{
-		ID: qqPluginID, Name: "QQ机器人", Version: "1.0.0", Contributes: []string{"nodes", "triggers"},
-	}, runtime.register)
+	return runtime.register(registrar)
 }
 
 func (q *qqRuntime) register(registrar sdk.Registrar) error {

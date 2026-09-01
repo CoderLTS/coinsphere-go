@@ -429,11 +429,11 @@
       path: '/scheduler/definition'
     },
     {
-      label: '量化数据',
-      caption: '行情元数据',
-      icon: 'ri:line-chart-line',
+      label: '插件能力',
+      caption: '节点与页面',
+      icon: 'ri:puzzle-2-line',
       tone: 'cyan',
-      path: '/quant-data'
+      path: '/system/plugins'
     },
     {
       label: '用户管理',

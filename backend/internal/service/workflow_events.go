@@ -38,6 +38,11 @@ func (a *App) PublishWorkflowEvent(ctx context.Context, event cloudevents.Event)
 	return workflowEventView(record), nil
 }
 
+func (a *App) Emit(ctx context.Context, event cloudevents.Event) error {
+	_, err := a.PublishWorkflowEvent(ctx, event)
+	return err
+}
+
 func (a *App) PublishWorkflowWebhook(ctx context.Context, workflowID int64, secret, eventID, partitionKey string, data map[string]any) (WorkflowEventView, error) {
 	eventID = strings.TrimSpace(eventID)
 	partitionKey = strings.TrimSpace(partitionKey)

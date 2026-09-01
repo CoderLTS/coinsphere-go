@@ -16,24 +16,16 @@ import (
 )
 
 const (
-	WorkflowModeBatch         = "batch"
-	WorkflowModeEvent         = "event"
-	WorkflowModeStream        = "stream"
-	WorkflowStatusInactive    = "inactive"
-	WorkflowStatusActive      = "active"
-	WorkflowStatusError       = "error"
-	WorkflowTemplateBlank     = "blank"
-	WorkflowTemplateSchedule  = "scheduled"
-	WorkflowTemplateEvent     = "event"
-	WorkflowTemplateFailure   = "failure-handler"
-	WorkflowTemplateWebhook   = "connector-webhook"
-	WorkflowTemplateWebSocket = "connector-websocket"
-	WorkflowTemplateQuantData = "quant-market-data"
-	WorkflowTemplateQuantLive = "quant-strategy"
-	WorkflowTemplateBacktest  = "quant-backtest"
-	WorkflowTemplateQuantFlow = "quant-workflow"
-	WorkflowTemplatePaper     = "quant-paper"
-	maxWorkflowGraphBytes     = 1 << 20
+	WorkflowModeBatch        = "batch"
+	WorkflowModeEvent        = "event"
+	WorkflowModeStream       = "stream"
+	WorkflowStatusInactive   = "inactive"
+	WorkflowStatusActive     = "active"
+	WorkflowStatusError      = "error"
+	WorkflowTemplateBlank    = "blank"
+	WorkflowTemplateSchedule = "scheduled"
+	WorkflowTemplateEvent    = "event"
+	maxWorkflowGraphBytes    = 1 << 20
 )
 
 const blankWorkflowGraph = `{
@@ -66,128 +58,6 @@ const eventWorkflowGraph = `{
   ],
   "edges": [
     {"edgeId":"event-to-end","sourceNodeInstanceId":"event-trigger","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}
-  ]
-}`
-
-const failureWorkflowGraph = `{
-  "schemaVersion": 1,
-  "nodes": [
-    {"nodeInstanceId":"failure-trigger","nodeType":"core.event","nodeVersion":"1.0.0","config":{"types":["io.coinsphere.workflow.run.failed"],"source":"urn:coinsphere:workflow-core"},"position":{"x":100,"y":220}},
-    {"nodeInstanceId":"notify","nodeType":"official.notification.in_app","nodeVersion":"1.0.0","config":{"title":"工作流执行失败"},"inputBindings":{"subjectKey":{"kind":"cel","expression":"event.id"},"message":{"kind":"literal","value":"工作流运行失败，请在工作台查看受控错误分类。"}},"position":{"x":400,"y":220}},
-    {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":700,"y":220}}
-  ],
-  "edges": [
-    {"edgeId":"failure-to-notify","sourceNodeInstanceId":"failure-trigger","sourcePort":"out","targetNodeInstanceId":"notify","targetPort":"in"},
-    {"edgeId":"notify-to-end","sourceNodeInstanceId":"notify","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}
-  ]
-}`
-
-const webhookWorkflowGraph = `{
-  "schemaVersion": 1,
-  "nodes": [
-    {"nodeInstanceId":"webhook-trigger","nodeType":"official.connector.webhook","nodeVersion":"1.0.0","config":{"eventType":"example.webhook"},"position":{"x":160,"y":220}},
-    {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":520,"y":220}}
-  ],
-  "edges": [
-    {"edgeId":"webhook-to-end","sourceNodeInstanceId":"webhook-trigger","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}
-  ]
-}`
-
-const webSocketWorkflowGraph = `{
-  "schemaVersion": 1,
-  "nodes": [
-    {"nodeInstanceId":"websocket-trigger","nodeType":"official.connector.websocket","nodeVersion":"1.0.0","config":{"url":"wss://stream.example.com/events","eventType":"example.event","idField":"id","partitionField":"partitionKey","useAuthorization":false},"position":{"x":160,"y":220}},
-    {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":520,"y":220}}
-  ],
-  "edges": [
-    {"edgeId":"websocket-to-end","sourceNodeInstanceId":"websocket-trigger","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}
-  ]
-}`
-
-const quantMarketDataWorkflowGraph = `{
-  "schemaVersion": 1,
-  "nodes": [
-    {"nodeInstanceId":"market-stream","nodeType":"official.quant.realtime_candles","nodeVersion":"1.0.0","config":{"market":"spot","instrument":"BTCUSDT","intervals":["1h"]},"position":{"x":140,"y":220}},
-    {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":520,"y":220}}
-  ],
-  "edges": [
-    {"edgeId":"market-to-end","sourceNodeInstanceId":"market-stream","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}
-  ]
-}`
-
-const quantStrategyWorkflowGraph = `{
-  "schemaVersion": 1,
-  "nodes": [
-    {"nodeInstanceId":"candle-event","nodeType":"core.event","nodeVersion":"1.0.0","config":{"types":["market.candle.closed"],"source":"urn:coinsphere:plugin:official.quant","subject":"binance:spot:BTCUSDT:1h"},"position":{"x":100,"y":220}},
-    {"nodeInstanceId":"strategy","nodeType":"official.quant.evaluate","nodeVersion":"1.0.0","config":{"strategyId":"official.quant.sma-crossover","market":"spot","instrument":"BTCUSDT","interval":"1h","parameters":{"fastPeriod":3,"slowPeriod":5}},"inputBindings":{"eventTime":{"kind":"cel","expression":"event.time"}},"position":{"x":400,"y":220}},
-    {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":700,"y":220}}
-  ],
-  "edges": [
-    {"edgeId":"event-to-strategy","sourceNodeInstanceId":"candle-event","sourcePort":"out","targetNodeInstanceId":"strategy","targetPort":"in"},
-    {"edgeId":"strategy-to-end","sourceNodeInstanceId":"strategy","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}
-  ]
-}`
-
-const quantBacktestWorkflowGraph = `{
-  "schemaVersion": 1,
-  "nodes": [
-    {"nodeInstanceId":"manual-trigger","nodeType":"core.manual","nodeVersion":"1.0.0","config":{},"position":{"x":100,"y":220}},
-    {"nodeInstanceId":"backtest","nodeType":"official.quant.backtest","nodeVersion":"1.0.0","config":{"strategyId":"official.quant.sma-crossover","market":"spot","instrument":"BTCUSDT","interval":"1h","startTime":"2026-01-01T00:00:00Z","endTime":"2026-02-01T00:00:00Z","initialCapital":"10000","feeRate":"0.001","slippageRate":"0.0005","parameters":{"fastPeriod":3,"slowPeriod":5}},"position":{"x":400,"y":220}},
-    {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":700,"y":220}}
-  ],
-  "edges": [
-    {"edgeId":"manual-to-backtest","sourceNodeInstanceId":"manual-trigger","sourcePort":"out","targetNodeInstanceId":"backtest","targetPort":"in"},
-    {"edgeId":"backtest-to-end","sourceNodeInstanceId":"backtest","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}
-  ]
-}`
-
-const quantWorkflowGraph = `{
-  "schemaVersion": 2,
-  "entryPoints": {"realtime":"candle-close","backtest":"backfill"},
-  "nodes": [
-    {"nodeInstanceId":"candle-close","nodeType":"core.event","nodeVersion":"1.0.0","config":{"types":["market.candle.closed"],"source":"urn:coinsphere:plugin:official.quant","subject":"binance:spot:BTCUSDT:1h"},"position":{"x":80,"y":120}},
-    {"nodeInstanceId":"backfill","nodeType":"official.quant.backfill_candles","nodeVersion":"1.0.0","config":{"market":"spot","instrument":"BTCUSDT","intervals":["1h"],"candleCount":500,"endTime":""},"position":{"x":80,"y":360}},
-    {"nodeInstanceId":"backtest-start","nodeType":"official.quant.backtest_start","nodeVersion":"1.0.0","config":{"market":"spot","instrument":"BTCUSDT","interval":"1h"},"inputBindings":{"startTime":{"kind":"field","nodeInstanceId":"backfill","fieldPath":["startTime"]},"endTime":{"kind":"field","nodeInstanceId":"backfill","fieldPath":["endTime"]},"initialCapital":{"kind":"field","nodeInstanceId":"backfill","fieldPath":["initialCapital"]},"feeRate":{"kind":"field","nodeInstanceId":"backfill","fieldPath":["feeRate"]},"slippageRate":{"kind":"field","nodeInstanceId":"backfill","fieldPath":["slippageRate"]}},"position":{"x":380,"y":360}},
-    {"nodeInstanceId":"macd","nodeType":"official.quant.macd_condition","nodeVersion":"1.0.0","config":{"market":"spot","instrument":"BTCUSDT","checkInterval":"1h","name":"MACD 金叉","interval":"1h","parameters":{"fastPeriod":12,"slowPeriod":26,"signalPeriod":9,"signal":"golden_cross"}},"inputBindings":{"eventTime":{"kind":"cel","expression":"event.time"}},"position":{"x":680,"y":120}},
-    {"nodeInstanceId":"code","nodeType":"official.quant.code_strategy","nodeVersion":"1.0.0","config":{"series":[{"alias":"main","market":"spot","instrument":"BTCUSDT","interval":"1h","lookback":30}],"parameters":{"target":"1"},"source":"{\"long\": decimalGt(last(ohlcv.main.close), sma(ohlcv.main.close, 20)), \"target\": params.target}","booleanOutputs":["long"],"decimalOutputs":["target"],"branchField":"long"},"inputBindings":{"eventTime":{"kind":"cel","expression":"event.time"}},"position":{"x":680,"y":360}},
-    {"nodeInstanceId":"position","nodeType":"official.quant.position","nodeVersion":"1.0.0","config":{"market":"spot","targetMode":"fixed","fixedTarget":"1","decimalField":"target"},"inputBindings":{"evaluatedAt":{"kind":"field","nodeInstanceId":"code","fieldPath":["evaluatedAt"]}},"position":{"x":1000,"y":240}},
-    {"nodeInstanceId":"signal","nodeType":"official.quant.output_signal","nodeVersion":"1.0.0","config":{"market":"spot","instrument":"BTCUSDT","interval":"1h"},"position":{"x":1280,"y":240}},
-    {"nodeInstanceId":"realtime-end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":1580,"y":160}},
-    {"nodeInstanceId":"backtest-end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":1580,"y":400}}
-  ],
-  "edges": [
-    {"edgeId":"backfill-to-backtest","sourceNodeInstanceId":"backfill","sourcePort":"out","targetNodeInstanceId":"backtest-start","targetPort":"in"},
-    {"edgeId":"realtime-macd","sourceNodeInstanceId":"candle-close","sourcePort":"out","targetNodeInstanceId":"macd","targetPort":"in"},
-    {"edgeId":"realtime-code","sourceNodeInstanceId":"candle-close","sourcePort":"out","targetNodeInstanceId":"code","targetPort":"in"},
-    {"edgeId":"backtest-macd","sourceNodeInstanceId":"backtest-start","sourcePort":"each","targetNodeInstanceId":"macd","targetPort":"in"},
-    {"edgeId":"backtest-code","sourceNodeInstanceId":"backtest-start","sourcePort":"each","targetNodeInstanceId":"code","targetPort":"in"},
-    {"edgeId":"macd-position","sourceNodeInstanceId":"macd","sourcePort":"true","targetNodeInstanceId":"position","targetPort":"in"},
-    {"edgeId":"code-position","sourceNodeInstanceId":"code","sourcePort":"true","targetNodeInstanceId":"position","targetPort":"in"},
-    {"edgeId":"position-signal","sourceNodeInstanceId":"position","sourcePort":"out","targetNodeInstanceId":"signal","targetPort":"in"},
-    {"edgeId":"signal-realtime-end","sourceNodeInstanceId":"signal","sourcePort":"realtime","targetNodeInstanceId":"realtime-end","targetPort":"in"},
-    {"edgeId":"signal-unchanged-end","sourceNodeInstanceId":"signal","sourcePort":"unchanged","targetNodeInstanceId":"realtime-end","targetPort":"in"},
-    {"edgeId":"backtest-completed","sourceNodeInstanceId":"backtest-start","sourcePort":"completed","targetNodeInstanceId":"backtest-end","targetPort":"in"}
-  ]
-}`
-
-const quantPaperWorkflowGraph = `{
-  "schemaVersion": 1,
-  "nodes": [
-    {"nodeInstanceId":"candle-event","nodeType":"core.event","nodeVersion":"1.0.0","config":{"types":["market.candle.closed"],"source":"urn:coinsphere:plugin:official.quant","subject":"binance:spot:BTCUSDT:1h"},"position":{"x":80,"y":220}},
-    {"nodeInstanceId":"strategy","nodeType":"official.quant.evaluate","nodeVersion":"1.0.0","config":{"strategyId":"official.quant.sma-crossover","market":"spot","instrument":"BTCUSDT","interval":"1h","parameters":{"fastPeriod":3,"slowPeriod":5}},"inputBindings":{"eventTime":{"kind":"cel","expression":"event.time"}},"position":{"x":320,"y":220}},
-    {"nodeInstanceId":"signal","nodeType":"official.quant.signal","nodeVersion":"1.0.0","config":{"market":"spot","instrument":"BTCUSDT","interval":"1h"},"inputBindings":{"strategyId":{"kind":"field","nodeInstanceId":"strategy","fieldPath":["strategyId"]},"strategyVersion":{"kind":"field","nodeInstanceId":"strategy","fieldPath":["strategyVersion"]},"target":{"kind":"field","nodeInstanceId":"strategy","fieldPath":["target"]},"evaluatedAt":{"kind":"field","nodeInstanceId":"strategy","fieldPath":["evaluatedAt"]},"businessKey":{"kind":"cel","expression":"event.subject"}},"position":{"x":560,"y":220}},
-    {"nodeInstanceId":"approve","nodeType":"core.human_approval","nodeVersion":"1.0.0","config":{"decisionMode":"human","taskType":"paper_signal","prompt":"审批 Paper 策略信号","expiresSeconds":86400},"inputBindings":{"businessKey":{"kind":"field","nodeInstanceId":"signal","fieldPath":["businessKey"]}},"position":{"x":800,"y":220}},
-    {"nodeInstanceId":"paper","nodeType":"official.quant.paper_execute","nodeVersion":"1.0.0","config":{"decisionMode":"human","market":"spot","instrument":"BTCUSDT","interval":"1h","initialBalance":"10000","feeRate":"0.001","maxTotalNotional":"10000","maxInstrumentNotional":"10000","maxOperationNotional":"2500","maxDailyLoss":"500","maxDrawdown":"0.1","maxQuoteAgeSeconds":10},"inputBindings":{"signalId":{"kind":"field","nodeInstanceId":"signal","fieldPath":["signalId"]},"decisionTaskId":{"kind":"field","nodeInstanceId":"approve","fieldPath":["taskId"]},"decisionStatus":{"kind":"field","nodeInstanceId":"approve","fieldPath":["status"]}},"position":{"x":1040,"y":220}},
-    {"nodeInstanceId":"notify","nodeType":"official.notification.in_app","nodeVersion":"1.0.0","config":{"title":"Paper 信号已处理"},"inputBindings":{"subjectKey":{"kind":"field","nodeInstanceId":"signal","fieldPath":["businessKey"]},"message":{"kind":"literal","value":"Paper 信号已完成风险检查与执行处理。"}},"position":{"x":1280,"y":220}},
-    {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":1520,"y":220}}
-  ],
-  "edges": [
-    {"edgeId":"event-to-strategy","sourceNodeInstanceId":"candle-event","sourcePort":"out","targetNodeInstanceId":"strategy","targetPort":"in"},
-    {"edgeId":"strategy-to-signal","sourceNodeInstanceId":"strategy","sourcePort":"out","targetNodeInstanceId":"signal","targetPort":"in"},
-    {"edgeId":"signal-to-approve","sourceNodeInstanceId":"signal","sourcePort":"out","targetNodeInstanceId":"approve","targetPort":"in"},
-    {"edgeId":"approve-to-paper","sourceNodeInstanceId":"approve","sourcePort":"out","targetNodeInstanceId":"paper","targetPort":"in"},
-    {"edgeId":"paper-to-notify","sourceNodeInstanceId":"paper","sourcePort":"out","targetNodeInstanceId":"notify","targetPort":"in"},
-    {"edgeId":"notify-to-end","sourceNodeInstanceId":"notify","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}
   ]
 }`
 
@@ -261,19 +131,32 @@ type WorkflowRevisionView struct {
 }
 
 func (a *App) ListWorkflowTemplates() []WorkflowTemplate {
-	return []WorkflowTemplate{
+	items := []WorkflowTemplate{
 		{Key: WorkflowTemplateBlank, Name: "空白工作流", Mode: WorkflowModeBatch, Description: "从手动开始节点创建空白流程。"},
 		{Key: WorkflowTemplateSchedule, Name: "定时工作流", Mode: WorkflowModeBatch, Description: "按固定间隔或 Cron 调度流程。"},
 		{Key: WorkflowTemplateEvent, Name: "事件工作流", Mode: WorkflowModeEvent, Description: "接收匹配的 CloudEvent 后运行。"},
-		{Key: WorkflowTemplateFailure, Name: "失败处理", Mode: WorkflowModeEvent, Description: "处理标准工作流失败事件。"},
-		{Key: WorkflowTemplateWebhook, Name: "Webhook 工作流", Mode: WorkflowModeBatch, Description: "通过认证 Webhook 启动流程。"},
-		{Key: WorkflowTemplateWebSocket, Name: "WebSocket 工作流", Mode: WorkflowModeStream, Description: "订阅公开 WebSocket 消息。"},
-		{Key: WorkflowTemplateQuantData, Name: "Binance 行情采集", Mode: WorkflowModeStream, Description: "共享采集 Spot 或 USD-M 闭合 K 线。"},
-		{Key: WorkflowTemplateQuantLive, Name: "可信策略评估", Mode: WorkflowModeEvent, Description: "按闭合 K 线运行内置 Go 策略。"},
-		{Key: WorkflowTemplateBacktest, Name: "可信策略回测", Mode: WorkflowModeBatch, Description: "对内置 Go 策略执行确定性回测。"},
-		{Key: WorkflowTemplateQuantFlow, Name: "量化策略与回测", Mode: WorkflowModeEvent, Description: "同一 revision 复用实时 K 线与节点化回测计算子图。"},
-		{Key: WorkflowTemplatePaper, Name: "Paper 策略", Mode: WorkflowModeEvent, Description: "创建行情采集及审批优先的 Paper 策略流程。"},
 	}
+	if a.Plugins != nil {
+		for _, template := range a.Plugins.Templates() {
+			items = append(items, WorkflowTemplate{Key: template.Key, Name: template.Name, Description: template.Description, Mode: template.Mode})
+		}
+	}
+	return items
+}
+
+func (a *App) workflowTemplate(key string) (json.RawMessage, bool) {
+	core := map[string]string{WorkflowTemplateBlank: blankWorkflowGraph, WorkflowTemplateSchedule: scheduledWorkflowGraph, WorkflowTemplateEvent: eventWorkflowGraph}
+	if graph := core[key]; graph != "" {
+		return json.RawMessage(graph), true
+	}
+	if a.Plugins != nil {
+		for _, template := range a.Plugins.Templates() {
+			if template.Key == key {
+				return append(json.RawMessage(nil), template.Graph...), true
+			}
+		}
+	}
+	return nil, false
 }
 
 func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload, principal *Principal) (WorkflowDetail, error) {
@@ -289,39 +172,14 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 	if utf8.RuneCountInString(description) > 500 {
 		return WorkflowDetail{}, errors.New("workflow description must not exceed 500 characters")
 	}
-	if templateKey != WorkflowTemplateBlank && templateKey != WorkflowTemplateSchedule &&
-		templateKey != WorkflowTemplateEvent && templateKey != WorkflowTemplateFailure &&
-		templateKey != WorkflowTemplateWebhook && templateKey != WorkflowTemplateWebSocket &&
-		templateKey != WorkflowTemplateQuantData && templateKey != WorkflowTemplateQuantLive &&
-		templateKey != WorkflowTemplateBacktest && templateKey != WorkflowTemplateQuantFlow && templateKey != WorkflowTemplatePaper {
+	templateGraph, ok := a.workflowTemplate(templateKey)
+	if !ok {
 		return WorkflowDetail{}, fmt.Errorf("unknown workflow template %q", templateKey)
 	}
 	if principal == nil || principal.User == nil || principal.User.ID <= 0 {
 		return WorkflowDetail{}, ErrPermission
 	}
-	templateGraph := blankWorkflowGraph
-	if templateKey == WorkflowTemplateSchedule {
-		templateGraph = scheduledWorkflowGraph
-	} else if templateKey == WorkflowTemplateEvent {
-		templateGraph = eventWorkflowGraph
-	} else if templateKey == WorkflowTemplateFailure {
-		templateGraph = failureWorkflowGraph
-	} else if templateKey == WorkflowTemplateWebhook {
-		templateGraph = webhookWorkflowGraph
-	} else if templateKey == WorkflowTemplateWebSocket {
-		templateGraph = webSocketWorkflowGraph
-	} else if templateKey == WorkflowTemplateQuantData {
-		templateGraph = quantMarketDataWorkflowGraph
-	} else if templateKey == WorkflowTemplateQuantLive {
-		templateGraph = quantStrategyWorkflowGraph
-	} else if templateKey == WorkflowTemplateBacktest {
-		templateGraph = quantBacktestWorkflowGraph
-	} else if templateKey == WorkflowTemplateQuantFlow {
-		templateGraph = quantWorkflowGraph
-	} else if templateKey == WorkflowTemplatePaper {
-		templateGraph = quantPaperWorkflowGraph
-	}
-	graph, err := a.validateWorkflowGraph(json.RawMessage(templateGraph))
+	graph, err := a.validateWorkflowGraph(templateGraph)
 	if err != nil {
 		return WorkflowDetail{}, errors.New("workflow template is invalid")
 	}
@@ -332,19 +190,7 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 		MainTriggerNodeID: graph.mainTriggerID, RetentionDays: 30, CreatedBy: principal.User.ID,
 		CreatedAt: now, UpdatedAt: now,
 	}
-	var marketGraph validatedWorkflowGraph
-	if templateKey == WorkflowTemplatePaper {
-		marketGraph, err = a.validateWorkflowGraph(json.RawMessage(quantMarketDataWorkflowGraph))
-		if err != nil {
-			return WorkflowDetail{}, errors.New("paper market data template is invalid")
-		}
-	}
 	err = a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if templateKey == WorkflowTemplatePaper {
-			if _, err := createWorkflowRecord(tx, name+" Market Data", "Paper shared public market data", marketGraph, principal.User.ID, now); err != nil {
-				return err
-			}
-		}
 		var createErr error
 		workflow, createErr = createWorkflowRecord(tx, name, description, graph, principal.User.ID, now)
 		return createErr

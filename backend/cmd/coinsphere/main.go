@@ -47,7 +47,7 @@ func validatePlugins(paths []string, output io.Writer) error {
 	if len(paths) == 0 {
 		return errors.New("at least one plugin directory is required")
 	}
-	plugins, err := manifest.LoadAll(paths, version.Core, version.SDKMajor)
+	plugins, err := manifest.LoadAllWithDependencies(paths, version.Core, version.SDKMajor, version.BuiltinPlugins)
 	if err != nil {
 		return err
 	}
@@ -59,10 +59,10 @@ func validatePlugins(paths []string, output io.Writer) error {
 			return err
 		}
 	}
-	if _, err := pluginbuild.RenderBackend(plugins); err != nil {
+	if _, err := pluginbuild.RenderBackendWithDependencies(plugins, version.BuiltinPlugins); err != nil {
 		return err
 	}
-	if _, err := pluginbuild.RenderFrontend(plugins); err != nil {
+	if _, err := pluginbuild.RenderFrontendWithDependencies(plugins, version.BuiltinPlugins); err != nil {
 		return err
 	}
 	for _, plugin := range plugins {
@@ -133,6 +133,16 @@ func changePlugin(parent context.Context, action string, args []string, output i
 	target := positionals[0]
 	switch action {
 	case "install", "upgrade":
+		if action == "install" {
+			builtin, err := installer.EnableBuiltin(ctx, target)
+			if err != nil {
+				return err
+			}
+			if builtin {
+				_, _ = fmt.Fprintf(output, "enabled built-in plugin %s; restart the application to load it\n", target)
+				return nil
+			}
+		}
 		plugin, err := installer.Install(ctx, target, action == "upgrade")
 		if err != nil {
 			return err
@@ -146,7 +156,7 @@ func changePlugin(parent context.Context, action string, args []string, output i
 		if err := installer.Uninstall(ctx, target); err != nil {
 			return err
 		}
-		_, _ = fmt.Fprintf(output, "uninstalled and rebuilt plugin %s; data retained\n", target)
+		_, _ = fmt.Fprintf(output, "uninstalled plugin %s; data retained\n", target)
 	case "purge-data":
 		if err := installer.PurgeData(ctx, target, *confirmation); err != nil {
 			return err

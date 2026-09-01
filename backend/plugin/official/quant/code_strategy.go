@@ -26,6 +26,7 @@ var quantCodeNamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`)
 
 type quantCodeSeries struct {
 	Alias      string `json:"alias"`
+	Venue      string `json:"venue"`
 	Market     string `json:"market"`
 	Instrument string `json:"instrument"`
 	Interval   string `json:"interval"`
@@ -71,7 +72,7 @@ func parseQuantCodeStrategyConfig(raw json.RawMessage) (quantCodeStrategyConfig,
 		if !quantCodeNamePattern.MatchString(series.Alias) || aliases[series.Alias] || series.Lookback < 1 || series.Lookback > 500 {
 			return config, errors.New("code strategy series declaration is invalid")
 		}
-		if _, err := parseQuantSeriesConfig(mustMarshal(quantSeriesConfig{Market: series.Market, Instrument: series.Instrument, Interval: series.Interval})); err != nil {
+		if _, err := parseQuantSeriesConfig(mustMarshal(quantSeriesConfig{Venue: series.Venue, Market: series.Market, Instrument: series.Instrument, Interval: series.Interval})); err != nil {
 			return config, err
 		}
 		aliases[series.Alias] = true
@@ -111,7 +112,7 @@ func (a *quantCodeStrategyAction) Execute(ctx context.Context, request sdk.Actio
 	ready := true
 	for _, declaration := range config.Series {
 		candles, err := a.runtime.loadQuantCandlesThroughClose(ctx, quantSeriesConfig{
-			Market: declaration.Market, Instrument: declaration.Instrument, Interval: declaration.Interval,
+			Venue: declaration.Venue, Market: declaration.Market, Instrument: declaration.Instrument, Interval: declaration.Interval,
 		}, evaluatedAt, declaration.Lookback)
 		if err != nil {
 			return sdk.ActionResult{}, err

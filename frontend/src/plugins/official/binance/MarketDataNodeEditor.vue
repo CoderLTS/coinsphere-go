@@ -10,7 +10,7 @@
   <ElFormItem :label="String(schema?.properties?.instrument?.title || 'Instrument')">
     <ElSelect
       :model-value="config.instrument"
-      class="quant-candle-config__full"
+      class="market-data-editor__full"
       filterable
       allow-create
       default-first-option
@@ -37,8 +37,8 @@
 </template>
 
 <script setup lang="ts">
-  import { fetchQuantInstruments, type QuantInstrument } from '@/api/quant'
-  import WorkflowSchemaFields from './WorkflowSchemaFields.vue'
+  import { fetchBinanceInstruments, type BinanceInstrument } from './api'
+  import WorkflowSchemaFields from '@/views/scheduler/workflow/editor/components/WorkflowSchemaFields.vue'
 
   const props = defineProps<{
     schema: Record<string, any>
@@ -47,15 +47,17 @@
   }>()
 
   const emit = defineEmits<{
-    (e: 'update', key: string, value: any): void
+    (event: 'update', key: string, value: any): void
   }>()
 
-  const instruments = ref<QuantInstrument[]>([])
+  const instruments = ref<BinanceInstrument[]>([])
   const loading = ref(false)
   let requestID = 0
 
   const remainingKeys = computed(() =>
-    ['intervals', 'candleCount', 'endTime'].filter((key) => props.schema?.properties?.[key])
+    ['proxyId', 'intervals', 'candleCount', 'endTime'].filter(
+      (key) => props.schema?.properties?.[key]
+    )
   )
 
   const updateInstrument = (value: unknown) =>
@@ -75,7 +77,7 @@
       const currentRequest = ++requestID
       loading.value = true
       try {
-        const response = await fetchQuantInstruments(market)
+        const response = await fetchBinanceInstruments(market)
         if (currentRequest === requestID) instruments.value = response.items
       } catch {
         if (currentRequest === requestID) instruments.value = []
@@ -87,8 +89,8 @@
   )
 </script>
 
-<style scoped lang="scss">
-  .quant-candle-config__full {
+<style scoped>
+  .market-data-editor__full {
     width: 100%;
   }
 </style>

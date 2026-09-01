@@ -8,10 +8,11 @@ import (
 	"coinsphere/backend/plugin/sdk"
 )
 
-var quantAssistantQuerySchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"resource":{"type":"string","enum":["instruments","backtests","signals","paper_accounts"]},"market":{"type":"string","enum":["spot","usdm"]},"instrument":{"type":"string","pattern":"^[A-Z0-9]{2,32}$"},"status":{"type":"string","maxLength":32},"limit":{"type":"integer","minimum":1,"maximum":50,"default":20}},"required":["resource"],"additionalProperties":false}`)
+var quantAssistantQuerySchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"resource":{"type":"string","enum":["backtests","signals"]},"venue":{"type":"string","pattern":"^[a-z][a-z0-9_-]{1,31}$"},"market":{"type":"string","enum":["spot","usdm"]},"instrument":{"type":"string","pattern":"^[A-Z0-9]{2,32}$"},"status":{"type":"string","maxLength":32},"limit":{"type":"integer","minimum":1,"maximum":50,"default":20}},"required":["resource"],"additionalProperties":false}`)
 
 type assistantDomainQuery struct {
 	Resource   string `json:"resource"`
+	Venue      string `json:"venue"`
 	Market     string `json:"market"`
 	Instrument string `json:"instrument"`
 	Status     string `json:"status"`
@@ -30,24 +31,6 @@ func (q *quantRuntime) assistantQuery(ctx context.Context, input json.RawMessage
 
 	var result any
 	switch request.Resource {
-	case "instruments":
-		var rows []struct {
-			Market, Symbol, BaseAsset, QuoteAsset, Status string
-		}
-		query := q.db.WithContext(ctx).Model(&quantInstrument{}).Limit(request.Limit)
-		if request.Market != "" {
-			query = query.Where("market = ?", request.Market)
-		}
-		if request.Instrument != "" {
-			query = query.Where("symbol = ?", request.Instrument)
-		}
-		if request.Status != "" {
-			query = query.Where("status = ?", request.Status)
-		}
-		if err := query.Order("symbol").Find(&rows).Error; err != nil {
-			return nil, errors.New("query Quant instruments failed")
-		}
-		result = map[string]any{"items": rows}
 	case "backtests":
 		var rows []struct {
 			ID                                       int64
@@ -61,6 +44,9 @@ func (q *quantRuntime) assistantQuery(ctx context.Context, input json.RawMessage
 		query := q.db.WithContext(ctx).Model(&quantBacktest{}).Limit(request.Limit)
 		if request.Market != "" {
 			query = query.Where("market = ?", request.Market)
+		}
+		if request.Venue != "" {
+			query = query.Where("venue = ?", request.Venue)
 		}
 		if request.Instrument != "" {
 			query = query.Where("instrument = ?", request.Instrument)
@@ -78,6 +64,9 @@ func (q *quantRuntime) assistantQuery(ctx context.Context, input json.RawMessage
 		if request.Market != "" {
 			query = query.Where("market = ?", request.Market)
 		}
+		if request.Venue != "" {
+			query = query.Where("venue = ?", request.Venue)
+		}
 		if request.Instrument != "" {
 			query = query.Where("instrument = ?", request.Instrument)
 		}
@@ -86,22 +75,6 @@ func (q *quantRuntime) assistantQuery(ctx context.Context, input json.RawMessage
 		}
 		if err := query.Order("created_at DESC, id DESC").Find(&rows).Error; err != nil {
 			return nil, errors.New("query Quant signals failed")
-		}
-		result = map[string]any{"items": rows}
-	case "paper_accounts":
-		var rows []struct {
-			ID, WorkflowID                              int64
-			Status, InitialBalance, CashBalance, Equity string
-		}
-		if request.Market != "" || request.Instrument != "" {
-			return nil, errors.New("market and instrument are not supported for Paper accounts")
-		}
-		query := q.db.WithContext(ctx).Model(&quantPaperAccount{}).Limit(request.Limit)
-		if request.Status != "" {
-			query = query.Where("status = ?", request.Status)
-		}
-		if err := query.Order("updated_at DESC, id DESC").Find(&rows).Error; err != nil {
-			return nil, errors.New("query Quant Paper accounts failed")
 		}
 		result = map[string]any{"items": rows}
 	default:

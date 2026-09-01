@@ -16,7 +16,7 @@ CoinSphere 是面向个人自托管场景的工作流驱动量化平台。用户
 - 固定范围的共享结果视图及授权操作。
 - 仅超级管理员可用的平台智能助手、全局模型配置和工作流草稿生成。
 
-当前明确不提供微服务、多实例调度、Redis、Kafka、Kubernetes、动态插件、插件市场、不可信代码沙箱、Python Worker、Testnet、Live 或交易所私有 API。旧接口、旧数据和旧工作流图没有兼容层。
+当前明确不提供微服务、多实例调度、Redis、Kafka、Kubernetes、动态插件、插件市场、不可信代码沙箱、Python Worker 或 Testnet。Binance 私有 API 仅由其插件通过 SecretReader 访问，Live 默认关闭并受[独立安全门禁](decisions/0005-live-trading-gate.md)约束。旧接口、旧数据和旧工作流图没有兼容层。
 
 平台助手位于 Core，而不是插件。HTTP 层只向 `R_SUPER` 暴露模型配置、会话、流式对话和工作流确认接口；Service 层负责有界上下文、OpenAI-compatible 工具循环、核心只读查询、插件查询调度和工作流方案校验。PostgreSQL 保存全局模型配置、用户会话与消息，提案随助手消息元数据保存。
 
@@ -38,7 +38,7 @@ flowchart LR
     MIGRATE["一次性 migration"] --> DB
 ```
 
-超级管理员可以管理系统、工作流和共享结果；普通用户不能访问工作流管理面，只能访问已授权且仍为 active 的 ResultView。外部网络访问默认关闭，仅 Connector/AI 和 Quant 公共行情按各自边界访问明确允许的公共目标。
+超级管理员可以管理系统、工作流和共享结果；普通用户不能访问工作流管理面，只能访问已授权且仍为 active 的 ResultView。外部网络访问默认关闭，仅 Connector/AI 和交易所 Provider 插件按各自边界访问明确允许的公共目标。
 
 ## 3. 运行与部署拓扑
 
@@ -75,7 +75,7 @@ sequenceDiagram
     Main->>HTTP: 开始监听
 ```
 
-启动时只校验核心 migration，不自动执行 DDL。插件注册先加载内置 Connector/AI、Quant、Notification、QQ，再加载生成的第三方注册表；插件 ID、节点类型、策略、页面和路由冲突都会使启动失败。随后系统初始化结构化日志运行时、确保内置 Quant 品种同步工作流存在，并启动工作流执行器。
+启动时只校验 migration，不自动执行 DDL，也不创建或激活任何业务工作流。插件按依赖拓扑注册；缺少未编译的插件不会成为 Core 启动前置条件，已编译插件自身注册错误或贡献冲突仍会阻止错误能力进入运行态。随后系统初始化结构化日志运行时并启动工作流执行器。
 
 收到终止信号后，同一个取消上下文停止新 HTTP 请求、连续流 Trigger 和外部 I/O。HTTP Server 有界关闭，执行器停止领取新 Run，在途 Action 通过 `context.Context` 协作取消并保存可提交的检查点；进程等待 Run 和 Trigger 收尾后关闭日志与数据库连接。
 
@@ -156,7 +156,7 @@ Run WebSocket 只发送工作流 ID、Run ID 和更新时间等轻量更新。�
 
 `core.schedule` 支持固定秒数或带 IANA 时区的六段 Cron，服务恢复后最多补一次漏跑。插件 `TriggerHandler` 用 Emitter 发送事件并必须响应取消与背压；服务启动时扫描 active 连续流并恢复 Trigger。
 
-Connector/AI 的 HTTP 与 WebSocket 访问执行精确域名白名单、公共 DNS 和重定向复核，不继承环境代理。系统代理池由 Service 拥有，密码通过 SecretCipher 加密；只有 Quant 的元数据同步、K 线补数和实时 K 线节点能在修订配置中显式选择 HTTP/SOCKS5 代理。直连继续执行公共 DNS 校验；代理模式由代理解析目标域名，但仍固定 Binance 主机及公共 REST/WebSocket 端点，禁用重定向，并按 `proxyId` 隔离实时订阅。Notification 的钉钉节点和独立 QQ 插件只访问固定官方域名，SMTP 只拨号公网域名并强制 TLS 或 STARTTLS；凭据只经 SecretReader 解密。QQ Gateway Trigger 随流式工作流启停，固定订阅群聊 @ 与单聊消息并按 OpenID 分区，不保存原始载荷或鉴权扩展。Binance Quant 只访问公共行情接口，通用节点不能调用交易所私有接口。六种 Quant 判断节点各自读取一种周期的 UTC 闭合 K 线，在当前和上一检查时点确定性计算 Decimal 指标；工作流只承担 true/false 端口组合、路径进入传播和通知输入聚合，不参与逐 K 线计算。
+Connector/AI 的 HTTP 与 WebSocket 访问执行精确域名白名单、公共 DNS 和重定向复核，不继承环境代理。系统代理池由 Service 拥有，密码通过 SecretCipher 加密；Binance 的元数据同步、K 线补数和实时 K 线节点可在修订配置中显式选择 HTTP/SOCKS5 代理。直连继续执行公共 DNS 校验；代理模式仍固定 Binance 主机及允许的 REST/WebSocket 端点，禁用重定向，并按 `proxyId` 隔离实时订阅。Notification 的钉钉节点和独立 QQ 插件只访问固定官方域名，SMTP 只拨号公网域名并强制 TLS 或 STARTTLS；凭据只经节点范围 `SecretReader` 解密。Quant 不包含交易所 URL、代理或签名，只通过 `MarketDataRegistry` 读取行情并执行 Decimal 指标和策略计算；通用节点不能调用交易所私有接口。
 
 ## 9. 编译期插件
 
@@ -193,33 +193,34 @@ ResultView 是普通用户访问插件结果的唯一共享边界。创建时固
 ```mermaid
 flowchart LR
     META["Binance 公共元数据"] --> INSTRUMENTS["工作流品种来源"]
-    MARKET["公共闭合 K 线"] --> CANDLES["plugin_quant.candles"]
+    MARKET["Binance/交易所 Provider 公共闭合 K 线"] --> CANDLES["plugin_binance.candles"]
     CANDLES --> STRATEGY["可信 Go Strategy"]
     STRATEGY --> SIGNAL["可取代 Signal"]
     SIGNAL --> DECISION["人工或完整风控下的自动决策"]
     DECISION --> QUOTE["公共报价复核"]
-    QUOTE --> PAPER["订单 / 成交 / 费用 / 账本"]
-    PAPER --> PROJECTION["账户与持仓投影"]
+    QUOTE --> PAPER["plugin_binance 订单 / 成交 / 费用 / 账本"]
+    PAPER --> PROJECTION["Binance 账户与持仓投影"]
     PAPER --> NOTIFY["幂等多渠道通知"]
 ```
 
-Quant 将相同 `market + instrument + interval` 的公共行情订阅合并，使用 UTC 和 Decimal 保存已闭合 K 线。品种同步节点按工作流保存过滤后的来源快照，全局目录是所有工作流来源的并集。放量、价格波动、MACD、KDJ、RSI 和布林带分别由独立判断节点执行，串行 true 表达 AND、并行汇合表达 OR、false 表达反向路径。实时策略评估与回测调用同一个无状态 Go `Strategy.Evaluate`；回测按下一根 K 线开盘应用费用和滑点，大明细写入内容寻址制品。
+Binance 插件将相同 `market + instrument + interval` 的公共行情订阅合并，使用 UTC 和 Decimal 保存已闭合 K 线及交易规则。Quant 只通过 `MarketDataRegistry` 读取任意 venue 的行情。放量、价格波动、MACD、KDJ、RSI 和布林带分别由 Quant 独立判断节点执行，串行 true 表达 AND、并行汇合表达 OR、false 表达反向路径。实时策略评估与回测调用同一个无状态 Go `Strategy.Evaluate`；回测按下一根 K 线开盘应用费用和滑点，大明细写入内容寻址制品。
 
 策略目标先持久化为 Signal。默认需要人工决定；自动模式只有在总名义价值、单品种名义价值、单次操作名义价值、最大日亏损和最大回撤全部明确配置后才能启用。决定后重新取得公共报价并复核时效、步进、账户状态和全部风险上限。
 
-Paper 订单、成交、费用和账本事实不可变，账户与持仓是可重建投影。稳定操作键保证 Run 重试不会重复记账。Notification 使用同一操作键幂等记录站内、钉钉、QQ 或 SMTP 投递；当前系统不包含真实订单、真实凭据或私有交易接口。
+Paper 与受门禁的 Binance Live 订单、成交、费用和账本事实不可变，账户与持仓是可重建投影。稳定操作键保证 Run 重试不会重复记账。Notification 使用同一操作键幂等记录站内、钉钉、QQ 或 SMTP 投递；真实凭据仍只在运行时由 SecretReader 提供。
 
 ## 12. 数据所有权
 
-| Schema / 存储 | 所有者 | 主要事实 |
-| --- | --- | --- |
-| `public` 系统表 | 认证与系统模块 | 用户、角色、菜单、权限、i18n、审计、系统日志、插件安装与引用 |
-| `public` 工作流表 | 工作流核心 | 工作流、修订、密钥、运行时、事件、投递、Outbox、Run、节点、日志、检查点、人工任务、制品、节点状态 |
-| `public` ResultView 表 | 结果视图模块 | 固定视图、用户授权、角色授权、撤销状态 |
-| `plugin_quant` | Quant 插件 | 品种、品种来源、K 线、回测、信号、Paper 账户、订单、成交、费用、账本和持仓 |
-| `plugin_notification` | Notification 插件 | 多渠道幂等投递、站内收件人与已读状态 |
-| Backend 持久目录 | 制品与上传模块 | gzip 制品正文、静态文件和用户上传 |
-| `plugin_<id>` | 外部插件 | 独立 migration 账本和插件自有领域数据 |
+| Schema / 存储          | 所有者            | 主要事实                                                                                          |
+| ---------------------- | ----------------- | ------------------------------------------------------------------------------------------------- |
+| `public` 系统表        | 认证与系统模块    | 用户、角色、菜单、权限、i18n、审计、系统日志、插件安装与引用                                      |
+| `public` 工作流表      | 工作流核心        | 工作流、修订、密钥、运行时、事件、投递、Outbox、Run、节点、日志、检查点、人工任务、制品、节点状态 |
+| `public` ResultView 表 | 结果视图模块      | 固定视图、用户授权、角色授权、撤销状态                                                            |
+| `plugin_quant`         | Quant 插件        | 策略、回测、行情信号、OrderIntent 和信号状态                                                      |
+| `plugin_binance`       | Binance 插件      | 币种、K 线、Quote、交易规则、订单、成交、费用、Paper 账本、持仓和账户快照                         |
+| `plugin_notification`  | Notification 插件 | 多渠道幂等投递、站内收件人与已读状态                                                              |
+| Backend 持久目录       | 制品与上传模块    | gzip 制品正文、静态文件和用户上传                                                                 |
+| `plugin_<id>`          | 外部插件          | 独立 migration 账本和插件自有领域数据                                                             |
 
 领域时间、数据库和接口统一使用 UTC。价格、数量、金额、费率和盈亏使用 Decimal；数据库采用 `NUMERIC(38,18)`，JSON 采用十进制字符串，账务值不使用 `float64`。
 
@@ -249,7 +250,7 @@ Paper 订单、成交、费用和账本事实不可变，账户与持仓是可�
 - Go 插件与主进程同生共死，无法强制终止忽略取消的处理器；只有出现实际隔离需求时才设计独立插件宿主。
 - 插件安装需要源码复制、migration 和镜像重建，允许维护停机；当前不提供热加载或远程市场。
 - 正式 Paper 观察开始前必须冻结既有 migration；冻结后核心和插件 migration 只能追加。
-- Testnet、Live 和私有交易必须通过新的 ADR、安全设计、独立凭据边界、恢复证据和用户手工放行，不能由通用工作流或插件隐式开启。
+- Testnet 仍不支持。Live 和私有交易必须遵守 [真实交易安全门禁 ADR](decisions/0005-live-trading-gate.md)、独立凭据边界、恢复证据和用户手工放行，不能由通用工作流或插件隐式开启。
 
 ## 16. 相关文档
 

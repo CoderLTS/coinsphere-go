@@ -24,13 +24,14 @@ var windowsAbsolutePathPattern = regexp.MustCompile(`^[A-Za-z]:/`)
 var assistantQueryNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,47}$`)
 
 type PluginDescriptor struct {
-	ID          string
-	Name        string
-	Version     string
-	Contributes []string
+	ID              string
+	Name            string
+	Version         string
+	Contributes     []string
+	RequiresPlugins map[string]string
 }
 
-type RegisterFunc func(Registrar) error
+type RegisterFunc func(Registrar, Host) error
 
 type Registrar interface {
 	Action(NodeDescriptor, ActionHandler) error
@@ -40,6 +41,10 @@ type Registrar interface {
 	ResultPage(ResultPageDescriptor) error
 	Route(RouteDescriptor, ScopedRouteHandler) error
 	AssistantQuery(AssistantQueryDescriptor, AssistantQueryHandler) error
+	MarketDataProvider(MarketDataProvider) error
+	ExecutionProvider(ExecutionProvider) error
+	WorkflowValidator(WorkflowValidator) error
+	Template(TemplateDescriptor) error
 }
 
 type Registry struct {
@@ -50,6 +55,10 @@ type Registry struct {
 	resultPages      map[string]ResultPageDescriptor
 	routes           map[string]registeredRoute
 	assistantQueries map[string]registeredAssistantQuery
+	marketData       map[string]registeredMarketDataProvider
+	execution        map[string]registeredExecutionProvider
+	validators       map[string]WorkflowValidator
+	templates        map[string]registeredTemplate
 }
 
 type registeredNode struct {
@@ -78,16 +87,33 @@ type registeredAssistantQuery struct {
 	schema   *jsonschema.Schema
 }
 
+type registeredMarketDataProvider struct {
+	pluginID string
+	provider MarketDataProvider
+}
+
+type registeredExecutionProvider struct {
+	pluginID string
+	provider ExecutionProvider
+}
+
+type registeredTemplate struct {
+	pluginID string
+	desc     TemplateDescriptor
+}
+
 func NewRegistry() *Registry {
 	return &Registry{
 		plugins: make(map[string]PluginDescriptor), nodes: make(map[string]registeredNode),
 		strategies: make(map[string]registeredStrategy),
 		pages:      make(map[string]PageDescriptor), resultPages: make(map[string]ResultPageDescriptor),
 		routes: make(map[string]registeredRoute), assistantQueries: make(map[string]registeredAssistantQuery),
+		marketData: make(map[string]registeredMarketDataProvider), execution: make(map[string]registeredExecutionProvider),
+		validators: make(map[string]WorkflowValidator), templates: make(map[string]registeredTemplate),
 	}
 }
 
-func (r *Registry) RegisterPlugin(plugin PluginDescriptor, register RegisterFunc) error {
+func (r *Registry) RegisterPlugin(plugin PluginDescriptor, host Host, register RegisterFunc) error {
 	if err := validatePluginDescriptor(plugin); err != nil {
 		return fmt.Errorf("plugin %q: %w", plugin.ID, err)
 	}
@@ -97,9 +123,25 @@ func (r *Registry) RegisterPlugin(plugin PluginDescriptor, register RegisterFunc
 	if _, exists := r.plugins[plugin.ID]; exists {
 		return fmt.Errorf("duplicate plugin id %q", plugin.ID)
 	}
+	for requiredID, constraintText := range plugin.RequiresPlugins {
+		required, exists := r.plugins[requiredID]
+		if !exists {
+			return fmt.Errorf("plugin %q requires plugin %q", plugin.ID, requiredID)
+		}
+		constraint, err := semver.NewConstraint(constraintText)
+		version, versionErr := semver.StrictNewVersion(required.Version)
+		if err != nil || versionErr != nil || !constraint.Check(version) {
+			return fmt.Errorf("plugin %q requires plugin %q version %s", plugin.ID, requiredID, constraintText)
+		}
+	}
 
+	pluginHost := host
+	if host.Stores != nil {
+		pluginHost.Store = host.Stores.ForPlugin(plugin.ID)
+	}
+	pluginHost.Stores = nil
 	collector := &registrationCollector{plugin: plugin, declared: stringSet(plugin.Contributes)}
-	if err := register(collector); err != nil {
+	if err := register(collector, pluginHost); err != nil {
 		return fmt.Errorf("plugin %q registration failed: %w", plugin.ID, err)
 	}
 	if err := collector.validateDeclaredContributions(); err != nil {
@@ -135,6 +177,21 @@ func (r *Registry) RegisterPlugin(plugin PluginDescriptor, register RegisterFunc
 			return fmt.Errorf("assistant query %q conflicts between plugins %q and %q", key, previous.pluginID, plugin.ID)
 		}
 	}
+	for id := range collector.marketData {
+		if previous, exists := r.marketData[id]; exists {
+			return fmt.Errorf("market data provider %q conflicts between plugins %q and %q", id, previous.pluginID, plugin.ID)
+		}
+	}
+	for id := range collector.execution {
+		if previous, exists := r.execution[id]; exists {
+			return fmt.Errorf("execution provider %q conflicts between plugins %q and %q", id, previous.pluginID, plugin.ID)
+		}
+	}
+	for key := range collector.templates {
+		if previous, exists := r.templates[key]; exists {
+			return fmt.Errorf("workflow template %q conflicts between plugins %q and %q", key, previous.pluginID, plugin.ID)
+		}
+	}
 
 	r.plugins[plugin.ID] = plugin
 	for _, node := range collector.nodes {
@@ -155,7 +212,57 @@ func (r *Registry) RegisterPlugin(plugin PluginDescriptor, register RegisterFunc
 	for key, query := range collector.assistantQueries {
 		r.assistantQueries[key] = query
 	}
+	for id, provider := range collector.marketData {
+		r.marketData[id] = provider
+	}
+	for id, provider := range collector.execution {
+		r.execution[id] = provider
+	}
+	if collector.validator != nil {
+		r.validators[plugin.ID] = collector.validator
+	}
+	for key, template := range collector.templates {
+		r.templates[key] = template
+	}
 	return nil
+}
+
+func (r *Registry) MarketDataProvider(id string) (MarketDataProvider, bool) {
+	provider, ok := r.marketData[id]
+	return provider.provider, ok
+}
+
+func (r *Registry) ExecutionProvider(id string) (ExecutionProvider, bool) {
+	provider, ok := r.execution[id]
+	return provider.provider, ok
+}
+
+func (r *Registry) WorkflowValidators() []WorkflowValidator {
+	ids := make([]string, 0, len(r.validators))
+	for id := range r.validators {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	result := make([]WorkflowValidator, 0, len(ids))
+	for _, id := range ids {
+		result = append(result, r.validators[id])
+	}
+	return result
+}
+
+func (r *Registry) Templates() []TemplateDescriptor {
+	keys := make([]string, 0, len(r.templates))
+	for key := range r.templates {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]TemplateDescriptor, 0, len(keys))
+	for _, key := range keys {
+		desc := r.templates[key].desc
+		desc.Graph = append(json.RawMessage(nil), desc.Graph...)
+		result = append(result, desc)
+	}
+	return result
 }
 
 func (r *Registry) Action(nodeType string) (NodeDescriptor, ActionHandler, bool) {
@@ -299,6 +406,7 @@ func (r *Registry) Plugins() []PluginDescriptor {
 	plugins := make([]PluginDescriptor, 0, len(r.plugins))
 	for _, plugin := range r.plugins {
 		plugin.Contributes = append([]string(nil), plugin.Contributes...)
+		plugin.RequiresPlugins = cloneStringMap(plugin.RequiresPlugins)
 		plugins = append(plugins, plugin)
 	}
 	sort.Slice(plugins, func(i, j int) bool { return plugins[i].ID < plugins[j].ID })
@@ -341,6 +449,10 @@ type registrationCollector struct {
 	resultPages      map[string]ResultPageDescriptor
 	routes           map[string]registeredRoute
 	assistantQueries map[string]registeredAssistantQuery
+	marketData       map[string]registeredMarketDataProvider
+	execution        map[string]registeredExecutionProvider
+	validator        WorkflowValidator
+	templates        map[string]registeredTemplate
 }
 
 func (c *registrationCollector) Action(desc NodeDescriptor, handler ActionHandler) error {
@@ -394,6 +506,7 @@ func (c *registrationCollector) addNode(contribution string, node registeredNode
 	if strings.HasPrefix(node.desc.Type, "core.") {
 		return fmt.Errorf("node type %q is reserved for workflow core", node.desc.Type)
 	}
+	node.desc = normalizeNodeDescriptor(node.desc, c.plugin.Name)
 	if err := validateNodeDescriptor(node.desc); err != nil {
 		return err
 	}
@@ -405,6 +518,36 @@ func (c *registrationCollector) addNode(contribution string, node registeredNode
 	c.markUsed(contribution)
 	c.nodes = append(c.nodes, node)
 	return nil
+}
+
+func normalizeNodeDescriptor(desc NodeDescriptor, pluginName string) NodeDescriptor {
+	name := strings.TrimSpace(strings.TrimPrefix(desc.Type, strings.Split(desc.Type, ".")[0]+"."))
+	if desc.Title == "" {
+		desc.Title = name
+	}
+	if desc.Description == "" {
+		desc.Description = desc.Title
+	}
+	if desc.Category == "" {
+		desc.Category = pluginName
+	}
+	if desc.Color == "" {
+		desc.Color = "#64748b"
+	}
+	if desc.Icon == "" {
+		desc.Icon = "box"
+	}
+	if desc.Width == 0 {
+		desc.Width = 220
+	}
+	if desc.Height == 0 {
+		desc.Height = 72
+	}
+	desc.Capabilities.Stateless = desc.State == StateStateless
+	if desc.SideEffect == SideEffectNone {
+		desc.Capabilities.Deterministic = true
+	}
+	return desc
 }
 
 func (c *registrationCollector) Page(desc PageDescriptor) error {
@@ -535,6 +678,61 @@ func (c *registrationCollector) AssistantQuery(desc AssistantQueryDescriptor, ha
 	return nil
 }
 
+func (c *registrationCollector) MarketDataProvider(provider MarketDataProvider) error {
+	if provider == nil || !contributionKeyPattern.MatchString(provider.ID()) {
+		return errors.New("market data provider requires a valid id")
+	}
+	if c.marketData == nil {
+		c.marketData = make(map[string]registeredMarketDataProvider)
+	}
+	if _, exists := c.marketData[provider.ID()]; exists {
+		return fmt.Errorf("duplicate market data provider %q", provider.ID())
+	}
+	c.markUsed("marketDataProviders")
+	c.marketData[provider.ID()] = registeredMarketDataProvider{pluginID: c.plugin.ID, provider: provider}
+	return nil
+}
+
+func (c *registrationCollector) ExecutionProvider(provider ExecutionProvider) error {
+	if provider == nil || !contributionKeyPattern.MatchString(provider.ID()) {
+		return errors.New("execution provider requires a valid id")
+	}
+	if c.execution == nil {
+		c.execution = make(map[string]registeredExecutionProvider)
+	}
+	if _, exists := c.execution[provider.ID()]; exists {
+		return fmt.Errorf("duplicate execution provider %q", provider.ID())
+	}
+	c.markUsed("executionProviders")
+	c.execution[provider.ID()] = registeredExecutionProvider{pluginID: c.plugin.ID, provider: provider}
+	return nil
+}
+
+func (c *registrationCollector) WorkflowValidator(validator WorkflowValidator) error {
+	if validator == nil || c.validator != nil {
+		return errors.New("plugin may register exactly one non-nil workflow validator")
+	}
+	c.markUsed("workflowValidators")
+	c.validator = validator
+	return nil
+}
+
+func (c *registrationCollector) Template(desc TemplateDescriptor) error {
+	if !contributionKeyPattern.MatchString(desc.Key) || strings.TrimSpace(desc.Name) == "" ||
+		strings.TrimSpace(desc.Description) == "" || strings.TrimSpace(desc.Mode) == "" || !json.Valid(desc.Graph) {
+		return errors.New("workflow template requires a valid key, metadata, and graph")
+	}
+	if c.templates == nil {
+		c.templates = make(map[string]registeredTemplate)
+	}
+	if _, exists := c.templates[desc.Key]; exists {
+		return fmt.Errorf("duplicate workflow template %q", desc.Key)
+	}
+	c.markUsed("templates")
+	c.templates[desc.Key] = registeredTemplate{pluginID: c.plugin.ID, desc: desc}
+	return nil
+}
+
 func routeKey(pluginID string, desc RouteDescriptor) string {
 	return pluginID + "/" + string(desc.Scope) + "/" + strings.ToUpper(strings.TrimSpace(desc.Method)) + " " + desc.Pattern
 }
@@ -570,6 +768,14 @@ func validatePluginDescriptor(plugin PluginDescriptor) error {
 	if _, err := semver.StrictNewVersion(plugin.Version); err != nil {
 		return errors.New("plugin version must be strict SemVer")
 	}
+	for id, constraint := range plugin.RequiresPlugins {
+		if id == plugin.ID || !contributionKeyPattern.MatchString(id) || !strings.Contains(id, ".") {
+			return fmt.Errorf("invalid required plugin id %q", id)
+		}
+		if _, err := semver.NewConstraint(constraint); err != nil {
+			return fmt.Errorf("invalid version constraint for required plugin %q", id)
+		}
+	}
 	return nil
 }
 
@@ -582,6 +788,20 @@ func validateNodeDescriptor(desc NodeDescriptor) error {
 	}
 	if desc.Kind != NodeKindAction && desc.Kind != NodeKindTrigger {
 		return fmt.Errorf("node %q has invalid kind %q", desc.Type, desc.Kind)
+	}
+	if strings.TrimSpace(desc.Title) == "" || strings.TrimSpace(desc.Description) == "" ||
+		strings.TrimSpace(desc.Category) == "" || strings.TrimSpace(desc.Color) == "" || strings.TrimSpace(desc.Icon) == "" {
+		return fmt.Errorf("node %q requires title, description, category, color, and icon", desc.Type)
+	}
+	if desc.Width < 120 || desc.Width > 640 || desc.Height < 48 || desc.Height > 480 {
+		return fmt.Errorf("node %q has invalid editor dimensions", desc.Type)
+	}
+	if desc.Capabilities.Stateless != (desc.State == StateStateless) {
+		return fmt.Errorf("node %q stateless capability must match state mode", desc.Type)
+	}
+	if desc.Capabilities.FrameSafe && (!desc.Capabilities.Deterministic || !desc.Capabilities.Stateless ||
+		desc.SideEffect != SideEffectNone && !desc.Capabilities.FrameResult) {
+		return fmt.Errorf("node %q frame-safe capability requires deterministic stateless execution without frame side effects", desc.Type)
 	}
 	if desc.Pool != PoolStream && desc.Pool != PoolCompute {
 		return fmt.Errorf("node %q has invalid pool %q", desc.Type, desc.Pool)
@@ -640,6 +860,17 @@ func stringSet(values []string) map[string]bool {
 	result := make(map[string]bool, len(values))
 	for _, value := range values {
 		result[value] = true
+	}
+	return result
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if values == nil {
+		return nil
+	}
+	result := make(map[string]string, len(values))
+	for key, value := range values {
+		result[key] = value
 	}
 	return result
 }
