@@ -65,7 +65,7 @@ export const ensureStencilShapeRegistered = () => {
           fontSize: 13,
           fontWeight: 600,
           fill: 'var(--workflow-panel-text, #263247)',
-          textWrap: { width: 124, height: 18, ellipsis: '…' }
+          textWrap: { width: 124, height: 20, ellipsis: '…' }
         },
         desc: {
           refX: 48,
