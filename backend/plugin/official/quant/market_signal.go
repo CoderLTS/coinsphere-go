@@ -45,7 +45,7 @@ func (q *quantRuntime) registerMarketSignals(registrar sdk.Registrar) error {
 		ConfigSchema: emptyObjectSchema, UISchema: json.RawMessage(`{"ui:order":[]}`),
 		InputSchema: quantMarketSignalInputSchema, OutputSchema: quantMarketSignalOutputSchema,
 		Pool: sdk.PoolStream, SideEffect: sdk.SideEffectData, State: sdk.StateStateless,
-	}, "行情信号", "持久化通用指标判断产生的行情 Signal。", "信号", "#0f766e", "radio-tower"), quantMarketSignalAction{runtime: q})
+	}, "输出信号", "持久化通用指标判断产生的行情 Signal。", "行情", "#0f766e", "radio-tower"), quantMarketSignalAction{runtime: q})
 }
 
 func (a quantMarketSignalAction) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {

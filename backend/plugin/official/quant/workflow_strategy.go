@@ -74,7 +74,7 @@ func (q *quantRuntime) registerWorkflowStrategyNodes(registrar sdk.Registrar) er
 			InputSchema: quantBacktestStartInputSchema, OutputSchema: quantBacktestStartOutputSchema,
 			Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
 			Capabilities: sdk.NodeCapabilities{FrameDriver: true},
-		}, quantWorkflowBacktestAction{runtime: q}, "工作流回测", "逐帧执行通用量化工作流并汇总回测结果。", "回测", "#7c3aed", "history"},
+		}, quantWorkflowBacktestAction{runtime: q}, "回测开始", "逐帧执行通用量化工作流并汇总回测结果。", "开始", "#7c3aed", "history"},
 		{sdk.NodeDescriptor{
 			Type: "official.quant.code_strategy", Version: "1.0.0", Kind: sdk.NodeKindAction,
 			Branches: []string{"true", "false"}, ConfigSchema: quantCodeStrategyConfigSchema,
@@ -83,7 +83,7 @@ func (q *quantRuntime) registerWorkflowStrategyNodes(registrar sdk.Registrar) er
 			OutputSchema: quantCodeStrategyOutputSchema, Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
 			Capabilities:   sdk.NodeCapabilities{FrameSafe: true},
 			ValidateConfig: validateQuantCodeStrategyConfig,
-		}, &quantCodeStrategyAction{runtime: q}, "通用代码策略", "使用受限 CEL 对多行情序列执行确定性策略判断。", "策略", "#2563eb", "code-xml"},
+		}, &quantCodeStrategyAction{runtime: q}, "代码策略", "使用受限 CEL 对多行情序列执行确定性策略判断。", "策略", "#2563eb", "code-xml"},
 		{sdk.NodeDescriptor{
 			Type: "official.quant.position", Version: "1.0.0", Kind: sdk.NodeKindAction,
 			ConfigSchema: quantPositionConfigSchema, UISchema: json.RawMessage(`{"ui:order":["market","targetMode","fixedTarget"]}`),
@@ -91,7 +91,7 @@ func (q *quantRuntime) registerWorkflowStrategyNodes(registrar sdk.Registrar) er
 			Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
 			Capabilities:   sdk.NodeCapabilities{FrameSafe: true},
 			ValidateConfig: validateQuantPositionConfig,
-		}, quantPositionAction{}, "目标仓位", "将策略输出转换为通用目标仓位。", "策略", "#2563eb", "percent"},
+		}, quantPositionAction{}, "仓位计算", "将策略输出转换为通用目标仓位。", "策略", "#2563eb", "percent"},
 		{sdk.NodeDescriptor{
 			Type: "official.quant.output_signal", Version: "1.0.0", Kind: sdk.NodeKindAction,
 			Branches: []string{"realtime", "unchanged"}, ConfigSchema: quantSeriesConfigSchema,
@@ -99,7 +99,7 @@ func (q *quantRuntime) registerWorkflowStrategyNodes(registrar sdk.Registrar) er
 			InputSchema: quantOutputSignalInputSchema, OutputSchema: quantOutputSignalOutputSchema,
 			Pool: sdk.PoolStream, SideEffect: sdk.SideEffectData, State: sdk.StateStateless,
 			Capabilities: sdk.NodeCapabilities{Deterministic: true, FrameSafe: true, FrameResult: true},
-		}, quantOutputSignalAction{runtime: q}, "信号输出", "汇总目标仓位并持久化通用量化 Signal。", "信号", "#0f766e", "radio"},
+		}, quantOutputSignalAction{runtime: q}, "输出策略信号", "汇总目标仓位并持久化通用量化 Signal。", "策略", "#0f766e", "radio"},
 	}
 	for _, node := range nodes {
 		if err := registrar.Action(quantNodeMeta(node.descriptor, node.title, node.description, node.category, node.color, node.icon), node.handler); err != nil {

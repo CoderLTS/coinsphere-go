@@ -34,6 +34,7 @@ func Register(registrar sdk.Registrar, host sdk.Host) error {
 	}
 	if err := registrar.Action(sdk.NodeDescriptor{
 		Type: "official.connector.http", Version: "1.0.0", Kind: sdk.NodeKindAction,
+		Title: "HTTP 请求", Description: "向外部服务发起受控 HTTP 请求", Category: "集成", Color: "#0f766e", Icon: "globe", Width: 220, Height: 72,
 		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"url":{"type":"string","title":"URL","format":"uri","maxLength":2048},"method":{"type":"string","title":"Method","enum":["GET","POST","PUT","PATCH"],"default":"GET"},"timeoutSeconds":{"type":"integer","title":"Timeout (seconds)","minimum":1,"maximum":60,"default":15},"useAuthorization":{"type":"boolean","title":"Use Authorization secret","default":false},"authorization":{"type":"string","title":"Authorization","x-coinsphere-secret":true}},"required":["url","method","timeoutSeconds","useAuthorization"],"additionalProperties":false}`),
 		UISchema:     json.RawMessage(`{"ui:order":["url","method","timeoutSeconds","useAuthorization","authorization"]}`),
 		InputSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"body":{"type":"object","title":"JSON body","x-coinsphere-field-source":true}},"additionalProperties":false}`),
@@ -44,6 +45,7 @@ func Register(registrar sdk.Registrar, host sdk.Host) error {
 	}
 	if err := registrar.Trigger(sdk.NodeDescriptor{
 		Type: "official.connector.webhook", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
+		Title: "Webhook 触发", Description: "声明 Webhook 触发入口节点", Category: "开始", Color: "#1e40af", Icon: "webhook", Width: 220, Height: 72,
 		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"eventType":{"type":"string","title":"CloudEvent type","minLength":1,"maxLength":255},"secret":{"type":"string","title":"Webhook secret","x-coinsphere-secret":true}},"required":["eventType","secret"],"additionalProperties":false}`),
 		UISchema:     json.RawMessage(`{"ui:order":["eventType","secret"]}`), InputSchema: emptyObjectSchema,
 		OutputSchema: dynamicObjectSchema, Pool: sdk.PoolStream, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
@@ -52,6 +54,7 @@ func Register(registrar sdk.Registrar, host sdk.Host) error {
 	}
 	if err := registrar.Trigger(sdk.NodeDescriptor{
 		Type: "official.connector.websocket", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
+		Title: "WebSocket 触发", Description: "从 WebSocket 消息触发工作流", Category: "开始", Color: "#0f766e", Icon: "radio", Width: 220, Height: 72,
 		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"url":{"type":"string","title":"WebSocket URL","format":"uri","maxLength":2048},"eventType":{"type":"string","title":"CloudEvent type","minLength":1,"maxLength":255},"idField":{"type":"string","title":"Event ID field","pattern":"^[A-Za-z0-9_.-]{1,128}$"},"partitionField":{"type":"string","title":"Partition field","pattern":"^[A-Za-z0-9_.-]{1,128}$"},"useAuthorization":{"type":"boolean","title":"Use Authorization secret","default":false},"authorization":{"type":"string","title":"Authorization","x-coinsphere-secret":true}},"required":["url","eventType","idField","partitionField","useAuthorization"],"additionalProperties":false}`),
 		UISchema:     json.RawMessage(`{"ui:order":["url","eventType","idField","partitionField","useAuthorization","authorization"]}`), InputSchema: emptyObjectSchema,
 		OutputSchema: dynamicObjectSchema, Pool: sdk.PoolStream, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,

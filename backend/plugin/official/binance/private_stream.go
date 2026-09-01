@@ -48,7 +48,7 @@ func registerPrivateAccountStream(registrar sdk.Registrar, runtime *binanceRunti
 		InputSchema:  emptyObjectSchema,
 		OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"account":{"type":"string"},"market":{"type":"string"},"instrument":{"type":"string"},"clientOrderId":{"type":"string"},"providerOrderId":{"type":"string"},"side":{"type":"string"},"status":{"type":"string"},"quantity":{"type":"string","x-coinsphere-decimal":true},"executed":{"type":"string","x-coinsphere-decimal":true},"averagePrice":{"type":"string","x-coinsphere-decimal":true},"updatedAt":{"type":"string","format":"date-time"}},"required":["account","market","instrument","clientOrderId","providerOrderId","side","status","quantity","executed","averagePrice","updatedAt"],"additionalProperties":false}`),
 		Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectData, State: sdk.StatePersistent,
-	}, "Binance 私有账户同步", "通过 User Data Stream 和 REST 恢复并对账订单、成交、持仓与账户快照。", "交易", "#b45309", "refresh-cw"), privateAccountStream{runtime: runtime})
+	}, "Binance 私有账户同步", "通过 User Data Stream 和 REST 恢复并对账订单、成交、持仓与账户快照。", "开始", "#b45309", "refresh-cw"), privateAccountStream{runtime: runtime})
 }
 
 func (s privateAccountStream) Run(ctx context.Context, request sdk.TriggerRequest, emitter sdk.Emitter) error {

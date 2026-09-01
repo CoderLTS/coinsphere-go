@@ -25,7 +25,10 @@ export function buildWorkflowMaterialGroups(
     title: definition.label,
     description: definition.description || definition.label,
     color: definition.color || '#64748b',
-    iconText: definition.icon || definition.label.slice(0, 1).toUpperCase(),
+    iconText:
+      definition.icon && Array.from(definition.icon).length <= 2
+        ? definition.icon
+        : definition.label.slice(0, 1).toUpperCase(),
     width: definition.width || 220,
     height: definition.height || 72
   }))
