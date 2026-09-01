@@ -16,13 +16,13 @@ CoinSphere 插件不是运行时扩展包。安装会把源码复制进主仓库
 
 当前兼容版本定义在 `backend/version/version.go`：
 
-| 项目 | 当前值 |
-| --- | --- |
-| Core | `2.0.0` |
-| SDK major | `2` |
-| manifest `schemaVersion` | `1` |
-| Go | `1.26.6` |
-| JSON Schema | Draft 2020-12 |
+| 项目                     | 当前值        |
+| ------------------------ | ------------- |
+| Core                     | `3.0.0`       |
+| SDK major                | `3`           |
+| manifest `schemaVersion` | `1`           |
+| Go                       | `1.26.6`      |
+| JSON Schema              | Draft 2020-12 |
 
 插件 ID、版本和节点版本发布后都应视为持久契约。不要复用已发布 ID 表达不兼容语义。
 
@@ -54,8 +54,8 @@ manifest 中的路径使用 `/`，必须是插件根目录内的相对路径。�
   "id": "example.hello",
   "name": "Hello Plugin",
   "version": "1.0.0",
-  "sdkMajor": 2,
-  "requiresCore": ">=2.0.0 <3.0.0",
+  "sdkMajor": 3,
+  "requiresCore": ">=3.0.0 <4.0.0",
   "backend": {
     "module": "example.com/coinsphere/hello",
     "package": "backend"
@@ -72,18 +72,19 @@ manifest 中的路径使用 `/`，必须是插件根目录内的相对路径。�
 
 字段规则：
 
-| 字段 | 规则 |
-| --- | --- |
-| `schemaVersion` | 当前只能是 `1` |
-| `id` | 至少两个小写点分段，可包含数字和段内连字符；同时决定插件 schema 名 |
-| `name` | 非空显示名 |
-| `version` | 严格 SemVer，例如 `1.2.3` |
-| `sdkMajor` | 必须等于当前 SDK major `2` |
-| `requiresCore` | 合法 SemVer constraint，必须包含当前 Core `2.0.0` |
-| `backend.module` | 必须与 `backend.package` 目录内 `go.mod` 的 module 完全一致 |
-| `frontend.entry` | 插件根内存在的 TypeScript 入口文件 |
-| `migrations.directory` | 插件根内存在的目录，至少包含一份版本化 SQL |
-| `contributes` | 声明实际贡献；非 migration 项必须在 `Register` 中实际注册 |
+| 字段                   | 规则                                                               |
+| ---------------------- | ------------------------------------------------------------------ |
+| `schemaVersion`        | 当前只能是 `1`                                                     |
+| `id`                   | 至少两个小写点分段，可包含数字和段内连字符；同时决定插件 schema 名 |
+| `name`                 | 非空显示名                                                         |
+| `version`              | 严格 SemVer，例如 `1.2.3`                                          |
+| `sdkMajor`             | 必须等于当前 SDK major `3`                                         |
+| `requiresCore`         | 合法 SemVer constraint，必须包含当前 Core `3.0.0`                  |
+| `requiresPlugins`      | 可选的插件 ID 到 SemVer constraint 映射；安装与注册按依赖拓扑排序  |
+| `backend.module`       | 必须与 `backend.package` 目录内 `go.mod` 的 module 完全一致        |
+| `frontend.entry`       | 插件根内存在的 TypeScript 入口文件                                 |
+| `migrations.directory` | 插件根内存在的目录，至少包含一份版本化 SQL                         |
+| `contributes`          | 声明实际贡献；非 migration 项必须在 `Register` 中实际注册          |
 
 `contributes` 只接受：
 
@@ -94,9 +95,15 @@ manifest 中的路径使用 `/`，必须是插件根目录内的相对路径。�
 - `pages`
 - `resultPages`
 - `assistantQueries`
+- `marketDataProviders`
+- `executionProviders`
+- `workflowValidators`
+- `templates`
 - `migrations`
 
 注册未声明的贡献或声明后没有注册都会失败。重复插件 ID、节点类型、策略 ID、页面 key、结果页 key 或路由也会失败。
+
+`requiresPlugins` 的目标既可以是外部插件，也可以是已启用的内建插件。安装器按依赖拓扑注册；依赖缺失或版本不满足时拒绝安装，存在依赖者时拒绝卸载。
 
 ### 助手只读查询
 
@@ -147,8 +154,10 @@ import (
 每个 Backend 插件 module 必须导出：
 
 ```go
-func Register(sdk.Registrar) error
+func Register(sdk.Registrar, sdk.Host) error
 ```
+
+所有内建和外部插件使用同一入口。`sdk.Host` 提供当前插件的 `PluginStore`、网络客户端工厂、代理解析、实时事件，以及行情、执行和策略注册表；插件不得依赖专属注册函数。行情插件通过 `MarketDataProvider` 注册 Decimal/UTC 行情，交易所插件通过 `ExecutionProvider` 注册下单、查询和撤单；量化插件应按 provider ID 获取行情，不直接调用交易所私有接口。
 
 以下 `backend/plugin.go` 注册一个无状态、无副作用的 Action：
 
@@ -195,11 +204,20 @@ func (echoAction) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.A
     return sdk.ActionResult{Output: output}, nil
 }
 
-func Register(registrar sdk.Registrar) error {
+func Register(registrar sdk.Registrar, host sdk.Host) error {
+    _ = host
     return registrar.Action(sdk.NodeDescriptor{
         Type:         "example.hello.echo",
         Version:      "1.0.0",
         Kind:         sdk.NodeKindAction,
+        Title:        "Echo",
+        Description:  "Returns the input message.",
+        Category:     "Example",
+        Color:        "#64748b",
+        Icon:         "message-square",
+        Width:        220,
+        Height:       72,
+        Capabilities: sdk.NodeCapabilities{Deterministic: true, Stateless: true},
         ConfigSchema: emptyObject,
         UISchema:     json.RawMessage(`{}`),
         InputSchema:  messageObject,
@@ -211,7 +229,7 @@ func Register(registrar sdk.Registrar) error {
 }
 ```
 
-节点 `Type` 必须是小写点分 key，且不能使用保留前缀 `core.`。节点 `Version` 必须是严格 SemVer。Config/Input/Output Schema 必须显式声明 Draft 2020-12；UI Schema 只要求是 JSON 对象。需要多出口时在 `NodeDescriptor.Branches` 声明至少两个稳定分支键；运行时以节点输出的字符串 `branch` 选择端口，再执行边上的 Boolean CEL，同一端口可以连接零个或多个下游节点。
+节点 `Type` 必须是小写点分 key，且不能使用保留前缀 `core.`。节点 `Version` 必须是严格 SemVer。标题、说明、分类、颜色、图标和稳定尺寸由 `NodeDescriptor` 唯一提供；`Deterministic`、`Stateless` 与 `FrameSafe` 决定通用校验和回测 frame 能力。Config/Input/Output Schema 必须显式声明 Draft 2020-12；UI Schema 只要求是 JSON 对象。需要多出口时在 `NodeDescriptor.Branches` 声明至少两个稳定分支键；运行时以节点输出的字符串 `branch` 选择端口，再执行边上的 Boolean CEL，同一端口可以连接零个或多个下游节点。
 
 Backend 会在执行前后分别校验输入和输出 Schema。插件仍应处理 JSON 解码、外部响应、URL、文件和凭据等信任边界错误，并响应 `context.Context` 取消。
 
@@ -219,17 +237,17 @@ Backend 会在执行前后分别校验输入和输出 Schema。插件仍应处�
 
 `sdk.ActionRequest` 提供：
 
-| 字段 | 用途 |
-| --- | --- |
-| `Revision` | 固定工作流与修订 ID |
-| `NodeInstanceID` | 稳定节点实例 ID |
-| `OperationKey` | 当前 Run/节点/Loop 迭代的稳定幂等键 |
-| `Input` | 已按映射解析并通过 Schema 校验的 JSON |
-| `Config` | 当前修订的普通节点配置 |
-| `Secrets` | 读取当前节点声明的加密密钥 |
-| `State` | 当前插件/工作流/节点命名空间状态 |
-| `Artifacts` | 写入或打开内容寻址制品 |
-| `Logger` | 写入当前节点的结构化日志 |
+| 字段             | 用途                                  |
+| ---------------- | ------------------------------------- |
+| `Revision`       | 固定工作流与修订 ID                   |
+| `NodeInstanceID` | 稳定节点实例 ID                       |
+| `OperationKey`   | 当前 Run/节点/Loop 迭代的稳定幂等键   |
+| `Input`          | 已按映射解析并通过 Schema 校验的 JSON |
+| `Config`         | 当前修订的普通节点配置                |
+| `Secrets`        | 读取当前节点声明的加密密钥            |
+| `State`          | 当前插件/工作流/节点命名空间状态      |
+| `Artifacts`      | 写入或打开内容寻址制品                |
+| `Logger`         | 写入当前节点的结构化日志              |
 
 副作用必须以 `OperationKey` 或同等数据库唯一键实现幂等。不要把密钥、授权头、Cookie、DSN、原始请求/响应或个人数据写入 Logger、Output 或 Artifact。
 
@@ -286,11 +304,11 @@ err := registrar.Route(sdk.RouteDescriptor{
 })
 ```
 
-| Scope | 当前状态 | 最终入口与语义 |
-| --- | --- | --- |
-| `sdk.ScopeSystem` | 已挂载 | `/api/v1/plugins/{pluginId}{pattern}`；仅超级管理员，注入用户和角色 |
-| `sdk.ScopeResult` | 已挂载 | `/api/v1/result-views/{viewId}/plugins/{pluginId}{pattern}`；注入固定 View scope/filter、用户、角色和允许操作 |
-| `sdk.ScopeWorkflow` | SDK 已定义，当前未挂载公共 HTTP | 保留给工作流/节点管理面；插件不能假定存在可调用 URL |
+| Scope               | 当前状态                        | 最终入口与语义                                                                                                |
+| ------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `sdk.ScopeSystem`   | 已挂载                          | `/api/v1/plugins/{pluginId}{pattern}`；仅超级管理员，注入用户和角色                                           |
+| `sdk.ScopeResult`   | 已挂载                          | `/api/v1/result-views/{viewId}/plugins/{pluginId}{pattern}`；注入固定 View scope/filter、用户、角色和允许操作 |
+| `sdk.ScopeWorkflow` | SDK 已定义，当前未挂载公共 HTTP | 保留给工作流/节点管理面；插件不能假定存在可调用 URL                                                           |
 
 Result 路由如果设置 `Action`，该 action 只能用于 `ScopeResult`，并且请求必须同时通过 ResultView 白名单和 RBAC。当前核心识别 `approve`、`reject`、`retry`、`cancel`、`pause`、`export` 等权限映射；插件仍须检查自己的领域状态。
 
@@ -320,14 +338,16 @@ if err := registrar.ResultPage(sdk.ResultPageDescriptor{
 
 ```ts
 export const resultPages = {
-  overview: () => import('./ResultPage.vue')
-}
+  overview: () => import("./ResultPage.vue"),
+};
 ```
+
+Frontend 入口还可导出 `nodeEditors`、`nodeRenderers` 和 `providerConfigComponents`。key 分别使用完整 node type 或 provider ID；节点标题、说明、分类、颜色、图标和尺寸只来自 Backend `NodeDescriptor`，前端组件不得维护第二份物料元数据。
 
 只提供 Backend 节点、不提供页面时，最小 Frontend 入口可以是：
 
 ```ts
-export {}
+export {};
 ```
 
 普通页使用 `pages` 映射，结果页使用 `resultPages` 映射。组件在主应用中运行，可使用已经安装的 Vue/Element Plus 能力，但外部插件安装器当前不会管理独立 npm 依赖；新增前端依赖前必须先把它作为主 Frontend 的显式依赖评审。
@@ -425,12 +445,14 @@ go run ./cmd/coinsphere plugin purge-data --config ./config.yml --backend-root .
 
 生命周期行为：
 
-| 动作 | 行为 |
-| --- | --- |
-| `install` | 校验、执行 plugin migration、复制 Backend/Frontend、生成注册表、更新 Go 依赖、构建镜像、记录安装版本 |
-| `upgrade` | 要求版本增加且 major 不变，验证旧 migration 字节不变，只追加 migration，再执行与 install 相同的构建流程 |
-| `uninstall` | 有活动引用时拒绝；移除编译输入并重建镜像，安装记录改为 uninstalled，保留 schema 和数据 |
-| `purge-data` | 要求已经卸载、无任何活动或历史引用、确认文本精确匹配；事务删除插件 schema 和安装记录 |
+| 动作         | 行为                                                                                                    |
+| ------------ | ------------------------------------------------------------------------------------------------------- |
+| `install`    | 校验、执行 plugin migration、复制 Backend/Frontend、生成注册表、更新 Go 依赖、构建镜像、记录安装版本    |
+| `upgrade`    | 要求版本增加且 major 不变，验证旧 migration 字节不变，只追加 migration，再执行与 install 相同的构建流程 |
+| `uninstall`  | 有活动引用时拒绝；移除编译输入并重建镜像，安装记录改为 uninstalled，保留 schema 和数据                  |
+| `purge-data` | 要求已经卸载、无任何活动或历史引用、确认文本精确匹配；事务删除插件 schema 和安装记录                    |
+
+内建插件使用同一安装记录控制启停：`plugin uninstall official.quant` 会保留其 schema 和数据并在下次启动停止注册，`plugin install official.quant` 会重新启用。内建 schema 由核心 migration 管理，不能通过 `purge-data` 删除；Core 在所有内建插件都停用时仍可启动。
 
 安装器不会启动或重启候选镜像。安装、升级或卸载在构建/记录失败时会恢复源码目录、生成注册表、主 `go.mod/go.sum` 和本次可回滚 migration。应用切换和健康检查仍按部署 Runbook 手工完成。
 

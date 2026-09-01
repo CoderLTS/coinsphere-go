@@ -38,23 +38,6 @@ const dedupeIssues = (issues: WorkflowEditorIssue[]) => {
 
 const isStartNode = (node: WorkflowDomainNode) => getNodeGraphKind(node.data.typeCode) === 'start'
 
-const quantIntervals = new Set([
-  '1m',
-  '3m',
-  '5m',
-  '15m',
-  '30m',
-  '1h',
-  '2h',
-  '4h',
-  '6h',
-  '8h',
-  '12h',
-  '1d',
-  '3d',
-  '1w'
-])
-
 /** foreach 的 NEXT 连线：循环全部跑完后才走的后继边（BODY 连的才是循环体）。 */
 const isForeachNextEdge = (edge: WorkflowDomainEdge) =>
   edge.data.branch === 'next' || edge.sourcePort === 'next'
@@ -545,17 +528,6 @@ export function validateNodeFormDraft(
       ) {
         errors.push('条件节点必须填写比较值或比较值路径。')
       }
-      break
-    }
-
-    case 'indicator-condition': {
-      if (!['spot', 'usdm'].includes(String(config.market || ''))) errors.push('请选择市场。')
-      if (!/^[A-Z0-9]{2,32}$/.test(String(config.instrument || '')))
-        errors.push('交易对必须使用 2 至 32 位大写字母或数字。')
-      if (!quantIntervals.has(String(config.checkInterval || ''))) errors.push('请选择检查周期。')
-      if (!quantIntervals.has(String(config.interval || ''))) errors.push('请选择 K 线周期。')
-      if (!String(config.name || '').trim()) errors.push('条件名称不能为空。')
-      if (!config.parameters || typeof config.parameters !== 'object') errors.push('指标参数无效。')
       break
     }
 

@@ -34,7 +34,7 @@
         @keydown.space.prevent="openPlugin(plugin)"
       >
         <div class="plugin-card__head">
-          <span class="plugin-mark"><ArtSvgIcon :icon="pluginIcon(plugin.id)" /></span>
+          <span class="plugin-mark"><ArtSvgIcon :icon="pluginIcon()" /></span>
           <div>
             <h2>{{ pluginLabel(plugin) }}</h2>
             <span class="plugin-id">
@@ -69,7 +69,7 @@
     >
       <div v-if="selectedPlugin" class="plugin-detail">
         <div class="plugin-detail__summary">
-          <span class="plugin-mark"><ArtSvgIcon :icon="pluginIcon(selectedPlugin.id)" /></span>
+          <span class="plugin-mark"><ArtSvgIcon :icon="pluginIcon()" /></span>
           <div>
             <code>{{ selectedPlugin.id }}</code>
             <span>v{{ selectedPlugin.version }} · 已加载</span>
@@ -204,14 +204,7 @@
   type PluginNode = Api.System.InstalledPlugin['nodes'][number]
   type ConfigSchema = Record<string, any>
 
-  const pluginIcon = (id: string) => {
-    if (id.includes('quant')) return 'ri:line-chart-line'
-    if (id.includes('notification')) return 'ri:notification-3-line'
-    if (id.includes('qq')) return 'ri:qq-line'
-    if (id.includes('connector')) return 'ri:links-line'
-    if (id.includes('ai')) return 'ri:sparkling-2-line'
-    return 'ri:puzzle-2-line'
-  }
+  const pluginIcon = () => 'ri:puzzle-2-line'
 
   const labels: Record<string, string> = {
     nodes: '节点',
@@ -222,14 +215,6 @@
     resultPages: '结果页',
     assistantQueries: '助手查询',
     migrations: '数据库迁移'
-  }
-
-  const pluginNames: Record<string, string> = {
-    'official.connector': '连接器',
-    'official.ai': '人工智能',
-    'official.quant': '量化分析',
-    'official.notification': '通知',
-    'official.qq': 'QQ机器人'
   }
 
   const icons: Record<string, string> = {
@@ -243,8 +228,7 @@
     migrations: 'ri:database-2-line'
   }
 
-  const pluginLabel = (plugin: Api.System.InstalledPlugin) =>
-    pluginNames[plugin.id] || plugin.name || plugin.id
+  const pluginLabel = (plugin: Api.System.InstalledPlugin) => plugin.name || plugin.id
   const contributionLabel = (value: string) => labels[value] || value
   const contributionIcon = (value: string) => icons[value] || 'ri:add-circle-line'
   const nodeKindLabel = (kind: 'action' | 'trigger') => (kind === 'trigger' ? '触发器' : '动作')

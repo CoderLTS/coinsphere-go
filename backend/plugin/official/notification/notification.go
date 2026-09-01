@@ -11,7 +11,6 @@ import (
 	"unicode/utf8"
 
 	"coinsphere/backend/internal/db"
-	"coinsphere/backend/plugin/official/internal/safehttp"
 	"coinsphere/backend/plugin/sdk"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -23,9 +22,9 @@ const (
 )
 
 type notificationRuntime struct {
-	db      *gorm.DB
-	publish func(context.Context, int64, int64)
-	http    *safehttp.Client
+	db       *gorm.DB
+	realtime sdk.RealtimePublisher
+	http     sdk.NetworkClient
 }
 
 type notificationAction struct {
@@ -43,18 +42,15 @@ type notificationTarget struct {
 	TargetID   int64  `json:"targetId"`
 }
 
-func Register(registry *sdk.Registry, database *gorm.DB, publish func(context.Context, int64, int64)) error {
-	client, err := safehttp.New([]string{"oapi.dingtalk.com"})
+func Register(registrar sdk.Registrar, host sdk.Host) error {
+	client, err := host.Network.New([]string{"oapi.dingtalk.com"})
 	if err != nil {
 		return err
 	}
 	client.SetTimeout(notificationTimeout)
 	client.DisableRedirects()
-	runtime := &notificationRuntime{db: database, publish: publish, http: client}
-	return registry.RegisterPlugin(sdk.PluginDescriptor{
-		ID: notificationPluginID, Name: "通知", Version: "3.0.0",
-		Contributes: []string{"nodes"},
-	}, runtime.register)
+	runtime := &notificationRuntime{db: host.Store.DB(), realtime: host.Realtime, http: client}
+	return runtime.register(registrar)
 }
 
 func (n *notificationRuntime) register(registrar sdk.Registrar) error {
@@ -170,8 +166,8 @@ func (a notificationAction) executeInApp(ctx context.Context, request sdk.Action
 		return sdk.ActionResult{}, errors.New("load in-app notification deliveries failed")
 	}
 	for _, delivery := range deliveries {
-		if a.runtime.publish != nil && delivery.RecipientUserID != nil {
-			a.runtime.publish(ctx, *delivery.RecipientUserID, delivery.ID)
+		if a.runtime.realtime != nil && delivery.RecipientUserID != nil {
+			a.runtime.realtime.PublishInAppNotification(ctx, *delivery.RecipientUserID, delivery.ID)
 		}
 	}
 	return notificationResult(deliveries, len(deliveries)), nil

@@ -116,6 +116,18 @@ export interface WorkflowNodeDefinition {
   title: string
   description: string
   kind: 'action' | 'trigger'
+  category: string
+  color: string
+  icon: string
+  width: number
+  height: number
+  capabilities: {
+    deterministic: boolean
+    stateless: boolean
+    frameDriver?: boolean
+    frameSafe?: boolean
+    frameResult?: boolean
+  }
   configSchema: Record<string, unknown>
   uiSchema: Record<string, unknown>
   inputSchema: Record<string, unknown>
@@ -288,18 +300,7 @@ export const validateWorkflowGraph = (graph: WorkflowGraph) =>
 export const createWorkflow = (params: {
   name: string
   description: string
-  templateKey:
-    | 'blank'
-    | 'scheduled'
-    | 'event'
-    | 'failure-handler'
-    | 'connector-webhook'
-    | 'connector-websocket'
-    | 'quant-market-data'
-    | 'quant-strategy'
-    | 'quant-backtest'
-    | 'quant-workflow'
-    | 'quant-paper'
+  templateKey: string
 }) => request.post<WorkflowDetail>({ url: '/api/v1/workflows', params })
 
 export const saveWorkflowRevision = (

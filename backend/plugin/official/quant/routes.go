@@ -13,70 +13,6 @@ import (
 	"gorm.io/gorm"
 )
 
-func (q *quantRuntime) handleQuantInstruments(c *gin.Context, scope sdk.RouteScope) {
-	if !validQuantSystemScope(scope) || !quantQueryKeys(c.Request, "market") {
-		writeQuantProblem(c, http.StatusBadRequest, "invalid Quant instrument query")
-		return
-	}
-	market := strings.ToLower(strings.TrimSpace(c.Query("market")))
-	if market != "spot" && market != "usdm" {
-		writeQuantProblem(c, http.StatusBadRequest, "market must be spot or usdm")
-		return
-	}
-	var instruments []quantInstrument
-	if err := q.db.WithContext(c.Request.Context()).Where("market = ?", market).Order("symbol").Limit(5000).Find(&instruments).Error; err != nil {
-		writeQuantProblem(c, http.StatusInternalServerError, "list Quant instruments failed")
-		return
-	}
-	items := make([]map[string]any, len(instruments))
-	for index, instrument := range instruments {
-		items[index] = map[string]any{
-			"market": instrument.Market, "symbol": instrument.Symbol, "baseAsset": instrument.BaseAsset,
-			"quoteAsset": instrument.QuoteAsset, "status": instrument.Status,
-			"priceTick": instrument.PriceTick.String(), "quantityStep": instrument.QuantityStep.String(),
-			"minQuantity": instrument.MinQuantity.String(), "updatedAt": instrument.UpdatedAt.UTC().Format(time.RFC3339Nano),
-		}
-	}
-	writeQuantOK(c, map[string]any{"items": items})
-}
-
-func (q *quantRuntime) handleQuantCandles(c *gin.Context, scope sdk.RouteScope) {
-	if !validQuantSystemScope(scope) || !quantQueryKeys(c.Request, "market", "instrument", "interval", "before", "limit") {
-		writeQuantProblem(c, http.StatusBadRequest, "invalid Quant candle query")
-		return
-	}
-	config, err := parseQuantSeriesConfig(mustMarshal(map[string]any{
-		"market": c.Query("market"), "instrument": c.Query("instrument"), "interval": c.Query("interval"),
-	}))
-	if err != nil {
-		writeQuantProblem(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	limit, err := quantQueryLimit(c.Request, 200, 500)
-	if err != nil {
-		writeQuantProblem(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	end := time.Now().UTC().Add(quantIntervals[config.Interval])
-	if raw := strings.TrimSpace(c.Query("before")); raw != "" {
-		end, err = parseQuantUTCTime(raw)
-		if err != nil {
-			writeQuantProblem(c, http.StatusBadRequest, err.Error())
-			return
-		}
-	}
-	candles, err := q.loadQuantCandles(c.Request.Context(), config, time.Time{}, end, limit)
-	if err != nil {
-		writeQuantProblem(c, http.StatusInternalServerError, err.Error())
-		return
-	}
-	items := make([]map[string]any, len(candles))
-	for index, candle := range candles {
-		items[index] = quantCandleData(candle)
-	}
-	writeQuantOK(c, map[string]any{"items": items})
-}
-
 func (q *quantRuntime) handleQuantStrategies(c *gin.Context, scope sdk.RouteScope) {
 	if !validQuantSystemScope(scope) || !quantQueryKeys(c.Request) {
 		writeQuantProblem(c, http.StatusBadRequest, "invalid Quant strategy query")
@@ -97,7 +33,7 @@ func (q *quantRuntime) handleQuantStrategies(c *gin.Context, scope sdk.RouteScop
 }
 
 func (q *quantRuntime) handleQuantBacktests(c *gin.Context, scope sdk.RouteScope) {
-	if !validQuantSystemScope(scope) || !quantQueryKeys(c.Request, "market", "instrument", "limit") {
+	if !validQuantSystemScope(scope) || !quantQueryKeys(c.Request, "venue", "market", "instrument", "limit") {
 		writeQuantProblem(c, http.StatusBadRequest, "invalid Quant backtest query")
 		return
 	}
@@ -107,6 +43,13 @@ func (q *quantRuntime) handleQuantBacktests(c *gin.Context, scope sdk.RouteScope
 		return
 	}
 	query := q.db.WithContext(c.Request.Context()).Omit("detail").Order("created_at DESC, id DESC").Limit(limit)
+	if venue := strings.ToLower(strings.TrimSpace(c.Query("venue"))); venue != "" {
+		if !quantProviderPattern.MatchString(venue) {
+			writeQuantProblem(c, http.StatusBadRequest, "venue is invalid")
+			return
+		}
+		query = query.Where("venue = ?", venue)
+	}
 	if market := strings.ToLower(strings.TrimSpace(c.Query("market"))); market != "" {
 		if market != "spot" && market != "usdm" {
 			writeQuantProblem(c, http.StatusBadRequest, "market must be spot or usdm")
@@ -115,7 +58,7 @@ func (q *quantRuntime) handleQuantBacktests(c *gin.Context, scope sdk.RouteScope
 		query = query.Where("market = ?", market)
 	}
 	if instrument := strings.ToUpper(strings.TrimSpace(c.Query("instrument"))); instrument != "" {
-		if !quantInstrumentPattern.MatchString(instrument) {
+		if !quantSeriesInstrumentPattern.MatchString(instrument) {
 			writeQuantProblem(c, http.StatusBadRequest, "instrument is invalid")
 			return
 		}
@@ -129,6 +72,45 @@ func (q *quantRuntime) handleQuantBacktests(c *gin.Context, scope sdk.RouteScope
 	items := make([]map[string]any, len(backtests))
 	for index, backtest := range backtests {
 		items[index] = quantBacktestView(backtest)
+	}
+	writeQuantOK(c, map[string]any{"items": items})
+}
+
+func (q *quantRuntime) handleQuantSignals(c *gin.Context, scope sdk.RouteScope) {
+	if !validQuantSystemScope(scope) || !quantQueryKeys(c.Request, "venue", "market", "instrument", "status", "limit") {
+		writeQuantProblem(c, http.StatusBadRequest, "invalid Quant signal query")
+		return
+	}
+	limit, err := quantQueryLimit(c.Request, 100, 200)
+	if err != nil {
+		writeQuantProblem(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	query := q.db.WithContext(c.Request.Context()).Order("created_at DESC, id DESC").Limit(limit)
+	for column, value := range map[string]string{
+		"venue":      strings.ToLower(strings.TrimSpace(c.Query("venue"))),
+		"market":     strings.ToLower(strings.TrimSpace(c.Query("market"))),
+		"instrument": strings.ToUpper(strings.TrimSpace(c.Query("instrument"))),
+		"status":     strings.ToLower(strings.TrimSpace(c.Query("status"))),
+	} {
+		if value != "" {
+			query = query.Where(column+" = ?", value)
+		}
+	}
+	var signals []quantSignal
+	if err := query.Find(&signals).Error; err != nil {
+		writeQuantProblem(c, http.StatusInternalServerError, "list Quant signals failed")
+		return
+	}
+	items := make([]map[string]any, len(signals))
+	for index, signal := range signals {
+		items[index] = map[string]any{
+			"id": signal.ID, "strategyId": signal.StrategyID, "strategyVersion": signal.StrategyVersion,
+			"venue": signal.Venue, "market": signal.Market, "instrument": signal.Instrument,
+			"target": signal.Target.String(), "status": signal.Status,
+			"evaluatedAt": signal.EvaluatedAt.UTC().Format(time.RFC3339Nano),
+			"createdAt":   signal.CreatedAt.UTC().Format(time.RFC3339Nano),
+		}
 	}
 	writeQuantOK(c, map[string]any{"items": items})
 }

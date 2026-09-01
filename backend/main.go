@@ -1,4 +1,4 @@
-// CoinSphere Go 后端：V2 P0 应用壳。
+// CoinSphere Go 后端应用入口。
 package main
 
 import (
@@ -99,21 +99,23 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 
 	plugins := sdk.NewRegistry()
 	app := service.NewApp(gdb, cfg, plugins)
-	if err := official.RegisterAll(plugins, cfg.Workflow.HTTPAllowedHosts); err != nil {
+	host := sdk.Host{
+		Stores: sdk.GormPluginStores{Database: gdb}, Network: official.NetworkClientFactory{},
+		OutboundProxy: app, Realtime: app, Events: app, MarketData: plugins, Execution: plugins, Strategies: plugins,
+		AllowedHTTPHosts: cfg.Workflow.HTTPAllowedHosts,
+	}
+	var enabledOfficialIDs []string
+	if err := gdb.WithContext(ctx).Table("plugin_installations").Where("source_path = ? AND status = ?", "builtin", "installed").Order("plugin_id").Pluck("plugin_id", &enabledOfficialIDs).Error; err != nil {
+		return fmt.Errorf("load enabled official plugins: %w", err)
+	}
+	enabledOfficial := make(map[string]bool, len(enabledOfficialIDs))
+	for _, pluginID := range enabledOfficialIDs {
+		enabledOfficial[pluginID] = true
+	}
+	if err := official.RegisterAll(plugins, host, enabledOfficial); err != nil {
 		return fmt.Errorf("register official plugins: %w", err)
 	}
-	if err := official.RegisterQuant(plugins, gdb, app.ResolveOutboundProxy); err != nil {
-		return fmt.Errorf("register Quant plugin: %w", err)
-	}
-	if err := official.RegisterNotification(plugins, gdb, func(ctx context.Context, userID, deliveryID int64) {
-		app.PublishInAppNotification(ctx, userID, deliveryID)
-	}); err != nil {
-		return fmt.Errorf("register Notification plugin: %w", err)
-	}
-	if err := official.RegisterQQ(plugins, gdb); err != nil {
-		return fmt.Errorf("register QQ plugin: %w", err)
-	}
-	if err := pluginregistry.RegisterAll(plugins); err != nil {
+	if err := pluginregistry.RegisterAll(plugins, host); err != nil {
 		return fmt.Errorf("register plugins: %w", err)
 	}
 	executable, _ := os.Executable()
@@ -133,13 +135,6 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 		defer closeCancel()
 		runErr = errors.Join(runErr, systemLogs.Close(closeCtx))
 	}()
-	createdQuantWorkflow, err := app.EnsureQuantInstrumentWorkflow(ctx)
-	if err != nil {
-		return fmt.Errorf("initialize Quant instrument workflow: %w", err)
-	}
-	if createdQuantWorkflow {
-		slog.Info("built-in Quant instrument workflow created", "component", "workflow.runtime")
-	}
 	if cfg.Auth.BootstrapAdminPassword == "coinsphere" {
 		slog.Warn("内置超管仍使用默认初始密码，请登录后尽快修改", "component", "runtime")
 	}

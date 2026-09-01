@@ -15,7 +15,7 @@ import (
 var quantCodeStrategyConfigSchema = json.RawMessage(`{
   "$schema":"https://json-schema.org/draft/2020-12/schema","type":"object",
   "properties":{
-    "series":{"type":"array","title":"行情序列","minItems":1,"maxItems":8,"items":{"type":"object","properties":{"alias":{"type":"string","title":"别名","pattern":"^[A-Za-z][A-Za-z0-9_]{0,63}$"},"market":{"type":"string","title":"市场","enum":["spot","usdm"]},"instrument":{"type":"string","title":"品种","pattern":"^[A-Z0-9]{2,32}$"},"interval":{"type":"string","title":"周期","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"]},"lookback":{"type":"integer","title":"回看根数","minimum":1,"maximum":500}},"required":["alias","market","instrument","interval","lookback"],"additionalProperties":false},"default":[{"alias":"main","market":"spot","instrument":"BTCUSDT","interval":"1h","lookback":30}]},
+    "series":{"type":"array","title":"行情序列","minItems":1,"maxItems":8,"items":{"type":"object","properties":{"alias":{"type":"string","title":"别名","pattern":"^[A-Za-z][A-Za-z0-9_]{0,63}$"},"venue":{"type":"string","title":"Venue","pattern":"^[a-z][a-z0-9_-]{1,31}$","default":"binance"},"market":{"type":"string","title":"市场","minLength":1,"maxLength":32},"instrument":{"type":"string","title":"品种","pattern":"^[A-Z0-9]{2,32}$"},"interval":{"type":"string","title":"周期","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"]},"lookback":{"type":"integer","title":"回看根数","minimum":1,"maximum":500}},"required":["alias","venue","market","instrument","interval","lookback"],"additionalProperties":false},"default":[{"alias":"main","venue":"binance","market":"spot","instrument":"BTCUSDT","interval":"1h","lookback":30}]},
     "parameters":{"type":"object","title":"参数（Decimal 使用字符串）","default":{"target":"1"}},
     "source":{"type":"string","title":"CEL 代码","minLength":1,"maxLength":4096,"default":"{\"long\": decimalGt(last(ohlcv.main.close), sma(ohlcv.main.close, 20)), \"target\": params.target}"},
     "booleanOutputs":{"type":"array","title":"Boolean 输出","items":{"type":"string","pattern":"^[A-Za-z][A-Za-z0-9_]{0,63}$"},"minItems":1,"maxItems":32,"uniqueItems":true,"default":["long"]},
@@ -30,10 +30,10 @@ var quantPositionConfigSchema = json.RawMessage(`{"$schema":"https://json-schema
 var quantPositionInputSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"target":{"type":"string","pattern":"^-?[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true,"x-coinsphere-field-source":true},"evaluatedAt":{"type":"string","format":"date-time","x-coinsphere-field-source":true}},"required":["evaluatedAt"],"additionalProperties":false}`)
 var quantPositionOutputSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"targetPosition":{"type":"string","x-coinsphere-decimal":true},"evaluatedAt":{"type":"string","format":"date-time"},"sourceNodeInstanceId":{"type":"string"}},"required":["targetPosition","evaluatedAt","sourceNodeInstanceId"],"additionalProperties":false}`)
 
-var quantOutputSignalInputSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"candidates":{"type":"array","items":{"type":"object","properties":{"targetPosition":{"type":"string","x-coinsphere-decimal":true},"evaluatedAt":{"type":"string","format":"date-time"},"sourceNodeInstanceId":{"type":"string"}},"required":["targetPosition","evaluatedAt","sourceNodeInstanceId"],"additionalProperties":false}},"previousTargetPosition":{"type":"string","x-coinsphere-decimal":true},"nodeValues":{"type":"object"}},"additionalProperties":false}`)
+var quantOutputSignalInputSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false}`)
 var quantOutputSignalOutputSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"signalId":{"type":"integer","minimum":0},"businessKey":{"type":"string"},"action":{"type":"string","enum":["buy","sell","hold"]},"previousTargetPosition":{"type":"string","x-coinsphere-decimal":true},"targetPosition":{"type":"string","x-coinsphere-decimal":true},"target":{"type":"string","x-coinsphere-decimal":true},"evaluatedAt":{"type":"string","format":"date-time"},"nodeValues":{"type":"object"},"branch":{"type":"string","enum":["realtime","unchanged"]}},"required":["signalId","businessKey","action","previousTargetPosition","targetPosition","target","evaluatedAt","nodeValues","branch"],"additionalProperties":false}`)
 
-var quantBacktestStartConfigSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"market":{"type":"string","title":"市场","enum":["spot","usdm"],"default":"spot"},"instrument":{"type":"string","title":"主品种","pattern":"^[A-Z0-9]{2,32}$","default":"BTCUSDT"},"interval":{"type":"string","title":"主周期","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"],"default":"1h"}},"required":["market","instrument","interval"],"additionalProperties":false}`)
+var quantBacktestStartConfigSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"venue":{"type":"string","title":"Venue","pattern":"^[a-z][a-z0-9_-]{1,31}$","default":"binance"},"market":{"type":"string","title":"市场","minLength":1,"maxLength":32},"instrument":{"type":"string","title":"主品种","pattern":"^[A-Z0-9]{2,32}$","default":"BTCUSDT"},"interval":{"type":"string","title":"主周期","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"],"default":"1h"}},"required":["venue","market","instrument","interval"],"additionalProperties":false}`)
 var quantBacktestStartInputSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"startTime":{"type":"string","format":"date-time"},"endTime":{"type":"string","format":"date-time"},"initialCapital":{"type":"string","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"feeRate":{"type":"string","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"slippageRate":{"type":"string","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true}},"required":["startTime","endTime","initialCapital","feeRate","slippageRate"],"additionalProperties":false}`)
 var quantBacktestStartOutputSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"branch":{"type":"string","enum":["each","completed"]},"backtestId":{"type":"integer"},"strategyId":{"type":"string"},"strategyVersion":{"type":"string"},"finalEquity":{"type":"string","x-coinsphere-decimal":true},"totalReturn":{"type":"string","x-coinsphere-decimal":true},"maxDrawdown":{"type":"string","x-coinsphere-decimal":true},"totalFees":{"type":"string","x-coinsphere-decimal":true},"tradeCount":{"type":"integer"},"candleCount":{"type":"integer"}},"required":["branch","backtestId","strategyId","strategyVersion","finalEquity","totalReturn","maxDrawdown","totalFees","tradeCount","candleCount"],"additionalProperties":false}`)
 
@@ -59,41 +59,50 @@ func validateQuantPositionConfig(raw json.RawMessage) error {
 
 func (q *quantRuntime) registerWorkflowStrategyNodes(registrar sdk.Registrar) error {
 	nodes := []struct {
-		descriptor sdk.NodeDescriptor
-		handler    sdk.ActionHandler
+		descriptor  sdk.NodeDescriptor
+		handler     sdk.ActionHandler
+		title       string
+		description string
+		category    string
+		color       string
+		icon        string
 	}{
 		{sdk.NodeDescriptor{
 			Type: "official.quant.backtest_start", Version: "1.0.0", Kind: sdk.NodeKindAction,
 			Branches: []string{"each", "completed"}, ConfigSchema: quantBacktestStartConfigSchema,
-			UISchema:    json.RawMessage(`{"ui:order":["market","instrument","interval"]}`),
+			UISchema:    json.RawMessage(`{"ui:order":["venue","market","instrument","interval"]}`),
 			InputSchema: quantBacktestStartInputSchema, OutputSchema: quantBacktestStartOutputSchema,
 			Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
-		}, quantWorkflowBacktestAction{runtime: q}},
+			Capabilities: sdk.NodeCapabilities{FrameDriver: true},
+		}, quantWorkflowBacktestAction{runtime: q}, "工作流回测", "逐帧执行通用量化工作流并汇总回测结果。", "回测", "#7c3aed", "history"},
 		{sdk.NodeDescriptor{
 			Type: "official.quant.code_strategy", Version: "1.0.0", Kind: sdk.NodeKindAction,
 			Branches: []string{"true", "false"}, ConfigSchema: quantCodeStrategyConfigSchema,
 			UISchema:     json.RawMessage(`{"ui:order":["series","parameters","source","booleanOutputs","decimalOutputs","branchField"],"source":{"ui:widget":"code","ui:language":"cel"}}`),
 			InputSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"eventTime":{"type":"string","format":"date-time"},"pathEntered":{"type":"boolean"}},"required":["eventTime"],"additionalProperties":false}`),
 			OutputSchema: quantCodeStrategyOutputSchema, Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
+			Capabilities:   sdk.NodeCapabilities{FrameSafe: true},
 			ValidateConfig: validateQuantCodeStrategyConfig,
-		}, &quantCodeStrategyAction{runtime: q}},
+		}, &quantCodeStrategyAction{runtime: q}, "通用代码策略", "使用受限 CEL 对多行情序列执行确定性策略判断。", "策略", "#2563eb", "code-xml"},
 		{sdk.NodeDescriptor{
 			Type: "official.quant.position", Version: "1.0.0", Kind: sdk.NodeKindAction,
 			ConfigSchema: quantPositionConfigSchema, UISchema: json.RawMessage(`{"ui:order":["market","targetMode","fixedTarget"]}`),
 			InputSchema: quantPositionInputSchema, OutputSchema: quantPositionOutputSchema,
 			Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
+			Capabilities:   sdk.NodeCapabilities{FrameSafe: true},
 			ValidateConfig: validateQuantPositionConfig,
-		}, quantPositionAction{}},
+		}, quantPositionAction{}, "目标仓位", "将策略输出转换为通用目标仓位。", "策略", "#2563eb", "percent"},
 		{sdk.NodeDescriptor{
 			Type: "official.quant.output_signal", Version: "1.0.0", Kind: sdk.NodeKindAction,
 			Branches: []string{"realtime", "unchanged"}, ConfigSchema: quantSeriesConfigSchema,
-			UISchema:    json.RawMessage(`{"ui:order":["market","instrument","interval"]}`),
+			UISchema:    json.RawMessage(`{"ui:order":["venue","market","instrument","interval"]}`),
 			InputSchema: quantOutputSignalInputSchema, OutputSchema: quantOutputSignalOutputSchema,
 			Pool: sdk.PoolStream, SideEffect: sdk.SideEffectData, State: sdk.StateStateless,
-		}, quantOutputSignalAction{runtime: q}},
+			Capabilities: sdk.NodeCapabilities{Deterministic: true, FrameSafe: true, FrameResult: true},
+		}, quantOutputSignalAction{runtime: q}, "信号输出", "汇总目标仓位并持久化通用量化 Signal。", "信号", "#0f766e", "radio"},
 	}
 	for _, node := range nodes {
-		if err := registrar.Action(node.descriptor, node.handler); err != nil {
+		if err := registrar.Action(quantNodeMeta(node.descriptor, node.title, node.description, node.category, node.color, node.icon), node.handler); err != nil {
 			return err
 		}
 	}
@@ -142,7 +151,25 @@ func (a quantOutputSignalAction) Execute(ctx context.Context, request sdk.Action
 		PreviousTargetPosition string         `json:"previousTargetPosition"`
 		NodeValues             map[string]any `json:"nodeValues"`
 	}
-	if !decodeQuantStrict(request.Input, &input) || len(input.Candidates) == 0 {
+	for _, incoming := range request.Incoming {
+		var candidate struct{ TargetPosition, EvaluatedAt, SourceNodeInstanceID string }
+		if json.Unmarshal(incoming.Output, &candidate) == nil && candidate.TargetPosition != "" {
+			if candidate.SourceNodeInstanceID == "" {
+				candidate.SourceNodeInstanceID = incoming.NodeInstanceID
+			}
+			input.Candidates = append(input.Candidates, candidate)
+		}
+	}
+	if len(request.FrameContext) > 0 {
+		var frame struct {
+			PreviousTargetPosition string `json:"previousTargetPosition"`
+		}
+		if json.Unmarshal(request.FrameContext, &frame) != nil {
+			return sdk.ActionResult{}, errors.New("quant output signal frame context is invalid")
+		}
+		input.PreviousTargetPosition = frame.PreviousTargetPosition
+	}
+	if len(input.Candidates) == 0 {
 		return sdk.ActionResult{}, errors.New("quant output signal requires at least one reached position")
 	}
 	target, err := decimal.NewFromString(input.Candidates[0].TargetPosition)

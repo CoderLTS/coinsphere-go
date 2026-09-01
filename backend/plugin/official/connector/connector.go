@@ -27,14 +27,11 @@ var errPermanentWebSocketHandshake = errors.New("permanent WebSocket handshake f
 var emptyObjectSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false}`)
 var dynamicObjectSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object"}`)
 
-func Register(registry *sdk.Registry, client *safehttp.Client) error {
-	return registry.RegisterPlugin(sdk.PluginDescriptor{
-		ID: pluginID, Name: "连接器", Version: "1.0.0",
-		Contributes: []string{"nodes", "triggers", "resultPages"},
-	}, func(registrar sdk.Registrar) error { return register(registrar, client) })
-}
-
-func register(registrar sdk.Registrar, client *safehttp.Client) error {
+func Register(registrar sdk.Registrar, host sdk.Host) error {
+	client, err := host.Network.New(host.AllowedHTTPHosts)
+	if err != nil {
+		return err
+	}
 	if err := registrar.Action(sdk.NodeDescriptor{
 		Type: "official.connector.http", Version: "1.0.0", Kind: sdk.NodeKindAction,
 		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"url":{"type":"string","title":"URL","format":"uri","maxLength":2048},"method":{"type":"string","title":"Method","enum":["GET","POST","PUT","PATCH"],"default":"GET"},"timeoutSeconds":{"type":"integer","title":"Timeout (seconds)","minimum":1,"maximum":60,"default":15},"useAuthorization":{"type":"boolean","title":"Use Authorization secret","default":false},"authorization":{"type":"string","title":"Authorization","x-coinsphere-secret":true}},"required":["url","method","timeoutSeconds","useAuthorization"],"additionalProperties":false}`),
@@ -67,7 +64,7 @@ func register(registrar sdk.Registrar, client *safehttp.Client) error {
 	})
 }
 
-type connectorHTTPAction struct{ client *safehttp.Client }
+type connectorHTTPAction struct{ client sdk.NetworkClient }
 
 func (a connectorHTTPAction) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
 	var config struct {
@@ -142,7 +139,7 @@ func (webhookTrigger) Run(ctx context.Context, _ sdk.TriggerRequest, _ sdk.Emitt
 	return ctx.Err()
 }
 
-type websocketTrigger struct{ client *safehttp.Client }
+type websocketTrigger struct{ client sdk.NetworkClient }
 
 func (t websocketTrigger) Run(ctx context.Context, request sdk.TriggerRequest, emitter sdk.Emitter) error {
 	var config struct {

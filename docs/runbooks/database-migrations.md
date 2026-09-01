@@ -2,9 +2,9 @@
 
 ## 当前基线
 
-CoinSphere 只支持 PostgreSQL 16。`00001` 至 `00004` 创建认证、插件和工作流定义基线；`00005_workflow_runs.sql` 创建 Run 队列、节点尝试、节点日志、检查点、事件、人工任务和制品；`00006_quant_market_backtests.sql` 创建 Quant 公共行情和回测；`00007_paper_results_notifications.sql` 创建 ResultView、Quant 信号/Paper 事实与 Notification 投递；`00008_quant_instrument_sources.sql` 保存工作流级品种来源；`00009_system_logs.sql` 保存结构化系统日志和运行配置；`00010_notification_delivery_channels.sql` 扩展多渠道投递；`00011_single_indicator_workflow_rebuild.sql` 永久删除旧条件树工作流及运行历史，并用六种单指标节点中的对应类型重建当前业务工作流。
+CoinSphere 只支持 PostgreSQL 16。`00001` 至 `00005` 创建认证、插件、工作流和运行基线；`00006_quant_market_backtests.sql` 首次创建 Binance 行情表与 Quant 回测表；`00007_paper_results_notifications.sql` 创建 ResultView、Quant Signal 与 Notification 投递；`00008_quant_instrument_sources.sql` 创建 Binance 品种来源；`00009` 至 `00016` 完成日志、通知、工作流和回测明细基线；`00017_quant_binance_split.sql` 创建 Binance 订单、成交、费用、Paper 账本、持仓和账户快照约束。
 
-服务启动只读校验核心版本，核心 DDL 只由 `coinsphere-migrate` 执行。内置 Quant 随应用版本迁移；通过插件 CLI 安装的插件使用 `plugin_<规范化插件 ID>` schema 和自己的 `schema_migrations` 账本。项目不提供旧表、旧接口或旧数据转换器；生产 DSN 和数据库密码只通过服务器配置注入。
+服务启动只读校验核心版本，DDL 只由 `coinsphere-migrate` 执行。随应用发布的 Quant、Binance 与 Notification 基线使用核心 migration runner；通过插件 CLI 安装的插件使用 `plugin_<规范化插件 ID>` schema 和自己的 `schema_migrations` 账本。项目不提供旧表、旧接口或旧数据转换器；生产 DSN 和数据库密码只通过服务器配置注入。
 
 ## 命令
 
@@ -24,7 +24,7 @@ go run ./cmd/migrate -config ./config.yml -direction down -steps 1
 旧独立数据库从 PostgreSQL 17/TimescaleDB 迁入服务器 PostgreSQL 16 时，必须在发布维护窗口执行一次逻辑迁移：
 
 1. 停止 CoinSphere 应用容器，并保存旧数据库和 `data/backend` 的一致恢复点。
-2. 在旧数据库中把 `plugin_quant.candles` 无损转换为具有相同约束和索引的普通表，再卸载 TimescaleDB 扩展。
+2. 在旧数据库中把历史 K 线 hypertable 无损转换为与 `plugin_binance.candles` 约束和索引一致的普通表，再卸载 TimescaleDB 扩展。
 3. 在共享 PostgreSQL 中创建独立 `coinsphere_go` 用户和空数据库，不覆盖已有 `coinsphere` 旧库或其他应用数据库。
 4. 使用 PostgreSQL 17 客户端逻辑导出并恢复到 PostgreSQL 16；先在隔离目标验证版本兼容，再切换生产连接。
 5. 对比 migration 版本、schema、关键表行数和数据库大小，运行目标应用镜像健康检查。
@@ -51,9 +51,9 @@ go run ./cmd/migrate -config ./config.yml -direction down -steps 1
 - 金融时间使用 `TIMESTAMPTZ`；价格、数量、金额和费率使用 `NUMERIC(38,18)`。
 - `Down` 必须保护持久数据；插件和工作流 migration 只在所属表为空时允许回滚。
 - `00005` 只有在 Run、RunNode、节点日志、检查点、事件、人工任务、状态和制品全部为空时允许 Down。
-- `00006` 只有在 Quant 品种、K 线和回测摘要均为空时允许 Down；应用回滚不得自动删除 `plugin_quant`。
-- `00007` 只有在 ResultView、信号、Paper 账户/事实/投影和 Notification 投递全部为空时允许 Down；存在任一记录时必须恢复备份，不能删除事实来迁就旧应用。
-- `00008` 只有在所有 Quant 工作流品种来源为空时允许 Down；`00009` 只有在系统日志和日志设置都为空时允许 Down。
+- `00006` 只有在 Binance 品种/K 线和 Quant 回测摘要均为空时允许 Down；应用回滚不得自动删除插件 schema。
+- `00007` 只有在 ResultView、Quant Signal 和 Notification 投递全部为空时允许 Down；存在任一记录时必须恢复备份，不能删除事实来迁就旧应用。
+- `00008` 只有在所有 Binance 品种来源为空时允许 Down；`00009` 只有在系统日志和日志设置都为空时允许 Down。
 - `00010` 只有在不存在外部渠道、站内收件人、已读或错误类别数据时允许 Down；应用回滚不执行该 Down，也不删除通知记录。
 - `00011` 的生产预检清单固定为旧工作流 ID `3`、活动修订 `7` 和图哈希 `ceb29098af6afa49b7a20d9698f53fa7`。发布前旧服务必须已停止并完成数据库备份；清单、活动图、金融事实、共享制品或跨工作流诊断引用任一不符都会终止事务。该 migration 删除旧 Run、通知、日志、检查点、状态、修订和工作流后创建新 ID；Down 永远拒绝，只能恢复发布前备份。
 - 无法无损回滚时恢复已验证备份，不提供伪可逆 SQL。

@@ -7,7 +7,7 @@
 - 只支持 PostgreSQL 16。
 - 不开放公开注册；首次启动创建内置超级管理员。
 - 默认部署不包含 Python Worker、Private Executor、Redis 或消息代理。
-- 当前版本不会连接 Binance 私有 API，不提供 Testnet/Live 放行或真实交易。
+- Binance 插件包含受安全门禁保护的 Spot/USD-M 市价真实下单链路，但默认关闭；没有人工确认或完整风险上限时不能执行。
 
 ### 智能助手
 
@@ -62,17 +62,17 @@ docker compose down
 
 ## 4. 当前页面
 
-| 页面       | 用途                                                       |
-| ---------- | ---------------------------------------------------------- |
-| 首页       | 查看 Go 进程、HTTP、PostgreSQL、migration 和插件版本状态   |
-| 节点定义   | 查看核心与编译期插件提供的可用节点                         |
-| 工作流定义 | 使用画布创建、编辑、启停和手工运行工作流                   |
-| 工作流日志 | 搜索每次 Run，查看节点尝试、多行日志、摘要和制品引用        |
-| 币种数据   | 查看工作流采集的真实交易标的目录并进入对应工作流           |
-| K 线详情   | 使用 `official.quant` 独立页面，以原形式查看闭合 K 线      |
-| 插件管理   | 查看编译进当前应用的插件、注册节点及节点配置参数           |
-| 系统日志   | 按级别、组件、请求和用户查询结构化运行日志                 |
-| 系统管理   | 维护用户、角色、菜单、权限码与出站代理                     |
+| 页面       | 用途                                                     |
+| ---------- | -------------------------------------------------------- |
+| 首页       | 查看 Go 进程、HTTP、PostgreSQL、migration 和插件版本状态 |
+| 节点定义   | 查看核心与编译期插件提供的可用节点                       |
+| 工作流定义 | 使用画布创建、编辑、启停和手工运行工作流                 |
+| 工作流日志 | 搜索每次 Run，查看节点尝试、多行日志、摘要和制品引用     |
+| 币种数据   | 查看工作流采集的真实交易标的目录并进入对应工作流         |
+| K 线详情   | 使用 `official.quant` 独立页面，以原形式查看闭合 K 线    |
+| 插件管理   | 查看编译进当前应用的插件、注册节点及节点配置参数         |
+| 系统日志   | 按级别、组件、请求和用户查询结构化运行日志               |
+| 系统管理   | 维护用户、角色、菜单、权限码与出站代理                   |
 
 导航和页面布局沿用 `/scheduler/*`、`/data/*` 形态，底层工作流、修订、Run 和插件接口统一使用当前 `/api/v1` 契约。旧交易、新闻和模型配置接口未恢复，因此对应菜单不展示。
 
@@ -104,7 +104,7 @@ Connector HTTP、Connector WebSocket 和 AI 模型调用默认不能访问任何
 COINSPHERE_WORKFLOW__HTTP_ALLOWED_HOSTS='[api.example.com,models.example.com]'
 ```
 
-不支持通配符、IP、自动包含子域或私网目标。环境代理不会被使用，DNS 解析中出现任一非公网地址都会拒绝。Binance 域名只开放明确的公共 GET/公共 WebSocket；不得配置授权请求、私有端点或真实交易密钥。AI 节点使用节点本地 API Key，要求 OpenAI-compatible JSON 响应，输入和输出都必须是对象。
+不支持通配符、IP、自动包含子域或私网目标。环境代理不会被使用，DNS 解析中出现任一非公网地址都会拒绝。通用 Connector/AI 仍不得调用 Binance 私有接口；只有 Binance 插件可通过 SecretReader 访问明确的私有订单端点。AI 节点使用节点本地 API Key，要求 OpenAI-compatible JSON 响应，输入和输出都必须是对象。
 
 具体请求、图格式和冲突语义见[公共契约](contracts/README.md)。工作台不要求管理员编辑原始 JSON。
 
@@ -112,13 +112,13 @@ COINSPHERE_WORKFLOW__HTTP_ALLOWED_HOSTS='[api.example.com,models.example.com]'
 
 服务器直连 Binance 受限时，先在“系统管理 / 代理配置”新增 HTTP 或 SOCKS5 代理并执行连接检测。密码只写入服务端加密存储，编辑时留空会保留原密码。代理仍被任一工作流历史修订引用时不能删除；需要下线时先停用，使用它的节点会明确失败。
 
-应用首次启动且尚无币种同步节点时，会创建并激活“Binance 币种元数据采集”：立即运行一次，之后在北京时间 `00:00 / 06:00 / 12:00 / 18:00` 运行。`official.quant.sync_instruments` 可选择 Spot/USD-M、直连或一个已启用代理，并配置报价资产、基础资产和交易对的黑白名单；输入会转大写、去空格和去重，空白名单不限，所有白名单取交集，任一黑名单命中即排除。多个元数据工作流各自保存成功快照，币种目录显示全部来源并集；停用只停止调度并保留上次成功快照。采集状态和实时日志从“查看采集工作流”进入工作流画布查看。
+Core 启动不会自动创建或激活 Binance 工作流。管理员可从空白或定时模板添加 `official.binance.sync_instruments`，选择 Spot/USD-M、直连或一个已启用代理，并配置报价资产、基础资产和交易对的黑白名单；输入会转大写、去空格和去重，空白名单不限，所有白名单取交集，任一黑名单命中即排除。多个元数据工作流各自保存成功快照，币种目录显示全部来源并集；停用只停止调度并保留上次成功快照。
 
-Quant 只连接 Binance Spot 和 USD-M 公共 REST/WebSocket。先创建并激活 `quant-market-data`，在 `official.quant.realtime_candles` 中选择市场、代理、单个品种和一个或多个固定周期；同一 `market + instrument + proxyId` 使用一条 combined-stream WebSocket，并在连接内合并所需周期。断线只重连，不隐式补数。每根实时闭合 K 线保存一条 Quant 行情和 CloudEvent，并为命中的工作流创建一条包含完整节点路径的 Run；Run 不复制 OHLCV 正文。月线不属于当前固定周期集合。
+Binance 插件连接 Spot 和 USD-M 公共 REST/WebSocket。先创建并激活 `binance-market-data`，在 `official.binance.realtime_candles` 中选择市场、代理、单个品种和一个或多个固定周期；同一 `market + instrument + proxyId` 使用一条 combined-stream WebSocket，并在连接内合并所需周期。Quant 节点通过 `venue` 读取这些数据，断线只重连，不隐式补数。每根实时闭合 K 线保存一条 Binance 行情和 CloudEvent；月线不属于当前固定周期集合。
 
-缺口修复使用独立的 `official.quant.backfill_candles` Action，可接手动、定时或节点化回测入口，并可选择直连或已启用代理。普通运行会为单个品种的每个选中周期抓取指定 UTC 结束时间之前最近 N 根闭合 K 线；作为回测入口时先检查回测区间及前置根数，完整则直接进入回测，不足才补数。结束时间留空时使用执行时间，每周期最多 10000 根。补数只写入 K 线表并返回抓取/新增数量，不发布 `market.candle.closed`，重复执行由数据库主键去重。元数据节点只有在全部选中市场都抓取并解析成功后才替换快照；失败时目录保持不变，过滤后为空则保存为空快照。代理只供上述三类 Binance 公共行情节点显式选择，不会自动作用于 Connector、AI、通知、QQ、Paper 报价或其他 Quant 节点。
+缺口修复使用独立的 `official.binance.backfill_candles` Action，可接手动或定时运行。Quant 回测直接通过 Binance `MarketDataProvider` 读取数据；未来接入其他 Provider 时不修改 Quant 回测代码。补数只写入 Binance K 线表并返回抓取/新增数量，不发布 `market.candle.closed`，重复执行由数据库主键去重。代理只供 Binance 公共行情节点显式选择，不会自动作用于 Connector、AI、通知、QQ 或其他 Quant 节点。
 
-`quant-strategy` 消费 `market.candle.closed` 并调用已编译的 SMA crossover Go 策略。`quant-backtest` 读取已落库的闭合 K 线，在下一根 K 线开盘成交并应用 Decimal 手续费和滑点；日期必须是 UTC。运行结果中的 Quant 页面可查看品种、K 线、策略和回测摘要，并下载后校验完整明细 SHA-256。
+`quant-strategy` 消费 `market.candle.closed` 并调用已编译的 SMA crossover Go 策略。`quant-backtest` 通过所选 `venue` 的 `MarketDataProvider` 读取闭合 K 线，在下一根 K 线开盘成交并应用 Decimal 手续费和滑点；日期必须是 UTC。运行结果中的 Quant 页面只查看策略和回测摘要，交易所行情由对应 Provider 插件页面查看。
 
 量化判断拆分为放量、价格波动、MACD、KDJ、RSI 和布林带六种独立节点，每个节点只配置一种指标和一种规则，并独立选择市场、交易对、检查周期和 K 线周期。当前支持 N 根 K 线首尾上涨/下跌/绝对涨跌、期间振幅、MACD 金叉/死叉/零轴位置、KDJ 金叉/死叉及 K/D/J 阈值、Wilder RSI 阈值和布林带突破。节点只使用已经闭合且连续的 K 线；历史不足时走 false，不发送通知。
 
@@ -128,9 +128,9 @@ Quant 只连接 Binance Spot 和 USD-M 公共 REST/WebSocket。先创建并激�
 
 ### 5.4 Paper 与通知
 
-选择 `quant-paper` 会在一个事务内创建未激活的共享行情工作流和 Paper 策略工作流。先确认市场、品种、周期和五项风险限制，再分别激活两个工作流。默认 `core.human_approval` 和 `paper_execute` 都使用 `human`；自动模式必须同时显式改为 `auto`，且不能删除任一风险上限。
+Paper 工作流由管理员显式组合：Quant 策略或信号节点产生通用 `OrderIntent`，可先经过 `core.human_approval`，再交给 `official.binance.paper_execute`。Paper 节点必须配置初始余额、费率、单笔最大名义价值和单品种最大持仓价值；工作流创建后默认未激活。
 
-Paper 链路为“闭合 K 线 → 可信策略 → 信号 → 人工/自动决策 → 新鲜公共报价与风险复核 → Paper 账本 → 通知”。账户按工作流和 Paper 节点实例隔离。风险拒绝不创建账户、订单或部分账本；成交、费用和账本使用 Decimal 字符串与 UTC 时间，不连接 Binance 私有接口。
+Paper 链路为“闭合 K 线 → 可信策略 → Signal/OrderIntent → 可选人工决策 → 新鲜公共报价与风险复核 → Binance Paper 账本 → 通知”。账户由 `OrderIntent.account` 明确选择；风险拒绝不创建订单或部分账本，成交、费用和账本使用 Decimal 字符串与 UTC 时间。
 
 工作流可分别添加站内、钉钉和 SMTP 通知节点。站内目标支持用户和角色多选，角色在执行时展开为当前启用用户并与直接用户去重；旧节点未配置目标时发送给工作流创建者。钉钉可选择纯文本或 Markdown 及可选加签，SMTP 必须选择 TLS 或 STARTTLS。渠道凭据只在节点密钥输入中配置，留空保留已有密钥；部署和 CI 不配置或试发真实消息。
 
@@ -138,7 +138,7 @@ Paper 链路为“闭合 K 线 → 可信策略 → 信号 → 人工/自动决�
 
 顶部铃铛只显示当前用户的站内通知和未读数，支持单条或全部已读。登录后浏览器通过 `coinsphere.notifications.v1` WebSocket 接收实时更新，断线时仍可从持久列表恢复。
 
-Paper 页面展示账户、持仓、最近脱敏 Run 和信号；移动端使用纵向信号队列。管理员可从系统 Quant 路由执行账户投影重建。具体恢复步骤与证据项见 [Paper 恢复与观察](runbooks/paper-recovery.md)。当前仍不提供在线策略源码、Testnet、Live、交易所私有凭据或真实下单。
+Binance Paper 结果页展示固定工作流和节点范围内的订单，管理员可从系统 Binance 路由查看订单。具体恢复步骤与证据项见 [Paper 恢复与观察](runbooks/paper-recovery.md)。当前不提供在线策略源码或 Testnet；Live 真实下单默认关闭，只有账户人工确认、全部风险上限、无提现权限密钥和恢复/对账链路同时满足时才可启用，详见[真实交易安全门禁 ADR](architecture/decisions/0005-live-trading-gate.md)。
 
 ## 6. 插件维护
 
@@ -190,20 +190,20 @@ docker compose ps
 docker compose logs --tail=200 migrate backend
 ```
 
-| 现象                     | 优先检查                                                |
-| ------------------------ | ------------------------------------------------------- |
-| Compose 提示缺少签名密钥 | 当前环境是否提供稳定的 `COINSPHERE_AUTH__SECRET_KEY`    |
-| `migrate` 失败           | PostgreSQL 网络、凭据、核心版本和目标数据库 schema      |
-| Backend 不 ready         | PostgreSQL 网络、凭据、migration 是否落后或超前         |
-| Web 打不开               | Web 端口、Backend 健康和反向代理配置                    |
-| 登录立即失效             | 签名密钥是否变化、浏览器时间是否异常                    |
-| 插件安装失败             | manifest、Core/SDK 版本、migration、Go/Vue 构建输出     |
-| 插件无法卸载             | CLI 输出的活动引用，先在拥有模块解除引用                |
-| 工作流返回 `409`         | 修订指针过期、状态冲突、事件内容冲突或积压达到上限      |
-| 连续流变为“需处理”       | Trigger 配置、域名白名单、DNS、凭据或远端握手状态       |
+| 现象                         | 优先检查                                                   |
+| ---------------------------- | ---------------------------------------------------------- |
+| Compose 提示缺少签名密钥     | 当前环境是否提供稳定的 `COINSPHERE_AUTH__SECRET_KEY`       |
+| `migrate` 失败               | PostgreSQL 网络、凭据、核心版本和目标数据库 schema         |
+| Backend 不 ready             | PostgreSQL 网络、凭据、migration 是否落后或超前            |
+| Web 打不开                   | Web 端口、Backend 健康和反向代理配置                       |
+| 登录立即失效                 | 签名密钥是否变化、浏览器时间是否异常                       |
+| 插件安装失败                 | manifest、Core/SDK 版本、migration、Go/Vue 构建输出        |
+| 插件无法卸载                 | CLI 输出的活动引用，先在拥有模块解除引用                   |
+| 工作流返回 `409`             | 修订指针过期、状态冲突、事件内容冲突或积压达到上限         |
+| 连续流变为“需处理”           | Trigger 配置、域名白名单、DNS、凭据或远端握手状态          |
 | Binance 目标解析为非公网地址 | 在系统管理配置并检测服务器可用代理，再在采集节点选择该代理 |
-| Paper 信号被拒绝         | 结果页拒绝原因、报价时效、数量步进、账户状态及五项上限  |
-| Paper 投影不一致         | 先保留事实和备份，再按 Paper 恢复 Runbook 执行重建      |
+| Paper 信号被拒绝             | 结果页拒绝原因、报价时效、数量步进、账户状态及五项上限     |
+| Paper 投影不一致             | 先保留事实和备份，再按 Paper 恢复 Runbook 执行重建         |
 
 日志和截图必须移除 DSN、Token、密码、原始载荷和个人数据。
 

@@ -57,6 +57,12 @@ export interface WorkflowNodeDefinitionItem {
   label: string
   version?: string
   description?: string
+  category?: string
+  color?: string
+  icon?: string
+  width?: number
+  height?: number
+  capabilities?: WorkflowNodeDefinition['capabilities']
   configSchema: Record<string, any>
   uiSchema?: Record<string, any>
   secretFields?: { name: string; title: string; required: boolean }[]
@@ -246,38 +252,8 @@ export interface RunWorkflowDefinitionResponse {
 
 const versionIDFactor = 1_000_000_000
 const currentNodeDefinitions = new Map<string, WorkflowNodeDefinition>()
-const nodeLabels: Record<string, string> = {
-  'core.manual': '手动开始',
-  'core.schedule': '定时开始',
-  'core.event': '事件开始',
-  'core.constant': '常量',
-  'core.end': '结束',
-  'core.human_approval': '人工审批',
-  'core.loop': '循环',
-  'official.connector.http': 'HTTP 请求',
-  'official.connector.webhook': 'Webhook 触发',
-  'official.connector.websocket': 'WebSocket 触发',
-  'official.ai.model_call': 'AI 模型调用',
-  'official.quant.realtime_candles': 'Binance K 线实时采集',
-  'official.quant.backfill_candles': 'Binance K 线补数',
-  'official.quant.sync_instruments': 'Binance 币种元数据采集',
-  'official.quant.evaluate': '量化策略评估',
-  'official.quant.volume_spike_condition': '放量判断',
-  'official.quant.price_change_condition': '价格波动判断',
-  'official.quant.macd_condition': 'MACD 判断',
-  'official.quant.kdj_condition': 'KDJ 判断',
-  'official.quant.rsi_condition': 'RSI 判断',
-  'official.quant.bollinger_condition': '布林带判断',
-  'official.quant.market_signal': '输出信号',
-  'official.quant.backtest': '量化策略回测',
-  'official.quant.signal': '量化信号',
-  'official.quant.paper_execute': 'Paper 执行',
-  'official.notification.in_app': '站内通知',
-  'official.notification.dingtalk': '钉钉通知',
-  'official.qq.receive': 'QQ 消息接收',
-  'official.qq.send': 'QQ 消息发送',
-  'official.notification.smtp': '邮件通知'
-}
+const nodeLabel = (type: string, fallback = type) =>
+  currentNodeDefinitions.get(type)?.title || fallback
 
 const schemaTitleLabels: Record<string, string> = {
   Value: '值',
@@ -476,7 +452,7 @@ const toLegacyGraph = (graph: CurrentWorkflowGraph): WorkflowGraph => ({
     const config: Record<string, unknown> = { ...node.config, ...literalInputs }
     if (definition?.kind === 'trigger') {
       config.entryKey = node.nodeInstanceId
-      config.displayName = nodeLabels[node.nodeType] || node.nodeType
+      config.displayName = nodeLabel(node.nodeType)
       config.inputBindings = {}
     }
     if (node.nodeType === 'core.schedule') {
@@ -495,7 +471,7 @@ const toLegacyGraph = (graph: CurrentWorkflowGraph): WorkflowGraph => ({
     return {
       id: node.nodeInstanceId,
       type: legacyNodeTypes[node.nodeType] || node.nodeType,
-      label: nodeLabels[node.nodeType] || definition?.title || node.nodeType,
+      label: nodeLabel(node.nodeType, definition?.title || node.nodeType),
       config: {
         ...config,
         __nodeType: node.nodeType,
@@ -750,9 +726,15 @@ export async function fetchNodeDefinitions() {
     .filter((item) => item.available)
     .map((item) => ({
       typeCode: legacyNodeTypes[item.type] || item.type,
-      label: nodeLabels[item.type] || item.title,
+      label: nodeLabel(item.type, item.title),
       version: item.version,
       description: item.description,
+      category: item.category,
+      color: item.color,
+      icon: item.icon,
+      width: item.width,
+      height: item.height,
+      capabilities: item.capabilities,
       configSchema: legacyConfigSchema(item),
       uiSchema: item.uiSchema,
       secretFields: item.secretFields,
@@ -902,7 +884,7 @@ export async function fetchWorkflowRuntime(
             definitionId: activeID,
             startNodeId: trigger.nodeInstanceId,
             entryKey: trigger.nodeInstanceId,
-            entryName: nodeLabels[trigger.nodeType] || trigger.nodeType,
+            entryName: nodeLabel(trigger.nodeType),
             startType: startType(trigger.nodeType),
             isEnabled: workflow.status === 'active',
             registrationStatus: workflow.status === 'active' ? 'registered' : 'disabled',

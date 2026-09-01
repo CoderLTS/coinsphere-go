@@ -189,7 +189,7 @@
   import EditorWorker from 'monaco-editor/editor/editor.worker.js?worker'
   import 'monaco-editor/languages/definitions/python/register.js'
   import { ElMessage, ElMessageBox } from 'element-plus'
-  import { fetchMarketSymbols, type MarketSymbol } from '@/api/market'
+  import { fetchMarketSymbols, type MarketSymbol } from '@/plugins/official/binance/market-api'
   import {
     fetchCreateStrategyBacktest,
     fetchCreateStrategyDraft,

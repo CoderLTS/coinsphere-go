@@ -528,15 +528,8 @@ func (a *App) executeWorkflowRun(parent context.Context, run db.WorkflowRun) {
 				continue
 			}
 		}
-		if !workflowQuantPositionInputReady(node, outputs) {
-			continue
-		}
 		input, err := resolveWorkflowNodeInput(node, graph.incoming[nodeID], outputs, event)
 		if err != nil {
-			a.failWorkflowRun(run.ID, "input")
-			return
-		}
-		if err := injectWorkflowQuantInput(node, graph.incoming[nodeID], outputs, event, input); err != nil {
 			a.failWorkflowRun(run.ID, "input")
 			return
 		}
@@ -546,7 +539,7 @@ func (a *App) executeWorkflowRun(parent context.Context, run db.WorkflowRun) {
 				return
 			}
 		}
-		outcome := a.executeWorkflowNode(ctx, run, revision, graph, node, input, event, 0)
+		outcome := a.executeWorkflowNode(ctx, run, revision, graph, node, input, outputs, event, 0)
 		if outcome.waiting {
 			return
 		}
@@ -580,7 +573,7 @@ type workflowNodeOutcome struct {
 	err      error
 }
 
-func (a *App) executeWorkflowNode(ctx context.Context, run db.WorkflowRun, revision db.WorkflowRevision, graph workflowRunGraph, node workflowGraphNode, input map[string]any, event map[string]string, iteration int) workflowNodeOutcome {
+func (a *App) executeWorkflowNode(ctx context.Context, run db.WorkflowRun, revision db.WorkflowRevision, graph workflowRunGraph, node workflowGraphNode, input map[string]any, outputs map[string]map[string]any, event map[string]string, iteration int) workflowNodeOutcome {
 	desc := graph.descriptors[node.NodeInstanceID]
 	attempt, err := a.nextWorkflowNodeAttempt(ctx, run.ID, node.NodeInstanceID, iteration)
 	if err != nil {
@@ -644,12 +637,18 @@ func (a *App) executeWorkflowNode(ctx context.Context, run db.WorkflowRun, revis
 		Input: mustJSON(input), Config: append(json.RawMessage(nil), node.Config...),
 		Secrets: workflowSecretReader{app: a, revisionID: revision.ID, nodeInstanceID: node.NodeInstanceID},
 		State:   state, Artifacts: workflowArtifactStore{app: a}, ExecutionMode: sdk.ExecutionModeWorkflow,
-		Logger: a.workflowNodeLogger(run.WorkflowID, run.ID, runNode.ID, node.NodeType),
+		Incoming: workflowIncomingOutputs(graph.incoming[node.NodeInstanceID], outputs, event),
+		Logger:   a.workflowNodeLogger(run.WorkflowID, run.ID, runNode.ID, node.NodeType),
 	}
-	if node.NodeType == "official.quant.backtest_start" {
+	if desc.Capabilities.FrameDriver {
+		for nodeID, descriptor := range graph.descriptors {
+			if descriptor.Capabilities.FrameResult {
+				request.FrameResultNodeIDs = append(request.FrameResultNodeIDs, nodeID)
+			}
+		}
+		sort.Strings(request.FrameResultNodeIDs)
 		request.Frames = workflowFrameExecutor{
 			app: a, run: run, revision: revision, graph: graph, sourceNodeID: node.NodeInstanceID,
-			frameNodeIDs: workflowBacktestFrameNodeIDs(graph, node.NodeInstanceID),
 		}
 	}
 	result, category, executeErr := a.callWorkflowNode(ctx, run, revision, node, request, event)
@@ -972,7 +971,7 @@ func (a *App) executeWorkflowLoop(ctx context.Context, run db.WorkflowRun, revis
 					return sdk.ActionResult{}, err
 				}
 			}
-			outcome := a.executeWorkflowNode(loopCtx, run, revision, graph, bodyNode, bodyInput, event, iteration)
+			outcome := a.executeWorkflowNode(loopCtx, run, revision, graph, bodyNode, bodyInput, outputs, event, iteration)
 			if outcome.waiting {
 				return sdk.ActionResult{}, errors.New("loop body cannot enter a durable wait")
 			}
@@ -1169,7 +1168,7 @@ func workflowConditionNotificationValue(kind string, sources []workflowInputBind
 	}
 	if kind == "condition_subject" {
 		digest := sha256.Sum256([]byte(strings.Join(values, "\x00")))
-		return "quant-condition:" + hex.EncodeToString(digest[:16]), nil
+		return "condition-subject:" + hex.EncodeToString(digest[:16]), nil
 	}
 	return truncateWorkflowText(strings.Join(values, "\n"), 2000), nil
 }
@@ -1344,7 +1343,7 @@ func (a *App) finishWorkflowRun(runID int64, status, category string) {
 			return err
 		}
 		workflowID = run.WorkflowID
-		updates["result_summary"] = workflowRunResultSummary(tx, runID, run.EntryPoint)
+		updates["result_summary"] = workflowRunResultSummary(tx, runID)
 		if category == "" {
 			updates["error_message"] = nil
 		} else {
@@ -1365,15 +1364,12 @@ func (a *App) finishWorkflowRun(runID int64, status, category string) {
 	a.PublishWorkflowRunUpdated(workflowID, runID)
 }
 
-func workflowRunResultSummary(tx *gorm.DB, runID int64, entryPoint string) string {
+func workflowRunResultSummary(tx *gorm.DB, runID int64) string {
 	var attempts int64
 	_ = tx.Model(&db.WorkflowRunNode{}).Where("run_id = ?", runID).Count(&attempts).Error
 	summary := map[string]any{"nodeAttempts": attempts}
 	var last db.WorkflowRunNode
-	query := tx.Where("run_id = ?", runID)
-	if entryPoint == "backtest" {
-		query = query.Where("node_type = ?", "official.quant.backtest_start")
-	}
+	query := tx.Where("run_id = ? AND status = ? AND output_summary <> '{}'", runID, RunStatusSucceeded)
 	if err := query.Order("id DESC").First(&last).Error; err == nil {
 		summary["lastNodeInstanceId"] = last.NodeInstanceID
 		summary["lastNodeStatus"] = last.Status

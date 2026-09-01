@@ -4,31 +4,6 @@ interface ItemList<T> {
   items: T[]
 }
 
-export interface QuantInstrument {
-  market: 'spot' | 'usdm'
-  symbol: string
-  baseAsset: string
-  quoteAsset: string
-  status: string
-  priceTick: string
-  quantityStep: string
-  minQuantity: string
-  updatedAt: string
-}
-
-export interface QuantCandle {
-  market: 'spot' | 'usdm'
-  instrument: string
-  interval: string
-  openTime: string
-  closeTime: string
-  open: string
-  high: string
-  low: string
-  close: string
-  volume: string
-}
-
 export interface QuantStrategy {
   id: string
   version: string
@@ -39,6 +14,7 @@ export interface QuantStrategy {
 
 export interface QuantBacktest {
   id: number
+  venue: string
   strategyId: string
   strategyVersion: string
   market: 'spot' | 'usdm'
@@ -69,8 +45,23 @@ export interface QuantBacktestPoint {
   equity: string
 }
 
+export interface QuantCandle {
+  venue: string
+  market: 'spot' | 'usdm'
+  instrument: string
+  interval: string
+  openTime: string
+  closeTime: string
+  open: string
+  high: string
+  low: string
+  close: string
+  volume: string
+}
+
 export interface QuantBacktestDetail {
   schemaVersion: 2
+  venue: string
   strategyId: string
   strategyVersion: string
   market: 'spot' | 'usdm'
@@ -83,6 +74,7 @@ export interface QuantBacktestDetail {
 
 export interface QuantMarketSignal {
   id: number
+  venue: string
   market: 'spot' | 'usdm'
   instrument: string
   interval: string
@@ -95,17 +87,6 @@ export interface QuantMarketSignal {
 }
 
 const quantBase = '/api/v1/plugins/official.quant'
-
-export const fetchQuantInstruments = (market: 'spot' | 'usdm') =>
-  request.get<ItemList<QuantInstrument>>({ url: `${quantBase}/instruments`, params: { market } })
-
-export const fetchQuantCandles = (params: {
-  market: 'spot' | 'usdm'
-  instrument: string
-  interval: string
-  before?: string
-  limit?: number
-}) => request.get<ItemList<QuantCandle>>({ url: `${quantBase}/candles`, params })
 
 export const fetchQuantStrategies = () =>
   request.get<ItemList<QuantStrategy>>({ url: `${quantBase}/strategies` })

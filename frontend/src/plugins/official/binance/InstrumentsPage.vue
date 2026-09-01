@@ -122,7 +122,7 @@
     type MarketStatus,
     type MarketSymbol,
     type MarketType
-  } from '@/api/market'
+  } from './market-api'
   import { formatDateTime as formatTime } from '@/utils/date'
 
   defineOptions({ name: 'MarketMetadataPage' })
@@ -168,7 +168,7 @@
   const openWorkflows = () => void router.push('/scheduler/definition')
   const openSymbol = (row: MarketSymbol) => {
     void router.push({
-      path: '/quant-data/candles',
+      path: '/plugins/official.binance/candles',
       query: { instrumentId: row.id, market: row.market, interval: '1h' }
     })
   }

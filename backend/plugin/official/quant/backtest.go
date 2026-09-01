@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"coinsphere/backend/plugin/sdk"
@@ -61,7 +62,7 @@ func (a quantEvaluateAction) Execute(ctx context.Context, request sdk.ActionRequ
 		return sdk.ActionResult{}, errors.New("quant strategy target must be between -1 and 1")
 	}
 	return sdk.ActionResult{Output: mustMarshal(map[string]any{
-		"strategyId": desc.ID, "strategyVersion": desc.Version, "target": target.String(),
+		"venue": config.Venue, "strategyId": desc.ID, "strategyVersion": desc.Version, "target": target.String(),
 		"evaluatedAt": candles[len(candles)-1].CloseTime.UTC().Format(time.RFC3339Nano),
 	})}, nil
 }
@@ -116,7 +117,7 @@ func (a quantBacktestAction) Execute(ctx context.Context, request sdk.ActionRequ
 	manifestJSON, _ := json.Marshal(manifest)
 	row := quantBacktest{
 		OperationKey: request.OperationKey, WorkflowID: workflowID, RevisionID: revisionID,
-		NodeInstanceID: request.NodeInstanceID, StrategyID: desc.ID, StrategyVersion: desc.Version,
+		NodeInstanceID: request.NodeInstanceID, StrategyID: desc.ID, StrategyVersion: desc.Version, Venue: config.Venue,
 		Market: config.Market, Instrument: config.Instrument, Interval: config.Interval,
 		StartTime: candles[0].OpenTime.UTC(), EndTime: candles[len(candles)-1].CloseTime.UTC(),
 		InitialCapital: config.InitialCapital, FinalEquity: simulation.FinalEquity,
@@ -228,21 +229,25 @@ func simulateQuantBacktest(ctx context.Context, strategy sdk.Strategy, desc sdk.
 }
 
 func (q *quantRuntime) loadQuantCandles(ctx context.Context, config quantSeriesConfig, start, end time.Time, limit int) ([]quantCandle, error) {
-	query := q.db.WithContext(ctx).Where(
-		"market = ? AND instrument = ? AND interval = ?", config.Market, config.Instrument, config.Interval,
-	)
-	if !start.IsZero() {
-		query = query.Where("open_time >= ?", start.UTC())
+	if q.marketData == nil {
+		return nil, errors.New("quant market data registry is unavailable")
 	}
-	if !end.IsZero() {
-		query = query.Where("open_time < ?", end.UTC())
+	provider, ok := q.marketData.MarketDataProvider(config.Venue)
+	if !ok {
+		return nil, fmt.Errorf("quant market data provider %q is unavailable", config.Venue)
 	}
-	var candles []quantCandle
-	if err := query.Order("open_time DESC").Limit(limit).Find(&candles).Error; err != nil {
-		return nil, errors.New("load Quant candles failed")
+	items, err := provider.Candles(ctx, sdk.CandleQuery{
+		Market: config.Market, Instrument: config.Instrument, Interval: config.Interval,
+		StartTime: start.UTC(), EndTime: end.UTC(), Limit: limit,
+	})
+	if err != nil {
+		return nil, err
 	}
-	for left, right := 0, len(candles)-1; left < right; left, right = left+1, right-1 {
-		candles[left], candles[right] = candles[right], candles[left]
+	candles := make([]quantCandle, len(items))
+	for index, candle := range items {
+		candles[index] = quantCandle{Venue: config.Venue, Market: config.Market, Instrument: config.Instrument, Interval: config.Interval,
+			OpenTime: candle.OpenTime.UTC(), CloseTime: candle.CloseTime.UTC(), Open: candle.Open, High: candle.High,
+			Low: candle.Low, Close: candle.Close, Volume: candle.Volume}
 	}
 	return candles, nil
 }
@@ -251,17 +256,7 @@ func (q *quantRuntime) loadQuantCandlesThroughClose(ctx context.Context, config 
 	if cache, ok := ctx.Value(quantBacktestCandleCacheContextKey{}).(*quantBacktestCandleCache); ok {
 		return cache.candlesThroughClose(ctx, q, config, closeTime.UTC(), limit)
 	}
-	var candles []quantCandle
-	if err := q.db.WithContext(ctx).Where(
-		"market = ? AND instrument = ? AND interval = ? AND close_time <= ?",
-		config.Market, config.Instrument, config.Interval, closeTime.UTC(),
-	).Order("open_time DESC").Limit(limit).Find(&candles).Error; err != nil {
-		return nil, errors.New("load Quant strategy candles failed")
-	}
-	for left, right := 0, len(candles)-1; left < right; left, right = left+1, right-1 {
-		candles[left], candles[right] = candles[right], candles[left]
-	}
-	return candles, nil
+	return q.loadQuantCandles(ctx, config, time.Time{}, closeTime.UTC().Add(time.Nanosecond), limit)
 }
 
 func quantStrategyLookback(desc sdk.StrategyDescriptor, parameters json.RawMessage) (int, error) {
@@ -313,7 +308,7 @@ func quantBacktestDetail(config quantBacktestConfig, desc sdk.StrategyDescriptor
 		"lastCloseTime": candles[len(candles)-1].CloseTime.UTC().Format(time.RFC3339Nano),
 	}
 	detail, err := json.Marshal(map[string]any{
-		"schemaVersion": 1, "strategyId": desc.ID, "strategyVersion": desc.Version,
+		"schemaVersion": 2, "venue": config.Venue, "strategyId": desc.ID, "strategyVersion": desc.Version,
 		"market": config.Market, "instrument": config.Instrument, "interval": config.Interval,
 		"parameters": json.RawMessage(config.Parameters), "dataManifest": manifest,
 		"summary": map[string]any{
@@ -343,7 +338,7 @@ func quantBacktestActionResult(backtest quantBacktest) sdk.ActionResult {
 
 func quantBacktestOutput(backtest quantBacktest) map[string]any {
 	return map[string]any{
-		"backtestId": backtest.ID, "strategyId": backtest.StrategyID, "strategyVersion": backtest.StrategyVersion,
+		"backtestId": backtest.ID, "strategyId": backtest.StrategyID, "strategyVersion": backtest.StrategyVersion, "venue": backtest.Venue,
 		"finalEquity": backtest.FinalEquity.String(), "totalReturn": backtest.TotalReturn.String(),
 		"maxDrawdown": backtest.MaxDrawdown.String(), "totalFees": backtest.TotalFees.String(),
 		"tradeCount": backtest.TradeCount, "candleCount": backtest.CandleCount,
@@ -354,7 +349,7 @@ func quantBacktestView(backtest quantBacktest) map[string]any {
 	view := quantBacktestOutput(backtest)
 	view["id"] = backtest.ID
 	delete(view, "backtestId")
-	view["market"], view["instrument"], view["interval"] = backtest.Market, backtest.Instrument, backtest.Interval
+	view["venue"], view["market"], view["instrument"], view["interval"] = backtest.Venue, backtest.Market, backtest.Instrument, backtest.Interval
 	view["startTime"] = backtest.StartTime.UTC().Format(time.RFC3339Nano)
 	view["endTime"] = backtest.EndTime.UTC().Format(time.RFC3339Nano)
 	view["initialCapital"] = backtest.InitialCapital.String()

@@ -23,14 +23,11 @@ const (
 
 var emptyObjectSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false}`)
 
-func Register(registry *sdk.Registry, client *safehttp.Client) error {
-	return registry.RegisterPlugin(sdk.PluginDescriptor{
-		ID: pluginID, Name: "人工智能", Version: "1.0.0",
-		Contributes: []string{"nodes", "resultPages"},
-	}, func(registrar sdk.Registrar) error { return register(registrar, client) })
-}
-
-func register(registrar sdk.Registrar, client *safehttp.Client) error {
+func Register(registrar sdk.Registrar, host sdk.Host) error {
+	client, err := host.Network.New(host.AllowedHTTPHosts)
+	if err != nil {
+		return err
+	}
 	if err := registrar.Action(sdk.NodeDescriptor{
 		Type: "official.ai.model_call", Version: "1.0.0", Kind: sdk.NodeKindAction,
 		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"endpoint":{"type":"string","title":"OpenAI-compatible endpoint","format":"uri","maxLength":2048},"model":{"type":"string","title":"Model","minLength":1,"maxLength":200},"timeoutSeconds":{"type":"integer","title":"Timeout (seconds)","minimum":1,"maximum":120,"default":30},"apiKey":{"type":"string","title":"API key","x-coinsphere-secret":true}},"required":["endpoint","model","timeoutSeconds","apiKey"],"additionalProperties":false}`),
@@ -47,7 +44,7 @@ func register(registrar sdk.Registrar, client *safehttp.Client) error {
 	})
 }
 
-type aiModelCallAction struct{ client *safehttp.Client }
+type aiModelCallAction struct{ client sdk.NetworkClient }
 
 func (a aiModelCallAction) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
 	var config struct {

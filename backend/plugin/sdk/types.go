@@ -6,17 +6,30 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
+	"net/http"
+	"net/netip"
+	"net/url"
 	"time"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 )
 
 type NodeKind string
 type ExecutionPool string
 type SideEffectClass string
 type StateMode string
+
+type NodeCapabilities struct {
+	Deterministic bool `json:"deterministic"`
+	Stateless     bool `json:"stateless"`
+	FrameSafe     bool `json:"frameSafe"`
+	FrameDriver   bool `json:"frameDriver"`
+	FrameResult   bool `json:"frameResult"`
+}
 
 const (
 	NodeKindAction  NodeKind = "action"
@@ -39,6 +52,14 @@ type NodeDescriptor struct {
 	Type           string
 	Version        string
 	Kind           NodeKind
+	Title          string
+	Description    string
+	Category       string
+	Color          string
+	Icon           string
+	Width          int
+	Height         int
+	Capabilities   NodeCapabilities
 	Branches       []string
 	ConfigSchema   json.RawMessage
 	UISchema       json.RawMessage
@@ -56,17 +77,20 @@ type RevisionRef struct {
 }
 
 type ActionRequest struct {
-	Revision       RevisionRef
-	NodeInstanceID string
-	OperationKey   string
-	Input          json.RawMessage
-	Config         json.RawMessage
-	Secrets        SecretReader
-	State          StateStore
-	Artifacts      ArtifactStore
-	Frames         FrameExecutor
-	ExecutionMode  string
-	Logger         *slog.Logger
+	Revision           RevisionRef
+	NodeInstanceID     string
+	OperationKey       string
+	Input              json.RawMessage
+	Config             json.RawMessage
+	Secrets            SecretReader
+	State              StateStore
+	Artifacts          ArtifactStore
+	Frames             FrameExecutor
+	Incoming           []NodeOutput
+	FrameContext       json.RawMessage
+	FrameResultNodeIDs []string
+	ExecutionMode      string
+	Logger             *slog.Logger
 }
 
 const (
@@ -75,17 +99,25 @@ const (
 )
 
 type FrameRequest struct {
-	SourceOutput           json.RawMessage
-	PreviousTargetPosition string
+	SourcePort    string
+	SourceOutput  json.RawMessage
+	Event         map[string]string
+	Context       json.RawMessage
+	ResultNodeIDs []string
 }
 
 type FrameResult struct {
 	NodeOutputs map[string]json.RawMessage
-	Signals     []json.RawMessage
+	Results     []json.RawMessage
 }
 
 type FrameExecutor interface {
 	ExecuteFrame(context.Context, FrameRequest) (FrameResult, error)
+}
+
+type NodeOutput struct {
+	NodeInstanceID string
+	Output         json.RawMessage
 }
 
 type ActionResult struct {
@@ -245,6 +277,160 @@ type Candle struct {
 	Low       decimal.Decimal
 	Close     decimal.Decimal
 	Volume    decimal.Decimal
+}
+
+type Instrument struct {
+	Market       string
+	Symbol       string
+	BaseAsset    string
+	QuoteAsset   string
+	Status       string
+	PriceTick    decimal.Decimal
+	QuantityStep decimal.Decimal
+	MinQuantity  decimal.Decimal
+	UpdatedAt    time.Time
+}
+
+type InstrumentQuery struct {
+	Markets     []string
+	Instruments []string
+	Limit       int
+	ProxyID     int64
+}
+
+type CandleQuery struct {
+	Market     string
+	Instrument string
+	Interval   string
+	StartTime  time.Time
+	EndTime    time.Time
+	Limit      int
+	ProxyID    int64
+}
+
+type QuoteQuery struct {
+	Market     string
+	Instrument string
+	ProxyID    int64
+}
+
+type Quote struct {
+	Price    decimal.Decimal
+	QuotedAt time.Time
+}
+
+type MarketDataProvider interface {
+	ID() string
+	Instruments(context.Context, InstrumentQuery) ([]Instrument, error)
+	Candles(context.Context, CandleQuery) ([]Candle, error)
+	Quote(context.Context, QuoteQuery) (Quote, error)
+}
+
+type MarketDataRegistry interface {
+	MarketDataProvider(string) (MarketDataProvider, bool)
+}
+
+type OrderRequest struct {
+	Account        string
+	Market         string
+	Instrument     string
+	Side           string
+	Quantity       decimal.Decimal
+	QuoteAmount    decimal.Decimal
+	PositionEffect string
+	ClientOrderID  string
+	Secrets        SecretReader
+	ProxyID        int64
+}
+
+type OrderQuery struct {
+	Account       string
+	Market        string
+	Instrument    string
+	OrderID       string
+	ClientOrderID string
+	Secrets       SecretReader
+	ProxyID       int64
+}
+
+type CancelOrderRequest = OrderQuery
+
+type OrderResult struct {
+	ProviderOrderID string
+	ClientOrderID   string
+	Status          string
+	Market          string
+	Instrument      string
+	Side            string
+	Quantity        decimal.Decimal
+	Executed        decimal.Decimal
+	AveragePrice    decimal.Decimal
+	UpdatedAt       time.Time
+}
+
+type ExecutionProvider interface {
+	ID() string
+	PlaceOrder(context.Context, OrderRequest) (OrderResult, error)
+	GetOrder(context.Context, OrderQuery) (OrderResult, error)
+	CancelOrder(context.Context, CancelOrderRequest) error
+}
+
+type ExecutionRegistry interface {
+	ExecutionProvider(string) (ExecutionProvider, bool)
+}
+
+type StrategyRegistry interface {
+	Strategy(string) (StrategyDescriptor, Strategy, bool)
+	Strategies() []StrategyDescriptor
+}
+
+type PluginStore interface {
+	PluginID() string
+	DB() *gorm.DB
+}
+
+type PluginStoreProvider interface {
+	ForPlugin(string) PluginStore
+}
+
+type NetworkClient interface {
+	Do(*http.Request) (*http.Response, error)
+	DoProxied(*http.Request, *url.URL) (*http.Response, error)
+	DoPrivate(*http.Request) (*http.Response, error)
+	DoPrivateProxied(*http.Request, *url.URL) (*http.Response, error)
+	ValidateWebSocketURL(context.Context, *url.URL, bool) error
+	ValidateProxiedWebSocketURL(*url.URL, bool) error
+	ValidatePrivateWebSocketURL(context.Context, *url.URL) error
+	ValidatePrivateProxiedWebSocketURL(*url.URL) error
+	DialContext(context.Context, string, string) (net.Conn, error)
+	ResolvePublicDomain(context.Context, string) ([]netip.Addr, error)
+	SetTimeout(time.Duration)
+	DisableRedirects()
+}
+
+type NetworkClientFactory interface {
+	New([]string) (NetworkClient, error)
+}
+
+type OutboundProxyResolver interface {
+	ResolveOutboundProxy(context.Context, int64) (string, error)
+}
+
+type RealtimePublisher interface {
+	PublishInAppNotification(context.Context, int64, int64)
+}
+
+type Host struct {
+	Store            PluginStore
+	Stores           PluginStoreProvider
+	Network          NetworkClientFactory
+	OutboundProxy    OutboundProxyResolver
+	Realtime         RealtimePublisher
+	Events           Emitter
+	MarketData       MarketDataRegistry
+	Execution        ExecutionRegistry
+	Strategies       StrategyRegistry
+	AllowedHTTPHosts []string
 }
 
 type EvaluateRequest struct {

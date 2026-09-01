@@ -263,15 +263,6 @@
             />
           </template>
 
-          <template v-else-if="localForm.kind === 'indicator-condition'">
-            <QuantIndicatorEditor
-              :schema="configSchema"
-              :ui-schema="uiSchema"
-              :config="localForm.config"
-              @update="handleSchemaFieldUpdate"
-            />
-          </template>
-
           <template v-else-if="localForm.kind === 'foreach'">
             <WorkflowSchemaFields
               :schema="configSchema"
@@ -430,32 +421,6 @@
             />
           </template>
 
-          <template v-else-if="isQuantCandleNode">
-            <QuantCandleConfigEditor
-              :schema="configSchema"
-              :ui-schema="uiSchema"
-              :config="localForm.config"
-              @update="handleSchemaFieldUpdate"
-            />
-          </template>
-
-          <template v-else-if="localForm.typeCode === 'official.quant.code_strategy'">
-            <WorkflowSchemaFields
-              :schema="configSchema"
-              :ui-schema="uiSchema"
-              :config="localForm.config"
-              :keys="['series', 'parameters', 'booleanOutputs', 'decimalOutputs', 'branchField']"
-              @update="handleSchemaFieldUpdate"
-            />
-            <ElFormItem label="CEL 代码">
-              <QuantCodeStrategyEditor
-                :model-value="String(localForm.config.source || '')"
-                :config="localForm.config"
-                @update:model-value="handleSchemaFieldUpdate('source', $event)"
-              />
-            </ElFormItem>
-          </template>
-
           <template v-else-if="localForm.kind === 'end'">
             <ElAlert
               type="success"
@@ -467,7 +432,16 @@
           <!-- 兜底：没有定制表单的节点按后端下发的 configSchema 自动渲染。
                新增一种节点只要后端登记好 schema，这里就有可用的表单，不必再改本文件。 -->
           <template v-else>
+            <component
+              :is="pluginNodeEditor"
+              v-if="pluginNodeEditor"
+              :schema="configSchema"
+              :ui-schema="uiSchema"
+              :config="localForm.config"
+              @update="handleSchemaFieldUpdate"
+            />
             <WorkflowSchemaFields
+              v-else
               :schema="configSchema"
               :ui-schema="uiSchema"
               :config="localForm.config"
@@ -482,16 +456,14 @@
 
 <script setup lang="ts">
   import type { WorkflowAgentOption } from '@/api/scheduler'
+  import { loadPluginNodeEditor } from '@/plugins'
   import type {
     WorkflowDomainNode,
     WorkflowEditorIssue,
     WorkflowNodeFormModel,
     WorkflowNotifyTargetOption
   } from '../types'
-  import { getNodeConfigSchema, getNodeUISchema } from '../node-registry'
-  import QuantCandleConfigEditor from './QuantCandleConfigEditor.vue'
-  import QuantCodeStrategyEditor from './QuantCodeStrategyEditor.vue'
-  import QuantIndicatorEditor from './QuantIndicatorEditor.vue'
+  import { getNodeConfigSchema, getNodeDefinition, getNodeUISchema } from '../node-registry'
   import WorkflowSchemaFields from './WorkflowSchemaFields.vue'
 
   interface Props {
@@ -528,40 +500,9 @@
   })
   const emit = defineEmits<Emits>()
 
-  const NODE_TYPE_LABELS: Record<string, string> = {
-    'start.manual': '开始节点（手动触发）',
-    'start.schedule': '开始节点（定时触发）',
-    'start.event': '开始节点（事件触发）',
-    'start.webhook': '开始节点（Webhook 触发）',
-    'condition.branch': '条件判断节点',
-    'official.quant.volume_spike_condition': '放量判断节点',
-    'official.quant.price_change_condition': '价格波动判断节点',
-    'official.quant.macd_condition': 'MACD 判断节点',
-    'official.quant.kdj_condition': 'KDJ 判断节点',
-    'official.quant.rsi_condition': 'RSI 判断节点',
-    'official.quant.bollinger_condition': '布林带判断节点',
-    'official.quant.market_signal': '输出信号节点',
-    'official.quant.backtest_start': '回测开始节点',
-    'official.quant.code_strategy': '代码策略节点',
-    'official.quant.position': '仓位计算节点',
-    'official.quant.output_signal': '输出策略信号节点',
-    'official.notification.in_app': '站内通知节点',
-    'official.notification.dingtalk': '钉钉通知节点',
-    'official.qq.receive': 'QQ 消息接收节点',
-    'official.qq.send': 'QQ 消息发送节点',
-    'official.notification.smtp': '邮件通知节点',
-    foreach: '遍历节点',
-    notify: '通知节点',
-    'event.publish': '发布事件节点',
-    'http.request': 'HTTP 请求节点',
-    'delay.wait': '等待节点',
-    end: '结束节点'
-  }
-
   const NODE_KIND_LABELS: Record<string, string> = {
     start: '开始节点',
     condition: '判断节点',
-    'indicator-condition': '量化指标判断节点',
     foreach: '遍历节点',
     notify: '通知节点',
     event: '事件节点',
@@ -580,6 +521,8 @@
   })
 
   const localForm = reactive<WorkflowNodeFormModel>(cloneModel(props.model))
+  const pluginNodeEditor = shallowRef()
+  let pluginEditorRequest = 0
   const notifyTargetRows = ref<NotifyTargetRow[]>([])
   const startInputBindingsJson = ref('{}')
   const eventFiltersJson = ref('[]')
@@ -587,19 +530,16 @@
   const lastEmittedSnapshot = ref('')
 
   const nodeTypeLabel = computed(
-    () => NODE_TYPE_LABELS[localForm.typeCode] || NODE_KIND_LABELS[localForm.kind] || '工作流节点'
+    () =>
+      getNodeDefinition(localForm.typeCode)?.label ||
+      NODE_KIND_LABELS[localForm.kind] ||
+      '工作流节点'
   )
 
   // 后端下发的配置 schema：HTTP / 延迟 / 事件 / 遍历这几种「字段直译」的节点直接按它渲染表单，
   // 不再在本文件里逐个手写一遍。开始 / 任务 / 通知 / 条件有联动和自定义控件，仍走下面的定制模板。
   const configSchema = computed(() => getNodeConfigSchema(localForm.typeCode))
   const uiSchema = computed(() => getNodeUISchema(localForm.typeCode))
-  const isQuantCandleNode = computed(() =>
-    ['official.quant.realtime_candles', 'official.quant.backfill_candles'].includes(
-      localForm.typeCode
-    )
-  )
-
   /** 当前选中的智能体：决定要不要显示「关联数据 id 路径」和「结构化分析」开关。 */
   const selectedAgent = computed(
     () => props.agentOptions.find((item) => item.code === localForm.config.agentCode) || null
@@ -868,6 +808,16 @@
     ([, incomingSnapshot]) => {
       if (incomingSnapshot === localModelSnapshot.value) return
       updateLocalForm(props.model)
+    },
+    { immediate: true }
+  )
+
+  watch(
+    () => localForm.typeCode,
+    async (typeCode) => {
+      const request = ++pluginEditorRequest
+      const editor = await loadPluginNodeEditor(typeCode)
+      if (request === pluginEditorRequest) pluginNodeEditor.value = editor
     },
     { immediate: true }
   )

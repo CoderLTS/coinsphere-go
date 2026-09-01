@@ -10,20 +10,6 @@ import (
 
 const workflowJSONSchema202012 = "https://json-schema.org/draft/2020-12/schema"
 
-var workflowQuantConditionTypes = map[string]bool{
-	"official.quant.volume_spike_condition": true,
-	"official.quant.price_change_condition": true,
-	"official.quant.macd_condition":         true,
-	"official.quant.kdj_condition":          true,
-	"official.quant.rsi_condition":          true,
-	"official.quant.bollinger_condition":    true,
-	"official.quant.code_strategy":          true,
-}
-
-func isWorkflowQuantConditionType(nodeType string) bool {
-	return workflowQuantConditionTypes[nodeType]
-}
-
 type WorkflowSecretFieldView struct {
 	Name        string `json:"name"`
 	Title       string `json:"title"`
@@ -37,6 +23,12 @@ type WorkflowNodeDefinitionView struct {
 	Title        string                    `json:"title"`
 	Description  string                    `json:"description"`
 	Kind         sdk.NodeKind              `json:"kind"`
+	Category     string                    `json:"category"`
+	Color        string                    `json:"color"`
+	Icon         string                    `json:"icon"`
+	Width        int                       `json:"width"`
+	Height       int                       `json:"height"`
+	Capabilities sdk.NodeCapabilities      `json:"capabilities"`
 	ConfigSchema json.RawMessage           `json:"configSchema"`
 	UISchema     json.RawMessage           `json:"uiSchema"`
 	InputSchema  json.RawMessage           `json:"inputSchema"`
@@ -55,8 +47,10 @@ func (a *App) ListWorkflowNodeDefinitions() []WorkflowNodeDefinitionView {
 		inputPorts, outputPorts := workflowPorts(desc)
 		available := desc.Type != "core.loop_item" && desc.Type != "core.loop_end"
 		items = append(items, WorkflowNodeDefinitionView{
-			Type: desc.Type, Version: desc.Version, Title: workflowNodeTitle(desc.Type),
-			Description: workflowNodeDescription(desc.Type), Kind: desc.Kind,
+			Type: desc.Type, Version: desc.Version, Title: desc.Title,
+			Description: desc.Description, Kind: desc.Kind, Category: desc.Category,
+			Color: desc.Color, Icon: desc.Icon, Width: desc.Width, Height: desc.Height,
+			Capabilities: desc.Capabilities,
 			ConfigSchema: desc.ConfigSchema, UISchema: desc.UISchema,
 			InputSchema: desc.InputSchema, OutputSchema: desc.OutputSchema,
 			Branches:   append([]string(nil), desc.Branches...),
@@ -83,7 +77,7 @@ func (a *App) workflowNodeDescriptors() map[string]sdk.NodeDescriptor {
 func coreWorkflowNodeDescriptors() []sdk.NodeDescriptor {
 	empty := json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false}`)
 	valueInput := json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"value":{"type":"object","title":"Value","x-coinsphere-field-source":true}},"additionalProperties":false}`)
-	return []sdk.NodeDescriptor{
+	items := []sdk.NodeDescriptor{
 		{
 			Type: "core.manual", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
 			ConfigSchema: empty, UISchema: json.RawMessage(`{"ui:order":[]}`), InputSchema: empty,
@@ -147,6 +141,26 @@ func coreWorkflowNodeDescriptors() []sdk.NodeDescriptor {
 			Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
 		},
 	}
+	meta := map[string][5]string{
+		"core.manual":         {"Manual trigger", "Starts one run on demand.", "开始", "#2563eb", "play"},
+		"core.schedule":       {"Schedule trigger", "Starts one run on a schedule.", "开始", "#1d4ed8", "clock"},
+		"core.event":          {"Event trigger", "Starts one run for each matching CloudEvent.", "开始", "#0f766e", "radio"},
+		"core.constant":       {"Constant", "Emits a configured text value.", "数据", "#0891b2", "braces"},
+		"core.end":            {"End", "Marks the end of a branch.", "结束", "#dc2626", "circle-stop"},
+		"core.human_approval": {"Human approval", "Waits for a human decision.", "控制", "#d97706", "user-check"},
+		"core.loop":           {"Loop", "Runs an embedded graph with fixed limits.", "控制", "#ca8a04", "repeat"},
+		"core.loop_item":      {"Loop item", "Provides the current loop value.", "控制", "#ca8a04", "repeat-1"},
+		"core.loop_end":       {"Loop end", "Returns one loop iteration value.", "控制", "#ca8a04", "circle-stop"},
+	}
+	for index := range items {
+		value := meta[items[index].Type]
+		items[index].Title, items[index].Description, items[index].Category = value[0], value[1], value[2]
+		items[index].Color, items[index].Icon = value[3], value[4]
+		items[index].Width, items[index].Height = 220, 72
+		items[index].Capabilities.Stateless = items[index].State == sdk.StateStateless
+		items[index].Capabilities.Deterministic = items[index].SideEffect == sdk.SideEffectNone
+	}
+	return items
 }
 
 func workflowPorts(desc sdk.NodeDescriptor) ([]string, []string) {
@@ -166,147 +180,6 @@ func workflowPorts(desc sdk.NodeDescriptor) ([]string, []string) {
 		return []string{"in"}, append([]string(nil), desc.Branches...)
 	}
 	return []string{"in"}, []string{"out"}
-}
-
-func workflowNodeTitle(nodeType string) string {
-	switch nodeType {
-	case "core.manual":
-		return "Manual trigger"
-	case "core.schedule":
-		return "Schedule trigger"
-	case "core.event":
-		return "Event trigger"
-	case "core.constant":
-		return "Constant"
-	case "core.end":
-		return "End"
-	case "core.human_approval":
-		return "Human approval"
-	case "core.loop":
-		return "Loop"
-	case "core.loop_item":
-		return "Loop item"
-	case "core.loop_end":
-		return "Loop end"
-	case "official.connector.http":
-		return "HTTP 请求"
-	case "official.connector.webhook":
-		return "Webhook 触发"
-	case "official.connector.websocket":
-		return "WebSocket 触发"
-	case "official.ai.model_call":
-		return "AI 模型调用"
-	case "official.quant.realtime_candles":
-		return "Binance K 线实时采集"
-	case "official.quant.backfill_candles":
-		return "Binance K 线补数"
-	case "official.quant.sync_instruments":
-		return "Binance 币种元数据采集"
-	case "official.quant.evaluate":
-		return "量化策略评估"
-	case "official.quant.volume_spike_condition":
-		return "放量判断"
-	case "official.quant.price_change_condition":
-		return "价格波动判断"
-	case "official.quant.macd_condition":
-		return "MACD 判断"
-	case "official.quant.kdj_condition":
-		return "KDJ 判断"
-	case "official.quant.rsi_condition":
-		return "RSI 判断"
-	case "official.quant.bollinger_condition":
-		return "布林带判断"
-	case "official.quant.market_signal":
-		return "输出信号"
-	case "official.quant.backtest":
-		return "量化策略回测"
-	case "official.quant.backtest_start":
-		return "回测开始"
-	case "official.quant.code_strategy":
-		return "代码策略"
-	case "official.quant.position":
-		return "仓位计算"
-	case "official.quant.output_signal":
-		return "输出策略信号"
-	case "official.quant.signal":
-		return "量化信号"
-	case "official.quant.paper_execute":
-		return "Paper 执行"
-	case "official.notification.in_app":
-		return "站内通知"
-	case "official.notification.dingtalk":
-		return "钉钉通知"
-	case "official.qq.receive":
-		return "QQ 消息接收"
-	case "official.qq.send":
-		return "QQ 消息发送"
-	case "official.notification.smtp":
-		return "邮件通知"
-	default:
-		return nodeType
-	}
-}
-
-func workflowNodeDescription(nodeType string) string {
-	switch nodeType {
-	case "core.manual":
-		return "Starts one run on demand."
-	case "core.schedule":
-		return "Starts one run on an interval or six-field Cron schedule."
-	case "core.event":
-		return "Starts one run for each matching CloudEvent."
-	case "core.constant":
-		return "Emits a configured text value."
-	case "core.end":
-		return "Marks the end of a branch."
-	case "core.human_approval":
-		return "Persists an approval task and releases execution capacity while waiting."
-	case "core.loop":
-		return "Runs an embedded acyclic graph with a fixed iteration and absolute time limit."
-	case "core.loop_item":
-		return "Provides the current iteration and carried value inside a loop."
-	case "core.loop_end":
-		return "Returns the carried value from one loop iteration."
-	case "official.quant.realtime_candles":
-		return "Streams and publishes closed Binance Spot or USD-M candles."
-	case "official.quant.backfill_candles":
-		return "Backfills closed Binance Spot or USD-M candles without publishing events."
-	case "official.quant.sync_instruments":
-		return "Synchronizes a filtered Binance instrument metadata snapshot."
-	case "official.quant.evaluate":
-		return "Evaluates a compiled Go strategy against closed candles."
-	case "official.quant.volume_spike_condition", "official.quant.price_change_condition", "official.quant.macd_condition",
-		"official.quant.kdj_condition", "official.quant.rsi_condition", "official.quant.bollinger_condition":
-		return "Evaluates one indicator rule against closed candles."
-	case "official.quant.market_signal":
-		return "Persists one idempotent market signal for a matched closed candle."
-	case "official.quant.backtest":
-		return "Runs a deterministic next-open backtest over stored candles."
-	case "official.quant.backtest_start":
-		return "Drives the shared Quant subgraph candle by candle with run-time backtest parameters."
-	case "official.quant.code_strategy":
-		return "Evaluates restricted CEL over closed OHLCV series and Decimal functions."
-	case "official.quant.position":
-		return "Converts one reached path into a market-bounded target position."
-	case "official.quant.output_signal":
-		return "Merges position candidates and persists only real-time target changes."
-	case "official.quant.signal":
-		return "Persists a replaceable strategy signal fact."
-	case "official.quant.paper_execute":
-		return "Revalidates a public quote and applies the complete Paper risk gate atomically."
-	case "official.notification.in_app":
-		return "Persists one idempotent in-app notification delivery."
-	case "official.notification.dingtalk":
-		return "Sends one idempotent DingTalk robot notification."
-	case "official.qq.receive":
-		return "Starts one run for each QQ group mention or direct message."
-	case "official.qq.send":
-		return "Sends one idempotent QQ group or direct message."
-	case "official.notification.smtp":
-		return "Sends one idempotent TLS-protected SMTP notification."
-	default:
-		return "Compiled plugin node."
-	}
 }
 
 func workflowSecretFieldViews(raw json.RawMessage) []WorkflowSecretFieldView {

@@ -100,6 +100,36 @@ func (c *Client) DoProxied(request *http.Request, proxyURL *url.URL) (*http.Resp
 	return client.Do(request)
 }
 
+func (c *Client) DoPrivate(request *http.Request) (*http.Response, error) {
+	if err := c.validateURL(request.Context(), request.URL, "https"); err != nil {
+		return nil, err
+	}
+	client := *c.client
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return errors.New("private API redirects are disabled")
+	}
+	return client.Do(request)
+}
+
+func (c *Client) DoPrivateProxied(request *http.Request, proxyURL *url.URL) (*http.Response, error) {
+	if proxyURL == nil {
+		return c.DoPrivate(request)
+	}
+	if err := c.validateURLWithoutResolution(request.URL, "https"); err != nil {
+		return nil, err
+	}
+	if err := validateProxyURL(proxyURL); err != nil {
+		return nil, err
+	}
+	transport := c.client.Transport.(*http.Transport).Clone()
+	transport.Proxy = http.ProxyURL(proxyURL)
+	transport.DialContext = (&net.Dialer{}).DialContext
+	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error {
+		return errors.New("private API redirects are disabled")
+	}}
+	return client.Do(request)
+}
+
 func (c *Client) SetTimeout(timeout time.Duration) {
 	c.client.Timeout = timeout
 }
@@ -148,6 +178,14 @@ func (c *Client) ValidateProxiedWebSocketURL(target *url.URL, usesAuthorization 
 		return unsafeEndpoint("Binance WebSocket connector is limited to public streams")
 	}
 	return nil
+}
+
+func (c *Client) ValidatePrivateWebSocketURL(ctx context.Context, target *url.URL) error {
+	return c.validateURL(ctx, target, "wss")
+}
+
+func (c *Client) ValidatePrivateProxiedWebSocketURL(target *url.URL) error {
+	return c.validateURLWithoutResolution(target, "wss")
 }
 
 func (c *Client) validateURL(ctx context.Context, target *url.URL, schemes ...string) error {

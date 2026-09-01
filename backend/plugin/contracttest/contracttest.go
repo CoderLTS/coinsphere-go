@@ -23,7 +23,7 @@ type Contract struct {
 	registry *sdk.Registry
 }
 
-func Load(t testing.TB, root string, register sdk.RegisterFunc) *Contract {
+func Load(t testing.TB, root string, host sdk.Host, register sdk.RegisterFunc) *Contract {
 	t.Helper()
 	pkg, err := manifest.Load(root, version.Core, version.SDKMajor)
 	if err != nil {
@@ -32,8 +32,8 @@ func Load(t testing.TB, root string, register sdk.RegisterFunc) *Contract {
 	registry := sdk.NewRegistry()
 	if err := registry.RegisterPlugin(sdk.PluginDescriptor{
 		ID: pkg.Manifest.ID, Name: pkg.Manifest.Name, Version: pkg.Manifest.Version,
-		Contributes: pkg.Manifest.Contributes,
-	}, register); err != nil {
+		Contributes: pkg.Manifest.Contributes, RequiresPlugins: pkg.Manifest.RequiresPlugins,
+	}, host, register); err != nil {
 		t.Fatalf("register plugin: %v", err)
 	}
 	return &Contract{t: t, pkg: pkg, registry: registry}

@@ -5,11 +5,7 @@ import type {
   WorkflowNodeDefinitionItem,
   WorkflowNodeItem
 } from '@/api/scheduler'
-import {
-  buildWorkflowMaterialGroups,
-  getNodeMaterialMeta,
-  inferNodeFormKind
-} from './node-materials'
+import { buildWorkflowMaterialGroups, inferNodeFormKind } from './node-materials'
 import {
   LOOP_NEXT_BRANCH,
   getNodeBranches,
@@ -47,31 +43,11 @@ const START_LABELS: Record<string, string> = {
   'start.webhook': 'Webhook 开始'
 }
 
-const INDICATOR_CONDITION_TYPES = new Set([
-  'official.quant.volume_spike_condition',
-  'official.quant.price_change_condition',
-  'official.quant.macd_condition',
-  'official.quant.kdj_condition',
-  'official.quant.rsi_condition',
-  'official.quant.bollinger_condition',
-  'official.quant.code_strategy'
-])
 const NOTIFICATION_NODE_TYPES = new Set([
   'official.notification.in_app',
   'official.notification.dingtalk',
   'official.notification.smtp'
 ])
-const MARKET_SIGNAL_NODE_TYPE = 'official.quant.market_signal'
-const MARKET_SIGNAL_BINDINGS: Record<string, string> = {
-  market: 'market',
-  instrument: 'instrument',
-  interval: 'interval',
-  name: 'formula',
-  indicator: 'indicator',
-  candleCloseTime: 'candleCloseTime',
-  summary: 'summary',
-  values: 'value'
-}
 
 const LEGACY_NODE_LABELS: Record<string, Record<string, string>> = {
   'start.manual': {
@@ -129,13 +105,6 @@ export const buildEdgeDisplayLabel = (condition: string) => {
   if (expression.includes('.endsWith(":59:59.999Z")')) return '每小时一次'
   if (expression.includes('input.triggered == true')) return '首次命中时'
   return '满足条件时'
-}
-
-const notificationCondition = (condition: string) => {
-  const original = String(condition || '').trim()
-  const trigger = 'input.triggered == true'
-  if (original.split('&&').some((part) => part.trim() === trigger)) return original
-  return original ? `(${original}) && ${trigger}` : trigger
 }
 
 const getNodeMaterial = (typeCode: string, materials: WorkflowMaterialItem[]) => {
@@ -288,19 +257,6 @@ export function buildPortsForType(
   config?: Record<string, any>
 ): WorkflowDomainPort[] {
   const inPort: WorkflowDomainPort = { id: 'in', group: 'in', role: 'in' }
-
-  if (typeCode === 'official.quant.backtest_start') {
-    const branches = getNodeBranches(typeCode, config)
-    return [
-      inPort,
-      ...branches.map((branch, index) => ({
-        id: branch,
-        group: resolveBranchPortGroup(branch, index, branches.length),
-        role: 'out' as const,
-        label: branch.toUpperCase()
-      }))
-    ]
-  }
 
   switch (getNodeGraphKind(typeCode)) {
     case 'start':
@@ -480,13 +436,6 @@ const buildNodeCollapsedSummary = (node: WorkflowDomainNode) => {
       )
     }
 
-    case 'indicator-condition':
-      return truncateText(
-        [String(config.name || '').trim(), String(config.interval || '').trim()]
-          .filter(Boolean)
-          .join(' / ') || '配置指标条件'
-      )
-
     case 'foreach':
       return truncateText(String(config.itemsPath || '遍历数组输入'))
 
@@ -575,14 +524,7 @@ const createDomainEdge = (
   )
   const sourcePort = normalizeEdgeSourcePort(sourceType, edge.sourcePort, edge.branch)
   const branch = normalizeEdgeBranch(sourceType, sourcePort, edge.branch)
-  const sourceNode = nodeMap.get(String(edge.source))
-  const targetNode = nodeMap.get(String(edge.target))
-  const condition =
-    INDICATOR_CONDITION_TYPES.has(sourceNode?.data.typeCode || '') &&
-    NOTIFICATION_NODE_TYPES.has(targetNode?.data.typeCode || '') &&
-    branch === 'true'
-      ? notificationCondition(edge.condition || '')
-      : String(edge.condition || '').trim()
+  const condition = String(edge.condition || '').trim()
 
   return {
     id: String(edge.id),
@@ -637,8 +579,8 @@ export function createDefaultDomainGraph(
       kind: 'start',
       title: startDefinition?.label || START_LABELS[startTypeCode],
       subtitle: '',
-      color: getNodeMaterialMeta(startTypeCode)?.color || '#3b82f6',
-      iconText: getNodeMaterialMeta(startTypeCode)?.iconText || 'S',
+      color: '#3b82f6',
+      iconText: 'S',
       config: startConfig
     }
   }
@@ -654,8 +596,8 @@ export function createDefaultDomainGraph(
       kind: 'end',
       title: endDefinition?.label || '结束',
       subtitle: '',
-      color: getNodeMaterialMeta('end')?.color || '#dc2626',
-      iconText: getNodeMaterialMeta('end')?.iconText || 'E',
+      color: '#dc2626',
+      iconText: 'E',
       config: buildDefaultNodeConfig(endDefinition)
     }
   }
@@ -702,27 +644,12 @@ export function mapServerGraphToDomain(
 export function mapDomainGraphToServer(graph: WorkflowDomainGraphModel): WorkflowGraph {
   const nodeMap = new Map(graph.nodes.map((node) => [node.id, node]))
   const nodeOrder = new Map(graph.nodes.map((node, index) => [node.id, index]))
-  const upstreamNode = (targetID: string, typeCode: string) => {
-    const queue = graph.edges.filter((edge) => edge.target === targetID).map((edge) => edge.source)
-    const seen = new Set<string>()
-    while (queue.length) {
-      const nodeID = queue.shift() as string
-      if (seen.has(nodeID)) continue
-      seen.add(nodeID)
-      const node = nodeMap.get(nodeID)
-      if (node?.data.typeCode === typeCode) return node
-      graph.edges
-        .filter((edge) => edge.target === nodeID)
-        .forEach((edge) => queue.push(edge.source))
-    }
-    return undefined
-  }
   const incomingConditions = (targetID: string, branch?: string) =>
     graph.edges
       .filter((edge) => edge.target === targetID && (!branch || edge.data.branch === branch))
       .map((edge) => {
         const source = nodeMap.get(edge.source)
-        return INDICATOR_CONDITION_TYPES.has(source?.data.typeCode || '')
+        return getNodeGraphKind(source?.data.typeCode || '') === 'branch'
           ? {
               nodeInstanceId: edge.source,
               ...(edge.data.branch ? { branch: edge.data.branch } : {})
@@ -739,20 +666,6 @@ export function mapDomainGraphToServer(graph: WorkflowDomainGraphModel): Workflo
       node.data.config?.__inputBindings && typeof node.data.config.__inputBindings === 'object'
         ? { ...node.data.config.__inputBindings }
         : {}
-    const conditionSources = incomingConditions(node.id)
-    if (INDICATOR_CONDITION_TYPES.has(node.data.typeCode)) {
-      if (!existing.eventTime) {
-        existing.eventTime = {
-          kind: 'cel',
-          expression: '"time" in event ? event.time : event.triggeredAt'
-        }
-      }
-      if (conditionSources.length) {
-        existing.pathEntered = { kind: 'condition_entry', sources: conditionSources }
-      } else if (existing.pathEntered?.kind === 'condition_entry') {
-        delete existing.pathEntered
-      }
-    }
     const notificationSources = incomingConditions(node.id, 'true')
     if (NOTIFICATION_NODE_TYPES.has(node.data.typeCode) && notificationSources.length) {
       existing.subjectKey = { kind: 'condition_subject', sources: notificationSources }
@@ -760,95 +673,6 @@ export function mapDomainGraphToServer(graph: WorkflowDomainGraphModel): Workflo
     } else if (NOTIFICATION_NODE_TYPES.has(node.data.typeCode)) {
       if (existing.subjectKey?.kind === 'condition_subject') delete existing.subjectKey
       if (existing.message?.kind === 'condition_message') delete existing.message
-    }
-    if (node.data.typeCode === MARKET_SIGNAL_NODE_TYPE) {
-      const source = notificationSources[0]?.nodeInstanceId
-      Object.entries(MARKET_SIGNAL_BINDINGS).forEach(([targetField, sourceField]) => {
-        if (source) {
-          existing[targetField] = {
-            kind: 'field',
-            nodeInstanceId: source,
-            fieldPath: [sourceField]
-          }
-        } else {
-          delete existing[targetField]
-        }
-      })
-    }
-    if (node.data.typeCode === 'official.quant.position') {
-      const sources = graph.edges
-        .filter((edge) => edge.target === node.id)
-        .map((edge) => nodeMap.get(edge.source))
-        .filter(Boolean) as WorkflowDomainNode[]
-      const source =
-        sources.find((item) => item.data.typeCode === 'official.quant.code_strategy') || sources[0]
-      if (source) {
-        existing.evaluatedAt = {
-          kind: 'field',
-          nodeInstanceId: source.id,
-          fieldPath: ['evaluatedAt']
-        }
-      }
-      if (node.data.config?.targetMode === 'input') {
-        const codeSource = sources.find(
-          (item) => item.data.typeCode === 'official.quant.code_strategy'
-        )
-        if (codeSource) {
-          existing.target = {
-            kind: 'field',
-            nodeInstanceId: codeSource.id,
-            fieldPath: ['decimals', String(node.data.config?.decimalField || 'target')]
-          }
-        }
-      } else {
-        delete existing.target
-      }
-    }
-    const outputSignal = upstreamNode(node.id, 'official.quant.output_signal')
-    if (node.data.typeCode === 'core.human_approval' && outputSignal) {
-      existing.businessKey = {
-        kind: 'field',
-        nodeInstanceId: outputSignal.id,
-        fieldPath: ['businessKey']
-      }
-    }
-    if (node.data.typeCode === 'official.quant.paper_execute' && outputSignal) {
-      existing.signalId = {
-        kind: 'field',
-        nodeInstanceId: outputSignal.id,
-        fieldPath: ['signalId']
-      }
-      if (node.data.config?.decisionMode === 'auto') {
-        existing.decisionTaskId = { kind: 'literal', value: 0 }
-        existing.decisionStatus = { kind: 'literal', value: 'approved' }
-      } else {
-        const approval = upstreamNode(node.id, 'core.human_approval')
-        if (approval) {
-          existing.decisionTaskId = {
-            kind: 'field',
-            nodeInstanceId: approval.id,
-            fieldPath: ['taskId']
-          }
-          existing.decisionStatus = {
-            kind: 'field',
-            nodeInstanceId: approval.id,
-            fieldPath: ['status']
-          }
-        } else {
-          delete existing.decisionTaskId
-          delete existing.decisionStatus
-        }
-      }
-    }
-    if (NOTIFICATION_NODE_TYPES.has(node.data.typeCode) && outputSignal) {
-      existing.subjectKey = {
-        kind: 'field',
-        nodeInstanceId: outputSignal.id,
-        fieldPath: ['businessKey']
-      }
-      if (!existing.message) {
-        existing.message = { kind: 'literal', value: '策略目标仓位已更新。' }
-      }
     }
     return existing
   }
@@ -877,19 +701,8 @@ export function mapDomainGraphToServer(graph: WorkflowDomainGraphModel): Workflo
         edge.sourcePort,
         edge.data.branch
       ),
-      label: buildEdgeDisplayLabel(
-        INDICATOR_CONDITION_TYPES.has(nodeMap.get(edge.source)?.data.typeCode || '') &&
-          NOTIFICATION_NODE_TYPES.has(nodeMap.get(edge.target)?.data.typeCode || '') &&
-          edge.data.branch === 'true'
-          ? notificationCondition(edge.data.condition)
-          : edge.data.condition || ''
-      ),
-      condition:
-        INDICATOR_CONDITION_TYPES.has(nodeMap.get(edge.source)?.data.typeCode || '') &&
-        NOTIFICATION_NODE_TYPES.has(nodeMap.get(edge.target)?.data.typeCode || '') &&
-        edge.data.branch === 'true'
-          ? notificationCondition(edge.data.condition)
-          : edge.data.condition || ''
+      label: buildEdgeDisplayLabel(edge.data.condition || ''),
+      condition: edge.data.condition || ''
     }))
   }
 }

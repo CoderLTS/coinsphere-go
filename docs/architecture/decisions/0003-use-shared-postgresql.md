@@ -7,7 +7,7 @@
 
 ## 背景
 
-CoinSphere 是个人自用的单实例系统。当前只有 `plugin_quant.candles` 被转换为 hypertable，查询仍是普通的品种、周期和时间范围索引查询，没有使用压缩、保留策略、时间聚合或 chunk 管理。服务器已经运行 PostgreSQL 16，继续维护 CoinSphere 独立 TimescaleDB 容器没有对应收益。
+CoinSphere 是个人自用的单实例系统。历史上只有行情 K 线表被转换为 hypertable；当前该数据归 `plugin_binance.candles` 所有，查询仍是普通的品种、周期和时间范围索引查询，没有使用压缩、保留策略、时间聚合或 chunk 管理。服务器已经运行 PostgreSQL 16，继续维护 CoinSphere 独立 TimescaleDB 容器没有对应收益。
 
 ## 决策
 
