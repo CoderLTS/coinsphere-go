@@ -113,6 +113,7 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 		enabledOfficial[pluginID] = true
 	}
 	if err := official.RegisterAll(plugins, host, enabledOfficial); err != nil {
+		slog.Error("official plugin registration failed", "component", "plugin_registry", "error", err.Error())
 		return fmt.Errorf("register official plugins: %w", err)
 	}
 	if err := pluginregistry.RegisterAll(plugins, host); err != nil {
