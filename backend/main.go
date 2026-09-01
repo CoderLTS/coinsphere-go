@@ -47,7 +47,7 @@ func main() {
 	err := run(ctx, *configPath)
 	stop()
 	if err != nil {
-		slog.Error("backend stopped", "component", "runtime", "error_category", "runtime")
+		slog.Error("backend stopped", "component", "runtime", "error_category", "runtime", "error_stage", strings.SplitN(err.Error(), ":", 2)[0])
 		os.Exit(1)
 	}
 }
