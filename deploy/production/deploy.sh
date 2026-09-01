@@ -181,6 +181,7 @@ rollback() {
   trap - ERR INT TERM
   set +e
   echo "发布失败，开始恢复上一版本" >&2
+  compose_with "$next_env" "$DEPLOY_DIR/compose.yaml" logs --no-color --tail 200 backend >&2
   compose_with "$next_env" "$DEPLOY_DIR/compose.yaml" down --remove-orphans
   if $had_previous; then
     install -m 0644 "$previous_compose" "$DEPLOY_DIR/compose.yaml"
