@@ -5,11 +5,7 @@ import type {
   WorkflowNodeDefinitionItem,
   WorkflowNodeItem
 } from '@/api/scheduler'
-import {
-  buildWorkflowMaterialGroups,
-  getNodeMaterialMeta,
-  inferNodeFormKind
-} from './node-materials'
+import { buildWorkflowMaterialGroups, inferNodeFormKind } from './node-materials'
 import {
   LOOP_NEXT_BRANCH,
   getNodeBranches,
@@ -583,8 +579,8 @@ export function createDefaultDomainGraph(
       kind: 'start',
       title: startDefinition?.label || START_LABELS[startTypeCode],
       subtitle: '',
-      color: getNodeMaterialMeta(startTypeCode)?.color || '#3b82f6',
-      iconText: getNodeMaterialMeta(startTypeCode)?.iconText || 'S',
+      color: '#3b82f6',
+      iconText: 'S',
       config: startConfig
     }
   }
@@ -600,8 +596,8 @@ export function createDefaultDomainGraph(
       kind: 'end',
       title: endDefinition?.label || '结束',
       subtitle: '',
-      color: getNodeMaterialMeta('end')?.color || '#dc2626',
-      iconText: getNodeMaterialMeta('end')?.iconText || 'E',
+      color: '#dc2626',
+      iconText: 'E',
       config: buildDefaultNodeConfig(endDefinition)
     }
   }

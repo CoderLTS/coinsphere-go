@@ -15,11 +15,6 @@ export function inferNodeFormKind(typeCode: string): WorkflowNodeFormKind {
   return 'generic'
 }
 
-export function getNodeMaterialMeta(typeCode: string) {
-  void typeCode
-  return undefined
-}
-
 export function buildWorkflowMaterialGroups(
   definitions: WorkflowNodeDefinitionItem[]
 ): WorkflowMaterialGroup[] {

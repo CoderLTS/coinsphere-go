@@ -34,7 +34,7 @@
         @keydown.space.prevent="openPlugin(plugin)"
       >
         <div class="plugin-card__head">
-          <span class="plugin-mark"><ArtSvgIcon :icon="pluginIcon(plugin.id)" /></span>
+          <span class="plugin-mark"><ArtSvgIcon :icon="pluginIcon()" /></span>
           <div>
             <h2>{{ pluginLabel(plugin) }}</h2>
             <span class="plugin-id">
@@ -69,7 +69,7 @@
     >
       <div v-if="selectedPlugin" class="plugin-detail">
         <div class="plugin-detail__summary">
-          <span class="plugin-mark"><ArtSvgIcon :icon="pluginIcon(selectedPlugin.id)" /></span>
+          <span class="plugin-mark"><ArtSvgIcon :icon="pluginIcon()" /></span>
           <div>
             <code>{{ selectedPlugin.id }}</code>
             <span>v{{ selectedPlugin.version }} · 已加载</span>
