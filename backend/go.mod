@@ -13,7 +13,7 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/shopspring/decimal v1.4.0
-	golang.org/x/crypto v0.54.0
+	golang.org/x/crypto v0.55.0
 	golang.org/x/mod v0.40.0
 	golang.org/x/term v0.45.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20240826202546-f6391c0de4c7
@@ -52,7 +52,7 @@ require (
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	github.com/quic-go/quic-go v0.59.0 // indirect
+	github.com/quic-go/quic-go v0.59.1 // indirect
 	github.com/rogpeppe/go-internal v1.15.0 // indirect
 	github.com/sethvargo/go-retry v0.4.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
@@ -66,7 +66,7 @@ require (
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260720211330-0afa2a65878a // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
