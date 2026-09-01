@@ -228,10 +228,12 @@ export interface KLineDataItem {
 }
 
 export interface KLineSignalItem {
+  id?: string | number
   time: string
   name: string
   summary: string
   values: Record<string, string>
+  action?: 'buy' | 'sell' | 'hold'
 }
 
 // K线图 Props 接口 - 统一K线图配置
@@ -240,6 +242,8 @@ export interface KLineChartProps extends BaseChartProps {
   data?: KLineDataItem[]
   /** 策略信号标记 */
   signals?: KLineSignalItem[]
+  /** 当前选中的策略信号 */
+  selectedSignalId?: string | number
   /** 显示成交量区域 */
   showVolume?: boolean
   /** 是否显示数据缩放控件 */

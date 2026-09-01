@@ -68,8 +68,7 @@ type quantBacktest struct {
 	CandleCount     int
 	Parameters      string
 	DataManifest    string
-	DetailSHA256    string
-	DetailSizeBytes int64
+	Detail          string
 	CreatedAt       time.Time
 }
 

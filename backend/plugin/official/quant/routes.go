@@ -10,6 +10,7 @@ import (
 
 	"coinsphere/backend/plugin/sdk"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func (q *quantRuntime) handleQuantInstruments(c *gin.Context, scope sdk.RouteScope) {
@@ -105,7 +106,7 @@ func (q *quantRuntime) handleQuantBacktests(c *gin.Context, scope sdk.RouteScope
 		writeQuantProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	query := q.db.WithContext(c.Request.Context()).Order("created_at DESC, id DESC").Limit(limit)
+	query := q.db.WithContext(c.Request.Context()).Omit("detail").Order("created_at DESC, id DESC").Limit(limit)
 	if market := strings.ToLower(strings.TrimSpace(c.Query("market"))); market != "" {
 		if market != "spot" && market != "usdm" {
 			writeQuantProblem(c, http.StatusBadRequest, "market must be spot or usdm")
@@ -130,6 +131,28 @@ func (q *quantRuntime) handleQuantBacktests(c *gin.Context, scope sdk.RouteScope
 		items[index] = quantBacktestView(backtest)
 	}
 	writeQuantOK(c, map[string]any{"items": items})
+}
+
+func (q *quantRuntime) handleQuantBacktest(c *gin.Context, scope sdk.RouteScope) {
+	if !validQuantSystemScope(scope) || !quantQueryKeys(c.Request) {
+		writeQuantProblem(c, http.StatusBadRequest, "invalid Quant backtest detail request")
+		return
+	}
+	backtestID, err := quantPathInt64(c.Param("backtestId"))
+	if err != nil {
+		writeQuantProblem(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	var backtest quantBacktest
+	if err := q.db.WithContext(c.Request.Context()).Select("detail").First(&backtest, backtestID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			writeQuantProblem(c, http.StatusNotFound, "Quant backtest not found")
+			return
+		}
+		writeQuantProblem(c, http.StatusInternalServerError, "load Quant backtest detail failed")
+		return
+	}
+	writeQuantOK(c, json.RawMessage(backtest.Detail))
 }
 
 func validQuantSystemScope(scope sdk.RouteScope) bool {

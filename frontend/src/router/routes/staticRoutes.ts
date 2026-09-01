@@ -122,6 +122,18 @@ export const staticRoutes: AppRouteRecordRaw[] = [
           isHide: true,
           activePath: '/scheduler/definition'
         }
+      },
+      {
+        path: '/scheduler/execution/:runId/backtest',
+        name: 'SchedulerWorkflowBacktestAnalysis',
+        component: () => import('@views/scheduler/execution/backtest/index.vue'),
+        beforeEnter: createPermissionGuard('scheduler.workflow_definitions.view'),
+        meta: {
+          title: '回测分析',
+          isHideTab: true,
+          isHide: true,
+          activePath: '/scheduler/definition'
+        }
       }
     ]
   }

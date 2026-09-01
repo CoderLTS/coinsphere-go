@@ -14,6 +14,10 @@
 
   defineOptions({ name: 'ArtKLineChart' })
 
+  const emit = defineEmits<{
+    signalClick: [signalId: string | number]
+  }>()
+
   const props = withDefaults(defineProps<KLineChartProps>(), {
     height: '36rem',
     loading: false,
@@ -42,7 +46,8 @@
     getAxisLabelStyle,
     getAxisTickStyle,
     getSplitLineStyle,
-    getTooltipStyle
+    getTooltipStyle,
+    getChartInstance
   } = useChartComponent({
     props,
     checkEmpty: () => !props.data.length,
@@ -53,7 +58,8 @@
       () => props.showVolume,
       () => props.showDataZoom,
       () => props.dataZoomStart,
-      () => props.dataZoomEnd
+      () => props.dataZoomEnd,
+      () => props.selectedSignalId
     ],
     generateOptions: (): EChartsOption => {
       const chartTheme = useChartOps()
@@ -61,7 +67,7 @@
       const downColor = props.colors[1] || chartTheme.colors[5] || '#fa896b'
       const signalColor = chartTheme.themeColor || '#5d87ff'
       const times = props.data.map((item) => item.time)
-      const closeByTime = new Map(props.data.map((item) => [item.time, item.close]))
+      const candleByTime = new Map(props.data.map((item) => [item.time, item]))
       const signalsByTime = new Map<string, typeof props.signals>()
       props.signals.forEach((signal) => {
         const items = signalsByTime.get(signal.time) || []
@@ -107,28 +113,66 @@
             borderWidth: 1
           },
           markPoint: {
-            symbol: 'pin',
-            symbolSize: 40,
             data: Array.from(signalsByTime.entries())
-              .filter(([time]) => closeByTime.has(time))
-              .map(([time, items]) => ({
-                name: '信号',
-                value: items.length,
-                coord: [time, closeByTime.get(time)],
-                symbolOffset: [0, -22],
-                itemStyle: {
-                  color: signalColor,
-                  borderColor: isDark.value ? '#161618' : '#ffffff',
-                  borderWidth: 1
-                },
-                label: {
-                  show: true,
-                  formatter: String(items.length),
-                  color: '#ffffff',
-                  fontSize: 10,
-                  fontWeight: 700
+              .filter(([time]) => candleByTime.has(time))
+              .flatMap(([time, items]) => {
+                const candle = candleByTime.get(time)!
+                if (items.every((signal) => !signal.action)) {
+                  return [
+                    {
+                      name: '信号',
+                      value: items.length,
+                      coord: [time, candle.close],
+                      symbol: 'pin',
+                      symbolSize: 40,
+                      symbolOffset: [0, -22],
+                      itemStyle: {
+                        color: signalColor,
+                        borderColor: isDark.value ? '#161618' : '#ffffff',
+                        borderWidth: 1
+                      },
+                      label: {
+                        show: true,
+                        formatter: String(items.length),
+                        color: '#ffffff',
+                        fontSize: 10,
+                        fontWeight: 700
+                      }
+                    }
+                  ]
                 }
-              }))
+                return items.map((signal, signalIndex) => {
+                  const action = signal.action
+                  const selected =
+                    signal.id !== undefined &&
+                    props.selectedSignalId !== undefined &&
+                    String(signal.id) === String(props.selectedSignalId)
+                  const buy = action === 'buy'
+                  const sell = action === 'sell'
+                  return {
+                    name: signal.name,
+                    value: action ? '' : items.length,
+                    coord: [time, buy ? candle.low : sell ? candle.high : candle.close],
+                    symbol: action ? (action === 'hold' ? 'circle' : 'triangle') : 'pin',
+                    symbolRotate: sell ? 180 : 0,
+                    symbolSize: selected ? 44 : action === 'hold' ? 20 : action ? 32 : 40,
+                    symbolOffset: [(signalIndex - (items.length - 1) / 2) * 18, buy ? 18 : -18],
+                    signalId: signal.id,
+                    itemStyle: {
+                      color: buy ? '#13deb9' : sell ? '#fa896b' : signalColor,
+                      borderColor: selected ? signalColor : isDark.value ? '#161618' : '#ffffff',
+                      borderWidth: selected ? 3 : 1
+                    },
+                    label: {
+                      show: !action,
+                      formatter: String(items.length),
+                      color: '#ffffff',
+                      fontSize: 10,
+                      fontWeight: 700
+                    }
+                  }
+                })
+              })
           }
         }
       ]
@@ -221,4 +265,21 @@
       } as EChartsOption
     }
   })
+
+  const handleChartClick = (params: any) => {
+    const signalId = params?.data?.signalId
+    if (params?.componentType === 'markPoint' && signalId !== undefined) {
+      emit('signalClick', signalId)
+    }
+  }
+
+  const bindChartClick = () => {
+    const instance = getChartInstance()
+    if (!instance) return
+    instance.off('click', handleChartClick)
+    instance.on('click', handleChartClick)
+  }
+
+  onMounted(() => nextTick(bindChartClick))
+  onBeforeUnmount(() => getChartInstance()?.off('click', handleChartClick))
 </script>
