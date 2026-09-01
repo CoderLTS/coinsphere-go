@@ -115,7 +115,7 @@
           markPoint: {
             data: Array.from(signalsByTime.entries())
               .filter(([time]) => candleByTime.has(time))
-              .flatMap(([time, items]) => {
+              .flatMap<any>(([time, items]) => {
                 const candle = candleByTime.get(time)!
                 if (items.every((signal) => !signal.action)) {
                   return [
