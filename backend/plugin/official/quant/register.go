@@ -45,7 +45,7 @@ func (q *quantRuntime) register(registrar sdk.Registrar) error {
 		OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"venue":{"type":"string"},"strategyId":{"type":"string"},"strategyVersion":{"type":"string"},"target":{"type":"string","pattern":"^-?[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"evaluatedAt":{"type":"string","format":"date-time"}},"required":["venue","strategyId","strategyVersion","target","evaluatedAt"],"additionalProperties":false}`),
 		Pool:         sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
 		Capabilities: sdk.NodeCapabilities{FrameSafe: true},
-	}, "策略评估", "使用行情 Provider 运行通用量化策略。", "策略", "#2563eb", "chart-no-axes-combined"), quantEvaluateAction{runtime: q}); err != nil {
+	}, "量化策略评估", "使用行情 Provider 运行通用量化策略。", "策略", "#2563eb", "chart-no-axes-combined"), quantEvaluateAction{runtime: q}); err != nil {
 		return err
 	}
 	for _, indicator := range quantIndicatorDefinitions {
@@ -56,7 +56,7 @@ func (q *quantRuntime) register(registrar sdk.Registrar) error {
 			InputSchema: quantIndicatorInputSchema, OutputSchema: quantIndicatorOutputSchema,
 			Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
 			Capabilities: sdk.NodeCapabilities{FrameSafe: true},
-		}, indicator.Title, "基于闭合 K 线确定性计算 "+indicator.Title+"。", "指标", "#0f766e", indicator.Icon), quantIndicatorAction{runtime: q, indicator: indicator.Indicator}); err != nil {
+		}, indicator.Title, "基于闭合 K 线确定性计算 "+indicator.Title+"。", "行情", "#0f766e", indicator.Icon), quantIndicatorAction{runtime: q, indicator: indicator.Indicator}); err != nil {
 			return err
 		}
 	}
@@ -76,7 +76,7 @@ func (q *quantRuntime) register(registrar sdk.Registrar) error {
 		InputSchema:  emptyObjectSchema,
 		OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"backtestId":{"type":"integer"},"venue":{"type":"string"},"strategyId":{"type":"string"},"strategyVersion":{"type":"string"},"finalEquity":{"type":"string","x-coinsphere-decimal":true},"totalReturn":{"type":"string","x-coinsphere-decimal":true},"maxDrawdown":{"type":"string","x-coinsphere-decimal":true},"totalFees":{"type":"string","x-coinsphere-decimal":true},"tradeCount":{"type":"integer"},"candleCount":{"type":"integer"}},"required":["backtestId","venue","strategyId","strategyVersion","finalEquity","totalReturn","maxDrawdown","totalFees","tradeCount","candleCount"],"additionalProperties":false}`),
 		Pool:         sdk.PoolCompute, SideEffect: sdk.SideEffectData, State: sdk.StateStateless,
-	}, "量化回测", "通过任意行情 Provider 执行确定性回测。", "回测", "#7c3aed", "history"), quantBacktestAction{runtime: q}); err != nil {
+	}, "量化策略回测", "通过任意行情 Provider 执行确定性回测。", "策略", "#7c3aed", "history"), quantBacktestAction{runtime: q}); err != nil {
 		return err
 	}
 	for _, route := range []struct {

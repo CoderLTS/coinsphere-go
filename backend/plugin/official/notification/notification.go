@@ -57,16 +57,19 @@ func (n *notificationRuntime) register(registrar sdk.Registrar) error {
 	descriptors := []sdk.NodeDescriptor{
 		{
 			Type: "official.notification.in_app", Version: "1.0.0", Kind: sdk.NodeKindAction,
+			Title: "站内通知", Description: "向用户或角色发送站内通知", Category: "通知", Color: "#7c3aed", Icon: "bell", Width: 220, Height: 72,
 			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"title":{"type":"string","title":"通知标题","minLength":1,"maxLength":160},"targets":{"type":"array","title":"通知目标","maxItems":100,"items":{"type":"object","properties":{"targetType":{"type":"string","title":"目标类型","enum":["user","role"],"enumLabels":["用户","角色"]},"targetId":{"type":"integer","title":"目标 ID","minimum":1}},"required":["targetType","targetId"],"additionalProperties":false}}},"required":["title"],"additionalProperties":false}`),
 			UISchema:     json.RawMessage(`{"ui:order":["title","targets"]}`),
 		},
 		{
 			Type: "official.notification.dingtalk", Version: "1.0.0", Kind: sdk.NodeKindAction,
+			Title: "钉钉通知", Description: "通过钉钉机器人发送通知", Category: "通知", Color: "#2563eb", Icon: "message-circle", Width: 220, Height: 72,
 			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"title":{"type":"string","title":"通知标题","minLength":1,"maxLength":160},"format":{"type":"string","title":"消息格式","enum":["text","markdown"],"enumLabels":["纯文本","Markdown"],"default":"markdown"},"signed":{"type":"boolean","title":"启用加签","default":false},"accessToken":{"type":"string","title":"Access Token","x-coinsphere-secret":true},"signingSecret":{"type":"string","title":"加签 Secret","x-coinsphere-secret":true}},"required":["title","format","signed","accessToken"],"additionalProperties":false}`),
 			UISchema:     json.RawMessage(`{"ui:order":["title","format","signed","accessToken","signingSecret"]}`),
 		},
 		{
 			Type: "official.notification.smtp", Version: "1.0.0", Kind: sdk.NodeKindAction,
+			Title: "邮件通知", Description: "通过 TLS SMTP 发送邮件通知", Category: "通知", Color: "#15803d", Icon: "mail", Width: 220, Height: 72,
 			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"title":{"type":"string","title":"邮件主题","minLength":1,"maxLength":160},"host":{"type":"string","title":"SMTP 公网域名","minLength":1,"maxLength":253},"port":{"type":"integer","title":"端口","minimum":1,"maximum":65535,"default":465},"security":{"type":"string","title":"连接安全","enum":["implicit_tls","starttls"],"enumLabels":["TLS","STARTTLS"],"default":"implicit_tls"},"username":{"type":"string","title":"用户名","minLength":1,"maxLength":320},"fromEmail":{"type":"string","title":"发件邮箱","format":"email","maxLength":320},"fromName":{"type":"string","title":"发件名称","maxLength":160},"recipients":{"type":"array","title":"收件人","minItems":1,"maxItems":100,"uniqueItems":true,"items":{"type":"string","format":"email","maxLength":320}},"password":{"type":"string","title":"密码","x-coinsphere-secret":true}},"required":["title","host","port","security","username","fromEmail","recipients","password"],"additionalProperties":false}`),
 			UISchema:     json.RawMessage(`{"ui:order":["title","host","port","security","username","fromEmail","fromName","recipients","password"]}`),
 		},

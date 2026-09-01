@@ -142,15 +142,15 @@ func coreWorkflowNodeDescriptors() []sdk.NodeDescriptor {
 		},
 	}
 	meta := map[string][5]string{
-		"core.manual":         {"Manual trigger", "Starts one run on demand.", "开始", "#2563eb", "play"},
-		"core.schedule":       {"Schedule trigger", "Starts one run on a schedule.", "开始", "#1d4ed8", "clock"},
-		"core.event":          {"Event trigger", "Starts one run for each matching CloudEvent.", "开始", "#0f766e", "radio"},
-		"core.constant":       {"Constant", "Emits a configured text value.", "数据", "#0891b2", "braces"},
-		"core.end":            {"End", "Marks the end of a branch.", "结束", "#dc2626", "circle-stop"},
-		"core.human_approval": {"Human approval", "Waits for a human decision.", "控制", "#d97706", "user-check"},
-		"core.loop":           {"Loop", "Runs an embedded graph with fixed limits.", "控制", "#ca8a04", "repeat"},
-		"core.loop_item":      {"Loop item", "Provides the current loop value.", "控制", "#ca8a04", "repeat-1"},
-		"core.loop_end":       {"Loop end", "Returns one loop iteration value.", "控制", "#ca8a04", "circle-stop"},
+		"core.manual":         {"手动开始", "声明手动触发入口节点", "开始", "#2563eb", "play"},
+		"core.schedule":       {"定时开始", "声明定时触发入口节点", "开始", "#1d4ed8", "clock"},
+		"core.event":          {"事件开始", "声明事件触发入口节点", "开始", "#0f766e", "radio"},
+		"core.constant":       {"常量", "输出配置的常量文本", "数据", "#0891b2", "braces"},
+		"core.end":            {"结束", "声明当前执行链路结束", "结束", "#dc2626", "circle-stop"},
+		"core.human_approval": {"人工审批", "创建人工审批任务并等待处理", "控制", "#d97706", "user-check"},
+		"core.loop":           {"循环", "在限制次数和时间内执行内嵌流程", "控制", "#ca8a04", "repeat"},
+		"core.loop_item":      {"循环项", "提供当前循环值", "控制", "#ca8a04", "repeat-1"},
+		"core.loop_end":       {"循环结束", "返回单次循环结果", "控制", "#ca8a04", "circle-stop"},
 	}
 	for index := range items {
 		value := meta[items[index].Type]

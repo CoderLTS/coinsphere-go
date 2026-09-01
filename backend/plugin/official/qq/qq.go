@@ -86,6 +86,7 @@ func Register(registrar sdk.Registrar, host sdk.Host) error {
 func (q *qqRuntime) register(registrar sdk.Registrar) error {
 	if err := registrar.Trigger(sdk.NodeDescriptor{
 		Type: "official.qq.receive", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
+		Title: "QQ 消息接收", Description: "接收 QQ 群聊 @ 消息或单聊消息", Category: "开始", Color: "#0891b2", Icon: "message-square", Width: 220, Height: 72,
 		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"appId":{"type":"string","title":"AppID","pattern":"^[A-Za-z0-9_-]{1,128}$"},"clientSecret":{"type":"string","title":"Client Secret","x-coinsphere-secret":true}},"required":["appId","clientSecret"],"additionalProperties":false}`),
 		UISchema:     json.RawMessage(`{"ui:order":["appId","clientSecret"]}`),
 		InputSchema:  emptyObjectSchema,
@@ -96,6 +97,7 @@ func (q *qqRuntime) register(registrar sdk.Registrar) error {
 	}
 	return registrar.Action(sdk.NodeDescriptor{
 		Type: "official.qq.send", Version: "1.0.0", Kind: sdk.NodeKindAction,
+		Title: "QQ 消息发送", Description: "向 QQ 群聊或用户发送消息", Category: "集成", Color: "#0891b2", Icon: "send", Width: 220, Height: 72,
 		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"appId":{"type":"string","title":"AppID","pattern":"^[A-Za-z0-9_-]{1,128}$"},"clientSecret":{"type":"string","title":"Client Secret","x-coinsphere-secret":true}},"required":["appId","clientSecret"],"additionalProperties":false}`),
 		UISchema:     json.RawMessage(`{"ui:order":["appId","clientSecret"]}`),
 		InputSchema:  qqSendInputSchema(),

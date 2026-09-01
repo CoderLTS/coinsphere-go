@@ -22,7 +22,7 @@ func registerPaper(registrar sdk.Registrar, runtime *binanceRuntime) error {
 		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"initialBalance":{"type":"string","title":"Initial balance","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"feeRate":{"type":"string","title":"Fee rate","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"maxOrderNotional":{"type":"string","title":"Max order notional","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"maxInstrumentNotional":{"type":"string","title":"Max instrument notional","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true}},"required":["initialBalance","feeRate","maxOrderNotional","maxInstrumentNotional"],"additionalProperties":false}`),
 		UISchema:     json.RawMessage(`{"ui:order":["initialBalance","feeRate","maxOrderNotional","maxInstrumentNotional"]}`),
 		InputSchema:  orderIntentSchema(), OutputSchema: orderResultSchema(), Pool: sdk.PoolStream, SideEffect: sdk.SideEffectPaper, State: sdk.StatePersistent,
-	}, "Binance Paper 下单", "使用 Binance 最新 Quote 模拟成交并记录订单、成交和持仓。", "交易", "#2563eb", "flask-conical"), paperExecuteAction{runtime: runtime})
+	}, "Paper 执行", "使用 Binance 最新 Quote 模拟成交并记录订单、成交和持仓。", "策略", "#2563eb", "flask-conical"), paperExecuteAction{runtime: runtime})
 }
 
 type paperExecuteAction struct{ runtime *binanceRuntime }
