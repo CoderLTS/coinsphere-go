@@ -48,7 +48,7 @@ var coreMenuItems = []menuItem{
 	{"User", "用户管理", "user", "/system/user", "ri:user-3-line", "System", true, false, false},
 	{"Role", "角色管理", "role", "/system/role", "ri:team-line", "System", true, false, false},
 	{"Menus", "菜单管理", "menu", "/system/menu", "ri:menu-line", "System", true, false, false},
-	{"ConfigCenter", "配置管理", "/config", "/index/index", "ri:settings-4-line", "", false, false, false},
+	{"ConfigCenter", "配置管理", "/config", "/index/index", "ri:tools-line", "", false, false, false},
 	{"OutboundProxies", "代理配置", "proxies", "/system/proxy", "ri:route-line", "ConfigCenter", true, false, false},
 	{"AiModelConfig", "模型配置", "ai-models", "/config/ai-model", "ri:brain-line", "ConfigCenter", true, false, false},
 	{"Plugins", "插件管理", "plugins", "/system/plugins", "ri:puzzle-2-line", "ConfigCenter", true, false, false},

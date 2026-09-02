@@ -7,7 +7,7 @@ export const configRoutes: AppRouteRecord = {
   component: '/index/index',
   meta: {
     title: 'menus.config.title',
-    icon: 'ri:settings-4-line',
+    icon: 'ri:tools-line',
     roles: ['R_SUPER']
   },
   children: [

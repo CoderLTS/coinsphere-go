@@ -182,7 +182,7 @@
             :loading="loading"
             :data="filteredDefinitions"
             :stripe="false"
-            table-layout="auto"
+            table-layout="fixed"
             empty-height="320px"
             @selection-change="handleSelectionChange"
           >
