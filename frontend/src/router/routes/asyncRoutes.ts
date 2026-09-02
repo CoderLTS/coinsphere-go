@@ -1,5 +1,4 @@
 /** 路由定义模块：asyncRoutes。 */
-// 权限文档：https://www.artd.pro/docs/zh/guide/in-depth/permission.html
 import { AppRouteRecord } from '@/types/router'
 import { routeModules } from '../modules'
 

@@ -214,21 +214,6 @@
     "outside": {
       "title": "Outside"
     },
-    "dashboard": {
-      "title": "Dashboard",
-      "overview": "Overview"
-    },
-    "result": {
-      "title": "Result Page",
-      "success": "Success",
-      "fail": "Fail"
-    },
-    "exception": {
-      "title": "Exception",
-      "forbidden": "403",
-      "notFound": "404",
-      "serverError": "500"
-    },
     "system": {
       "title": "System Settings",
       "user": "User Manage",
@@ -236,22 +221,8 @@
       "userCenter": "User Center",
       "menu": "Menu Manage"
     },
-    "trading": {
-      "title": "Trading",
-      "overview": "Trading Accounts",
-      "accounts": "Trading Accounts",
-      "strategies": "Strategy Management"
-    },
     "scheduler": {
-      "title": "Scheduler",
-      "overview": "Task Overview",
-      "tasks": "Task List"
-    },
-    "data": {
-      "title": "Data Management",
-      "news": "News Data",
-      "push": "Push Data",
-      "analysis": "AI Analysis"
+      "title": "Workflow"
     },
     "config": {
       "title": "Configuration",

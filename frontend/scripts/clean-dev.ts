@@ -71,7 +71,7 @@ async function cleanLanguageFiles() {
 
 // 清理快速入口组件
 async function cleanFastEnterComponent() {
-  const fastEnterPath = path.resolve(process.cwd(), 'src/config/fastEnter.ts')
+  const fastEnterPath = path.resolve(process.cwd(), 'src/config/modules/fastEnter.ts')
 
   try {
     const cleanedFastEnter = `/**
@@ -87,13 +87,13 @@ const fastEnterConfig: FastEnterConfig = {
   // 应用列表
   applications: [
     {
-      name: '工作台',
-      description: '系统概览与数据统计',
-      icon: 'ri:pie-chart-line',
+      name: '首页',
+      description: '查看系统运行状态',
+      icon: 'ri:home-5-line',
       iconColor: '#377dff',
       enabled: true,
       order: 1,
-      routeName: 'Console'
+      routeName: 'Home'
     },
     {
       name: '官方文档',
@@ -103,24 +103,6 @@ const fastEnterConfig: FastEnterConfig = {
       enabled: true,
       order: 2,
       link: WEB_LINKS.DOCS
-    },
-    {
-      name: '技术支持',
-      description: '技术支持与问题反馈',
-      icon: 'ri:user-location-line',
-      iconColor: '#ff6b6b',
-      enabled: true,
-      order: 3,
-      link: WEB_LINKS.COMMUNITY
-    },
-    {
-      name: '哔哩哔哩',
-      description: '技术分享与交流',
-      icon: 'ri:bilibili-line',
-      iconColor: '#FB7299',
-      enabled: true,
-      order: 4,
-      link: WEB_LINKS.BILIBILI
     }
   ],
   // 快速链接
@@ -241,10 +223,10 @@ async function showCleanupWarning() {
   console.log()
 
   const preservedModules = [
-    { name: 'Dashboard', desc: '工作台页面' },
+    { name: 'Home', desc: '系统首页' },
     { name: 'System', desc: '系统管理模块' },
-    { name: 'Result', desc: '结果页面' },
-    { name: 'Exception', desc: '异常页面' },
+    { name: 'Workflow', desc: '工作流与执行记录' },
+    { name: 'Configuration', desc: '配置管理模块' },
     { name: 'Auth', desc: '登录注册功能' },
     { name: 'Core Components', desc: '核心组件库' }
   ]

@@ -42,7 +42,7 @@ type menuItem struct {
 // 的字段顺序完全一致。Parent 为空字符串 "" 表示顶级菜单,否则填父菜单的 Name。
 var coreMenuItems = []menuItem{
 	{"Home", "首页", "/home", "/home/index", "ri:home-5-line", "", true, true, false},
-	{"SchedulerCenter", "工作流调度", "/scheduler", "/index/index", "ri:time-line", "", false, false, false},
+	{"SchedulerCenter", "工作流", "/scheduler", "/index/index", "ri:time-line", "", false, false, false},
 	{"WorkflowDefinitions", "工作流定义", "definition", "/scheduler/workflow", "ri:node-tree", "SchedulerCenter", true, false, false},
 	{"System", "系统管理", "/system", "/index/index", "ri:settings-3-line", "", false, false, false},
 	{"User", "用户管理", "user", "/system/user", "ri:user-3-line", "System", true, false, false},
@@ -59,7 +59,7 @@ var coreMenuItems = []menuItem{
 // 值是 [2]string(定长为 2 的数组):第 0 个存中文、第 1 个存英文,即菜单的多语言文案。
 var menuI18n = map[string][2]string{
 	"Home":                {"首页", "Home"},
-	"SchedulerCenter":     {"工作流调度", "Workflow Scheduler"},
+	"SchedulerCenter":     {"工作流", "Workflow"},
 	"WorkflowDefinitions": {"工作流定义", "Workflow Definitions"},
 	"System":              {"系统管理", "System Management"},
 	"ConfigCenter":        {"配置管理", "Configuration"},
