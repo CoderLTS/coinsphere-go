@@ -214,21 +214,6 @@
     "outside": {
       "title": "内嵌页面"
     },
-    "dashboard": {
-      "title": "仪表盘",
-      "overview": "总览"
-    },
-    "result": {
-      "title": "结果页面",
-      "success": "成功页",
-      "fail": "失败页"
-    },
-    "exception": {
-      "title": "异常页面",
-      "forbidden": "403",
-      "notFound": "404",
-      "serverError": "500"
-    },
     "system": {
       "title": "系统管理",
       "user": "用户管理",
@@ -236,22 +221,8 @@
       "userCenter": "个人中心",
       "menu": "菜单管理"
     },
-    "trading": {
-      "title": "交易管理",
-      "overview": "交易账户",
-      "accounts": "交易账户",
-      "strategies": "策略管理"
-    },
     "scheduler": {
-      "title": "定时任务",
-      "overview": "任务概览",
-      "tasks": "任务列表"
-    },
-    "data": {
-      "title": "数据管理",
-      "news": "新闻数据",
-      "push": "推送数据",
-      "analysis": "AI 分析"
+      "title": "工作流"
     },
     "config": {
       "title": "配置管理",

@@ -15,16 +15,7 @@ const fastEnterConfig: FastEnterConfig = {
       iconColor: '#377dff',
       enabled: true,
       order: 1,
-      routeName: 'Dashboard'
-    },
-    {
-      name: '新闻数据',
-      description: '进入数据管理维护新闻数据',
-      icon: 'ri:database-2-line',
-      iconColor: '#ff8a00',
-      enabled: true,
-      order: 3,
-      routeName: 'NewsData'
+      routeName: 'Home'
     },
     {
       name: '官方文档',
@@ -32,7 +23,7 @@ const fastEnterConfig: FastEnterConfig = {
       icon: 'ri:bill-line',
       iconColor: '#8b5cf6',
       enabled: true,
-      order: 4,
+      order: 2,
       link: WEB_LINKS.DOCS
     }
   ],

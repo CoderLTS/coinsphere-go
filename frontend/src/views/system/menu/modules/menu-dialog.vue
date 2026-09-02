@@ -31,7 +31,7 @@
           <ElInput v-model.trim="form.title" placeholder="请输入菜单名称" />
         </ElFormItem>
         <ElFormItem label="国际化 Key" prop="i18nKey">
-          <ElInput v-model.trim="form.i18nKey" placeholder="如：menus.data.news" />
+          <ElInput v-model.trim="form.i18nKey" placeholder="如：menus.system.user" />
         </ElFormItem>
         <ElFormItem label="中文文案" prop="i18nTexts.zh">
           <ElInput v-model.trim="form.i18nTexts.zh" placeholder="请输入中文文案" />
@@ -40,7 +40,7 @@
           <ElInput v-model.trim="form.i18nTexts.en" placeholder="请输入英文文案" />
         </ElFormItem>
         <ElFormItem label="路由名称" prop="name">
-          <ElInput v-model.trim="form.name" placeholder="如：User、NewsData" />
+          <ElInput v-model.trim="form.name" placeholder="如：User、WorkflowDefinitions" />
         </ElFormItem>
         <ElFormItem label="路由地址" prop="path">
           <ElInput
@@ -141,7 +141,10 @@
           <ElInput v-model.trim="form.i18nTexts.en" placeholder="请输入英文文案" />
         </ElFormItem>
         <ElFormItem label="权限码" prop="permissionCode">
-          <ElInput v-model.trim="form.permissionCode" placeholder="如：data.news.create" />
+          <ElInput
+            v-model.trim="form.permissionCode"
+            placeholder="如：scheduler.workflow_definitions.view"
+          />
         </ElFormItem>
         <ElFormItem label="角色范围" prop="roleCodes">
           <ElSelect v-model="form.roleCodes" multiple filterable placeholder="请选择角色">

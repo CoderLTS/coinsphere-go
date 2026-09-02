@@ -422,7 +422,7 @@
   })
   const quickActions = [
     {
-      label: '工作流调度',
+      label: '工作流',
       caption: '执行队列',
       icon: 'ri:node-tree',
       tone: 'blue',
