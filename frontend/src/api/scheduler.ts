@@ -3,6 +3,7 @@ import {
   applyWorkflowLifecycle,
   createWorkflow,
   createWorkflowRun,
+  deleteWorkflowRevision,
   fetchWorkflow,
   fetchWorkflowRun,
   fetchWorkflowRuns,
@@ -869,8 +870,9 @@ export async function fetchDeactivateWorkflowDefinition(definitionID: number) {
 }
 
 export async function fetchDeleteWorkflowDefinition(definitionID: number) {
-  void definitionID
-  throw new Error('工作流不支持归档或删除')
+  const { workflowID, revisionID } = decodeDefinitionID(definitionID)
+  if (!revisionID) throw new Error('请选择要删除的历史版本')
+  return deleteWorkflowRevision(workflowID, revisionID)
 }
 
 const startType = (nodeType: string): WorkflowStartType => {

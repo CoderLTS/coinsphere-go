@@ -374,22 +374,48 @@
             <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
           </ElTableColumn>
           <ElTableColumn
-            v-if="hasAuth('scheduler.workflow_definitions.update')"
+            v-if="
+              hasAuth('scheduler.workflow_definitions.update') ||
+              hasAuth('scheduler.workflow_definitions.delete')
+            "
             label="操作"
-            width="90"
+            width="100"
             align="center"
           >
             <template #default="{ row }">
-              <ElTooltip content="打开版本" placement="top">
-                <ElButton
-                  circle
-                  plain
-                  size="small"
-                  type="primary"
-                  :icon="Edit"
-                  @click="openVersionEditor(row)"
-                />
-              </ElTooltip>
+              <ElSpace size="small">
+                <ElTooltip
+                  v-if="hasAuth('scheduler.workflow_definitions.update')"
+                  content="打开版本"
+                  placement="top"
+                >
+                  <ElButton
+                    circle
+                    plain
+                    size="small"
+                    type="primary"
+                    :icon="Edit"
+                    @click="openVersionEditor(row)"
+                  />
+                </ElTooltip>
+                <ElTooltip
+                  v-if="hasAuth('scheduler.workflow_definitions.delete') && !row.isLatest"
+                  :content="row.executionCount ? '已有执行记录，不能删除' : '删除版本'"
+                  placement="top"
+                >
+                  <ElButton
+                    circle
+                    plain
+                    size="small"
+                    type="danger"
+                    :icon="Delete"
+                    :disabled="row.executionCount > 0"
+                    :loading="deletingVersionId === row.id"
+                    aria-label="删除版本"
+                    @click="deleteVersion(row)"
+                  />
+                </ElTooltip>
+              </ElSpace>
             </template>
           </ElTableColumn>
         </ElTable>
@@ -455,6 +481,7 @@
     ArrowDown,
     Clock,
     Collection,
+    Delete,
     Edit,
     Folder,
     FolderOpened,
@@ -470,6 +497,7 @@
   import {
     fetchActivateWorkflowDefinition,
     fetchDeactivateWorkflowDefinition,
+    fetchDeleteWorkflowDefinition,
     fetchRunWorkflowDefinition,
     fetchWorkflowDefinitionList,
     type WorkflowDefinitionItem,
@@ -513,6 +541,7 @@
   const assigning = ref(false)
   const versionDialogVisible = ref(false)
   const versionDetail = ref<WorkflowDefinitionItem | null>(null)
+  const deletingVersionId = ref<number>()
   const versionRows = computed(() => versionDetail.value?.versions || [])
   const utc8OffsetMs = 8 * 60 * 60 * 1000
   const utc8PickerDate = (timestamp = Date.now()) => {
@@ -786,6 +815,30 @@
   const openVersionEditor = async (row: WorkflowDefinitionVersionItem) => {
     versionDialogVisible.value = false
     await router.push(`/scheduler/workflow/${row.id}/edit`)
+  }
+
+  const deleteVersion = async (row: WorkflowDefinitionVersionItem) => {
+    try {
+      await ElMessageBox.confirm(
+        `删除历史版本 v${row.version}？版本配置及密钥将永久删除。已有执行记录的版本不能删除。`,
+        '删除版本',
+        { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+      )
+    } catch {
+      return
+    }
+    deletingVersionId.value = row.id
+    try {
+      await fetchDeleteWorkflowDefinition(row.id)
+      if (versionDetail.value?.versions) {
+        versionDetail.value.versions = versionDetail.value.versions.filter(
+          (version) => version.id !== row.id
+        )
+      }
+      ElMessage.success(`历史版本 v${row.version} 已删除`)
+    } finally {
+      deletingVersionId.value = undefined
+    }
   }
 
   const toggleLifecycle = async (row: WorkflowDefinitionItem) => {
