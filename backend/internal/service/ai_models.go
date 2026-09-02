@@ -196,7 +196,7 @@ func (a *App) ValidateAIModel(ctx context.Context, modelID int64) (M, error) {
 	}
 	request.Header.Set("Accept", "application/json")
 	runtime.authorize(request)
-	response, err := runtime.client().Do(request)
+	response, err := runtime.client(runtime.Timeout).Do(request)
 	if err != nil {
 		if response != nil {
 			response.Body.Close()
@@ -300,11 +300,11 @@ func (runtime assistantModelRuntime) authorize(request *http.Request) {
 	}
 }
 
-func (runtime assistantModelRuntime) client() *http.Client {
+func (runtime assistantModelRuntime) client(timeout time.Duration) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	return &http.Client{
-		Transport: transport, Timeout: runtime.Timeout,
+		Transport: transport, Timeout: timeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("AI model redirects are disabled") },
 	}
 }

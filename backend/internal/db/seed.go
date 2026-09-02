@@ -44,14 +44,14 @@ var coreMenuItems = []menuItem{
 	{"Home", "首页", "/home", "/home/index", "ri:home-5-line", "", true, true, false},
 	{"SchedulerCenter", "工作流", "/scheduler", "/index/index", "ri:time-line", "", false, false, false},
 	{"WorkflowDefinitions", "工作流定义", "definition", "/scheduler/workflow", "ri:node-tree", "SchedulerCenter", true, false, false},
-	{"System", "系统管理", "/system", "/index/index", "ri:settings-3-line", "", false, false, false},
-	{"User", "用户管理", "user", "/system/user", "ri:user-3-line", "System", true, false, false},
-	{"Role", "角色管理", "role", "/system/role", "ri:team-line", "System", true, false, false},
-	{"Menus", "菜单管理", "menu", "/system/menu", "ri:menu-line", "System", true, false, false},
 	{"ConfigCenter", "配置管理", "/config", "/index/index", "ri:tools-line", "", false, false, false},
 	{"OutboundProxies", "代理配置", "proxies", "/system/proxy", "ri:route-line", "ConfigCenter", true, false, false},
 	{"AiModelConfig", "模型配置", "ai-models", "/config/ai-model", "ri:brain-line", "ConfigCenter", true, false, false},
 	{"Plugins", "插件管理", "plugins", "/system/plugins", "ri:puzzle-2-line", "ConfigCenter", true, false, false},
+	{"System", "系统管理", "/system", "/index/index", "ri:settings-3-line", "", false, false, false},
+	{"User", "用户管理", "user", "/system/user", "ri:user-3-line", "System", true, false, false},
+	{"Role", "角色管理", "role", "/system/role", "ri:team-line", "System", true, false, false},
+	{"Menus", "菜单管理", "menu", "/system/menu", "ri:menu-line", "System", true, false, false},
 	{"UserCenter", "个人中心", "/profile", "/system/user-center", "", "", true, false, true},
 }
 
@@ -74,17 +74,24 @@ var menuI18n = map[string][2]string{
 
 // Seed 写入内置角色、用户、菜单与 i18n。幂等。
 func Seed(ctx context.Context, gdb *gorm.DB, hasher *security.PasswordHasher, adminPassword string, pluginPages []sdk.RegisteredPage) error {
-	menuItems := append([]menuItem(nil), coreMenuItems...)
+	menuItems := make([]menuItem, 0, len(coreMenuItems)+len(pluginPages))
 	pluginMenus := map[string]bool{}
+	ownMenus := make([]menuItem, 0, len(pluginPages))
 	for _, page := range pluginPages {
 		if page.Menu.Mode != "" && page.Menu.Mode != sdk.PluginMenuOwn || pluginMenus[page.PluginID] {
 			continue
 		}
 		pluginMenus[page.PluginID] = true
-		menuItems = append(menuItems, menuItem{
+		ownMenus = append(ownMenus, menuItem{
 			Name: "PluginMenu:" + page.PluginID, Title: page.Menu.Title, Path: "/plugins/" + page.PluginID,
 			Icon: page.Menu.Icon,
 		})
+	}
+	for _, item := range coreMenuItems {
+		if item.Name == "ConfigCenter" {
+			menuItems = append(menuItems, ownMenus...)
+		}
+		menuItems = append(menuItems, item)
 	}
 	for _, page := range pluginPages {
 		key := page.PluginID + "/" + page.PageKey

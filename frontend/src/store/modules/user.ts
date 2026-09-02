@@ -1,4 +1,4 @@
-/** 用户会话状态；访问令牌持久化到服务端签发的过期时间，锁屏密码只保存在内存中。 */
+/** 用户会话状态；普通会话保存在当前标签页，30 天会话才跨刷新持久化。 */
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { LanguageEnum } from '@/enums/appEnum'
@@ -26,9 +26,15 @@ export const useUserStore = defineStore(
 
     // 语言设置
     const language = ref(LanguageEnum.ZH)
+    const storedAccessToken =
+      sessionStorage.getItem(StorageConfig.ACCESS_TOKEN_KEY) ||
+      localStorage.getItem(StorageConfig.REMEMBERED_ACCESS_TOKEN_KEY) ||
+      ''
     // 登录状态
-    const isLogin = ref(false)
-    const accessMode = ref<Api.Auth.UserInfo['accessMode']>('guest')
+    const isLogin = ref(Boolean(storedAccessToken))
+    const accessMode = ref<Api.Auth.UserInfo['accessMode']>(
+      storedAccessToken ? 'authenticated' : 'guest'
+    )
     // 锁屏状态
     const isLock = ref(false)
     // 锁屏密码
@@ -38,7 +44,7 @@ export const useUserStore = defineStore(
     // 搜索历史记录
     const searchHistory = ref<AppRouteRecord[]>([])
     // 访问令牌
-    const accessToken = ref('')
+    const accessToken = ref(storedAccessToken)
 
     // 计算属性：获取用户信息
     const getUserInfo = computed(() => info.value)
@@ -100,8 +106,15 @@ export const useUserStore = defineStore(
       lockPassword.value = password
     }
 
-    const setToken = (newAccessToken: string) => {
+    const setToken = (newAccessToken: string, keepLoggedIn = false) => {
       accessToken.value = newAccessToken
+      sessionStorage.removeItem(StorageConfig.ACCESS_TOKEN_KEY)
+      localStorage.removeItem(StorageConfig.REMEMBERED_ACCESS_TOKEN_KEY)
+      const storage = keepLoggedIn ? localStorage : sessionStorage
+      const key = keepLoggedIn
+        ? StorageConfig.REMEMBERED_ACCESS_TOKEN_KEY
+        : StorageConfig.ACCESS_TOKEN_KEY
+      storage.setItem(key, newAccessToken)
     }
 
     /** 清理本地会话并回到登录页。 */
@@ -123,6 +136,8 @@ export const useUserStore = defineStore(
       lockPassword.value = ''
       // 清空访问令牌
       accessToken.value = ''
+      sessionStorage.removeItem(StorageConfig.ACCESS_TOKEN_KEY)
+      localStorage.removeItem(StorageConfig.REMEMBERED_ACCESS_TOKEN_KEY)
       // 移除iframe路由缓存
       useWorktabStore().clearAll()
       sessionStorage.removeItem('iframeRoutes')
@@ -203,11 +218,14 @@ export const useUserStore = defineStore(
   },
   {
     persist: {
-      key: 'user-preferences',
+      key: 'user-preferences-v2',
       storage: localStorage,
-      pick: ['language', 'searchHistory', 'isLogin', 'accessMode', 'accessToken'],
-      // 旧版本使用过默认 store key，初始化前移除，避免恢复锁屏密码等废弃字段。
-      beforeHydrate: () => localStorage.removeItem('user')
+      pick: ['language', 'searchHistory'],
+      // 清理旧版本可能持久化的会话 token，避免恢复已废弃的登录状态。
+      beforeHydrate: () => {
+        localStorage.removeItem('user')
+        localStorage.removeItem('user-preferences')
+      }
     }
   }
 )
