@@ -73,11 +73,33 @@ var menuI18n = map[string][2]string{
 // Seed 写入内置角色、用户、菜单与 i18n。幂等。
 func Seed(ctx context.Context, gdb *gorm.DB, hasher *security.PasswordHasher, adminPassword string, pluginPages []sdk.RegisteredPage) error {
 	menuItems := append([]menuItem(nil), coreMenuItems...)
+	pluginMenus := map[string]bool{}
+	for _, page := range pluginPages {
+		if page.Menu.Mode != "" && page.Menu.Mode != sdk.PluginMenuOwn || pluginMenus[page.PluginID] {
+			continue
+		}
+		pluginMenus[page.PluginID] = true
+		menuItems = append(menuItems, menuItem{
+			Name: "PluginMenu:" + page.PluginID, Title: page.Menu.Title, Path: "/plugins/" + page.PluginID,
+			Icon: page.Menu.Icon,
+		})
+	}
 	for _, page := range pluginPages {
 		key := page.PluginID + "/" + page.PageKey
-		path := "/plugins/" + key
+		menuName := ""
+		pagePath := "/plugins/" + key
+		switch page.Menu.Mode {
+		case sdk.PluginMenuExisting:
+			menuName = page.Menu.Parent
+			pagePath = page.PluginID + "/" + page.PageKey
+		case sdk.PluginMenuDirect:
+			// 页面直接作为顶级菜单。
+		default:
+			menuName = "PluginMenu:" + page.PluginID
+			pagePath = page.PageKey
+		}
 		menuItems = append(menuItems, menuItem{
-			Name: "PluginPage:" + key, Title: page.Title, Path: path,
+			Name: "PluginPage:" + key, Title: page.Title, Path: pagePath, Parent: menuName,
 			Component: "plugin:" + key, Icon: page.Icon, KeepAlive: page.KeepAlive,
 		})
 	}
@@ -188,7 +210,7 @@ func seedSuperUser(tx *gorm.DB, hasher *security.PasswordHasher, adminPassword s
 func seedMenusAndButtons(tx *gorm.DB, menuItems []menuItem) (map[string]*SystemMenu, map[string]*SystemMenuButton, error) {
 	now := time.Now()
 	menuMap := map[string]*SystemMenu{}
-	if err := tx.Model(&SystemMenu{}).Where("name LIKE ?", "PluginPage:%").
+	if err := tx.Model(&SystemMenu{}).Where("name LIKE ? OR name LIKE ?", "PluginPage:%", "PluginMenu:%").
 		Updates(map[string]any{"is_active": false, "is_hidden": true, "updated_at": now}).Error; err != nil {
 		return nil, nil, err
 	}

@@ -35,8 +35,8 @@ func RenderBackendWithDependencies(plugins []manifest.Package, available map[str
 	for index, plugin := range plugins {
 		contributes := append([]string(nil), plugin.Manifest.Contributes...)
 		sort.Strings(contributes)
-		fmt.Fprintf(&source, "if err := registry.RegisterPlugin(sdk.PluginDescriptor{ID: %s, Name: %s, Version: %s, Contributes: %#v, RequiresPlugins: %#v}, host, plugin%d.Register); err != nil { return err }\n",
-			strconv.Quote(plugin.Manifest.ID), strconv.Quote(plugin.Manifest.Name), strconv.Quote(plugin.Manifest.Version), contributes, plugin.Manifest.RequiresPlugins, index)
+		fmt.Fprintf(&source, "if err := registry.RegisterPlugin(sdk.PluginDescriptor{ID: %s, Name: %s, Menu: sdk.PluginMenuDescriptor{Mode: %s, Title: %s, Icon: %s, Parent: %s}, Version: %s, Contributes: %#v, RequiresPlugins: %#v}, host, plugin%d.Register); err != nil { return err }\n",
+			strconv.Quote(plugin.Manifest.ID), strconv.Quote(plugin.Manifest.Name), strconv.Quote(plugin.Manifest.Menu.Mode), strconv.Quote(plugin.Manifest.Menu.Title), strconv.Quote(plugin.Manifest.Menu.Icon), strconv.Quote(plugin.Manifest.Menu.Parent), strconv.Quote(plugin.Manifest.Version), contributes, plugin.Manifest.RequiresPlugins, index)
 	}
 	source.WriteString("return nil\n}\n")
 	formatted, err := format.Source([]byte(source.String()))

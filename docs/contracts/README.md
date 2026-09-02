@@ -92,7 +92,7 @@
 - `schemaVersion` 当前固定为 `1`。
 - `id` 是稳定的小写点分名称；`version` 是严格 SemVer。
 - `sdkMajor` 必须等于当前 SDK major `3`，`requiresCore` 必须包含当前 Core `3.0.0`；`requiresPlugins` 按依赖拓扑排序并校验 SemVer。
-- Backend 入口必须是拥有匹配 module 名的 Go module；Frontend 和 migration 路径必须留在插件根目录内。
+- Backend 入口必须是拥有匹配 module 名的 Go module；Frontend 和 migration 路径必须留在插件根目录内。可选 `menu` 支持 `own`、`existing` 和 `direct` 三种页面菜单定位方式。
 - `contributes` 只接受 `nodes`、`triggers`、`strategies`、`apiRoutes`、`pages`、`resultPages`、`assistantQueries` 和 `migrations`，声明的非 migration 贡献必须实际注册。
 
 `plugin validate` 只读校验一个或多个目录。应用启动只执行生成的 Go 注册表，不扫描插件目录或动态加载共享库。
@@ -115,7 +115,7 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 
 `assistantQueries` 通过 `AssistantQueryDescriptor`、`AssistantQueryHandler` 和 `Registrar.AssistantQuery` 注册。工具名由插件 ID 与查询名组成稳定命名空间；输入必须匹配 JSON Schema 2020-12，Handler 只接收 Core 注入的 `SystemScope`，返回值必须是 64 KiB 内的合法 JSON。该扩展只允许查询拥有插件的数据，不授予写入、交易或扩大作用域的能力。
 
-页面描述符通过 `pages` 注册插件内唯一的 `pageKey`、标题、图标和缓存设置，并生成独立顶级菜单；前端 `FrontendPluginModule.pages` 必须导出同名页面。`resultPages` 只渲染服务端固定 ResultView 范围，不生成菜单。
+页面描述符通过 `pages` 注册插件内唯一的 `pageKey`、标题、图标和缓存设置。菜单定位由插件 manifest 的 `menu` 选择：默认把全部页面放进插件自己的顶级菜单，也可以指定现有顶级菜单，或让页面各自直接作为顶级菜单；前端 `FrontendPluginModule.pages` 必须导出同名页面。`resultPages` 只渲染服务端固定 ResultView 范围，不生成菜单。
 
 内置 `official.connector` 提供 HTTP Action、Webhook Trigger、WebSocket Trigger 和运行诊断结果页；`official.ai` 提供 OpenAI-compatible 结构化模型调用和结果页。两者只访问 `workflow.http_allowed_hosts` 的精确公共域名，禁用环境代理，拨号前后解析并拒绝非公网 IP。Binance 只允许明确列出的公共 GET/公共 WebSocket，授权、私有或未知端点一律拒绝。AI 节点只接收/返回 JSON 对象，不能控制工作流生命周期或交易。
 

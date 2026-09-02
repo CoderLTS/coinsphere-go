@@ -36,6 +36,7 @@ type Manifest struct {
 	SchemaVersion   int               `json:"schemaVersion"`
 	ID              string            `json:"id"`
 	Name            string            `json:"name"`
+	Menu            Menu              `json:"menu,omitempty"`
 	Version         string            `json:"version"`
 	SDKMajor        int               `json:"sdkMajor"`
 	RequiresCore    string            `json:"requiresCore"`
@@ -44,6 +45,13 @@ type Manifest struct {
 	Frontend        Frontend          `json:"frontend"`
 	Migrations      Migrations        `json:"migrations"`
 	Contributes     []string          `json:"contributes"`
+}
+
+type Menu struct {
+	Mode   string `json:"mode,omitempty"`
+	Title  string `json:"title,omitempty"`
+	Icon   string `json:"icon,omitempty"`
+	Parent string `json:"parent,omitempty"`
 }
 
 type Backend struct {
@@ -226,6 +234,15 @@ func Validate(value Manifest, coreVersion string, sdkMajor int) error {
 	}
 	if strings.TrimSpace(value.Name) == "" {
 		return errors.New("name is required")
+	}
+	if value.Menu.Mode != "" && value.Menu.Mode != "own" && value.Menu.Mode != "existing" && value.Menu.Mode != "direct" {
+		return fmt.Errorf("menu.mode %q is invalid", value.Menu.Mode)
+	}
+	if value.Menu.Mode == "existing" && strings.TrimSpace(value.Menu.Parent) == "" {
+		return errors.New("menu.parent is required for existing menu mode")
+	}
+	if value.Menu.Mode != "existing" && strings.TrimSpace(value.Menu.Parent) != "" {
+		return errors.New("menu.parent is only valid for existing menu mode")
 	}
 	if _, err := semver.StrictNewVersion(value.Version); err != nil {
 		return fmt.Errorf("version must be strict SemVer: %w", err)

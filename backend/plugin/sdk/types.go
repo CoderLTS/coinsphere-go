@@ -71,6 +71,21 @@ type NodeDescriptor struct {
 	ValidateConfig func(json.RawMessage) error
 }
 
+type PluginMenuMode string
+
+const (
+	PluginMenuOwn      PluginMenuMode = "own"
+	PluginMenuExisting PluginMenuMode = "existing"
+	PluginMenuDirect   PluginMenuMode = "direct"
+)
+
+type PluginMenuDescriptor struct {
+	Mode   PluginMenuMode
+	Title  string
+	Icon   string
+	Parent string
+}
+
 type RevisionRef struct {
 	WorkflowID string
 	RevisionID string
@@ -185,6 +200,7 @@ type PageDescriptor struct {
 
 type RegisteredPage struct {
 	PluginID string
+	Menu     PluginMenuDescriptor
 	PageDescriptor
 }
 
