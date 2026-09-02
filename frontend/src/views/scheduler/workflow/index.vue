@@ -10,108 +10,292 @@
     />
 
     <ElCard class="art-table-card">
-      <ArtTableHeader
-        :loading="loading"
-        :show-zebra="false"
-        layout="refresh,size,fullscreen,settings"
-        @refresh="loadPageData"
-      >
-        <template #left>
-          <ElSpace v-if="hasAuth('scheduler.workflow_definitions.create')">
-            <ElButton type="primary" @click="openCreateWorkflow">新建工作流</ElButton>
-          </ElSpace>
-        </template>
-      </ArtTableHeader>
+      <div class="workflow-library">
+        <aside class="workflow-groups" aria-label="工作流分组">
+          <div class="workflow-groups__header">
+            <span>分组</span>
+            <ElTooltip
+              v-if="hasAuth('scheduler.workflow_definitions.create')"
+              content="新建分组"
+              placement="top"
+            >
+              <ElButton text circle :icon="Plus" aria-label="新建分组" @click="createGroup" />
+            </ElTooltip>
+          </div>
 
-      <ArtTable
-        :loading="loading"
-        :data="filteredDefinitions"
-        :stripe="false"
-        table-layout="auto"
-        empty-height="320px"
-      >
-        <ElTableColumn
-          prop="displayName"
-          label="工作流名称"
-          min-width="240"
-          show-overflow-tooltip
-        />
-        <ElTableColumn label="版本" width="100" align="center">
-          <template #default="{ row }">v{{ row.version }}</template>
-        </ElTableColumn>
-        <ElTableColumn label="状态" width="110" align="center">
-          <template #default="{ row }">
-            <ElTag :type="statusTagType(row.workflowStatus)" effect="plain">
-              {{ statusLabel(row.workflowStatus) }}
-            </ElTag>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn label="创建时间" min-width="180">
-          <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
-        </ElTableColumn>
-        <ElTableColumn label="操作" width="220" align="center">
-          <template #default="{ row }">
-            <ElSpace size="small">
-              <ElTooltip content="工作流日志" placement="top">
-                <ElButton
-                  circle
-                  plain
-                  size="small"
-                  type="primary"
-                  :icon="Clock"
-                  @click="openLogs(row)"
-                />
-              </ElTooltip>
-              <ElTooltip content="编辑" placement="top">
-                <ElButton
-                  circle
-                  plain
-                  size="small"
-                  type="primary"
-                  :icon="Edit"
-                  @click="router.push(`/scheduler/workflow/${row.id}/edit`)"
-                />
-              </ElTooltip>
-              <ElTooltip content="版本记录" placement="top">
-                <ElButton
-                  circle
-                  plain
-                  size="small"
-                  type="primary"
-                  :icon="Collection"
-                  @click="openVersionDialog(row)"
-                />
-              </ElTooltip>
-              <ElTooltip :content="lifecycleLabel(row.workflowStatus)" placement="top">
-                <ElButton
-                  circle
-                  plain
-                  size="small"
-                  :type="row.workflowStatus === 'inactive' ? 'success' : 'warning'"
-                  :icon="SwitchButton"
-                  :loading="actingId === row.id"
-                  @click="toggleLifecycle(row)"
-                />
-              </ElTooltip>
-              <ElTooltip
-                :content="isBacktestWorkflow(row) ? '运行回测' : '手动运行'"
-                placement="top"
+          <div class="workflow-groups__scroll">
+            <div class="workflow-groups__fixed">
+              <button
+                type="button"
+                class="workflow-group-filter"
+                :class="{ 'is-active': selectedGroup === 'all' }"
+                @click="selectGroup('all')"
               >
+                <ElIcon><FolderOpened /></ElIcon>
+                <span class="workflow-group-filter__name">全部</span>
+                <span class="workflow-group-filter__count">{{ definitions.length }}</span>
+              </button>
+              <button
+                type="button"
+                class="workflow-group-filter"
+                :class="{ 'is-active': selectedGroup === 'ungrouped' }"
+                @click="selectGroup('ungrouped')"
+              >
+                <ElIcon><Folder /></ElIcon>
+                <span class="workflow-group-filter__name">未分组</span>
+                <span class="workflow-group-filter__count">{{ ungroupedCount }}</span>
+              </button>
+            </div>
+
+            <VueDraggable
+              v-model="workflowGroups"
+              class="workflow-groups__custom"
+              handle=".workflow-group-filter__drag"
+              :animation="150"
+              :disabled="!hasAuth('scheduler.workflow_definitions.update')"
+              @end="persistGroupOrder"
+            >
+              <div v-for="(group, index) in workflowGroups" :key="group.id" class="workflow-group">
+                <ElTooltip
+                  v-if="hasAuth('scheduler.workflow_definitions.update')"
+                  content="拖动排序"
+                  placement="top"
+                >
+                  <ElButton
+                    text
+                    circle
+                    class="workflow-group-filter__drag"
+                    :icon="Rank"
+                    :aria-label="`拖动分组 ${group.name}`"
+                  />
+                </ElTooltip>
+                <button
+                  type="button"
+                  class="workflow-group-filter workflow-group-filter--custom"
+                  :class="{ 'is-active': selectedGroup === group.id }"
+                  @click="selectGroup(group.id)"
+                >
+                  <ElIcon><Folder /></ElIcon>
+                  <span class="workflow-group-filter__name">{{ group.name }}</span>
+                  <span class="workflow-group-filter__count">{{ groupCount(group.id) }}</span>
+                </button>
+                <ElDropdown
+                  v-if="
+                    hasAuth('scheduler.workflow_definitions.update') ||
+                    hasAuth('scheduler.workflow_definitions.delete')
+                  "
+                  trigger="click"
+                  @command="(command) => handleGroupCommand(command, group, index)"
+                >
+                  <ElButton
+                    text
+                    circle
+                    :icon="MoreFilled"
+                    :aria-label="`管理分组 ${group.name}`"
+                    @click.stop
+                  />
+                  <template #dropdown>
+                    <ElDropdownMenu>
+                      <ElDropdownItem
+                        v-if="hasAuth('scheduler.workflow_definitions.update')"
+                        command="rename"
+                      >
+                        重命名
+                      </ElDropdownItem>
+                      <ElDropdownItem
+                        v-if="hasAuth('scheduler.workflow_definitions.update')"
+                        command="up"
+                        :disabled="index === 0"
+                      >
+                        上移
+                      </ElDropdownItem>
+                      <ElDropdownItem
+                        v-if="hasAuth('scheduler.workflow_definitions.update')"
+                        command="down"
+                        :disabled="index === workflowGroups.length - 1"
+                      >
+                        下移
+                      </ElDropdownItem>
+                      <ElDropdownItem
+                        v-if="hasAuth('scheduler.workflow_definitions.delete')"
+                        command="delete"
+                        divided
+                      >
+                        删除分组
+                      </ElDropdownItem>
+                    </ElDropdownMenu>
+                  </template>
+                </ElDropdown>
+              </div>
+            </VueDraggable>
+          </div>
+        </aside>
+
+        <section class="workflow-table">
+          <ArtTableHeader
+            :loading="loading"
+            :show-zebra="false"
+            layout="refresh,size,fullscreen,settings"
+            @refresh="loadPageData"
+          >
+            <template #left>
+              <ElSpace wrap>
                 <ElButton
-                  circle
-                  plain
-                  size="small"
+                  v-if="hasAuth('scheduler.workflow_definitions.create')"
                   type="primary"
-                  :icon="VideoPlay"
-                  :disabled="!isBacktestWorkflow(row) && row.workflowStatus !== 'active'"
-                  :loading="runningId === row.id"
-                  @click="runWorkflow(row)"
-                />
-              </ElTooltip>
-            </ElSpace>
-          </template>
-        </ElTableColumn>
-      </ArtTable>
+                  @click="openCreateWorkflow"
+                >
+                  新建工作流
+                </ElButton>
+                <ElDropdown
+                  v-if="
+                    selectedDefinitions.length && hasAuth('scheduler.workflow_definitions.update')
+                  "
+                  trigger="click"
+                  @command="assignSelectedToGroup"
+                >
+                  <ElButton :loading="assigning">
+                    移至分组（{{ selectedDefinitions.length }}）<ElIcon class="el-icon--right"
+                      ><ArrowDown
+                    /></ElIcon>
+                  </ElButton>
+                  <template #dropdown>
+                    <ElDropdownMenu>
+                      <ElDropdownItem :command="0">未分组</ElDropdownItem>
+                      <ElDropdownItem
+                        v-for="group in workflowGroups"
+                        :key="group.id"
+                        :command="group.id"
+                      >
+                        {{ group.name }}
+                      </ElDropdownItem>
+                    </ElDropdownMenu>
+                  </template>
+                </ElDropdown>
+              </ElSpace>
+            </template>
+          </ArtTableHeader>
+
+          <ArtTable
+            ref="tableRef"
+            row-key="id"
+            :loading="loading"
+            :data="filteredDefinitions"
+            :stripe="false"
+            table-layout="auto"
+            empty-height="320px"
+            @selection-change="handleSelectionChange"
+          >
+            <ElTableColumn
+              v-if="hasAuth('scheduler.workflow_definitions.update')"
+              type="selection"
+              width="48"
+              reserve-selection
+            />
+            <ElTableColumn
+              prop="displayName"
+              label="工作流名称"
+              min-width="240"
+              show-overflow-tooltip
+            />
+            <ElTableColumn label="分组" min-width="180">
+              <template #default="{ row }">
+                <ElSelect
+                  v-if="hasAuth('scheduler.workflow_definitions.update')"
+                  :model-value="row.groupId || 0"
+                  size="small"
+                  :disabled="assigning"
+                  @change="(groupId) => assignDefinitions([row], Number(groupId) || null)"
+                >
+                  <ElOption label="未分组" :value="0" />
+                  <ElOption
+                    v-for="group in workflowGroups"
+                    :key="group.id"
+                    :label="group.name"
+                    :value="group.id"
+                  />
+                </ElSelect>
+                <span v-else>{{ groupName(row.groupId) }}</span>
+              </template>
+            </ElTableColumn>
+            <ElTableColumn label="版本" width="100" align="center">
+              <template #default="{ row }">v{{ row.version }}</template>
+            </ElTableColumn>
+            <ElTableColumn label="状态" width="110" align="center">
+              <template #default="{ row }">
+                <ElTag :type="statusTagType(row.workflowStatus)" effect="plain">
+                  {{ statusLabel(row.workflowStatus) }}
+                </ElTag>
+              </template>
+            </ElTableColumn>
+            <ElTableColumn label="创建时间" min-width="180">
+              <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+            </ElTableColumn>
+            <ElTableColumn label="操作" width="220" align="center">
+              <template #default="{ row }">
+                <ElSpace size="small">
+                  <ElTooltip content="工作流日志" placement="top">
+                    <ElButton
+                      circle
+                      plain
+                      size="small"
+                      type="primary"
+                      :icon="Clock"
+                      @click="openLogs(row)"
+                    />
+                  </ElTooltip>
+                  <ElTooltip content="编辑" placement="top">
+                    <ElButton
+                      circle
+                      plain
+                      size="small"
+                      type="primary"
+                      :icon="Edit"
+                      @click="router.push(`/scheduler/workflow/${row.id}/edit`)"
+                    />
+                  </ElTooltip>
+                  <ElTooltip content="版本记录" placement="top">
+                    <ElButton
+                      circle
+                      plain
+                      size="small"
+                      type="primary"
+                      :icon="Collection"
+                      @click="openVersionDialog(row)"
+                    />
+                  </ElTooltip>
+                  <ElTooltip :content="lifecycleLabel(row.workflowStatus)" placement="top">
+                    <ElButton
+                      circle
+                      plain
+                      size="small"
+                      :type="row.workflowStatus === 'inactive' ? 'success' : 'warning'"
+                      :icon="SwitchButton"
+                      :loading="actingId === row.id"
+                      @click="toggleLifecycle(row)"
+                    />
+                  </ElTooltip>
+                  <ElTooltip
+                    :content="isBacktestWorkflow(row) ? '运行回测' : '手动运行'"
+                    placement="top"
+                  >
+                    <ElButton
+                      circle
+                      plain
+                      size="small"
+                      type="primary"
+                      :icon="VideoPlay"
+                      :disabled="!isBacktestWorkflow(row) && row.workflowStatus !== 'active'"
+                      :loading="runningId === row.id"
+                      @click="runWorkflow(row)"
+                    />
+                  </ElTooltip>
+                </ElSpace>
+              </template>
+            </ElTableColumn>
+          </ArtTable>
+        </section>
+      </div>
     </ElCard>
 
     <ElDialog v-model="createVisible" title="新建工作流" width="min(520px, calc(100vw - 32px))">
@@ -126,6 +310,17 @@
               :key="template.key"
               :label="template.name"
               :value="template.key"
+            />
+          </ElSelect>
+        </ElFormItem>
+        <ElFormItem label="分组">
+          <ElSelect v-model="createForm.groupId" class="backtest-form__full">
+            <ElOption label="未分组" :value="0" />
+            <ElOption
+              v-for="group in workflowGroups"
+              :key="group.id"
+              :label="group.name"
+              :value="group.id"
             />
           </ElSelect>
         </ElFormItem>
@@ -248,8 +443,21 @@
 </template>
 
 <script setup lang="ts">
-  import { Clock, Collection, Edit, SwitchButton, VideoPlay } from '@element-plus/icons-vue'
+  import {
+    ArrowDown,
+    Clock,
+    Collection,
+    Edit,
+    Folder,
+    FolderOpened,
+    MoreFilled,
+    Plus,
+    Rank,
+    SwitchButton,
+    VideoPlay
+  } from '@element-plus/icons-vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
+  import { VueDraggable } from 'vue-draggable-plus'
   import { useAuth } from '@/hooks/core/useAuth'
   import {
     fetchActivateWorkflowDefinition,
@@ -260,9 +468,16 @@
     type WorkflowDefinitionVersionItem
   } from '@/api/scheduler'
   import {
+    assignWorkflowGroup,
+    createWorkflowGroup,
     createWorkflow,
+    deleteWorkflowGroup,
+    fetchWorkflowGroups,
     fetchWorkflowRuns,
     fetchWorkflowTemplates,
+    updateWorkflowGroup,
+    updateWorkflowGroupOrder,
+    type WorkflowGroup,
     type WorkflowStatus,
     type WorkflowTemplate
   } from '@/api/workflows'
@@ -278,11 +493,16 @@
   const creating = ref(false)
   const createVisible = ref(false)
   const workflowTemplates = ref<WorkflowTemplate[]>([])
-  const createForm = reactive({ name: '', templateKey: 'blank' })
+  const createForm = reactive({ name: '', templateKey: 'blank', groupId: 0 })
   const selectedTemplate = computed(() =>
     workflowTemplates.value.find((item) => item.key === createForm.templateKey)
   )
   const definitions = ref<WorkflowDefinitionItem[]>([])
+  const workflowGroups = ref<WorkflowGroup[]>([])
+  const selectedGroup = ref<'all' | 'ungrouped' | number>('all')
+  const selectedDefinitions = ref<WorkflowDefinitionItem[]>([])
+  const tableRef = ref<{ elTableRef?: { clearSelection: () => void } }>()
+  const assigning = ref(false)
   const versionDialogVisible = ref(false)
   const versionDetail = ref<WorkflowDefinitionItem | null>(null)
   const versionRows = computed(() => versionDetail.value?.versions || [])
@@ -346,14 +566,40 @@
     }
   ])
 
+  const ungroupedCount = computed(
+    () => definitions.value.filter((item) => item.groupId === null).length
+  )
+
+  const groupCount = (groupId: number) =>
+    definitions.value.filter((item) => item.groupId === groupId).length
+
+  const groupName = (groupId: number | null) =>
+    groupId === null
+      ? '未分组'
+      : workflowGroups.value.find((group) => group.id === groupId)?.name || '未分组'
+
   const filteredDefinitions = computed(() => {
     const keyword = appliedFilters.keyword.trim().toLowerCase()
     return definitions.value.filter(
       (item) =>
+        (selectedGroup.value === 'all' ||
+          (selectedGroup.value === 'ungrouped'
+            ? item.groupId === null
+            : item.groupId === selectedGroup.value)) &&
         (!keyword || item.displayName.toLowerCase().includes(keyword)) &&
         (!appliedFilters.status || item.workflowStatus === appliedFilters.status)
     )
   })
+
+  const clearSelection = () => {
+    selectedDefinitions.value = []
+    tableRef.value?.elTableRef?.clearSelection()
+  }
+
+  const selectGroup = (group: 'all' | 'ungrouped' | number) => {
+    selectedGroup.value = group
+    clearSelection()
+  }
 
   const statusLabel = (status: WorkflowStatus) =>
     ({ inactive: '未激活', active: '已激活', error: '异常' })[status]
@@ -370,10 +616,137 @@
   const loadPageData = async () => {
     loading.value = true
     try {
-      definitions.value = await fetchWorkflowDefinitionList()
+      const [groupResult, items] = await Promise.all([
+        fetchWorkflowGroups(),
+        fetchWorkflowDefinitionList()
+      ])
+      workflowGroups.value = groupResult.items
+      definitions.value = items
+      if (
+        typeof selectedGroup.value === 'number' &&
+        !workflowGroups.value.some((group) => group.id === selectedGroup.value)
+      ) {
+        selectedGroup.value = 'all'
+      }
+      clearSelection()
     } finally {
       loading.value = false
     }
+  }
+
+  const promptGroupName = async (title: string, initialValue = '') => {
+    try {
+      const { value } = await ElMessageBox.prompt('', title, {
+        inputValue: initialValue,
+        inputPlaceholder: '请输入分组名称',
+        inputAttributes: { maxlength: 80 },
+        inputValidator: (input) => {
+          const length = [...String(input || '').trim()].length
+          return (length > 0 && length <= 80) || '分组名称须为 1 至 80 个字符'
+        },
+        confirmButtonText: '保存',
+        cancelButtonText: '取消'
+      })
+      return String(value || '').trim()
+    } catch {
+      return ''
+    }
+  }
+
+  const createGroup = async () => {
+    const name = await promptGroupName('新建分组')
+    if (!name) return
+    const group = await createWorkflowGroup(name)
+    workflowGroups.value.push(group)
+    selectGroup(group.id)
+    ElMessage.success('分组已创建')
+  }
+
+  const renameGroup = async (group: WorkflowGroup) => {
+    const name = await promptGroupName('重命名分组', group.name)
+    if (!name || name === group.name) return
+    const updated = await updateWorkflowGroup(group.id, name)
+    const index = workflowGroups.value.findIndex((item) => item.id === group.id)
+    if (index >= 0) workflowGroups.value[index] = updated
+    ElMessage.success('分组已重命名')
+  }
+
+  const deleteGroup = async (group: WorkflowGroup) => {
+    const count = groupCount(group.id)
+    try {
+      await ElMessageBox.confirm(
+        count
+          ? `删除分组“${group.name}”？其中 ${count} 个工作流将移至“未分组”。`
+          : `删除空分组“${group.name}”？`,
+        '删除分组',
+        { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+      )
+    } catch {
+      return
+    }
+    await deleteWorkflowGroup(group.id)
+    definitions.value.forEach((item) => {
+      if (item.groupId === group.id) item.groupId = null
+    })
+    workflowGroups.value = workflowGroups.value.filter((item) => item.id !== group.id)
+    if (selectedGroup.value === group.id) selectGroup('ungrouped')
+    ElMessage.success('分组已删除')
+  }
+
+  const persistGroupOrder = async () => {
+    try {
+      const result = await updateWorkflowGroupOrder(workflowGroups.value.map((group) => group.id))
+      workflowGroups.value = result.items
+    } catch {
+      workflowGroups.value = (await fetchWorkflowGroups()).items
+      ElMessage.error('保存分组顺序失败，已恢复服务器顺序')
+    }
+  }
+
+  const moveGroup = async (index: number, offset: -1 | 1) => {
+    const target = index + offset
+    if (target < 0 || target >= workflowGroups.value.length) return
+    const [group] = workflowGroups.value.splice(index, 1)
+    workflowGroups.value.splice(target, 0, group)
+    await persistGroupOrder()
+  }
+
+  const handleGroupCommand = async (
+    command: string | number | Record<string, unknown>,
+    group: WorkflowGroup,
+    index: number
+  ) => {
+    if (command === 'rename') await renameGroup(group)
+    if (command === 'up') await moveGroup(index, -1)
+    if (command === 'down') await moveGroup(index, 1)
+    if (command === 'delete') await deleteGroup(group)
+  }
+
+  const handleSelectionChange = (rows: WorkflowDefinitionItem[]) => {
+    selectedDefinitions.value = rows
+  }
+
+  const assignDefinitions = async (rows: WorkflowDefinitionItem[], groupId: number | null) => {
+    if (!rows.length || assigning.value) return
+    assigning.value = true
+    try {
+      await assignWorkflowGroup(
+        rows.map((row) => Number(row.code)),
+        groupId
+      )
+      const rowIDs = new Set(rows.map((row) => row.id))
+      definitions.value.forEach((item) => {
+        if (rowIDs.has(item.id)) item.groupId = groupId
+      })
+      clearSelection()
+      ElMessage.success(rows.length === 1 ? '工作流已移动' : `已移动 ${rows.length} 个工作流`)
+    } finally {
+      assigning.value = false
+    }
+  }
+
+  const assignSelectedToGroup = async (command: number | string | Record<string, unknown>) => {
+    await assignDefinitions(selectedDefinitions.value, Number(command) || null)
   }
 
   const openLogs = async (row: WorkflowDefinitionItem) => {
@@ -433,6 +806,7 @@
     }
     createForm.name = ''
     createForm.templateKey = 'blank'
+    createForm.groupId = typeof selectedGroup.value === 'number' ? selectedGroup.value : 0
     createVisible.value = true
   }
 
@@ -447,7 +821,8 @@
       const workflow = await createWorkflow({
         name,
         description: '',
-        templateKey: createForm.templateKey as Parameters<typeof createWorkflow>[0]['templateKey']
+        templateKey: createForm.templateKey as Parameters<typeof createWorkflow>[0]['templateKey'],
+        groupId: createForm.groupId || null
       })
       createVisible.value = false
       await router.push(`/scheduler/workflow/${workflow.id}/edit`)
@@ -517,16 +892,123 @@
     }
   }
 
-  const handleSearch = () => Object.assign(appliedFilters, formFilters)
+  const handleSearch = () => {
+    Object.assign(appliedFilters, formFilters)
+    clearSelection()
+  }
   const handleReset = () => {
     Object.assign(formFilters, initialFilters)
     Object.assign(appliedFilters, initialFilters)
+    clearSelection()
   }
 
   onMounted(loadPageData)
 </script>
 
 <style scoped lang="scss">
+  .workflow-library {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    min-height: 420px;
+  }
+
+  .workflow-groups {
+    min-width: 0;
+    padding-right: 16px;
+    border-right: 1px solid var(--el-border-color-lighter);
+  }
+
+  .workflow-groups__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 40px;
+    margin-bottom: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--el-text-color-primary);
+  }
+
+  .workflow-groups__scroll {
+    max-height: calc(100vh - 300px);
+    overflow-y: auto;
+  }
+
+  .workflow-groups__fixed,
+  .workflow-groups__custom {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .workflow-groups__custom {
+    margin-top: 4px;
+  }
+
+  .workflow-group {
+    display: flex;
+    gap: 2px;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .workflow-group-filter {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+    width: 100%;
+    min-height: 36px;
+    padding: 0 10px;
+    font: inherit;
+    color: var(--el-text-color-regular);
+    text-align: left;
+    letter-spacing: 0;
+    cursor: pointer;
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+  }
+
+  .workflow-group-filter:hover {
+    background: var(--el-fill-color-light);
+  }
+
+  .workflow-group-filter.is-active {
+    color: var(--el-color-primary);
+    background: var(--el-color-primary-light-9);
+  }
+
+  .workflow-group-filter--custom {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .workflow-group-filter__drag {
+    flex: 0 0 28px;
+    width: 28px;
+    height: 28px;
+    cursor: move;
+  }
+
+  .workflow-group-filter__name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .workflow-group-filter__count {
+    min-width: 20px;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+    text-align: right;
+  }
+
+  .workflow-table {
+    min-width: 0;
+    padding-left: 16px;
+  }
+
   .version-header {
     display: flex;
     gap: 16px;
@@ -571,6 +1053,49 @@
     .backtest-form__times,
     .backtest-form__numbers {
       grid-template-columns: 1fr;
+    }
+  }
+
+  @media (width <= 900px) {
+    .workflow-library {
+      display: block;
+    }
+
+    .workflow-groups {
+      padding-right: 0;
+      padding-bottom: 12px;
+      margin-bottom: 8px;
+      border-right: 0;
+      border-bottom: 1px solid var(--el-border-color-lighter);
+    }
+
+    .workflow-groups__scroll {
+      display: flex;
+      gap: 4px;
+      max-height: none;
+      padding-bottom: 4px;
+      overflow-x: auto;
+      overflow-y: hidden;
+    }
+
+    .workflow-groups__fixed,
+    .workflow-groups__custom {
+      flex-direction: row;
+      flex-shrink: 0;
+      margin-top: 0;
+    }
+
+    .workflow-group {
+      flex: 0 0 auto;
+      min-width: 160px;
+    }
+
+    .workflow-group-filter {
+      min-width: 128px;
+    }
+
+    .workflow-table {
+      padding-left: 0;
     }
   }
 </style>

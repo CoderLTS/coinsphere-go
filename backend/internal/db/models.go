@@ -231,6 +231,7 @@ type Workflow struct {
 	ID                int64  `gorm:"primaryKey;autoIncrement"`
 	Name              string `gorm:"size:120"`
 	Description       string `gorm:"size:500"`
+	GroupID           *int64 `gorm:"column:group_id"`
 	Mode              string `gorm:"size:16"`
 	Status            string `gorm:"size:16"`
 	ActiveRevisionID  *int64 `gorm:"column:active_revision_id"`
@@ -242,6 +243,16 @@ type Workflow struct {
 }
 
 func (Workflow) TableName() string { return "workflows" }
+
+type WorkflowGroup struct {
+	ID        int64  `gorm:"primaryKey;autoIncrement"`
+	Name      string `gorm:"size:80"`
+	SortOrder int    `gorm:"column:sort_order"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+func (WorkflowGroup) TableName() string { return "workflow_groups" }
 
 type WorkflowRevision struct {
 	ID                int64  `gorm:"primaryKey;autoIncrement"`

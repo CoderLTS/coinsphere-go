@@ -103,6 +103,68 @@ func (s *Server) handleListWorkflowNodeDefinitions(c *gin.Context) {
 	ok(c, M{"items": s.App.ListWorkflowNodeDefinitions()})
 }
 
+func (s *Server) handleListWorkflowGroups(c *gin.Context) {
+	items, err := s.App.ListWorkflowGroups(c.Request.Context())
+	respond(c, M{"items": items}, err, "")
+}
+
+func (s *Server) handleCreateWorkflowGroup(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxWorkflowRequestBytes)
+	payload, err := decodeBody[service.WorkflowGroupUpsertPayload](c)
+	if err != nil {
+		writeProblem(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	data, err := s.App.CreateWorkflowGroup(c.Request.Context(), *payload)
+	respond(c, data, err, "")
+}
+
+func (s *Server) handleUpdateWorkflowGroup(c *gin.Context) {
+	groupID, err := pathInt64(c, "groupId")
+	if err != nil {
+		writeProblem(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxWorkflowRequestBytes)
+	payload, err := decodeBody[service.WorkflowGroupUpsertPayload](c)
+	if err != nil {
+		writeProblem(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	data, err := s.App.UpdateWorkflowGroup(c.Request.Context(), groupID, *payload)
+	respond(c, data, err, "")
+}
+
+func (s *Server) handleDeleteWorkflowGroup(c *gin.Context) {
+	groupID, err := pathInt64(c, "groupId")
+	if err == nil {
+		err = s.App.DeleteWorkflowGroup(c.Request.Context(), groupID)
+	}
+	respond(c, M{"id": groupID}, err, "")
+}
+
+func (s *Server) handleUpdateWorkflowGroupOrder(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxWorkflowRequestBytes)
+	payload, err := decodeBody[service.WorkflowGroupOrderPayload](c)
+	if err != nil {
+		writeProblem(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	items, err := s.App.UpdateWorkflowGroupOrder(c.Request.Context(), *payload)
+	respond(c, M{"items": items}, err, "")
+}
+
+func (s *Server) handleAssignWorkflowGroup(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxWorkflowRequestBytes)
+	payload, err := decodeBody[service.WorkflowGroupAssignmentPayload](c)
+	if err != nil {
+		writeProblem(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	data, err := s.App.AssignWorkflowGroup(c.Request.Context(), *payload)
+	respond(c, data, err, "")
+}
+
 func (s *Server) handleValidateWorkflowGraph(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxWorkflowRequestBytes)
 	payload, err := decodeBody[struct {

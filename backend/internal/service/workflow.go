@@ -72,6 +72,7 @@ type WorkflowCreatePayload struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	TemplateKey string `json:"templateKey"`
+	GroupID     *int64 `json:"groupId"`
 }
 
 type WorkflowUpdatePayload struct {
@@ -94,6 +95,7 @@ type WorkflowView struct {
 	ID                int64  `json:"id"`
 	Name              string `json:"name"`
 	Description       string `json:"description"`
+	GroupID           *int64 `json:"groupId"`
 	Mode              string `json:"mode"`
 	Status            string `json:"status"`
 	ActiveRevisionID  int64  `json:"activeRevisionId"`
@@ -191,8 +193,11 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	err = a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := validateWorkflowGroupID(tx, payload.GroupID); err != nil {
+			return err
+		}
 		var createErr error
-		workflow, createErr = createWorkflowRecord(tx, name, description, graph, principal.User.ID, now)
+		workflow, createErr = createWorkflowRecord(tx, name, description, payload.GroupID, graph, principal.User.ID, now)
 		return createErr
 	})
 	if err != nil {
@@ -201,9 +206,9 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 	return a.GetWorkflow(ctx, workflow.ID)
 }
 
-func createWorkflowRecord(tx *gorm.DB, name, description string, graph validatedWorkflowGraph, userID int64, now time.Time) (db.Workflow, error) {
+func createWorkflowRecord(tx *gorm.DB, name, description string, groupID *int64, graph validatedWorkflowGraph, userID int64, now time.Time) (db.Workflow, error) {
 	workflow := db.Workflow{
-		Name: name, Description: description, Mode: workflowModeForTrigger(graph.nodes[graph.mainTriggerID].NodeType), Status: WorkflowStatusInactive,
+		Name: name, Description: description, GroupID: groupID, Mode: workflowModeForTrigger(graph.nodes[graph.mainTriggerID].NodeType), Status: WorkflowStatusInactive,
 		MainTriggerNodeID: graph.mainTriggerID, RetentionDays: 30, CreatedBy: userID, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := tx.Create(&workflow).Error; err != nil {
@@ -578,7 +583,7 @@ func workflowView(workflow db.Workflow) WorkflowView {
 		activeRevisionID = *workflow.ActiveRevisionID
 	}
 	view := WorkflowView{
-		ID: workflow.ID, Name: workflow.Name, Description: workflow.Description, Mode: workflow.Mode,
+		ID: workflow.ID, Name: workflow.Name, Description: workflow.Description, GroupID: workflow.GroupID, Mode: workflow.Mode,
 		Status: workflow.Status, ActiveRevisionID: activeRevisionID,
 		MainTriggerNodeID: workflow.MainTriggerNodeID, RetentionDays: workflow.RetentionDays,
 		CreatedBy: workflow.CreatedBy, CreatedAt: formatWorkflowTime(workflow.CreatedAt),

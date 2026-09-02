@@ -44,7 +44,11 @@
 | `POST /api/v1/human-tasks/{taskId}`                         | 一次性批准或拒绝人工任务                 |
 | `GET /api/v1/workflows/node-definitions`                    | 列出核心与编译期插件节点 Schema          |
 | `POST /api/v1/workflows/validate`                           | 只读校验完整工作流图                     |
+| `GET/POST /api/v1/workflow-groups`                          | 列出全局分组，或在末尾创建分组           |
+| `PATCH/DELETE /api/v1/workflow-groups/{groupId}`            | 重命名分组，或删除并解除工作流归属       |
+| `PUT /api/v1/workflow-groups/order`                         | 原子替换全部自定义分组顺序               |
 | `GET/POST /api/v1/workflows`                                | 列表，或从模板创建工作流及初始修订       |
+| `PATCH /api/v1/workflows/group-assignment`                  | 原子移动最多 1000 个工作流               |
 | `GET /api/v1/workflows/{workflowId}`                        | 读取元数据、活动修订和运行时容量         |
 | `PATCH /api/v1/workflows/{workflowId}`                      | 更新工作流名称和说明，不修改活动修订     |
 | `GET/POST /api/v1/workflows/{workflowId}/revisions`         | 列表，或保存新不可变修订                 |
@@ -69,6 +73,7 @@
 | `POST /api/v1/result-views/{viewId}/workflow/pause`         | 按白名单暂停固定工作流                   |
 
 - 创建接受批处理、事件、Connector 和 Quant 模板。事件 Trigger 按类型及可选精确 source/subject 过滤；`core.schedule` 配置必须二选一：`everySeconds` 60 至 86400，或六段 `cronExpression` 加 IANA `timeZone`。图 `schemaVersion` 固定为 `1`，节点保存 `nodeInstanceId`、精确节点版本、普通配置、结构化输入映射和位置；边保存两端端口及可选 Boolean CEL 条件。
+- 工作流分组是超级管理员共享的单层分类，每个工作流最多归属一个分组；`groupId=null` 表示未分组，既有工作流升级后保持未分组。分组名去除首尾空白后为 1 至 80 个字符且大小写不敏感唯一；删除分组只把其工作流移至未分组，不删除、停用或修改修订。排序请求必须提交当前全部分组 ID 的完整排列，分组集合已并发变化时返回 `409 Conflict`；批量归属请求必须提交 1 至 1000 个唯一正工作流 ID，并在目标分组或任一工作流不存在时整体失败。
 - 输入映射只接受 `field`、`literal`、`cel`。字段来源使用上游 `nodeInstanceId` 和字段路径数组；保存校验端口、可达性、DAG、JSON Schema、字段类型和 CEL，并拒绝 Decimal CEL 算术。图级后向边始终拒绝；`core.loop` 只运行内嵌无环子图，并强制 1 至 100 次上限、绝对超时和 Boolean CEL 退出条件。每轮 RunNode、RunCheckpoint 与操作键都包含迭代号，人工等待节点不能嵌入 Loop。
 - 保存请求必须提供当前 `expectedActiveRevisionId`。服务锁定工作流，校验完整图，写入递增修订、修订级密钥绑定并原子切换活动指针；并发旧指针返回 `409 Conflict`，失败校验不创建修订。同一节点实例的类型和版本不变时保留持久状态；删除节点或修改类型/版本且已有状态时，工作流必须为 `inactive`，并由管理员通过 `resetStateNodeInstanceIds` 精确确认要重置的节点，状态删除与修订激活在同一事务提交。
 - `secretChanges` 只允许替换或移除节点 Config Schema 声明的顶层 `x-coinsphere-secret` 字段。密钥按修订、节点实例和字段独立加密；响应只返回 `secretFields[nodeInstanceId][field]=true`，图、修订响应和节点目录永不返回密钥值。

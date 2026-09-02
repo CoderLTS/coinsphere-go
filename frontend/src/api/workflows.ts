@@ -63,6 +63,7 @@ export interface WorkflowItem {
   id: number
   name: string
   description: string
+  groupId: number | null
   mode: 'batch' | 'event' | 'stream'
   status: WorkflowStatus
   activeRevisionId: number
@@ -89,6 +90,14 @@ export interface WorkflowTemplate {
   name: string
   mode: 'batch' | 'event' | 'stream'
   description: string
+}
+
+export interface WorkflowGroup {
+  id: number
+  name: string
+  sortOrder: number
+  createdAt: string
+  updatedAt: string
 }
 
 export interface WorkflowRevision {
@@ -291,6 +300,36 @@ export const fetchWorkflowNodeDefinitions = () =>
 export const fetchWorkflowTemplates = () =>
   request.get<ItemList<WorkflowTemplate>>({ url: '/api/v1/workflows/templates' })
 
+export const fetchWorkflowGroups = () =>
+  request.get<ItemList<WorkflowGroup>>({ url: '/api/v1/workflow-groups' })
+
+export const createWorkflowGroup = (name: string) =>
+  request.post<WorkflowGroup>({ url: '/api/v1/workflow-groups', params: { name } })
+
+export const updateWorkflowGroup = (groupId: number, name: string) =>
+  request.request<WorkflowGroup>({
+    url: `/api/v1/workflow-groups/${groupId}`,
+    method: 'PATCH',
+    data: { name }
+  })
+
+export const deleteWorkflowGroup = (groupId: number) =>
+  request.del<{ id: number }>({ url: `/api/v1/workflow-groups/${groupId}` })
+
+export const updateWorkflowGroupOrder = (groupIds: number[]) =>
+  request.request<ItemList<WorkflowGroup>>({
+    url: '/api/v1/workflow-groups/order',
+    method: 'PUT',
+    data: { groupIds }
+  })
+
+export const assignWorkflowGroup = (workflowIds: number[], groupId: number | null) =>
+  request.request<{ updated: number }>({
+    url: '/api/v1/workflows/group-assignment',
+    method: 'PATCH',
+    data: { workflowIds, groupId }
+  })
+
 export const validateWorkflowGraph = (graph: WorkflowGraph) =>
   request.post<{
     valid: boolean
@@ -301,6 +340,7 @@ export const createWorkflow = (params: {
   name: string
   description: string
   templateKey: string
+  groupId?: number | null
 }) => request.post<WorkflowDetail>({ url: '/api/v1/workflows', params })
 
 export const saveWorkflowRevision = (
