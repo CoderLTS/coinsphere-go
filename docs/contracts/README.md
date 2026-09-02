@@ -52,7 +52,7 @@
 | `GET /api/v1/workflows/{workflowId}`                        | 读取元数据、活动修订和运行时容量         |
 | `PATCH /api/v1/workflows/{workflowId}`                      | 更新工作流名称和说明，不修改活动修订     |
 | `GET/POST /api/v1/workflows/{workflowId}/revisions`         | 列表，或保存新不可变修订                 |
-| `GET /api/v1/workflows/{workflowId}/revisions/{revisionId}` | 读取固定修订                             |
+| `GET/DELETE /api/v1/workflows/{workflowId}/revisions/{revisionId}` | 读取固定修订，或删除历史修订                    |
 | `POST /api/v1/workflows/{workflowId}/lifecycle`             | 执行 `activate` 或 `deactivate`          |
 | `GET/POST /api/v1/workflows/{workflowId}/runs`              | 搜索运行日志，或创建手工运行             |
 | `WS /api/v1/ws/workflows/{workflowId}/runs`                 | 超级管理员订阅轻量运行更新通知           |
@@ -77,7 +77,7 @@
 - 输入映射只接受 `field`、`literal`、`cel`。字段来源使用上游 `nodeInstanceId` 和字段路径数组；保存校验端口、可达性、DAG、JSON Schema、字段类型和 CEL，并拒绝 Decimal CEL 算术。图级后向边始终拒绝；`core.loop` 只运行内嵌无环子图，并强制 1 至 100 次上限、绝对超时和 Boolean CEL 退出条件。每轮 RunNode、RunCheckpoint 与操作键都包含迭代号，人工等待节点不能嵌入 Loop。
 - 保存请求必须提供当前 `expectedActiveRevisionId`。服务锁定工作流，校验完整图，写入递增修订、修订级密钥绑定并原子切换活动指针；每个工作流只保留最新 10 个修订，第 11 个修订保存时在同一事务删除最旧修订及其密钥绑定。最旧修订仍被运行事实引用时返回 `409 Conflict` 并整体回滚。并发旧指针返回 `409 Conflict`，失败校验不创建修订。同一节点实例的类型和版本不变时保留持久状态；删除节点或修改类型/版本且已有状态时，工作流必须为 `inactive`，并由管理员通过 `resetStateNodeInstanceIds` 精确确认要重置的节点，状态删除与修订激活在同一事务提交。
 - `secretChanges` 只允许替换或移除节点 Config Schema 声明的顶层 `x-coinsphere-secret` 字段。密钥按修订、节点实例和字段独立加密；响应只返回 `secretFields[nodeInstanceId][field]=true`，图、修订响应和节点目录永不返回密钥值。
-- 修订保存后不可更新，也不可在保留上限清理之外删除。工作流状态只有 `inactive / active / error`；Trigger 异常退出进入 `error`，管理员先 `deactivate` 恢复为 `inactive`，确认修复后再 `activate`。
+- 修订保存后不可更新。具有 `scheduler.workflow_definitions.delete` 权限的管理员可以删除非活动历史修订；服务在同一事务迁移兼容节点状态并删除修订级密钥，活动修订或已有 Run 引用的修订返回 `409 Conflict`。保留上限清理遵循相同约束。工作流状态只有 `inactive / active / error`；Trigger 异常退出进入 `error`，管理员先 `deactivate` 恢复为 `inactive`，确认修复后再 `activate`。
 - `activate` 允许 Run 队列领取工作并启动连续流 Trigger；`deactivate` 停止领取新 Run、取消 Trigger，当前 Action 返回后保存检查点并重新排队。手工触发只适用于 `core.manual`；`core.schedule` 按固定间隔或带时区 Cron 去重入队，服务恢复后最多补一次漏跑。TriggerHandler 必须响应取消和 Emitter 背压；进程重启会从数据库扫描仍为 `active` 的连续流。
 - CloudEvent 要求 1.0、UTC 时间、对象 `data` 和 1 至 256 字节 `partitionkey`。`(source,id)` 全局唯一；相同内容重试返回原事件，不同内容返回 `409`。事件、投递和 Run 在同一事务提交，Outbox 持久重试内部失败事件。闭合 K 线的 OHLCV 正文只保存在 Quant 行情表和事件表，Run 只关联事件 ID。
 - Run 创建时固定事件与活动修订。单实例执行器使用 PostgreSQL 持久队列、每工作流并发/积压上限和有界 `stream`/`compute` 池；同工作流同分区按入队顺序领取，不同分区可并行，过期租约重启后重新排队。进入 `waiting` 的人工任务保存上下文并释放执行池和分区占用。

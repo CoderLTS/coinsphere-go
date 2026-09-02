@@ -287,6 +287,11 @@ export const fetchWorkflowRevision = (workflowId: number, revisionId: number) =>
     url: `/api/v1/workflows/${workflowId}/revisions/${revisionId}`
   })
 
+export const deleteWorkflowRevision = (workflowId: number, revisionId: number) =>
+  request.del<{ id: number }>({
+    url: `/api/v1/workflows/${workflowId}/revisions/${revisionId}`
+  })
+
 export const fetchWorkflowRevisions = (workflowId: number) =>
   request.get<ItemList<WorkflowRevision>>({
     url: `/api/v1/workflows/${workflowId}/revisions`

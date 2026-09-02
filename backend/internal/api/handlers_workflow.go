@@ -264,6 +264,21 @@ func (s *Server) handleGetWorkflowRevision(c *gin.Context) {
 	respond(c, data, err, "")
 }
 
+func (s *Server) handleDeleteWorkflowRevision(c *gin.Context) {
+	workflowID, err := pathInt64(c, "workflowId")
+	if err != nil {
+		writeProblem(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	revisionID, err := pathInt64(c, "revisionId")
+	if err != nil {
+		writeProblem(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	err = s.App.DeleteWorkflowRevision(c.Request.Context(), workflowID, revisionID)
+	respond(c, M{"id": revisionID}, err, "")
+}
+
 func (s *Server) handleWorkflowLifecycle(c *gin.Context) {
 	workflowID, err := pathInt64(c, "workflowId")
 	if err != nil {

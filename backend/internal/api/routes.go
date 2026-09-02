@@ -86,6 +86,7 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 	get(super, "/workflows/:workflowId/revisions", s.handleListWorkflowRevisions)
 	super.POST("/workflows/:workflowId/revisions", s.handleSaveWorkflowRevision)
 	get(super, "/workflows/:workflowId/revisions/:revisionId", s.handleGetWorkflowRevision)
+	super.DELETE("/workflows/:workflowId/revisions/:revisionId", s.requirePermission(perm.SchedulerWorkflowDefinitionsDelete), s.handleDeleteWorkflowRevision)
 	super.POST("/workflows/:workflowId/lifecycle", s.handleWorkflowLifecycle)
 	get(super, "/workflows/:workflowId/runs", s.handleListWorkflowRuns)
 	super.POST("/workflows/:workflowId/runs", s.handleCreateWorkflowRun)

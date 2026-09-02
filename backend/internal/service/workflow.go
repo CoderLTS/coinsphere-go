@@ -459,27 +459,33 @@ func pruneWorkflowRevisions(tx *gorm.DB, workflowID, retainedRevisionID int64) e
 		return errors.New("list workflow revisions for pruning failed")
 	}
 	for index := len(revisionIDs) - 1; index >= maxWorkflowRevisions; index-- {
-		revisionID := revisionIDs[index]
-		var runCount int64
-		if err := tx.Model(&db.WorkflowRun{}).Where("workflow_id = ? AND revision_id = ?", workflowID, revisionID).
-			Count(&runCount).Error; err != nil {
-			return errors.New("check pruned workflow revision references failed")
+		if err := deleteWorkflowRevisionRecord(tx, workflowID, revisionIDs[index], retainedRevisionID); err != nil {
+			return err
 		}
-		if runCount > 0 {
-			return fmt.Errorf("%w: oldest workflow revision is still referenced by workflow runs", ErrConflict)
-		}
-		if err := tx.Model(&db.WorkflowNodeState{}).Where("workflow_id = ? AND revision_id = ?", workflowID, revisionID).
-			Update("revision_id", retainedRevisionID).Error; err != nil {
-			return errors.New("carry workflow node states forward failed")
-		}
-		if err := tx.Where("workflow_id = ? AND revision_id = ?", workflowID, revisionID).
-			Delete(&db.WorkflowSecretBinding{}).Error; err != nil {
-			return errors.New("delete pruned workflow revision secrets failed")
-		}
-		if err := tx.Where("workflow_id = ? AND id = ?", workflowID, revisionID).
-			Delete(&db.WorkflowRevision{}).Error; err != nil {
-			return errors.New("delete pruned workflow revision failed")
-		}
+	}
+	return nil
+}
+
+func deleteWorkflowRevisionRecord(tx *gorm.DB, workflowID, revisionID, retainedRevisionID int64) error {
+	var runCount int64
+	if err := tx.Model(&db.WorkflowRun{}).Where("workflow_id = ? AND revision_id = ?", workflowID, revisionID).
+		Count(&runCount).Error; err != nil {
+		return errors.New("check workflow revision references failed")
+	}
+	if runCount > 0 {
+		return fmt.Errorf("%w: workflow revision is referenced by workflow runs", ErrConflict)
+	}
+	if err := tx.Model(&db.WorkflowNodeState{}).Where("workflow_id = ? AND revision_id = ?", workflowID, revisionID).
+		Update("revision_id", retainedRevisionID).Error; err != nil {
+		return errors.New("carry workflow node states forward failed")
+	}
+	if err := tx.Where("workflow_id = ? AND revision_id = ?", workflowID, revisionID).
+		Delete(&db.WorkflowSecretBinding{}).Error; err != nil {
+		return errors.New("delete workflow revision secrets failed")
+	}
+	if err := tx.Where("workflow_id = ? AND id = ?", workflowID, revisionID).
+		Delete(&db.WorkflowRevision{}).Error; err != nil {
+		return errors.New("delete workflow revision failed")
 	}
 	return nil
 }
@@ -532,6 +538,29 @@ func (a *App) GetWorkflowRevision(ctx context.Context, workflowID, revisionID in
 		return WorkflowRevisionView{}, err
 	}
 	return views[0], nil
+}
+
+func (a *App) DeleteWorkflowRevision(ctx context.Context, workflowID, revisionID int64) error {
+	return a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var workflow db.Workflow
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&workflow, workflowID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("%w: workflow", ErrNotFound)
+			}
+			return errors.New("lock workflow failed")
+		}
+		var revision db.WorkflowRevision
+		if err := tx.Where("workflow_id = ? AND id = ?", workflowID, revisionID).First(&revision).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("%w: workflow revision", ErrNotFound)
+			}
+			return errors.New("load workflow revision failed")
+		}
+		if workflow.ActiveRevisionID == nil || *workflow.ActiveRevisionID == revisionID {
+			return fmt.Errorf("%w: active workflow revision cannot be deleted", ErrConflict)
+		}
+		return deleteWorkflowRevisionRecord(tx, workflowID, revisionID, *workflow.ActiveRevisionID)
+	})
 }
 
 func (a *App) ApplyWorkflowLifecycle(ctx context.Context, workflowID int64, payload WorkflowLifecyclePayload) (WorkflowDetail, error) {
