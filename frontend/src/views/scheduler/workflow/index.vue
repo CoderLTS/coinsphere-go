@@ -397,8 +397,16 @@
     </ElDialog>
 
     <ElDialog v-model="backtestVisible" title="运行回测" width="min(560px, calc(100vw - 32px))">
+      <ElAlert
+        v-if="backtestError"
+        class="backtest-form__error"
+        type="error"
+        show-icon
+        :closable="false"
+        :title="backtestError"
+      />
       <ElForm label-position="top">
-        <ElFormItem label="策略 revision">
+        <ElFormItem label="策略版本">
           <ElSelect v-model="backtestForm.definitionId" class="backtest-form__full">
             <ElOption
               v-for="revision in backtestWorkflow?.versions || []"
@@ -532,6 +540,7 @@
     ).toISOString()
   const backtestVisible = ref(false)
   const backtestWorkflow = ref<WorkflowDefinitionItem | null>(null)
+  const backtestError = ref('')
   const backtestForm = reactive({
     definitionId: 0,
     startTime: utc8PickerDate(Date.now() - 30 * 24 * 60 * 60 * 1000),
@@ -833,6 +842,7 @@
   const runWorkflow = async (row: WorkflowDefinitionItem) => {
     if (isBacktestWorkflow(row)) {
       backtestWorkflow.value = row
+      backtestError.value = ''
       backtestForm.definitionId =
         row.versions?.find((revision) => revision.isActive)?.id || row.versions?.[0]?.id || row.id
       backtestForm.endTime = utc8PickerDate()
@@ -858,15 +868,19 @@
 
   const submitBacktest = async () => {
     const row = backtestWorkflow.value
-    if (!row || !backtestForm.definitionId || !backtestForm.startTime || !backtestForm.endTime)
+    backtestError.value = ''
+    if (!row || !backtestForm.definitionId || !backtestForm.startTime || !backtestForm.endTime) {
+      backtestError.value = '请选择策略版本和回测时间'
       return
+    }
     if (backtestForm.startTime >= backtestForm.endTime) {
-      ElMessage.warning('开始时间必须早于结束时间')
+      backtestError.value = '开始时间必须早于结束时间'
       return
     }
     runningId.value = row.id
+    let result
     try {
-      const result = await fetchRunWorkflowDefinition(backtestForm.definitionId, {
+      result = await fetchRunWorkflowDefinition(backtestForm.definitionId, {
         startEntryKeys: ['backtest'],
         entryPoint: 'backtest',
         inputs: {
@@ -877,17 +891,20 @@
           slippageRate: backtestForm.slippageRate
         }
       })
-      backtestVisible.value = false
-      const run = result.executions[0]
-      ElMessage.success('回测已加入队列')
-      if (run) {
-        await router.push({
-          path: `/scheduler/execution/${run.id}/detail`,
-          query: { workflowId: row.code, workflowName: row.displayName }
-        })
-      }
+    } catch {
+      backtestError.value = '回测启动失败，请检查所选策略版本和工作流配置'
+      return
     } finally {
       runningId.value = undefined
+    }
+    backtestVisible.value = false
+    const run = result.executions[0]
+    ElMessage.success('回测已加入队列')
+    if (run) {
+      await router.push({
+        path: `/scheduler/execution/${run.id}/detail`,
+        query: { workflowId: row.code, workflowName: row.displayName }
+      })
     }
   }
 
@@ -1030,6 +1047,10 @@
 
   .backtest-form__full {
     width: 100%;
+  }
+
+  .backtest-form__error {
+    margin-bottom: 16px;
   }
 
   .create-template-description {
