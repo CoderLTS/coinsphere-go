@@ -1,5 +1,5 @@
 <template>
-  <div class="plugin-page" v-loading="loading">
+  <div class="plugin-page art-full-height" v-loading="loading">
     <header class="plugin-header">
       <div class="title-block">
         <span class="title-icon"><ArtSvgIcon icon="ri:puzzle-2-line" /></span>
@@ -284,9 +284,9 @@
 <style scoped lang="scss">
   .plugin-page {
     min-height: 100%;
-    padding: 24px;
+    padding: 0;
     color: var(--art-gray-900);
-    background: var(--art-gray-100);
+    background: transparent;
   }
 
   .plugin-header,
@@ -780,7 +780,7 @@
 
   @media (max-width: 700px) {
     .plugin-page {
-      padding: 12px;
+      padding: 0;
     }
 
     .plugin-header {
