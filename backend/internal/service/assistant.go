@@ -287,7 +287,7 @@ func (a *App) ConfirmAssistantWorkflow(ctx context.Context, messageID int64, pri
 		if err != nil {
 			return fmt.Errorf("%w: workflow proposal is no longer valid", ErrConflict)
 		}
-		workflow, err := createWorkflowRecord(tx, proposal.Name, proposal.Description, graph, principal.User.ID, time.Now().UTC())
+		workflow, err := createWorkflowRecord(tx, proposal.Name, proposal.Description, nil, graph, principal.User.ID, time.Now().UTC())
 		if err != nil {
 			return err
 		}

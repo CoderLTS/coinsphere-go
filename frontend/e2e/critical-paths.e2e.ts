@@ -214,6 +214,7 @@ const workflow = {
   id: 7,
   name: '批处理示例',
   description: 'E2E workflow',
+  groupId: 1,
   mode: 'batch',
   status: 'running',
   activeRevisionId: 11,
@@ -224,6 +225,11 @@ const workflow = {
   updatedAt: createdAt,
   runtime: { activityCursor: 0, healthSummary: 'idle', updatedAt: createdAt }
 }
+
+const workflowGroupFixtures = [
+  { id: 1, name: '策略组', sortOrder: 0, createdAt, updatedAt: createdAt },
+  { id: 2, name: '数据采集', sortOrder: 1, createdAt, updatedAt: createdAt }
+]
 
 const workflowRevision = {
   id: 11,
@@ -360,7 +366,13 @@ const nodeDefinitions = ['core.manual', 'core.constant', 'core.end'].map((type) 
 function userInfo(accessMode: AccessMode) {
   const authenticated = accessMode === 'authenticated'
   return {
-    permissions: authenticated ? ['scheduler.workflow_definitions.update'] : [],
+    permissions: authenticated
+      ? [
+          'scheduler.workflow_definitions.create',
+          'scheduler.workflow_definitions.update',
+          'scheduler.workflow_definitions.delete'
+        ]
+      : [],
     roleCodes: [authenticated ? 'R_SUPER' : 'R_GUEST'],
     userId: authenticated ? 1 : 0,
     username: authenticated ? 'e2e-user' : 'guest',
@@ -382,6 +394,8 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
   const unexpectedApiCalls: string[] = []
   const authApiCalls: string[] = []
   const schedulerApiCalls: string[] = []
+  let workflowGroupId: number | null = workflow.groupId
+  let workflowGroups = workflowGroupFixtures.map((group) => ({ ...group }))
 
   await page.route('**/*', async (route) => {
     const url = new URL(route.request().url())
@@ -407,7 +421,11 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
     const path = new URL(request.url()).pathname
     const method = request.method()
 
-    if (path.startsWith('/api/v1/workflows') || path.startsWith('/api/v1/batches')) {
+    if (
+      path.startsWith('/api/v1/workflows') ||
+      path.startsWith('/api/v1/workflow-groups') ||
+      path.startsWith('/api/v1/batches')
+    ) {
       schedulerApiCalls.push(`${method} ${path}`)
     }
     if (path.startsWith('/api/v1/auth/')) {
@@ -468,8 +486,58 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
       await fulfillApi(route, { items: [] })
       return
     }
+    if (method === 'GET' && path === '/api/v1/workflow-groups') {
+      await fulfillApi(route, { items: workflowGroups })
+      return
+    }
+    if (method === 'POST' && path === '/api/v1/workflow-groups') {
+      const { name } = request.postDataJSON() as { name: string }
+      const group = {
+        id: Math.max(0, ...workflowGroups.map((item) => item.id)) + 1,
+        name,
+        sortOrder: workflowGroups.length,
+        createdAt,
+        updatedAt: createdAt
+      }
+      workflowGroups.push(group)
+      await fulfillApi(route, group)
+      return
+    }
+    if (method === 'PUT' && path === '/api/v1/workflow-groups/order') {
+      const { groupIds } = request.postDataJSON() as { groupIds: number[] }
+      workflowGroups = groupIds.map((id, sortOrder) => ({
+        ...workflowGroups.find((group) => group.id === id)!,
+        sortOrder
+      }))
+      await fulfillApi(route, { items: workflowGroups })
+      return
+    }
+    if (method === 'PATCH' && /^\/api\/v1\/workflow-groups\/\d+$/.test(path)) {
+      const groupId = Number(path.split('/').pop())
+      const { name } = request.postDataJSON() as { name: string }
+      const group = workflowGroups.find((item) => item.id === groupId)!
+      group.name = name
+      await fulfillApi(route, group)
+      return
+    }
+    if (method === 'DELETE' && /^\/api\/v1\/workflow-groups\/\d+$/.test(path)) {
+      const groupId = Number(path.split('/').pop())
+      workflowGroups = workflowGroups.filter((item) => item.id !== groupId)
+      if (workflowGroupId === groupId) workflowGroupId = null
+      await fulfillApi(route, { id: groupId })
+      return
+    }
+    if (method === 'PATCH' && path === '/api/v1/workflows/group-assignment') {
+      const payload = request.postDataJSON() as {
+        workflowIds: number[]
+        groupId: number | null
+      }
+      if (payload.workflowIds.includes(workflow.id)) workflowGroupId = payload.groupId
+      await fulfillApi(route, { updated: payload.workflowIds.length })
+      return
+    }
     if (method === 'GET' && path === '/api/v1/workflows') {
-      await fulfillApi(route, { items: [workflow] })
+      await fulfillApi(route, { items: [{ ...workflow, groupId: workflowGroupId }] })
       return
     }
     if (method === 'GET' && path === '/api/v1/workflows/node-definitions') {
@@ -493,7 +561,7 @@ async function installBackendMocks(page: Page, accessMode: AccessMode) {
       return
     }
     if (method === 'GET' && path === '/api/v1/workflows/7') {
-      await fulfillApi(route, workflow)
+      await fulfillApi(route, { ...workflow, groupId: workflowGroupId })
       return
     }
     if (method === 'GET' && path === '/api/v1/workflows/7/revisions') {
@@ -708,12 +776,47 @@ test('超级管理员可以使用原节点列表页面', async ({ page }) => {
   expect(backend.unexpectedApiCalls).toEqual([])
 })
 
-test('超级管理员可以使用原工作流列表页面', async ({ page }) => {
+test('超级管理员可以按分组整理工作流', async ({ page }) => {
   const backend = await installBackendMocks(page, 'authenticated')
 
   await loginAsTestUser(page, '/scheduler/definition')
   await expect(page.getByText('批处理示例', { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: '查看执行记录', exact: true })).toBeVisible()
+  await expect(
+    page.locator('.workflow-group-filter--custom').filter({ hasText: '策略组' })
+  ).toContainText('1')
+
+  await page.getByRole('button', { name: '策略组', exact: false }).click()
+
+  const workflowRow = page.getByRole('row').filter({ hasText: '批处理示例' })
+  await workflowRow.getByRole('combobox').click()
+  await page.getByRole('option', { name: '未分组', exact: true }).click()
+  await expect(page.getByText('批处理示例', { exact: true })).not.toBeVisible()
+
+  await page.getByRole('button', { name: '未分组', exact: false }).click()
+  await expect(page.getByText('批处理示例', { exact: true })).toBeVisible()
+  await workflowRow.getByRole('checkbox').check()
+  await page.getByRole('button', { name: /移至分组/ }).click()
+  await page.getByRole('menuitem', { name: '数据采集', exact: true }).click()
+  await expect(page.getByText('批处理示例', { exact: true })).not.toBeVisible()
+
+  await page.getByRole('button', { name: '数据采集', exact: false }).click()
+  await expect(page.getByText('批处理示例', { exact: true })).toBeVisible()
+
+  await page.getByRole('button', { name: '管理分组 策略组', exact: true }).click()
+  await page.getByRole('menuitem', { name: '下移', exact: true }).click()
+  await expect.poll(() => backend.schedulerApiCalls).toContain('PUT /api/v1/workflow-groups/order')
+
+  await page.getByRole('button', { name: '管理分组 数据采集', exact: true }).click()
+  await page.getByRole('menuitem', { name: '删除分组', exact: true }).click()
+  await page.getByRole('button', { name: '删除', exact: true }).click()
+  await expect(page.getByText('批处理示例', { exact: true })).toBeVisible()
+  expect(backend.schedulerApiCalls).toEqual(
+    expect.arrayContaining([
+      'GET /api/v1/workflow-groups',
+      'PATCH /api/v1/workflows/group-assignment',
+      'DELETE /api/v1/workflow-groups/2'
+    ])
+  )
   expect(backend.unexpectedApiCalls).toEqual([])
 })
 

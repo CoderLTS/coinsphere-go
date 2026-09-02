@@ -124,6 +124,7 @@ export interface WorkflowDefinitionItem {
   version: number
   displayName: string
   description: string
+  groupId: number | null
   graph: WorkflowGraph
   isLatest: boolean
   isBuiltin: boolean
@@ -713,6 +714,7 @@ const loadDefinition = async (definitionID: number): Promise<WorkflowDefinitionI
     version: selected.revisionNumber,
     displayName: workflow.name,
     description: workflow.description,
+    groupId: workflow.groupId,
     graph: toLegacyGraph(selected.graph),
     isLatest: selected.id === revisions[0]?.id,
     isBuiltin: false,
