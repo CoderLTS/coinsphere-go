@@ -946,11 +946,15 @@ export async function fetchRunWorkflowDefinition(
   const decoded = decodeDefinitionID(definitionID)
   const workflowID = decoded.workflowID
   const [run, workflow, revisions] = await Promise.all([
-    createWorkflowRun(workflowID, {
-      entryPoint: params.entryPoint,
-      revisionId: params.revisionId || decoded.revisionID || undefined,
-      input: params.inputs
-    }),
+    createWorkflowRun(
+      workflowID,
+      {
+        entryPoint: params.entryPoint,
+        revisionId: params.revisionId || decoded.revisionID || undefined,
+        input: params.inputs
+      },
+      params.entryPoint !== 'backtest'
+    ),
     fetchWorkflow(workflowID),
     fetchWorkflowRevisions(workflowID)
   ])

@@ -102,27 +102,27 @@ func (a *App) CreateWorkflowRun(ctx context.Context, workflowID int64, payload W
 			entryPoint = "realtime"
 		}
 		if entryPoint != "realtime" && entryPoint != "backtest" {
-			return errors.New("workflow entryPoint must be realtime or backtest")
+			return errors.New("工作流运行入口无效")
 		}
 		if entryPoint == "realtime" && (workflow.Status != WorkflowStatusActive || workflow.ActiveRevisionID == nil) {
-			return fmt.Errorf("%w: workflow is not accepting runs", ErrConflict)
+			return fmt.Errorf("%w: 当前工作流未激活，无法运行", ErrConflict)
 		}
 		revisionID := payload.RevisionID
 		if entryPoint == "realtime" {
 			revisionID = *workflow.ActiveRevisionID
 		} else if revisionID <= 0 {
-			return errors.New("backtest revisionId is required")
+			return errors.New("请选择要回测的工作流版本")
 		}
 		var revision db.WorkflowRevision
 		if err := tx.Where("workflow_id = ? AND id = ?", workflowID, revisionID).First(&revision).Error; err != nil {
-			return errors.New("load workflow revision failed")
+			return errors.New("加载工作流版本失败")
 		}
 		graph, err := a.buildWorkflowRunGraphAt(revision.GraphJSON, entryPoint)
 		if err != nil {
-			return fmt.Errorf("%w: workflow entryPoint is unavailable", ErrConflict)
+			return fmt.Errorf("%w: 所选工作流版本的配置无效，无法从该入口运行", ErrConflict)
 		}
 		if entryPoint == "realtime" && graph.nodes[graph.order[0]].NodeType != "core.manual" {
-			return fmt.Errorf("%w: workflow does not use a manual trigger", ErrConflict)
+			return fmt.Errorf("%w: 工作流未使用手动触发节点", ErrConflict)
 		}
 		if err := enforceWorkflowBacklog(tx, workflowID); err != nil {
 			return err
@@ -134,10 +134,10 @@ func (a *App) CreateWorkflowRun(ctx context.Context, workflowID int64, payload W
 		}
 		var inputObject map[string]any
 		if json.Unmarshal(input, &inputObject) != nil || inputObject == nil {
-			return errors.New("workflow run input must be a JSON object")
+			return errors.New("工作流运行参数必须是 JSON 对象")
 		}
 		if entryPoint == "backtest" && validateWorkflowSchemaValue(graph.descriptors[graph.order[0]].InputSchema, inputObject) != nil {
-			return errors.New("workflow backtest input does not match its JSON Schema")
+			return errors.New("回测参数不符合所选工作流版本的要求")
 		}
 		run = db.WorkflowRun{
 			WorkflowID: workflowID, RevisionID: revision.ID, EntryPoint: entryPoint, InputJSON: string(input), TriggerType: "manual",
@@ -145,7 +145,7 @@ func (a *App) CreateWorkflowRun(ctx context.Context, workflowID int64, payload W
 			TriggeredAt: now, CreatedBy: &ownerID, ResultSummary: `{}`, CreatedAt: now, UpdatedAt: now,
 		}
 		if err := tx.Create(&run).Error; err != nil {
-			return errors.New("create workflow run failed")
+			return errors.New("创建工作流运行记录失败")
 		}
 		return nil
 	})
@@ -826,7 +826,7 @@ func (a *App) buildWorkflowRunGraphAt(raw, entryPoint string) (workflowRunGraph,
 	}
 	startID := validated.entryPoints[entryPoint]
 	if startID == "" {
-		return workflowRunGraph{}, errors.New("workflow entryPoint is unavailable")
+		return workflowRunGraph{}, errors.New("所选工作流版本不支持该运行方式")
 	}
 	return buildWorkflowRunGraph(graph, validated.nodes, validated.descriptors, startID), nil
 }

@@ -365,8 +365,16 @@ export interface WorkflowRunCreatePayload {
   input?: Record<string, unknown>
 }
 
-export const createWorkflowRun = (workflowId: number, params: WorkflowRunCreatePayload = {}) =>
-  request.post<WorkflowRun>({ url: `/api/v1/workflows/${workflowId}/runs`, params })
+export const createWorkflowRun = (
+  workflowId: number,
+  params: WorkflowRunCreatePayload = {},
+  showErrorMessage = true
+) =>
+  request.post<WorkflowRun>({
+    url: `/api/v1/workflows/${workflowId}/runs`,
+    params,
+    showErrorMessage
+  })
 
 export const fetchWorkflowRuns = (workflowId: number, params: WorkflowRunQuery = {}) =>
   request.get<Api.Common.PaginatedResponse<WorkflowRun>>({

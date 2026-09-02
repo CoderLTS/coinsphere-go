@@ -210,7 +210,7 @@ func respond(c *gin.Context, data any, err error, successMsg string) {
 			return
 		}
 		if errors.Is(err, service.ErrConflict) {
-			failStatus(c, http.StatusConflict, err.Error())
+			failStatus(c, http.StatusConflict, strings.TrimPrefix(err.Error(), service.ErrConflict.Error()+": "))
 			return
 		}
 		fail(c, err.Error())
