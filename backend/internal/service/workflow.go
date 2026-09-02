@@ -26,6 +26,7 @@ const (
 	WorkflowTemplateSchedule = "scheduled"
 	WorkflowTemplateEvent    = "event"
 	maxWorkflowGraphBytes    = 1 << 20
+	maxWorkflowRevisions     = 10
 )
 
 const blankWorkflowGraph = `{
@@ -436,6 +437,9 @@ func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payloa
 				return errors.New("update workflow runtime schedule failed")
 			}
 		}
+		if err := pruneWorkflowRevisions(tx, workflowID, revision.ID); err != nil {
+			return err
+		}
 		return nil
 	})
 	if err != nil {
@@ -446,6 +450,38 @@ func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payloa
 		return WorkflowRevisionView{}, err
 	}
 	return views[0], nil
+}
+
+func pruneWorkflowRevisions(tx *gorm.DB, workflowID, retainedRevisionID int64) error {
+	var revisionIDs []int64
+	if err := tx.Model(&db.WorkflowRevision{}).Where("workflow_id = ?", workflowID).
+		Order("revision_number DESC").Pluck("id", &revisionIDs).Error; err != nil {
+		return errors.New("list workflow revisions for pruning failed")
+	}
+	for index := len(revisionIDs) - 1; index >= maxWorkflowRevisions; index-- {
+		revisionID := revisionIDs[index]
+		var runCount int64
+		if err := tx.Model(&db.WorkflowRun{}).Where("workflow_id = ? AND revision_id = ?", workflowID, revisionID).
+			Count(&runCount).Error; err != nil {
+			return errors.New("check pruned workflow revision references failed")
+		}
+		if runCount > 0 {
+			return fmt.Errorf("%w: oldest workflow revision is still referenced by workflow runs", ErrConflict)
+		}
+		if err := tx.Model(&db.WorkflowNodeState{}).Where("workflow_id = ? AND revision_id = ?", workflowID, revisionID).
+			Update("revision_id", retainedRevisionID).Error; err != nil {
+			return errors.New("carry workflow node states forward failed")
+		}
+		if err := tx.Where("workflow_id = ? AND revision_id = ?", workflowID, revisionID).
+			Delete(&db.WorkflowSecretBinding{}).Error; err != nil {
+			return errors.New("delete pruned workflow revision secrets failed")
+		}
+		if err := tx.Where("workflow_id = ? AND id = ?", workflowID, revisionID).
+			Delete(&db.WorkflowRevision{}).Error; err != nil {
+			return errors.New("delete pruned workflow revision failed")
+		}
+	}
+	return nil
 }
 
 func workflowStateResetConflict(required map[string]bool) error {
