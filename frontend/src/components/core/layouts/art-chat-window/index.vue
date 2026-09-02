@@ -536,7 +536,7 @@
 
   const goToModelConfig = () => {
     visible.value = false
-    void router.push('/system/ai-models')
+    void router.push('/config/ai-models')
   }
 
   const resolveError = (error: unknown, fallbackKey: string) =>

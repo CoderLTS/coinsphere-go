@@ -433,7 +433,7 @@
       caption: '节点与页面',
       icon: 'ri:puzzle-2-line',
       tone: 'cyan',
-      path: '/system/plugins'
+      path: '/config/plugins'
     },
     {
       label: '用户管理',

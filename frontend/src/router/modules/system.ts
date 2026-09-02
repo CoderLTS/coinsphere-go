@@ -56,34 +56,6 @@ export const systemRoutes: AppRouteRecord = {
           { title: '删除', permissionCode: 'system.menus.delete' }
         ]
       }
-    },
-    {
-      path: 'ai-models',
-      name: 'AiModelConfig',
-      component: '/config/ai-model',
-      meta: {
-        title: 'menus.system.aiModels',
-        icon: 'ri:brain-line',
-        keepAlive: true,
-        roles: ['R_SUPER']
-      }
-    },
-    {
-      path: 'proxies',
-      name: 'OutboundProxies',
-      component: '/system/proxy',
-      meta: {
-        title: 'menus.system.proxies',
-        icon: 'ri:route-line',
-        keepAlive: true,
-        roles: ['R_SUPER'],
-        actionList: [
-          { title: '新增', permissionCode: 'system.proxies.create' },
-          { title: '编辑', permissionCode: 'system.proxies.update' },
-          { title: '删除', permissionCode: 'system.proxies.delete' },
-          { title: '检测', permissionCode: 'system.proxies.validate' }
-        ]
-      }
     }
   ]
 }
