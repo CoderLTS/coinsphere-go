@@ -131,7 +131,7 @@ func streamAssistantCompletion(ctx context.Context, runtime assistantModelRuntim
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "text/event-stream")
 	runtime.authorize(request)
-	response, err := runtime.client().Do(request)
+	response, err := runtime.client(0).Do(request)
 	if err != nil {
 		if response != nil {
 			response.Body.Close()
