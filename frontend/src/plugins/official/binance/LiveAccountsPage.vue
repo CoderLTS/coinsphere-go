@@ -1,54 +1,30 @@
 <template>
-  <main class="live-accounts-page">
-    <header class="page-head">
-      <div>
-        <span>Binance / 安全门禁</span>
-        <h1>真实交易账户放行</h1>
-      </div>
-      <div class="page-actions">
-        <ElButton :icon="Refresh" :loading="loading" @click="loadAccounts">刷新</ElButton>
-        <ElButton type="primary" :icon="Unlock" @click="openRelease">放行账户</ElButton>
-      </div>
-    </header>
-
+  <main class="art-full-height live-accounts-page">
     <ElAlert
       type="warning"
       :closable="false"
       title="账户放行不会自动激活工作流；真实下单仍需节点开关、全部风险上限和无提现权限密钥。"
     />
 
-    <section class="release-table" aria-label="真实交易账户放行记录">
-      <ElTable v-loading="loading" :data="accounts" :row-key="releaseKey">
-        <ElTableColumn prop="account" label="账户" min-width="180" />
-        <ElTableColumn label="市场" width="110">
-          <template #default="{ row }">{{ row.market === 'usdm' ? 'USD-M' : 'SPOT' }}</template>
-        </ElTableColumn>
-        <ElTableColumn label="状态" width="110">
-          <template #default="{ row }">
-            <ElTag :type="row.enabled ? 'danger' : 'info'" effect="plain">
-              {{ row.enabled ? '已放行' : '已停用' }}
-            </ElTag>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn label="确认人" width="110" prop="confirmedBy" />
-        <ElTableColumn label="更新时间" min-width="180">
-          <template #default="{ row }">{{ formatTime(row.updatedAt) }}</template>
-        </ElTableColumn>
-        <ElTableColumn label="操作" width="100" fixed="right">
-          <template #default="{ row }">
-            <ElButton
-              v-if="row.enabled"
-              text
-              type="danger"
-              :icon="Lock"
-              @click="disableAccount(row)"
-            >
-              停用
-            </ElButton>
-          </template>
-        </ElTableColumn>
-      </ElTable>
-    </section>
+    <ElCard class="art-table-card release-table" aria-label="真实交易账户放行记录">
+      <ArtTableHeader
+        v-model:columns="columnChecks"
+        :show-zebra="false"
+        :loading="loading"
+        @refresh="loadAccounts"
+      >
+        <template #left>
+          <ElButton type="primary" :icon="Unlock" @click="openRelease">放行账户</ElButton>
+        </template>
+      </ArtTableHeader>
+      <ArtTable
+        :loading="loading"
+        :columns="columns"
+        :data="accounts"
+        :row-key="releaseKey"
+        :stripe="false"
+      />
+    </ElCard>
 
     <ElDialog v-model="dialogOpen" title="放行真实交易账户" width="min(480px, calc(100vw - 32px))">
       <ElForm label-position="top">
@@ -78,13 +54,14 @@
 </template>
 
 <script setup lang="ts">
-  import { Lock, Refresh, Unlock } from '@element-plus/icons-vue'
-  import { ElMessageBox } from 'element-plus'
+  import { Lock, Unlock } from '@element-plus/icons-vue'
+  import { ElButton, ElMessageBox, ElTag } from 'element-plus'
   import {
     fetchBinanceLiveAccounts,
     updateBinanceLiveAccount,
     type BinanceLiveAccountRelease
   } from './api'
+  import { useTableColumns } from '@/hooks/core/useTableColumns'
   import { formatDateTime as formatTime } from '@/utils/date'
 
   defineOptions({ name: 'BinanceLiveAccountsPage' })
@@ -105,6 +82,55 @@
   const expectedConfirmation = computed(() => `ENABLE LIVE ${form.account.trim()} ${form.market}`)
   const validAccount = computed(() => /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(form.account.trim()))
   const releaseKey = (row: BinanceLiveAccountRelease) => `${row.account}:${row.market}`
+
+  const renderActions = (row: BinanceLiveAccountRelease) =>
+    row.enabled
+      ? h('div', { class: 'table-actions' }, [
+          h(ElButton, {
+            class: 'icon-action',
+            size: 'small',
+            circle: true,
+            plain: true,
+            type: 'danger',
+            icon: Lock,
+            title: '停用',
+            onClick: () => disableAccount(row)
+          })
+        ])
+      : null
+
+  const { columns, columnChecks } = useTableColumns<BinanceLiveAccountRelease>(() => [
+    { prop: 'account', label: '账户', minWidth: 180 },
+    {
+      prop: 'market',
+      label: '市场',
+      width: 110,
+      formatter: (row) => (row.market === 'usdm' ? 'USD-M' : 'SPOT')
+    },
+    {
+      prop: 'enabled',
+      label: '状态',
+      width: 110,
+      formatter: (row) =>
+        h(ElTag, { type: row.enabled ? 'danger' : 'info', effect: 'plain' }, () =>
+          row.enabled ? '已放行' : '已停用'
+        )
+    },
+    { prop: 'confirmedBy', label: '确认人', width: 110 },
+    {
+      prop: 'updatedAt',
+      label: '更新时间',
+      minWidth: 180,
+      formatter: (row) => formatTime(row.updatedAt)
+    },
+    {
+      prop: 'operation',
+      label: '操作',
+      width: 100,
+      fixed: 'right',
+      formatter: renderActions
+    }
+  ])
 
   const loadAccounts = async () => {
     loading.value = true
@@ -157,49 +183,30 @@
   .live-accounts-page {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 12px;
     min-width: 0;
     min-height: 100%;
-    padding: 20px;
+    padding: 0;
     color: var(--art-gray-900);
     background: var(--default-bg-color);
-  }
-
-  .page-head,
-  .page-actions {
-    display: flex;
-    gap: 12px;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  .page-head span {
-    font-size: 13px;
-    color: var(--art-gray-500);
-  }
-
-  .page-head h1 {
-    margin: 4px 0 0;
-    font-size: 24px;
-    letter-spacing: 0;
   }
 
   .release-table {
     min-width: 0;
     overflow: hidden;
-    background: var(--default-box-color);
-    border: 1px solid var(--art-gray-200);
-    border-radius: 6px;
+    margin-top: 0;
+  }
+
+  .table-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: center;
   }
 
   @media (width <= 640px) {
-    .page-head {
+    .live-accounts-page :deep(.el-alert) {
       align-items: flex-start;
-      flex-direction: column;
-    }
-
-    .page-actions {
-      width: 100%;
     }
   }
 </style>
