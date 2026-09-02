@@ -36,6 +36,7 @@ const IGNORABLE_SCRIPT_ERRORS = [
   'ResizeObserver loop completed with undelivered notifications.',
   'ResizeObserver loop limit exceeded'
 ]
+const PRELOAD_ERROR_RELOADED_KEY = 'coinsphere:preload-error-reloaded'
 
 function normalizeErrorMessage(message: Event | string): string {
   if (typeof message === 'string') {
@@ -108,6 +109,23 @@ export function registerPromiseErrorHandler() {
 }
 
 /**
+ * Vite 动态模块加载失败处理
+ */
+export function registerPreloadErrorHandler() {
+  window.addEventListener('vite:preloadError', (event) => {
+    event.preventDefault()
+
+    if (sessionStorage.getItem(PRELOAD_ERROR_RELOADED_KEY)) {
+      window.alert('页面资源加载失败，请刷新后重试。')
+      return
+    }
+
+    sessionStorage.setItem(PRELOAD_ERROR_RELOADED_KEY, '1')
+    window.location.reload()
+  })
+}
+
+/**
  * 资源加载错误处理 (img, script, css...)
  */
 export function registerResourceErrorHandler() {
@@ -139,6 +157,7 @@ export function registerResourceErrorHandler() {
 export function setupErrorHandle(app: App) {
   app.config.errorHandler = vueErrorHandler
   window.onerror = scriptErrorHandler
+  registerPreloadErrorHandler()
   registerPromiseErrorHandler()
   registerResourceErrorHandler()
 }
