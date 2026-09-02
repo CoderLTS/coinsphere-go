@@ -219,10 +219,10 @@
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 12px;
     min-width: 0;
     min-height: 100%;
-    padding: 20px;
+    padding: 0;
     color: var(--art-gray-900);
     background: var(--default-bg-color);
   }
@@ -485,7 +485,7 @@
 
   @media (max-width: 760px) {
     .market-chart-page {
-      padding: 16px;
+      padding: 0;
     }
 
     .filter-card {

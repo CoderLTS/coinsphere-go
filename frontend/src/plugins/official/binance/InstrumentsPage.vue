@@ -1,170 +1,211 @@
 <template>
-  <div class="market-metadata-page">
-    <header class="page-head">
-      <div>
-        <div class="page-context">
-          <ArtSvgIcon icon="ri:database-2-line" />
-          行情数据
-        </div>
-        <h1>币种元数据</h1>
-      </div>
-      <div class="head-actions">
-        <ElButton :icon="Refresh" :loading="symbolsLoading" @click="reloadSymbols">刷新</ElButton>
-        <ElButton type="primary" :icon="View" @click="openWorkflows">查看采集工作流</ElButton>
-      </div>
-    </header>
+  <div class="art-full-height market-metadata-page">
+    <ArtSearchBar
+      v-model="filters"
+      :items="formItems"
+      :show-expand="false"
+      @search="reloadSymbols"
+      @reset="resetFilters"
+    />
 
-    <section class="catalog-section">
-      <header class="section-head">
-        <div>
-          <h2>交易标的目录</h2>
-          <span>{{ symbolTotal.toLocaleString() }} 个结果</span>
-        </div>
-      </header>
+    <ElCard class="art-table-card">
+      <ArtTableHeader
+        v-model:columns="columnChecks"
+        :show-zebra="false"
+        :loading="loading"
+        @refresh="reloadSymbols"
+      >
+        <template #left>
+          <ElSpace wrap>
+            <div class="table-title">
+              <h1>币种元数据</h1>
+              <span>{{ pagination.total.toLocaleString() }} 个结果</span>
+            </div>
+            <ElButton type="primary" :icon="View" @click="openWorkflows"> 查看采集工作流 </ElButton>
+          </ElSpace>
+        </template>
+      </ArtTableHeader>
 
-      <div class="filters" aria-label="标的筛选">
-        <ElInput
-          v-model="filters.keyword"
-          clearable
-          :prefix-icon="Search"
-          placeholder="搜索交易对或基础资产"
-          @keyup.enter="reloadSymbols"
-          @clear="reloadSymbols"
-        />
-        <ElSelect v-model="filters.market" placeholder="全部市场" @change="reloadSymbols">
-          <ElOption label="全部市场" value="" />
-          <ElOption label="Spot" value="spot" />
-          <ElOption label="USD-M" value="usd_m" />
-        </ElSelect>
-        <ElSelect
-          v-model="filters.quoteAsset"
-          clearable
-          filterable
-          allow-create
-          placeholder="全部报价资产"
-          @change="reloadSymbols"
-        >
-          <ElOption label="USDT" value="USDT" />
-          <ElOption label="USDC" value="USDC" />
-        </ElSelect>
-        <ElRadioGroup v-model="filters.status" @change="reloadSymbols">
-          <ElRadioButton value="trading">交易中</ElRadioButton>
-          <ElRadioButton value="suspended">已暂停</ElRadioButton>
-          <ElRadioButton value="all">全部</ElRadioButton>
-        </ElRadioGroup>
-        <ElButton :icon="Search" @click="reloadSymbols">筛选</ElButton>
-      </div>
-
-      <div v-loading="symbolsLoading" class="symbol-table-wrap">
-        <ElTable :data="symbols" row-key="id" table-layout="fixed" @row-click="openSymbol">
-          <ElTableColumn label="交易对" min-width="180">
-            <template #default="{ row }">
-              <div class="symbol-cell">
-                <span class="symbol-avatar">{{ row.baseAsset.slice(0, 1) }}</span>
-                <div>
-                  <strong>{{ row.nativeSymbol }}</strong>
-                  <span>{{ row.baseAsset }} / {{ row.quoteAsset }}</span>
-                </div>
-              </div>
-            </template>
-          </ElTableColumn>
-          <ElTableColumn label="市场" width="110">
-            <template #default="{ row }">
-              <ElTag type="info" effect="plain" size="small">
-                {{ row.market === 'usd_m' ? 'USD-M' : 'SPOT' }}
-              </ElTag>
-            </template>
-          </ElTableColumn>
-          <ElTableColumn label="状态" width="120">
-            <template #default="{ row }">
-              <span class="status-cell" :class="{ 'is-paused': row.status !== 'trading' }">
-                <i></i>{{ row.status === 'trading' ? '交易中' : row.status }}
-              </span>
-            </template>
-          </ElTableColumn>
-          <ElTableColumn label="价格精度" min-width="140">
-            <template #default="{ row }"
-              ><span class="decimal-value">{{ row.priceTick }}</span></template
-            >
-          </ElTableColumn>
-          <ElTableColumn label="数量步长" min-width="140">
-            <template #default="{ row }"
-              ><span class="decimal-value">{{ row.quantityStep }}</span></template
-            >
-          </ElTableColumn>
-          <ElTableColumn label="最小数量" min-width="140">
-            <template #default="{ row }"
-              ><span class="decimal-value">{{ row.minQuantity }}</span></template
-            >
-          </ElTableColumn>
-          <ElTableColumn label="更新时间" min-width="180">
-            <template #default="{ row }"
-              ><span class="table-time">{{ formatTime(row.updatedAt) }}</span></template
-            >
-          </ElTableColumn>
-        </ElTable>
-        <div v-if="!symbolsLoading && !symbols.length" class="empty-state">
-          <ArtSvgIcon icon="ri:database-2-line" />
-          <strong>没有匹配的标的</strong>
-        </div>
-      </div>
-      <div v-if="hasMore" class="load-more">
-        <ElButton text :loading="symbolsLoading" @click="loadMore">加载更多</ElButton>
-      </div>
-    </section>
+      <ArtTable
+        :loading="loading"
+        :data="symbols"
+        :columns="columns"
+        :pagination="pagination"
+        :stripe="false"
+        @row-click="openSymbol"
+        @pagination:size-change="handleSizeChange"
+        @pagination:current-change="handleCurrentChange"
+      />
+    </ElCard>
   </div>
 </template>
 
 <script setup lang="ts">
-  import { Refresh, Search, View } from '@element-plus/icons-vue'
+  import { View } from '@element-plus/icons-vue'
+  import { ElTag } from 'element-plus'
   import {
     fetchMarketSymbols,
     type MarketStatus,
     type MarketSymbol,
     type MarketType
   } from './market-api'
+  import { useCursorPagination } from '@/hooks/core/useCursorPagination'
+  import { useTableColumns } from '@/hooks/core/useTableColumns'
   import { formatDateTime as formatTime } from '@/utils/date'
 
   defineOptions({ name: 'MarketMetadataPage' })
 
   const router = useRouter()
-  const symbolsLoading = ref(false)
+  const loading = ref(false)
   const symbols = ref<MarketSymbol[]>([])
-  const nextCursor = ref('')
-  const hasMore = ref(false)
-  const symbolTotal = ref(0)
   const filters = reactive<{
     keyword: string
     market: MarketType | ''
     quoteAsset: string
     status: MarketStatus
   }>({ keyword: '', market: '', quoteAsset: '', status: 'all' })
+  const { pagination, requestParams, applyPage, reset, moveTo } = useCursorPagination(20)
 
-  const loadSymbols = async (append = false) => {
-    symbolsLoading.value = true
+  const formItems = computed(() => [
+    {
+      label: '关键词',
+      key: 'keyword',
+      type: 'input',
+      props: { clearable: true, placeholder: '搜索交易对或基础资产' }
+    },
+    {
+      label: '市场',
+      key: 'market',
+      type: 'select',
+      props: {
+        clearable: true,
+        placeholder: '全部市场',
+        options: [
+          { label: 'Spot', value: 'spot' },
+          { label: 'USD-M', value: 'usd_m' }
+        ]
+      }
+    },
+    {
+      label: '报价资产',
+      key: 'quoteAsset',
+      type: 'select',
+      props: {
+        clearable: true,
+        filterable: true,
+        allowCreate: true,
+        placeholder: '全部报价资产',
+        options: [
+          { label: 'USDT', value: 'USDT' },
+          { label: 'USDC', value: 'USDC' }
+        ]
+      }
+    },
+    {
+      label: '状态',
+      key: 'status',
+      type: 'radiogroup',
+      props: {
+        options: [
+          { label: '交易中', value: 'trading' },
+          { label: '已暂停', value: 'suspended' },
+          { label: '全部', value: 'all' }
+        ]
+      }
+    }
+  ])
+
+  const renderStatus = (row: MarketSymbol) =>
+    h(ElTag, { type: row.status === 'trading' ? 'success' : 'info', effect: 'plain' }, () =>
+      row.status === 'trading' ? '交易中' : '已暂停'
+    )
+
+  const { columns, columnChecks } = useTableColumns<MarketSymbol>(() => [
+    {
+      prop: 'nativeSymbol',
+      label: '交易对',
+      minWidth: 180,
+      formatter: (row) =>
+        h('div', { class: 'symbol-cell' }, [
+          h('span', { class: 'symbol-avatar' }, row.baseAsset.slice(0, 1)),
+          h('div', [
+            h('strong', row.nativeSymbol),
+            h('span', `${row.baseAsset} / ${row.quoteAsset}`)
+          ])
+        ])
+    },
+    {
+      prop: 'market',
+      label: '市场',
+      width: 110,
+      formatter: (row) =>
+        h(ElTag, { type: 'info', effect: 'plain', size: 'small' }, () =>
+          row.market === 'usd_m' ? 'USD-M' : 'SPOT'
+        )
+    },
+    { prop: 'status', label: '状态', width: 110, formatter: renderStatus },
+    {
+      prop: 'priceTick',
+      label: '价格精度',
+      minWidth: 140,
+      formatter: (row) => h('span', { class: 'decimal-value' }, row.priceTick)
+    },
+    {
+      prop: 'quantityStep',
+      label: '数量步长',
+      minWidth: 140,
+      formatter: (row) => h('span', { class: 'decimal-value' }, row.quantityStep)
+    },
+    {
+      prop: 'minQuantity',
+      label: '最小数量',
+      minWidth: 140,
+      formatter: (row) => h('span', { class: 'decimal-value' }, row.minQuantity)
+    },
+    {
+      prop: 'updatedAt',
+      label: '更新时间',
+      minWidth: 180,
+      formatter: (row) => h('span', { class: 'table-time' }, formatTime(row.updatedAt))
+    }
+  ])
+
+  const loadSymbols = async () => {
+    loading.value = true
     try {
       const result = await fetchMarketSymbols({
-        cursor: append ? nextCursor.value : undefined,
-        limit: 100,
+        ...requestParams(),
         market: filters.market,
         quoteAsset: filters.quoteAsset,
         status: filters.status,
         keyword: filters.keyword.trim()
       })
-      symbols.value = append ? [...symbols.value, ...result.records] : result.records
-      nextCursor.value = result.nextCursor
-      hasMore.value = result.hasMore
-      symbolTotal.value = result.total
+      symbols.value = result.records
+      applyPage(result)
     } finally {
-      symbolsLoading.value = false
+      loading.value = false
     }
   }
 
   const reloadSymbols = () => {
-    nextCursor.value = ''
+    reset()
     void loadSymbols()
   }
-  const loadMore = () => void loadSymbols(true)
+
+  const resetFilters = () => {
+    Object.assign(filters, { keyword: '', market: '', quoteAsset: '', status: 'all' })
+    reloadSymbols()
+  }
+
+  const handleSizeChange = (size: number) => {
+    reset(size)
+    void loadSymbols()
+  }
+
+  const handleCurrentChange = (current: number) => {
+    if (moveTo(current)) void loadSymbols()
+  }
+
   const openWorkflows = () => void router.push('/scheduler/definition')
   const openSymbol = (row: MarketSymbol) => {
     void router.push({
@@ -180,58 +221,22 @@
   .market-metadata-page {
     display: flex;
     flex-direction: column;
-    gap: 20px;
     min-width: 0;
     min-height: 100%;
-    padding: 20px;
     color: var(--art-gray-900);
-    background: var(--default-bg-color);
   }
 
-  .page-head,
-  .head-actions,
-  .section-head,
-  .symbol-cell,
-  .status-cell {
+  .table-title {
     display: flex;
-    align-items: center;
-  }
-
-  .page-head {
-    gap: 16px;
-    justify-content: space-between;
+    gap: 10px;
+    align-items: baseline;
+    margin-right: 4px;
 
     h1 {
-      margin: 4px 0 0;
-      font-size: 24px;
-      letter-spacing: 0;
-    }
-  }
-
-  .page-context {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-    font-size: 13px;
-    color: var(--art-gray-500);
-  }
-
-  .head-actions {
-    gap: 8px;
-  }
-
-  .catalog-section {
-    min-width: 0;
-  }
-
-  .section-head {
-    justify-content: space-between;
-    margin-bottom: 14px;
-
-    h2 {
-      margin: 0 0 4px;
+      margin: 0;
       font-size: 18px;
-      letter-spacing: 0;
+      font-weight: 600;
+      color: var(--el-text-color-primary);
     }
 
     span {
@@ -240,23 +245,10 @@
     }
   }
 
-  .filters {
-    display: grid;
-    grid-template-columns: minmax(220px, 1fr) 140px 160px auto auto;
+  .symbol-cell {
+    display: flex;
     gap: 10px;
     align-items: center;
-    margin-bottom: 14px;
-  }
-
-  .symbol-table-wrap {
-    min-height: 280px;
-    overflow: hidden;
-    border: 1px solid var(--art-gray-200);
-    border-radius: 6px;
-  }
-
-  .symbol-cell {
-    gap: 10px;
 
     > div {
       display: flex;
@@ -284,24 +276,9 @@
     width: 32px;
     height: 32px;
     font-weight: 700;
-    color: #0e7490 !important;
-    background: #ecfeff;
+    color: var(--theme-color) !important;
+    background: var(--el-color-primary-light-9);
     border-radius: 6px;
-  }
-
-  .status-cell {
-    gap: 7px;
-
-    i {
-      width: 7px;
-      height: 7px;
-      background: #16a34a;
-      border-radius: 50%;
-    }
-
-    &.is-paused i {
-      background: #94a3b8;
-    }
   }
 
   .decimal-value,
@@ -310,52 +287,7 @@
     font-size: 12px;
   }
 
-  .empty-state {
-    display: grid;
-    gap: 10px;
-    place-content: center;
-    justify-items: center;
-    min-height: 280px;
-    color: var(--art-gray-500);
-
-    svg {
-      font-size: 34px;
-    }
-  }
-
-  .load-more {
-    display: flex;
-    justify-content: center;
-    padding-top: 12px;
-  }
-
-  @media (width <= 960px) {
-    .filters {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-  }
-
-  @media (width <= 640px) {
-    .market-metadata-page {
-      padding: 14px;
-    }
-
-    .page-head {
-      flex-direction: column;
-      align-items: flex-start;
-    }
-
-    .head-actions {
-      width: 100%;
-
-      :deep(.el-button) {
-        flex: 1;
-        min-width: 0;
-      }
-    }
-
-    .filters {
-      grid-template-columns: 1fr;
-    }
+  :deep(.el-table__row) {
+    cursor: pointer;
   }
 </style>
