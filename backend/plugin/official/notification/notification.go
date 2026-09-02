@@ -64,7 +64,7 @@ func (n *notificationRuntime) register(registrar sdk.Registrar) error {
 		{
 			Type: "official.notification.dingtalk", Version: "1.0.0", Kind: sdk.NodeKindAction,
 			Title: "钉钉通知", Description: "通过钉钉机器人发送通知", Category: "通知", Color: "#2563eb", Icon: "message-circle", Width: 220, Height: 72,
-			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"title":{"type":"string","title":"通知标题","minLength":1,"maxLength":160},"format":{"type":"string","title":"消息格式","enum":["text","markdown"],"enumLabels":["纯文本","Markdown"],"default":"markdown"},"signed":{"type":"boolean","title":"启用加签","default":false},"accessToken":{"type":"string","title":"Access Token","x-coinsphere-secret":true},"signingSecret":{"type":"string","title":"加签 Secret","x-coinsphere-secret":true}},"required":["title","format","signed","accessToken"],"additionalProperties":false}`),
+			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"title":{"type":"string","title":"通知标题","minLength":1,"maxLength":160},"format":{"type":"string","title":"消息格式","enum":["text","markdown"],"enumLabels":["纯文本","Markdown 文本"],"default":"markdown"},"signed":{"type":"boolean","title":"启用加签","default":false},"accessToken":{"type":"string","title":"访问令牌","x-coinsphere-secret":true},"signingSecret":{"type":"string","title":"签名密钥","x-coinsphere-secret":true}},"required":["title","format","signed","accessToken"],"additionalProperties":false}`),
 			UISchema:     json.RawMessage(`{"ui:order":["title","format","signed","accessToken","signingSecret"]}`),
 		},
 		{

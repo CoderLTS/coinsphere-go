@@ -7,7 +7,7 @@
     @update="emitUpdate"
   />
 
-  <ElFormItem :label="String(schema?.properties?.instrument?.title || 'Instrument')">
+  <ElFormItem :label="String(schema?.properties?.instrument?.title || '交易对')">
     <ElSelect
       :model-value="config.instrument"
       class="market-data-editor__full"

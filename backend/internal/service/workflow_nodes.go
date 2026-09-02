@@ -76,7 +76,7 @@ func (a *App) workflowNodeDescriptors() map[string]sdk.NodeDescriptor {
 
 func coreWorkflowNodeDescriptors() []sdk.NodeDescriptor {
 	empty := json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false}`)
-	valueInput := json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"value":{"type":"object","title":"Value","x-coinsphere-field-source":true}},"additionalProperties":false}`)
+	valueInput := json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"value":{"type":"object","title":"值","x-coinsphere-field-source":true}},"additionalProperties":false}`)
 	items := []sdk.NodeDescriptor{
 		{
 			Type: "core.manual", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
@@ -86,21 +86,21 @@ func coreWorkflowNodeDescriptors() []sdk.NodeDescriptor {
 		},
 		{
 			Type: "core.schedule", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
-			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"everySeconds":{"type":"integer","title":"Interval (seconds)","minimum":60,"maximum":86400,"default":3600},"cronExpression":{"type":"string","title":"Cron expression","minLength":1,"maxLength":255},"timeZone":{"type":"string","title":"Time zone","minLength":1,"maxLength":255,"default":"Asia/Shanghai"}},"oneOf":[{"required":["everySeconds"]},{"required":["cronExpression","timeZone"]}],"additionalProperties":false}`),
+			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"everySeconds":{"type":"integer","title":"执行间隔（秒）","minimum":60,"maximum":86400,"default":3600},"cronExpression":{"type":"string","title":"Cron 表达式","minLength":1,"maxLength":255},"timeZone":{"type":"string","title":"时区","minLength":1,"maxLength":255,"default":"Asia/Shanghai"}},"oneOf":[{"required":["everySeconds"]},{"required":["cronExpression","timeZone"]}],"additionalProperties":false}`),
 			UISchema:     json.RawMessage(`{"ui:order":["everySeconds","cronExpression","timeZone"]}`), InputSchema: empty,
 			OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"triggeredAt":{"type":"string","format":"date-time"}},"required":["triggeredAt"],"additionalProperties":false}`),
 			Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
 		},
 		{
 			Type: "core.event", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
-			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"types":{"type":"array","title":"Event types","items":{"type":"string","minLength":1,"maxLength":255},"minItems":1,"uniqueItems":true},"source":{"type":"string","title":"Source","maxLength":500},"subject":{"type":"string","title":"Subject","maxLength":500}},"required":["types"],"additionalProperties":false}`),
+			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"types":{"type":"array","title":"事件类型","items":{"type":"string","minLength":1,"maxLength":255},"minItems":1,"uniqueItems":true},"source":{"type":"string","title":"事件来源","maxLength":500},"subject":{"type":"string","title":"事件主题","maxLength":500}},"required":["types"],"additionalProperties":false}`),
 			UISchema:     json.RawMessage(`{"ui:order":["types","source","subject"]}`), InputSchema: empty,
 			OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object"}`),
 			Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
 		},
 		{
 			Type: "core.constant", Version: "1.0.0", Kind: sdk.NodeKindAction,
-			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"value":{"type":"string","title":"Value","description":"Value emitted by this node."}},"required":["value"],"additionalProperties":false}`),
+			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"value":{"type":"string","title":"值","description":"该节点输出的值。"}},"required":["value"],"additionalProperties":false}`),
 			UISchema:     json.RawMessage(`{"ui:order":["value"],"value":{"ui:widget":"textarea"}}`), InputSchema: empty,
 			OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"value":{"type":"string"}},"required":["value"],"additionalProperties":false}`),
 			Pool:         sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
@@ -108,20 +108,20 @@ func coreWorkflowNodeDescriptors() []sdk.NodeDescriptor {
 		{
 			Type: "core.end", Version: "1.0.0", Kind: sdk.NodeKindAction,
 			ConfigSchema: empty, UISchema: json.RawMessage(`{"ui:order":[]}`),
-			InputSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"result":{"type":"string","title":"Result","x-coinsphere-field-source":true}},"additionalProperties":false}`),
+			InputSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"result":{"type":"string","title":"执行结果","x-coinsphere-field-source":true}},"additionalProperties":false}`),
 			OutputSchema: empty, Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
 		},
 		{
 			Type: "core.human_approval", Version: "1.0.0", Kind: sdk.NodeKindAction,
-			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"decisionMode":{"type":"string","title":"Decision mode","enum":["human","auto"],"default":"human"},"taskType":{"type":"string","title":"Task type","minLength":1,"maxLength":64,"default":"approval"},"prompt":{"type":"string","title":"Prompt","maxLength":500,"default":"Review this workflow action."},"expiresSeconds":{"type":"integer","title":"Expires after (seconds)","minimum":60,"maximum":604800,"default":86400}},"required":["taskType","prompt","expiresSeconds"],"additionalProperties":false}`),
+			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"decisionMode":{"type":"string","title":"决策方式","enum":["human","auto"],"default":"human"},"taskType":{"type":"string","title":"任务类型","minLength":1,"maxLength":64,"default":"approval"},"prompt":{"type":"string","title":"提示内容","maxLength":500,"default":"Review this workflow action."},"expiresSeconds":{"type":"integer","title":"有效时间（秒）","minimum":60,"maximum":604800,"default":86400}},"required":["taskType","prompt","expiresSeconds"],"additionalProperties":false}`),
 			UISchema:     json.RawMessage(`{"ui:order":["decisionMode","taskType","prompt","expiresSeconds"]}`),
-			InputSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"businessKey":{"type":"string","title":"Business key","minLength":1,"maxLength":256,"x-coinsphere-field-source":true}},"required":["businessKey"],"additionalProperties":false}`),
+			InputSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"businessKey":{"type":"string","title":"业务标识","minLength":1,"maxLength":256,"x-coinsphere-field-source":true}},"required":["businessKey"],"additionalProperties":false}`),
 			OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"taskId":{"type":"integer"},"status":{"type":"string","enum":["approved","rejected","expired","superseded"]},"decidedAt":{"type":"string","format":"date-time"}},"required":["taskId","status","decidedAt"],"additionalProperties":false}`),
 			Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectHumanAction, State: sdk.StateStateless,
 		},
 		{
 			Type: "core.loop", Version: "1.0.0", Kind: sdk.NodeKindAction,
-			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"maxIterations":{"type":"integer","title":"Maximum iterations","minimum":1,"maximum":100,"default":10},"timeoutSeconds":{"type":"integer","title":"Absolute timeout (seconds)","minimum":1,"maximum":86400,"default":60},"exitCondition":{"type":"string","title":"Boolean exit condition","minLength":1,"maxLength":4096,"default":"input.iteration >= 1"},"body":{"type":"object","title":"Embedded DAG","default":{"schemaVersion":1,"nodes":[{"nodeInstanceId":"item","nodeType":"core.loop_item","nodeVersion":"1.0.0","config":{},"position":{"x":80,"y":80}},{"nodeInstanceId":"done","nodeType":"core.loop_end","nodeVersion":"1.0.0","config":{},"position":{"x":360,"y":80}}],"edges":[{"edgeId":"item-done","sourceNodeInstanceId":"item","sourcePort":"out","targetNodeInstanceId":"done","targetPort":"in"}]}}},"required":["maxIterations","timeoutSeconds","exitCondition","body"],"additionalProperties":false}`),
+			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"maxIterations":{"type":"integer","title":"最大循环次数","minimum":1,"maximum":100,"default":10},"timeoutSeconds":{"type":"integer","title":"总超时时间（秒）","minimum":1,"maximum":86400,"default":60},"exitCondition":{"type":"string","title":"布尔退出条件","minLength":1,"maxLength":4096,"default":"input.iteration >= 1"},"body":{"type":"object","title":"内嵌流程","default":{"schemaVersion":1,"nodes":[{"nodeInstanceId":"item","nodeType":"core.loop_item","nodeVersion":"1.0.0","config":{},"position":{"x":80,"y":80}},{"nodeInstanceId":"done","nodeType":"core.loop_end","nodeVersion":"1.0.0","config":{},"position":{"x":360,"y":80}}],"edges":[{"edgeId":"item-done","sourceNodeInstanceId":"item","sourcePort":"out","targetNodeInstanceId":"done","targetPort":"in"}]}}},"required":["maxIterations","timeoutSeconds","exitCondition","body"],"additionalProperties":false}`),
 			UISchema:     json.RawMessage(`{"ui:order":["maxIterations","timeoutSeconds","exitCondition","body"],"exitCondition":{"ui:widget":"textarea"}}`),
 			InputSchema:  valueInput,
 			OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"iterations":{"type":"integer"},"exited":{"type":"boolean"},"value":{"type":"object"}},"required":["iterations","exited","value"],"additionalProperties":false}`),
