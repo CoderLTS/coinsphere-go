@@ -234,9 +234,7 @@
       "user": "User Manage",
       "role": "Role Manage",
       "userCenter": "User Center",
-      "menu": "Menu Manage",
-      "aiModels": "AI Models",
-      "proxies": "Proxy Configuration"
+      "menu": "Menu Manage"
     },
     "trading": {
       "title": "Trading",
@@ -258,6 +256,9 @@
     "config": {
       "title": "Configuration",
       "overview": "Configuration Overview",
+      "aiModels": "AI Models",
+      "proxies": "Proxy Configuration",
+      "plugins": "Plugins",
       "notifyChannels": "Notification Channels",
       "notifyRules": "Notification Rules"
     }

@@ -234,9 +234,7 @@
       "user": "用户管理",
       "role": "角色管理",
       "userCenter": "个人中心",
-      "menu": "菜单管理",
-      "aiModels": "模型配置",
-      "proxies": "代理配置"
+      "menu": "菜单管理"
     },
     "trading": {
       "title": "交易管理",
@@ -258,6 +256,9 @@
     "config": {
       "title": "配置管理",
       "overview": "配置概览",
+      "aiModels": "模型配置",
+      "proxies": "代理配置",
+      "plugins": "插件管理",
       "notifyChannels": "通知渠道",
       "notifyRules": "通知规则"
     }
