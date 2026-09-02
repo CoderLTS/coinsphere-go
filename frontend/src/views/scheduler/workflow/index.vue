@@ -639,7 +639,6 @@
       const { value } = await ElMessageBox.prompt('', title, {
         inputValue: initialValue,
         inputPlaceholder: '请输入分组名称',
-        inputAttributes: { maxlength: 80 },
         inputValidator: (input) => {
           const length = [...String(input || '').trim()].length
           return (length > 0 && length <= 80) || '分组名称须为 1 至 80 个字符'
