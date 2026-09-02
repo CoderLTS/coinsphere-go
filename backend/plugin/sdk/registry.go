@@ -26,6 +26,7 @@ var assistantQueryNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,47}$`)
 type PluginDescriptor struct {
 	ID              string
 	Name            string
+	Menu            PluginMenuDescriptor
 	Version         string
 	Contributes     []string
 	RequiresPlugins map[string]string
@@ -116,6 +117,17 @@ func NewRegistry() *Registry {
 func (r *Registry) RegisterPlugin(plugin PluginDescriptor, host Host, register RegisterFunc) error {
 	if err := validatePluginDescriptor(plugin); err != nil {
 		return fmt.Errorf("plugin %q: %w", plugin.ID, err)
+	}
+	plugin.Menu.Title = strings.TrimSpace(plugin.Menu.Title)
+	plugin.Menu.Parent = strings.TrimSpace(plugin.Menu.Parent)
+	if plugin.Menu.Title == "" {
+		plugin.Menu.Title = plugin.Name
+	}
+	if strings.TrimSpace(plugin.Menu.Icon) == "" {
+		plugin.Menu.Icon = "ri:puzzle-2-line"
+	}
+	if plugin.Menu.Mode == "" {
+		plugin.Menu.Mode = PluginMenuOwn
 	}
 	if register == nil {
 		return fmt.Errorf("plugin %q: register function is required", plugin.ID)
@@ -328,7 +340,7 @@ func (r *Registry) Pages() []RegisteredPage {
 	pages := make([]RegisteredPage, 0, len(r.pages))
 	for key, page := range r.pages {
 		pluginID, _, _ := strings.Cut(key, "/")
-		pages = append(pages, RegisteredPage{PluginID: pluginID, PageDescriptor: page})
+		pages = append(pages, RegisteredPage{PluginID: pluginID, Menu: r.plugins[pluginID].Menu, PageDescriptor: page})
 	}
 	sort.Slice(pages, func(i, j int) bool {
 		return pages[i].PluginID+"/"+pages[i].PageKey < pages[j].PluginID+"/"+pages[j].PageKey
@@ -764,6 +776,15 @@ func validatePluginDescriptor(plugin PluginDescriptor) error {
 	}
 	if strings.TrimSpace(plugin.Name) == "" {
 		return errors.New("plugin name is required")
+	}
+	if plugin.Menu.Mode != "" && plugin.Menu.Mode != PluginMenuOwn && plugin.Menu.Mode != PluginMenuExisting && plugin.Menu.Mode != PluginMenuDirect {
+		return fmt.Errorf("invalid plugin menu mode %q", plugin.Menu.Mode)
+	}
+	if plugin.Menu.Mode == PluginMenuExisting && strings.TrimSpace(plugin.Menu.Parent) == "" {
+		return errors.New("existing plugin menu requires a parent")
+	}
+	if plugin.Menu.Mode != PluginMenuExisting && strings.TrimSpace(plugin.Menu.Parent) != "" {
+		return errors.New("plugin menu parent is only valid for existing menu mode")
 	}
 	if _, err := semver.StrictNewVersion(plugin.Version); err != nil {
 		return errors.New("plugin version must be strict SemVer")

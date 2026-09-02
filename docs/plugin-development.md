@@ -53,6 +53,7 @@ manifest 中的路径使用 `/`，必须是插件根目录内的相对路径。�
   "schemaVersion": 1,
   "id": "example.hello",
   "name": "Hello Plugin",
+  "menu": { "mode": "own", "title": "Hello", "icon": "ri:puzzle-line" },
   "version": "1.0.0",
   "sdkMajor": 3,
   "requiresCore": ">=3.0.0 <4.0.0",
@@ -77,6 +78,7 @@ manifest 中的路径使用 `/`，必须是插件根目录内的相对路径。�
 | `schemaVersion`        | 当前只能是 `1`                                                     |
 | `id`                   | 至少两个小写点分段，可包含数字和段内连字符；同时决定插件 schema 名 |
 | `name`                 | 非空显示名                                                         |
+| `menu`                 | 可选菜单定位：`own` 自建顶级菜单（默认）、`existing` 挂到现有顶级菜单（需 `parent`）、`direct` 页面直接作为顶级菜单 |
 | `version`              | 严格 SemVer，例如 `1.2.3`                                          |
 | `sdkMajor`             | 必须等于当前 SDK major `3`                                         |
 | `requiresCore`         | 合法 SemVer constraint，必须包含当前 Core `3.0.0`                  |
