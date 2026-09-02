@@ -258,7 +258,9 @@ const nodeLabel = (type: string, fallback = type) =>
 const schemaTitleLabels: Record<string, string> = {
   Value: '值',
   'Interval (seconds)': '执行间隔（秒）',
-  Markets: '市场',
+  'Cron expression': 'Cron 表达式',
+  'Time zone': '时区',
+  Markets: '市场类型',
   'Quote assets': '报价资产',
   'Base asset allowlist': '基础资产白名单',
   'Base asset denylist': '基础资产黑名单',
@@ -275,7 +277,7 @@ const schemaTitleLabels: Record<string, string> = {
   'Business key': '业务标识',
   'Maximum iterations': '最大循环次数',
   'Absolute timeout (seconds)': '总超时时间（秒）',
-  'Boolean exit condition': '退出条件',
+  'Boolean exit condition': '布尔退出条件',
   'Embedded DAG': '内嵌流程',
   URL: '请求地址',
   Method: '请求方法',
@@ -331,6 +333,8 @@ const schemaTitleLabels: Record<string, string> = {
 }
 
 const schemaFieldLabels: Record<string, string> = {
+  action: '操作',
+  pathEntered: '已进入上游路径',
   eventTime: '事件时间',
   strategyId: '策略标识',
   strategyVersion: '策略版本',
@@ -347,6 +351,9 @@ const schemaFieldLabels: Record<string, string> = {
 const schemaEnumLabels: Record<string, Record<string, string>> = {
   decisionMode: { human: '人工确认', auto: '自动执行' },
   market: { spot: '现货', usdm: 'U 本位合约' },
+  targetMode: { fixed: '固定目标仓位', input: '引用上游小数' },
+  format: { text: '纯文本', markdown: 'Markdown 文本' },
+  security: { implicit_tls: 'TLS', starttls: 'STARTTLS' },
   mode: { rise: '上涨', fall: '下跌', absolute: '绝对涨跌幅', amplitude: '最高最低振幅' },
   direction: { above: '高于阈值', below: '低于阈值' },
   signal: {
@@ -369,6 +376,10 @@ const schemaEnumLabels: Record<string, Record<string, string>> = {
     expired: '已过期',
     superseded: '已替代'
   }
+}
+
+const schemaDescriptionLabels: Record<string, string> = {
+  'Value emitted by this node.': '该节点输出的值。'
 }
 const legacyNodeTypes: Record<string, string> = {
   'core.manual': 'start.manual',
@@ -405,14 +416,22 @@ const localizeSchemaProperties = (
   Object.fromEntries(
     Object.entries(properties).map(([key, schema]) => {
       const title = String(schema.title || '')
+      const existingEnumLabels = Array.isArray(schema.enumLabels) ? schema.enumLabels : []
       const enumLabels = (schema.enum as unknown[] | undefined)?.map(
-        (value) => schemaEnumLabels[key]?.[String(value)] || String(value)
+        (value, index) =>
+          schemaEnumLabels[key]?.[String(value)] || existingEnumLabels[index] || String(value)
       )
       return [
         key,
         {
           ...schema,
           title: schemaTitleLabels[title] || schemaFieldLabels[key] || title || key,
+          ...(schema.description
+            ? {
+                description:
+                  schemaDescriptionLabels[String(schema.description)] || String(schema.description)
+              }
+            : {}),
           ...(enumLabels ? { enumLabels } : {}),
           ...(schema.properties
             ? {

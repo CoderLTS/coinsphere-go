@@ -17,15 +17,15 @@ import (
 var quantMarketSignalInputSchema = json.RawMessage(`{
   "$schema":"https://json-schema.org/draft/2020-12/schema","type":"object",
   "properties":{
-    "venue":{"type":"string","title":"Venue","pattern":"^[a-z][a-z0-9_-]{1,31}$","x-coinsphere-field-source":true},
-    "market":{"type":"string","title":"Market","enum":["spot","usdm"],"x-coinsphere-field-source":true},
-    "instrument":{"type":"string","title":"Instrument","pattern":"^[A-Z0-9]{2,32}$","x-coinsphere-field-source":true},
-    "interval":{"type":"string","title":"Interval","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"],"x-coinsphere-field-source":true},
-    "name":{"type":"string","title":"Signal name","minLength":1,"maxLength":80,"x-coinsphere-field-source":true},
-    "indicator":{"type":"string","title":"Indicator","minLength":1,"maxLength":64,"x-coinsphere-field-source":true},
-    "candleCloseTime":{"type":"string","title":"Candle close time","format":"date-time","x-coinsphere-field-source":true},
-    "summary":{"type":"string","title":"Summary","minLength":1,"maxLength":2000,"x-coinsphere-field-source":true},
-    "values":{"type":"object","title":"Values","additionalProperties":{"type":"string"},"x-coinsphere-field-source":true}
+    "venue":{"type":"string","title":"交易所","pattern":"^[a-z][a-z0-9_-]{1,31}$","x-coinsphere-field-source":true},
+    "market":{"type":"string","title":"市场类型","enum":["spot","usdm"],"x-coinsphere-field-source":true},
+    "instrument":{"type":"string","title":"交易对","pattern":"^[A-Z0-9]{2,32}$","x-coinsphere-field-source":true},
+    "interval":{"type":"string","title":"K 线周期","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"],"x-coinsphere-field-source":true},
+    "name":{"type":"string","title":"信号名称","minLength":1,"maxLength":80,"x-coinsphere-field-source":true},
+    "indicator":{"type":"string","title":"指标","minLength":1,"maxLength":64,"x-coinsphere-field-source":true},
+    "candleCloseTime":{"type":"string","title":"K 线收盘时间","format":"date-time","x-coinsphere-field-source":true},
+    "summary":{"type":"string","title":"摘要","minLength":1,"maxLength":2000,"x-coinsphere-field-source":true},
+    "values":{"type":"object","title":"数值","additionalProperties":{"type":"string"},"x-coinsphere-field-source":true}
   },
   "required":["venue","market","instrument","interval","name","indicator","candleCloseTime","summary","values"],
   "additionalProperties":false
