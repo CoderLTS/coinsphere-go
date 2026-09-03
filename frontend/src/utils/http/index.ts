@@ -144,6 +144,9 @@ async function request<T = any>(config: ExtendedAxiosRequestConfig): Promise<T> 
     config.params = undefined
   }
 
+  // 记录请求发出时的会话，避免旧请求的迟到 401 清掉新登录态。
+  const requestAccessToken = useUserStore().accessToken
+
   try {
     const res = await axiosInstance.request<BaseResponse<T>>(config)
 
@@ -157,8 +160,11 @@ async function request<T = any>(config: ExtendedAxiosRequestConfig): Promise<T> 
     return res.data.data as T
   } catch (error) {
     if (error instanceof HttpError && error.code === ApiStatus.unauthorized) {
-      useUserStore().clearSession()
-      if (config.showErrorMessage !== false) showUnauthorizedError(error)
+      const userStore = useUserStore()
+      if (userStore.accessToken === requestAccessToken) {
+        userStore.clearSession()
+        if (config.showErrorMessage !== false) showUnauthorizedError(error)
+      }
       return Promise.reject(error)
     }
 
