@@ -177,10 +177,7 @@
     validateMagnet
   } from '../canvas-connection-rules'
   import { LOOP_NEXT_BRANCH } from '../node-registry'
-  import {
-    WORKFLOW_CATEGORY_ORDER,
-    workflowCategoryLabel
-  } from '../node-materials'
+  import { WORKFLOW_CATEGORY_ORDER, workflowCategoryLabel } from '../node-materials'
   import {
     createDomainEdgeFromForm,
     mapDomainGraphToX6,
@@ -292,13 +289,12 @@
   const searchTokens = computed(() =>
     materialSearch.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
   )
-  const hasMaterialFilters = computed(
-    () =>
-      Boolean(
-        searchTokens.value.length ||
-          materialMode.value === 'recent' ||
-          materialCategory.value !== 'all'
-      )
+  const hasMaterialFilters = computed(() =>
+    Boolean(
+      searchTokens.value.length ||
+        materialMode.value === 'recent' ||
+        materialCategory.value !== 'all'
+    )
   )
 
   const matchesMaterialSearch = (item: WorkflowMaterialItem) => {
@@ -384,9 +380,10 @@
       const raw = localStorage.getItem('coinsphere.workflow.material-recent.v1')
       const parsed = raw ? JSON.parse(raw) : []
       return Array.isArray(parsed)
-        ? [
-            ...new Set(parsed.filter((item): item is string => typeof item === 'string'))
-          ].slice(0, 6)
+        ? [...new Set(parsed.filter((item): item is string => typeof item === 'string'))].slice(
+            0,
+            6
+          )
         : []
     } catch {
       return []
@@ -474,9 +471,7 @@
   const visibleMaterialCount = computed(
     () =>
       new Set(
-        filteredMaterialGroups.value.flatMap((group) =>
-          group.items.map((item) => item.typeCode)
-        )
+        filteredMaterialGroups.value.flatMap((group) => group.items.map((item) => item.typeCode))
       ).size
   )
 
