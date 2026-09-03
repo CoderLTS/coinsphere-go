@@ -11,11 +11,11 @@ CoinSphere 需要一个统一入口回答平台问题、查询核心与插件数
 ## 决策
 
 - 助手是 Core 平台能力，仅向 `R_SUPER` 开放；不提供智能体配置、模板、绑定或新闻专用模式。
-- Core 持有全局 OpenAI-compatible 模型配置、会话、消息、工具循环、工作流提案和确认事务。API Key 使用 `SecretCipher` 加密，只返回掩码。
+- Core 持有全局 OpenAI-compatible 模型配置、会话、消息、工具循环和工作流创建事务。API Key 使用 `SecretCipher` 加密，只返回掩码。
 - 模型连接允许管理员指定 HTTP/HTTPS 公网、私网、IP 或本地地址，但禁用环境代理和重定向，并限制超时与响应大小。
 - Core 工具只读查询平台数据。插件只能通过 SDK `assistantQueries` 注册 `SystemScope` 查询；输入由 JSON Schema 校验，返回值必须是 64 KiB 内的合法 JSON。
 - 模型使用 Chat Completions `tools` 协议，最多执行六轮。前端只接收工具名称和状态，不接收参数、结果、密钥或原始载荷。
-- 工作流方案必须按实时节点目录生成并由 Core 完整校验。方案只保存在助手消息元数据中；用户确认后，Core 在单个事务中创建 `inactive` 工作流、初始修订和运行时。确认幂等，绝不自动激活或运行。
+- 工作流图必须按实时节点目录生成并由 Core 完整校验。助手调用 `create_workflow` 后，Core 在单个事务中直接创建 `inactive` 工作流、初始修订和运行时；绝不自动激活或运行。
 - 保留 `official.ai.model_call` 的既有节点契约，平台助手不通过插件实现，也不改变工作流模型调用行为。
 
 ## 结果

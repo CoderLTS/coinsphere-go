@@ -431,22 +431,10 @@ declare namespace Api {
       lastMessageAt: string
     }
 
-    interface WorkflowProposal {
-      name: string
-      description: string
-      nodeCount: number
-      edgeCount: number
-      nodeTypes: string[]
-      missingSecrets: string[]
-      workflowId?: number
-      editUrl?: string
-    }
-
     interface Message {
       id: number
       role: MessageRole
       content: string
-      proposal?: WorkflowProposal
       createdAt: string
     }
 
@@ -457,12 +445,6 @@ declare namespace Api {
 
     interface StreamRequest {
       text: string
-    }
-
-    interface WorkflowCreateResult {
-      workflowId: number
-      status: 'inactive'
-      editUrl: string
     }
   }
 

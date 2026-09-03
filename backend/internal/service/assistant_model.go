@@ -43,11 +43,11 @@ type assistantToolDefinitionFunction struct {
 	Parameters  json.RawMessage `json:"parameters"`
 }
 
-type assistantToolExecution func(context.Context, json.RawMessage) (json.RawMessage, *assistantWorkflowProposal, error)
+type assistantToolExecution func(context.Context, json.RawMessage) (json.RawMessage, *assistantWorkflowCreateSummary, error)
 
 type assistantRunResult struct {
 	Content  string
-	Proposal *assistantWorkflowProposal
+	Workflow *assistantWorkflowCreateSummary
 }
 
 type assistantCompletion struct {
@@ -62,7 +62,7 @@ func (a *App) runAssistantModel(ctx context.Context, runtime assistantModelRunti
 	messages = append(messages, history...)
 	contentParts := make([]string, 0, 8)
 	contentBytes := 0
-	var proposal *assistantWorkflowProposal
+	var workflow *assistantWorkflowCreateSummary
 
 	for round := 0; round < assistantToolRoundLimit; round++ {
 		completion, err := streamAssistantCompletion(ctx, runtime, messages, definitions, func(content string) error {
@@ -77,7 +77,7 @@ func (a *App) runAssistantModel(ctx context.Context, runtime assistantModelRunti
 			return assistantRunResult{}, err
 		}
 		if len(completion.ToolCalls) == 0 {
-			return assistantRunResult{Content: strings.Join(contentParts, ""), Proposal: proposal}, nil
+			return assistantRunResult{Content: strings.Join(contentParts, ""), Workflow: workflow}, nil
 		}
 		messages = append(messages, assistantChatMessage{Role: "assistant", Content: completion.Content, ToolCalls: completion.ToolCalls})
 		for _, call := range completion.ToolCalls {
@@ -86,7 +86,7 @@ func (a *App) runAssistantModel(ctx context.Context, runtime assistantModelRunti
 				return assistantRunResult{}, err
 			}
 			var result json.RawMessage
-			var candidate *assistantWorkflowProposal
+			var candidate *assistantWorkflowCreateSummary
 			if !exists {
 				result = json.RawMessage(`{"ok":false,"error":"unknown tool"}`)
 			} else {
@@ -103,7 +103,7 @@ func (a *App) runAssistantModel(ctx context.Context, runtime assistantModelRunti
 				return assistantRunResult{}, err
 			}
 			if candidate != nil {
-				proposal = candidate
+				workflow = candidate
 			}
 			if len(result) > 64<<10 {
 				result = json.RawMessage(`{"ok":false,"error":"tool result exceeds 64 KiB"}`)
@@ -112,6 +112,9 @@ func (a *App) runAssistantModel(ctx context.Context, runtime assistantModelRunti
 				Role: "tool", ToolCallID: call.ID, Content: string(result),
 			})
 		}
+	}
+	if workflow != nil {
+		return assistantRunResult{Content: strings.Join(contentParts, ""), Workflow: workflow}, nil
 	}
 	return assistantRunResult{}, errors.New("assistant tool call round limit exceeded")
 }

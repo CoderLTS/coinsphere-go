@@ -7,7 +7,6 @@ interface AssistantStreamHandlers {
   onUser?: (message: Api.Assistant.Message) => void
   onTool?: (payload: { name: string; status: 'running' | 'completed' | 'failed' }) => void
   onContent?: (chunk: string) => void
-  onProposal?: (payload: { messageId: number; proposal: Api.Assistant.WorkflowProposal }) => void
   onDone?: (payload: { message?: Api.Assistant.Message; session?: Api.Assistant.Session }) => void
   onError?: (payload: { code?: number; msg?: string }) => void
 }
@@ -36,12 +35,6 @@ export function fetchAssistantMessages(sessionId: number) {
 
 export function deleteAssistantSession(sessionId: number) {
   return request.del<{ id: number }>({ url: `/api/v1/assistant/sessions/${sessionId}` })
-}
-
-export function confirmAssistantWorkflow(messageId: number) {
-  return request.post<Api.Assistant.WorkflowCreateResult>({
-    url: `/api/v1/assistant/messages/${messageId}/workflow`
-  })
 }
 
 export async function streamAssistantSession(
@@ -85,7 +78,6 @@ export async function streamAssistantSession(
     if (eventName === 'user' && eventPayload.message) handlers.onUser?.(eventPayload.message)
     else if (eventName === 'tool') handlers.onTool?.(eventPayload)
     else if (eventName === 'content') handlers.onContent?.(eventPayload.content || '')
-    else if (eventName === 'proposal') handlers.onProposal?.(eventPayload)
     else if (eventName === 'done') {
       streamDone = true
       handlers.onDone?.(eventPayload)

@@ -103,50 +103,6 @@
               />
               <template v-else>{{ message.content }}</template>
             </div>
-
-            <section v-if="message.proposal" class="workflow-proposal">
-              <div class="workflow-proposal__heading">
-                <ElIcon><MagicStick /></ElIcon>
-                <div>
-                  <strong>{{ message.proposal.name }}</strong>
-                  <span>{{ t('assistant.proposal.title') }}</span>
-                </div>
-              </div>
-              <p v-if="message.proposal.description">{{ message.proposal.description }}</p>
-              <div class="workflow-proposal__stats">
-                <span>{{
-                  t('assistant.proposal.nodes', { count: message.proposal.nodeCount })
-                }}</span>
-                <span>{{
-                  t('assistant.proposal.edges', { count: message.proposal.edgeCount })
-                }}</span>
-              </div>
-              <div v-if="message.proposal.nodeTypes.length" class="workflow-proposal__tags">
-                <ElTag v-for="nodeType in message.proposal.nodeTypes" :key="nodeType" size="small">
-                  {{ nodeType }}
-                </ElTag>
-              </div>
-              <ElAlert
-                v-if="message.proposal.missingSecrets.length"
-                :title="t('assistant.proposal.missingSecrets')"
-                :description="message.proposal.missingSecrets.join(', ')"
-                type="warning"
-                :closable="false"
-                show-icon
-              />
-              <ElButton
-                type="primary"
-                :loading="confirmingMessageId === message.numericId"
-                @click="handleProposal(message)"
-              >
-                <ElIcon><Edit v-if="message.proposal.workflowId" /><CirclePlus v-else /></ElIcon>
-                {{
-                  message.proposal.workflowId
-                    ? t('assistant.proposal.edit')
-                    : t('assistant.proposal.create')
-                }}
-              </ElButton>
-            </section>
           </div>
         </article>
       </main>
@@ -247,9 +203,7 @@
     CirclePlus,
     Close,
     Delete,
-    Edit,
     Loading,
-    MagicStick,
     Promotion,
     VideoPause
   } from '@element-plus/icons-vue'
@@ -260,7 +214,6 @@
   import defaultAvatar from '@imgs/user/avatar.webp'
   import assistantAvatar from '@/assets/images/avatar/avatar10.webp'
   import {
-    confirmAssistantWorkflow,
     createAssistantSession,
     deleteAssistantSession,
     fetchAssistantMessages,
@@ -280,7 +233,6 @@
 
   interface ChatMessage extends Omit<Api.Assistant.Message, 'id'> {
     id: number | string
-    numericId?: number
     streaming: boolean
     tools: ToolState[]
   }
@@ -295,7 +247,6 @@
   const historyLoading = ref(false)
   const isStreaming = ref(false)
   const deletingSessionId = ref<number | null>(null)
-  const confirmingMessageId = ref<number | null>(null)
   const selectedModelId = ref<number | null>(null)
   const currentSession = ref<Api.Assistant.Session | null>(null)
   const models = ref<Api.Assistant.ModelOption[]>([])
@@ -315,7 +266,6 @@
 
   const toChatMessage = (message: Api.Assistant.Message): ChatMessage => ({
     ...message,
-    numericId: message.id,
     streaming: false,
     tools: []
   })
@@ -442,11 +392,6 @@
             ensureDraft(draftId).content += chunk
             scrollToBottom()
           },
-          onProposal: ({ messageId, proposal }) => {
-            const draft = ensureDraft(draftId)
-            draft.numericId = messageId
-            draft.proposal = proposal
-          },
           onDone: ({ message, session }) => {
             if (message) {
               const index = messages.value.findIndex((item) => item.id === draftId)
@@ -516,24 +461,6 @@
     }
   }
 
-  const handleProposal = async (message: ChatMessage) => {
-    if (!message.proposal || !message.numericId) return
-    if (message.proposal.workflowId && message.proposal.editUrl) {
-      await router.push(message.proposal.editUrl)
-      visible.value = false
-      return
-    }
-    confirmingMessageId.value = message.numericId
-    try {
-      const result = await confirmAssistantWorkflow(message.numericId)
-      message.proposal.workflowId = result.workflowId
-      message.proposal.editUrl = result.editUrl
-      ElMessage.success(t('assistant.proposal.created'))
-    } finally {
-      confirmingMessageId.value = null
-    }
-  }
-
   const goToModelConfig = () => {
     visible.value = false
     void router.push('/config/ai-models')
@@ -560,8 +487,6 @@
   .assistant-header,
   .history-panel > header,
   .assistant-composer__toolbar,
-  .workflow-proposal__heading,
-  .workflow-proposal__stats,
   .history-item {
     display: flex;
     align-items: center;
@@ -760,60 +685,6 @@
 
   .tool-status small {
     font-size: 11px;
-  }
-
-  .workflow-proposal {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    width: min(100%, 410px);
-    padding: 14px;
-    margin-top: 8px;
-    background: var(--el-color-primary-light-9);
-    border: 1px solid var(--el-color-primary-light-5);
-    border-radius: 8px;
-  }
-
-  .workflow-proposal__heading {
-    gap: 10px;
-  }
-
-  .workflow-proposal__heading > .el-icon {
-    font-size: 20px;
-    color: var(--el-color-primary);
-  }
-
-  .workflow-proposal__heading div {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-  }
-
-  .workflow-proposal__heading strong {
-    overflow-wrap: anywhere;
-    font-size: 14px;
-  }
-
-  .workflow-proposal__heading span,
-  .workflow-proposal__stats,
-  .workflow-proposal p {
-    margin: 0;
-    font-size: 12px;
-    color: var(--el-text-color-secondary);
-  }
-
-  .workflow-proposal__stats {
-    gap: 16px;
-  }
-
-  .workflow-proposal__tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-
-  .workflow-proposal > .el-button {
-    align-self: flex-end;
   }
 
   .stream-loading {

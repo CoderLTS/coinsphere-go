@@ -5,7 +5,7 @@
 平台助手的主要修改入口如下：
 
 - `backend/internal/service/ai_models.go`：全局模型配置、加密密钥和受限 HTTP 客户端。
-- `backend/internal/service/assistant*.go`：会话、SSE、模型工具循环、核心查询及工作流提案确认。
+- `backend/internal/service/assistant*.go`：会话、SSE、模型工具循环、核心查询及工作流校验创建。
 - `backend/internal/api/handlers_assistant.go`：模型和助手 HTTP 接口。
 - `backend/plugin/sdk/{types,registry}.go`：插件 `assistantQueries` 注册、Schema 校验和结果上限。
 - `frontend/src/components/core/layouts/art-chat-window/`：平台助手抽屉与富文本展示。

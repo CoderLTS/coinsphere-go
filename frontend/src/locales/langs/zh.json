@@ -291,15 +291,6 @@
       "completed": "已完成",
       "failed": "失败"
     },
-    "proposal": {
-      "title": "工作流方案",
-      "nodes": "{count} 个节点",
-      "edges": "{count} 条连线",
-      "missingSecrets": "创建后仍需在编辑器中补充密钥",
-      "create": "创建草稿",
-      "edit": "编辑工作流",
-      "created": "工作流草稿已创建"
-    },
     "errors": {
       "loadConversation": "加载智能助手会话失败，请稍后重试",
       "stream": "智能助手暂时不可用，请稍后重试"

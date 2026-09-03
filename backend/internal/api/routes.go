@@ -64,7 +64,6 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 	super.DELETE("/assistant/sessions/:sessionId", s.handleDeleteAssistantSession)
 	get(super, "/assistant/sessions/:sessionId/messages", s.handleListAssistantMessages)
 	super.POST("/assistant/sessions/:sessionId/stream", s.handleStreamAssistantSession)
-	super.POST("/assistant/messages/:messageId/workflow", s.handleConfirmAssistantWorkflow)
 
 	api.POST("/webhooks/:workflowId", s.handlePublishWorkflowWebhook)
 	get(super, "/workflows/templates", s.handleListWorkflowTemplates)
