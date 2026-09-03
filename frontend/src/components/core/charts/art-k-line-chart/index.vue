@@ -452,7 +452,11 @@
   }
 
   const resetZoom = () =>
-    getChartInstance()?.dispatchAction({ type: 'dataZoom', start: 25, end: 100 })
+    getChartInstance()?.dispatchAction({
+      type: 'dataZoom',
+      start: props.dataZoomStart,
+      end: props.dataZoomEnd
+    })
   const toggleFullscreen = async () => {
     if (!workbenchRef.value) return
     if (!document.fullscreenElement) await workbenchRef.value.requestFullscreen()
@@ -464,7 +468,8 @@
     nextTick(() => getChartInstance()?.resize())
   }
   const handleDataZoom = (event: any) => {
-    if (Number(event?.start) <= 2) emit('loadMore')
+    const zoom = event?.batch?.[0] || event
+    if (Number(zoom?.start) <= 2) emit('loadMore')
   }
 
   watch(

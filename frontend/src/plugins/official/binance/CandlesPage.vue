@@ -84,9 +84,7 @@
           class="metric-icon"
           :class="todayChangePercent >= 0 ? 'metric-icon--positive' : 'metric-icon--negative'"
         >
-          <ArtSvgIcon
-            :icon="todayChangePercent >= 0 ? 'ri:arrow-up-line' : 'ri:arrow-down-line'"
-          />
+          <ArtSvgIcon :icon="todayChangePercent >= 0 ? 'ri:arrow-up-line' : 'ri:arrow-down-line'" />
         </span>
         <div class="metric-copy">
           <span>今日涨跌幅</span>
@@ -120,6 +118,7 @@
           height="clamp(440px, 58vh, 620px)"
           :interval="selectedInterval"
           :intervals="intervals"
+          :data-zoom-start="0"
           :main-indicator="mainIndicator"
           :sub-indicator="subIndicator"
           @interval-change="handleIntervalChange"
