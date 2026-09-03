@@ -96,6 +96,7 @@ type binanceCandleSubscriber struct {
 	ctx       context.Context
 	emitter   sdk.Emitter
 	intervals map[string]bool
+	publish   func(binanceCandle, bool)
 }
 
 func newBinanceCandleHub(runtime *binanceRuntime) *binanceCandleHub {
@@ -103,6 +104,22 @@ func newBinanceCandleHub(runtime *binanceRuntime) *binanceCandleHub {
 }
 
 func (h *binanceCandleHub) subscribe(ctx context.Context, config binanceCandleStreamConfig, emitter sdk.Emitter) error {
+	intervals := make(map[string]bool, len(config.Intervals))
+	for _, interval := range config.Intervals {
+		intervals[interval] = true
+	}
+	return h.subscribeWith(ctx, config, binanceCandleSubscriber{ctx: ctx, emitter: emitter, intervals: intervals})
+}
+
+func (h *binanceCandleHub) subscribeBrowser(ctx context.Context, config binanceCandleStreamConfig, publish func(binanceCandle, bool)) error {
+	intervals := make(map[string]bool, len(config.Intervals))
+	for _, interval := range config.Intervals {
+		intervals[interval] = true
+	}
+	return h.subscribeWith(ctx, config, binanceCandleSubscriber{ctx: ctx, intervals: intervals, publish: publish})
+}
+
+func (h *binanceCandleHub) subscribeWith(ctx context.Context, config binanceCandleStreamConfig, subscriber binanceCandleSubscriber) error {
 	key := fmt.Sprintf("%s:%s:%d", config.Market, config.Instrument, config.ProxyID)
 	h.mu.Lock()
 	subscription := h.subscriptions[key]
@@ -118,11 +135,8 @@ func (h *binanceCandleHub) subscribe(ctx context.Context, config binanceCandleSt
 	}
 	h.nextSubscriber++
 	subscriberID := h.nextSubscriber
-	intervals := make(map[string]bool, len(config.Intervals))
-	for _, interval := range config.Intervals {
-		intervals[interval] = true
-	}
-	subscription.subscribers[subscriberID] = binanceCandleSubscriber{ctx: ctx, emitter: emitter, intervals: intervals}
+	subscriber.ctx = ctx
+	subscription.subscribers[subscriberID] = subscriber
 	select {
 	case subscription.changed <- struct{}{}:
 	default:
@@ -222,7 +236,7 @@ func (q *binanceRuntime) broadcastBinanceCandle(subscription *binanceCandleSubsc
 	}
 	q.hub.mu.Unlock()
 	for _, subscriber := range subscribers {
-		if subscriber.ctx.Err() != nil {
+		if subscriber.emitter == nil || subscriber.ctx.Err() != nil {
 			continue
 		}
 		if err := subscriber.emitter.Emit(subscriber.ctx, event); err != nil && subscriber.ctx.Err() == nil {
@@ -230,6 +244,20 @@ func (q *binanceRuntime) broadcastBinanceCandle(subscription *binanceCandleSubsc
 		}
 	}
 	return nil
+}
+
+func (q *binanceRuntime) publishBinanceCandleUpdate(subscription *binanceCandleSubscription, candle binanceCandle, closed bool) {
+	q.hub.mu.Lock()
+	callbacks := make([]func(binanceCandle, bool), 0, len(subscription.subscribers))
+	for _, subscriber := range subscription.subscribers {
+		if subscriber.intervals[candle.Interval] && subscriber.publish != nil {
+			callbacks = append(callbacks, subscriber.publish)
+		}
+	}
+	q.hub.mu.Unlock()
+	for _, publish := range callbacks {
+		publish(candle, closed)
+	}
 }
 
 func (q *binanceRuntime) persistBinanceCandle(ctx context.Context, candle binanceCandle) error {
@@ -486,9 +514,6 @@ func (q *binanceRuntime) streamBinanceCandles(ctx context.Context, subscription 
 		if _, ok := binanceIntervals[message.Kline.Interval]; !ok {
 			return errors.New("binance WebSocket kline payload is invalid")
 		}
-		if !message.Kline.Closed {
-			continue
-		}
 		raw := mustMarshal([]any{
 			message.Kline.OpenTime, message.Kline.Open, message.Kline.High, message.Kline.Low,
 			message.Kline.Close, message.Kline.Volume, message.Kline.CloseTime,
@@ -498,9 +523,12 @@ func (q *binanceRuntime) streamBinanceCandles(ctx context.Context, subscription 
 		if err != nil {
 			return errors.New("binance WebSocket kline payload is invalid")
 		}
-		if err := q.broadcastBinanceCandle(subscription, candle); err != nil {
-			return err
+		if message.Kline.Closed {
+			if err := q.broadcastBinanceCandle(subscription, candle); err != nil {
+				return err
+			}
 		}
+		q.publishBinanceCandleUpdate(subscription, candle, message.Kline.Closed)
 	}
 }
 

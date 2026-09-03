@@ -56,6 +56,13 @@
           :selected-signal-id="selectedPointId"
           :is-empty="!chartData.length"
           height="clamp(360px, 48vh, 520px)"
+          :interval="detail.interval"
+          :intervals="[detail.interval]"
+          fixed-interval
+          :main-indicator="mainIndicator"
+          :sub-indicator="subIndicator"
+          @main-indicator-change="(value) => (mainIndicator = value)"
+          @sub-indicator-change="(value) => (subIndicator = value)"
           @signal-click="selectPoint"
         />
       </section>
@@ -186,12 +193,16 @@
   import type { KLineDataItem, KLineSignalItem } from '@/types/component/chart'
   import { formatDateTime } from '@/utils/date'
   import { decimalFixed, decimalPercent } from '@/plugins/official/quant/decimal'
+  import { fetchBinanceIndicators } from '@/plugins/official/binance/api'
 
   defineOptions({ name: 'SchedulerWorkflowBacktestAnalysisPage' })
 
   type BacktestAction = 'buy' | 'sell' | 'hold'
   type BacktestPoint = QuantBacktestPoint & { id: number }
   type BacktestDetail = Omit<QuantBacktestDetail, 'points'> & { points: BacktestPoint[] }
+  type ChartCandle = QuantCandle & {
+    indicators?: { main: Record<string, number | null>; sub: Record<string, number | null> }
+  }
 
   const decimalPattern = /^-?\d+(?:\.\d+)?$/
   const route = useRoute()
@@ -200,8 +211,10 @@
   const loadError = ref('')
   const run = ref<WorkflowRunDetail | null>(null)
   const detail = ref<BacktestDetail | null>(null)
-  const candles = ref<QuantCandle[]>([])
+  const candles = ref<ChartCandle[]>([])
   const selectedPointId = ref<number>()
+  const mainIndicator = ref<'none' | 'ma' | 'ema' | 'boll'>('none')
+  const subIndicator = ref<'volume' | 'macd' | 'rsi' | 'kdj' | 'obv' | 'wr'>('volume')
 
   const workflowName = computed(() => String(route.query.workflowName || '工作流回测'))
   const resultSummary = computed<Record<string, unknown>>(() => {
@@ -255,16 +268,18 @@
   const timeKey = (value: string) => String(Date.parse(value))
   const chartData = computed<KLineDataItem[]>(() =>
     candles.value.map((item) => ({
-      time: axisTime(item.openTime),
+      time: item.openTime,
+      label: axisTime(item.openTime),
       open: Number(item.open),
       close: Number(item.close),
       high: Number(item.high),
       low: Number(item.low),
-      volume: Number(item.volume)
+      volume: Number(item.volume),
+      indicators: item.indicators
     }))
   )
   const candleLabels = computed(
-    () => new Map(candles.value.map((item) => [timeKey(item.openTime), axisTime(item.openTime)]))
+    () => new Map(candles.value.map((item) => [timeKey(item.openTime), item.openTime]))
   )
   const chartSignals = computed<KLineSignalItem[]>(() =>
     tradePoints.value.flatMap((point) => {
@@ -332,7 +347,43 @@
       }
       run.value = currentRun
       detail.value = parsed
-      candles.value = parsed.candles
+      const indicatorMap = new Map<
+        string,
+        { main: Record<string, string | null>; sub: Record<string, string | null> }
+      >()
+      if (parsed.venue === 'binance') {
+        const indicatorResult = await fetchBinanceIndicators({
+          market: parsed.market === 'usdm' ? 'usdm' : 'spot',
+          instrument: parsed.instrument,
+          interval: parsed.interval,
+          startTime: parsed.candles[0]?.openTime,
+          endTime: parsed.candles.at(-1)?.closeTime,
+          limit: parsed.candles.length
+        })
+        indicatorResult.items.forEach((item) => indicatorMap.set(item.openTime, item))
+      }
+      candles.value = parsed.candles.map((item) => {
+        const indicators = indicatorMap.get(item.openTime)
+        return indicators
+          ? {
+              ...item,
+              indicators: {
+                main: Object.fromEntries(
+                  Object.entries(indicators.main).map(([key, value]) => [
+                    key,
+                    value === null ? null : Number(value)
+                  ])
+                ),
+                sub: Object.fromEntries(
+                  Object.entries(indicators.sub).map(([key, value]) => [
+                    key,
+                    value === null ? null : Number(value)
+                  ])
+                )
+              }
+            }
+          : item
+      })
       selectedPointId.value = tradePoints.value.at(-1)?.id
     } catch (error: any) {
       run.value = null

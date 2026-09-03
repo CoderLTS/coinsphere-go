@@ -366,7 +366,7 @@ func (r *Registry) Routes() []RegisteredRoute {
 			methodPattern := strings.SplitN(parts[1], " ", 2)
 			routes = append(routes, RegisteredRoute{
 				PluginID:   plugin.ID,
-				Descriptor: RouteDescriptor{Scope: ScopeKind(parts[0]), Method: methodPattern[0], Pattern: methodPattern[1], Action: route.desc.Action},
+				Descriptor: RouteDescriptor{Scope: ScopeKind(parts[0]), Method: methodPattern[0], Pattern: methodPattern[1], Action: route.desc.Action, WebSocket: route.desc.WebSocket},
 				Handler:    route.handler,
 			})
 		}
@@ -628,6 +628,9 @@ func (c *registrationCollector) Route(desc RouteDescriptor, handler ScopedRouteH
 	desc.Action = strings.TrimSpace(desc.Action)
 	if desc.Action != "" && (!contributionKeyPattern.MatchString(desc.Action) || desc.Scope != ScopeResult) {
 		return fmt.Errorf("route %s %s has invalid result action %q", method, desc.Pattern, desc.Action)
+	}
+	if desc.WebSocket && (method != "GET" || desc.Scope != ScopeSystem || desc.Action != "") {
+		return fmt.Errorf("route %s %s has invalid WebSocket configuration", method, desc.Pattern)
 	}
 	if handler == nil {
 		return errors.New("route handler is required")
