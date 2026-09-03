@@ -168,7 +168,7 @@
       })
       const showSubChart = props.showVolume || props.subIndicator !== 'volume'
       const visibleTracks = Number(showSubChart)
-      const priceBottom = visibleTracks ? '27%' : '12%'
+      const priceBottom = visibleTracks ? '28%' : '10%'
       const xAxes: any[] = [
         {
           type: 'category',
@@ -295,7 +295,7 @@
       }
 
       if (props.showVolume || props.subIndicator !== 'volume') {
-        grids.push({ top: '72%', right: 58, height: '13%', left: 12, containLabel: true })
+        grids.push({ top: '76%', right: 58, bottom: 18, left: 12, containLabel: true })
         xAxes.push({
           type: 'category',
           gridIndex: 1,
@@ -316,9 +316,10 @@
           scale: true,
           position: 'right',
           axisLabel: {
-            ...getAxisLabelStyle(true),
-            formatter: (value: number) => numberText(value)
+            show: false
           },
+          axisLine: { show: false },
+          axisTick: { show: false },
           splitLine: { show: false }
         })
         if (props.subIndicator === 'volume') {
@@ -436,21 +437,6 @@
                 xAxisIndex: xAxes.map((_, index) => index),
                 start: props.dataZoomStart,
                 end: props.dataZoomEnd
-              },
-              {
-                type: 'slider',
-                xAxisIndex: xAxes.map((_, index) => index),
-                bottom: 2,
-                height: 18,
-                start: props.dataZoomStart,
-                end: props.dataZoomEnd,
-                borderColor: isDark.value ? '#353b48' : '#dfe4ec',
-                backgroundColor: isDark.value ? '#202226' : '#f2f4f5',
-                fillerColor: `${signalColor}1f`,
-                handleStyle: {
-                  color: signalColor,
-                  borderColor: isDark.value ? '#161618' : '#ffffff'
-                }
               }
             ]
           : undefined

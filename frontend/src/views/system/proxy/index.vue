@@ -171,7 +171,7 @@
       renderIconAction({ icon: Edit, title: '编辑', onClick: () => openEdit(row) }),
       renderIconAction({
         icon: CircleCheck,
-        title: '检测 Binance 连接',
+        title: '检测币安连接',
         type: 'primary',
         loading: validatingId.value === row.id,
         onClick: () => validateProxy(row)

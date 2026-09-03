@@ -83,6 +83,7 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 	super.PATCH("/workflows/group-assignment", s.handleAssignWorkflowGroup)
 	get(super, "/workflows/:workflowId", s.handleGetWorkflow)
 	super.PATCH("/workflows/:workflowId", s.handleUpdateWorkflow)
+	super.DELETE("/workflows/:workflowId", s.requirePermission(perm.SchedulerWorkflowDefinitionsDelete), s.handleDeleteWorkflow)
 	get(super, "/workflows/:workflowId/revisions", s.handleListWorkflowRevisions)
 	super.POST("/workflows/:workflowId/revisions", s.handleSaveWorkflowRevision)
 	get(super, "/workflows/:workflowId/revisions/:revisionId", s.handleGetWorkflowRevision)

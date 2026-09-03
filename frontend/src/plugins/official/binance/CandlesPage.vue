@@ -57,7 +57,7 @@
     </section>
 
     <section class="metric-grid" aria-label="行情摘要">
-      <article class="metric-card art-card">
+      <article class="metric-card">
         <span class="metric-icon metric-icon--primary"><ArtSvgIcon icon="ri:coins-line" /></span>
         <div class="metric-copy">
           <span>当前标的</span>
@@ -70,7 +70,7 @@
         </div>
       </article>
 
-      <article class="metric-card art-card">
+      <article class="metric-card">
         <span class="metric-icon metric-icon--price"><ArtSvgIcon icon="ri:stock-line" /></span>
         <div class="metric-copy">
           <span>最新收盘</span>
@@ -79,7 +79,7 @@
         </div>
       </article>
 
-      <article class="metric-card art-card">
+      <article class="metric-card">
         <span
           class="metric-icon"
           :class="changePercent >= 0 ? 'metric-icon--positive' : 'metric-icon--negative'"
@@ -385,7 +385,7 @@
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
     min-width: 0;
     min-height: 100%;
     padding: 0;
@@ -402,24 +402,23 @@
   }
 
   .filter-card {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 16px;
-    align-items: flex-end;
-    padding: 14px 16px;
+    display: grid;
+    grid-template-columns: minmax(280px, 1fr) auto auto;
+    gap: 24px;
+    align-items: center;
+    padding: 12px 16px;
     background: var(--default-box-color);
   }
 
   .filter-group {
     display: flex;
     flex-direction: column;
-    gap: 7px;
+    gap: 5px;
     min-width: 0;
   }
 
   .filter-group--selector {
-    flex: 1;
-    min-width: 260px;
+    width: min(100%, 420px);
   }
 
   .filter-label {
@@ -428,7 +427,7 @@
   }
 
   .symbol-select {
-    width: min(100%, 400px);
+    width: 100%;
   }
 
   .market-status,
@@ -442,10 +441,9 @@
 
   .market-status {
     gap: 10px;
-    min-width: 116px;
+    min-width: 216px;
     min-height: 32px;
-    padding-left: 16px;
-    margin-left: auto;
+    padding-left: 20px;
     border-left: 1px solid var(--art-card-border);
   }
 
@@ -484,27 +482,25 @@
   }
 
   .metric-grid {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1px;
     min-width: 0;
-    border-top: 1px solid var(--art-card-border);
-    border-bottom: 1px solid var(--art-card-border);
+    padding: 1px;
+    overflow: hidden;
+    background: var(--art-card-border);
+    border: 1px solid var(--art-card-border);
+    border-radius: 8px;
   }
 
   .metric-card {
     display: flex;
     gap: 12px;
     align-items: center;
-    flex: 1 1 220px;
     min-width: 0;
-    min-height: 66px;
-    padding: 8px 16px;
-    background: transparent;
-    border-right: 1px solid var(--art-card-border);
-  }
-
-  .metric-card:last-child {
-    border-right: 0;
+    min-height: 72px;
+    padding: 10px 18px;
+    background: var(--default-box-color);
   }
 
   .metric-icon,
@@ -590,15 +586,15 @@
 
   .chart-panel {
     min-width: 0;
-    padding: 16px;
+    padding: 14px 20px 18px;
     background: var(--default-box-color);
   }
 
   .panel-head {
     gap: 14px;
     justify-content: space-between;
-    min-height: 44px;
-    margin-bottom: 12px;
+    min-height: 38px;
+    margin-bottom: 8px;
   }
 
   .panel-title {
@@ -652,8 +648,9 @@
   }
 
   @media (max-width: 1100px) {
-    .metric-card:nth-child(2) {
-      border-right: 0;
+    .filter-card {
+      grid-template-columns: minmax(220px, 1fr) auto auto;
+      gap: 16px;
     }
   }
 
@@ -663,6 +660,8 @@
     }
 
     .filter-card {
+      display: flex;
+      flex-wrap: wrap;
       align-items: stretch;
     }
 
@@ -682,6 +681,10 @@
       border-left: 0;
     }
 
+    .metric-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
     .refresh-button {
       align-self: flex-end;
       margin-top: 8px;
@@ -693,9 +696,12 @@
   }
 
   @media (max-width: 520px) {
+    .metric-grid {
+      grid-template-columns: 1fr;
+    }
+
     .metric-card {
-      flex-basis: 100%;
-      border-right: 0;
+      min-height: 64px;
     }
 
     .chart-legend {
