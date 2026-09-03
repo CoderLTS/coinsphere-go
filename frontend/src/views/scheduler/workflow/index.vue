@@ -231,7 +231,7 @@
             <ElTableColumn label="创建时间" min-width="180">
               <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
             </ElTableColumn>
-            <ElTableColumn label="操作" width="220" align="center">
+            <ElTableColumn label="操作" width="260" align="center">
               <template #default="{ row }">
                 <ElSpace size="small">
                   <ElTooltip content="工作流日志" placement="top">
@@ -288,6 +288,23 @@
                       :disabled="!isBacktestWorkflow(row) && row.workflowStatus !== 'active'"
                       :loading="runningId === row.id"
                       @click="runWorkflow(row)"
+                    />
+                  </ElTooltip>
+                  <ElTooltip
+                    v-if="hasAuth('scheduler.workflow_definitions.delete')"
+                    :content="row.workflowStatus === 'active' ? '请先停用工作流' : '删除工作流'"
+                    placement="top"
+                  >
+                    <ElButton
+                      circle
+                      plain
+                      size="small"
+                      type="danger"
+                      :icon="Delete"
+                      :disabled="row.workflowStatus === 'active'"
+                      :loading="deletingWorkflowId === row.id"
+                      aria-label="删除工作流"
+                      @click="deleteWorkflowRow(row)"
                     />
                   </ElTooltip>
                 </ElSpace>
@@ -400,7 +417,7 @@
                 </ElTooltip>
                 <ElTooltip
                   v-if="hasAuth('scheduler.workflow_definitions.delete') && !row.isLatest"
-                  :content="row.executionCount ? '已有执行记录，不能删除' : '删除版本'"
+                  content="删除版本"
                   placement="top"
                 >
                   <ElButton
@@ -409,7 +426,6 @@
                     size="small"
                     type="danger"
                     :icon="Delete"
-                    :disabled="row.executionCount > 0"
                     :loading="deletingVersionId === row.id"
                     aria-label="删除版本"
                     @click="deleteVersion(row)"
@@ -497,6 +513,7 @@
   import {
     fetchActivateWorkflowDefinition,
     fetchDeactivateWorkflowDefinition,
+    fetchDeleteWorkflow,
     fetchDeleteWorkflowDefinition,
     fetchRunWorkflowDefinition,
     fetchWorkflowDefinitionList,
@@ -542,6 +559,7 @@
   const versionDialogVisible = ref(false)
   const versionDetail = ref<WorkflowDefinitionItem | null>(null)
   const deletingVersionId = ref<number>()
+  const deletingWorkflowId = ref<number>()
   const versionRows = computed(() => versionDetail.value?.versions || [])
   const utc8OffsetMs = 8 * 60 * 60 * 1000
   const utc8PickerDate = (timestamp = Date.now()) => {
@@ -820,7 +838,7 @@
   const deleteVersion = async (row: WorkflowDefinitionVersionItem) => {
     try {
       await ElMessageBox.confirm(
-        `删除历史版本 v${row.version}？版本配置及密钥将永久删除。已有执行记录的版本不能删除。`,
+        `删除历史版本 v${row.version}？版本配置、执行记录及密钥将永久删除。`,
         '删除版本',
         { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
       )
@@ -838,6 +856,27 @@
       ElMessage.success(`历史版本 v${row.version} 已删除`)
     } finally {
       deletingVersionId.value = undefined
+    }
+  }
+
+  const deleteWorkflowRow = async (row: WorkflowDefinitionItem) => {
+    try {
+      await ElMessageBox.confirm(
+        `删除工作流“${row.displayName}”？所有版本、执行记录和关联结果都将永久删除。`,
+        '删除工作流',
+        { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+      )
+    } catch {
+      return
+    }
+    deletingWorkflowId.value = row.id
+    try {
+      await fetchDeleteWorkflow(Number(row.code))
+      definitions.value = definitions.value.filter((item) => item.id !== row.id)
+      clearSelection()
+      ElMessage.success(`工作流“${row.displayName}”已删除`)
+    } finally {
+      deletingWorkflowId.value = undefined
     }
   }
 

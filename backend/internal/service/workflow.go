@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -459,21 +461,31 @@ func pruneWorkflowRevisions(tx *gorm.DB, workflowID, retainedRevisionID int64) e
 		return errors.New("list workflow revisions for pruning failed")
 	}
 	for index := len(revisionIDs) - 1; index >= maxWorkflowRevisions; index-- {
-		if err := deleteWorkflowRevisionRecord(tx, workflowID, revisionIDs[index], retainedRevisionID); err != nil {
+		if err := deleteWorkflowRevisionRecord(tx, workflowID, revisionIDs[index], retainedRevisionID, false, false); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func deleteWorkflowRevisionRecord(tx *gorm.DB, workflowID, revisionID, retainedRevisionID int64) error {
-	var runCount int64
-	if err := tx.Model(&db.WorkflowRun{}).Where("workflow_id = ? AND revision_id = ?", workflowID, revisionID).
-		Count(&runCount).Error; err != nil {
-		return errors.New("check workflow revision references failed")
+func deleteWorkflowRevisionRecord(tx *gorm.DB, workflowID, revisionID, retainedRevisionID int64, removeRuns, removeOutputs bool) error {
+	if removeRuns {
+		if _, err := deleteWorkflowRunTree(tx, "workflow_id = ? AND revision_id = ?", workflowID, revisionID); err != nil {
+			return err
+		}
+	} else {
+		var runCount int64
+		if err := tx.Model(&db.WorkflowRun{}).Where("workflow_id = ? AND revision_id = ?", workflowID, revisionID).Count(&runCount).Error; err != nil {
+			return errors.New("check workflow revision references failed")
+		}
+		if runCount > 0 {
+			return fmt.Errorf("%w: workflow revision is referenced by workflow runs", ErrConflict)
+		}
 	}
-	if runCount > 0 {
-		return fmt.Errorf("%w: workflow revision is referenced by workflow runs", ErrConflict)
+	if removeOutputs {
+		if err := deleteWorkflowRevisionOutputs(tx, workflowID, revisionID); err != nil {
+			return err
+		}
 	}
 	if err := tx.Model(&db.WorkflowNodeState{}).Where("workflow_id = ? AND revision_id = ?", workflowID, revisionID).
 		Update("revision_id", retainedRevisionID).Error; err != nil {
@@ -541,7 +553,24 @@ func (a *App) GetWorkflowRevision(ctx context.Context, workflowID, revisionID in
 }
 
 func (a *App) DeleteWorkflowRevision(ctx context.Context, workflowID, revisionID int64) error {
-	return a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var workflow db.Workflow
+	if err := a.DB.WithContext(ctx).Select("id", "active_revision_id").First(&workflow, workflowID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("%w: workflow", ErrNotFound)
+		}
+		return errors.New("load workflow failed")
+	}
+	if workflow.ActiveRevisionID == nil || *workflow.ActiveRevisionID == revisionID {
+		return fmt.Errorf("%w: active workflow revision cannot be deleted", ErrConflict)
+	}
+	if err := a.cancelWorkflowRuns(ctx, workflowID, &revisionID); err != nil {
+		return err
+	}
+	if err := a.waitWorkflowRuns(ctx, workflowID, &revisionID); err != nil {
+		return err
+	}
+	var storageKeys []string
+	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var workflow db.Workflow
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&workflow, workflowID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -559,8 +588,279 @@ func (a *App) DeleteWorkflowRevision(ctx context.Context, workflowID, revisionID
 		if workflow.ActiveRevisionID == nil || *workflow.ActiveRevisionID == revisionID {
 			return fmt.Errorf("%w: active workflow revision cannot be deleted", ErrConflict)
 		}
-		return deleteWorkflowRevisionRecord(tx, workflowID, revisionID, *workflow.ActiveRevisionID)
+		if err := tx.Exec("SET LOCAL coinsphere.workflow_delete = 'on'").Error; err != nil {
+			return errors.New("enable workflow deletion mode failed")
+		}
+		var err error
+		storageKeys, err = deleteWorkflowRunTree(tx, "workflow_id = ? AND revision_id = ?", workflowID, revisionID)
+		if err != nil {
+			return err
+		}
+		return deleteWorkflowRevisionRecord(tx, workflowID, revisionID, *workflow.ActiveRevisionID, false, true)
 	})
+	if err != nil {
+		return err
+	}
+	return a.removeWorkflowArtifacts(storageKeys)
+}
+
+// DeleteWorkflow removes the workflow definition and every execution record owned by it.
+func (a *App) DeleteWorkflow(ctx context.Context, workflowID int64) error {
+	if workflowID <= 0 {
+		return fmt.Errorf("%w: workflow", ErrNotFound)
+	}
+	var storageKeys []string
+	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var workflow db.Workflow
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&workflow, workflowID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("%w: workflow", ErrNotFound)
+			}
+			return errors.New("lock workflow failed")
+		}
+		if workflow.Status == WorkflowStatusActive {
+			return fmt.Errorf("%w: active workflow cannot be deleted", ErrConflict)
+		}
+		var activeRuns int64
+		if err := tx.Raw(fmt.Sprintf(workflowRunTreeCTE, "workflow_id = ?")+`SELECT COUNT(*) FROM workflow_runs WHERE id IN (SELECT id FROM run_tree) AND status = ?`, workflowID, RunStatusRunning).Scan(&activeRuns).Error; err != nil {
+			return errors.New("check workflow runs before deletion failed")
+		}
+		if activeRuns > 0 {
+			return fmt.Errorf("%w: workflow has active runs", ErrConflict)
+		}
+		if err := tx.Exec("SET LOCAL coinsphere.workflow_delete = 'on'").Error; err != nil {
+			return errors.New("enable workflow deletion mode failed")
+		}
+		var err error
+		storageKeys, err = deleteWorkflowRunTree(tx, "workflow_id = ?", workflowID)
+		if err != nil {
+			return err
+		}
+		if err := deleteWorkflowOutputs(tx, workflowID); err != nil {
+			return err
+		}
+		if err := tx.Where("workflow_id = ?", workflowID).Delete(&db.WorkflowNodeState{}).Error; err != nil {
+			return errors.New("delete workflow node states failed")
+		}
+		if err := tx.Where("workflow_id = ?", workflowID).Delete(&db.WorkflowSecretBinding{}).Error; err != nil {
+			return errors.New("delete workflow secrets failed")
+		}
+		if err := tx.Model(&workflow).Updates(map[string]any{
+			"active_revision_id": nil, "updated_at": time.Now().UTC(),
+		}).Error; err != nil {
+			return errors.New("clear workflow active revision failed")
+		}
+		if err := tx.Where("workflow_id = ?", workflowID).Delete(&db.WorkflowRevision{}).Error; err != nil {
+			return errors.New("delete workflow revisions failed")
+		}
+		if err := tx.Where("workflow_id = ?", workflowID).Delete(&db.WorkflowRuntime{}).Error; err != nil {
+			return errors.New("delete workflow runtime failed")
+		}
+		if err := tx.Where("id = ?", workflowID).Delete(&db.Workflow{}).Error; err != nil {
+			return errors.New("delete workflow failed")
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return a.removeWorkflowArtifacts(storageKeys)
+}
+
+func (a *App) removeWorkflowArtifacts(storageKeys []string) error {
+	for _, key := range storageKeys {
+		if strings.TrimSpace(a.ArtifactRoot) == "" {
+			continue
+		}
+		if err := os.Remove(filepath.Join(a.ArtifactRoot, filepath.FromSlash(key))); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return errors.New("remove workflow artifact failed")
+		}
+	}
+	return nil
+}
+
+const workflowRunTreeCTE = `WITH RECURSIVE run_tree(id) AS (
+    SELECT id FROM workflow_runs WHERE %s
+    UNION ALL
+    SELECT child.id FROM workflow_runs child JOIN run_tree parent ON child.original_run_id = parent.id
+) `
+
+func deleteWorkflowRunTree(tx *gorm.DB, rootWhere string, args ...any) ([]string, error) {
+	cte := fmt.Sprintf(workflowRunTreeCTE, rootWhere)
+	var digests []string
+	if err := tx.Raw(cte+`SELECT DISTINCT ref.artifact_sha256
+FROM workflow_artifact_refs ref
+JOIN workflow_run_nodes node ON node.id = ref.run_node_id
+WHERE node.run_id IN (SELECT id FROM run_tree)`, args...).Scan(&digests).Error; err != nil {
+		return nil, errors.New("collect workflow artifacts failed")
+	}
+	statements := []string{
+		`DELETE FROM workflow_human_tasks WHERE run_id IN (SELECT id FROM run_tree)`,
+		`DELETE FROM workflow_event_deliveries WHERE run_id IN (SELECT id FROM run_tree)`,
+		`DELETE FROM workflow_artifact_refs WHERE run_node_id IN (SELECT id FROM workflow_run_nodes WHERE run_id IN (SELECT id FROM run_tree))`,
+		`DELETE FROM workflow_run_checkpoints WHERE run_id IN (SELECT id FROM run_tree)`,
+		`DELETE FROM workflow_node_logs WHERE run_id IN (SELECT id FROM run_tree)`,
+		`DELETE FROM workflow_run_nodes WHERE run_id IN (SELECT id FROM run_tree)`,
+	}
+	for _, statement := range statements {
+		if err := tx.Exec(cte+statement, args...).Error; err != nil {
+			return nil, errors.New("delete workflow run details failed")
+		}
+	}
+	for {
+		result := tx.Exec(cte+`DELETE FROM workflow_runs
+WHERE id = (
+    SELECT run.id FROM workflow_runs run
+    WHERE run.id IN (SELECT id FROM run_tree)
+      AND NOT EXISTS (SELECT 1 FROM workflow_runs child WHERE child.original_run_id = run.id)
+    LIMIT 1
+)`, args...)
+		if result.Error != nil {
+			return nil, errors.New("delete workflow runs failed")
+		}
+		if result.RowsAffected == 0 {
+			break
+		}
+	}
+	if len(digests) == 0 {
+		return nil, nil
+	}
+	var artifacts []db.WorkflowArtifact
+	if err := tx.Where("sha256 IN ?", digests).Find(&artifacts).Error; err != nil {
+		return nil, errors.New("load workflow artifacts failed")
+	}
+	storageKeys := make([]string, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		var references int64
+		if err := tx.Model(&db.WorkflowArtifactRef{}).Where("artifact_sha256 = ?", artifact.SHA256).Count(&references).Error; err != nil {
+			return nil, errors.New("check workflow artifact references failed")
+		}
+		if references != 0 {
+			continue
+		}
+		if err := tx.Delete(&artifact).Error; err != nil {
+			return nil, errors.New("delete workflow artifact failed")
+		}
+		storageKeys = append(storageKeys, artifact.StorageKey)
+	}
+	return storageKeys, nil
+}
+
+func (a *App) cancelWorkflowRuns(ctx context.Context, workflowID int64, revisionID *int64) error {
+	var runIDs []int64
+	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var workflow db.Workflow
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&workflow, workflowID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("%w: workflow", ErrNotFound)
+			}
+			return errors.New("lock workflow failed")
+		}
+		query := tx.Model(&db.WorkflowRun{}).Where("workflow_id = ? AND status IN ?", workflowID, []string{RunStatusQueued, RunStatusRunning, RunStatusWaiting, RunStatusRetrying})
+		if revisionID != nil {
+			query = query.Where("revision_id = ?", *revisionID)
+		}
+		if err := query.Pluck("id", &runIDs).Error; err != nil {
+			return errors.New("list workflow runs for cancellation failed")
+		}
+		now := time.Now().UTC()
+		runQuery := tx.Model(&db.WorkflowRun{}).Where("workflow_id = ? AND status IN ?", workflowID, []string{RunStatusQueued, RunStatusWaiting, RunStatusRetrying})
+		if revisionID != nil {
+			runQuery = runQuery.Where("revision_id = ?", *revisionID)
+		}
+		if err := runQuery.
+			Updates(map[string]any{"status": RunStatusCancelled, "cancel_requested_at": now, "completed_at": now, "lease_token": nil, "lease_expires_at": nil, "updated_at": now}).Error; err != nil {
+			return errors.New("cancel queued workflow runs failed")
+		}
+		runQuery = tx.Model(&db.WorkflowRun{}).Where("workflow_id = ? AND status = ?", workflowID, RunStatusRunning)
+		if revisionID != nil {
+			runQuery = runQuery.Where("revision_id = ?", *revisionID)
+		}
+		if err := runQuery.
+			Updates(map[string]any{"cancel_requested_at": now, "updated_at": now}).Error; err != nil {
+			return errors.New("request running workflow cancellation failed")
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	a.runCancelMu.Lock()
+	for _, runID := range runIDs {
+		if cancel := a.runCancels[runID]; cancel != nil {
+			cancel()
+		}
+	}
+	a.runCancelMu.Unlock()
+	return nil
+}
+
+func (a *App) waitWorkflowRuns(ctx context.Context, workflowID int64, revisionID *int64) error {
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		query := a.DB.WithContext(ctx).Model(&db.WorkflowRun{}).Where("workflow_id = ? AND status IN ?", workflowID, []string{RunStatusQueued, RunStatusRunning, RunStatusWaiting, RunStatusRetrying})
+		if revisionID != nil {
+			query = query.Where("revision_id = ?", *revisionID)
+		}
+		var count int64
+		if err := query.Count(&count).Error; err != nil {
+			return errors.New("check workflow run cancellation failed")
+		}
+		if count == 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func deleteWorkflowRevisionOutputs(tx *gorm.DB, workflowID, revisionID int64) error {
+	statements := []string{
+		`DELETE FROM plugin_notification.deliveries WHERE workflow_id = ? AND revision_id = ?`,
+		`DELETE FROM plugin_quant.backtests WHERE workflow_id = ? AND revision_id = ?`,
+		`DELETE FROM plugin_quant.market_signals WHERE workflow_id = ? AND revision_id = ?`,
+		`UPDATE plugin_quant.signals SET superseded_by = NULL WHERE superseded_by IN (SELECT id FROM plugin_quant.signals WHERE workflow_id = ? AND revision_id = ?)`,
+		`DELETE FROM plugin_quant.paper_fees WHERE fill_id IN (SELECT fill.id FROM plugin_quant.paper_fills fill JOIN plugin_quant.paper_orders order_row ON order_row.id = fill.order_id JOIN plugin_quant.signals signal ON signal.id = order_row.signal_id WHERE signal.workflow_id = ? AND signal.revision_id = ?)`,
+		`DELETE FROM plugin_quant.paper_fills WHERE order_id IN (SELECT order_row.id FROM plugin_quant.paper_orders order_row JOIN plugin_quant.signals signal ON signal.id = order_row.signal_id WHERE signal.workflow_id = ? AND signal.revision_id = ?)`,
+		`DELETE FROM plugin_quant.paper_orders WHERE signal_id IN (SELECT id FROM plugin_quant.signals WHERE workflow_id = ? AND revision_id = ?)`,
+		`DELETE FROM plugin_quant.signals WHERE workflow_id = ? AND revision_id = ?`,
+	}
+	for _, statement := range statements {
+		if err := tx.Exec(statement, workflowID, revisionID).Error; err != nil {
+			return errors.New("delete workflow revision outputs failed")
+		}
+	}
+	return nil
+}
+
+func deleteWorkflowOutputs(tx *gorm.DB, workflowID int64) error {
+	statements := []string{
+		`DELETE FROM plugin_notification.deliveries WHERE workflow_id = ?`,
+		`DELETE FROM plugin_quant.backtests WHERE workflow_id = ?`,
+		`DELETE FROM plugin_quant.market_signals WHERE workflow_id = ?`,
+		`UPDATE plugin_quant.signals SET superseded_by = NULL WHERE superseded_by IN (SELECT id FROM plugin_quant.signals WHERE workflow_id = ?)`,
+		`DELETE FROM plugin_quant.paper_fees WHERE fill_id IN (SELECT fill.id FROM plugin_quant.paper_fills fill JOIN plugin_quant.paper_orders order_row ON order_row.id = fill.order_id JOIN plugin_quant.signals signal ON signal.id = order_row.signal_id WHERE signal.workflow_id = ?)`,
+		`DELETE FROM plugin_quant.paper_fills WHERE order_id IN (SELECT order_row.id FROM plugin_quant.paper_orders order_row JOIN plugin_quant.signals signal ON signal.id = order_row.signal_id WHERE signal.workflow_id = ?)`,
+		`DELETE FROM plugin_quant.paper_orders WHERE account_id IN (SELECT id FROM plugin_quant.paper_accounts WHERE workflow_id = ?)`,
+		`DELETE FROM plugin_quant.paper_positions WHERE account_id IN (SELECT id FROM plugin_quant.paper_accounts WHERE workflow_id = ?)`,
+		`DELETE FROM plugin_quant.paper_ledger_entries WHERE account_id IN (SELECT id FROM plugin_quant.paper_accounts WHERE workflow_id = ?)`,
+		`DELETE FROM plugin_quant.paper_accounts WHERE workflow_id = ?`,
+		`DELETE FROM plugin_quant.paper_orders WHERE signal_id IN (SELECT id FROM plugin_quant.signals WHERE workflow_id = ?)`,
+		`DELETE FROM plugin_quant.signals WHERE workflow_id = ?`,
+		`DELETE FROM plugin_binance.fees WHERE fill_id IN (SELECT fill.id FROM plugin_binance.fills fill JOIN plugin_binance.orders order_row ON order_row.id = fill.order_id WHERE order_row.workflow_id = ?)`,
+		`DELETE FROM plugin_binance.fills WHERE order_id IN (SELECT id FROM plugin_binance.orders WHERE workflow_id = ?)`,
+		`DELETE FROM plugin_binance.orders WHERE workflow_id = ?`,
+	}
+	for _, statement := range statements {
+		if err := tx.Exec(statement, workflowID).Error; err != nil {
+			return errors.New("delete workflow outputs failed")
+		}
+	}
+	return nil
 }
 
 func (a *App) ApplyWorkflowLifecycle(ctx context.Context, workflowID int64, payload WorkflowLifecyclePayload) (WorkflowDetail, error) {

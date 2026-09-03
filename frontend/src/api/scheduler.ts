@@ -3,6 +3,7 @@ import {
   applyWorkflowLifecycle,
   createWorkflow,
   createWorkflowRun,
+  deleteWorkflow,
   deleteWorkflowRevision,
   fetchWorkflow,
   fetchWorkflowRun,
@@ -873,6 +874,10 @@ export async function fetchDeleteWorkflowDefinition(definitionID: number) {
   const { workflowID, revisionID } = decodeDefinitionID(definitionID)
   if (!revisionID) throw new Error('请选择要删除的历史版本')
   return deleteWorkflowRevision(workflowID, revisionID)
+}
+
+export async function fetchDeleteWorkflow(workflowID: number) {
+  return deleteWorkflow(workflowID)
 }
 
 const startType = (nodeType: string): WorkflowStartType => {

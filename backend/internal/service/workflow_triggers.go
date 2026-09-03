@@ -19,6 +19,7 @@ type workflowTriggerRun struct {
 	revisionID int64
 	cancel     context.CancelFunc
 	token      chan struct{}
+	done       chan struct{}
 }
 
 type workflowTriggerEmitter struct {
@@ -158,7 +159,8 @@ func (a *App) startWorkflowTrigger(parent context.Context, workflow db.Workflow,
 		cancel()
 		return nil
 	}
-	a.triggerRuns[workflow.ID] = workflowTriggerRun{revisionID: revisionID, cancel: cancel, token: token}
+	done := make(chan struct{})
+	a.triggerRuns[workflow.ID] = workflowTriggerRun{revisionID: revisionID, cancel: cancel, token: token, done: done}
 	a.triggerMu.Unlock()
 	request := sdk.TriggerRequest{
 		Revision:       sdk.RevisionRef{WorkflowID: fmt.Sprint(workflow.ID), RevisionID: fmt.Sprint(revisionID)},
@@ -170,6 +172,7 @@ func (a *App) startWorkflowTrigger(parent context.Context, workflow db.Workflow,
 	a.triggerWG.Add(1)
 	go func() {
 		defer a.triggerWG.Done()
+		defer close(done)
 		_ = handler.Run(ctx, request, workflowTriggerEmitter{app: a, workflowID: workflow.ID})
 		stoppedByCancellation := ctx.Err() != nil
 		cancel()
@@ -192,12 +195,17 @@ func (a *App) startWorkflowTrigger(parent context.Context, workflow db.Workflow,
 }
 
 func (a *App) stopWorkflowTrigger(workflowID int64) {
+	var done chan struct{}
 	a.triggerMu.Lock()
 	if running, ok := a.triggerRuns[workflowID]; ok {
 		running.cancel()
+		done = running.done
 		delete(a.triggerRuns, workflowID)
 	}
 	a.triggerMu.Unlock()
+	if done != nil {
+		<-done
+	}
 }
 
 func (a *App) stopWorkflowTriggers() {

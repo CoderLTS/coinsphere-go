@@ -2,7 +2,7 @@
 
 ## 当前基线
 
-CoinSphere 只支持 PostgreSQL 16。`00001` 至 `00005` 创建认证、插件、工作流和运行基线；`00006_quant_market_backtests.sql` 首次创建 Binance 行情表与 Quant 回测表；`00007_paper_results_notifications.sql` 创建 ResultView、Quant Signal 与 Notification 投递；`00008_quant_instrument_sources.sql` 创建 Binance 品种来源；`00009` 至 `00016` 完成日志、通知、工作流和回测明细基线；`00017_quant_binance_split.sql` 创建 Binance 订单、成交、费用、Paper 账本、持仓和账户快照约束；`00018_quant_workflow_venue.sql` 为 Quant 工作流补齐 venue 并移除失效节点；`00019_workflow_groups.sql` 增加全局工作流分组与单一归属；`00020_quant_workflow_backtest_entry.sql` 将旧 Quant 回测入口迁移到回测帧驱动节点；`00021_workflow_revision_retention.sql` 允许保存事务清理超限的最旧修订；`00022_workflow_revision_delete.sql` 允许服务层删除非活动历史修订。
+CoinSphere 只支持 PostgreSQL 16。`00001` 至 `00005` 创建认证、插件、工作流和运行基线；`00006_quant_market_backtests.sql` 首次创建 Binance 行情表与 Quant 回测表；`00007_paper_results_notifications.sql` 创建 ResultView、Quant Signal 与 Notification 投递；`00008_quant_instrument_sources.sql` 创建 Binance 品种来源；`00009` 至 `00016` 完成日志、通知、工作流和回测明细基线；`00017_quant_binance_split.sql` 创建 Binance 订单、成交、费用、Paper 账本、持仓和账户快照约束；`00018_quant_workflow_venue.sql` 为 Quant 工作流补齐 venue 并移除失效节点；`00019_workflow_groups.sql` 增加全局工作流分组与单一归属；`00020_quant_workflow_backtest_entry.sql` 将旧 Quant 回测入口迁移到回测帧驱动节点；`00021_workflow_revision_retention.sql` 允许保存事务清理超限的最旧修订；`00022_workflow_revision_delete.sql` 允许服务层删除非活动历史修订；`00023_workflow_delete.sql` 为显式工作流删除事务放行不可变执行事实清理。
 
 服务启动只读校验核心版本，DDL 只由 `coinsphere-migrate` 执行。随应用发布的 Quant、Binance 与 Notification 基线使用核心 migration runner；通过插件 CLI 安装的插件使用 `plugin_<规范化插件 ID>` schema 和自己的 `schema_migrations` 账本。项目不提供旧表、旧接口或旧数据转换器；生产 DSN 和数据库密码只通过服务器配置注入。
 

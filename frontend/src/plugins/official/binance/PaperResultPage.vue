@@ -2,7 +2,7 @@
   <section class="paper-result" aria-labelledby="paper-result-title">
     <header class="paper-result__header">
       <div>
-        <p>Binance Paper</p>
+        <p>币安模拟交易</p>
         <h2 id="paper-result-title">{{ view.name }}</h2>
       </div>
       <div class="paper-result__tools">

@@ -282,6 +282,9 @@ export const updateWorkflow = (
     data: params
   })
 
+export const deleteWorkflow = (workflowId: number) =>
+  request.del<{ id: number }>({ url: `/api/v1/workflows/${workflowId}` })
+
 export const fetchWorkflowRevision = (workflowId: number, revisionId: number) =>
   request.get<WorkflowRevision>({
     url: `/api/v1/workflows/${workflowId}/revisions/${revisionId}`

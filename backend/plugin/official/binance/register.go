@@ -56,14 +56,14 @@ func Register(registrar sdk.Registrar, host sdk.Host) error {
 		return err
 	}
 	if err := registrar.ResultPage(sdk.ResultPageDescriptor{
-		PageKey: "paper", Title: "Binance Paper 结果", ComponentEntry: "./official/binance/PaperResultPage.vue",
+		PageKey: "paper", Title: "币安模拟交易结果", ComponentEntry: "./official/binance/PaperResultPage.vue",
 		ScopeSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"workflowId":{"type":"integer","minimum":1},"paperNodeInstanceId":{"type":"string","minLength":1,"maxLength":128}},"required":["workflowId","paperNodeInstanceId"],"additionalProperties":false}`),
 		FilterSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"market":{"type":"string","enum":["spot","usdm"]},"instrument":{"type":"string","pattern":"^[A-Z0-9]{2,32}$"},"status":{"type":"string","enum":["new","partially_filled","filled","canceled","rejected","expired"]}},"additionalProperties":false}`),
 		Actions:      []string{"export"}, Mobile: true,
 	}); err != nil {
 		return err
 	}
-	for _, page := range []sdk.PageDescriptor{{PageKey: "instruments", Title: "Binance 币种", Icon: "ri:coins-line", KeepAlive: true}, {PageKey: "candles", Title: "Binance K 线", Icon: "ri:stock-line"}, {PageKey: "live-accounts", Title: "Binance 账户放行", Icon: "ri:shield-keyhole-line"}} {
+	for _, page := range []sdk.PageDescriptor{{PageKey: "instruments", Title: "币安 币种", Icon: "ri:coins-line", KeepAlive: true}, {PageKey: "candles", Title: "币安 K 线", Icon: "ri:stock-line"}, {PageKey: "live-accounts", Title: "币安账户", Icon: "ri:shield-keyhole-line"}} {
 		if err := registrar.Page(page); err != nil {
 			return err
 		}
