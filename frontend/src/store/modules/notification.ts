@@ -43,6 +43,7 @@ export function decodeNotificationWsEnvelope(
 }
 
 const NOTIFICATION_WS_PROTOCOL = 'coinsphere.notifications.v1'
+const MAX_TIMEOUT_MS = 2_147_483_647
 
 function accessTokenExpiresAt(accessToken: string) {
   try {
@@ -214,6 +215,13 @@ export const useNotificationStore = defineStore('notificationStore', () => {
       userStore.clearSession()
       return
     }
+    if (sessionExpiryTimer) clearTimeout(sessionExpiryTimer)
+    sessionExpiryTimer = setTimeout(
+      () => {
+        if (userStore.accessToken === accessToken) connect()
+      },
+      Math.min(expiresAt - Date.now(), MAX_TIMEOUT_MS)
+    )
     if (
       socket &&
       (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)
@@ -222,12 +230,6 @@ export const useNotificationStore = defineStore('notificationStore', () => {
     }
     manualClose = false
     lastSequence = 0
-    if (sessionExpiryTimer) clearTimeout(sessionExpiryTimer)
-    sessionExpiryTimer = setTimeout(() => {
-      if (userStore.accessToken !== accessToken) return
-      disconnect()
-      userStore.clearSession()
-    }, expiresAt - Date.now())
     const currentSocket = new WebSocket(buildNotificationWsUrl(window.location.origin), [
       NOTIFICATION_WS_PROTOCOL,
       accessToken

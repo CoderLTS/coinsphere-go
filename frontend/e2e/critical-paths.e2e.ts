@@ -4,7 +4,7 @@ import { expect, test, type Page, type Route } from '@playwright/test'
 type AccessMode = 'guest' | 'authenticated'
 
 const createdAt = '2026-08-01T00:00:00Z'
-const accessToken = `header.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.signature`
+const accessToken = `header.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60 })).toString('base64url')}.signature`
 
 const productionCsp = readFileSync(new URL('../nginx.conf', import.meta.url), 'utf8').match(
   /add_header Content-Security-Policy "([^"]+)" always;/
