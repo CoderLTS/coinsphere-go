@@ -166,7 +166,7 @@ func (q *binanceRuntime) handleCandles(c *gin.Context, scope sdk.RouteScope) {
 	}
 	hasMore := len(items) > limit
 	if hasMore {
-		items = items[:limit]
+		items = items[1:]
 	}
 	result := make([]map[string]any, len(items))
 	for i, item := range items {
