@@ -1,7 +1,9 @@
 import request from '@/utils/http'
 
-interface ItemList<T> {
+export interface ItemList<T> {
   items: T[]
+  nextBefore?: string
+  hasMore?: boolean
 }
 
 export interface BinanceInstrument {
@@ -30,6 +32,12 @@ export interface BinanceCandle {
   volume: string
 }
 
+export interface BinanceIndicatorPoint {
+  openTime: string
+  main: Record<string, string | null>
+  sub: Record<string, string | null>
+}
+
 export interface BinanceLiveAccountRelease {
   account: string
   market: 'spot' | 'usdm'
@@ -52,8 +60,19 @@ export const fetchBinanceCandles = (params: {
   instrument: string
   interval: string
   before?: string
+  startTime?: string
+  endTime?: string
   limit?: number
 }) => request.get<ItemList<BinanceCandle>>({ url: `${binanceBase}/candles`, params })
+
+export const fetchBinanceIndicators = (params: {
+  market: 'spot' | 'usdm'
+  instrument: string
+  interval: string
+  startTime?: string
+  endTime?: string
+  limit?: number
+}) => request.get<ItemList<BinanceIndicatorPoint>>({ url: `${binanceBase}/candles/indicators`, params })
 
 export const fetchBinanceLiveAccounts = () =>
   request.get<ItemList<BinanceLiveAccountRelease>>({ url: `${binanceBase}/live-accounts` })

@@ -128,6 +128,8 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 
 `official.binance@3.0.0` 提供 Binance Spot/USD-M 公共行情、交易规则、`MarketDataProvider`、Paper 执行和受门禁保护的市价 `ExecutionProvider`。Binance 节点拥有行情、订单、成交、费用、持仓和账户快照数据；代理由该插件选择，私有请求只能通过 `SecretReader` 签名。未来交易所插件只需实现相同 Provider 契约，Core 与 Quant 不需要修改。
 
+Binance K 线查询支持 `startTime`、`endTime`、`before` 和 `limit`，响应包含 `items`、`nextBefore` 与 `hasMore`；`/candles/indicators` 返回按 `openTime` 对齐的 Decimal 字符串指标序列。`/candles/stream` 是仅超级管理员可用的 WebSocket 公共行情桥接，使用 `coinsphere.plugin.official.binance.v1` 子协议和访问令牌，不允许浏览器直连交易所。
+
 六种 `1.0.0` 判断节点分别是 `official.quant.volume_spike_condition`、`official.quant.price_change_condition`、`official.quant.macd_condition`、`official.quant.kdj_condition`、`official.quant.rsi_condition` 和 `official.quant.bollinger_condition`。一个节点只保存一种指标规则及市场、交易对、检查周期、K 线周期和名称；每次在当前与上一个检查时点截取当时已闭合的 K 线，禁止未来数据。K 线断档、非法参数和数据库错误使节点失败，历史不足则 `ready=false` 并走 `false`。EMA、Wilder RSI、KDJ、布林标准差和有界平方根全部使用确定性 Decimal。
 
 `official.quant.market_signal@1.0.0` 只能接收一个指标判断节点的 `true` 分支，保存时由编辑器生成且由后端校验 `market`、`instrument`、`interval`、`formula -> name`、`indicator`、`candleCloseTime`、`summary` 和 `value -> values` 的直接字段绑定。每根命中的闭合 K 线写入一条 `plugin_quant.market_signals` 行；稳定 `operation_key` 使节点重试幂等。该表及查询接口只表示行情信号，不进入现有 `plugin_quant.signals`、审批或 Paper 交易链路。

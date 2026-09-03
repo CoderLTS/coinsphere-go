@@ -19,19 +19,10 @@
         </ElSelect>
       </div>
 
-      <div class="filter-group">
-        <span class="filter-label">K 线周期</span>
-        <ElRadioGroup v-model="selectedInterval" class="interval-control" @change="loadChart">
-          <ElRadioButton v-for="item in intervals" :key="item" :label="item">
-            {{ item }}
-          </ElRadioButton>
-        </ElRadioGroup>
-      </div>
-
       <div class="market-status">
         <span
           class="market-status__dot"
-          :class="{ 'market-status__dot--offline': selectedSymbol?.status !== 'trading' }"
+          :class="{ 'market-status__dot--offline': selectedSymbol?.status !== 'trading' || !streamConnected }"
         ></span>
         <div>
           <strong>
@@ -43,7 +34,10 @@
                   : '已暂停'
             }}
           </strong>
-          <span>{{ selectedSymbol?.market === 'usd_m' ? 'USD-M 合约' : '现货市场' }}</span>
+          <span>
+            {{ selectedSymbol?.market === 'usd_m' ? 'USD-M 合约' : '现货市场' }} ·
+            {{ streamConnected ? '实时行情已连接' : '实时行情重连中' }}
+          </span>
         </div>
       </div>
 
@@ -120,6 +114,14 @@
           :loading="loading"
           :is-empty="!chartData.length"
           height="clamp(440px, 58vh, 620px)"
+          :interval="selectedInterval"
+          :intervals="intervals"
+          :main-indicator="mainIndicator"
+          :sub-indicator="subIndicator"
+          @interval-change="handleIntervalChange"
+          @main-indicator-change="(value) => (mainIndicator = value)"
+          @sub-indicator-change="(value) => (subIndicator = value)"
+          @load-more="loadMore"
         />
       </section>
     </div>
@@ -137,16 +139,26 @@
   } from './market-api'
   import type { KLineDataItem } from '@/types/component/chart'
   import { formatDateTime } from '@/utils/date'
+  import { useUserStore } from '@/store/modules/user'
 
   defineOptions({ name: 'MarketChartPage' })
 
   const route = useRoute()
-  const intervals: CandleInterval[] = ['1m', '5m', '15m', '1h', '4h', '1d']
+  const intervals: CandleInterval[] = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w']
   const selectedInstrumentId = ref('')
   const selectedInterval = ref<CandleInterval>('1h')
   const symbols = ref<MarketSymbol[]>([])
   const candles = ref<MarketCandle[]>([])
   const loading = ref(false)
+  const loadingMore = ref(false)
+  const nextBefore = ref('')
+  const hasMore = ref(false)
+  const mainIndicator = ref<'none' | 'ma' | 'ema' | 'boll'>('none')
+  const subIndicator = ref<'volume' | 'macd' | 'rsi' | 'kdj' | 'obv' | 'wr'>('volume')
+  const socket = ref<WebSocket | null>(null)
+  const streamConnected = ref(false)
+  let streamReconnectTimer: ReturnType<typeof setTimeout> | null = null
+  let loadGeneration = 0
 
   const selectedSymbol = computed(
     () => symbols.value.find((item) => item.id === selectedInstrumentId.value) || null
@@ -167,31 +179,155 @@
 
   const chartData = computed<KLineDataItem[]>(() =>
     candles.value.map((item) => ({
-      time: axisTime(item.openTime),
+      time: item.openTime,
+      label: axisTime(item.openTime),
       open: Number(item.open),
       close: Number(item.close),
       high: Number(item.high),
       low: Number(item.low),
-      volume: Number(item.baseVolume)
+      volume: Number(item.baseVolume),
+      indicators: item.indicators
     }))
   )
   const loadChart = async () => {
+    const generation = ++loadGeneration
     const symbol = selectedSymbol.value
     if (!selectedInstrumentId.value || !symbol) {
       candles.value = []
+      hasMore.value = false
       return
     }
     loading.value = true
     candles.value = []
+    nextBefore.value = ''
+    if (streamReconnectTimer) clearTimeout(streamReconnectTimer)
+    streamReconnectTimer = null
+    const previousSocket = socket.value
+    socket.value = null
+    streamConnected.value = false
+    previousSocket?.close()
     try {
       const candleResult = await fetchMarketCandles({
         instrumentId: selectedInstrumentId.value,
         interval: selectedInterval.value,
-        limit: 200
+        limit: 500
       })
+      if (generation !== loadGeneration) return
       candles.value = candleResult.records
+      nextBefore.value = candleResult.nextCursor
+      hasMore.value = candleResult.hasMore
+      connectStream()
+    } catch {
+      if (generation === loadGeneration) {
+        candles.value = []
+        nextBefore.value = ''
+        hasMore.value = false
+      }
     } finally {
-      loading.value = false
+      if (generation === loadGeneration) loading.value = false
+    }
+  }
+
+  const handleIntervalChange = (value: string) => {
+    if (intervals.includes(value as CandleInterval)) {
+      selectedInterval.value = value as CandleInterval
+      void loadChart()
+    }
+  }
+
+  const loadMore = async () => {
+    if (loadingMore.value || !hasMore.value || !nextBefore.value || !selectedSymbol.value) return
+    const generation = loadGeneration
+    loadingMore.value = true
+    try {
+      const result = await fetchMarketCandles({
+        instrumentId: selectedInstrumentId.value,
+        interval: selectedInterval.value,
+        endTime: nextBefore.value,
+        limit: 500
+      })
+      if (generation !== loadGeneration) return
+      const existing = new Set(candles.value.map((item) => item.openTime))
+      candles.value = [...result.records.filter((item) => !existing.has(item.openTime)), ...candles.value]
+      nextBefore.value = result.nextCursor
+      hasMore.value = result.hasMore
+    } finally {
+      if (generation === loadGeneration) loadingMore.value = false
+    }
+  }
+
+  const connectStream = () => {
+    const userStore = useUserStore()
+    if (!selectedSymbol.value || !userStore.accessToken) return
+    const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
+    const symbol = selectedSymbol.value
+    const url = `${scheme}://${window.location.host}/api/v1/plugins/official.binance/candles/stream?market=${symbol.market === 'usd_m' ? 'usdm' : 'spot'}&instrument=${encodeURIComponent(symbol.nativeSymbol)}&interval=${selectedInterval.value}`
+    const current = new WebSocket(url, ['coinsphere.plugin.official.binance.v1', userStore.accessToken])
+    socket.value = current
+    current.onopen = () => {
+      if (socket.value !== current) {
+        current.close()
+        return
+      }
+      if (current.protocol !== 'coinsphere.plugin.official.binance.v1') {
+        current.close(1002, 'unexpected websocket protocol')
+        return
+      }
+      streamConnected.value = true
+    }
+    current.onmessage = (event) => {
+      try {
+        const envelope = JSON.parse(event.data)
+        const item = envelope?.data
+        if (envelope?.type !== 'kline' || !item?.openTime || socket.value !== current) return
+        const next = {
+          instrumentId: selectedInstrumentId.value,
+          interval: selectedInterval.value,
+          openTime: item.openTime,
+          closeTime: item.closeTime,
+          open: item.open,
+          high: item.high,
+          low: item.low,
+          close: item.close,
+          baseVolume: item.volume,
+          isClosed: Boolean(item.closed),
+          indicators: item.indicators
+            ? {
+                main: Object.fromEntries(
+                  Object.entries(item.indicators.main || {}).map(([key, value]) => [
+                    key,
+                    value === null ? null : Number(value)
+                  ])
+                ),
+                sub: Object.fromEntries(
+                  Object.entries(item.indicators.sub || {}).map(([key, value]) => [
+                    key,
+                    value === null ? null : Number(value)
+                  ])
+                )
+              }
+            : undefined
+        } as MarketCandle
+        const index = candles.value.findIndex((candle) => candle.openTime === next.openTime)
+        if (index >= 0) {
+          candles.value.splice(index, 1, next)
+        } else {
+          const insertAt = candles.value.findIndex((candle) => candle.openTime > next.openTime)
+          if (insertAt < 0) candles.value.push(next)
+          else candles.value.splice(insertAt, 0, next)
+        }
+      } catch {
+        // Ignore malformed market frames; the next REST refresh repairs the view.
+      }
+    }
+    current.onclose = () => {
+      if (socket.value !== current) return
+      socket.value = null
+      streamConnected.value = false
+      streamReconnectTimer = setTimeout(() => {
+        streamReconnectTimer = null
+        connectStream()
+      }, 3000)
     }
   }
 
@@ -211,6 +347,13 @@
       loading.value = false
     }
     await loadChart()
+  })
+
+  onBeforeUnmount(() => {
+    if (streamReconnectTimer) clearTimeout(streamReconnectTimer)
+    socket.value?.close()
+    socket.value = null
+    streamConnected.value = false
   })
 </script>
 
@@ -318,19 +461,27 @@
   }
 
   .metric-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 16px;
+    display: flex;
+    flex-wrap: wrap;
+    min-width: 0;
+    border-top: 1px solid var(--art-card-border);
+    border-bottom: 1px solid var(--art-card-border);
   }
 
   .metric-card {
     display: flex;
     gap: 12px;
     align-items: center;
+    flex: 1 1 220px;
     min-width: 0;
-    min-height: 88px;
-    padding: 14px 16px;
-    background: var(--default-box-color);
+    min-height: 66px;
+    padding: 8px 16px;
+    background: transparent;
+    border-right: 1px solid var(--art-card-border);
+  }
+
+  .metric-card:last-child {
+    border-right: 0;
   }
 
   .metric-icon,
@@ -342,9 +493,9 @@
   }
 
   .metric-icon {
-    width: 38px;
-    height: 38px;
-    font-size: 19px;
+    width: 30px;
+    height: 30px;
+    font-size: 16px;
   }
 
   .metric-icon--primary,
@@ -478,8 +629,8 @@
   }
 
   @media (max-width: 1100px) {
-    .metric-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+    .metric-card:nth-child(2) {
+      border-right: 0;
     }
   }
 
@@ -519,13 +670,9 @@
   }
 
   @media (max-width: 520px) {
-    .metric-grid {
-      grid-template-columns: 1fr;
-    }
-
-    .interval-control {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+    .metric-card {
+      flex-basis: 100%;
+      border-right: 0;
     }
 
     .chart-legend {

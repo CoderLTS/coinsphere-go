@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"coinsphere/backend/internal/perm"
@@ -106,7 +107,7 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 	get(authenticated, "/result-views/:viewId/runs", s.handleListResultViewRuns)
 	authenticated.POST("/result-views/:viewId/runs/:runId/:action", s.handleResultViewRunAction)
 	authenticated.POST("/result-views/:viewId/workflow/pause", s.handleResultViewWorkflowPause)
-	s.registerSystemPluginRoutes(authenticated)
+	s.registerSystemPluginRoutes(authenticated, api)
 	s.registerResultPluginRoutes(authenticated)
 
 	get(authenticated, "/admin/users", s.requirePermission(perm.SystemUsersView), s.handleListUsers)
@@ -202,7 +203,7 @@ func authorizeResultAction(c *gin.Context, principal *service.Principal, action 
 	return false
 }
 
-func (s *Server) registerSystemPluginRoutes(routes gin.IRoutes) {
+func (s *Server) registerSystemPluginRoutes(routes, publicRoutes gin.IRoutes) {
 	if s.App == nil || s.App.Plugins == nil {
 		return
 	}
@@ -212,6 +213,22 @@ func (s *Server) registerSystemPluginRoutes(routes gin.IRoutes) {
 		}
 		registered := route
 		pattern := "/plugins/" + registered.PluginID + registered.Descriptor.Pattern
+		if registered.Descriptor.WebSocket {
+			publicRoutes.GET(pattern, func(c *gin.Context) {
+				protocol := "coinsphere.plugin." + registered.PluginID + ".v1"
+				token, ok := pluginWebSocketToken(c.Request, protocol)
+				principal, err := s.App.AuthenticateAccessToken(token)
+				if !ok || err != nil || principal == nil || !principal.HasRole("R_SUPER") {
+					writeProblem(c, http.StatusUnauthorized, "invalid websocket authentication")
+					return
+				}
+				registered.Handler(c, sdk.SystemScope{
+					PluginID: registered.PluginID, UserID: principal.User.ID,
+					RoleCodes: slices.Clone(principal.RoleCodes),
+				})
+			})
+			continue
+		}
 		registerPluginRoute(routes, registered.Descriptor.Method, pattern, s.requireRole("R_SUPER"), func(c *gin.Context) {
 			principal := currentPrincipal(c)
 			registered.Handler(c, sdk.SystemScope{
@@ -220,6 +237,19 @@ func (s *Server) registerSystemPluginRoutes(routes gin.IRoutes) {
 			})
 		})
 	}
+}
+
+func pluginWebSocketToken(request *http.Request, expectedProtocol string) (string, bool) {
+	values := request.Header.Values("Sec-WebSocket-Protocol")
+	if len(values) != 1 {
+		return "", false
+	}
+	protocols := strings.Split(values[0], ",")
+	if len(protocols) != 2 || strings.TrimSpace(protocols[0]) != expectedProtocol {
+		return "", false
+	}
+	token := strings.TrimSpace(protocols[1])
+	return token, token != ""
 }
 
 func (s *Server) handleReady(c *gin.Context) {

@@ -1,8 +1,13 @@
-import { fetchBinanceCandles, fetchBinanceInstruments, type BinanceInstrument } from './api'
+import {
+  fetchBinanceCandles,
+  fetchBinanceIndicators,
+  fetchBinanceInstruments,
+  type BinanceInstrument
+} from './api'
 
 export type MarketType = 'spot' | 'usd_m'
 export type MarketStatus = 'trading' | 'suspended' | 'all'
-export type CandleInterval = '1m' | '5m' | '15m' | '1h' | '4h' | '1d'
+export type CandleInterval = '1m' | '3m' | '5m' | '15m' | '30m' | '1h' | '2h' | '4h' | '6h' | '8h' | '12h' | '1d' | '3d' | '1w'
 
 export interface MarketSymbol {
   id: string
@@ -30,6 +35,7 @@ export interface MarketCandle {
   close: string
   baseVolume: string
   isClosed: boolean
+  indicators?: { main: Record<string, number | null>; sub: Record<string, number | null> }
 }
 
 export interface MarketSymbolQuery {
@@ -99,8 +105,20 @@ export async function fetchMarketCandles(params: MarketCandleQuery) {
     market: market === 'usdm' || market === 'usd_m' ? 'usdm' : 'spot',
     instrument,
     interval: params.interval,
+    limit: params.limit,
+    before: params.endTime,
+    startTime: params.startTime,
+    endTime: params.endTime
+  })
+  const indicatorResult = await fetchBinanceIndicators({
+    market: market === 'usdm' || market === 'usd_m' ? 'usdm' : 'spot',
+    instrument,
+    interval: params.interval,
+    startTime: params.startTime,
+    endTime: params.endTime,
     limit: params.limit
   })
+  const indicators = new Map(indicatorResult.items.map((item) => [item.openTime, item]))
   const records: MarketCandle[] = result.items.map((item) => ({
     instrumentId: params.instrumentId,
     interval: item.interval as CandleInterval,
@@ -111,7 +129,24 @@ export async function fetchMarketCandles(params: MarketCandleQuery) {
     low: item.low,
     close: item.close,
     baseVolume: item.volume,
-    isClosed: true
+    isClosed: true,
+    indicators: indicators.get(item.openTime)
+      ? {
+          main: Object.fromEntries(
+            Object.entries(indicators.get(item.openTime)!.main).map(([key, value]) => [
+              key,
+              value === null ? null : Number(value)
+            ])
+          ),
+          sub: Object.fromEntries(
+            Object.entries(indicators.get(item.openTime)!.sub).map(([key, value]) => [
+              key,
+              value === null ? null : Number(value)
+            ])
+          )
+        }
+      : undefined
   }))
-  return { records, nextCursor: '', hasMore: false, total: records.length }
+  const nextBefore = result.nextBefore || ''
+  return { records, nextCursor: nextBefore, hasMore: Boolean(result.hasMore), total: records.length }
 }

@@ -213,8 +213,10 @@ export interface RingChartProps extends BaseChartProps, InteractionProps {
 
 // K线图数据项接口
 export interface KLineDataItem {
-  /** 时间标签 */
+  /** 稳定的时间键 */
   time: string
+  /** 展示用时间标签 */
+  label?: string
   /** 开盘价 */
   open: number
   /** 收盘价 */
@@ -225,6 +227,10 @@ export interface KLineDataItem {
   low: number
   /** 成交量 */
   volume?: number
+  indicators?: {
+    main?: Record<string, number | null>
+    sub?: Record<string, number | null>
+  }
 }
 
 export interface KLineSignalItem {
@@ -252,6 +258,11 @@ export interface KLineChartProps extends BaseChartProps {
   dataZoomStart?: number
   /** 数据缩放初始结束位置 */
   dataZoomEnd?: number
+  interval?: string
+  intervals?: string[]
+  mainIndicator?: 'none' | 'ma' | 'ema' | 'boll'
+  subIndicator?: 'volume' | 'macd' | 'rsi' | 'kdj' | 'obv' | 'wr'
+  fixedInterval?: boolean
 }
 
 // 散点图数据项接口

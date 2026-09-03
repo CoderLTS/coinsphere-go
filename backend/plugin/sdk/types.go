@@ -273,10 +273,11 @@ type RegisteredAssistantQuery struct {
 type ScopedRouteHandler func(*gin.Context, RouteScope)
 
 type RouteDescriptor struct {
-	Method  string
-	Pattern string
-	Scope   ScopeKind
-	Action  string
+	Method    string
+	Pattern   string
+	Scope     ScopeKind
+	Action    string
+	WebSocket bool
 }
 
 type RegisteredRoute struct {
