@@ -42,6 +42,8 @@ export interface WorkflowMaterialItem {
   group: string
   title: string
   description: string
+  aliases: string[]
+  tags: string[]
   color: string
   iconText: string
   width: number

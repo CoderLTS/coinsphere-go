@@ -12,11 +12,11 @@ import type { CSSProperties, Ref, ShallowRef } from 'vue'
 import { createStencilNode } from '../workflow-editor.mapper'
 import type { WorkflowMaterialDropPayload, WorkflowMaterialGroup } from '../types'
 
-const STENCIL_GRAPH_WIDTH = 204
-const STENCIL_COLUMN_WIDTH = 188
-const STENCIL_CARD_WIDTH = 184
-const STENCIL_CARD_HEIGHT = 58
-const STENCIL_ROW_HEIGHT = 76
+const STENCIL_GRAPH_WIDTH = 248
+const STENCIL_COLUMN_WIDTH = 232
+const STENCIL_CARD_WIDTH = 224
+const STENCIL_CARD_HEIGHT = 52
+const STENCIL_ROW_HEIGHT = 66
 const STENCIL_SCROLLBAR_TOP_INSET = 6
 const STENCIL_SCROLLBAR_BOTTOM_INSET = 10
 
@@ -47,10 +47,10 @@ export const ensureStencilShapeRegistered = () => {
           rx: 7,
           ry: 7
         },
-        iconRect: { width: 28, height: 28, rx: 7, ry: 7, refX: 10, refY: 15 },
+        iconRect: { width: 28, height: 28, rx: 7, ry: 7, refX: 10, refY: 12 },
         iconLabel: {
           refX: 24,
-          refY: 29,
+          refY: 26,
           textAnchor: 'middle',
           textVerticalAnchor: 'middle',
           fontSize: 11,
@@ -59,22 +59,22 @@ export const ensureStencilShapeRegistered = () => {
         },
         title: {
           refX: 48,
-          refY: 21,
+          refY: 18,
           textAnchor: 'start',
           textVerticalAnchor: 'middle',
           fontSize: 13,
           fontWeight: 600,
           fill: 'var(--workflow-panel-text, #263247)',
-          textWrap: { width: 124, height: 20, ellipsis: '…' }
+          textWrap: { width: 164, height: 20, ellipsis: '…' }
         },
         desc: {
           refX: 48,
-          refY: 39,
+          refY: 37,
           textAnchor: 'start',
           textVerticalAnchor: 'middle',
           fontSize: 11,
           fill: 'var(--workflow-panel-muted, #78859a)',
-          textWrap: { width: 124, height: 24, ellipsis: '…' }
+          textWrap: { width: 164, height: 16, ellipsis: '…' }
         }
       }
     },
@@ -214,9 +214,18 @@ export function useWorkflowStencil(options: StencilOptions) {
 
   const createStencil = () => {
     const groups = options.materialGroups()
-    if (!options.graphInstance.value || !options.stencilRef.value || !groups.length) return
+    if (!options.graphInstance.value || !options.stencilRef.value) return
+    detachScrollSync?.()
+    detachScrollSync = null
+    stencilScrollContainer.value = null
     ;(stencilInstance.value as any)?.dispose?.()
+    stencilInstance.value = null
     options.stencilRef.value.innerHTML = ''
+
+    if (!groups.length) {
+      scrollbar.visible = false
+      return
+    }
 
     const stencil = new Stencil({
       title: '节点物料',
@@ -225,11 +234,11 @@ export function useWorkflowStencil(options: StencilOptions) {
       stencilGraphHeight: 480,
       stencilGraphOptions: { async: false, panning: true, interacting: false },
       collapsable: false,
-      groups: groups.map((group) => ({
+      groups: groups.map((group, index) => ({
         title: group.title,
         name: group.key,
         collapsable: true,
-        collapsed: false,
+        collapsed: index > 0,
         graphHeight: Math.max(STENCIL_ROW_HEIGHT, group.items.length * STENCIL_ROW_HEIGHT),
         layoutOptions: { rowHeight: STENCIL_ROW_HEIGHT }
       })),

@@ -214,7 +214,10 @@ func Register(registrar sdk.Registrar, host sdk.Host) error {
         Kind:         sdk.NodeKindAction,
         Title:        "Echo",
         Description:  "Returns the input message.",
-        Category:     "Example",
+        Category:     "integration",
+        Aliases:      []string{"示例节点", "Echo"},
+        Tags:         []string{"示例", "集成"},
+        SortOrder:    10,
         Color:        "#64748b",
         Icon:         "message-square",
         Width:        220,
@@ -231,7 +234,7 @@ func Register(registrar sdk.Registrar, host sdk.Host) error {
 }
 ```
 
-节点 `Type` 必须是小写点分 key，且不能使用保留前缀 `core.`。节点 `Version` 必须是严格 SemVer。标题、说明、分类、颜色、图标和稳定尺寸由 `NodeDescriptor` 唯一提供；`Deterministic`、`Stateless` 与 `FrameSafe` 决定通用校验和回测 frame 能力。Config/Input/Output Schema 必须显式声明 Draft 2020-12；UI Schema 只要求是 JSON 对象。需要多出口时在 `NodeDescriptor.Branches` 声明至少两个稳定分支键；运行时以节点输出的字符串 `branch` 选择端口，再执行边上的 Boolean CEL，同一端口可以连接零个或多个下游节点。
+节点 `Type` 必须是小写点分 key，且不能使用保留前缀 `core.`。节点 `Version` 必须是严格 SemVer。标题、说明、稳定分类 key、别名、标签、排序、颜色、图标和稳定尺寸由 `NodeDescriptor` 唯一提供；分类 key 使用 `start`、`market`、`strategy`、`agent`、`control`、`data`、`notification`、`integration` 或 `end`，未知分类归入前端“其他”。`Aliases` 和 `Tags` 用于工作流编辑器本地检索，`SortOrder` 用于同分类内稳定排序。`Deterministic`、`Stateless` 与 `FrameSafe` 决定通用校验和回测 frame 能力。Config/Input/Output Schema 必须显式声明 Draft 2020-12；UI Schema 只要求是 JSON 对象。需要多出口时在 `NodeDescriptor.Branches` 声明至少两个稳定分支键；运行时以节点输出的字符串 `branch` 选择端口，再执行边上的 Boolean CEL，同一端口可以连接零个或多个下游节点。
 
 Backend 会在执行前后分别校验输入和输出 Schema。插件仍应处理 JSON 解码、外部响应、URL、文件和凭据等信任边界错误，并响应 `context.Context` 取消。
 
@@ -344,7 +347,7 @@ export const resultPages = {
 };
 ```
 
-Frontend 入口还可导出 `nodeEditors`、`nodeRenderers` 和 `providerConfigComponents`。key 分别使用完整 node type 或 provider ID；节点标题、说明、分类、颜色、图标和尺寸只来自 Backend `NodeDescriptor`，前端组件不得维护第二份物料元数据。
+Frontend 入口还可导出 `nodeEditors`、`nodeRenderers` 和 `providerConfigComponents`。key 分别使用完整 node type 或 provider ID；节点标题、说明、分类、别名、标签、排序、颜色、图标和尺寸只来自 Backend `NodeDescriptor`，前端组件不得维护第二份物料元数据。
 
 只提供 Backend 节点、不提供页面时，最小 Frontend 入口可以是：
 

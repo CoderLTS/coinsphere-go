@@ -860,6 +860,7 @@
 
     applyDomainGraph(nextGraph)
     syncSelection(nextNode.id, 'node')
+    canvasRef.value?.rememberMaterial(payload.typeCode)
   }
 
   const handleEdgeDraftCommit = (form: WorkflowEdgeFormModel) => {

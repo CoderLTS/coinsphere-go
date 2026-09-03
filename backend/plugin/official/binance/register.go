@@ -30,14 +30,14 @@ func Register(registrar sdk.Registrar, host sdk.Host) error {
 		Type: "official.binance.realtime_candles", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
 		ConfigSchema: candleStreamSchema, UISchema: json.RawMessage(`{"ui:order":["market","proxyId","instrument","intervals"]}`),
 		InputSchema: emptyObjectSchema, OutputSchema: candleSchema, Pool: sdk.PoolStream, SideEffect: sdk.SideEffectData, State: sdk.StateStateless,
-	}, "Binance K 线实时采集", "采集并发布 Binance 已闭合 K 线。", "行情", "#0f766e", "activity"), binanceCandleRealtimeTrigger{runtime: runtime}); err != nil {
+	}, "Binance K 线实时采集", "采集并发布 Binance 已闭合 K 线。", "market", "#0f766e", "activity"), binanceCandleRealtimeTrigger{runtime: runtime}); err != nil {
 		return err
 	}
 	if err := registrar.Action(withNodeMeta(sdk.NodeDescriptor{
 		Type: "official.binance.backfill_candles", Version: "1.0.0", Kind: sdk.NodeKindAction,
 		ConfigSchema: candleBackfillSchema, UISchema: json.RawMessage(`{"ui:order":["market","proxyId","instrument","intervals","candleCount","endTime"]}`),
 		InputSchema: emptyObjectSchema, OutputSchema: candleBackfillOutput, Pool: sdk.PoolStream, SideEffect: sdk.SideEffectData, State: sdk.StateStateless,
-	}, "Binance K 线补数", "补齐 Binance 历史闭合 K 线。", "行情", "#0f766e", "database"), binanceCandleBackfillAction{runtime: runtime}); err != nil {
+	}, "Binance K 线补数", "补齐 Binance 历史闭合 K 线。", "market", "#0f766e", "database"), binanceCandleBackfillAction{runtime: runtime}); err != nil {
 		return err
 	}
 	if err := registerInstrumentSync(registrar, runtime); err != nil {
@@ -63,7 +63,7 @@ func Register(registrar sdk.Registrar, host sdk.Host) error {
 	}); err != nil {
 		return err
 	}
-	for _, page := range []sdk.PageDescriptor{{PageKey: "instruments", Title: "币安 币种", Icon: "ri:coins-line", KeepAlive: true}, {PageKey: "candles", Title: "币安 K 线", Icon: "ri:stock-line"}, {PageKey: "live-accounts", Title: "币安账户", Icon: "ri:shield-keyhole-line"}} {
+	for _, page := range []sdk.PageDescriptor{{PageKey: "instruments", Title: "币安币种", Icon: "ri:coins-line", KeepAlive: true}, {PageKey: "candles", Title: "币安K线", Icon: "ri:stock-line"}, {PageKey: "live-accounts", Title: "币安账户", Icon: "ri:shield-keyhole-line"}} {
 		if err := registrar.Page(page); err != nil {
 			return err
 		}
@@ -73,8 +73,41 @@ func Register(registrar sdk.Registrar, host sdk.Host) error {
 
 func withNodeMeta(desc sdk.NodeDescriptor, title, description, category, color, icon string) sdk.NodeDescriptor {
 	desc.Title, desc.Description, desc.Category, desc.Color, desc.Icon = title, description, category, color, icon
+	desc.Aliases = append([]string{title}, binanceNodeAliases[desc.Type]...)
+	desc.Tags = append([]string{category}, binanceNodeTags[desc.Type]...)
+	desc.SortOrder = binanceNodeOrder[desc.Type]
+	if desc.SortOrder == 0 {
+		desc.SortOrder = 100
+	}
 	desc.Width, desc.Height = 220, 72
 	desc.Capabilities.Stateless = desc.State == sdk.StateStateless
 	desc.Capabilities.Deterministic = desc.SideEffect == sdk.SideEffectNone
 	return desc
+}
+
+var binanceNodeOrder = map[string]int{
+	"official.binance.sync_instruments": 10,
+	"official.binance.realtime_candles": 20,
+	"official.binance.backfill_candles": 30,
+	"official.binance.account_stream":   40,
+	"official.binance.paper_execute":    10,
+	"official.binance.live_execute":     20,
+}
+
+var binanceNodeAliases = map[string][]string{
+	"official.binance.sync_instruments": {"币种同步", "交易规则", "交易对"},
+	"official.binance.realtime_candles": {"实时 K 线", "行情采集", "K线"},
+	"official.binance.backfill_candles": {"K 线补数", "历史行情", "回补"},
+	"official.binance.account_stream":   {"账户流", "订单同步", "成交同步"},
+	"official.binance.paper_execute":    {"模拟交易", "Paper", "纸面交易"},
+	"official.binance.live_execute":     {"实盘交易", "真实下单"},
+}
+
+var binanceNodeTags = map[string][]string{
+	"official.binance.sync_instruments": {"Binance", "数据"},
+	"official.binance.realtime_candles": {"Binance", "K线", "实时"},
+	"official.binance.backfill_candles": {"Binance", "K线", "历史"},
+	"official.binance.account_stream":   {"Binance", "账户", "私有流"},
+	"official.binance.paper_execute":    {"Binance", "Paper", "订单"},
+	"official.binance.live_execute":     {"Binance", "Live", "风控"},
 }

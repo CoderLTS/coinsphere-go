@@ -2,11 +2,48 @@
 import type { WorkflowNodeDefinitionItem } from '@/api/scheduler'
 import type { WorkflowMaterialGroup, WorkflowMaterialItem, WorkflowNodeFormKind } from './types'
 
-const GROUP_ORDER = ['开始', '行情', '策略', '智能体', '控制', '数据', '通知', '集成', '结束']
+export const WORKFLOW_CATEGORY_ORDER = [
+  'start',
+  'market',
+  'strategy',
+  'agent',
+  'control',
+  'data',
+  'notification',
+  'integration',
+  'end'
+]
+
+export const WORKFLOW_CATEGORY_LABELS: Record<string, string> = {
+  start: '开始',
+  market: '行情',
+  strategy: '策略',
+  agent: '智能体',
+  control: '控制',
+  data: '数据',
+  notification: '通知',
+  integration: '集成',
+  end: '结束',
+  other: '其他'
+}
+
+export const workflowCategoryLabel = (key: string) => WORKFLOW_CATEGORY_LABELS[key] || '其他'
+
+const normalizeCategory = (category: string) => {
+  const value = category.trim()
+  return WORKFLOW_CATEGORY_LABELS[value] ? value : 'other'
+}
+
+const BUILTIN_START_FORM_TYPES = new Set([
+  'start.manual',
+  'start.schedule',
+  'start.event',
+  'start.webhook'
+])
 
 const formKind = (definition: WorkflowNodeDefinitionItem): WorkflowNodeFormKind => {
   if (definition.typeCode === 'core.end' || definition.kind === 'terminal') return 'end'
-  if (definition.kind === 'start') return 'start'
+  if (BUILTIN_START_FORM_TYPES.has(definition.typeCode)) return 'start'
   return 'generic'
 }
 
@@ -21,9 +58,11 @@ export function buildWorkflowMaterialGroups(
   const items: WorkflowMaterialItem[] = definitions.map((definition) => ({
     typeCode: definition.typeCode,
     kind: formKind(definition),
-    group: definition.category || (definition.kind === 'start' ? '开始' : '其他'),
+    group: normalizeCategory(definition.category),
     title: definition.label,
     description: definition.description || definition.label,
+    aliases: definition.aliases || [],
+    tags: definition.tags || [],
     color: definition.color || '#64748b',
     iconText:
       definition.icon && Array.from(definition.icon).length <= 2
@@ -34,11 +73,11 @@ export function buildWorkflowMaterialGroups(
   }))
   const groups = Array.from(new Set(items.map((item) => item.group)))
   return [
-    ...GROUP_ORDER.filter((group) => groups.includes(group)),
-    ...groups.filter((group) => !GROUP_ORDER.includes(group))
+    ...WORKFLOW_CATEGORY_ORDER.filter((group) => groups.includes(group)),
+    ...(groups.includes('other') ? ['other'] : [])
   ].map((group) => ({
     key: group,
-    title: group,
+    title: workflowCategoryLabel(group),
     items: items.filter((item) => item.group === group)
   }))
 }

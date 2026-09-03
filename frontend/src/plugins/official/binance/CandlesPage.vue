@@ -82,16 +82,16 @@
       <article class="metric-card">
         <span
           class="metric-icon"
-          :class="changePercent >= 0 ? 'metric-icon--positive' : 'metric-icon--negative'"
+          :class="todayChangePercent >= 0 ? 'metric-icon--positive' : 'metric-icon--negative'"
         >
-          <ArtSvgIcon :icon="changePercent >= 0 ? 'ri:arrow-up-line' : 'ri:arrow-down-line'" />
+          <ArtSvgIcon :icon="todayChangePercent >= 0 ? 'ri:arrow-up-line' : 'ri:arrow-down-line'" />
         </span>
         <div class="metric-copy">
-          <span>区间变化</span>
-          <strong :class="changePercent >= 0 ? 'positive' : 'negative'">
-            {{ changePercent >= 0 ? '+' : '' }}{{ changePercent.toFixed(2) }}%
+          <span>今日涨跌幅</span>
+          <strong :class="todayChangePercent >= 0 ? 'positive' : 'negative'">
+            {{ todayChangePercent >= 0 ? '+' : '' }}{{ todayChangePercent.toFixed(2) }}%
           </strong>
-          <small>当前加载区间</small>
+          <small>UTC+0 自然日</small>
         </div>
       </article>
     </section>
@@ -118,6 +118,7 @@
           height="clamp(440px, 58vh, 620px)"
           :interval="selectedInterval"
           :intervals="intervals"
+          :data-zoom-start="0"
           :main-indicator="mainIndicator"
           :sub-indicator="subIndicator"
           @interval-change="handleIntervalChange"
@@ -181,10 +182,34 @@
     () => symbols.value.find((item) => item.id === selectedInstrumentId.value) || null
   )
   const latestCandle = computed(() => candles.value.at(-1) || null)
-  const changePercent = computed(() => {
-    const first = Number(candles.value[0]?.open || 0)
-    const last = Number(latestCandle.value?.close || 0)
-    return first ? ((last - first) / first) * 100 : 0
+  const utcDayStart = (timestamp = Date.now()) => {
+    const date = new Date(timestamp)
+    return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
+  }
+  const todayChangePercent = computed(() => {
+    const latest = latestCandle.value
+    const current = Number(latest?.close)
+    if (!latest || !Number.isFinite(current) || current <= 0) return 0
+
+    const dayStart = utcDayStart()
+    const openingCandle = candles.value.find((candle) => {
+      const openTime = Date.parse(candle.openTime)
+      const closeTime = Date.parse(candle.closeTime)
+      return (
+        Number.isFinite(openTime) &&
+        Number.isFinite(closeTime) &&
+        openTime <= dayStart &&
+        dayStart < closeTime
+      )
+    })
+    const todayCandle = candles.value.find((candle) => Date.parse(candle.openTime) >= dayStart)
+    const previousCandle = [...candles.value]
+      .reverse()
+      .find((candle) => Date.parse(candle.closeTime) <= dayStart)
+    const reference = Number(openingCandle?.open ?? todayCandle?.open ?? previousCandle?.close)
+    return Number.isFinite(reference) && reference > 0
+      ? ((current - reference) / reference) * 100
+      : 0
   })
 
   const axisTime = (value: string) => formatDateTime(value).slice(5, 16)

@@ -85,7 +85,7 @@ sequenceDiagram
 
 Web 负责登录、导航、权限感知页面、系统管理、工作流编辑与运行观察，以及插件页面和共享结果页的呈现。API 模块只负责传输和类型映射，领域状态仍由 Backend 与数据库拥有。
 
-工作流编辑器从 `/api/v1/workflows/node-definitions` 获取核心和插件节点的 JSON Schema/UI Schema 及固定分支端口；六种 Quant 单指标节点使用同一逐项参数编辑器并通过连线组合，通知凭据使用修订级 Secret 输入，普通节点仍使用 Schema 表单。运行详情从持久 RunNode attempt 合成开始/业务/结束记录，历史页固定选择的 Run；运行详情和个人通知分别使用 `coinsphere.workflow-runs.v1` 与 `coinsphere.notifications.v1` WebSocket 接收更新。WebSocket 是进程内实时提示，不是第二份事实源。
+工作流编辑器从 `/api/v1/workflows/node-definitions` 获取核心和插件节点的 JSON Schema/UI Schema、稳定分类 key、别名、标签、排序和固定分支端口；六种 Quant 单指标节点使用同一逐项参数编辑器并通过连线组合，通知凭据使用修订级 Secret 输入，普通节点仍使用 Schema 表单。节点定义按分类顺序、`sortOrder`、标题和 `type` 稳定排序；编辑器使用标题、说明、别名和标签执行本地检索。运行详情从持久 RunNode attempt 合成开始/业务/结束记录，历史页固定选择的 Run；运行详情和个人通知分别使用 `coinsphere.workflow-runs.v1` 与 `coinsphere.notifications.v1` WebSocket 接收更新。WebSocket 是进程内实时提示，不是第二份事实源。
 
 前端插件通过生成的 `registry.generated.ts` 与内置插件表静态加入 Vite 构建。普通页面和结果页均是主应用 Vue 组件，不使用 iframe、Web Component 或运行时远程模块。
 
