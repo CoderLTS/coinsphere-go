@@ -32,8 +32,8 @@ const DEFAULT_NODE_SIZE = {
 }
 
 const STENCIL_NODE_SIZE = {
-  width: 184,
-  height: 58
+  width: 224,
+  height: 52
 }
 
 const START_LABELS: Record<string, string> = {

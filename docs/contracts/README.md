@@ -42,7 +42,7 @@
 | `POST /api/v1/webhooks/{workflowId}`                        | 通过工作流 Secret 发布 Webhook 事件      |
 | `GET /api/v1/human-tasks`                                   | 查询待处理人工任务                       |
 | `POST /api/v1/human-tasks/{taskId}`                         | 一次性批准或拒绝人工任务                 |
-| `GET /api/v1/workflows/node-definitions`                    | 列出核心与编译期插件节点 Schema          |
+| `GET /api/v1/workflows/node-definitions`                    | 列出核心与编译期插件节点 Schema、分类与检索元数据 |
 | `POST /api/v1/workflows/validate`                           | 只读校验完整工作流图                     |
 | `GET/POST /api/v1/workflow-groups`                          | 列出全局分组，或在末尾创建分组           |
 | `PATCH/DELETE /api/v1/workflow-groups/{groupId}`            | 重命名分组，或删除并解除工作流归属       |

@@ -23,7 +23,7 @@ func (q *quantRuntime) registerOrderIntent(registrar sdk.Registrar) error {
 		InputSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"action":{"type":"string","enum":["buy","sell","hold"],"x-coinsphere-field-source":true},"evaluatedAt":{"type":"string","format":"date-time","x-coinsphere-field-source":true}},"required":["action","evaluatedAt"],"additionalProperties":false}`),
 		OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"venue":{"type":"string"},"account":{"type":"string"},"market":{"type":"string"},"instrument":{"type":"string"},"side":{"type":"string","enum":["buy","sell"]},"quantity":{"type":"string","x-coinsphere-decimal":true},"quoteAmount":{"type":"string","x-coinsphere-decimal":true},"positionEffect":{"type":"string","enum":["open","reduce"]},"clientOrderId":{"type":"string"},"referencePrice":{"type":"string","x-coinsphere-decimal":true},"quotedAt":{"type":"string","format":"date-time"}},"required":["venue","account","market","instrument","side","quantity","quoteAmount","positionEffect","clientOrderId","referencePrice","quotedAt"],"additionalProperties":false}`),
 		Pool:         sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
-	}, "生成订单意图", "将通用量化信号转换为不含交易所私有参数的订单意图。", "策略", "#2563eb", "file-output"), orderIntentAction{runtime: q})
+	}, "生成订单意图", "将通用量化信号转换为不含交易所私有参数的订单意图。", "strategy", "#2563eb", "file-output"), orderIntentAction{runtime: q})
 }
 
 func (a orderIntentAction) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {

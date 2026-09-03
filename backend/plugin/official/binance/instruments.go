@@ -24,7 +24,7 @@ func registerInstrumentSync(registrar sdk.Registrar, runtime *binanceRuntime) er
 		InputSchema:  emptyObjectSchema,
 		OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"fetchedCount":{"type":"integer"},"matchedCount":{"type":"integer"},"upsertedCount":{"type":"integer"},"deletedCount":{"type":"integer"},"syncedAt":{"type":"string","format":"date-time"}},"required":["fetchedCount","matchedCount","upsertedCount","deletedCount","syncedAt"],"additionalProperties":false}`),
 		Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectData, State: sdk.StateStateless,
-	}, "Binance 币种元数据采集", "同步 Binance 现货与 USD-M 交易规则。", "行情", "#0f766e", "list-filter"), binanceInstrumentSyncAction{runtime: runtime})
+	}, "Binance 币种元数据采集", "同步 Binance 现货与 USD-M 交易规则。", "market", "#0f766e", "list-filter"), binanceInstrumentSyncAction{runtime: runtime})
 }
 
 type binanceInstrumentSyncAction struct{ runtime *binanceRuntime }

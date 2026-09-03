@@ -55,6 +55,9 @@ type NodeDescriptor struct {
 	Title          string
 	Description    string
 	Category       string
+	Aliases        []string
+	Tags           []string
+	SortOrder      int
 	Color          string
 	Icon           string
 	Width          int

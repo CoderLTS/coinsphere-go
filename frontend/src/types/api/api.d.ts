@@ -457,6 +457,10 @@ declare namespace Api {
     interface WorkflowNodeDefinitionItem {
       typeCode: string
       label: string
+      category: string
+      aliases?: string[]
+      tags?: string[]
+      sortOrder: number
       configSchema: Record<string, any>
     }
 
