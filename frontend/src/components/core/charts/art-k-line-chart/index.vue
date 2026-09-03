@@ -481,6 +481,12 @@
     if (Number(event?.start) <= 2) emit('loadMore')
   }
 
+  watch(
+    () => [props.mainIndicator, props.subIndicator, props.showVolume],
+    () => getChartInstance()?.clear(),
+    { flush: 'sync' }
+  )
+
   const bindChartClick = () => {
     const instance = getChartInstance()
     if (!instance) return
