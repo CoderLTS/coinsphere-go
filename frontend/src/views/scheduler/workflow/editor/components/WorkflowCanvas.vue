@@ -2,9 +2,57 @@
 <template>
   <div class="workflow-canvas">
     <div v-show="props.materialsVisible" class="workflow-canvas__stencil">
-      <div class="workflow-canvas__stencil-header">节点物料</div>
-      <div v-if="!materialCount" class="workflow-canvas__stencil-empty">
-        <ElEmpty description="暂无可用物料" :image-size="40" />
+      <div class="workflow-canvas__stencil-header">
+        <strong>节点物料</strong>
+        <span>{{ visibleMaterialCount }}/{{ materialTotalCount }}</span>
+      </div>
+      <div class="workflow-canvas__stencil-controls">
+        <ElInput
+          v-model="materialSearch"
+          clearable
+          size="small"
+          placeholder="搜索节点、别名或标签"
+          :prefix-icon="Search"
+        />
+        <div class="workflow-canvas__stencil-filter-row">
+          <div class="workflow-canvas__stencil-mode" role="group" aria-label="节点范围">
+            <button
+              type="button"
+              :class="{ 'is-active': materialMode === 'recent' }"
+              :aria-pressed="materialMode === 'recent'"
+              @click="materialMode = 'recent'"
+            >
+              最近使用
+            </button>
+            <button
+              type="button"
+              :class="{ 'is-active': materialMode === 'all' }"
+              :aria-pressed="materialMode === 'all'"
+              @click="materialMode = 'all'"
+            >
+              全部
+            </button>
+          </div>
+          <ElSelect v-model="materialCategory" size="small" placeholder="分类">
+            <ElOption label="全部分类" value="all" />
+            <ElOption
+              v-for="option in materialCategoryOptions"
+              :key="option.value"
+              :label="`${option.label} (${option.count})`"
+              :value="option.value"
+            />
+          </ElSelect>
+        </div>
+      </div>
+      <div v-if="!visibleMaterialCount" class="workflow-canvas__stencil-empty">
+        <ElEmpty
+          :description="hasMaterialFilters ? '没有匹配的节点' : '暂无可用物料'"
+          :image-size="40"
+        >
+          <ElButton v-if="hasMaterialFilters" link type="primary" @click="clearMaterialFilters">
+            清除筛选
+          </ElButton>
+        </ElEmpty>
       </div>
 
       <div ref="stencilRef" class="workflow-canvas__stencil-body"></div>
@@ -112,7 +160,8 @@
 </template>
 
 <script setup lang="ts">
-  import { ElButton, ElEmpty, ElSkeleton } from 'element-plus'
+  import { Search } from '@element-plus/icons-vue'
+  import { ElButton, ElEmpty, ElInput, ElOption, ElSelect, ElSkeleton } from 'element-plus'
   import { Edge, Graph, History, Keyboard, Selection, Snapline } from '@antv/x6'
   import type { CSSProperties } from 'vue'
   import type { WorkflowAgentOption } from '@/api/scheduler'
@@ -128,6 +177,10 @@
     validateMagnet
   } from '../canvas-connection-rules'
   import { LOOP_NEXT_BRANCH } from '../node-registry'
+  import {
+    WORKFLOW_CATEGORY_ORDER,
+    workflowCategoryLabel
+  } from '../node-materials'
   import {
     createDomainEdgeFromForm,
     mapDomainGraphToX6,
@@ -227,6 +280,139 @@
   const positionDirty = ref(false)
   const suppressBlankClick = ref(false)
   const hoveredNodeId = ref<string | null>(null)
+  const materialSearch = ref('')
+  const materialMode = ref<'recent' | 'all'>('all')
+  const materialCategory = ref('all')
+  const recentMaterialTypeCodes = ref<string[]>(loadRecentMaterialTypeCodes())
+
+  const materialItems = computed(() => props.materialGroups.flatMap((group) => group.items))
+  const materialTotalCount = computed(
+    () => new Set(materialItems.value.map((item) => item.typeCode)).size
+  )
+  const searchTokens = computed(() =>
+    materialSearch.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
+  )
+  const hasMaterialFilters = computed(
+    () =>
+      Boolean(
+        searchTokens.value.length ||
+          materialMode.value === 'recent' ||
+          materialCategory.value !== 'all'
+      )
+  )
+
+  const matchesMaterialSearch = (item: WorkflowMaterialItem) => {
+    if (!searchTokens.value.length) return true
+    const haystack = [item.title, item.description, ...item.aliases, ...item.tags]
+      .join(' ')
+      .toLocaleLowerCase()
+    return searchTokens.value.every((token) => haystack.includes(token))
+  }
+
+  const recentItems = computed(() => {
+    const itemMap = new Map(materialItems.value.map((item) => [item.typeCode, item]))
+    return recentMaterialTypeCodes.value
+      .map((typeCode) => itemMap.get(typeCode))
+      .filter(Boolean) as WorkflowMaterialItem[]
+  })
+
+  const categoryCountItems = computed(() =>
+    (materialMode.value === 'recent' ? recentItems.value : materialItems.value).filter(
+      matchesMaterialSearch
+    )
+  )
+  const materialCategoryOptions = computed(() =>
+    [...WORKFLOW_CATEGORY_ORDER, 'other']
+      .map((value) => ({
+        value,
+        label: workflowCategoryLabel(value),
+        count: categoryCountItems.value.filter((item) => item.group === value).length
+      }))
+      .filter((item) => item.count > 0 || item.value === materialCategory.value)
+  )
+
+  const filteredMaterialGroups = computed<WorkflowMaterialGroup[]>(() => {
+    const matchesCategory = (item: WorkflowMaterialItem) =>
+      materialCategory.value === 'all' || item.group === materialCategory.value
+    const candidates = materialMode.value === 'recent' ? recentItems.value : materialItems.value
+    const filtered = candidates.filter(
+      (item) => matchesMaterialSearch(item) && matchesCategory(item)
+    )
+
+    if (searchTokens.value.length) {
+      return filtered.length
+        ? [
+            {
+              key: 'search',
+              title: `搜索结果 (${filtered.length})`,
+              items: filtered.map((item) => ({
+                ...item,
+                description: `${workflowCategoryLabel(item.group)} · ${item.description}`
+              }))
+            }
+          ]
+        : []
+    }
+
+    if (materialMode.value === 'recent') {
+      return filtered.length ? [{ key: 'recent', title: '最近使用', items: filtered }] : []
+    }
+
+    if (materialCategory.value !== 'all') {
+      return filtered.length
+        ? [
+            {
+              key: materialCategory.value,
+              title: workflowCategoryLabel(materialCategory.value),
+              items: filtered
+            }
+          ]
+        : []
+    }
+
+    const groups = props.materialGroups
+      .map((group) => ({ ...group, items: group.items.filter(matchesMaterialSearch) }))
+      .filter((group) => group.items.length)
+    if (recentItems.value.length) {
+      groups.unshift({ key: 'recent', title: '最近使用', items: recentItems.value })
+    }
+    return groups
+  })
+
+  function loadRecentMaterialTypeCodes(): string[] {
+    try {
+      const raw = localStorage.getItem('coinsphere.workflow.material-recent.v1')
+      const parsed = raw ? JSON.parse(raw) : []
+      return Array.isArray(parsed)
+        ? [
+            ...new Set(parsed.filter((item): item is string => typeof item === 'string'))
+          ].slice(0, 6)
+        : []
+    } catch {
+      return []
+    }
+  }
+
+  const rememberMaterial = (typeCode: string) => {
+    recentMaterialTypeCodes.value = [
+      typeCode,
+      ...recentMaterialTypeCodes.value.filter((item) => item !== typeCode)
+    ].slice(0, 6)
+    try {
+      localStorage.setItem(
+        'coinsphere.workflow.material-recent.v1',
+        JSON.stringify(recentMaterialTypeCodes.value)
+      )
+    } catch {
+      // 本地存储不可用时不影响节点插入。
+    }
+  }
+
+  const clearMaterialFilters = () => {
+    materialSearch.value = ''
+    materialMode.value = 'all'
+    materialCategory.value = 'all'
+  }
   const blankPanState = reactive({
     pressed: false,
     armed: false,
@@ -272,7 +458,7 @@
   const stencil = useWorkflowStencil({
     stencilRef,
     graphInstance,
-    materialGroups: () => props.materialGroups,
+    materialGroups: () => filteredMaterialGroups.value,
     materialsVisible: () => props.materialsVisible,
     viewportCenter: () => getViewportCenterClientPoint(),
     onInsert: (payload) => emit('material-drop', payload)
@@ -280,11 +466,19 @@
   const {
     scrollbar: stencilScrollbar,
     thumbStyle: stencilScrollbarThumbStyle,
-    materialCount,
     createStencil,
     updateScrollbar: updateStencilScrollbar,
     destroyStencil
   } = stencil
+
+  const visibleMaterialCount = computed(
+    () =>
+      new Set(
+        filteredMaterialGroups.value.flatMap((group) =>
+          group.items.map((item) => item.typeCode)
+        )
+      ).size
+  )
 
   const getTranslateState = () => {
     const current = graphInstance.value?.translate()
@@ -1002,7 +1196,8 @@
     undo,
     redo,
     focusCell,
-    removeSelection
+    removeSelection,
+    rememberMaterial
   })
 
   const initializeGraph = () => {
@@ -1268,7 +1463,7 @@
   }
 
   watch(
-    () => props.materialGroups,
+    [() => props.materialGroups, filteredMaterialGroups],
     () => {
       if (!graphInstance.value) return
       createStencil()
@@ -1450,9 +1645,9 @@
     display: flex;
     flex-direction: column;
     gap: 0;
-    width: 220px;
+    width: 264px;
     min-height: 0;
-    padding: 0 0 0 8px;
+    padding: 0 0 0 10px;
     overflow: hidden;
     background: var(--workflow-overlay-bg, var(--workflow-panel-bg));
     border: 1px solid var(--workflow-overlay-border-soft, var(--workflow-panel-border));
@@ -1470,13 +1665,68 @@
 
   .workflow-canvas__stencil-header {
     display: flex;
-    flex: 0 0 40px;
+    flex: 0 0 38px;
     align-items: center;
-    padding: 0 8px 0 2px;
-    font-size: 12px;
+    padding: 0 12px 0 4px;
+    font-size: 13px;
     font-weight: 700;
     color: var(--workflow-overlay-text, var(--workflow-panel-text));
     border-bottom: 1px solid var(--workflow-overlay-border-subtle, var(--workflow-panel-border));
+
+    strong {
+      color: var(--workflow-overlay-text, var(--workflow-panel-text));
+    }
+
+    span {
+      margin-left: auto;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--workflow-overlay-muted, var(--workflow-panel-muted));
+    }
+  }
+
+  .workflow-canvas__stencil-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 10px 8px 4px;
+    border-bottom: 1px solid var(--workflow-overlay-border-subtle, var(--workflow-panel-border));
+  }
+
+  .workflow-canvas__stencil-filter-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .workflow-canvas__stencil-filter-row :deep(.el-select) {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .workflow-canvas__stencil-mode {
+    display: inline-flex;
+    flex: 0 0 auto;
+    padding: 2px;
+    background: var(--workflow-overlay-soft, var(--workflow-panel-soft));
+    border-radius: 6px;
+  }
+
+  .workflow-canvas__stencil-mode button {
+    height: 24px;
+    padding: 0 7px;
+    font-size: 11px;
+    color: var(--workflow-overlay-muted, var(--workflow-panel-muted));
+    cursor: pointer;
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+  }
+
+  .workflow-canvas__stencil-mode button.is-active {
+    color: var(--workflow-overlay-text, var(--workflow-panel-text));
+    background: var(--workflow-overlay-bg, var(--workflow-panel-bg));
+    box-shadow: 0 1px 3px rgb(15 23 42 / 0.1);
   }
 
   .workflow-canvas__stencil-scrollbar {
@@ -1690,7 +1940,7 @@
   }
 
   :deep(.x6-widget-stencil-group) {
-    padding-bottom: 10px;
+    padding-bottom: 8px;
     margin: 0;
   }
 
@@ -1751,10 +2001,10 @@
     display: flex;
     gap: 8px;
     align-items: center;
-    padding: 6px 8px;
+    padding: 5px 8px;
     background: var(--workflow-overlay-raised, var(--workflow-panel-raised));
     border: 1px solid var(--workflow-overlay-border-subtle, var(--workflow-panel-border));
-    border-radius: 8px;
+    border-radius: 6px;
     box-shadow: none;
     transition:
       transform 0.18s ease,
@@ -1767,8 +2017,8 @@
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
+    width: 26px;
+    height: 26px;
     font-size: 11px;
     font-weight: 600;
     line-height: 1;
@@ -1801,7 +2051,7 @@
     line-height: 15px;
     color: var(--workflow-overlay-muted, var(--workflow-panel-muted));
     -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
+    -webkit-line-clamp: 1;
   }
 
   :deep(.x6-widget-stencil-node:hover .workflow-stencil-card) {
@@ -1817,7 +2067,7 @@
   @media (max-width: 980px) {
     .workflow-canvas__stencil {
       inset: 60px auto 8px 8px;
-      width: min(220px, calc(100% - 16px));
+      width: min(264px, calc(100% - 16px));
       box-shadow: 0 12px 30px rgb(31 35 48 / 0.16);
     }
 

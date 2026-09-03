@@ -126,6 +126,9 @@ export interface WorkflowNodeDefinition {
   description: string
   kind: 'action' | 'trigger'
   category: string
+  aliases?: string[]
+  tags?: string[]
+  sortOrder: number
   color: string
   icon: string
   width: number

@@ -59,7 +59,10 @@ export interface WorkflowNodeDefinitionItem {
   label: string
   version?: string
   description?: string
-  category?: string
+  category: string
+  aliases?: string[]
+  tags?: string[]
+  sortOrder: number
   color?: string
   icon?: string
   width?: number
@@ -753,6 +756,9 @@ export async function fetchNodeDefinitions() {
       version: item.version,
       description: item.description,
       category: item.category,
+      aliases: item.aliases,
+      tags: item.tags,
+      sortOrder: item.sortOrder,
       color: item.color,
       icon: item.icon,
       width: item.width,

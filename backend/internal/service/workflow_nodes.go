@@ -24,6 +24,9 @@ type WorkflowNodeDefinitionView struct {
 	Description  string                    `json:"description"`
 	Kind         sdk.NodeKind              `json:"kind"`
 	Category     string                    `json:"category"`
+	Aliases      []string                  `json:"aliases,omitempty"`
+	Tags         []string                  `json:"tags,omitempty"`
+	SortOrder    int                       `json:"sortOrder"`
 	Color        string                    `json:"color"`
 	Icon         string                    `json:"icon"`
 	Width        int                       `json:"width"`
@@ -49,6 +52,7 @@ func (a *App) ListWorkflowNodeDefinitions() []WorkflowNodeDefinitionView {
 		items = append(items, WorkflowNodeDefinitionView{
 			Type: desc.Type, Version: desc.Version, Title: desc.Title,
 			Description: desc.Description, Kind: desc.Kind, Category: desc.Category,
+			Aliases: append([]string(nil), desc.Aliases...), Tags: append([]string(nil), desc.Tags...), SortOrder: desc.SortOrder,
 			Color: desc.Color, Icon: desc.Icon, Width: desc.Width, Height: desc.Height,
 			Capabilities: desc.Capabilities,
 			ConfigSchema: desc.ConfigSchema, UISchema: desc.UISchema,
@@ -58,8 +62,29 @@ func (a *App) ListWorkflowNodeDefinitions() []WorkflowNodeDefinitionView {
 			SecretFields: workflowSecretFieldViews(desc.ConfigSchema), Available: available,
 		})
 	}
-	sort.Slice(items, func(i, j int) bool { return items[i].Type < items[j].Type })
+	sort.SliceStable(items, func(i, j int) bool {
+		leftCategory, rightCategory := workflowCategoryOrder(items[i].Category), workflowCategoryOrder(items[j].Category)
+		if leftCategory != rightCategory {
+			return leftCategory < rightCategory
+		}
+		if items[i].SortOrder != items[j].SortOrder {
+			return items[i].SortOrder < items[j].SortOrder
+		}
+		if items[i].Title != items[j].Title {
+			return items[i].Title < items[j].Title
+		}
+		return items[i].Type < items[j].Type
+	})
 	return items
+}
+
+func workflowCategoryOrder(category string) int {
+	for index, known := range []string{"start", "market", "strategy", "agent", "control", "data", "notification", "integration", "end"} {
+		if category == known {
+			return index
+		}
+	}
+	return 100
 }
 
 func (a *App) workflowNodeDescriptors() map[string]sdk.NodeDescriptor {
@@ -141,21 +166,27 @@ func coreWorkflowNodeDescriptors() []sdk.NodeDescriptor {
 			Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
 		},
 	}
-	meta := map[string][5]string{
-		"core.manual":         {"手动开始", "声明手动触发入口节点", "开始", "#2563eb", "play"},
-		"core.schedule":       {"定时开始", "声明定时触发入口节点", "开始", "#1d4ed8", "clock"},
-		"core.event":          {"事件开始", "声明事件触发入口节点", "开始", "#0f766e", "radio"},
-		"core.constant":       {"常量", "输出配置的常量文本", "数据", "#0891b2", "braces"},
-		"core.end":            {"结束", "声明当前执行链路结束", "结束", "#dc2626", "circle-stop"},
-		"core.human_approval": {"人工审批", "创建人工审批任务并等待处理", "控制", "#d97706", "user-check"},
-		"core.loop":           {"循环", "在限制次数和时间内执行内嵌流程", "控制", "#ca8a04", "repeat"},
-		"core.loop_item":      {"循环项", "提供当前循环值", "控制", "#ca8a04", "repeat-1"},
-		"core.loop_end":       {"循环结束", "返回单次循环结果", "控制", "#ca8a04", "circle-stop"},
+	type catalogMeta struct {
+		title, description, category, color, icon string
+		aliases, tags                             []string
+		sortOrder                                 int
+	}
+	meta := map[string]catalogMeta{
+		"core.manual":         {"手动开始", "声明手动触发入口节点", "start", "#2563eb", "play", []string{"手动触发", "启动"}, []string{"入口", "触发"}, 10},
+		"core.schedule":       {"定时开始", "声明定时触发入口节点", "start", "#1d4ed8", "clock", []string{"定时触发", "周期执行"}, []string{"入口", "调度"}, 20},
+		"core.event":          {"事件开始", "声明事件触发入口节点", "start", "#0f766e", "radio", []string{"事件触发", "事件入口"}, []string{"入口", "事件"}, 30},
+		"core.constant":       {"常量", "输出配置的常量文本", "data", "#0891b2", "braces", []string{"固定值", "文本值"}, []string{"数据", "值"}, 10},
+		"core.end":            {"结束", "声明当前执行链路结束", "end", "#dc2626", "circle-stop", []string{"结束节点", "终点"}, []string{"输出", "终点"}, 10},
+		"core.human_approval": {"人工审批", "创建人工审批任务并等待处理", "control", "#d97706", "user-check", []string{"人工确认", "审批"}, []string{"控制", "人工"}, 10},
+		"core.loop":           {"循环", "在限制次数和时间内执行内嵌流程", "control", "#ca8a04", "repeat", []string{"循环执行", "重复"}, []string{"控制", "循环"}, 20},
+		"core.loop_item":      {"循环项", "提供当前循环值", "control", "#ca8a04", "repeat-1", []string{"当前循环项"}, []string{"控制", "循环"}, 30},
+		"core.loop_end":       {"循环结束", "返回单次循环结果", "control", "#ca8a04", "circle-stop", []string{"循环终点"}, []string{"控制", "循环"}, 40},
 	}
 	for index := range items {
 		value := meta[items[index].Type]
-		items[index].Title, items[index].Description, items[index].Category = value[0], value[1], value[2]
-		items[index].Color, items[index].Icon = value[3], value[4]
+		items[index].Title, items[index].Description, items[index].Category = value.title, value.description, value.category
+		items[index].Aliases, items[index].Tags, items[index].SortOrder = value.aliases, value.tags, value.sortOrder
+		items[index].Color, items[index].Icon = value.color, value.icon
 		items[index].Width, items[index].Height = 220, 72
 		items[index].Capabilities.Stateless = items[index].State == sdk.StateStateless
 		items[index].Capabilities.Deterministic = items[index].SideEffect == sdk.SideEffectNone
