@@ -7,7 +7,21 @@ import {
 
 export type MarketType = 'spot' | 'usd_m'
 export type MarketStatus = 'trading' | 'suspended' | 'all'
-export type CandleInterval = '1m' | '3m' | '5m' | '15m' | '30m' | '1h' | '2h' | '4h' | '6h' | '8h' | '12h' | '1d' | '3d' | '1w'
+export type CandleInterval =
+  | '1m'
+  | '3m'
+  | '5m'
+  | '15m'
+  | '30m'
+  | '1h'
+  | '2h'
+  | '4h'
+  | '6h'
+  | '8h'
+  | '12h'
+  | '1d'
+  | '3d'
+  | '1w'
 
 export interface MarketSymbol {
   id: string
@@ -148,5 +162,10 @@ export async function fetchMarketCandles(params: MarketCandleQuery) {
       : undefined
   }))
   const nextBefore = result.nextBefore || ''
-  return { records, nextCursor: nextBefore, hasMore: Boolean(result.hasMore), total: records.length }
+  return {
+    records,
+    nextCursor: nextBefore,
+    hasMore: Boolean(result.hasMore),
+    total: records.length
+  }
 }

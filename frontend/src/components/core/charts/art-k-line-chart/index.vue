@@ -10,7 +10,9 @@
           type="button"
           :disabled="props.fixedInterval"
           @click="emit('intervalChange', item)"
-        >{{ item }}</button>
+        >
+          {{ item }}
+        </button>
       </div>
       <div class="kline-toolbar__group kline-toolbar__group--selects">
         <ElSelect
@@ -45,7 +47,13 @@
           <ElButton text size="small" :icon="Refresh" aria-label="重置缩放" @click="resetZoom" />
         </ElTooltip>
         <ElTooltip content="全屏" placement="top">
-          <ElButton text size="small" :icon="FullScreen" aria-label="全屏" @click="toggleFullscreen" />
+          <ElButton
+            text
+            size="small"
+            :icon="FullScreen"
+            aria-label="全屏"
+            @click="toggleFullscreen"
+          />
         </ElTooltip>
       </div>
     </div>
@@ -87,7 +95,22 @@
     dataZoomStart: 25,
     dataZoomEnd: 100,
     interval: '1h',
-    intervals: () => ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w'],
+    intervals: () => [
+      '1m',
+      '3m',
+      '5m',
+      '15m',
+      '30m',
+      '1h',
+      '2h',
+      '4h',
+      '6h',
+      '8h',
+      '12h',
+      '1d',
+      '3d',
+      '1w'
+    ],
     mainIndicator: 'none',
     subIndicator: 'volume',
     fixedInterval: false
@@ -348,25 +371,49 @@
               htmlText(signal.summary)
             ])
             const mainKeys: Record<string, [string, string][]> = {
-              ma: [['ma7', 'MA7'], ['ma25', 'MA25'], ['ma99', 'MA99']],
-              ema: [['ema7', 'EMA7'], ['ema25', 'EMA25'], ['ema99', 'EMA99']],
-              boll: [['bollUpper', 'BOLL 上轨'], ['bollMiddle', 'BOLL 中轨'], ['bollLower', 'BOLL 下轨']]
+              ma: [
+                ['ma7', 'MA7'],
+                ['ma25', 'MA25'],
+                ['ma99', 'MA99']
+              ],
+              ema: [
+                ['ema7', 'EMA7'],
+                ['ema25', 'EMA25'],
+                ['ema99', 'EMA99']
+              ],
+              boll: [
+                ['bollUpper', 'BOLL 上轨'],
+                ['bollMiddle', 'BOLL 中轨'],
+                ['bollLower', 'BOLL 下轨']
+              ]
             }
             const subKeys: Record<string, [string, string][]> = {
-              macd: [['dif', 'DIF'], ['dea', 'DEA'], ['macd', 'MACD']],
+              macd: [
+                ['dif', 'DIF'],
+                ['dea', 'DEA'],
+                ['macd', 'MACD']
+              ],
               rsi: [['rsi', 'RSI']],
-              kdj: [['k', 'K'], ['d', 'D'], ['j', 'J']],
+              kdj: [
+                ['k', 'K'],
+                ['d', 'D'],
+                ['j', 'J']
+              ],
               obv: [['obv', 'OBV']],
               wr: [['wr', 'WR']]
             }
             const indicatorLines = [
               ...(mainKeys[props.mainIndicator || 'none'] || []).flatMap(([key, label]) => {
                 const value = item.indicators?.main?.[key]
-                return value === null || value === undefined ? [] : [`${label} ${numberText(value)}`]
+                return value === null || value === undefined
+                  ? []
+                  : [`${label} ${numberText(value)}`]
               }),
               ...(subKeys[props.subIndicator || 'volume'] || []).flatMap(([key, label]) => {
                 const value = item.indicators?.sub?.[key]
-                return value === null || value === undefined ? [] : [`${label} ${numberText(value)}`]
+                return value === null || value === undefined
+                  ? []
+                  : [`${label} ${numberText(value)}`]
               })
             ]
             return [
@@ -418,7 +465,8 @@
     }
   }
 
-  const resetZoom = () => getChartInstance()?.dispatchAction({ type: 'dataZoom', start: 25, end: 100 })
+  const resetZoom = () =>
+    getChartInstance()?.dispatchAction({ type: 'dataZoom', start: 25, end: 100 })
   const toggleFullscreen = async () => {
     if (!workbenchRef.value) return
     if (!document.fullscreenElement) await workbenchRef.value.requestFullscreen()

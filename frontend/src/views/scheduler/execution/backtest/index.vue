@@ -347,7 +347,10 @@
       }
       run.value = currentRun
       detail.value = parsed
-      const indicatorMap = new Map<string, { main: Record<string, string | null>; sub: Record<string, string | null> }>()
+      const indicatorMap = new Map<
+        string,
+        { main: Record<string, string | null>; sub: Record<string, string | null> }
+      >()
       if (parsed.venue === 'binance') {
         const indicatorResult = await fetchBinanceIndicators({
           market: parsed.market === 'usdm' ? 'usdm' : 'spot',

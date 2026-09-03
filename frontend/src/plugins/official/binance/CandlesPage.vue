@@ -22,7 +22,9 @@
       <div class="market-status">
         <span
           class="market-status__dot"
-          :class="{ 'market-status__dot--offline': selectedSymbol?.status !== 'trading' || !streamConnected }"
+          :class="{
+            'market-status__dot--offline': selectedSymbol?.status !== 'trading' || !streamConnected
+          }"
         ></span>
         <div>
           <strong>
@@ -144,7 +146,22 @@
   defineOptions({ name: 'MarketChartPage' })
 
   const route = useRoute()
-  const intervals: CandleInterval[] = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w']
+  const intervals: CandleInterval[] = [
+    '1m',
+    '3m',
+    '5m',
+    '15m',
+    '30m',
+    '1h',
+    '2h',
+    '4h',
+    '6h',
+    '8h',
+    '12h',
+    '1d',
+    '3d',
+    '1w'
+  ]
   const selectedInstrumentId = ref('')
   const selectedInterval = ref<CandleInterval>('1h')
   const symbols = ref<MarketSymbol[]>([])
@@ -248,7 +265,10 @@
       })
       if (generation !== loadGeneration) return
       const existing = new Set(candles.value.map((item) => item.openTime))
-      candles.value = [...result.records.filter((item) => !existing.has(item.openTime)), ...candles.value]
+      candles.value = [
+        ...result.records.filter((item) => !existing.has(item.openTime)),
+        ...candles.value
+      ]
       nextBefore.value = result.nextCursor
       hasMore.value = result.hasMore
     } finally {
@@ -262,7 +282,10 @@
     const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
     const symbol = selectedSymbol.value
     const url = `${scheme}://${window.location.host}/api/v1/plugins/official.binance/candles/stream?market=${symbol.market === 'usd_m' ? 'usdm' : 'spot'}&instrument=${encodeURIComponent(symbol.nativeSymbol)}&interval=${selectedInterval.value}`
-    const current = new WebSocket(url, ['coinsphere.plugin.official.binance.v1', userStore.accessToken])
+    const current = new WebSocket(url, [
+      'coinsphere.plugin.official.binance.v1',
+      userStore.accessToken
+    ])
     socket.value = current
     current.onopen = () => {
       if (socket.value !== current) {

@@ -72,7 +72,11 @@ export const fetchBinanceIndicators = (params: {
   startTime?: string
   endTime?: string
   limit?: number
-}) => request.get<ItemList<BinanceIndicatorPoint>>({ url: `${binanceBase}/candles/indicators`, params })
+}) =>
+  request.get<ItemList<BinanceIndicatorPoint>>({
+    url: `${binanceBase}/candles/indicators`,
+    params
+  })
 
 export const fetchBinanceLiveAccounts = () =>
   request.get<ItemList<BinanceLiveAccountRelease>>({ url: `${binanceBase}/live-accounts` })
