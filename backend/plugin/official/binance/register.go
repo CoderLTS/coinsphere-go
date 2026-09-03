@@ -63,7 +63,7 @@ func Register(registrar sdk.Registrar, host sdk.Host) error {
 	}); err != nil {
 		return err
 	}
-	for _, page := range []sdk.PageDescriptor{{PageKey: "instruments", Title: "币安 币种", Icon: "ri:coins-line", KeepAlive: true}, {PageKey: "candles", Title: "币安 K 线", Icon: "ri:stock-line"}, {PageKey: "live-accounts", Title: "币安账户", Icon: "ri:shield-keyhole-line"}} {
+	for _, page := range []sdk.PageDescriptor{{PageKey: "instruments", Title: "币安币种", Icon: "ri:coins-line", KeepAlive: true}, {PageKey: "candles", Title: "币安K线", Icon: "ri:stock-line"}, {PageKey: "live-accounts", Title: "币安账户", Icon: "ri:shield-keyhole-line"}} {
 		if err := registrar.Page(page); err != nil {
 			return err
 		}
