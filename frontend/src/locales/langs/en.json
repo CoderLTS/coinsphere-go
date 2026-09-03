@@ -291,15 +291,6 @@
       "completed": "Completed",
       "failed": "Failed"
     },
-    "proposal": {
-      "title": "Workflow proposal",
-      "nodes": "{count} nodes",
-      "edges": "{count} edges",
-      "missingSecrets": "Add the required secrets in the editor after creation",
-      "create": "Create draft",
-      "edit": "Edit workflow",
-      "created": "Workflow draft created"
-    },
     "errors": {
       "loadConversation": "Failed to load the assistant conversation. Please try again later.",
       "stream": "The assistant is temporarily unavailable. Please try again later."

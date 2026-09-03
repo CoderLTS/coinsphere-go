@@ -18,9 +18,9 @@ CoinSphere 是面向个人自托管场景的工作流驱动量化平台。用户
 
 当前明确不提供微服务、多实例调度、Redis、Kafka、Kubernetes、动态插件、插件市场、不可信代码沙箱、Python Worker 或 Testnet。Binance 私有 API 仅由其插件通过 SecretReader 访问，Live 默认关闭并受[独立安全门禁](decisions/0005-live-trading-gate.md)约束。旧接口、旧数据和旧工作流图没有兼容层。
 
-平台助手位于 Core，而不是插件。HTTP 层只向 `R_SUPER` 暴露模型配置、会话、流式对话和工作流确认接口；Service 层负责有界上下文、OpenAI-compatible 工具循环、核心只读查询、插件查询调度和工作流方案校验。PostgreSQL 保存全局模型配置、用户会话与消息，提案随助手消息元数据保存。
+平台助手位于 Core，而不是插件。HTTP 层只向 `R_SUPER` 暴露模型配置、会话和流式对话接口；Service 层负责有界上下文、OpenAI-compatible 工具循环、核心只读查询、插件查询调度以及工作流校验和创建。PostgreSQL 保存全局模型配置、用户会话与消息。
 
-插件仍拥有自身领域数据。Quant 通过 SDK `assistantQueries` 暴露有界只读摘要；Connector、Notification 与 `official.ai` 不注册查询。工作流方案使用实时 Core/插件节点目录，确认时再次校验目录摘要和完整图，并在同一事务创建 `inactive` 工作流、初始修订与运行时；平台不会自动激活或运行。
+插件仍拥有自身领域数据。Quant 通过 SDK `assistantQueries` 暴露有界只读摘要；Connector、Notification 与 `official.ai` 不注册查询。助手使用实时 Core/插件节点目录生成工作流图，调用 `create_workflow` 时完整校验并在同一事务创建 `inactive` 工作流、初始修订与运行时；平台不会自动激活或运行。
 
 ## 2. 系统上下文
 

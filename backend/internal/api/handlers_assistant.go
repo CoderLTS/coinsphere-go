@@ -153,13 +153,3 @@ func (s *Server) handleStreamAssistantSession(c *gin.Context) {
 		_ = emit(service.AssistantStreamEvent{Name: "done", Data: map[string]any{}})
 	}
 }
-
-func (s *Server) handleConfirmAssistantWorkflow(c *gin.Context) {
-	messageID, err := pathInt64(c, "messageId")
-	if err != nil {
-		respond(c, nil, err, "")
-		return
-	}
-	data, err := s.App.ConfirmAssistantWorkflow(c.Request.Context(), messageID, currentPrincipal(c))
-	respond(c, data, err, "")
-}

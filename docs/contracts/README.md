@@ -22,8 +22,8 @@
 
 - `/api/v1/config/ai-models` 提供全局模型 CRUD，`/{modelId}/validations` 执行连接检查；`PATCH` 只切换启用状态。模型字段固定为展示名、Base URL、模型名、可选 API Key、启用状态、优先级和超时，响应仅返回 Key 掩码。已被会话引用的模型删除返回 `409 Conflict`。
 - `GET /api/v1/assistant/models` 列出可用模型；`GET/POST /api/v1/assistant/sessions`、`GET/DELETE /api/v1/assistant/sessions/{sessionId}` 和 `GET /api/v1/assistant/sessions/{sessionId}/messages` 管理当前超级管理员的会话。
-- `POST /api/v1/assistant/sessions/{sessionId}/stream` 返回 SSE，事件名固定为 `user`、`tool`、`content`、`proposal`、`done`、`error`。`tool` 只包含工具名及 `running/completed/failed` 状态。
-- `POST /api/v1/assistant/messages/{messageId}/workflow` 确认工作流方案，返回 `workflowId`、`inactive` 状态和编辑地址。重复确认返回同一工作流；节点目录变化或方案失效返回 `409`，失败不留下工作流、修订或运行时记录。
+- `POST /api/v1/assistant/sessions/{sessionId}/stream` 返回 SSE，事件名固定为 `user`、`tool`、`content`、`done`、`error`。`tool` 只包含工具名及 `running/completed/failed` 状态；助手调用 `create_workflow` 时，平台会先按实时节点目录完整校验，再在同一事务中创建 `inactive` 工作流、初始修订和运行时。
+- 工作流创建失败会把校验或事务错误返回给助手重试，不留下工作流、修订或运行时记录；创建成功后不自动激活或运行。
 - 上述模型和助手接口全部要求 `R_SUPER`。模型上下文、工具结果与日志不得暴露密钥、工具原始参数、个人数据或原始载荷。
 
 ## 出站代理

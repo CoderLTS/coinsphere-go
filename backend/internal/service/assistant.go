@@ -2,8 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,7 +12,6 @@ import (
 
 	"coinsphere/backend/internal/db"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 const (
@@ -44,43 +41,28 @@ type AssistantSessionView struct {
 }
 
 type AssistantMessageView struct {
-	ID        int64                 `json:"id"`
-	Role      string                `json:"role"`
-	Content   string                `json:"content"`
-	Proposal  *WorkflowProposalView `json:"proposal,omitempty"`
-	CreatedAt string                `json:"createdAt"`
+	ID        int64  `json:"id"`
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	CreatedAt string `json:"createdAt"`
 }
 
-type WorkflowProposalView struct {
+type assistantWorkflowCreateSummary struct {
+	WorkflowID     int64    `json:"workflowId"`
+	Status         string   `json:"status"`
+	EditURL        string   `json:"editUrl"`
 	Name           string   `json:"name"`
 	Description    string   `json:"description"`
 	NodeCount      int      `json:"nodeCount"`
 	EdgeCount      int      `json:"edgeCount"`
 	NodeTypes      []string `json:"nodeTypes"`
 	MissingSecrets []string `json:"missingSecrets"`
-	WorkflowID     int64    `json:"workflowId,omitempty"`
-	EditURL        string   `json:"editUrl,omitempty"`
-}
-
-type assistantMessageMetadata struct {
-	Proposal *assistantWorkflowProposal `json:"proposal,omitempty"`
-}
-
-type assistantWorkflowProposal struct {
-	WorkflowProposalView
-	Graph       json.RawMessage `json:"graph"`
-	CatalogHash string          `json:"catalogHash"`
+	graph          validatedWorkflowGraph
 }
 
 type AssistantStreamEvent struct {
 	Name string
 	Data any
-}
-
-type AssistantWorkflowCreateResult struct {
-	WorkflowID int64  `json:"workflowId"`
-	Status     string `json:"status"`
-	EditURL    string `json:"editUrl"`
 }
 
 func (a *App) CreateAssistantSession(ctx context.Context, payload AssistantSessionCreatePayload, principal *Principal) (AssistantSessionView, error) {
@@ -216,19 +198,14 @@ func (a *App) StreamAssistantSession(ctx context.Context, sessionID int64, paylo
 		return err
 	}
 	if strings.TrimSpace(run.Content) == "" {
-		if run.Proposal == nil {
+		if run.Workflow == nil {
 			return errors.New("AI model returned an empty response")
 		}
-		run.Content = "工作流方案已生成，请确认后创建草稿。"
-	}
-	metadata := assistantMessageMetadata{Proposal: run.Proposal}
-	metadataJSON, err := json.Marshal(metadata)
-	if err != nil {
-		return errors.New("encode assistant message metadata failed")
+		run.Content = fmt.Sprintf("工作流已创建：%s（ID %d），当前状态为 inactive。编辑地址：%s", run.Workflow.Name, run.Workflow.WorkflowID, run.Workflow.EditURL)
 	}
 	assistantMessage := db.AssistantMessage{
 		SessionID: session.ID, Role: "assistant", Content: run.Content,
-		MetadataJSON: string(metadataJSON), CreatedAt: time.Now().UTC(),
+		MetadataJSON: `{}`, CreatedAt: time.Now().UTC(),
 	}
 	if err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&assistantMessage).Error; err != nil {
@@ -243,69 +220,12 @@ func (a *App) StreamAssistantSession(ctx context.Context, sessionID int64, paylo
 	session.UpdatedAt = assistantMessage.CreatedAt
 	session.LastMessageAt = assistantMessage.CreatedAt
 	view := assistantMessageView(assistantMessage)
-	if view.Proposal != nil {
-		if err := emit(AssistantStreamEvent{Name: "proposal", Data: map[string]any{"messageId": view.ID, "proposal": view.Proposal}}); err != nil {
-			return err
-		}
-	}
 	sessionView, err := a.assistantSessionView(ctx, session)
 	if err != nil {
 		return err
 	}
 	return emit(AssistantStreamEvent{Name: "done", Data: map[string]any{"message": view, "session": sessionView}})
 }
-
-func (a *App) ConfirmAssistantWorkflow(ctx context.Context, messageID int64, principal *Principal) (AssistantWorkflowCreateResult, error) {
-	if principal == nil || principal.User == nil {
-		return AssistantWorkflowCreateResult{}, ErrPermission
-	}
-	var result AssistantWorkflowCreateResult
-	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var message db.AssistantMessage
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Joins("JOIN assistant_sessions ON assistant_sessions.id = assistant_messages.session_id").
-			Where("assistant_messages.id = ? AND assistant_sessions.user_id = ?", messageID, principal.User.ID).
-			First(&message).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return fmt.Errorf("%w: assistant message", ErrNotFound)
-			}
-			return errors.New("lock assistant workflow proposal failed")
-		}
-		var metadata assistantMessageMetadata
-		if message.Role != "assistant" || json.Unmarshal([]byte(message.MetadataJSON), &metadata) != nil || metadata.Proposal == nil {
-			return fmt.Errorf("%w: assistant message has no workflow proposal", ErrConflict)
-		}
-		proposal := metadata.Proposal
-		if proposal.WorkflowID > 0 {
-			result = assistantWorkflowCreateResult(proposal.WorkflowID)
-			return nil
-		}
-		if proposal.CatalogHash != a.workflowNodeCatalogHash() {
-			return fmt.Errorf("%w: workflow node catalog changed", ErrConflict)
-		}
-		graph, err := a.validateWorkflowGraph(proposal.Graph)
-		if err != nil {
-			return fmt.Errorf("%w: workflow proposal is no longer valid", ErrConflict)
-		}
-		workflow, err := createWorkflowRecord(tx, proposal.Name, proposal.Description, nil, graph, principal.User.ID, time.Now().UTC())
-		if err != nil {
-			return err
-		}
-		proposal.WorkflowID = workflow.ID
-		proposal.EditURL = fmt.Sprintf("/scheduler/workflow/%d/edit", workflow.ID)
-		raw, err := json.Marshal(metadata)
-		if err != nil {
-			return errors.New("encode confirmed workflow proposal failed")
-		}
-		if err := tx.Model(&db.AssistantMessage{}).Where("id = ?", message.ID).Update("metadata_json", string(raw)).Error; err != nil {
-			return errors.New("record confirmed workflow proposal failed")
-		}
-		result = assistantWorkflowCreateResult(workflow.ID)
-		return nil
-	})
-	return result, err
-}
-
 func (a *App) requireAssistantSession(ctx context.Context, sessionID int64, principal *Principal) (db.AssistantSession, error) {
 	if principal == nil || principal.User == nil {
 		return db.AssistantSession{}, ErrPermission
@@ -360,22 +280,13 @@ func (a *App) loadAssistantHistory(ctx context.Context, sessionID int64) ([]assi
 }
 
 func assistantMessageView(message db.AssistantMessage) AssistantMessageView {
-	view := AssistantMessageView{ID: message.ID, Role: message.Role, Content: message.Content, CreatedAt: formatWorkflowTime(message.CreatedAt)}
-	var metadata assistantMessageMetadata
-	if json.Unmarshal([]byte(message.MetadataJSON), &metadata) == nil && metadata.Proposal != nil {
-		proposal := metadata.Proposal.WorkflowProposalView
-		if proposal.WorkflowID > 0 && proposal.EditURL == "" {
-			proposal.EditURL = fmt.Sprintf("/scheduler/workflow/%d/edit", proposal.WorkflowID)
-		}
-		view.Proposal = &proposal
-	}
-	return view
+	return AssistantMessageView{ID: message.ID, Role: message.Role, Content: message.Content, CreatedAt: formatWorkflowTime(message.CreatedAt)}
 }
 
-func (a *App) workflowProposal(name, description string, raw json.RawMessage) (*assistantWorkflowProposal, error) {
+func (a *App) workflowCreateSummary(name, description string, raw json.RawMessage) (*assistantWorkflowCreateSummary, error) {
 	name, description = strings.TrimSpace(name), strings.TrimSpace(description)
 	if name == "" || utf8.RuneCountInString(name) > 120 || utf8.RuneCountInString(description) > 500 {
-		return nil, errors.New("workflow proposal name or description is invalid")
+		return nil, errors.New("workflow name or description is invalid")
 	}
 	validated, err := a.validateWorkflowGraph(raw)
 	if err != nil {
@@ -383,7 +294,7 @@ func (a *App) workflowProposal(name, description string, raw json.RawMessage) (*
 	}
 	var graph workflowGraph
 	if json.Unmarshal([]byte(validated.graphJSON), &graph) != nil {
-		return nil, errors.New("decode normalized workflow proposal failed")
+		return nil, errors.New("decode normalized workflow graph failed")
 	}
 	nodeTypes := make([]string, 0, len(validated.nodeTypes))
 	seenTypes := map[string]bool{}
@@ -399,26 +310,32 @@ func (a *App) workflowProposal(name, description string, raw json.RawMessage) (*
 		missingSecrets = append(missingSecrets, key.nodeInstanceID+"."+key.field)
 	}
 	sort.Strings(missingSecrets)
-	return &assistantWorkflowProposal{
-		WorkflowProposalView: WorkflowProposalView{
-			Name: name, Description: description, NodeCount: len(graph.Nodes), EdgeCount: len(graph.Edges),
-			NodeTypes: nodeTypes, MissingSecrets: missingSecrets,
-		},
-		Graph: json.RawMessage(validated.graphJSON), CatalogHash: a.workflowNodeCatalogHash(),
+	return &assistantWorkflowCreateSummary{
+		Name: name, Description: description, NodeCount: len(graph.Nodes), EdgeCount: len(graph.Edges),
+		NodeTypes: nodeTypes, MissingSecrets: missingSecrets, graph: validated,
 	}, nil
 }
 
-func (a *App) workflowNodeCatalogHash() string {
-	raw, _ := json.Marshal(a.ListWorkflowNodeDefinitions())
-	digest := sha256.Sum256(raw)
-	return hex.EncodeToString(digest[:])
-}
-
-func assistantWorkflowCreateResult(workflowID int64) AssistantWorkflowCreateResult {
-	return AssistantWorkflowCreateResult{
-		WorkflowID: workflowID, Status: WorkflowStatusInactive,
-		EditURL: fmt.Sprintf("/scheduler/workflow/%d/edit", workflowID),
+func (a *App) createAssistantWorkflow(ctx context.Context, name, description string, raw json.RawMessage, principal *Principal) (*assistantWorkflowCreateSummary, error) {
+	if principal == nil || principal.User == nil || principal.User.ID <= 0 {
+		return nil, ErrPermission
 	}
+	summary, err := a.workflowCreateSummary(name, description, raw)
+	if err != nil {
+		return nil, err
+	}
+	var workflow db.Workflow
+	err = a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		workflow, err = createWorkflowRecord(tx, summary.Name, summary.Description, nil, summary.graph, principal.User.ID, time.Now().UTC())
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	summary.WorkflowID = workflow.ID
+	summary.Status = WorkflowStatusInactive
+	summary.EditURL = fmt.Sprintf("/scheduler/workflow/%d/edit", workflow.ID)
+	return summary, nil
 }
 
 func truncateAssistantText(value string, limit int) string {
