@@ -598,7 +598,6 @@
 <style scoped lang="scss">
   .ops-console {
     --ops-bg: #061526;
-    --ops-shell: #18253a;
     --ops-card: #0d182d;
     --ops-card-soft: #111f35;
     --ops-line: #30435d;
@@ -626,10 +625,7 @@
     max-width: 1600px;
     padding: 22px 24px 28px;
     margin: 0 auto;
-    background: var(--ops-shell);
-    border: 1px solid #344760;
-    border-radius: 22px;
-    box-shadow: 0 18px 40px rgb(0 0 0 / 0.16);
+    background: transparent;
   }
 
   .console-head,
@@ -1353,17 +1349,11 @@
 
   .ops-console.is-light {
     --ops-bg: #eef3f8;
-    --ops-shell: #f8fbff;
     --ops-card: #fff;
     --ops-card-soft: #f2f6fa;
     --ops-line: #d9e2ec;
     --ops-ink: #1e293b;
     --ops-muted: #718096;
-  }
-
-  .ops-console.is-light .dashboard-shell {
-    border-color: #d4dfeb;
-    box-shadow: 0 18px 40px rgb(44 62 80 / 0.1);
   }
 
   .ops-console.is-light .health-card,
@@ -1466,7 +1456,6 @@
 
     .dashboard-shell {
       padding: 16px 14px 20px;
-      border-radius: 16px;
     }
 
     .console-head {
