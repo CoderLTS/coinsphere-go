@@ -34,9 +34,16 @@ const normalizeCategory = (category: string) => {
   return WORKFLOW_CATEGORY_LABELS[value] ? value : 'other'
 }
 
+const BUILTIN_START_FORM_TYPES = new Set([
+  'start.manual',
+  'start.schedule',
+  'start.event',
+  'start.webhook'
+])
+
 const formKind = (definition: WorkflowNodeDefinitionItem): WorkflowNodeFormKind => {
   if (definition.typeCode === 'core.end' || definition.kind === 'terminal') return 'end'
-  if (definition.kind === 'start') return 'start'
+  if (BUILTIN_START_FORM_TYPES.has(definition.typeCode)) return 'start'
   return 'generic'
 }
 
