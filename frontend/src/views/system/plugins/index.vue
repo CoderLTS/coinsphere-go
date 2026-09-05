@@ -28,108 +28,41 @@
       </ElTooltip>
     </div>
 
-    <section v-if="filteredPlugins.length" class="plugin-grid" aria-label="已加载插件">
-      <article
-        v-for="plugin in filteredPlugins"
-        :key="plugin.id"
-        class="plugin-card"
-        role="button"
-        tabindex="0"
-        :style="pluginStyle(plugin)"
-        :aria-label="`查看${pluginLabel(plugin)}详情`"
-        @click="openPlugin(plugin)"
-        @keydown.enter="openPlugin(plugin)"
-        @keydown.space.prevent="openPlugin(plugin)"
-      >
-        <header class="plugin-card__header">
+    <div v-if="selectedPlugin" class="plugin-workspace">
+      <nav class="plugin-list" aria-label="已加载插件">
+        <button
+          v-for="plugin in filteredPlugins"
+          :key="plugin.id"
+          type="button"
+          :class="['plugin-row', { 'is-selected': selectedPlugin.id === plugin.id }]"
+          :style="pluginStyle(plugin)"
+          :aria-pressed="selectedPlugin.id === plugin.id"
+          @click="selectedPluginId = plugin.id"
+        >
           <span class="plugin-mark">
             <ArtSvgIcon :icon="pluginVisual(plugin).icon" />
           </span>
-          <div class="plugin-card__title">
-            <h2>{{ pluginLabel(plugin) }}</h2>
-            <span>第 {{ plugin.version }} 版</span>
-          </div>
-          <ElTag type="success" effect="plain" size="small">运行中</ElTag>
-        </header>
-
-        <dl class="plugin-metrics">
-          <div>
-            <dt>节点</dt>
-            <dd>{{ plugin.nodes.length }}</dd>
-          </div>
-          <div>
-            <dt>页面</dt>
-            <dd>{{ plugin.pages.length }}</dd>
-          </div>
-          <div>
-            <dt>能力</dt>
-            <dd>{{ plugin.contributes.length }}</dd>
-          </div>
-        </dl>
-
-        <div class="plugin-capabilities">
-          <span class="plugin-capabilities__label">提供能力</span>
-          <div>
-            <span v-for="item in contributionPreview(plugin)" :key="item">
-              <ArtSvgIcon :icon="contributionIcon(item)" />
-              {{ contributionLabel(item) }}
-            </span>
-            <span v-if="hiddenContributionCount(plugin)" class="capability-more">
-              另有 {{ hiddenContributionCount(plugin) }} 项
-            </span>
-          </div>
-        </div>
-
-        <footer class="plugin-card__footer">
-          <span>查看详情</span>
-          <ArtSvgIcon icon="ri:arrow-right-line" />
-        </footer>
-      </article>
-    </section>
-
-    <ElEmpty v-else-if="!loading" description="没有符合条件的插件" />
-
-    <ElDrawer
-      v-model="detailVisible"
-      :title="selectedPlugin ? `${pluginLabel(selectedPlugin)}详情` : '插件详情'"
-      size="min(620px, 96vw)"
-    >
-      <div v-if="selectedPlugin" class="plugin-detail" :style="pluginStyle(selectedPlugin)">
-        <div class="plugin-detail__summary">
-          <span class="plugin-mark">
-            <ArtSvgIcon :icon="pluginVisual(selectedPlugin).icon" />
+          <span class="plugin-copy">
+            <strong>{{ pluginLabel(plugin) }}</strong>
+            <small>{{ plugin.nodes.length }} 个节点 / {{ plugin.pages.length }} 个页面</small>
           </span>
-          <div>
-            <strong>{{ pluginLabel(selectedPlugin) }}</strong>
-            <span>第 {{ selectedPlugin.version }} 版</span>
-          </div>
-          <ElTag type="success" effect="plain">运行正常</ElTag>
-        </div>
+        </button>
+      </nav>
 
-        <dl class="detail-metrics">
-          <div>
-            <dt>节点数量</dt>
-            <dd>{{ selectedPlugin.nodes.length }}</dd>
+      <section class="plugin-detail" :style="pluginStyle(selectedPlugin)" aria-label="插件详情">
+        <header class="plugin-detail__header">
+          <div class="plugin-detail__title">
+            <h2>{{ pluginLabel(selectedPlugin) }}</h2>
+            <span class="plugin-version">第 {{ selectedPlugin.version }} 版</span>
+            <ElTag type="success" effect="plain" size="small">运行中</ElTag>
           </div>
-          <div>
-            <dt>页面数量</dt>
-            <dd>{{ selectedPlugin.pages.length }}</dd>
-          </div>
-          <div>
-            <dt>能力类型</dt>
-            <dd>{{ selectedPlugin.contributes.length }}</dd>
-          </div>
-        </dl>
-
-        <section class="detail-capabilities">
-          <h3>扩展能力</h3>
-          <div>
+          <div class="plugin-capabilities" aria-label="扩展能力">
             <span v-for="item in selectedPlugin.contributes" :key="item">
               <ArtSvgIcon :icon="contributionIcon(item)" />
               {{ contributionLabel(item) }}
             </span>
           </div>
-        </section>
+        </header>
 
         <ElTabs v-model="detailTab" class="plugin-detail__tabs">
           <ElTabPane name="nodes">
@@ -140,82 +73,105 @@
               </span>
             </template>
 
-            <div v-if="selectedPlugin.nodes.length" class="detail-list">
-              <div
-                v-for="node in selectedPlugin.nodes"
-                :key="node.type"
-                :class="['node-entry', { 'is-open': expandedNodeType === node.type }]"
-              >
-                <button
-                  type="button"
-                  class="node-row"
-                  :aria-expanded="expandedNodeType === node.type"
-                  @click="toggleNode(node.type)"
-                >
-                  <span class="node-copy">
-                    <strong>{{ localizeText(node.title, '扩展节点') }}</strong>
-                    <span>第 {{ node.version }} 版</span>
-                  </span>
-                  <span class="node-controls">
-                    <ElTag size="small" effect="plain">{{ nodeKindLabel(node.kind) }}</ElTag>
-                    <ArtSvgIcon
-                      icon="ri:arrow-down-s-line"
-                      :class="['node-chevron', { 'is-open': expandedNodeType === node.type }]"
-                    />
-                  </span>
-                </button>
+            <div v-if="selectedPlugin.nodes.length" :key="selectedPlugin.id" class="node-browser">
+              <div class="node-navigation">
+                <ElInput
+                  v-model="nodeKeyword"
+                  :prefix-icon="Search"
+                  clearable
+                  placeholder="搜索节点"
+                  aria-label="搜索节点"
+                  class="node-search"
+                />
+                <nav class="node-list" aria-label="注册节点">
+                  <button
+                    v-for="node in filteredNodes"
+                    :key="node.type"
+                    type="button"
+                    :class="['node-row', { 'is-selected': selectedNode?.type === node.type }]"
+                    :aria-pressed="selectedNode?.type === node.type"
+                    @click="selectedNodeType = node.type"
+                  >
+                    <span class="node-copy">
+                      <strong>{{ localizeText(node.title, '扩展节点') }}</strong>
+                      <small>
+                        {{ nodeKindLabel(node.kind) }} / {{ configFields(node).length }} 项参数
+                      </small>
+                    </span>
+                    <ArtSvgIcon icon="ri:arrow-right-s-line" />
+                  </button>
+                </nav>
+              </div>
 
-                <div v-if="expandedNodeType === node.type" class="node-config">
-                  <div class="node-config__heading">
-                    <strong>配置参数</strong>
-                    <small>共 {{ configFields(node).length }} 项</small>
+              <section
+                v-if="selectedNode"
+                :key="selectedNode.type"
+                class="node-config"
+                tabindex="0"
+                aria-labelledby="plugin-node-title"
+              >
+                <header class="node-config__header">
+                  <p class="node-location">{{ pluginLabel(selectedPlugin) }} / 注册节点</p>
+                  <div class="node-config__title">
+                    <h3 id="plugin-node-title">{{
+                      localizeText(selectedNode.title, '扩展节点')
+                    }}</h3>
+                    <ElTag size="small" effect="plain">{{
+                      nodeKindLabel(selectedNode.kind)
+                    }}</ElTag>
                   </div>
-                  <dl v-if="configFields(node).length" class="parameter-list">
-                    <div
-                      v-for="([fieldName, schema], index) in configFields(node)"
-                      :key="fieldName"
-                      class="parameter-row"
-                    >
-                      <dt>
-                        <strong>{{ schemaTitle(schema, index) }}</strong>
-                        <span class="parameter-tags">
-                          <ElTag size="small" effect="plain">
-                            {{ schemaTypeLabel(schema.type) }}
-                          </ElTag>
-                          <ElTag
-                            v-if="isConfigRequired(node, fieldName)"
-                            size="small"
-                            type="warning"
-                            effect="plain"
-                          >
-                            必填
-                          </ElTag>
-                          <ElTag
-                            v-if="schema['x-coinsphere-secret'] === true"
-                            size="small"
-                            type="danger"
-                            effect="plain"
-                          >
-                            密钥
-                          </ElTag>
-                        </span>
-                      </dt>
-                      <dd v-if="localizeText(schema.description)" class="parameter-description">
+                  <span class="node-version">第 {{ selectedNode.version }} 版</span>
+                </header>
+                <div class="node-config__heading">
+                  <h4>配置参数</h4>
+                  <small>{{ configFields(selectedNode).length }} 项</small>
+                </div>
+                <dl v-if="configFields(selectedNode).length" class="parameter-list">
+                  <div
+                    v-for="([fieldName, schema], index) in configFields(selectedNode)"
+                    :key="fieldName"
+                    class="parameter-row"
+                  >
+                    <dt>
+                      <strong>{{ schemaTitle(schema, index) }}</strong>
+                      <span class="parameter-tags">
+                        <span>{{ schemaTypeLabel(schema.type) }}</span>
+                        <ElTag
+                          v-if="isConfigRequired(selectedNode, fieldName)"
+                          size="small"
+                          type="warning"
+                          effect="plain"
+                        >
+                          必填
+                        </ElTag>
+                        <ElTag
+                          v-if="schema['x-coinsphere-secret'] === true"
+                          size="small"
+                          type="danger"
+                          effect="plain"
+                        >
+                          密钥
+                        </ElTag>
+                      </span>
+                    </dt>
+                    <dd>
+                      <p v-if="localizeText(schema.description)" class="parameter-description">
                         {{ localizeText(schema.description) }}
-                      </dd>
-                      <dd v-if="schemaDefault(schema)" class="parameter-meta">
+                      </p>
+                      <p v-if="schemaDefault(schema)" class="parameter-meta">
                         <span>默认值</span>
                         <span>{{ schemaDefault(schema) }}</span>
-                      </dd>
-                      <dd v-if="schemaOptions(schema)" class="parameter-meta">
+                      </p>
+                      <p v-if="schemaOptions(schema)" class="parameter-meta">
                         <span>可选值</span>
                         <span>{{ schemaOptions(schema) }}</span>
-                      </dd>
-                    </div>
-                  </dl>
-                  <p v-else class="node-config__empty">无需配置参数</p>
-                </div>
-              </div>
+                      </p>
+                    </dd>
+                  </div>
+                </dl>
+                <ElEmpty v-else :image-size="64" description="无需配置参数" />
+              </section>
+              <ElEmpty v-else :image-size="64" description="没有符合条件的节点" />
             </div>
             <ElEmpty v-else :image-size="64" description="未注册节点" />
           </ElTabPane>
@@ -228,12 +184,13 @@
               </span>
             </template>
 
-            <div v-if="selectedPlugin.pages.length" class="detail-list">
+            <div v-if="selectedPlugin.pages.length" class="page-list">
               <div
                 v-for="page in selectedPlugin.pages"
                 :key="`${page.kind}:${page.pageKey}`"
                 class="detail-row"
               >
+                <ArtSvgIcon icon="ri:layout-grid-line" />
                 <strong>{{ localizeText(page.title, '扩展页面') }}</strong>
                 <ElTag size="small" effect="plain">{{ pageKindLabel(page.kind) }}</ElTag>
               </div>
@@ -241,13 +198,14 @@
             <ElEmpty v-else :image-size="64" description="未注册页面" />
           </ElTabPane>
         </ElTabs>
-      </div>
-    </ElDrawer>
+      </section>
+    </div>
+    <ElEmpty v-else-if="!loading" description="没有符合条件的插件" />
   </div>
 </template>
 
 <script setup lang="ts">
-  import { Refresh } from '@element-plus/icons-vue'
+  import { Refresh, Search } from '@element-plus/icons-vue'
   import { fetchGetInstalledPlugins } from '@/api/system'
 
   defineOptions({ name: 'Plugins' })
@@ -258,9 +216,9 @@
 
   const loading = ref(false)
   const plugins = ref<InstalledPlugin[]>([])
-  const selectedPlugin = ref<InstalledPlugin>()
-  const detailVisible = ref(false)
-  const expandedNodeType = ref<string>()
+  const selectedPluginId = ref<string>()
+  const selectedNodeType = ref<string>()
+  const nodeKeyword = ref('')
   const detailTab = ref('nodes')
 
   const initialFilters = {
@@ -411,9 +369,6 @@
     pluginNames[plugin.id] || localizeText(plugin.name, '扩展插件')
   const contributionLabel = (value: string) => contributionLabels[value] || '其他能力'
   const contributionIcon = (value: string) => contributionIcons[value] || 'ri:add-circle-line'
-  const contributionPreview = (plugin: InstalledPlugin) => plugin.contributes.slice(0, 4)
-  const hiddenContributionCount = (plugin: InstalledPlugin) =>
-    Math.max(plugin.contributes.length - 4, 0)
   const nodeKindLabel = (kind: 'action' | 'trigger') => (kind === 'trigger' ? '触发器' : '动作')
   const pageKindLabel = (kind: 'page' | 'resultPage') =>
     kind === 'resultPage' ? '结果页面' : '管理页面'
@@ -462,6 +417,33 @@
 
   const configFields = (node: PluginNode) =>
     Object.entries(node.configSchema?.properties || {}) as Array<[string, ConfigSchema]>
+  const selectedPlugin = computed(
+    () =>
+      filteredPlugins.value.find((plugin) => plugin.id === selectedPluginId.value) ||
+      filteredPlugins.value[0]
+  )
+  const filteredNodes = computed(() => {
+    const keyword = nodeKeyword.value.trim().toLowerCase()
+    return (selectedPlugin.value?.nodes || []).filter(
+      (node) =>
+        node.title.toLowerCase().includes(keyword) || localizeText(node.title).includes(keyword)
+    )
+  })
+  const selectedNode = computed(
+    () =>
+      filteredNodes.value.find((node) => node.type === selectedNodeType.value) ||
+      filteredNodes.value[0]
+  )
+
+  watch(
+    () => selectedPlugin.value?.id,
+    () => {
+      selectedPluginId.value = selectedPlugin.value?.id
+      selectedNodeType.value = undefined
+      nodeKeyword.value = ''
+      detailTab.value = selectedPlugin.value?.nodes.length ? 'nodes' : 'pages'
+    }
+  )
   const isConfigRequired = (node: PluginNode, fieldName: string) =>
     Array.isArray(node.configSchema?.required) && node.configSchema.required.includes(fieldName)
   const schemaTitle = (schema: ConfigSchema, index: number) =>
@@ -507,15 +489,6 @@
       .filter(Boolean)
       .join('、')
   }
-  const toggleNode = (nodeType: string) => {
-    expandedNodeType.value = expandedNodeType.value === nodeType ? undefined : nodeType
-  }
-  const openPlugin = (plugin: InstalledPlugin) => {
-    selectedPlugin.value = plugin
-    expandedNodeType.value = undefined
-    detailTab.value = plugin.nodes.length ? 'nodes' : 'pages'
-    detailVisible.value = true
-  }
   const handleSearch = (filters: Record<string, string>) => {
     Object.assign(appliedFilters, initialFilters, filters)
   }
@@ -537,23 +510,22 @@
 
 <style scoped lang="scss">
   .plugin-page {
-    min-height: 100%;
+    min-height: 0;
     color: var(--art-gray-900);
+    letter-spacing: 0;
   }
 
   .plugin-toolbar,
   .plugin-summary,
-  .plugin-card__header,
-  .plugin-capabilities > div,
-  .plugin-card__footer,
-  .plugin-detail__summary,
-  .detail-capabilities > div,
+  .plugin-row,
+  .plugin-detail__title,
+  .plugin-capabilities,
+  .plugin-capabilities > span,
   .detail-tab-label,
   .node-row,
-  .node-controls,
-  .parameter-row dt,
-  .parameter-tags,
+  .node-config__title,
   .node-config__heading,
+  .parameter-tags,
   .parameter-meta,
   .detail-row {
     display: flex;
@@ -561,12 +533,14 @@
   }
 
   .plugin-toolbar {
+    flex-shrink: 0;
     justify-content: space-between;
     min-height: 54px;
     padding: 0 4px;
   }
 
   .plugin-summary {
+    flex-wrap: wrap;
     gap: 9px;
     font-size: 13px;
     color: var(--art-gray-600);
@@ -583,324 +557,251 @@
     background: var(--art-gray-300);
   }
 
-  .plugin-grid {
+  .plugin-workspace {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 16px;
-  }
-
-  .plugin-card {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    min-height: 262px;
-    padding: 18px;
-    cursor: pointer;
+    flex: 1;
+    grid-template-columns: 208px minmax(0, 1fr);
+    min-height: 380px;
     background: var(--default-box-color);
-    border: 1px solid var(--art-card-border);
-    border-radius: 8px;
-    transition:
-      border-color 160ms ease,
-      box-shadow 160ms ease,
-      transform 160ms ease;
+    border-block: 1px solid var(--art-card-border);
   }
 
-  .plugin-card::before {
-    position: absolute;
-    top: 0;
-    right: 18px;
-    left: 18px;
-    height: 2px;
-    content: '';
-    background: var(--plugin-color);
-    border-radius: 0 0 2px 2px;
-    opacity: 0;
-    transition: opacity 160ms ease;
-  }
-
-  .plugin-card:hover,
-  .plugin-card:focus-visible {
-    border-color: var(--plugin-color);
-    outline: none;
-    box-shadow: 0 6px 18px rgb(15 23 42 / 0.07);
-    transform: translateY(-1px);
-  }
-
-  .plugin-card:hover::before,
-  .plugin-card:focus-visible::before {
-    opacity: 1;
-  }
-
-  .plugin-card__header {
-    gap: 12px;
-  }
-
-  .plugin-mark {
-    display: grid;
-    flex: 0 0 auto;
-    width: 42px;
-    height: 42px;
-    font-size: 19px;
-    color: var(--plugin-color);
-    background: var(--plugin-background);
-    border-radius: 7px;
-    place-items: center;
-  }
-
-  .plugin-card__title {
-    min-width: 0;
-    margin-right: auto;
-  }
-
-  .plugin-card__title h2 {
-    margin: 0;
-    overflow: hidden;
-    font-size: 15px;
-    line-height: 1.5;
-    text-overflow: ellipsis;
-    letter-spacing: 0;
-    white-space: nowrap;
-  }
-
-  .plugin-card__title span {
-    display: block;
-    margin-top: 2px;
-    font-size: 12px;
-    color: var(--art-gray-500);
-  }
-
-  .plugin-metrics,
-  .detail-metrics {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    margin: 18px 0 0;
-  }
-
-  .plugin-metrics {
-    padding: 12px 0;
-    background: var(--art-gray-100);
-    border-radius: 6px;
-  }
-
-  .plugin-metrics div,
-  .detail-metrics div {
-    text-align: center;
+  .plugin-list {
+    min-height: 0;
+    padding: 12px 8px;
+    overflow-y: auto;
     border-right: 1px solid var(--art-gray-300);
   }
 
-  .plugin-metrics div:last-child,
-  .detail-metrics div:last-child {
-    border-right: 0;
-  }
-
-  .plugin-metrics dt,
-  .detail-metrics dt {
-    font-size: 11px;
-    color: var(--art-gray-500);
-  }
-
-  .plugin-metrics dd,
-  .detail-metrics dd {
-    margin: 4px 0 0;
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--art-gray-900);
-  }
-
-  .plugin-capabilities {
-    padding: 15px 0;
-  }
-
-  .plugin-capabilities__label,
-  .detail-capabilities h3 {
-    display: block;
-    margin-bottom: 9px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--art-gray-700);
-  }
-
-  .plugin-capabilities > div,
-  .detail-capabilities > div {
-    flex-wrap: wrap;
-    gap: 7px;
-  }
-
-  .plugin-capabilities > div > span,
-  .detail-capabilities > div > span {
-    display: inline-flex;
-    gap: 5px;
-    align-items: center;
-    padding: 4px 7px;
-    font-size: 11px;
-    line-height: 1.4;
-    color: var(--art-gray-700);
-    background: var(--art-gray-200);
-    border-radius: 4px;
-  }
-
-  .plugin-capabilities .capability-more {
-    color: var(--plugin-color);
-    background: var(--plugin-background);
-  }
-
-  .plugin-card__footer {
-    justify-content: space-between;
-    padding-top: 12px;
-    margin-top: auto;
-    font-size: 12px;
-    color: var(--art-gray-500);
-    border-top: 1px solid var(--art-gray-300);
-  }
-
-  .plugin-card:hover .plugin-card__footer,
-  .plugin-card:focus-visible .plugin-card__footer {
-    color: var(--plugin-color);
-  }
-
-  .plugin-detail__summary {
-    gap: 12px;
-    padding-bottom: 18px;
-    border-bottom: 1px solid var(--art-gray-300);
-  }
-
-  .plugin-detail__summary > div {
-    min-width: 0;
-    margin-right: auto;
-  }
-
-  .plugin-detail__summary strong,
-  .plugin-detail__summary span {
-    display: block;
-  }
-
-  .plugin-detail__summary strong {
-    font-size: 15px;
-  }
-
-  .plugin-detail__summary > div > span {
-    margin-top: 3px;
-    font-size: 12px;
-    color: var(--art-gray-500);
-  }
-
-  .detail-metrics {
-    padding: 17px 0;
-    border-bottom: 1px solid var(--art-gray-300);
-  }
-
-  .detail-capabilities {
-    padding: 18px 0 12px;
-  }
-
-  .detail-capabilities h3 {
-    margin-top: 0;
-  }
-
-  .plugin-detail__tabs {
-    margin-top: 8px;
-  }
-
-  .detail-tab-label {
-    gap: 6px;
-  }
-
-  .detail-tab-label small {
-    min-width: 20px;
-    padding: 0 5px;
-    font-size: 10px;
-    line-height: 18px;
-    color: var(--art-gray-600);
-    text-align: center;
-    background: var(--art-gray-200);
-    border-radius: 9px;
-  }
-
-  .detail-list {
-    border-top: 1px solid var(--art-gray-300);
-  }
-
-  .node-entry,
-  .detail-row {
-    border-bottom: 1px solid var(--art-gray-300);
-  }
-
+  .plugin-row,
   .node-row {
-    gap: 16px;
-    justify-content: space-between;
+    gap: 12px;
     width: 100%;
-    min-height: 64px;
-    padding: 10px 4px;
+    padding: 12px;
     font: inherit;
     color: inherit;
     text-align: left;
     cursor: pointer;
     background: transparent;
     border: 0;
+    border-left: 3px solid transparent;
+    border-radius: 4px;
   }
 
-  .node-row:hover,
-  .node-row:focus-visible {
+  .plugin-row + .plugin-row {
+    margin-top: 4px;
+  }
+
+  .plugin-row:hover,
+  .node-row:hover {
     background: var(--art-gray-100);
-    outline: none;
   }
 
+  .plugin-row:focus-visible,
+  .node-row:focus-visible,
+  .node-config:focus-visible {
+    outline: 2px solid var(--plugin-color);
+    outline-offset: -2px;
+  }
+
+  .plugin-row.is-selected,
+  .node-row.is-selected {
+    color: var(--plugin-color);
+    background: var(--plugin-background);
+    border-left-color: var(--plugin-color);
+  }
+
+  .plugin-mark {
+    display: grid;
+    flex: 0 0 32px;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    font-size: 19px;
+    color: var(--plugin-color);
+  }
+
+  .plugin-copy,
   .node-copy {
+    flex: 1;
     min-width: 0;
+    overflow-wrap: anywhere;
   }
 
-  .node-copy strong,
-  .node-copy span {
+  .plugin-copy strong,
+  .node-copy strong {
     display: block;
-  }
-
-  .node-copy strong,
-  .detail-row strong {
     font-size: 13px;
     font-weight: 600;
+    line-height: 1.6;
   }
 
-  .node-copy span {
+  .plugin-copy small,
+  .node-copy small {
+    display: block;
     margin-top: 4px;
     font-size: 11px;
+    line-height: 1.5;
+    color: var(--art-gray-600);
+  }
+
+  .plugin-detail {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    padding: 0 20px;
+  }
+
+  .plugin-detail__header {
+    padding: 18px 0 4px;
+  }
+
+  .plugin-detail__title {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .plugin-detail__title h2 {
+    margin: 0;
+    font-size: 17px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+
+  .plugin-version,
+  .node-version {
+    font-size: 12px;
     color: var(--art-gray-500);
   }
 
-  .node-controls {
-    flex: 0 0 auto;
-    gap: 8px;
+  .plugin-capabilities {
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    margin-top: 12px;
+    font-size: 12px;
+    color: var(--art-gray-600);
   }
 
-  .node-chevron {
-    width: 18px;
-    height: 18px;
+  .plugin-capabilities > span {
+    gap: 5px;
+  }
+
+  .plugin-detail__tabs {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+    margin-top: 12px;
+  }
+
+  .plugin-detail__tabs :deep(.el-tabs__header) {
+    flex-shrink: 0;
+    margin-bottom: 0;
+  }
+
+  .plugin-detail__tabs :deep(.el-tabs__content) {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .plugin-detail__tabs :deep(.el-tab-pane) {
+    height: 100%;
+    overflow-y: auto;
+  }
+
+  .detail-tab-label {
+    gap: 7px;
+  }
+
+  .detail-tab-label small {
+    min-width: 20px;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
     color: var(--art-gray-500);
-    transition: transform 160ms ease;
+    text-align: center;
   }
 
-  .node-chevron.is-open {
-    transform: rotate(180deg);
+  .node-browser {
+    display: grid;
+    grid-template-columns: 208px minmax(0, 1fr);
+    height: 100%;
+    min-height: 0;
+  }
+
+  .node-navigation {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    padding: 16px 12px 16px 0;
+    border-right: 1px solid var(--art-gray-300);
+  }
+
+  .node-search {
+    flex-shrink: 0;
+    margin-bottom: 12px;
+  }
+
+  .node-list {
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .node-row {
+    min-height: 68px;
+    padding: 10px;
+    border-radius: 0;
+  }
+
+  .node-row > :last-child {
+    flex-shrink: 0;
   }
 
   .node-config {
-    padding: 13px 14px 14px;
-    margin-bottom: 12px;
-    background: var(--art-gray-100);
-    border-left: 2px solid var(--plugin-color, var(--theme-color));
+    min-width: 0;
+    min-height: 0;
+    padding: 20px 0 20px 24px;
+    overflow-y: auto;
+    overflow-wrap: anywhere;
+  }
+
+  .node-config__header {
+    padding-bottom: 20px;
+  }
+
+  .node-location {
+    margin: 0 0 10px;
+    font-size: 12px;
+    color: var(--art-gray-500);
+  }
+
+  .node-config__title {
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 6px;
+  }
+
+  .node-config__title h3 {
+    margin: 0;
+    font-size: 16px;
+    line-height: 1.6;
   }
 
   .node-config__heading {
     justify-content: space-between;
-    margin-bottom: 9px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--art-gray-300);
   }
 
-  .node-config__heading strong {
-    font-size: 12px;
+  .node-config__heading h4 {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
   }
 
   .node-config__heading small {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--art-gray-500);
   }
 
@@ -909,110 +810,138 @@
   }
 
   .parameter-row {
-    padding: 11px 0;
-    border-top: 1px solid var(--art-gray-300);
+    display: grid;
+    grid-template-columns: minmax(120px, 1fr) minmax(0, 2fr);
+    gap: 16px;
+    padding: 16px 0;
+    font-size: 12px;
+    line-height: 1.7;
+    border-bottom: 1px solid var(--art-gray-200);
   }
 
-  .parameter-row dt {
-    gap: 12px;
-    justify-content: space-between;
+  .parameter-row dt,
+  .parameter-row dd {
+    min-width: 0;
+    margin: 0;
   }
 
   .parameter-row dt > strong {
-    font-size: 12px;
+    font-weight: 600;
   }
 
   .parameter-tags {
-    flex: 0 0 auto;
     flex-wrap: wrap;
-    gap: 5px;
-    justify-content: flex-end;
-  }
-
-  .parameter-row dd {
-    margin-left: 0;
+    gap: 6px;
+    margin-top: 6px;
+    color: var(--art-gray-500);
   }
 
   .parameter-description,
   .parameter-meta {
-    margin-top: 7px;
-    font-size: 12px;
-    line-height: 1.6;
+    margin: 0;
     color: var(--art-gray-600);
   }
 
-  .parameter-description {
-    overflow-wrap: anywhere;
-  }
-
   .parameter-meta {
-    gap: 8px;
+    gap: 10px;
     align-items: flex-start;
   }
 
+  .parameter-row dd > p + p {
+    margin-top: 6px;
+  }
+
   .parameter-meta > span:first-child {
-    flex: 0 0 auto;
+    flex-shrink: 0;
     color: var(--art-gray-500);
   }
 
-  .node-config__empty {
-    margin: 0;
-    font-size: 12px;
-    color: var(--art-gray-500);
+  .page-list {
+    padding-top: 8px;
   }
 
   .detail-row {
-    gap: 16px;
-    justify-content: space-between;
+    gap: 12px;
     min-height: 58px;
-    padding: 10px 4px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--art-gray-200);
   }
 
-  @media (width <= 1180px) {
-    .plugin-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+  .detail-row strong {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    overflow-wrap: anywhere;
+  }
+
+  .detail-row > :last-child {
+    flex-shrink: 0;
+  }
+
+  @media (width <= 1200px) {
+    .plugin-workspace {
+      grid-template-rows: auto minmax(0, 1fr);
+      grid-template-columns: minmax(0, 1fr);
+      min-height: 480px;
+    }
+
+    .plugin-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 4px;
+      max-height: 160px;
+      padding: 8px;
+      border-right: 0;
+      border-bottom: 1px solid var(--art-gray-300);
+    }
+
+    .plugin-row {
+      padding: 8px;
+    }
+
+    .plugin-row + .plugin-row {
+      margin-top: 0;
     }
   }
 
-  @media (width <= 700px) {
-    .plugin-grid {
-      grid-template-columns: 1fr;
+  @media (width <= 900px) {
+    .plugin-page {
+      height: auto;
     }
 
-    .plugin-toolbar {
-      align-items: flex-start;
-      padding: 9px 2px;
-    }
-
-    .plugin-summary {
-      flex-wrap: wrap;
-    }
-
-    .plugin-card {
+    .plugin-workspace {
       min-height: 0;
     }
 
-    .node-row,
-    .parameter-row dt {
-      gap: 10px;
+    .plugin-detail {
+      padding: 0 12px;
+    }
+
+    .plugin-detail__tabs :deep(.el-tab-pane) {
+      height: auto;
+      overflow: visible;
+    }
+
+    .node-browser {
+      grid-template-columns: minmax(0, 1fr);
+      height: auto;
+    }
+
+    .node-navigation {
+      max-height: 220px;
+      padding: 12px 0;
+      border-right: 0;
+      border-bottom: 1px solid var(--art-gray-300);
     }
 
     .node-config {
-      padding-right: 10px;
-      padding-left: 10px;
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .plugin-card,
-    .plugin-card::before,
-    .node-chevron {
-      transition: none;
+      padding: 20px 0;
+      overflow: visible;
     }
 
-    .plugin-card:hover,
-    .plugin-card:focus-visible {
-      transform: none;
+    .parameter-row {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 8px;
     }
   }
 </style>

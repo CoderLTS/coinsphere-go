@@ -837,6 +837,89 @@ test('超级管理员可以使用原工作流编辑器', async ({ page }) => {
   expect(backend.unexpectedApiCalls).toEqual([])
 })
 
+test('插件浏览保持节点选择、搜索和刷新后的详情一致', async ({ page }) => {
+  const backend = await installBackendMocks(page, 'authenticated')
+  await page.route('**/api/v1/system/menus', (route) =>
+    fulfillApi(route, [
+      homeMenu,
+      {
+        ...resultsMenu,
+        id: 9,
+        path: '/system/plugins',
+        name: 'Plugins',
+        component: '/system/plugins/index',
+        meta: { ...resultsMenu.meta, title: '插件管理' }
+      }
+    ])
+  )
+  const aiPlugin = {
+    id: 'official.ai',
+    name: '人工智能',
+    version: '1.0.0',
+    status: 'loaded',
+    contributes: ['nodes'],
+    nodes: [
+      {
+        type: 'ai.text',
+        title: '文本生成',
+        version: '1.0.0',
+        kind: 'action',
+        configSchema: { properties: { prompt: { type: 'string', title: '提示词' } } }
+      },
+      {
+        type: 'ai.summary',
+        title: '摘要生成',
+        version: '1.0.0',
+        kind: 'action',
+        configSchema: { properties: { length: { type: 'integer', title: '摘要长度' } } }
+      }
+    ],
+    pages: []
+  }
+  await page.route('**/api/v1/system/plugins', (route) =>
+    fulfillApi(route, [
+      aiPlugin,
+      {
+        ...aiPlugin,
+        id: 'official.notification',
+        name: '通知',
+        contributes: ['pages'],
+        nodes: [],
+        pages: [{ pageKey: 'channels', title: '通知渠道', kind: 'page' }]
+      }
+    ])
+  )
+
+  await loginAsTestUser(page, '/system/plugins')
+  const nodes = page.getByRole('navigation', { name: '注册节点', exact: true })
+  const search = page.getByRole('textbox', { name: '搜索节点', exact: true })
+  await expect(page.getByRole('region', { name: '文本生成', exact: true })).toContainText('提示词')
+  await nodes.getByRole('button', { name: /摘要生成/ }).click()
+  await expect(page.getByRole('region', { name: '摘要生成', exact: true })).toContainText(
+    '摘要长度'
+  )
+  await expect(page.getByText('提示词', { exact: true })).not.toBeVisible()
+  await search.fill('不存在的节点')
+  await expect(page.getByText('没有符合条件的节点', { exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: '摘要生成', exact: true })).not.toBeVisible()
+  await search.fill('摘要')
+  await expect(nodes.getByRole('button', { name: /摘要生成/, pressed: true })).toBeVisible()
+
+  const plugins = page.getByRole('navigation', { name: '已加载插件', exact: true })
+  await plugins.getByRole('button', { name: /通知/ }).click()
+  await expect(page.getByRole('tab', { name: /注册页面/, selected: true })).toBeVisible()
+  await expect(page.getByText('通知渠道', { exact: true })).toBeVisible()
+  await plugins.getByRole('button', { name: /人工智能/ }).click()
+  await expect(search).toHaveValue('')
+  await nodes.getByRole('button', { name: /摘要生成/ }).click()
+  aiPlugin.nodes = aiPlugin.nodes.slice(0, 1)
+  await page.getByRole('button', { name: '刷新插件列表', exact: true }).click()
+  await expect(nodes.getByRole('button', { name: /文本生成/, pressed: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: '文本生成', exact: true })).toContainText('提示词')
+  await expect(nodes.getByRole('button', { name: /摘要生成/ })).toHaveCount(0)
+  expect(backend.unexpectedApiCalls).toEqual([])
+})
+
 test('超级管理员可以使用原币种元数据页面', async ({ page }) => {
   const calls = await installBackendMocks(page, 'authenticated')
   await loginAsTestUser(page, '/data/market-metadata')
