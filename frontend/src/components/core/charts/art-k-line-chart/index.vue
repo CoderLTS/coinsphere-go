@@ -129,7 +129,20 @@
     mainIndicator: 'none',
     subIndicator: 'volume',
     fixedInterval: false,
-    indicatorConfig: () => defaultIndicatorConfig
+    indicatorConfig: () => ({
+      maPeriods: [7, 25, 99],
+      emaPeriods: [7, 25, 99],
+      bollPeriod: 20,
+      bollMultiplier: 2,
+      macdFast: 12,
+      macdSlow: 26,
+      macdSignal: 9,
+      rsiPeriod: 14,
+      kdjPeriod: 9,
+      kdjK: 3,
+      kdjD: 3,
+      wrPeriod: 14
+    })
   })
 
   const workbenchRef = ref<HTMLElement | null>(null)
