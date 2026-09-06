@@ -466,6 +466,16 @@
                 xAxisIndex: xAxes.map((_, index) => index),
                 start: props.dataZoomStart,
                 end: props.dataZoomEnd
+              },
+              {
+                type: 'slider',
+                xAxisIndex: xAxes.map((_, index) => index),
+                start: props.dataZoomStart,
+                end: props.dataZoomEnd,
+                bottom: 0,
+                height: 18,
+                showDetail: false,
+                brushSelect: false
               }
             ]
           : undefined
