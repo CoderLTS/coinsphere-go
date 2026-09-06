@@ -1,6 +1,7 @@
 package binance
 
 import (
+	"fmt"
 	"time"
 
 	"coinsphere/backend/plugin/sdk"
@@ -9,27 +10,49 @@ import (
 
 const indicatorScale int32 = 18
 
-func calculateBinanceIndicators(candles []sdk.Candle) []map[string]any {
+type binanceIndicatorConfig struct {
+	MAPeriods                         [3]int
+	EMAPeriods                        [3]int
+	BollPeriod                        int
+	BollMultiplier                    decimal.Decimal
+	MACDFast, MACDSlow, MACDSignal    int
+	RSIPeriod                         int
+	KDJPeriod, KDJKSmooth, KDJDSmooth int
+	WRPeriod                          int
+}
+
+var defaultBinanceIndicatorConfig = binanceIndicatorConfig{
+	MAPeriods: [3]int{7, 25, 99}, EMAPeriods: [3]int{7, 25, 99}, BollPeriod: 20,
+	BollMultiplier: decimal.NewFromInt(2), MACDFast: 12, MACDSlow: 26, MACDSignal: 9,
+	RSIPeriod: 14, KDJPeriod: 9, KDJKSmooth: 3, KDJDSmooth: 3, WRPeriod: 14,
+}
+
+func calculateBinanceIndicators(candles []sdk.Candle, config binanceIndicatorConfig) []map[string]any {
 	closes := make([]decimal.Decimal, len(candles))
 	for i := range candles {
 		closes[i] = candles[i].Close
 	}
-	ma7, ma25, ma99 := alignedMA(closes, 7), alignedMA(closes, 25), alignedMA(closes, 99)
-	ema7, ema25, ema99 := alignedEMA(closes, 7), alignedEMA(closes, 25), alignedEMA(closes, 99)
-	bollMiddle, bollUpper, bollLower := alignedBollinger(candles, 20, decimal.NewFromInt(2))
-	dif, dea, macdHist := alignedMACD(closes, 12, 26, 9)
-	rsi := alignedRSI(closes, 14)
-	k, d, j := alignedKDJ(candles, 9, 3, 3)
-	obv, wr := alignedOBV(candles), alignedWR(candles, 14)
+	ma := [3][]*decimal.Decimal{alignedMA(closes, config.MAPeriods[0]), alignedMA(closes, config.MAPeriods[1]), alignedMA(closes, config.MAPeriods[2])}
+	ema := [3][]*decimal.Decimal{alignedEMA(closes, config.EMAPeriods[0]), alignedEMA(closes, config.EMAPeriods[1]), alignedEMA(closes, config.EMAPeriods[2])}
+	bollMiddle, bollUpper, bollLower := alignedBollinger(candles, config.BollPeriod, config.BollMultiplier)
+	dif, dea, macdHist := alignedMACD(closes, config.MACDFast, config.MACDSlow, config.MACDSignal)
+	rsi := alignedRSI(closes, config.RSIPeriod)
+	k, d, j := alignedKDJ(candles, config.KDJPeriod, config.KDJKSmooth, config.KDJDSmooth)
+	obv, wr := alignedOBV(candles), alignedWR(candles, config.WRPeriod)
 	result := make([]map[string]any, len(candles))
 	for i, candle := range candles {
+		main := map[string]any{
+			"bollMiddle": decimalOrNil(bollMiddle[i]), "bollUpper": decimalOrNil(bollUpper[i]), "bollLower": decimalOrNil(bollLower[i]),
+		}
+		for index, period := range config.MAPeriods {
+			main[fmt.Sprintf("ma%d", period)] = decimalOrNil(ma[index][i])
+		}
+		for index, period := range config.EMAPeriods {
+			main[fmt.Sprintf("ema%d", period)] = decimalOrNil(ema[index][i])
+		}
 		result[i] = map[string]any{
 			"openTime": candle.OpenTime.UTC().Format(time.RFC3339Nano),
-			"main": map[string]any{
-				"ma7": decimalOrNil(ma7[i]), "ma25": decimalOrNil(ma25[i]), "ma99": decimalOrNil(ma99[i]),
-				"ema7": decimalOrNil(ema7[i]), "ema25": decimalOrNil(ema25[i]), "ema99": decimalOrNil(ema99[i]),
-				"bollMiddle": decimalOrNil(bollMiddle[i]), "bollUpper": decimalOrNil(bollUpper[i]), "bollLower": decimalOrNil(bollLower[i]),
-			},
+			"main":     main,
 			"sub": map[string]any{
 				"volume": candle.Volume.String(),
 				"macd":   decimalOrNil(macdHist[i]), "dif": decimalOrNil(dif[i]), "dea": decimalOrNil(dea[i]),

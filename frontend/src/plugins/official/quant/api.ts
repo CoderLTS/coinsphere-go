@@ -104,4 +104,8 @@ export const fetchQuantMarketSignals = (params: {
   startTime?: string
   endTime?: string
   limit?: number
-}) => request.get<ItemList<QuantMarketSignal>>({ url: `${quantBase}/market-signals`, params })
+}) =>
+  request.get<ItemList<QuantMarketSignal>>({
+    url: `${quantBase}/market-signals`,
+    params: { venue: 'binance', ...params }
+  })

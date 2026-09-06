@@ -1,4 +1,5 @@
 import request from '@/utils/http'
+import type { KLineIndicatorConfig } from '@/types/component/chart'
 
 export interface ItemList<T> {
   items: T[]
@@ -38,6 +39,26 @@ export interface BinanceIndicatorPoint {
   sub: Record<string, string | null>
 }
 
+export type BinanceIndicatorParams = KLineIndicatorConfig
+
+export const indicatorQueryParams = (config?: BinanceIndicatorParams) =>
+  config
+    ? {
+        maPeriods: config.maPeriods.join(','),
+        emaPeriods: config.emaPeriods.join(','),
+        bollPeriod: config.bollPeriod,
+        bollMultiplier: config.bollMultiplier,
+        macdFast: config.macdFast,
+        macdSlow: config.macdSlow,
+        macdSignal: config.macdSignal,
+        rsiPeriod: config.rsiPeriod,
+        kdjPeriod: config.kdjPeriod,
+        kdjK: config.kdjK,
+        kdjD: config.kdjD,
+        wrPeriod: config.wrPeriod
+      }
+    : undefined
+
 export interface BinanceLiveAccountRelease {
   account: string
   market: 'spot' | 'usdm'
@@ -72,10 +93,14 @@ export const fetchBinanceIndicators = (params: {
   startTime?: string
   endTime?: string
   limit?: number
+  indicatorConfig?: BinanceIndicatorParams
 }) =>
   request.get<ItemList<BinanceIndicatorPoint>>({
     url: `${binanceBase}/candles/indicators`,
-    params
+    params: (() => {
+      const { indicatorConfig, ...query } = params
+      return { ...query, ...indicatorQueryParams(indicatorConfig) }
+    })()
   })
 
 export const fetchBinanceLiveAccounts = () =>

@@ -1,6 +1,7 @@
 import {
   fetchBinanceCandles,
   fetchBinanceIndicators,
+  type BinanceIndicatorParams,
   fetchBinanceInstruments,
   type BinanceInstrument
 } from './api'
@@ -68,6 +69,7 @@ export interface MarketCandleQuery {
   interval: CandleInterval
   startTime?: string
   endTime?: string
+  indicatorConfig?: BinanceIndicatorParams
 }
 
 const toMarketSymbol = (item: BinanceInstrument): MarketSymbol => ({
@@ -130,7 +132,8 @@ export async function fetchMarketCandles(params: MarketCandleQuery) {
     interval: params.interval,
     startTime: params.startTime,
     endTime: params.endTime,
-    limit: params.limit
+    limit: params.limit,
+    indicatorConfig: params.indicatorConfig
   })
   const indicators = new Map(indicatorResult.items.map((item) => [item.openTime, item]))
   const records: MarketCandle[] = result.items.map((item) => ({
