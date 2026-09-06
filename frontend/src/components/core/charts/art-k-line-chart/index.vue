@@ -147,6 +147,13 @@
 
   const workbenchRef = ref<HTMLElement | null>(null)
   const fullscreen = ref(false)
+  const zoomStart = ref<number>()
+  const zoomEnd = ref<number>()
+
+  const getZoomWindow = () => ({
+    start: zoomStart.value ?? props.dataZoomStart,
+    end: zoomEnd.value ?? props.dataZoomEnd
+  })
 
   const numberText = (value: number | null | undefined) => {
     if (value === null || value === undefined || Number.isNaN(value)) return '--'
@@ -464,18 +471,10 @@
               {
                 type: 'inside',
                 xAxisIndex: xAxes.map((_, index) => index),
-                start: props.dataZoomStart,
-                end: props.dataZoomEnd
-              },
-              {
-                type: 'slider',
-                xAxisIndex: xAxes.map((_, index) => index),
-                start: props.dataZoomStart,
-                end: props.dataZoomEnd,
-                bottom: 0,
-                height: 18,
-                showDetail: false,
-                brushSelect: false
+                ...getZoomWindow(),
+                zoomOnMouseWheel: true,
+                moveOnMouseMove: true,
+                moveOnMouseWheel: true
               }
             ]
           : undefined
@@ -490,12 +489,11 @@
     }
   }
 
-  const resetZoom = () =>
-    getChartInstance()?.dispatchAction({
-      type: 'dataZoom',
-      start: props.dataZoomStart,
-      end: props.dataZoomEnd
-    })
+  const resetZoom = () => {
+    zoomStart.value = props.dataZoomStart
+    zoomEnd.value = props.dataZoomEnd
+    getChartInstance()?.dispatchAction({ type: 'dataZoom', ...getZoomWindow() })
+  }
   const toggleFullscreen = async () => {
     if (!workbenchRef.value) return
     if (!document.fullscreenElement) await workbenchRef.value.requestFullscreen()
@@ -508,8 +506,18 @@
   }
   const handleDataZoom = (event: any) => {
     const zoom = event?.batch?.[0] || event
+    if (Number.isFinite(Number(zoom?.start))) zoomStart.value = Number(zoom.start)
+    if (Number.isFinite(Number(zoom?.end))) zoomEnd.value = Number(zoom.end)
     if (Number(zoom?.start) <= 2) emit('loadMore')
   }
+
+  watch(
+    () => [props.interval, props.dataZoomStart, props.dataZoomEnd],
+    () => {
+      zoomStart.value = undefined
+      zoomEnd.value = undefined
+    }
+  )
 
   watch(
     () => [props.mainIndicator, props.subIndicator, props.showVolume],

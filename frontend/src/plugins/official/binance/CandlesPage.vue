@@ -133,7 +133,7 @@
           height="clamp(440px, 58vh, 620px)"
           :interval="selectedInterval"
           :intervals="intervals"
-          :data-zoom-start="0"
+          :data-zoom-start="70"
           :main-indicator="mainIndicator"
           :sub-indicator="subIndicator"
           :indicator-config="indicatorConfig"
