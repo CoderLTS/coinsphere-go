@@ -70,7 +70,7 @@
   import { FullScreen, Refresh } from '@element-plus/icons-vue'
   import type { EChartsOption } from '@/plugins/echarts'
   import { useChartOps, useChartComponent } from '@/hooks/core/useChart'
-  import type { KLineChartProps } from '@/types/component/chart'
+  import type { KLineChartProps, KLineIndicatorConfig } from '@/types/component/chart'
 
   defineOptions({ name: 'ArtKLineChart' })
 
@@ -83,11 +83,26 @@
     fullscreenChange: [fullscreen: boolean]
   }>()
 
+  const defaultIndicatorConfig: KLineIndicatorConfig = {
+    maPeriods: [7, 25, 99],
+    emaPeriods: [7, 25, 99],
+    bollPeriod: 20,
+    bollMultiplier: 2,
+    macdFast: 12,
+    macdSlow: 26,
+    macdSignal: 9,
+    rsiPeriod: 14,
+    kdjPeriod: 9,
+    kdjK: 3,
+    kdjD: 3,
+    wrPeriod: 14
+  }
+
   const props = withDefaults(defineProps<KLineChartProps>(), {
     height: '36rem',
     loading: false,
     isEmpty: false,
-    colors: () => ['#13deb9', '#fa896b'],
+    colors: () => ['#0ecb81', '#f6465d'],
     data: () => [],
     signals: () => [],
     showVolume: true,
@@ -113,7 +128,21 @@
     ],
     mainIndicator: 'none',
     subIndicator: 'volume',
-    fixedInterval: false
+    fixedInterval: false,
+    indicatorConfig: () => ({
+      maPeriods: [7, 25, 99],
+      emaPeriods: [7, 25, 99],
+      bollPeriod: 20,
+      bollMultiplier: 2,
+      macdFast: 12,
+      macdSlow: 26,
+      macdSignal: 9,
+      rsiPeriod: 14,
+      kdjPeriod: 9,
+      kdjK: 3,
+      kdjD: 3,
+      wrPeriod: 14
+    })
   })
 
   const workbenchRef = ref<HTMLElement | null>(null)
@@ -150,13 +179,15 @@
       () => props.selectedSignalId,
       () => props.mainIndicator,
       () => props.subIndicator,
-      () => props.interval
+      () => props.interval,
+      () => props.indicatorConfig
     ],
     generateOptions: (): EChartsOption => {
       const chartTheme = useChartOps()
-      const upColor = props.colors[0] || chartTheme.colors[3] || '#13deb9'
-      const downColor = props.colors[1] || chartTheme.colors[5] || '#fa896b'
+      const upColor = props.colors[0] || chartTheme.colors[3] || '#0ecb81'
+      const downColor = props.colors[1] || chartTheme.colors[5] || '#f6465d'
       const signalColor = chartTheme.themeColor || '#5d87ff'
+      const indicatorConfig = props.indicatorConfig || defaultIndicatorConfig
       const times = props.data.map((item) => item.time)
       const timeLabels = props.data.map((item) => item.label || item.time)
       const candleByTime = new Map(props.data.map((item) => [item.time, item]))
@@ -168,7 +199,7 @@
       })
       const showSubChart = props.showVolume || props.subIndicator !== 'volume'
       const visibleTracks = Number(showSubChart)
-      const priceBottom = visibleTracks ? '28%' : '10%'
+      const priceBottom = visibleTracks ? '30%' : '10%'
       const xAxes: any[] = [
         {
           type: 'category',
@@ -194,7 +225,7 @@
         }
       ]
       const grids: any[] = [
-        { top: 18, right: 58, bottom: priceBottom, left: 12, containLabel: true }
+        { top: 12, right: 64, bottom: priceBottom, left: 8, containLabel: false }
       ]
       const series: any[] = [
         {
@@ -257,7 +288,7 @@
                     symbolOffset: [(signalIndex - (items.length - 1) / 2) * 18, buy ? 18 : -18],
                     signalId: signal.id,
                     itemStyle: {
-                      color: buy ? '#13deb9' : sell ? '#fa896b' : signalColor,
+                      color: buy ? '#0ecb81' : sell ? '#f6465d' : signalColor,
                       borderColor: selected ? signalColor : isDark.value ? '#161618' : '#ffffff',
                       borderWidth: selected ? 3 : 1
                     },
@@ -276,8 +307,8 @@
       ]
 
       const mainKeys: Record<string, string[]> = {
-        ma: ['ma7', 'ma25', 'ma99'],
-        ema: ['ema7', 'ema25', 'ema99'],
+        ma: indicatorConfig.maPeriods.map((period) => `ma${period}`),
+        ema: indicatorConfig.emaPeriods.map((period) => `ema${period}`),
         boll: ['bollUpper', 'bollMiddle', 'bollLower']
       }
       const mainColors = ['#f0b90b', '#8b5cf6', '#2563eb']
@@ -295,7 +326,7 @@
       }
 
       if (props.showVolume || props.subIndicator !== 'volume') {
-        grids.push({ top: '76%', right: 58, bottom: 18, left: 12, containLabel: true })
+        grids.push({ top: '74%', right: 64, bottom: 22, left: 8, containLabel: false })
         xAxes.push({
           type: 'category',
           gridIndex: 1,
@@ -372,16 +403,14 @@
               htmlText(signal.summary)
             ])
             const mainKeys: Record<string, [string, string][]> = {
-              ma: [
-                ['ma7', 'MA7'],
-                ['ma25', 'MA25'],
-                ['ma99', 'MA99']
-              ],
-              ema: [
-                ['ema7', 'EMA7'],
-                ['ema25', 'EMA25'],
-                ['ema99', 'EMA99']
-              ],
+              ma: indicatorConfig.maPeriods.map((period): [string, string] => [
+                `ma${period}`,
+                `MA${period}`
+              ]),
+              ema: indicatorConfig.emaPeriods.map((period): [string, string] => [
+                `ema${period}`,
+                `EMA${period}`
+              ]),
               boll: [
                 ['bollUpper', 'BOLL 上轨'],
                 ['bollMiddle', 'BOLL 中轨'],

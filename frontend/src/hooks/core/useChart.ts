@@ -92,6 +92,7 @@ export function useChart(options: UseChartOptions = {}) {
   const chartRef = ref<HTMLElement>()
   let chart: echarts.ECharts | null = null
   let intersectionObserver: IntersectionObserver | null = null
+  let resizeObserver: ResizeObserver | null = null
   let pendingOptions: EChartsOption | null = null
   let resizeTimeoutId: number | null = null
   let resizeFrameId: number | null = null
@@ -578,6 +579,8 @@ export function useChart(options: UseChartOptions = {}) {
     cleanupThemeWatcher()
     emptyStateManager.remove()
     cleanupIntersectionObserver()
+    resizeObserver?.disconnect()
+    resizeObserver = null
     clearTimers()
     clearStyleCache()
     pendingOptions = null
@@ -591,6 +594,11 @@ export function useChart(options: UseChartOptions = {}) {
 
   onMounted(() => {
     window.addEventListener('resize', debouncedResize)
+    nextTick(() => {
+      if (!chartRef.value || isDestroyed) return
+      resizeObserver = new ResizeObserver(debouncedResize)
+      resizeObserver.observe(chartRef.value)
+    })
   })
 
   onBeforeUnmount(() => {

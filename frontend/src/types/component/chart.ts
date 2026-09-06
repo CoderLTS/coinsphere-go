@@ -242,6 +242,21 @@ export interface KLineSignalItem {
   action?: 'buy' | 'sell' | 'hold'
 }
 
+export interface KLineIndicatorConfig {
+  maPeriods: [number, number, number]
+  emaPeriods: [number, number, number]
+  bollPeriod: number
+  bollMultiplier: number
+  macdFast: number
+  macdSlow: number
+  macdSignal: number
+  rsiPeriod: number
+  kdjPeriod: number
+  kdjK: number
+  kdjD: number
+  wrPeriod: number
+}
+
 // K线图 Props 接口 - 统一K线图配置
 export interface KLineChartProps extends BaseChartProps {
   /** 图表数据 */
@@ -262,6 +277,7 @@ export interface KLineChartProps extends BaseChartProps {
   intervals?: string[]
   mainIndicator?: 'none' | 'ma' | 'ema' | 'boll'
   subIndicator?: 'volume' | 'macd' | 'rsi' | 'kdj' | 'obv' | 'wr'
+  indicatorConfig?: KLineIndicatorConfig
   fixedInterval?: boolean
 }
 

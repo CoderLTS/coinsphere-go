@@ -16,6 +16,7 @@ import (
 	"coinsphere/backend/plugin/sdk"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm/clause"
 )
 
@@ -208,8 +209,13 @@ func binanceQueryKeys(c *gin.Context, allowed ...string) bool {
 }
 
 func (q *binanceRuntime) handleIndicators(c *gin.Context, scope sdk.RouteScope) {
-	if !validSystemScope(scope) || !binanceQueryKeys(c, "market", "instrument", "interval", "startTime", "endTime", "limit") {
+	if !validSystemScope(scope) || !binanceQueryKeys(c, "market", "instrument", "interval", "startTime", "endTime", "limit", "maPeriods", "emaPeriods", "bollPeriod", "bollMultiplier", "macdFast", "macdSlow", "macdSignal", "rsiPeriod", "kdjPeriod", "kdjK", "kdjD", "wrPeriod") {
 		writeProblem(c, http.StatusBadRequest, "invalid Binance indicator query")
+		return
+	}
+	indicatorConfig, err := parseBinanceIndicatorConfig(c.Request)
+	if err != nil {
+		writeProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	startTime, err := parseOptionalUTCTime(c.Query("startTime"))
@@ -227,7 +233,67 @@ func (q *binanceRuntime) handleIndicators(c *gin.Context, scope sdk.RouteScope) 
 		writeProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeOK(c, map[string]any{"items": calculateBinanceIndicators(items)})
+	writeOK(c, map[string]any{"items": calculateBinanceIndicators(items, indicatorConfig)})
+}
+
+func parseBinanceIndicatorConfig(r *http.Request) (binanceIndicatorConfig, error) {
+	config := defaultBinanceIndicatorConfig
+	parseInt := func(key string, target *int, min, max int) error {
+		raw := strings.TrimSpace(r.URL.Query().Get(key))
+		if raw == "" {
+			return nil
+		}
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < min || value > max {
+			return errors.New("invalid Binance indicator parameter: " + key)
+		}
+		*target = value
+		return nil
+	}
+	parsePeriods := func(key string, target *[3]int) error {
+		raw := strings.TrimSpace(r.URL.Query().Get(key))
+		if raw == "" {
+			return nil
+		}
+		parts := strings.Split(raw, ",")
+		if len(parts) != len(target) {
+			return errors.New("invalid Binance indicator parameter: " + key)
+		}
+		for index, part := range parts {
+			value, err := strconv.Atoi(strings.TrimSpace(part))
+			if err != nil || value < 1 || value > 120 {
+				return errors.New("invalid Binance indicator parameter: " + key)
+			}
+			target[index] = value
+		}
+		return nil
+	}
+	if err := parsePeriods("maPeriods", &config.MAPeriods); err != nil {
+		return config, err
+	}
+	if err := parsePeriods("emaPeriods", &config.EMAPeriods); err != nil {
+		return config, err
+	}
+	for key, target := range map[string]*int{
+		"bollPeriod": &config.BollPeriod, "macdFast": &config.MACDFast, "macdSlow": &config.MACDSlow,
+		"macdSignal": &config.MACDSignal, "rsiPeriod": &config.RSIPeriod, "kdjPeriod": &config.KDJPeriod,
+		"kdjK": &config.KDJKSmooth, "kdjD": &config.KDJDSmooth, "wrPeriod": &config.WRPeriod,
+	} {
+		if err := parseInt(key, target, 1, 120); err != nil {
+			return config, err
+		}
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("bollMultiplier")); raw != "" {
+		value, err := decimal.NewFromString(raw)
+		if err != nil || value.LessThanOrEqual(decimal.Zero) || value.GreaterThan(decimal.NewFromInt(10)) {
+			return config, errors.New("invalid Binance indicator parameter: bollMultiplier")
+		}
+		config.BollMultiplier = value
+	}
+	if config.MACDFast >= config.MACDSlow {
+		return config, errors.New("macdFast must be smaller than macdSlow")
+	}
+	return config, nil
 }
 
 var binanceCandleWSUpgrader = websocket.Upgrader{ReadBufferSize: 1024, WriteBufferSize: 4096, CheckOrigin: checkBinanceCandleOrigin, Subprotocols: []string{"coinsphere.plugin.official.binance.v1"}}
@@ -278,7 +344,7 @@ func binanceOriginPort(value *url.URL, scheme string) (string, bool) {
 }
 
 func (q *binanceRuntime) handleCandleStream(c *gin.Context, scope sdk.RouteScope) {
-	if !validSystemScope(scope) || !binanceQueryKeys(c, "market", "instrument", "interval") {
+	if !validSystemScope(scope) || !binanceQueryKeys(c, "market", "instrument", "interval", "maPeriods", "emaPeriods", "bollPeriod", "bollMultiplier", "macdFast", "macdSlow", "macdSignal", "rsiPeriod", "kdjPeriod", "kdjK", "kdjD", "wrPeriod") {
 		writeProblem(c, http.StatusForbidden, "invalid Binance scope")
 		return
 	}
@@ -289,6 +355,11 @@ func (q *binanceRuntime) handleCandleStream(c *gin.Context, scope sdk.RouteScope
 	}
 	if _, ok := binanceIntervals[interval]; !ok {
 		writeProblem(c, http.StatusBadRequest, "unsupported Binance candle interval")
+		return
+	}
+	indicatorConfig, err := parseBinanceIndicatorConfig(c.Request)
+	if err != nil {
+		writeProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	connection, err := binanceCandleWSUpgrader.Upgrade(c.Writer, c.Request, nil)
@@ -318,7 +389,7 @@ func (q *binanceRuntime) handleCandleStream(c *gin.Context, scope sdk.RouteScope
 		closed bool
 	}, 8)
 	config := binanceCandleStreamConfig{Market: market, Instrument: instrument, Intervals: []string{interval}}
-	historyRows, _ := q.fetchBinanceKlinePage(ctx, binanceSeriesConfig{Market: market, Instrument: instrument, Interval: interval}, time.Now().UTC(), 120)
+	historyRows, _ := q.fetchBinanceKlinePage(ctx, binanceSeriesConfig{Market: market, Instrument: instrument, Interval: interval}, time.Now().UTC(), 240)
 	history := make([]sdk.Candle, len(historyRows))
 	for index := range historyRows {
 		history[index] = binanceSDKCandle(historyRows[index])
@@ -360,10 +431,10 @@ func (q *binanceRuntime) handleCandleStream(c *gin.Context, scope sdk.RouteScope
 				copy(history[index+1:], history[index:])
 				history[index] = sdkCandle
 			}
-			if len(history) > 120 {
-				history = history[len(history)-120:]
+			if len(history) > 240 {
+				history = history[len(history)-240:]
 			}
-			indicatorRows := calculateBinanceIndicators(history)
+			indicatorRows := calculateBinanceIndicators(history, indicatorConfig)
 			indicator := indicatorRows[len(indicatorRows)-1]
 			if err := connection.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
 				return
