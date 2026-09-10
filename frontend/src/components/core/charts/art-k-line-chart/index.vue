@@ -535,6 +535,11 @@
   }
   const handleChartVisible = () => nextTick(bindChartClick)
 
+  watch(
+    () => props.data.length,
+    () => nextTick(bindChartClick)
+  )
+
   onMounted(() => {
     nextTick(bindChartClick)
     chartRef.value?.addEventListener('chartVisible', handleChartVisible)
