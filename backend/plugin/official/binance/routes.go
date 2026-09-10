@@ -160,10 +160,39 @@ func (q *binanceRuntime) handleCandles(c *gin.Context, scope sdk.RouteScope) {
 		endTime = before
 	}
 	limit := queryLimit(c, 500, 5000)
-	items, err := (marketDataProvider{runtime: q}).Candles(c.Request.Context(), sdk.CandleQuery{Market: c.Query("market"), Instrument: c.Query("instrument"), Interval: c.Query("interval"), StartTime: startTime, EndTime: endTime, Limit: limit + 1})
+	query := sdk.CandleQuery{Market: c.Query("market"), Instrument: c.Query("instrument"), Interval: c.Query("interval"), StartTime: startTime, EndTime: endTime, Limit: limit + 1}
+	provider := marketDataProvider{runtime: q}
+	items, err := provider.Candles(c.Request.Context(), query)
 	if err != nil {
 		writeProblem(c, http.StatusBadRequest, err.Error())
 		return
+	}
+	// The chart pages through persisted candles; hydrate one older page when the local edge is reached.
+	if len(items) <= limit && startTime.IsZero() {
+		cursor := endTime
+		if len(items) > 0 {
+			cursor = items[0].OpenTime
+		}
+		if cursor.IsZero() {
+			cursor = time.Now().UTC()
+		}
+		series := binanceSeriesConfig{Market: query.Market, Instrument: query.Instrument, Interval: query.Interval, ProxyID: query.ProxyID}
+		older, fetchErr := q.fetchBinanceKlinesBefore(c.Request.Context(), series, cursor, limit+1)
+		if fetchErr != nil {
+			writeProblem(c, http.StatusBadGateway, fetchErr.Error())
+			return
+		}
+		if _, err = q.persistBinanceCandles(c.Request.Context(), older); err != nil {
+			writeProblem(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if len(older) > 0 {
+			items, err = provider.Candles(c.Request.Context(), query)
+			if err != nil {
+				writeProblem(c, http.StatusInternalServerError, err.Error())
+				return
+			}
+		}
 	}
 	hasMore := len(items) > limit
 	if hasMore {
