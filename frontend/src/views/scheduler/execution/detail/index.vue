@@ -219,11 +219,49 @@
                       <div class="workflow-execution-detail__json-group">
                         <div class="workflow-execution-detail__json-block">
                           <div class="workflow-execution-detail__json-title">输入摘要</div>
-                          <pre>{{ formatJSON(attempt.inputSummary) }}</pre>
+                          <div
+                            v-if="summaryEntries(attempt.inputSummary).length"
+                            class="workflow-execution-detail__summary-grid"
+                          >
+                            <div
+                              v-for="item in summaryEntries(attempt.inputSummary)"
+                              :key="item.key"
+                              class="workflow-execution-detail__summary-item"
+                            >
+                              <span>{{ item.label }}</span>
+                              <strong>{{ item.value }}</strong>
+                            </div>
+                          </div>
+                          <span v-else class="workflow-execution-detail__summary-empty">
+                            无输入
+                          </span>
+                          <details class="workflow-execution-detail__raw">
+                            <summary>查看原始 JSON</summary>
+                            <pre>{{ formatJSON(attempt.inputSummary) }}</pre>
+                          </details>
                         </div>
                         <div class="workflow-execution-detail__json-block">
                           <div class="workflow-execution-detail__json-title">输出摘要</div>
-                          <pre>{{ formatJSON(attempt.outputSummary) }}</pre>
+                          <div
+                            v-if="summaryEntries(attempt.outputSummary).length"
+                            class="workflow-execution-detail__summary-grid"
+                          >
+                            <div
+                              v-for="item in summaryEntries(attempt.outputSummary)"
+                              :key="item.key"
+                              class="workflow-execution-detail__summary-item"
+                            >
+                              <span>{{ item.label }}</span>
+                              <strong>{{ item.value }}</strong>
+                            </div>
+                          </div>
+                          <span v-else class="workflow-execution-detail__summary-empty">
+                            无输出
+                          </span>
+                          <details class="workflow-execution-detail__raw">
+                            <summary>查看原始 JSON</summary>
+                            <pre>{{ formatJSON(attempt.outputSummary) }}</pre>
+                          </details>
                         </div>
                       </div>
                     </div>
@@ -312,7 +350,26 @@
                     <div class="workflow-execution-detail__section">
                       <div class="workflow-execution-detail__section-title">结果摘要</div>
                       <div class="workflow-execution-detail__json-block">
-                        <pre>{{ formatJSON(executionDetail.resultSummary) }}</pre>
+                        <div
+                          v-if="summaryEntries(executionDetail.resultSummary).length"
+                          class="workflow-execution-detail__summary-grid"
+                        >
+                          <div
+                            v-for="item in summaryEntries(executionDetail.resultSummary)"
+                            :key="item.key"
+                            class="workflow-execution-detail__summary-item"
+                          >
+                            <span>{{ item.label }}</span>
+                            <strong>{{ item.value }}</strong>
+                          </div>
+                        </div>
+                        <span v-else class="workflow-execution-detail__summary-empty">
+                          暂无结果
+                        </span>
+                        <details class="workflow-execution-detail__raw">
+                          <summary>查看原始 JSON</summary>
+                          <pre>{{ formatJSON(executionDetail.resultSummary) }}</pre>
+                        </details>
                       </div>
                     </div>
 
@@ -581,6 +638,42 @@
   }
 
   const formatJSON = (value: Record<string, unknown>) => JSON.stringify(value || {}, null, 2)
+
+  const summaryLabels: Record<string, string> = {
+    ready: '已准备',
+    matched: '命中',
+    branch: '分支',
+    instrument: '交易对',
+    interval: '周期',
+    evaluatedAt: '评估时间',
+    target: '目标仓位',
+    finalEquity: '最终权益',
+    totalReturn: '总收益',
+    maxDrawdown: '最大回撤',
+    totalFees: '总手续费',
+    tradeCount: '成交笔数',
+    candleCount: 'K 线数量',
+    signalId: '信号 ID',
+    summary: '摘要'
+  }
+
+  const summaryLabel = (key: string) => summaryLabels[key] || key
+
+  const summaryValue = (value: unknown) => {
+    if (value === null || value === undefined) return '--'
+    if (typeof value === 'boolean') return value ? '是' : '否'
+    if (typeof value === 'object') {
+      return `${Array.isArray(value) ? '数组' : '对象'} · ${Object.keys(value).length} 项`
+    }
+    return String(value)
+  }
+
+  const summaryEntries = (value: Record<string, unknown>) =>
+    Object.entries(value || {}).map(([key, entryValue]) => ({
+      key,
+      label: summaryLabel(key),
+      value: summaryValue(entryValue)
+    }))
 
   const formatLogFields = (value: Record<string, unknown>) => {
     const text = JSON.stringify(value || {}, null, 2)
@@ -1330,6 +1423,67 @@
     color: var(--workflow-overlay-text);
     word-break: break-word;
     white-space: pre-wrap;
+  }
+
+  .workflow-execution-detail__summary-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .workflow-execution-detail__summary-item {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+    padding: 8px 10px;
+    background: var(--workflow-overlay-raised);
+    border: 1px solid var(--workflow-overlay-border-subtle);
+    border-radius: 6px;
+  }
+
+  .workflow-execution-detail__summary-item span {
+    overflow: hidden;
+    font-size: 10px;
+    color: var(--workflow-overlay-muted);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .workflow-execution-detail__summary-item strong {
+    overflow: hidden;
+    font-size: 12px;
+    color: var(--workflow-overlay-text);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .workflow-execution-detail__summary-empty {
+    display: block;
+    padding: 4px 0;
+    font-size: 12px;
+    color: var(--workflow-overlay-muted);
+  }
+
+  .workflow-execution-detail__raw {
+    margin-top: 10px;
+    font-size: 11px;
+    color: var(--workflow-overlay-muted);
+  }
+
+  .workflow-execution-detail__raw summary {
+    width: fit-content;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .workflow-execution-detail__raw pre {
+    margin-top: 8px;
+  }
+
+  @media (max-width: 460px) {
+    .workflow-execution-detail__summary-grid {
+      grid-template-columns: 1fr;
+    }
   }
 
   .workflow-execution-detail__alert {

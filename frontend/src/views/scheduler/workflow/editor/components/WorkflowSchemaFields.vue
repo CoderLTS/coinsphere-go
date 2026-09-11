@@ -10,7 +10,8 @@
   由父组件写回自己的草稿并决定何时提交。
 
   控件映射见 workflow-schema-field.ts。其中对象数组（switch 的 cases、state.set 的 assignments）
-  用行编辑器而不是 JSON 文本域 —— 手写 JSON 容易写错，也看不出每行该填什么。
+  用行编辑器而不是 JSON 文本域 —— 手写 JSON 容易写错，也看不出每行该填什么；
+  有固定 properties 的对象也会按字段分组，只有动态对象才提供键值行与高级 JSON。
 -->
 <template>
   <template v-for="field in visibleFields" :key="field.key">
@@ -61,6 +62,76 @@
             添加{{ field.title }}
           </ElButton>
         </div>
+      </template>
+
+      <!-- 固定结构对象按字段分组展示，避免把有 schema 的参数退化为整块 JSON。 -->
+      <template v-else-if="field.control === 'object'">
+        <div class="schema-fields__object">
+          <div v-for="sub in field.objectFields" :key="sub.key" class="schema-fields__object-field">
+            <label>{{ sub.title }}</label>
+            <WorkflowSchemaField
+              :field="sub"
+              :value="config[field.key]?.[sub.key]"
+              @update="updateObjectField(field, sub.key, $event)"
+            />
+            <div v-if="sub.description" class="schema-fields__hint">{{ sub.description }}</div>
+          </div>
+        </div>
+        <details class="schema-fields__advanced">
+          <summary>高级 JSON</summary>
+          <ElInput
+            v-model="jsonDrafts[field.key]"
+            type="textarea"
+            :rows="4"
+            :placeholder="field.placeholder"
+            @blur="commitJsonField(field)"
+          />
+          <div v-if="jsonErrors[field.key]" class="schema-fields__error">
+            {{ jsonErrors[field.key] }}
+          </div>
+        </details>
+      </template>
+
+      <!-- 动态对象优先用键值行编辑；高级 JSON 仍保留给嵌套结构。 -->
+      <template v-else-if="field.control === 'objectMap'">
+        <div class="schema-fields__map">
+          <div
+            v-for="(entry, index) in mapEntriesOf(field)"
+            :key="`${field.key}-${index}`"
+            class="schema-fields__map-row"
+          >
+            <ElInput
+              :model-value="entry.key"
+              class="schema-fields__map-key"
+              placeholder="参数名"
+              @change="updateMapKey(field, index, $event)"
+            />
+            <ElInput
+              :model-value="mapValueText(entry.value)"
+              class="schema-fields__map-value"
+              placeholder="参数值"
+              @change="updateMapValue(field, index, $event)"
+            />
+            <ElButton link type="danger" @click="removeMapEntry(field, index)">删除</ElButton>
+          </div>
+          <ElEmpty v-if="!mapEntriesOf(field).length" :image-size="32" description="暂无参数" />
+          <ElButton class="schema-fields__add" @click="addMapEntry(field)">
+            添加{{ field.title }}
+          </ElButton>
+        </div>
+        <details class="schema-fields__advanced">
+          <summary>高级 JSON</summary>
+          <ElInput
+            v-model="jsonDrafts[field.key]"
+            type="textarea"
+            :rows="4"
+            :placeholder="field.placeholder"
+            @blur="commitJsonField(field)"
+          />
+          <div v-if="jsonErrors[field.key]" class="schema-fields__error">
+            {{ jsonErrors[field.key] }}
+          </div>
+        </details>
       </template>
 
       <!-- 非对象数组 / 对象：仍用 JSON 文本域，失焦时校验并回写。 -->
@@ -229,6 +300,84 @@
     commitRows(field, rows)
   }
 
+  const updateObjectField = (field: SchemaFieldMeta, key: string, value: any) => {
+    const current = props.config?.[field.key]
+    emit('update', field.key, {
+      ...(current && typeof current === 'object' && !Array.isArray(current) ? current : {}),
+      [key]: value
+    })
+  }
+
+  // ---------- 动态对象 ----------
+
+  const mapEntriesOf = (field: SchemaFieldMeta) => {
+    const value = props.config?.[field.key]
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return []
+    return Object.entries(value).map(([key, entryValue]) => ({ key, value: entryValue }))
+  }
+
+  const commitMap = (field: SchemaFieldMeta, entries: Array<{ key: string; value: any }>) => {
+    emit(
+      'update',
+      field.key,
+      Object.fromEntries(
+        entries.filter((entry) => entry.key.trim()).map((entry) => [entry.key.trim(), entry.value])
+      )
+    )
+  }
+
+  const addMapEntry = (field: SchemaFieldMeta) => {
+    const entries = mapEntriesOf(field)
+    let key = 'parameter'
+    let suffix = 1
+    while (entries.some((entry) => entry.key === key)) key = `parameter${suffix++}`
+    commitMap(field, [...entries, { key, value: '' }])
+  }
+
+  const updateMapKey = (field: SchemaFieldMeta, index: number, value: string) => {
+    const entries = mapEntriesOf(field).map((entry) => ({ ...entry }))
+    if (!entries[index]) return
+    const nextKey = String(value || '').trim()
+    if (
+      !nextKey ||
+      entries.some((entry, entryIndex) => entryIndex !== index && entry.key === nextKey)
+    ) {
+      return
+    }
+    entries[index].key = nextKey
+    commitMap(field, entries)
+  }
+
+  const mapValueText = (value: unknown) =>
+    value === undefined || value === null
+      ? ''
+      : typeof value === 'object'
+        ? JSON.stringify(value)
+        : String(value)
+
+  const coerceMapValue = (current: unknown, value: string) => {
+    if (typeof current === 'number') {
+      const parsed = Number(value)
+      return Number.isFinite(parsed) ? parsed : current
+    }
+    if (typeof current === 'boolean') return value === 'true'
+    return value
+  }
+
+  const updateMapValue = (field: SchemaFieldMeta, index: number, value: string) => {
+    const entries = mapEntriesOf(field).map((entry) => ({ ...entry }))
+    if (!entries[index]) return
+    entries[index].value = coerceMapValue(entries[index].value, String(value ?? ''))
+    commitMap(field, entries)
+  }
+
+  const removeMapEntry = (field: SchemaFieldMeta, index: number) => {
+    commitMap(
+      field,
+      mapEntriesOf(field).filter((_, entryIndex) => entryIndex !== index)
+    )
+  }
+
   // ---------- JSON 字段 ----------
 
   /** JSON 字段在文本域里编辑，失焦才回写，中途的半成品不会污染节点配置。 */
@@ -246,14 +395,17 @@
 
   const syncJsonDrafts = () => {
     fields.value
-      .filter((field) => field.control === 'json')
+      .filter(
+        (field) =>
+          field.control === 'json' || field.control === 'object' || field.control === 'objectMap'
+      )
       .forEach((field) => {
         jsonDrafts[field.key] = formatJson(props.config?.[field.key], field.isArray)
         jsonErrors[field.key] = ''
       })
   }
 
-  watch(() => [props.schema, props.config], syncJsonDrafts, { immediate: true })
+  watch(() => [props.schema, props.config], syncJsonDrafts, { immediate: true, deep: true })
 
   const commitJsonField = (field: SchemaFieldMeta) => {
     const text = String(jsonDrafts[field.key] ?? '').trim()
@@ -327,6 +479,58 @@
     border-style: dashed;
   }
 
+  .schema-fields__object {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    width: 100%;
+    padding: 10px;
+    background: var(--el-fill-color-lighter, #f8fafc);
+    border: 1px solid var(--el-border-color-lighter, #e2e8f0);
+    border-radius: 6px;
+  }
+
+  .schema-fields__object-field {
+    min-width: 0;
+  }
+
+  .schema-fields__object-field > label {
+    display: block;
+    margin-bottom: 5px;
+    font-size: 12px;
+    color: var(--el-text-color-secondary, #64748b);
+  }
+
+  .schema-fields__map {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .schema-fields__map-row {
+    display: grid;
+    grid-template-columns: minmax(110px, 0.8fr) minmax(0, 1.2fr) auto;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .schema-fields__advanced {
+    margin-top: 10px;
+    color: var(--el-text-color-secondary, #94a3b8);
+    font-size: 12px;
+  }
+
+  .schema-fields__advanced summary {
+    width: fit-content;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .schema-fields__advanced > .el-textarea {
+    margin-top: 8px;
+  }
+
   .schema-fields__hint {
     margin-top: 4px;
     font-size: 12px;
@@ -339,5 +543,20 @@
     font-size: 12px;
     line-height: 18px;
     color: var(--el-color-danger, #dc2626);
+  }
+
+  @media (max-width: 480px) {
+    .schema-fields__object {
+      grid-template-columns: 1fr;
+    }
+
+    .schema-fields__map-row {
+      grid-template-columns: 1fr auto;
+    }
+
+    .schema-fields__map-value {
+      grid-column: 1 / -1;
+      grid-row: 2;
+    }
   }
 </style>
