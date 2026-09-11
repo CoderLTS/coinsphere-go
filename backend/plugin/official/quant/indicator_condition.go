@@ -178,7 +178,12 @@ func (a quantIndicatorAction) Execute(ctx context.Context, request sdk.ActionReq
 	formula := leaf.Name
 	summary := fmt.Sprintf("%s %s 未命中：%s", strings.ToUpper(config.Market), config.Instrument, formula)
 	if matched {
-		summary = fmt.Sprintf("%s %s 命中：%s", strings.ToUpper(config.Market), config.Instrument, formula)
+		closePrice := ""
+		if len(candles) > 0 {
+			closePrice = candles[len(candles)-1].Close.String()
+		}
+		summary = fmt.Sprintf("🚨【指标警报】%s %s · %s\n🎯 %s\n💰 收盘价 %s\n⏰ K线收盘 %s",
+			strings.ToUpper(config.Market), config.Instrument, leaf.Interval, current.Summary, closePrice, current.CandleCloseTime)
 	} else if !ready {
 		summary = fmt.Sprintf("%s %s 历史数据不足：%s", strings.ToUpper(config.Market), config.Instrument, formula)
 	}
