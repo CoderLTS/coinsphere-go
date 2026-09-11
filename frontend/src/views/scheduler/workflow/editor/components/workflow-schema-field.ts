@@ -18,6 +18,8 @@ export type SchemaFieldControl =
   | 'number'
   | 'boolean'
   | 'json'
+  | 'object'
+  | 'objectMap'
   | 'objectList'
 
 export interface SchemaFieldMeta {
@@ -32,10 +34,12 @@ export interface SchemaFieldMeta {
   placeholder: string
   multiline: boolean
   secret: boolean
-  /** control 为 json 时：这个字段是数组还是对象，决定校验与空值。 */
+  /** JSON/对象控件使用：这个字段是数组还是对象，决定校验与空值。 */
   isArray: boolean
   /** control 为 objectList 时：每一行内部的子字段。 */
   itemFields: SchemaFieldMeta[]
+  /** control 为 object 时：固定结构的子字段。 */
+  objectFields: SchemaFieldMeta[]
 }
 
 /** 内容偏长、值得用多行文本框的字段名关键字。 */
@@ -56,7 +60,10 @@ const resolveControl = (schema: Record<string, any>): SchemaFieldControl => {
     if (schema.items?.type === 'string') return 'stringList'
     return schema.items?.properties ? 'objectList' : 'json'
   }
-  if (schema.type === 'object') return 'json'
+  if (schema.type === 'object') {
+    if (schema.properties) return 'object'
+    return schema.additionalProperties !== false ? 'objectMap' : 'json'
+  }
   return 'text'
 }
 
@@ -69,7 +76,9 @@ export function buildSchemaField(key: string, raw: unknown): SchemaFieldMeta {
   if (control === 'json') {
     placeholder = isArray ? '[]' : '{}'
   } else if (schema.default !== undefined && schema.default !== '') {
-    placeholder = `默认 ${schema.default}`
+    const defaultValue =
+      typeof schema.default === 'object' ? JSON.stringify(schema.default) : schema.default
+    placeholder = `默认 ${defaultValue}`
   }
 
   return {
@@ -92,7 +101,8 @@ export function buildSchemaField(key: string, raw: unknown): SchemaFieldMeta {
     multiline: isMultiline(key, schema),
     secret: schema['x-coinsphere-secret'] === true,
     isArray,
-    itemFields: control === 'objectList' ? buildSchemaFields(schema.items?.properties || {}) : []
+    itemFields: control === 'objectList' ? buildSchemaFields(schema.items?.properties || {}) : [],
+    objectFields: control === 'object' ? buildSchemaFields(schema.properties || {}) : []
   }
 }
 
