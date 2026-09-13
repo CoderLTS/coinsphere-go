@@ -64,7 +64,7 @@ var quantIndicatorDefinitions = []quantIndicatorDefinition{
 
 var quantIndicatorParameterSchemas = map[string]string{
 	"volume_spike": `{"type":"object","title":"参数","properties":{"lookback":{"type":"integer","title":"均量周期","minimum":1,"maximum":500,"default":20},"multiplier":{"type":"string","title":"放量倍数","pattern":"^[0-9]+(?:\\.[0-9]+)?$","default":"2","x-coinsphere-decimal":true}},"required":["lookback","multiplier"],"additionalProperties":false,"default":{"lookback":20,"multiplier":"2"}}`,
-	"price_change": `{"type":"object","title":"参数","properties":{"lookback":{"type":"integer","title":"K 线数量","minimum":1,"maximum":500,"default":1},"mode":{"type":"string","title":"判断方式","enum":["rise","fall","absolute","amplitude"],"enumLabels":["上涨","下跌","绝对涨跌幅","最高最低振幅"],"default":"absolute"},"threshold":{"type":"string","title":"阈值（%）","pattern":"^[0-9]+(?:\\.[0-9]+)?$","default":"1","x-coinsphere-decimal":true}},"required":["lookback","mode","threshold"],"additionalProperties":false,"default":{"lookback":1,"mode":"absolute","threshold":"1"}}`,
+	"price_change": `{"type":"object","title":"参数","properties":{"lookback":{"type":"integer","title":"K 线数量","minimum":1,"maximum":500,"default":1},"mode":{"type":"string","title":"判断方式","enum":["rise","fall","absolute","amplitude","since_day_start"],"enumLabels":["上涨","下跌","绝对涨跌幅","最高最低振幅","当日涨跌幅(UTC+0)"],"default":"absolute"},"threshold":{"type":"string","title":"阈值（%）","pattern":"^[0-9]+(?:\\.[0-9]+)?$","default":"1","x-coinsphere-decimal":true}},"required":["lookback","mode","threshold"],"additionalProperties":false,"default":{"lookback":1,"mode":"absolute","threshold":"1"}}`,
 	"macd":         `{"type":"object","title":"参数","properties":{"fastPeriod":{"type":"integer","title":"快线周期","minimum":1,"maximum":100,"default":12},"slowPeriod":{"type":"integer","title":"慢线周期","minimum":2,"maximum":200,"default":26},"signalPeriod":{"type":"integer","title":"信号周期","minimum":1,"maximum":100,"default":9},"signal":{"type":"string","title":"判断规则","enum":["golden_cross","death_cross","dif_above_zero","dif_below_zero"],"enumLabels":["金叉","死叉","DIF 位于零轴上方","DIF 位于零轴下方"],"default":"golden_cross"}},"required":["fastPeriod","slowPeriod","signalPeriod","signal"],"additionalProperties":false,"default":{"fastPeriod":12,"slowPeriod":26,"signalPeriod":9,"signal":"golden_cross"}}`,
 	"kdj":          `{"type":"object","title":"参数","properties":{"period":{"type":"integer","title":"周期","minimum":2,"maximum":200,"default":9},"kSmoothing":{"type":"integer","title":"K 平滑周期","minimum":1,"maximum":50,"default":3},"dSmoothing":{"type":"integer","title":"D 平滑周期","minimum":1,"maximum":50,"default":3},"signal":{"type":"string","title":"判断规则","enum":["golden_cross","death_cross","k_above","k_below","d_above","d_below","j_above","j_below"],"enumLabels":["K/D 金叉","K/D 死叉","K 高于阈值","K 低于阈值","D 高于阈值","D 低于阈值","J 高于阈值","J 低于阈值"],"default":"golden_cross"},"threshold":{"type":"string","title":"阈值","pattern":"^-?[0-9]+(?:\\.[0-9]+)?$","default":"80","x-coinsphere-decimal":true}},"required":["period","kSmoothing","dSmoothing","signal","threshold"],"additionalProperties":false,"default":{"period":9,"kSmoothing":3,"dSmoothing":3,"signal":"golden_cross","threshold":"80"}}`,
 	"rsi":          `{"type":"object","title":"参数","properties":{"period":{"type":"integer","title":"周期","minimum":2,"maximum":200,"default":14},"direction":{"type":"string","title":"判断规则","enum":["above","below"],"enumLabels":["高于阈值","低于阈值"],"default":"below"},"threshold":{"type":"string","title":"阈值","pattern":"^[0-9]+(?:\\.[0-9]+)?$","default":"30","x-coinsphere-decimal":true}},"required":["period","direction","threshold"],"additionalProperties":false,"default":{"period":14,"direction":"below","threshold":"30"}}`,
@@ -256,7 +256,7 @@ func parseQuantIndicatorParameters(indicator string, raw json.RawMessage) (quant
 			Threshold string `json:"threshold"`
 		}{Lookback: 5, Mode: "absolute", Threshold: "5"}
 		if !decodeQuantStrict(raw, &value) || value.Lookback < 1 || value.Lookback > 500 ||
-			value.Mode != "rise" && value.Mode != "fall" && value.Mode != "absolute" && value.Mode != "amplitude" {
+			value.Mode != "rise" && value.Mode != "fall" && value.Mode != "absolute" && value.Mode != "amplitude" && value.Mode != "since_day_start" {
 			return parameters, errors.New("price change parameters are invalid")
 		}
 		threshold, err := parseQuantConditionDecimal(value.Threshold, decimal.Zero, decimal.NewFromInt(10000), true)
@@ -362,6 +362,13 @@ func quantIndicatorLookback(leaf *quantIndicatorLeaf) int {
 	case "volume_spike":
 		return p.Lookback + 1
 	case "price_change":
+		if p.Mode == "since_day_start" {
+			duration := quantIntervals[leaf.Interval]
+			if duration <= 0 || duration > 24*time.Hour {
+				return 1
+			}
+			return int((24*time.Hour + duration - 1) / duration)
+		}
 		return p.Lookback
 	case "macd":
 		if p.Signal == "golden_cross" || p.Signal == "death_cross" {
@@ -415,6 +422,25 @@ func evaluateQuantIndicatorLeaf(leaf *quantIndicatorLeaf, candles []quantCandle)
 		point.Values = map[string]string{"volume": candles[len(candles)-1].Volume.String(), "averageVolume": average.String(), "ratio": ratio.String()}
 		point.Summary = fmt.Sprintf("%s：成交量倍数 %s，阈值 %s", leaf.Name, ratio.String(), p.Multiplier.String())
 	case "price_change":
+		if p.Mode == "since_day_start" {
+			last := candles[len(candles)-1]
+			openDay := last.OpenTime.UTC()
+			dayStart := time.Date(openDay.Year(), openDay.Month(), openDay.Day(), 0, 0, 0, 0, time.UTC)
+			start := 0
+			for index, candle := range candles {
+				if !candle.OpenTime.UTC().Before(dayStart) {
+					start = index
+					break
+				}
+			}
+			first := candles[start]
+			dayChange := last.Close.Sub(first.Open).DivRound(first.Open, quantIndicatorScale).Mul(quantHundred).Round(2)
+			intervalChange := last.Close.Sub(last.Open).DivRound(last.Open, quantIndicatorScale).Mul(quantHundred).Round(2)
+			point.Matched = dayChange.Abs().GreaterThanOrEqual(p.Threshold)
+			point.Values = map[string]string{"changePercent": dayChange.String(), "intervalChangePercent": intervalChange.String()}
+			point.Summary = fmt.Sprintf("%s：本周期涨跌幅 %s%%，当日涨跌幅(UTC+0) %s%%", leaf.Name, intervalChange.String(), dayChange.String())
+			break
+		}
 		first, last := candles[0], candles[len(candles)-1]
 		change := last.Close.Sub(first.Open).DivRound(first.Open, quantIndicatorScale).Mul(quantHundred)
 		high, low := candles[0].High, candles[0].Low
