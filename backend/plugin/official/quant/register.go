@@ -48,6 +48,21 @@ func (q *quantRuntime) register(registrar sdk.Registrar) error {
 	}, "量化策略评估", "使用行情 Provider 运行通用量化策略。", "strategy", "#2563eb", "chart-no-axes-combined"), quantEvaluateAction{runtime: q}); err != nil {
 		return err
 	}
+	// 注册统一技术指标节点（新版本）
+	if err := registrar.Action(quantNodeMeta(sdk.NodeDescriptor{
+		Type: "official.quant.unified_indicator", Version: "2.0.0", Kind: sdk.NodeKindAction,
+		Branches: []string{"true", "false"},
+		ConfigSchema: unifiedIndicatorBasicSchema,
+		UISchema:     json.RawMessage(`{"ui:order":["dataSource","monitoring","indicator","condition"]}`),
+		InputSchema:  quantIndicatorInputSchema,
+		OutputSchema: quantIndicatorOutputSchema,
+		Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
+		Capabilities: sdk.NodeCapabilities{FrameSafe: true},
+	}, "统一技术指标", "支持智能继承、缓存优化的统一技术指标节点，整合 RSI、MACD、成交量、价格变动、布林带等指标。", "chart-line", "#0f766e", "trending-up"), quantUnifiedIndicatorAction{runtime: q}); err != nil {
+		return err
+	}
+
+	// 注册旧版指标节点（标记为已弃用，保留用于迁移）
 	for _, indicator := range quantIndicatorDefinitions {
 		if err := registrar.Action(quantNodeMeta(sdk.NodeDescriptor{
 			Type: indicator.NodeType, Version: "1.0.0", Kind: sdk.NodeKindAction,
@@ -56,7 +71,7 @@ func (q *quantRuntime) register(registrar sdk.Registrar) error {
 			InputSchema: quantIndicatorInputSchema, OutputSchema: quantIndicatorOutputSchema,
 			Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
 			Capabilities: sdk.NodeCapabilities{FrameSafe: true},
-		}, indicator.Title, "基于闭合 K 线确定性计算 "+indicator.Title+"。", "market", "#0f766e", indicator.Icon), quantIndicatorAction{runtime: q, indicator: indicator.Indicator}); err != nil {
+		}, indicator.Title+" (已弃用)", "基于闭合 K 线确定性计算 "+indicator.Title+"。请使用统一技术指标节点。", "market", "#6b7280", indicator.Icon), quantIndicatorAction{runtime: q, indicator: indicator.Indicator}); err != nil {
 			return err
 		}
 	}
