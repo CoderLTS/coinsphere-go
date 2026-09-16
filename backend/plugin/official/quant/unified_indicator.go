@@ -19,7 +19,7 @@ type quantUnifiedIndicatorAction struct {
 type UnifiedIndicatorConfig struct {
 	// 数据源配置
 	DataSource struct {
-		Mode       string `json:"mode"`       // inherit, query
+		Mode       string `json:"mode"` // inherit, query
 		Venue      string `json:"venue"`
 		Market     string `json:"market"`
 		Instrument string `json:"instrument"`
@@ -133,26 +133,26 @@ func (a quantUnifiedIndicatorAction) Execute(ctx context.Context, request sdk.Ac
 
 	// 构建输出
 	output := map[string]interface{}{
-		"ready":                  currentPoint.Ready,
-		"matched":                currentPoint.Matched,
-		"previousMatched":        previousPoint.Matched,
-		"branch":                 fmt.Sprintf("%t", currentPoint.Matched),
-		"entered":                input.PathEntered && currentPoint.Matched,
-		"triggered":              !input.PathEntered && currentPoint.Matched,
-		"evaluatedAt":            evaluatedAt.Format(time.RFC3339),
-		"previousEvaluatedAt":    previousAt.Format(time.RFC3339),
-		"businessKey":            fmt.Sprintf("%s:%s:%s:%s", seriesConfig.Venue, seriesConfig.Market, seriesConfig.Instrument, config.Indicator.Type),
-		"summary":                currentPoint.Summary,
-		"formula":                config.Monitoring.Name,
-		"venue":                  seriesConfig.Venue,
-		"market":                 seriesConfig.Market,
-		"instrument":             seriesConfig.Instrument,
-		"indicator":              config.Indicator.Type,
-		"interval":               seriesConfig.Interval,
-		"candleCloseTime":        currentPoint.CandleCloseTime,
+		"ready":                   currentPoint.Ready,
+		"matched":                 currentPoint.Matched,
+		"previousMatched":         previousPoint.Matched,
+		"branch":                  fmt.Sprintf("%t", currentPoint.Matched),
+		"entered":                 input.PathEntered && currentPoint.Matched,
+		"triggered":               !input.PathEntered && currentPoint.Matched,
+		"evaluatedAt":             evaluatedAt.Format(time.RFC3339),
+		"previousEvaluatedAt":     previousAt.Format(time.RFC3339),
+		"businessKey":             fmt.Sprintf("%s:%s:%s:%s", seriesConfig.Venue, seriesConfig.Market, seriesConfig.Instrument, config.Indicator.Type),
+		"summary":                 currentPoint.Summary,
+		"formula":                 config.Monitoring.Name,
+		"venue":                   seriesConfig.Venue,
+		"market":                  seriesConfig.Market,
+		"instrument":              seriesConfig.Instrument,
+		"indicator":               config.Indicator.Type,
+		"interval":                seriesConfig.Interval,
+		"candleCloseTime":         currentPoint.CandleCloseTime,
 		"previousCandleCloseTime": previousPoint.CandleCloseTime,
-		"value":                  currentPoint.Values,
-		"previousValue":          previousPoint.Values,
+		"value":                   currentPoint.Values,
+		"previousValue":           previousPoint.Values,
 	}
 
 	outputJSON, err := json.Marshal(output)

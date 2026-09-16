@@ -51,12 +51,12 @@ func (q *quantRuntime) register(registrar sdk.Registrar) error {
 	// 注册统一技术指标节点（新版本）
 	if err := registrar.Action(quantNodeMeta(sdk.NodeDescriptor{
 		Type: "official.quant.unified_indicator", Version: "2.0.0", Kind: sdk.NodeKindAction,
-		Branches: []string{"true", "false"},
+		Branches:     []string{"true", "false"},
 		ConfigSchema: unifiedIndicatorBasicSchema,
 		UISchema:     json.RawMessage(`{"ui:order":["dataSource","monitoring","indicator","condition"]}`),
 		InputSchema:  quantIndicatorInputSchema,
 		OutputSchema: quantIndicatorOutputSchema,
-		Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
+		Pool:         sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
 		Capabilities: sdk.NodeCapabilities{FrameSafe: true},
 	}, "统一技术指标", "支持智能继承、缓存优化的统一技术指标节点，整合 RSI、MACD、成交量、价格变动、布林带等指标。", "chart-line", "#0f766e", "trending-up"), quantUnifiedIndicatorAction{runtime: q}); err != nil {
 		return err

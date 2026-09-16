@@ -38,9 +38,9 @@ type LogicCondition struct {
 
 // ThresholdCondition 阈值条件
 type ThresholdCondition struct {
-	Field     string `json:"field"`     // 字段名
-	Direction string `json:"direction"` // "above", "below", "between"
-	Value     string `json:"value"`     // 阈值
+	Field     string `json:"field"`           // 字段名
+	Direction string `json:"direction"`       // "above", "below", "between"
+	Value     string `json:"value"`           // 阈值
 	Upper     string `json:"upper,omitempty"` // 上限（between 模式）
 }
 
@@ -53,7 +53,7 @@ type IndicatorCondition struct {
 
 // ValueSource 值来源
 type ValueSource struct {
-	Kind  string      `json:"kind"`  // "field", "constant", "indicator", "expression"
+	Kind  string      `json:"kind"` // "field", "constant", "indicator", "expression"
 	Field string      `json:"field,omitempty"`
 	Value interface{} `json:"value,omitempty"`
 	Expr  string      `json:"expr,omitempty"`
