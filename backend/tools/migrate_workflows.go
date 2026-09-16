@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"time"
 
 	"gorm.io/driver/postgres"
@@ -37,7 +36,7 @@ func main() {
 	}
 
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogLevel(logger.Info),
+		Logger: logger.Default.LogMode(logger.Info),
 	})
 	if err != nil {
 		log.Fatalf("Failed to connect database: %v", err)
