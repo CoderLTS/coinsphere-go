@@ -106,7 +106,7 @@ func (q *binanceRuntime) runPrivateAccountStream(ctx context.Context, config pri
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		if cleanupErr := q.manageListenKey(cleanupCtx, config, secrets, http.MethodDelete, listenKey); cleanupErr != nil && ctx.Err() == nil {
+		if _, cleanupErr := q.manageListenKey(cleanupCtx, config, secrets, http.MethodDelete, listenKey); cleanupErr != nil && ctx.Err() == nil {
 			// Do not fail the already completed stream; the next retry will
 			// recreate the key and the warning contains no credential material.
 			if requestLogger := slog.Default(); requestLogger != nil {

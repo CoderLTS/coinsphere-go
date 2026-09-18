@@ -167,10 +167,7 @@ func (a *App) SaveConnection(ctx context.Context, id string, payload ConnectionP
 		if validateWorkflowSchemaValue(schema, complete) != nil {
 			return errors.New("连接配置不符合字段要求")
 		}
-		encrypted, err := a.Cipher.Encrypt(mustJSONString(values))
-		if err != nil {
-			return errors.New("加密连接凭据失败")
-		}
+		encrypted := a.Cipher.Encrypt(mustJSONString(values))
 		row.Name = strings.TrimSpace(payload.Name)
 		row.Enabled = payload.Enabled
 		row.ConfigJSON = mustJSONString(payload.Config)
@@ -276,10 +273,7 @@ func (a *App) snapshotRunConnections(tx *gorm.DB, run db.WorkflowRun, graph work
 		if err != nil {
 			return err
 		}
-		encrypted, err := a.Cipher.Encrypt(mustJSONString(secrets))
-		if err != nil {
-			return err
-		}
+		encrypted := a.Cipher.Encrypt(mustJSONString(secrets))
 		row := db.WorkflowRunConnection{RunID: run.ID, NodeInstanceID: nodeID, ConnectionID: node.ConnectionID, Version: version, ConfigJSON: mustJSONString(config), SecretsCiphertext: encrypted}
 		if err := tx.Create(&row).Error; err != nil {
 			return err
@@ -306,10 +300,7 @@ func (a *App) snapshotWorkflowLoopConnections(tx *gorm.DB, run db.WorkflowRun, l
 		if err != nil {
 			return err
 		}
-		encrypted, err := a.Cipher.Encrypt(mustJSONString(secrets))
-		if err != nil {
-			return err
-		}
+		encrypted := a.Cipher.Encrypt(mustJSONString(secrets))
 		if err := tx.Create(&db.WorkflowRunConnection{RunID: run.ID, NodeInstanceID: id, ConnectionID: bodyNode.ConnectionID, Version: version, ConfigJSON: mustJSONString(configValues), SecretsCiphertext: encrypted}).Error; err != nil {
 			return err
 		}

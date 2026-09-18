@@ -447,6 +447,4 @@ declare namespace Api {
       text: string
     }
   }
-
-
 }

@@ -40,8 +40,8 @@ func (a paperExecuteAction) Execute(ctx context.Context, request sdk.ActionReque
 	var account struct{ Account, Market string }
 	var config struct{ InitialBalance, FeeRate, MaxOrderNotional, MaxInstrumentNotional string }
 	var intent struct{ Venue, Account, Market, Instrument, Side, Quantity, QuoteAmount, PositionEffect, ClientOrderID string }
-	if json.Unmarshal(accountRaw, &account) != nil || validateTradingAccountProfile(accountRaw) != nil ||
-		json.Unmarshal(riskRaw, &config) != nil || validateTradingRiskProfile(riskRaw) != nil ||
+	if json.Unmarshal(accountRaw, &account) != nil || validateTradingAccountProfile(ctx, accountRaw) != nil ||
+		json.Unmarshal(riskRaw, &config) != nil || validateTradingRiskProfile(ctx, riskRaw) != nil ||
 		json.Unmarshal(request.Input, &intent) != nil || intent.Venue != "binance" {
 		return sdk.ActionResult{}, errors.New("Binance Paper order is invalid")
 	}

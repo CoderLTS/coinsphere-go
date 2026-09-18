@@ -412,10 +412,7 @@
 <script setup lang="ts">
   import { ArrowLeft, Clock, Download, Hide, View } from '@element-plus/icons-vue'
   import { ElMessage } from 'element-plus'
-  import {
-    fetchWorkflowExecutionDetail,
-    type WorkflowExecutionDetail
-  } from '@/api/scheduler'
+  import { fetchWorkflowExecutionDetail, type WorkflowExecutionDetail } from '@/api/scheduler'
   import {
     buildWorkflowRunsWsUrl,
     downloadWorkflowArtifact,
@@ -429,7 +426,6 @@
   import WorkflowExecutionCanvas from './components/WorkflowExecutionCanvas.vue'
   import type { WorkflowGraph, WorkflowGraphNode, WorkflowGraphEdge } from '@/api/workflows'
   type WorkflowActiveCellType = 'node' | 'edge' | null
-
 
   defineOptions({ name: 'SchedulerWorkflowExecutionDetailPage' })
 

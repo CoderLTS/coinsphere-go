@@ -8,15 +8,15 @@
 </template>
 
 <script setup lang="ts">
-import WorkflowSchemaFields from '@/views/scheduler/workflow/editor/components/WorkflowSchemaFields.vue'
+  import WorkflowSchemaFields from '@/views/scheduler/workflow/editor/components/WorkflowSchemaFields.vue'
 
-defineProps<{
-  schema: Record<string, any>
-  uiSchema?: Record<string, any>
-  config: Record<string, any>
-}>()
+  defineProps<{
+    schema: Record<string, any>
+    uiSchema?: Record<string, any>
+    config: Record<string, any>
+  }>()
 
-const emit = defineEmits<{
-  (event: 'update', key: string, value: any): void
-}>()
+  const emit = defineEmits<{
+    (event: 'update', key: string, value: any): void
+  }>()
 </script>

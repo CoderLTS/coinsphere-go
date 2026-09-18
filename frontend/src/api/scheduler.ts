@@ -1,13 +1,33 @@
 import {
-  applyWorkflowLifecycle, createWorkflowRun, deleteWorkflow, deleteWorkflowRevision,
-  fetchWorkflow, fetchWorkflowRun, fetchWorkflowRuns, fetchWorkflowRevision,
-  fetchWorkflowRevisions, fetchWorkflows,
-  type WorkflowRun, type WorkflowNodeLog, type WorkflowArtifact, type WorkflowRunEvent,
-  type WorkflowGraph, type WorkflowItem, type WorkflowRevision, type WorkflowRunCreatePayload
+  applyWorkflowLifecycle,
+  createWorkflowRun,
+  deleteWorkflow,
+  deleteWorkflowRevision,
+  fetchWorkflow,
+  fetchWorkflowRun,
+  fetchWorkflowRuns,
+  fetchWorkflowRevision,
+  fetchWorkflowRevisions,
+  fetchWorkflows,
+  type WorkflowRun,
+  type WorkflowNodeLog,
+  type WorkflowArtifact,
+  type WorkflowRunEvent,
+  type WorkflowGraph,
+  type WorkflowItem,
+  type WorkflowRevision,
+  type WorkflowRunCreatePayload
 } from './workflows'
 
 export type WorkflowTriggerType = WorkflowRun['triggerType']
-export type WorkflowExecutionStatus = 'queued' | 'running' | 'waiting' | 'retry_waiting' | 'success' | 'failed' | 'canceled'
+export type WorkflowExecutionStatus =
+  | 'queued'
+  | 'running'
+  | 'waiting'
+  | 'retry_waiting'
+  | 'success'
+  | 'failed'
+  | 'canceled'
 export interface WorkflowDefinitionVersionItem {
   id: number
   version: number
@@ -155,7 +175,9 @@ const toExecution = (
     triggerInstanceId: run.triggerInstanceId,
     triggerEventId: run.triggerEventId,
     profileSnapshot: run.profileSnapshot,
-    entryName: revision?.graph.nodes.find(node => node.nodeInstanceId === run.entryNodeInstanceId)?.label || run.entryNodeInstanceId,
+    entryName:
+      revision?.graph.nodes.find((node) => node.nodeInstanceId === run.entryNodeInstanceId)
+        ?.label || run.entryNodeInstanceId,
     triggerType: run.triggerType,
     status,
     statusLabel: statusLabel(status),
@@ -231,19 +253,23 @@ const loadDefinition = async (definitionID: number): Promise<WorkflowDefinitionI
   }
 }
 
-
 export async function fetchWorkflowDefinitionList() {
   const { items } = await fetchWorkflows()
-  return Promise.all(items.map(item => loadDefinition(item.id)))
+  return Promise.all(items.map((item) => loadDefinition(item.id)))
 }
 export const fetchWorkflowDefinitionDetail = loadDefinition
-export const fetchActivateWorkflowDefinition = (id: number) => applyWorkflowLifecycle(id, 'activate')
-export const fetchDeactivateWorkflowDefinition = (id: number) => applyWorkflowLifecycle(id, 'deactivate')
+export const fetchActivateWorkflowDefinition = (id: number) =>
+  applyWorkflowLifecycle(id, 'activate')
+export const fetchDeactivateWorkflowDefinition = (id: number) =>
+  applyWorkflowLifecycle(id, 'deactivate')
 export const fetchDeleteWorkflowDefinition = deleteWorkflowRevision
 export const fetchDeleteWorkflow = deleteWorkflow
 export async function fetchRunWorkflowDefinition(id: number, params: WorkflowRunCreatePayload) {
   const run = await createWorkflowRun(id, params)
-  const [workflow, revision] = await Promise.all([fetchWorkflow(id), fetchWorkflowRevision(id, run.revisionId)])
+  const [workflow, revision] = await Promise.all([
+    fetchWorkflow(id),
+    fetchWorkflowRevision(id, run.revisionId)
+  ])
   return { executions: [toExecution(run, workflow, revision)] }
 }
 
@@ -256,7 +282,9 @@ export async function fetchWorkflowExecutionDetail(
     fetchWorkflowRevision(run.workflowId, run.revisionId)
   ])
   const graph = revision.graph
-  const names = new Map(graph.nodes.map((node) => [node.nodeInstanceId, node.label || node.nodeType]))
+  const names = new Map(
+    graph.nodes.map((node) => [node.nodeInstanceId, node.label || node.nodeType])
+  )
   const execution = toExecution(run, workflow, revision)
   return {
     ...execution,

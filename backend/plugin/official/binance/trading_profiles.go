@@ -35,14 +35,14 @@ func (p tradingProfileProvider) Resolve(ctx context.Context, ref sdk.ProfileRef)
 	return p.store.Resolve(ctx, ref)
 }
 
-func validateTradingAccountProfile(raw json.RawMessage) error {
+func validateTradingAccountProfile(_ context.Context, raw json.RawMessage) error {
 	var value struct{ Account, Market string }
 	if json.Unmarshal(raw, &value) != nil || !accountIDPattern.MatchString(value.Account) || value.Market != "spot" && value.Market != "usdm" {
 		return errors.New("Binance account profile is invalid")
 	}
 	return nil
 }
-func validateTradingRiskProfile(raw json.RawMessage) error {
+func validateTradingRiskProfile(_ context.Context, raw json.RawMessage) error {
 	var value struct{ InitialBalance, FeeRate, MaxOrderNotional, MaxInstrumentNotional string }
 	if json.Unmarshal(raw, &value) != nil {
 		return errors.New("Binance risk profile is invalid")

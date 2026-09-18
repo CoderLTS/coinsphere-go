@@ -337,15 +337,15 @@ func (s *Store) Publish(ctx context.Context, actor sdk.ProfileActor, id, version
 			return ErrConflict
 		}
 		now := time.Now().UTC()
-		versionRow := versionRow{ProfileID: id, Version: version, ConfigJSON: row.DraftConfigJSON, Status: string(sdk.ProfileStatusPublished), PublishedAt: &now, CreatedBy: actor.UserID, CreatedAt: now}
-		if err := tx.Table(s.versions).Create(&versionRow).Error; err != nil {
+		publishedRow := versionRow{ProfileID: id, Version: version, ConfigJSON: row.DraftConfigJSON, Status: string(sdk.ProfileStatusPublished), PublishedAt: &now, CreatedBy: actor.UserID, CreatedAt: now}
+		if err := tx.Table(s.versions).Create(&publishedRow).Error; err != nil {
 			return err
 		}
 		row.Status, row.LatestPublishedVersion, row.UpdatedBy, row.UpdatedAt, row.DisabledAt = string(sdk.ProfileStatusActive), version, actor.UserID, now, nil
 		if err := tx.Table(s.profiles).Save(&row).Error; err != nil {
 			return err
 		}
-		result = s.summary(row, []versionRow{versionRow})
+		result = s.summary(row, []versionRow{publishedRow})
 		return nil
 	})
 	if err == nil {

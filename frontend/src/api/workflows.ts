@@ -11,7 +11,7 @@ export function buildWorkflowRunsWsUrl(pageOrigin: string, workflowId: number) {
   return url.toString()
 }
 
-export type WorkflowStatus = 'inactive' | 'active'
+export type WorkflowStatus = 'inactive' | 'active' | 'error'
 export type WorkflowBindingKind = 'node' | 'event' | 'profile' | 'literal'
 
 export interface WorkflowInputBinding {
@@ -29,7 +29,10 @@ export interface WorkflowGraphNode {
   label?: string
   connectionId?: string
   config: Record<string, unknown>
-  profileBindings?: Record<string, { pluginId: string; profileId: string; version: string; type: string }>
+  profileBindings?: Record<
+    string,
+    { pluginId: string; profileId: string; version: string; type: string }
+  >
   inputBindings?: Record<string, WorkflowInputBinding>
   position: { x: number; y: number }
 }
@@ -55,7 +58,7 @@ export interface WorkflowItem {
   name: string
   description: string
   groupId: number | null
-	status: WorkflowStatus
+  status: WorkflowStatus
   activeRevisionId: number
   retentionDays: number
   createdBy: number
@@ -69,14 +72,20 @@ export interface WorkflowDetail extends WorkflowItem {
     backlogLimit: number
     updatedAt: string
   }
-  triggers: { nodeInstanceId: string; status: string; errorCategory?: string; nextScheduledAt?: string; lastScheduledAt?: string }[]
+  triggers: {
+    nodeInstanceId: string
+    status: string
+    errorCategory?: string
+    nextScheduledAt?: string
+    lastScheduledAt?: string
+  }[]
   stateNodeInstanceIds: string[]
 }
 
 export interface WorkflowTemplate {
   key: string
   name: string
-	description: string
+  description: string
 }
 
 export interface WorkflowGroup {

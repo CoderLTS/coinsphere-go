@@ -275,10 +275,7 @@
                       @click="toggleLifecycle(row)"
                     />
                   </ElTooltip>
-                  <ElTooltip
-                    content="手动运行"
-                    placement="top"
-                  >
+                  <ElTooltip content="手动运行" placement="top">
                     <ElButton
                       circle
                       plain
@@ -313,8 +310,6 @@
         </section>
       </div>
     </ElCard>
-
-
 
     <ElDialog
       v-model="versionDialogVisible"
@@ -402,8 +397,6 @@
         </ElTable>
       </div>
     </ElDialog>
-
-
   </div>
 </template>
 
@@ -765,7 +758,11 @@
     }
   }
 
-  const openCreateWorkflow = () => router.push({ path: '/scheduler/workflow/create', query: typeof selectedGroup.value === 'number' ? { groupId: selectedGroup.value } : {} })
+  const openCreateWorkflow = () =>
+    router.push({
+      path: '/scheduler/workflow/create',
+      query: typeof selectedGroup.value === 'number' ? { groupId: selectedGroup.value } : {}
+    })
 
   const runWorkflow = async (row: WorkflowDefinitionItem) => {
     await router.push({ path: `/scheduler/workflow/${row.id}/edit`, query: { run: '1' } })
