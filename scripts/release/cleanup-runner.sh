@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-CACHE_MAX_SIZE=${COINSPHERE_BUILD_CACHE_MAX_SIZE:-4gb}
+CACHE_MAX_SIZE=${COINSPHERE_BUILD_CACHE_MAX_SIZE:-2gb}
 STALE_TEMP_MINUTES=${COINSPHERE_RUNNER_TEMP_MAX_AGE_MINUTES:-1440}
 BUILDER=${COINSPHERE_BUILDER:-coinsphere-release}
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+
+if [[ -z ${COINSPHERE_BUILDER+x} ]] &&
+  docker buildx inspect coinsphere-release-v2 >/dev/null 2>&1; then
+  BUILDER=coinsphere-release-v2
+fi
 
 if [[ ! $CACHE_MAX_SIZE =~ ^[1-9][0-9]*(kb|mb|gb|tb)$ ]]; then
   echo "Build Cache 大小上限无效: $CACHE_MAX_SIZE" >&2
@@ -33,6 +38,14 @@ if docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
     echo "Buildx Builder 清理未完整完成" >&2
     exit "$cleanup_status"
   fi
+fi
+
+if [[ $BUILDER == coinsphere-release-v2 ]] &&
+  docker buildx inspect coinsphere-release >/dev/null 2>&1; then
+  docker buildx rm --force coinsphere-release >/dev/null || {
+    echo "旧 Buildx Builder 清理未完成" >&2
+    exit 1
+  }
 fi
 
 echo "持久型 Runner 清理完成"

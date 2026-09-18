@@ -19,11 +19,10 @@
 ## Actions 与发布权限
 
 - 普通 Workflow 默认只有 repository contents 只读权限。
-- Release Workflow 只保留创建 GitHub Release 所需的 `contents: write`。
-- Deploy Workflow 为复用 Release Workflow 保留 `contents: write`，但跳过 GitHub Release 创建步骤。
+- 当前 `Release and deploy` Workflow 只使用 `contents: read`，不创建 GitHub Release；生产部署仍由手工触发完成。
 - 交易所密钥、SSH 私钥和生产数据库凭据不得进入 Actions Secret；私有 Registry 凭据只保存在生产 Runner 本机。
 - Fork PR 不运行持有写权限或高权限 Secret 的步骤。
-- 生产 Release/Deploy 默认不触发；用户在当前任务明确授权后，Codex 可从最新 `main` 触发既有 `workflow_dispatch` 并监控验证。进入 Live 前按发布 Runbook 分离构建与固定部署器。
+- 生产 Release/Deploy 默认不触发；用户在当前任务明确授权后，Codex 可从最新 `main` 触发既有 `workflow_dispatch` 并监控验证。当前工作流仍在同一生产 Runner 完成构建和部署，已通过受限 BuildKit、直接推送本机 Registry 和固定 digest 部署降低 4GB 主机峰值；进入 Live 前仍应按发布 Runbook 分离构建与固定部署器。
 
 ## 依赖与清理
 

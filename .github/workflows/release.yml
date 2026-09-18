@@ -24,22 +24,33 @@ jobs:
     env:
       VERSION: ${{ inputs.version }}
       COINSPHERE_REGISTRY: 127.0.0.1:5000
+      COINSPHERE_BUILDER: coinsphere-release-v2
+      COINSPHERE_BUILD_OUTPUT: registry
+      COINSPHERE_BUILDER_MEMORY: 1536m
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          fetch-depth: 0
+          fetch-depth: 1
+          persist-credentials: false
+          clean: true
 
       - name: Validate release source and version
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
           [[ "$GITHUB_REF" == "refs/heads/main" ]] || { echo "只能从 main 手工部署" >&2; exit 1; }
           [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || { echo "版本号必须符合 vX.Y.Z 格式" >&2; exit 1; }
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: bearer $GITHUB_TOKEN"
           for attempt in 1 2 3; do
             git fetch --quiet origin main --tags && break
             [[ "$attempt" -lt 3 ]] || exit 1
             sleep $((attempt * 5))
           done
+          unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
           [[ "$(git rev-parse HEAD)" == "$(git rev-parse origin/main)" ]] || { echo "当前 Commit 不是最新 main" >&2; exit 1; }
           if git show-ref --verify --quiet "refs/tags/$VERSION"; then
             echo "版本标签已存在: $VERSION" >&2
@@ -70,6 +81,6 @@ jobs:
         continue-on-error: true
         shell: bash
         env:
-          COINSPHERE_BUILD_CACHE_MAX_SIZE: 4gb
+          COINSPHERE_BUILD_CACHE_MAX_SIZE: 2gb
           COINSPHERE_RUNNER_TEMP_MAX_AGE_MINUTES: "1440"
         run: bash scripts/release/cleanup-runner.sh

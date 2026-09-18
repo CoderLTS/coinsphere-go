@@ -8,7 +8,11 @@ BUILD_MODE=${4:-release}
 REGISTRY=${COINSPHERE_REGISTRY:-127.0.0.1:5000}
 GO_PROXY=${COINSPHERE_GO_PROXY:-https://goproxy.cn,direct}
 BUILDER=${COINSPHERE_BUILDER:-coinsphere-release}
-BUILDER_MEMORY=${COINSPHERE_BUILDER_MEMORY:-2560m}
+BUILDER_MEMORY=${COINSPHERE_BUILDER_MEMORY:-1536m}
+BUILD_OUTPUT=${COINSPHERE_BUILD_OUTPUT:-load}
+if [[ $BUILD_OUTPUT == registry && -z ${COINSPHERE_BUILDER+x} ]]; then
+  BUILDER=coinsphere-release-v2
+fi
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 OUTPUT_DIR=$(mkdir -p "$OUTPUT_DIR" && cd "$OUTPUT_DIR" && pwd)
 DOCKER_CONFIG_FILE="${DOCKER_CONFIG:-${HOME:?HOME 未设置}/.docker}/config.json"
@@ -17,6 +21,13 @@ case "$BUILD_MODE" in
   release|images-only) ;;
   *)
     echo "build mode must be release or images-only: $BUILD_MODE" >&2
+    exit 2
+    ;;
+esac
+case "$BUILD_OUTPUT" in
+  load|registry) ;;
+  *)
+    echo "build output must be load or registry: $BUILD_OUTPUT" >&2
     exit 2
     ;;
 esac
@@ -96,6 +107,12 @@ run_buildx() {
   docker buildx build --builder "$BUILDER" "${proxy_build_args[@]}" "$@"
 }
 
+if [[ $BUILD_OUTPUT == registry && $BUILDER == coinsphere-release-v2 ]] &&
+  docker buildx inspect coinsphere-release >/dev/null 2>&1; then
+  # The registry output uses a new BuildKit config. Stop the legacy builder first
+  # so its old memory cgroup cannot compete with the replacement on a 4GB host.
+  docker buildx stop coinsphere-release >/dev/null 2>&1 || true
+fi
 if ! docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
   docker buildx create --name "$BUILDER" --driver docker-container --driver-opt network=host \
     --driver-opt "memory=$BUILDER_MEMORY" --driver-opt "memory-swap=$BUILDER_MEMORY" \
@@ -108,7 +125,13 @@ if docker container inspect "$builder_container" >/dev/null 2>&1; then
 fi
 docker buildx inspect --bootstrap "$BUILDER" >/dev/null
 
-run_buildx --load \
+image_output_args=(--load)
+if [[ $BUILD_OUTPUT == registry ]]; then
+  image_metadata_file="$work_dir/image-metadata.json"
+  image_output_args=(--push --provenance=false --metadata-file "$image_metadata_file")
+fi
+
+run_buildx "${image_output_args[@]}" \
   --label "org.opencontainers.image.version=$VERSION" \
   --label "org.opencontainers.image.revision=$COMMIT_SHA" \
   --build-arg TARGETOS=linux --build-arg TARGETARCH=amd64 --build-arg "GOPROXY=$GO_PROXY" --build-arg "VITE_VERSION=$VERSION" \
@@ -157,9 +180,17 @@ tar "${tar_options[@]}" -C "$work_dir/packages" -cf - "$docker_name" |
 
 fi
 
-docker push "$backend_image"
-docker push "$REGISTRY/coinsphere/backend:$sha_tag"
-backend_digest=$(docker image inspect "$backend_image" --format '{{range .RepoDigests}}{{println .}}{{end}}' | grep -F "$REGISTRY/coinsphere/backend@" | head -n 1)
+if [[ $BUILD_OUTPUT == registry ]]; then
+  image_digest=$(jq -er '
+    .["containerimage.digest"]
+    | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))
+  ' "$image_metadata_file")
+  backend_digest="$REGISTRY/coinsphere/backend@$image_digest"
+else
+  docker push "$backend_image"
+  docker push "$REGISTRY/coinsphere/backend:$sha_tag"
+  backend_digest=$(docker image inspect "$backend_image" --format '{{range .RepoDigests}}{{println .}}{{end}}' | grep -F "$REGISTRY/coinsphere/backend@" | head -n 1)
+fi
 cat >"$OUTPUT_DIR/release-manifest.json" <<EOF
 {
   "version": "$VERSION",

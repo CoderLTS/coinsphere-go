@@ -31,13 +31,15 @@ CoinSphere 不再部署到 sub2api 或其他应用的 Compose 项目。发布只
 5. `deploy/production/deploy.sh` 拉取镜像，停止 CoinSphere 旧服务，并对共享 PostgreSQL 执行目标镜像内 migration。
 6. 脚本启动单应用容器，检查容器健康和 `/health`；全部通过后保存新的 `.env`。
 
+4GB Runner 的构建限制：生产工作流使用单并行 BuildKit Worker，Builder 内存上限为 `1536m`，前端 Node 堆上限为 `1280m`，Go 编译使用单包并发。镜像直接推送到本机 Registry，不再先加载到 Docker 守护进程；部署阶段只拉取固定 digest 并串行执行 migration 与启动。工作流结束后将 BuildKit 缓存限制为 `2gb`，避免持久缓存长期膨胀。若手工运行 `scripts/release/build.sh`，设置 `COINSPHERE_BUILD_OUTPUT=registry` 会自动使用带本机 Registry 配置的 Builder，也可通过 `COINSPHERE_BUILDER_MEMORY` 调整内存上限。
+
 直接在已扫描 Manifest 上手工执行同一部署器：
 
 ```bash
 bash deploy/production/deploy.sh vX.Y.Z /path/to/release-manifest.json
 ```
 
-仅部署、不创建 GitHub Release 时，在 Actions 手工运行 `Deploy`，使用不会与正式 Tag 冲突的版本号，例如 `v0.2.0-deploy.1`。
+当前工作流执行镜像构建与部署，不创建 GitHub Release；在 Actions 手工运行 `Release and deploy`，使用不会与正式 Tag 冲突的版本号，例如 `v0.2.0-deploy.1`。
 
 ## 首次独立部署
 

@@ -9,7 +9,7 @@ RUN --mount=type=cache,id=coinsphere-pnpm-store,target=/root/.local/share/pnpm/s
     pnpm install --frozen-lockfile
 COPY frontend/ .
 ARG VITE_VERSION=development
-ENV NODE_OPTIONS="--max-old-space-size=1920 --max-semi-space-size=8"
+ENV NODE_OPTIONS="--max-old-space-size=1280 --max-semi-space-size=8"
 RUN VITE_VERSION="${VITE_VERSION}" pnpm build
 
 FROM scratch AS web-assets
@@ -19,7 +19,7 @@ FROM golang:1.26.6-alpine@sha256:af8d6740070b8906d12eae1c3e3ea0957fb63f492051ea0
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 ARG GOPROXY=https://proxy.golang.org,direct
-ENV GOTOOLCHAIN=local CGO_ENABLED=0 GOPROXY=${GOPROXY}
+ENV GOTOOLCHAIN=local CGO_ENABLED=0 GOPROXY=${GOPROXY} GOMAXPROCS=2
 WORKDIR /src
 COPY backend/go.mod backend/go.sum ./
 RUN --mount=type=cache,id=coinsphere-go-mod,target=/go/pkg/mod \
@@ -27,9 +27,9 @@ RUN --mount=type=cache,id=coinsphere-go-mod,target=/go/pkg/mod \
 COPY backend/ .
 RUN --mount=type=cache,id=coinsphere-go-mod,target=/go/pkg/mod \
     --mount=type=cache,id=coinsphere-go-build,target=/root/.cache/go-build \
-    GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/coinsphere-server . \
-    && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/coinsphere-migrate ./cmd/migrate \
-    && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/coinsphere ./cmd/coinsphere
+    GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -p 1 -trimpath -ldflags="-s -w" -o /out/coinsphere-server . \
+    && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -p 1 -trimpath -ldflags="-s -w" -o /out/coinsphere-migrate ./cmd/migrate \
+    && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -p 1 -trimpath -ldflags="-s -w" -o /out/coinsphere ./cmd/coinsphere
 
 FROM scratch AS binaries
 COPY --from=build /out/ /

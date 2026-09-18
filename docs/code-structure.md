@@ -15,7 +15,7 @@
 
 ```text
 coinsphere-go/
-├─ .github/             CI、Security、Release 和 Deploy 工作流
+├─ .github/             基础 CI 与生产部署工作流
 ├─ backend/             Go App、CLI、migration 和插件 SDK
 ├─ deploy/              生产 Compose 与二进制发布包说明
 ├─ docs/                架构、契约、开发指南、质量门禁和 Runbook
@@ -188,7 +188,7 @@ scripts/
 └─ release/                 构建、扫描、清理、部署辅助及其 shell 测试
 ```
 
-GitHub Actions 按 Backend、Frontend、插件和发布脚本路径选择检查。生产 Release/Deploy 只能通过显式授权触发；真实密钥不进入仓库或 Actions。
+GitHub Actions 只运行 Backend/Frontend 的基础语法与编译检查；生产部署只能通过显式授权手工触发，真实密钥不进入仓库或 Actions。
 
 ## 5. 文档职责
 

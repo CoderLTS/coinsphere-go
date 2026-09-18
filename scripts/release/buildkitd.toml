@@ -1,2 +1,8 @@
+[worker.oci]
+  max-parallelism = 1
+
 [registry."docker.io"]
   mirrors = ["mirror.ccs.tencentyun.com"]
+
+[registry."127.0.0.1:5000"]
+  http = true
