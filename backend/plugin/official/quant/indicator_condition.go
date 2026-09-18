@@ -9,9 +9,7 @@ import (
 	"io"
 	"regexp"
 	"sort"
-	"strings"
 	"time"
-	"unicode/utf8"
 
 	"coinsphere/backend/plugin/sdk"
 	"github.com/shopspring/decimal"
@@ -27,65 +25,53 @@ var (
 	quantDecimalPattern = regexp.MustCompile(`^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$`)
 )
 
-var quantIndicatorInputSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"eventTime":{"type":"string","title":"事件时间","format":"date-time"},"pathEntered":{"type":"boolean","title":"已进入上游路径","default":false}},"required":["eventTime"],"additionalProperties":false}`)
-
-var quantIndicatorOutputSchema = json.RawMessage(`{
-  "$schema":"https://json-schema.org/draft/2020-12/schema",
-  "type":"object",
-  "properties":{
-    "ready":{"type":"boolean"},"matched":{"type":"boolean"},"previousMatched":{"type":"boolean"},
-    "branch":{"type":"string","enum":["true","false"]},"entered":{"type":"boolean"},"triggered":{"type":"boolean"},
-    "evaluatedAt":{"type":"string","format":"date-time"},"previousEvaluatedAt":{"type":"string","format":"date-time"},
-    "businessKey":{"type":"string","minLength":1,"maxLength":256},"summary":{"type":"string","minLength":1,"maxLength":2000},"formula":{"type":"string","minLength":1,"maxLength":2000},
-    "market":{"type":"string","enum":["spot","usdm"]},"instrument":{"type":"string","pattern":"^[A-Z0-9]{2,32}$"},
-    "indicator":{"type":"string"},"interval":{"type":"string"},
-    "candleCloseTime":{"type":"string"},"previousCandleCloseTime":{"type":"string"},
-    "value":{"type":"object","additionalProperties":{"type":"string"}},"previousValue":{"type":"object","additionalProperties":{"type":"string"}},"venue":{"type":"string"}
-  },
-  "required":["ready","matched","previousMatched","branch","entered","triggered","evaluatedAt","previousEvaluatedAt","businessKey","summary","formula","venue","market","instrument","indicator","interval","candleCloseTime","previousCandleCloseTime","value","previousValue"],
-  "additionalProperties":false
-}`)
+var quantIndicatorInputSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"context":{"type":"object","title":"行情上下文"},"closeTime":{"type":"string","format":"date-time"}},"additionalProperties":false}`)
+var quantIndicatorOutputSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"available":{"type":"boolean"},"matched":{"type":["boolean","null"]},"evaluatedAt":{"type":"string"},"source":{"type":"string"},"summary":{"type":"string"},"venue":{"type":"string"},"market":{"type":"string"},"instrument":{"type":"string"},"interval":{"type":"string"},"indicator":{"type":"string"},"candleCloseTime":{"type":"string"},"value":{"type":"object","additionalProperties":{"type":"string"}}},"required":["available","matched","evaluatedAt","source","summary","venue","market","instrument","interval","indicator","candleCloseTime","value"],"additionalProperties":false}`)
 
 type quantIndicatorDefinition struct {
-	NodeType  string
 	Indicator string
 	Title     string
 	Icon      string
 }
 
 var quantIndicatorDefinitions = []quantIndicatorDefinition{
-	{NodeType: "official.quant.volume_spike_condition", Indicator: "volume_spike", Title: "放量判断", Icon: "chart-column-big"},
-	{NodeType: "official.quant.price_change_condition", Indicator: "price_change", Title: "价格波动判断", Icon: "trending-up"},
-	{NodeType: "official.quant.macd_condition", Indicator: "macd", Title: "MACD 判断", Icon: "chart-no-axes-combined"},
-	{NodeType: "official.quant.kdj_condition", Indicator: "kdj", Title: "KDJ 判断", Icon: "chart-spline"},
-	{NodeType: "official.quant.rsi_condition", Indicator: "rsi", Title: "RSI 判断", Icon: "gauge"},
-	{NodeType: "official.quant.bollinger_condition", Indicator: "bollinger", Title: "布林带判断", Icon: "chart-candlestick"},
+	{Indicator: "volume_spike", Title: "放量判断", Icon: "chart-column-big"},
+	{Indicator: "price_change", Title: "价格波动判断", Icon: "trending-up"},
+	{Indicator: "macd", Title: "MACD 判断", Icon: "chart-no-axes-combined"},
+	{Indicator: "kdj", Title: "KDJ 判断", Icon: "chart-spline"},
+	{Indicator: "rsi", Title: "RSI 判断", Icon: "gauge"},
+	{Indicator: "bollinger", Title: "布林带判断", Icon: "chart-candlestick"},
 }
 
 var quantIndicatorParameterSchemas = map[string]string{
 	"volume_spike": `{"type":"object","title":"参数","properties":{"lookback":{"type":"integer","title":"均量周期","minimum":1,"maximum":500,"default":20},"multiplier":{"type":"string","title":"放量倍数","pattern":"^[0-9]+(?:\\.[0-9]+)?$","default":"2","x-coinsphere-decimal":true}},"required":["lookback","multiplier"],"additionalProperties":false,"default":{"lookback":20,"multiplier":"2"}}`,
 	"price_change": `{"type":"object","title":"参数","properties":{"lookback":{"type":"integer","title":"K 线数量","minimum":1,"maximum":500,"default":1},"mode":{"type":"string","title":"判断方式","enum":["rise","fall","absolute","amplitude","since_day_start"],"enumLabels":["上涨","下跌","绝对涨跌幅","最高最低振幅","当日涨跌幅(UTC+0)"],"default":"absolute"},"threshold":{"type":"string","title":"阈值（%）","pattern":"^[0-9]+(?:\\.[0-9]+)?$","default":"1","x-coinsphere-decimal":true}},"required":["lookback","mode","threshold"],"additionalProperties":false,"default":{"lookback":1,"mode":"absolute","threshold":"1"}}`,
 	"macd":         `{"type":"object","title":"参数","properties":{"fastPeriod":{"type":"integer","title":"快线周期","minimum":1,"maximum":100,"default":12},"slowPeriod":{"type":"integer","title":"慢线周期","minimum":2,"maximum":200,"default":26},"signalPeriod":{"type":"integer","title":"信号周期","minimum":1,"maximum":100,"default":9},"signal":{"type":"string","title":"判断规则","enum":["golden_cross","death_cross","dif_above_zero","dif_below_zero"],"enumLabels":["金叉","死叉","DIF 位于零轴上方","DIF 位于零轴下方"],"default":"golden_cross"}},"required":["fastPeriod","slowPeriod","signalPeriod","signal"],"additionalProperties":false,"default":{"fastPeriod":12,"slowPeriod":26,"signalPeriod":9,"signal":"golden_cross"}}`,
-	"kdj":          `{"type":"object","title":"参数","properties":{"period":{"type":"integer","title":"周期","minimum":2,"maximum":200,"default":9},"kSmoothing":{"type":"integer","title":"K 平滑周期","minimum":1,"maximum":50,"default":3},"dSmoothing":{"type":"integer","title":"D 平滑周期","minimum":1,"maximum":50,"default":3},"signal":{"type":"string","title":"判断规则","enum":["golden_cross","death_cross","k_above","k_below","d_above","d_below","j_above","j_below"],"enumLabels":["K/D 金叉","K/D 死叉","K 高于阈值","K 低于阈值","D 高于阈值","D 低于阈值","J 高于阈值","J 低于阈值"],"default":"golden_cross"},"threshold":{"type":"string","title":"阈值","pattern":"^-?[0-9]+(?:\\.[0-9]+)?$","default":"80","x-coinsphere-decimal":true}},"required":["period","kSmoothing","dSmoothing","signal","threshold"],"additionalProperties":false,"default":{"period":9,"kSmoothing":3,"dSmoothing":3,"signal":"golden_cross","threshold":"80"}}`,
+	"kdj":          `{"type":"object","title":"参数","properties":{"period":{"type":"integer","title":"周期","minimum":2,"maximum":200,"default":9},"kSmoothing":{"type":"integer","title":"K 平滑周期","minimum":1,"maximum":50,"default":3},"dSmoothing":{"type":"integer","title":"D 平滑周期","minimum":1,"maximum":50,"default":3},"signal":{"type":"string","title":"判断规则","enum":["golden_cross","death_cross","k_above","k_below","d_above","d_below","j_above","j_below"],"enumLabels":["K/D 金叉","K/D 死叉","K 高于阈值","K 低于阈值","D 高于阈值","D 低于阈值","J 高于阈值","J 低于阈值"],"default":"golden_cross"},"threshold":{"type":"string","title":"阈值","x-visible-when":{"signal":["k_above","k_below","d_above","d_below","j_above","j_below"]},"pattern":"^-?[0-9]+(?:\\.[0-9]+)?$","default":"80","x-coinsphere-decimal":true}},"required":["period","kSmoothing","dSmoothing","signal"],"additionalProperties":false,"default":{"period":9,"kSmoothing":3,"dSmoothing":3,"signal":"golden_cross","threshold":"80"}}`,
 	"rsi":          `{"type":"object","title":"参数","properties":{"period":{"type":"integer","title":"周期","minimum":2,"maximum":200,"default":14},"direction":{"type":"string","title":"判断规则","enum":["above","below"],"enumLabels":["高于阈值","低于阈值"],"default":"below"},"threshold":{"type":"string","title":"阈值","pattern":"^[0-9]+(?:\\.[0-9]+)?$","default":"30","x-coinsphere-decimal":true}},"required":["period","direction","threshold"],"additionalProperties":false,"default":{"period":14,"direction":"below","threshold":"30"}}`,
 	"bollinger":    `{"type":"object","title":"参数","properties":{"period":{"type":"integer","title":"周期","minimum":2,"maximum":500,"default":20},"multiplier":{"type":"string","title":"标准差倍数","pattern":"^[0-9]+(?:\\.[0-9]+)?$","default":"2","x-coinsphere-decimal":true},"signal":{"type":"string","title":"判断规则","enum":["close_above_upper","close_below_lower"],"enumLabels":["收盘价突破上轨","收盘价跌破下轨"],"default":"close_above_upper"}},"required":["period","multiplier","signal"],"additionalProperties":false,"default":{"period":20,"multiplier":"2","signal":"close_above_upper"}}`,
 }
 
-func quantIndicatorConfigSchema(indicator string) json.RawMessage {
-	return json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"venue":{"type":"string","title":"交易所","pattern":"^[a-z][a-z0-9_-]{1,31}$","default":"binance"},"market":{"type":"string","title":"市场类型","minLength":1,"maxLength":32},"instrument":{"type":"string","title":"交易对","pattern":"^[A-Z0-9]{2,32}$","default":"BTCUSDT"},"checkInterval":{"type":"string","title":"检查周期","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"],"default":"1m"},"name":{"type":"string","title":"条件名称","minLength":1,"maxLength":80},"interval":{"type":"string","title":"K 线周期","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"],"default":"1m"},"parameters":` + quantIndicatorParameterSchemas[indicator] + `},"required":["venue","market","instrument","checkInterval","name","interval","parameters"],"additionalProperties":false}`)
+func quantIndicatorConfigSchema() json.RawMessage {
+	variants := make([]any, 0, len(quantIndicatorDefinitions))
+	for _, definition := range quantIndicatorDefinitions {
+		variants = append(variants, map[string]any{
+			"if":   map[string]any{"properties": map[string]any{"indicator": map[string]any{"const": definition.Indicator}}, "required": []string{"indicator"}},
+			"then": map[string]any{"properties": map[string]any{"parameters": json.RawMessage(quantIndicatorParameterSchemas[definition.Indicator])}},
+		})
+	}
+	return mustMarshal(map[string]any{"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object",
+		"properties": map[string]any{"indicator": map[string]any{"type": "string", "title": "指标", "enum": []string{"volume_spike", "price_change", "macd", "kdj", "rsi", "bollinger"}, "enumLabels": []string{"放量", "价格波动", "MACD", "KDJ", "RSI", "布林带"}, "default": "rsi"}, "parameters": map[string]any{"type": "object", "title": "指标参数", "default": map[string]any{"period": 14, "direction": "below", "threshold": "30"}}},
+		"required":   []string{"indicator", "parameters"}, "additionalProperties": false, "allOf": variants})
 }
 
 type quantIndicatorAction struct {
-	runtime   *quantRuntime
-	indicator string
+	runtime *quantRuntime
 }
 
 type quantIndicatorConfig struct {
-	Venue         string
-	Market        string
-	Instrument    string
-	CheckInterval string
-	Leaf          *quantIndicatorLeaf
+	Source string
+	Leaf   *quantIndicatorLeaf
 }
 
 type quantIndicatorLeaf struct {
@@ -119,118 +105,95 @@ type quantIndicatorPoint struct {
 }
 
 func (a quantIndicatorAction) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
-	config, err := parseQuantIndicatorConfig(request.Config, a.indicator)
+	config, err := parseQuantIndicatorConfig(request.Config)
 	if err != nil {
 		return sdk.ActionResult{}, err
 	}
 	var input struct {
-		EventTime   string `json:"eventTime"`
-		PathEntered bool   `json:"pathEntered"`
+		Context   *quantMarketContext `json:"context"`
+		CloseTime string              `json:"closeTime"`
 	}
 	if !decodeQuantStrict(request.Input, &input) {
-		return sdk.ActionResult{}, errors.New("quant indicator condition input is invalid")
+		return sdk.ActionResult{}, errors.New("invalid market context")
 	}
-	evaluatedAt, err := parseQuantUTCTime(input.EventTime)
+	series, err := resolveQuantMarketProfile(ctx, request.Profiles, request.ProfileBindings, "market")
 	if err != nil {
 		return sdk.ActionResult{}, err
 	}
-	previousAt := evaluatedAt.Add(-quantIntervals[config.CheckInterval])
-	leaf, lookback := config.Leaf, quantIndicatorLookback(config.Leaf)
-	duration := quantIntervals[leaf.Interval]
-	extra := int((quantIntervals[config.CheckInterval] + duration - 1) / duration)
-	candles, err := a.runtime.loadQuantCandlesThroughClose(ctx, quantSeriesConfig{
-		Venue: config.Venue, Market: config.Market, Instrument: config.Instrument, Interval: leaf.Interval,
-	}, evaluatedAt, lookback+extra+2)
+	evaluatedAt := request.TriggeredAt
+	if input.Context != nil && input.Context.AsOf != "" {
+		evaluatedAt, err = parseQuantUTCTime(input.Context.AsOf)
+	} else if input.CloseTime != "" {
+		evaluatedAt, err = parseQuantUTCTime(input.CloseTime)
+	}
 	if err != nil {
 		return sdk.ActionResult{}, err
 	}
-	if len(candles) > 0 {
-		if err := validateStrategyCandles(sdk.EvaluateRequest{
-			Market: config.Market, Instrument: config.Instrument, Interval: leaf.Interval,
-			Candles: quantSDKCandles(candles), EvaluatedAt: evaluatedAt,
-		}); err != nil {
-			return sdk.ActionResult{}, err
+	config.Leaf.Interval = series.Interval
+	lookback := quantIndicatorLookback(config.Leaf)
+	candles, err := a.runtime.loadQuantCandlesThroughClose(ctx, series, evaluatedAt, lookback+1)
+	if err != nil {
+		return sdk.ActionResult{}, err
+	}
+	point := quantIndicatorPoint{Values: map[string]string{}}
+	problem := ""
+	if problem == "" && (len(candles) == 0 || !quantLatestCandleAvailable(candles, evaluatedAt, series.Interval)) {
+		problem = "应有闭合 K 线尚未到达"
+	}
+	if problem == "" {
+		if err := validateStrategyCandles(sdk.EvaluateRequest{Market: series.Market, Instrument: series.Instrument, Interval: series.Interval, Candles: quantSDKCandles(candles), EvaluatedAt: evaluatedAt}); err != nil {
+			problem = "行情存在缺口"
+		} else {
+			point, err = evaluateQuantIndicatorLeaf(config.Leaf, candles)
+			if err != nil {
+				return sdk.ActionResult{}, err
+			}
+			if !point.Ready {
+				problem = "历史数据不足"
+			}
 		}
-		if !candles[len(candles)-1].CloseTime.Add(duration).After(evaluatedAt) {
-			return sdk.ActionResult{}, errors.New("quant indicator candles are stale")
+	}
+	if problem != "" && request.ExecutionMode != sdk.ExecutionModeBacktestFrame {
+		deadline := request.TriggeredAt.Add(30 * time.Second)
+		if time.Now().UTC().Before(deadline) {
+			return sdk.ActionResult{Output: quantIndicatorOutput(config, series, evaluatedAt, point, problem), Wait: &sdk.WaitRequest{BlockFollowingRuns: true, Key: request.OperationKey, Until: deadline, WakeAt: time.Now().UTC().Add(time.Second), Data: json.RawMessage(`{}`)}}, nil
 		}
 	}
-	current, err := evaluateQuantIndicatorLeaf(leaf, quantCandlesAt(candles, evaluatedAt, lookback))
-	if err != nil {
-		return sdk.ActionResult{}, err
+	port := "false"
+	if problem != "" || !point.Ready {
+		port = "unavailable"
+	} else if point.Matched {
+		port = "true"
 	}
-	previous, err := evaluateQuantIndicatorLeaf(leaf, quantCandlesAt(candles, previousAt, lookback))
-	if err != nil {
-		return sdk.ActionResult{}, err
-	}
-	ready := current.Ready && previous.Ready
-	matched := ready && current.Matched
-	previousMatched := previous.Ready && previous.Matched
-	branch, previousBranch := "false", "false"
-	if matched {
-		branch = "true"
-	}
-	if previousMatched {
-		previousBranch = "true"
-	}
-	entered := branch != previousBranch || input.PathEntered
-	triggered := matched && entered
-	formula := leaf.Name
-	summary := fmt.Sprintf("%s %s 未命中：%s", strings.ToUpper(config.Market), config.Instrument, formula)
-	if matched {
-		closePrice := ""
-		if len(candles) > 0 {
-			closePrice = candles[len(candles)-1].Close.String()
-		}
-		summary = fmt.Sprintf("🚨【指标警报】%s %s · %s\n🎯 %s\n💰 收盘价 %s\n⏰ K线收盘 %s",
-			strings.ToUpper(config.Market), config.Instrument, leaf.Interval, current.Summary, closePrice, current.CandleCloseTime)
-	} else if !ready {
-		summary = fmt.Sprintf("%s %s 历史数据不足：%s", strings.ToUpper(config.Market), config.Instrument, formula)
-	}
-	return sdk.ActionResult{Output: mustMarshal(map[string]any{
-		"ready": ready, "matched": matched, "previousMatched": previousMatched,
-		"branch": branch, "entered": entered, "triggered": triggered,
-		"evaluatedAt": evaluatedAt.Format(time.RFC3339Nano), "previousEvaluatedAt": previousAt.Format(time.RFC3339Nano),
-		"businessKey": fmt.Sprintf("quant:%s:%s:%s", config.Market, config.Instrument, request.NodeInstanceID),
-		"summary":     summary, "formula": formula, "venue": config.Venue, "market": config.Market, "instrument": config.Instrument,
-		"indicator": leaf.Indicator, "interval": leaf.Interval,
-		"candleCloseTime": current.CandleCloseTime, "previousCandleCloseTime": previous.CandleCloseTime,
-		"value": current.Values, "previousValue": previous.Values,
-	})}, nil
+	return sdk.ActionResult{Port: port, Output: quantIndicatorOutput(config, series, evaluatedAt, point, problem)}, nil
 }
 
-func parseQuantIndicatorConfig(raw json.RawMessage, indicator string) (quantIndicatorConfig, error) {
+func quantIndicatorOutput(config quantIndicatorConfig, series quantSeriesConfig, asOf time.Time, point quantIndicatorPoint, problem string) json.RawMessage {
+	var matched any = point.Matched
+	if problem != "" || !point.Ready {
+		matched = nil
+		point.Ready = false
+		point.Summary = config.Source + ": " + problem
+	}
+	if point.Values == nil {
+		point.Values = map[string]string{}
+	}
+	return mustMarshal(map[string]any{"available": point.Ready, "matched": matched, "evaluatedAt": asOf.Format(time.RFC3339Nano), "source": config.Source, "summary": point.Summary, "venue": series.Venue, "market": series.Market, "instrument": series.Instrument, "interval": series.Interval, "indicator": config.Leaf.Indicator, "candleCloseTime": point.CandleCloseTime, "value": point.Values})
+}
+
+func parseQuantIndicatorConfig(raw json.RawMessage) (quantIndicatorConfig, error) {
 	var payload struct {
-		Venue         string          `json:"venue"`
-		Market        string          `json:"market"`
-		Instrument    string          `json:"instrument"`
-		CheckInterval string          `json:"checkInterval"`
-		Name          string          `json:"name"`
-		Interval      string          `json:"interval"`
-		Parameters    json.RawMessage `json:"parameters"`
+		Indicator  string          `json:"indicator"`
+		Parameters json.RawMessage `json:"parameters"`
 	}
-	if !decodeQuantStrict(raw, &payload) {
-		return quantIndicatorConfig{}, errors.New("quant indicator condition configuration is invalid")
+	if !decodeQuantStrict(raw, &payload) || payload.Indicator == "" {
+		return quantIndicatorConfig{}, errors.New("invalid indicator configuration")
 	}
-	series, err := parseQuantSeriesConfig(mustMarshal(map[string]any{
-		"venue": payload.Venue, "market": payload.Market, "instrument": payload.Instrument, "interval": payload.CheckInterval,
-	}))
+	parameters, err := parseQuantIndicatorParameters(payload.Indicator, payload.Parameters)
 	if err != nil {
 		return quantIndicatorConfig{}, err
 	}
-	payload.Name = strings.TrimSpace(payload.Name)
-	if payload.Name == "" || utf8.RuneCountInString(payload.Name) > 80 {
-		return quantIndicatorConfig{}, errors.New("quant indicator condition name is invalid")
-	}
-	if _, ok := quantIntervals[payload.Interval]; !ok {
-		return quantIndicatorConfig{}, errors.New("quant indicator interval is unsupported")
-	}
-	parameters, err := parseQuantIndicatorParameters(indicator, payload.Parameters)
-	if err != nil {
-		return quantIndicatorConfig{}, err
-	}
-	leaf := &quantIndicatorLeaf{Name: payload.Name, Interval: payload.Interval, Indicator: indicator, Parameters: parameters}
-	return quantIndicatorConfig{Venue: series.Venue, Market: series.Market, Instrument: series.Instrument, CheckInterval: series.Interval, Leaf: leaf}, nil
+	return quantIndicatorConfig{Source: "market", Leaf: &quantIndicatorLeaf{Name: payload.Indicator, Indicator: payload.Indicator, Parameters: parameters}}, nil
 }
 
 func parseQuantIndicatorParameters(indicator string, raw json.RawMessage) (quantIndicatorParameters, error) {

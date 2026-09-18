@@ -51,21 +51,19 @@ func (a quantWorkflowBacktestAction) Execute(ctx context.Context, request sdk.Ac
 	if request.Frames == nil {
 		return sdk.ActionResult{}, errors.New("Quant backtest frame executor is unavailable")
 	}
-	series, err := parseQuantSeriesConfig(request.Config)
+	series, err := resolveQuantMarketProfile(ctx, request.Profiles, request.ProfileBindings, "market")
 	if err != nil {
 		return sdk.ActionResult{}, err
 	}
-	var input struct {
-		StartTime, EndTime, InitialCapital, FeeRate, SlippageRate string
+	profile, err := resolveQuantBacktestProfile(ctx, request.Profiles, request.ProfileBindings, "backtest")
+	if err != nil {
+		return sdk.ActionResult{}, err
 	}
-	if !decodeQuantStrict(request.Input, &input) {
-		return sdk.ActionResult{}, errors.New("Quant workflow backtest input is invalid")
-	}
-	start, startErr := parseQuantUTCTime(input.StartTime)
-	end, endErr := parseQuantUTCTime(input.EndTime)
-	capital, capitalErr := decimal.NewFromString(input.InitialCapital)
-	feeRate, feeErr := decimal.NewFromString(input.FeeRate)
-	slippageRate, slippageErr := decimal.NewFromString(input.SlippageRate)
+	start, startErr := parseQuantUTCTime(profile.StartTime)
+	end, endErr := parseQuantUTCTime(profile.EndTime)
+	capital, capitalErr := decimal.NewFromString(profile.InitialCapital)
+	feeRate, feeErr := decimal.NewFromString(profile.FeeRate)
+	slippageRate, slippageErr := decimal.NewFromString(profile.SlippageRate)
 	if startErr != nil || endErr != nil || !start.Before(end) || capitalErr != nil || capital.Sign() <= 0 ||
 		feeErr != nil || feeRate.Sign() < 0 || feeRate.GreaterThan(quantOne) ||
 		slippageErr != nil || slippageRate.Sign() < 0 || slippageRate.GreaterThan(quantOne) {
@@ -103,7 +101,7 @@ func (a quantWorkflowBacktestAction) Execute(ctx context.Context, request sdk.Ac
 	detail, err := json.Marshal(map[string]any{
 		"schemaVersion": 2, "strategyId": "workflow-revision", "strategyVersion": request.Revision.RevisionID,
 		"venue": series.Venue, "market": series.Market, "instrument": series.Instrument, "interval": series.Interval,
-		"parameters": input, "candles": detailCandles, "points": simulation.Points,
+		"parameters": profile, "candles": detailCandles, "points": simulation.Points,
 	})
 	if err != nil {
 		return sdk.ActionResult{}, errors.New("encode Quant workflow backtest detail failed")
@@ -113,7 +111,7 @@ func (a quantWorkflowBacktestAction) Execute(ctx context.Context, request sdk.Ac
 	if workflowErr != nil || revisionErr != nil {
 		return sdk.ActionResult{}, errors.New("Quant workflow backtest identity is invalid")
 	}
-	parameters, _ := json.Marshal(input)
+	parameters, _ := json.Marshal(profile)
 	manifest, _ := json.Marshal(map[string]any{
 		"venue": series.Venue, "market": series.Market, "instrument": series.Instrument, "interval": series.Interval,
 		"firstOpenTime": candles[0].OpenTime.UTC().Format(time.RFC3339Nano),
@@ -184,13 +182,10 @@ func executeQuantWorkflowBacktest(ctx context.Context, frames sdk.FrameExecutor,
 		}
 		current, next := candles[index], candles[index+1]
 		frame, err := frames.ExecuteFrame(ctx, sdk.FrameRequest{
-			SourcePort: "each",
-			SourceOutput: mustMarshal(map[string]any{
-				"branch": "each", "eventTime": current.CloseTime.UTC().Format(time.RFC3339Nano),
-				"evaluatedAt": current.CloseTime.UTC().Format(time.RFC3339Nano),
-			}),
-			Event:   map[string]string{"type": "backtest", "time": current.CloseTime.UTC().Format(time.RFC3339Nano), "triggeredAt": current.CloseTime.UTC().Format(time.RFC3339Nano)},
-			Context: mustMarshal(map[string]any{"previousTargetPosition": target.String()}), ResultNodeIDs: resultNodeIDs,
+			SourcePort:   "each",
+			SourceOutput: mustMarshal(quantCandleData(current)),
+			Event:        map[string]string{"type": "market.candle.closed", "time": current.CloseTime.UTC().Format(time.RFC3339Nano), "triggeredAt": current.CloseTime.UTC().Format(time.RFC3339Nano), "input": string(mustMarshal(quantCandleData(current)))},
+			Context:      mustMarshal(map[string]any{"previousTargetPosition": target.String()}), ResultNodeIDs: resultNodeIDs,
 		})
 		if err != nil {
 			return quantWorkflowBacktestSimulation{}, err
@@ -256,7 +251,7 @@ func executeQuantWorkflowBacktest(ctx context.Context, frames sdk.FrameExecutor,
 func quantWorkflowBacktestResult(backtest quantBacktest) sdk.ActionResult {
 	output := quantBacktestOutput(backtest)
 	output["branch"] = "completed"
-	return sdk.ActionResult{Output: mustMarshal(output)}
+	return sdk.ActionResult{Port: "completed", Output: mustMarshal(output)}
 }
 
 var _ sdk.ActionHandler = quantWorkflowBacktestAction{}

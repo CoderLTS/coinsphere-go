@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"coinsphere/backend/internal/db"
+	"coinsphere/backend/plugin/sdk"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -30,7 +31,7 @@ type WorkflowEventView struct {
 }
 
 func (a *App) PublishWorkflowEvent(ctx context.Context, event cloudevents.Event) (WorkflowEventView, error) {
-	record, err := a.persistWorkflowEvent(ctx, event, 0)
+	record, err := a.persistWorkflowEvent(ctx, event, 0, "")
 	if err != nil {
 		return WorkflowEventView{}, err
 	}
@@ -43,7 +44,7 @@ func (a *App) Emit(ctx context.Context, event cloudevents.Event) error {
 	return err
 }
 
-func (a *App) PublishWorkflowWebhook(ctx context.Context, workflowID int64, secret, eventID, partitionKey string, data map[string]any) (WorkflowEventView, error) {
+func (a *App) PublishWorkflowWebhook(ctx context.Context, workflowID int64, triggerNodeID, secret, eventID, partitionKey string, data map[string]any) (WorkflowEventView, error) {
 	eventID = strings.TrimSpace(eventID)
 	partitionKey = strings.TrimSpace(partitionKey)
 	if workflowID <= 0 || strings.TrimSpace(secret) == "" || len(secret) > maxWorkflowSecretBytes || eventID == "" || len(eventID) > 128 ||
@@ -65,7 +66,7 @@ func (a *App) PublishWorkflowWebhook(ctx context.Context, workflowID int64, secr
 		if err != nil {
 			return errors.New("load webhook workflow graph failed")
 		}
-		trigger := graph.nodes[revision.MainTriggerNodeID]
+		trigger := graph.nodes[triggerNodeID]
 		if trigger.NodeType != "official.connector.webhook" {
 			return fmt.Errorf("%w: webhook", ErrNotFound)
 		}
@@ -88,7 +89,7 @@ func (a *App) PublishWorkflowWebhook(ctx context.Context, workflowID int64, secr
 		if json.Unmarshal(trigger.Config, &config) != nil || strings.TrimSpace(config.EventType) == "" {
 			return errors.New("webhook trigger configuration is invalid")
 		}
-		source := fmt.Sprintf("urn:coinsphere:connector:webhook:%d", workflowID)
+		source := fmt.Sprintf("urn:coinsphere:connector:webhook:%d:%s", workflowID, triggerNodeID)
 		identity := fmt.Sprintf("%d:%s%s", len(source), source, eventID)
 		if err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtextextended(?, 0))`, identity).Error; err != nil {
 			return errors.New("lock webhook event identity failed")
@@ -115,7 +116,7 @@ func (a *App) PublishWorkflowWebhook(ctx context.Context, workflowID int64, secr
 		if err := event.SetData(cloudevents.ApplicationJSON, data); err != nil {
 			return errors.New("encode webhook event failed")
 		}
-		record, err = a.persistWorkflowEventTx(tx, event, workflowID)
+		record, err = a.persistWorkflowEventTx(tx, event, workflowID, triggerNodeID)
 		return err
 	})
 	if err != nil {
@@ -138,17 +139,17 @@ func (a *App) publishWorkflowEventRunUpdates(eventRecordID int64) {
 	}
 }
 
-func (a *App) persistWorkflowEvent(ctx context.Context, event cloudevents.Event, targetWorkflowID int64) (db.WorkflowEventRecord, error) {
+func (a *App) persistWorkflowEvent(ctx context.Context, event cloudevents.Event, targetWorkflowID int64, targetNodeID string) (db.WorkflowEventRecord, error) {
 	var record db.WorkflowEventRecord
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
-		record, err = a.persistWorkflowEventTx(tx, event, targetWorkflowID)
+		record, err = a.persistWorkflowEventTx(tx, event, targetWorkflowID, targetNodeID)
 		return err
 	})
 	return record, err
 }
 
-func (a *App) persistWorkflowEventTx(tx *gorm.DB, event cloudevents.Event, targetWorkflowID int64) (db.WorkflowEventRecord, error) {
+func (a *App) persistWorkflowEventTx(tx *gorm.DB, event cloudevents.Event, targetWorkflowID int64, targetNodeID string) (db.WorkflowEventRecord, error) {
 	raw, partitionKey, _, err := validateWorkflowCloudEvent(event)
 	if err != nil {
 		return db.WorkflowEventRecord{}, err
@@ -175,7 +176,10 @@ func (a *App) persistWorkflowEventTx(tx *gorm.DB, event cloudevents.Event, targe
 			return db.WorkflowEventRecord{}, fmt.Errorf("%w: CloudEvent identity already has different content", ErrConflict)
 		}
 	}
-	if err := a.deliverWorkflowEventTx(tx, record, event, targetWorkflowID, now); err != nil {
+	if err := wakeWorkflowWaits(tx, record, now); err != nil {
+		return db.WorkflowEventRecord{}, err
+	}
+	if err := a.deliverWorkflowEventTx(tx, record, event, targetWorkflowID, targetNodeID, now); err != nil {
 		return db.WorkflowEventRecord{}, err
 	}
 	return record, nil
@@ -208,65 +212,94 @@ func validateWorkflowCloudEvent(event cloudevents.Event) ([]byte, string, map[st
 	return raw, partitionKey, data, nil
 }
 
-func (a *App) deliverWorkflowEventTx(tx *gorm.DB, record db.WorkflowEventRecord, event cloudevents.Event, targetWorkflowID int64, now time.Time) error {
+func (a *App) deliverWorkflowEventTx(tx *gorm.DB, record db.WorkflowEventRecord, event cloudevents.Event, targetWorkflowID int64, targetNodeID string, now time.Time) error {
 	query := tx.Where("status = ? AND active_revision_id IS NOT NULL", WorkflowStatusActive)
 	if targetWorkflowID > 0 {
 		query = query.Where("id = ?", targetWorkflowID)
-	} else {
-		query = query.Where("mode = ?", WorkflowModeEvent)
 	}
 	var workflows []db.Workflow
 	if err := query.Order("id").Find(&workflows).Error; err != nil {
-		return errors.New("load workflow event subscribers failed")
+		return err
 	}
 	if targetWorkflowID > 0 && len(workflows) == 0 {
-		return fmt.Errorf("%w: target workflow is not running", ErrConflict)
+		return fmt.Errorf("%w: target workflow is not active", ErrConflict)
 	}
 	for _, workflow := range workflows {
 		var revision db.WorkflowRevision
 		if err := tx.First(&revision, *workflow.ActiveRevisionID).Error; err != nil {
-			return errors.New("load workflow event revision failed")
+			return err
 		}
 		graph, err := a.buildWorkflowRunGraph(revision.GraphJSON)
 		if err != nil {
-			return errors.New("load workflow event graph failed")
-		}
-		trigger := graph.nodes[revision.MainTriggerNodeID]
-		if targetWorkflowID == 0 && !workflowEventTriggerMatches(trigger.Config, event) {
-			continue
-		}
-		var existing int64
-		if err := tx.Model(&db.WorkflowEventDelivery{}).
-			Where("event_record_id = ? AND workflow_id = ?", record.ID, workflow.ID).Count(&existing).Error; err != nil {
-			return errors.New("check workflow event delivery failed")
-		}
-		if existing > 0 {
-			continue
-		}
-		if err := enforceWorkflowBacklog(tx, workflow.ID); err != nil {
 			return err
 		}
-		triggerType := WorkflowModeEvent
-		if workflow.Mode == WorkflowModeStream {
-			triggerType = WorkflowModeStream
-		} else if trigger.NodeType == "official.connector.webhook" {
-			triggerType = "webhook"
-		} else if event.Type() == workflowFailureEventType {
-			triggerType = "failure"
-		}
-		run := db.WorkflowRun{
-			WorkflowID: workflow.ID, RevisionID: revision.ID, EntryPoint: "realtime", InputJSON: `{}`, TriggerType: triggerType,
-			TriggerKey: fmt.Sprint(record.ID), EventRecordID: &record.ID, PartitionKey: record.PartitionKey,
-			Status: RunStatusQueued, NotBefore: now, TriggeredAt: event.Time().UTC(), ResultSummary: `{}`, CreatedAt: now, UpdatedAt: now,
-		}
-		if err := tx.Create(&run).Error; err != nil {
-			return errors.New("create workflow event run failed")
-		}
-		delivery := db.WorkflowEventDelivery{
-			EventRecordID: record.ID, WorkflowID: workflow.ID, RevisionID: revision.ID, RunID: run.ID, CreatedAt: now,
-		}
-		if err := tx.Create(&delivery).Error; err != nil {
-			return errors.New("record workflow event delivery failed")
+		for _, trigger := range graph.graph.Nodes {
+			desc := graph.descriptors[trigger.NodeInstanceID]
+			if desc.Kind != sdk.NodeKindTrigger {
+				continue
+			}
+			if targetWorkflowID > 0 {
+				if trigger.NodeInstanceID != targetNodeID {
+					continue
+				}
+			} else {
+				config := trigger.Config
+				if desc.EventSubscription != nil {
+					subscription, err := desc.EventSubscription(config)
+					if err != nil {
+						if err := tx.Model(&db.WorkflowTriggerRuntime{}).Where("workflow_id=? AND node_instance_id=?", workflow.ID, trigger.NodeInstanceID).Updates(map[string]any{"status": WorkflowTriggerStatusError, "error_category": "subscription", "updated_at": now}).Error; err != nil {
+							return err
+						}
+						continue
+					}
+					config = mustJSON(subscription)
+				} else if trigger.NodeType != "core.event" {
+					continue
+				}
+				if !workflowEventTriggerMatches(config, event) {
+					continue
+				}
+			}
+			var entry db.WorkflowTriggerRuntime
+			if err := tx.Where("workflow_id=? AND node_instance_id=? AND revision_id=?", workflow.ID, trigger.NodeInstanceID, revision.ID).First(&entry).Error; err != nil {
+				return err
+			}
+			if entry.Status != WorkflowTriggerStatusRunning {
+				continue
+			}
+			var existing int64
+			if err := tx.Model(&db.WorkflowEventDelivery{}).Where("event_record_id=? AND workflow_id=? AND trigger_node_id=?", record.ID, workflow.ID, trigger.NodeInstanceID).Count(&existing).Error; err != nil {
+				return err
+			}
+			if existing > 0 {
+				continue
+			}
+			if err := enforceWorkflowBacklog(tx, workflow.ID); err != nil {
+				return err
+			}
+			triggerType := "event"
+			if trigger.NodeType == "official.connector.webhook" {
+				triggerType = "webhook"
+			} else if targetWorkflowID > 0 {
+				triggerType = "stream"
+			} else if event.Type() == workflowFailureEventType {
+				triggerType = "failure"
+			}
+			run := db.WorkflowRun{WorkflowID: workflow.ID, RevisionID: revision.ID, TriggerNodeID: trigger.NodeInstanceID, EntryNodeInstanceID: trigger.NodeInstanceID, TriggerInstanceID: trigger.NodeInstanceID, TriggerEventID: fmt.Sprint(record.ID), ProfileSnapshot: workflowProfileSnapshot(graph.graph), OperationJSON: `{}`, InputJSON: `{}`, TriggerType: triggerType, TriggerKey: fmt.Sprint(record.ID), EventRecordID: &record.ID, PartitionKey: record.PartitionKey, Status: RunStatusQueued, NotBefore: now, TriggeredAt: event.Time().UTC(), ResultSummary: `{}`, CreatedAt: now, UpdatedAt: now}
+			if err := tx.Create(&run).Error; err != nil {
+				return errors.New("create workflow event run failed")
+			}
+			runGraph := buildWorkflowRunGraph(graph.graph, graph.nodes, graph.descriptors, trigger.NodeInstanceID)
+			if err := tx.Transaction(func(savepoint *gorm.DB) error { return a.snapshotRunConnections(savepoint, run, runGraph) }); err != nil {
+				// 配置故障属于此入口的运行；保留投递去重，继续投递其他入口。
+				if err := tx.Model(&run).Updates(map[string]any{"status": RunStatusFailed, "completed_at": now, "error_category": "connection", "error_message": "运行连接不可用", "updated_at": now}).Error; err != nil {
+					return err
+				}
+			}
+			delivery := db.WorkflowEventDelivery{EventRecordID: record.ID, WorkflowID: workflow.ID, RevisionID: revision.ID, TriggerNodeID: trigger.NodeInstanceID, RunID: run.ID, CreatedAt: now}
+			if err := tx.Create(&delivery).Error; err != nil {
+				return errors.New("record workflow event delivery failed")
+			}
 		}
 	}
 	return nil
@@ -342,7 +375,7 @@ func (a *App) dispatchWorkflowEventOutbox(ctx context.Context, now time.Time) er
 		item.AttemptCount++
 		var event cloudevents.Event
 		if err := json.Unmarshal([]byte(item.EventJSON), &event); err == nil {
-			record, err = a.persistWorkflowEventTx(tx, event, 0)
+			record, err = a.persistWorkflowEventTx(tx, event, 0, "")
 			if err == nil {
 				return tx.Model(&item).Updates(map[string]any{
 					"status": "published", "attempt_count": item.AttemptCount, "published_at": now,

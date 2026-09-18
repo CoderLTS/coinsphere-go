@@ -5,11 +5,16 @@ import (
 	"encoding/json"
 
 	"coinsphere/backend/plugin/sdk"
+	profileStore "coinsphere/backend/plugin/sdk/profile"
 )
 
 var candleSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"venue":{"type":"string","const":"binance"},"market":{"type":"string","enum":["spot","usdm"]},"instrument":{"type":"string"},"interval":{"type":"string"},"openTime":{"type":"string","format":"date-time"},"closeTime":{"type":"string","format":"date-time"},"open":{"type":"string","x-coinsphere-decimal":true},"high":{"type":"string","x-coinsphere-decimal":true},"low":{"type":"string","x-coinsphere-decimal":true},"close":{"type":"string","x-coinsphere-decimal":true},"volume":{"type":"string","x-coinsphere-decimal":true}},"required":["venue","market","instrument","interval","openTime","closeTime","open","high","low","close","volume"],"additionalProperties":false}`)
-var candleStreamSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"market":{"type":"string","title":"市场类型","enum":["spot","usdm"],"default":"spot"},"proxyId":{"type":"integer","title":"代理","minimum":0,"default":0,"x-coinsphere-proxy":true},"instrument":{"type":"string","title":"交易对","pattern":"^[A-Z0-9]{2,32}$","default":"BTCUSDT"},"intervals":{"type":"array","title":"K 线周期","items":{"type":"string","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"]},"minItems":1,"maxItems":14,"uniqueItems":true,"default":["1m"]}},"required":["market","instrument","intervals"],"additionalProperties":false}`)
-var candleBackfillSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"market":{"type":"string","title":"市场类型","enum":["spot","usdm"],"default":"spot"},"proxyId":{"type":"integer","title":"代理","minimum":0,"default":0,"x-coinsphere-proxy":true},"instrument":{"type":"string","title":"交易对","pattern":"^[A-Z0-9]{2,32}$","default":"BTCUSDT"},"intervals":{"type":"array","title":"K 线周期","items":{"type":"string","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"]},"minItems":1,"maxItems":14,"uniqueItems":true,"default":["1h"]},"candleCount":{"type":"integer","title":"每周期 K 线数量","minimum":1,"maximum":10000,"default":500},"endTime":{"type":"string","title":"结束时间（UTC）","default":""}},"required":["market","instrument","intervals","candleCount"],"additionalProperties":false}`)
+
+// The realtime trigger takes its market identity from the required market.data
+// ProfileSlot.  Keeping the trigger config empty prevents a second, divergent
+// copy of venue, symbol and interval from appearing in the workflow node.
+var candleStreamSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false}`)
+var candleBackfillSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"candleCount":{"type":"integer","title":"K 线数量","minimum":1,"maximum":10000,"default":500},"endTime":{"type":"string","title":"结束时间（UTC）","format":"date-time"}},"required":["candleCount"],"additionalProperties":false}`)
 var candleBackfillOutput = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"market":{"type":"string"},"instrument":{"type":"string"},"intervals":{"type":"array","items":{"type":"string"}},"requestedCountPerInterval":{"type":"integer"},"fetchedCount":{"type":"integer"},"insertedCount":{"type":"integer"},"completedAt":{"type":"string","format":"date-time"}},"required":["market","instrument","intervals","requestedCountPerInterval","fetchedCount","insertedCount","completedAt"],"additionalProperties":false}`)
 
 func Register(registrar sdk.Registrar, host sdk.Host) error {
@@ -21,22 +26,37 @@ func Register(registrar sdk.Registrar, host sdk.Host) error {
 	if host.OutboundProxy != nil {
 		resolveProxy = host.OutboundProxy.ResolveOutboundProxy
 	}
-	runtime := &binanceRuntime{db: host.Store.DB(), client: client, resolveProxy: resolveProxy}
+	runtime := &binanceRuntime{db: host.Store.DB(), client: client, resolveProxy: resolveProxy, profiles: host.Profiles}
 	runtime.hub = newBinanceCandleHub(runtime)
+	marketProfiles, err := newMarketDataProfileProvider(host)
+	if err != nil {
+		return err
+	}
+	if err := registrar.Profile(marketProfiles.store.Descriptor(), marketProfiles); err != nil {
+		return err
+	}
+	if err := profileStore.RegisterRoutes(registrar, marketProfiles.store); err != nil {
+		return err
+	}
+	if err := registerTradingProfiles(registrar, host); err != nil {
+		return err
+	}
 	if err := registrar.MarketDataProvider(marketDataProvider{runtime: runtime}); err != nil {
 		return err
 	}
 	if err := registrar.Trigger(withNodeMeta(sdk.NodeDescriptor{
 		Type: "official.binance.realtime_candles", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
-		ConfigSchema: candleStreamSchema, UISchema: json.RawMessage(`{"ui:order":["market","proxyId","instrument","intervals"]}`),
+		ConfigSchema: candleStreamSchema, UISchema: json.RawMessage(`{"ui:order":[]}`),
 		InputSchema: emptyObjectSchema, OutputSchema: candleSchema, Pool: sdk.PoolStream, SideEffect: sdk.SideEffectData, State: sdk.StateStateless,
+		ProfileSlots: []sdk.ProfileSlot{{Key: "market", Title: "行情 Profile", ProfileTypes: []string{"market.data"}, Required: true}},
 	}, "Binance K 线实时采集", "采集并发布 Binance 已闭合 K 线。", "market", "#0f766e", "activity"), binanceCandleRealtimeTrigger{runtime: runtime}); err != nil {
 		return err
 	}
 	if err := registrar.Action(withNodeMeta(sdk.NodeDescriptor{
 		Type: "official.binance.backfill_candles", Version: "1.0.0", Kind: sdk.NodeKindAction,
-		ConfigSchema: candleBackfillSchema, UISchema: json.RawMessage(`{"ui:order":["market","proxyId","instrument","intervals","candleCount","endTime"]}`),
+		ConfigSchema: candleBackfillSchema, UISchema: json.RawMessage(`{"ui:order":["candleCount","endTime"]}`),
 		InputSchema: emptyObjectSchema, OutputSchema: candleBackfillOutput, Pool: sdk.PoolStream, SideEffect: sdk.SideEffectData, State: sdk.StateStateless,
+		ProfileSlots: []sdk.ProfileSlot{{Key: "market", Title: "行情 Profile", ProfileTypes: []string{"market.data"}, Required: true}},
 	}, "Binance K 线补数", "补齐 Binance 历史闭合 K 线。", "market", "#0f766e", "database"), binanceCandleBackfillAction{runtime: runtime}); err != nil {
 		return err
 	}
@@ -63,7 +83,7 @@ func Register(registrar sdk.Registrar, host sdk.Host) error {
 	}); err != nil {
 		return err
 	}
-	for _, page := range []sdk.PageDescriptor{{PageKey: "instruments", Title: "币安币种", Icon: "ri:coins-line", KeepAlive: true}, {PageKey: "candles", Title: "币安K线", Icon: "ri:stock-line"}, {PageKey: "live-accounts", Title: "币安账户", Icon: "ri:shield-keyhole-line"}} {
+	for _, page := range []sdk.PageDescriptor{{PageKey: "profiles", Title: "行情 Profiles", Icon: "ri:database-2-line"}, {PageKey: "instruments", Title: "币安币种", Icon: "ri:coins-line", KeepAlive: true}, {PageKey: "candles", Title: "币安K线", Icon: "ri:stock-line"}, {PageKey: "live-accounts", Title: "币安账户", Icon: "ri:shield-keyhole-line"}} {
 		if err := registrar.Page(page); err != nil {
 			return err
 		}

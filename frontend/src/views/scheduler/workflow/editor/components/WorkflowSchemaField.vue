@@ -8,8 +8,9 @@
   受控组件：不改传进来的值，改动一律 emit('update', value)。
 -->
 <template>
+  <ElDatePicker v-if="field.format === 'date-time'" :model-value="value ? new Date(value) : undefined" type="datetime" placeholder="选择日期与时间（本地显示，UTC 保存）" @update:model-value="next => $emit('update', next ? new Date(next).toISOString() : '')" />
   <ElSelect
-    v-if="field.control === 'enum'"
+    v-else-if="field.control === 'enum'"
     :model-value="value"
     class="schema-field__full"
     clearable

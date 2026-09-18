@@ -36,6 +36,7 @@ type binanceRuntime struct {
 	client       sdk.NetworkClient
 	hub          *binanceCandleHub
 	resolveProxy func(context.Context, int64) (string, error)
+	profiles     sdk.ProfileResolver
 	liveLocks    sync.Map
 }
 
@@ -147,19 +148,17 @@ func parseBinanceCandleStreamConfig(raw json.RawMessage) (binanceCandleStreamCon
 	return normalizeBinanceCandleStreamConfig(config)
 }
 
-func parseBinanceCandleBackfillConfig(raw json.RawMessage, now time.Time) (binanceCandleBackfillConfig, error) {
+func parseBinanceCandleBackfillConfig(raw json.RawMessage, profile marketDataProfileConfig, now time.Time) (binanceCandleBackfillConfig, error) {
 	var payload struct {
-		Market, Instrument, EndTime string
-		Intervals                   []string `json:"intervals"`
-		CandleCount                 int      `json:"candleCount"`
-		ProxyID                     int64    `json:"proxyId"`
+		EndTime     string `json:"endTime"`
+		CandleCount int    `json:"candleCount"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&payload) != nil || payload.CandleCount < 1 || payload.CandleCount > 10000 {
 		return binanceCandleBackfillConfig{}, errors.New("Binance candle backfill configuration is invalid")
 	}
-	stream, err := normalizeBinanceCandleStreamConfig(binanceCandleStreamConfig{Market: payload.Market, Instrument: payload.Instrument, Intervals: payload.Intervals, ProxyID: payload.ProxyID})
+	stream, err := normalizeBinanceCandleStreamConfig(binanceCandleStreamConfig{Market: profile.Market, Instrument: profile.Instrument, Intervals: []string{profile.Interval}, ProxyID: profile.ProxyID})
 	if err != nil {
 		return binanceCandleBackfillConfig{}, err
 	}

@@ -228,18 +228,16 @@ type AssistantMessage struct {
 func (AssistantMessage) TableName() string { return "assistant_messages" }
 
 type Workflow struct {
-	ID                int64  `gorm:"primaryKey;autoIncrement"`
-	Name              string `gorm:"size:120"`
-	Description       string `gorm:"size:500"`
-	GroupID           *int64 `gorm:"column:group_id"`
-	Mode              string `gorm:"size:16"`
-	Status            string `gorm:"size:16"`
-	ActiveRevisionID  *int64 `gorm:"column:active_revision_id"`
-	MainTriggerNodeID string `gorm:"column:main_trigger_node_id;size:128"`
-	RetentionDays     int    `gorm:"column:retention_days"`
-	CreatedBy         int64  `gorm:"column:created_by"`
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	ID               int64  `gorm:"primaryKey;autoIncrement"`
+	Name             string `gorm:"size:120"`
+	Description      string `gorm:"size:500"`
+	GroupID          *int64 `gorm:"column:group_id"`
+	Status           string `gorm:"size:16"`
+	ActiveRevisionID *int64 `gorm:"column:active_revision_id"`
+	RetentionDays    int    `gorm:"column:retention_days"`
+	CreatedBy        int64  `gorm:"column:created_by"`
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 func (Workflow) TableName() string { return "workflows" }
@@ -255,14 +253,13 @@ type WorkflowGroup struct {
 func (WorkflowGroup) TableName() string { return "workflow_groups" }
 
 type WorkflowRevision struct {
-	ID                int64  `gorm:"primaryKey;autoIncrement"`
-	WorkflowID        int64  `gorm:"column:workflow_id"`
-	RevisionNumber    int64  `gorm:"column:revision_number"`
-	GraphJSON         string `gorm:"column:graph_json;type:jsonb"`
-	NodeVersions      string `gorm:"column:node_versions;type:jsonb"`
-	MainTriggerNodeID string `gorm:"column:main_trigger_node_id;size:128"`
-	CreatedBy         int64  `gorm:"column:created_by"`
-	CreatedAt         time.Time
+	ID             int64  `gorm:"primaryKey;autoIncrement"`
+	WorkflowID     int64  `gorm:"column:workflow_id"`
+	RevisionNumber int64  `gorm:"column:revision_number"`
+	GraphJSON      string `gorm:"column:graph_json;type:jsonb"`
+	NodeVersions   string `gorm:"column:node_versions;type:jsonb"`
+	CreatedBy      int64  `gorm:"column:created_by"`
+	CreatedAt      time.Time
 }
 
 func (WorkflowRevision) TableName() string { return "workflow_revisions" }
@@ -282,18 +279,22 @@ type WorkflowRuntime struct {
 	WorkflowID        int64 `gorm:"column:workflow_id;primaryKey"`
 	MaxConcurrentRuns int   `gorm:"column:max_concurrent_runs"`
 	BacklogLimit      int   `gorm:"column:backlog_limit"`
-	NextScheduledAt   *time.Time
-	LastScheduledAt   *time.Time
 	UpdatedAt         time.Time
 }
 
 func (WorkflowRuntime) TableName() string { return "workflow_runtimes" }
 
 type WorkflowRun struct {
+	OperationJSON         string `gorm:"type:jsonb"`
 	ID                    int64  `gorm:"primaryKey;autoIncrement"`
 	WorkflowID            int64  `gorm:"column:workflow_id"`
 	RevisionID            int64  `gorm:"column:revision_id"`
-	EntryPoint            string `gorm:"column:entry_point;size:32"`
+	TriggerNodeID         string `gorm:"column:trigger_node_id;size:128"`
+	EntryNodeInstanceID   string `gorm:"column:entry_node_instance_id;size:128"`
+	TriggerInstanceID     string `gorm:"column:trigger_instance_id;size:128"`
+	TriggerEventID        string `gorm:"column:trigger_event_id;size:128"`
+	ProfileSnapshot       string `gorm:"column:profile_snapshot;type:jsonb"`
+	OperationType         string `gorm:"column:operation_type;size:128"`
 	InputJSON             string `gorm:"column:input_json;type:jsonb"`
 	TriggerType           string `gorm:"column:trigger_type;size:16"`
 	TriggerKey            string `gorm:"column:trigger_key;size:128"`
@@ -337,6 +338,7 @@ type WorkflowEventRecord struct {
 func (WorkflowEventRecord) TableName() string { return "workflow_event_records" }
 
 type WorkflowEventDelivery struct {
+	TriggerNodeID string
 	ID            int64 `gorm:"primaryKey;autoIncrement"`
 	EventRecordID int64
 	WorkflowID    int64
@@ -387,6 +389,8 @@ type WorkflowRunNode struct {
 func (WorkflowRunNode) TableName() string { return "workflow_run_nodes" }
 
 type WorkflowRunCheckpoint struct {
+	Port           string
+	Skipped        bool
 	ID             int64 `gorm:"primaryKey;autoIncrement"`
 	RunID          int64 `gorm:"column:run_id"`
 	RunNodeID      int64 `gorm:"column:run_node_id"`
@@ -404,6 +408,7 @@ type WorkflowRunCheckpoint struct {
 func (WorkflowRunCheckpoint) TableName() string { return "workflow_run_checkpoints" }
 
 type WorkflowNodeState struct {
+	ScopeKey       string `gorm:"primaryKey"`
 	WorkflowID     int64  `gorm:"column:workflow_id;primaryKey"`
 	NodeInstanceID string `gorm:"column:node_instance_id;primaryKey"`
 	NodeType       string
@@ -522,3 +527,63 @@ type NotificationDelivery struct {
 }
 
 func (NotificationDelivery) TableName() string { return "plugin_notification.deliveries" }
+
+type WorkflowTriggerRuntime struct {
+	WorkflowID      int64      `gorm:"primaryKey" json:"workflowId"`
+	NodeInstanceID  string     `gorm:"primaryKey" json:"nodeInstanceId"`
+	RevisionID      int64      `json:"revisionId"`
+	Status          string     `json:"status"`
+	ErrorCategory   string     `json:"errorCategory,omitempty"`
+	RetryCount      int        `json:"retryCount"`
+	NextRetryAt     *time.Time `json:"nextRetryAt,omitempty"`
+	NextScheduledAt *time.Time `json:"nextScheduledAt,omitempty"`
+	LastScheduledAt *time.Time `json:"lastScheduledAt,omitempty"`
+	UpdatedAt       time.Time  `json:"updatedAt"`
+}
+
+func (WorkflowTriggerRuntime) TableName() string { return "workflow_trigger_runtimes" }
+
+type WorkflowWait struct {
+	BlockFollowingRuns bool
+	ID                 int64 `gorm:"primaryKey;autoIncrement"`
+	WorkflowID         int64
+	RevisionID         int64
+	RunID              int64
+	NodeInstanceID     string
+	WaitKey            string
+	Until              time.Time
+	WakeAt             time.Time
+	SubscriptionJSON   string `gorm:"type:jsonb"`
+	DataJSON           string `gorm:"type:jsonb"`
+	Status             string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+func (WorkflowWait) TableName() string { return "workflow_waits" }
+
+type WorkflowConnection struct {
+	ID                string `gorm:"primaryKey"`
+	Name              string
+	Type              string
+	Version           int64
+	Enabled           bool
+	ConfigJSON        string `gorm:"type:jsonb"`
+	SecretsCiphertext string
+	SecretFieldsJSON  string `gorm:"type:jsonb"`
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+func (WorkflowConnection) TableName() string { return "workflow_connections" }
+
+type WorkflowRunConnection struct {
+	RunID             int64  `gorm:"primaryKey"`
+	NodeInstanceID    string `gorm:"primaryKey"`
+	ConnectionID      string
+	Version           int64
+	ConfigJSON        string `gorm:"type:jsonb"`
+	SecretsCiphertext string
+}
+
+func (WorkflowRunConnection) TableName() string { return "workflow_run_connections" }

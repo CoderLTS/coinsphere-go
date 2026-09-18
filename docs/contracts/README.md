@@ -2,6 +2,8 @@
 
 本文只冻结当前已实现的跨模块语义。系统结构见[当前架构](../architecture/overview.md)，插件包与示例见[插件开发指南](../plugin-development.md)；未注册路由不得视为可用接口。
 
+> **Graph v3 基线**：本文中早期关于 Graph v1/v2、`entryPoints`、边 Boolean CEL、`field/cel` 输入绑定和单一主 Trigger 的描述均已被[Graph v3 契约](workflow-graph-v3.md)取代。当前实现不提供旧图兼容读取或写回，业务数据库按新的迁移基线重新初始化。
+
 ## 通用边界
 
 - 领域时间统一使用 UTC。数据库使用 `TIMESTAMPTZ`，HTTP 和事件使用带时区的 RFC 3339。
@@ -30,14 +32,14 @@
 
 - `/api/v1/system/proxies` 提供 HTTP/SOCKS5 代理的列表、新增、更新、启停和删除，`/{proxyId}/validations` 通过 Binance Spot 公共 Ping 检查连通性。接口只允许拥有对应系统代理权限的管理员使用。
 - 代理密码使用服务端 SecretCipher 加密保存，列表和编辑响应只返回是否已配置；编辑时密码留空表示保留，显式清除后删除密文。已被任一工作流修订引用的代理删除返回 `409 Conflict`。
-- `official.binance` 行情节点的 `proxyId` 为 `0` 或缺省时直连；选择正数 ID 时，运行时必须解析到仍存在且已启用的代理，否则节点失败。代理只改变 Binance 公共 REST/WebSocket 的传输路径，不扩大固定主机和公共端点白名单。Quant 回测不读取代理配置，而是通过 `MarketDataRegistry` 使用 Provider。
+- `official.binance` 行情 Profile 固化市场、品种、周期和代理引用；运行时必须解析到仍存在且已启用的代理，否则节点失败。代理只改变 Binance 公共 REST/WebSocket 的传输路径，不扩大固定主机和公共端点白名单。Quant 回放不读取系统代理配置，而是通过已绑定的 `market.data` Profile 和 `MarketDataRegistry` 使用 Provider。
 - `official.connector`、`official.ai`、通知、QQ、Paper 报价和其他 Quant 节点不读取系统代理池，也不继承上述节点的代理选择。
 
 ## 工作流
 
 | 路由                                                        | 语义                                     |
 | ----------------------------------------------------------- | ---------------------------------------- |
-| `GET /api/v1/workflows/templates`                           | 列出当前可创建的批处理、事件和连续流模板 |
+| `GET /api/v1/workflows/templates`                           | 列出当前可创建的 Graph v3 与插件模板       |
 | `POST /api/v1/events`                                       | 发布 CloudEvents 1.0 结构化 JSON         |
 | `POST /api/v1/webhooks/{workflowId}`                        | 通过工作流 Secret 发布 Webhook 事件      |
 | `GET /api/v1/human-tasks`                                   | 查询待处理人工任务                       |
@@ -55,7 +57,7 @@
 | `GET/POST /api/v1/workflows/{workflowId}/revisions`         | 列表，或保存新不可变修订                 |
 | `GET/DELETE /api/v1/workflows/{workflowId}/revisions/{revisionId}` | 读取固定修订，或删除历史修订                    |
 | `POST /api/v1/workflows/{workflowId}/lifecycle`             | 执行 `activate` 或 `deactivate`          |
-| `GET/POST /api/v1/workflows/{workflowId}/runs`              | 搜索运行日志，或创建手工运行             |
+| `GET/POST /api/v1/workflows/{workflowId}/runs`              | 搜索运行日志，或按入口创建手工/逐帧操作运行 |
 | `WS /api/v1/ws/workflows/{workflowId}/runs`                 | 超级管理员订阅轻量运行更新通知           |
 | `GET /api/v1/workflow-runs/{runId}`                         | 读取事件、节点尝试、日志和制品引用       |
 | `POST /api/v1/workflow-runs/{runId}`                        | 执行 `cancel`、`retry` 或 `replay`       |
@@ -73,19 +75,19 @@
 | `POST /api/v1/result-views/{viewId}/runs/{runId}/{action}`  | 按白名单重试或取消范围内运行             |
 | `POST /api/v1/result-views/{viewId}/workflow/pause`         | 按白名单暂停固定工作流                   |
 
-- 创建接受批处理、事件、Connector 和 Quant 模板。事件 Trigger 按类型及可选精确 source/subject 过滤；`core.schedule` 配置必须二选一：`everySeconds` 60 至 86400，或六段 `cronExpression` 加 IANA `timeZone`。图 `schemaVersion` 固定为 `1`，节点保存 `nodeInstanceId`、精确节点版本、普通配置、结构化输入映射和位置；边保存两端端口及可选 Boolean CEL 条件。
+- 创建接受手动、定时、事件、Connector 和 Quant 模板。事件 Trigger 按类型及可选精确 source/subject 过滤；`core.schedule` 配置必须二选一：`everySeconds` 60 至 86400，或六段 `cronExpression` 加 IANA `timeZone`。图 `schemaVersion` 固定为 `3`，节点保存 `nodeInstanceId`、精确节点版本、普通配置、Profile 绑定、类型化输入绑定和位置；边只保存两端端口。
 - 工作流分组是超级管理员共享的单层分类，每个工作流最多归属一个分组；`groupId=null` 表示未分组，既有工作流升级后保持未分组。分组名去除首尾空白后为 1 至 80 个字符且大小写不敏感唯一；删除分组只把其工作流移至未分组，不删除、停用或修改修订。排序请求必须提交当前全部分组 ID 的完整排列，分组集合已并发变化时返回 `409 Conflict`；批量归属请求必须提交 1 至 1000 个唯一正工作流 ID，并在目标分组或任一工作流不存在时整体失败。
-- 输入映射只接受 `field`、`literal`、`cel`。字段来源使用上游 `nodeInstanceId` 和字段路径数组；保存校验端口、可达性、DAG、JSON Schema、字段类型和 CEL，并拒绝 Decimal CEL 算术。图级后向边始终拒绝；`core.loop` 只运行内嵌无环子图，并强制 1 至 100 次上限、绝对超时和 Boolean CEL 退出条件。每轮 RunNode、RunCheckpoint 与操作键都包含迭代号，人工等待节点不能嵌入 Loop。
+- 输入映射只接受 `node`、`event`、`profile`、`literal`。保存校验端口、可达性、DAG、JSON Schema 和字段类型；条件、状态、节流、时间窗口和去重使用显式 Core 控制节点。图级后向边始终拒绝；`core.loop` 只运行内嵌无环子图，并强制 1 至 100 次上限和绝对超时。每轮 RunNode、RunCheckpoint 与操作键都包含迭代号，人工等待节点不能嵌入 Loop。
 - 保存请求必须提供当前 `expectedActiveRevisionId`。服务锁定工作流，校验完整图，写入递增修订、修订级密钥绑定并原子切换活动指针；每个工作流只保留最新 10 个修订，第 11 个修订保存时在同一事务删除最旧修订及其密钥绑定。最旧修订仍被运行事实引用时返回 `409 Conflict` 并整体回滚。并发旧指针返回 `409 Conflict`，失败校验不创建修订。同一节点实例的类型和版本不变时保留持久状态；删除节点或修改类型/版本且已有状态时，工作流必须为 `inactive`，并由管理员通过 `resetStateNodeInstanceIds` 精确确认要重置的节点，状态删除与修订激活在同一事务提交。
 - `secretChanges` 只允许替换或移除节点 Config Schema 声明的顶层 `x-coinsphere-secret` 字段。密钥按修订、节点实例和字段独立加密；响应只返回 `secretFields[nodeInstanceId][field]=true`，图、修订响应和节点目录永不返回密钥值。
-- 修订保存后不可更新。具有 `scheduler.workflow_definitions.delete` 权限的管理员可以删除非活动历史修订；服务在同一事务删除该修订的执行记录、关联结果、节点状态迁移和修订级密钥，活动修订仍返回 `409 Conflict`。保留上限清理仍拒绝删除有 Run 引用的最旧修订。相同权限也可删除非激活工作流；仍有运行中 Run 时返回 `409 Conflict`，否则在同一事务删除全部运行明细、结果、修订、运行时和工作流。该操作不可恢复。工作流状态只有 `inactive / active / error`；Trigger 异常退出进入 `error`，管理员先 `deactivate` 恢复为 `inactive`，确认修复后再 `activate`。
-- `activate` 允许 Run 队列领取工作并启动连续流 Trigger；`deactivate` 停止领取新 Run、取消 Trigger，当前 Action 返回后保存检查点并重新排队。手工触发只适用于 `core.manual`；`core.schedule` 按固定间隔或带时区 Cron 去重入队，服务恢复后最多补一次漏跑。TriggerHandler 必须响应取消和 Emitter 背压；进程重启会从数据库扫描仍为 `active` 的连续流。
+- 修订保存后不可更新。具有 `scheduler.workflow_definitions.delete` 权限的管理员可以删除非活动历史修订；服务在同一事务删除该修订的执行记录、关联结果、节点状态迁移和修订级密钥，活动修订仍返回 `409 Conflict`。保留上限清理仍拒绝删除有 Run 引用的最旧修订。相同权限也可删除非激活工作流；仍有运行中 Run 时返回 `409 Conflict`，否则在同一事务删除全部运行明细、结果、修订、运行时和工作流。该操作不可恢复。工作流状态只有 `inactive / active`；每个 Trigger 单独展示 `running / waiting / error / disabled`，Trigger 错误不会改变其他入口的运行状态。
+- `activate` 允许 Run 队列领取工作并启动全部 Trigger；`deactivate` 停止领取新 Run、取消 Trigger，当前 Action 返回后保存检查点并重新排队。每个入口独立创建 Run；手工运行从用户选定的 `manualTrigger` 入口开始，`core.schedule` 按固定间隔或带时区 Cron 去重入队，服务恢复后最多补一次漏跑。单个 Trigger 的连接或恢复失败只进入 Trigger 级 `error` 并进行有界重试，不阻止其他入口。
 - CloudEvent 要求 1.0、UTC 时间、对象 `data` 和 1 至 256 字节 `partitionkey`。`(source,id)` 全局唯一；相同内容重试返回原事件，不同内容返回 `409`。事件、投递和 Run 在同一事务提交，Outbox 持久重试内部失败事件。闭合 K 线的 OHLCV 正文只保存在 Quant 行情表和事件表，Run 只关联事件 ID。
 - Run 创建时固定事件与活动修订。单实例执行器使用 PostgreSQL 持久队列、每工作流并发/积压上限和有界 `stream`/`compute` 池；同工作流同分区按入队顺序领取，不同分区可并行，过期租约重启后重新排队。进入 `waiting` 的人工任务保存上下文并释放执行池和分区占用。
 - 每个成功节点原子提交终态 RunNode、输出 RunCheckpoint 和缓冲状态。失败只重试当前节点，默认最多三次并线性退避；操作键固定为 `sha256(runId + ":" + nodeInstanceId + ":" + loopIteration)`。取消通过 `context.Context` 协作传递，取消请求后不再调度下游节点。最终失败用 Outbox 发布 `io.coinsphere.workflow.run.failed`。
-- 核心执行 `core.manual`、`core.schedule`、`core.event`、`core.constant`、`core.human_approval`、`core.loop` 和 `core.end`，其他 Action/Trigger 从编译期插件注册表调用；执行前后分别校验输入/输出 Schema，修订密钥通过节点范围 `SecretReader` 解密。启动前必须已配置活动修订的全部必需密钥。
+- 核心执行 `core.manual`、`core.schedule`、`core.event`、`core.constant`、`core.condition`、`core.switch`、`core.join`、`core.transition`、`core.debounce`、`core.throttle`、`core.time_window`、`core.deduplicate`、`core.expression`、`core.human_approval`、`core.loop` 和 `core.end`，其他 Action/Trigger 从编译期插件注册表调用；执行前后分别校验输入/输出 Schema，修订密钥通过节点范围 `SecretReader` 解密。启动前必须已配置活动修订的全部必需密钥。
 - `core.human_approval` 默认产生 `pending` 任务；显式 `auto` 模式直接输出自动批准。相同工作流、节点和业务键的新任务会把旧任务置为 `superseded`。`approved`、`rejected`、`expired` 和 `superseded` 都只能提交一次并恢复原 Run，决定正文最多 64 KiB。
-- 终态 Run 可创建固定原事件与修订的诊断重放。`notification`、`human_action` 和 `paper` 副作用不再次执行，而是复用原 RunCheckpoint 和制品；缺少原检查点时重放失败。
+- 手工运行请求至少包含 `revisionId`、`triggerNodeId` 和对象形式的 `input`；逐帧插件操作额外包含 `operationType` 和一个 `resultNodeIds`，入口与操作类型必须一致。终态 Run 可创建固定原事件与修订的诊断重放。`notification`、`human_action` 和 `paper` 副作用不再次执行，而是复用原 RunCheckpoint 和制品；缺少原检查点时重放失败。
 - Run 列表支持游标分页、UTC `from/to`、状态、触发类型和最多 200 字符的关键词搜索。详情按执行顺序返回全部 RunNode 尝试、节点多行日志、脱敏输入输出摘要、事件摘要、结果和制品引用。前端按每个 attempt 合成开始、业务和结束记录，开始展示输入摘要，结束展示状态、耗时、输出摘要或受控错误；历史页选择的 Run 固定展示，不跟随后续流式 Run。
 - 核心和插件通过节点范围 `slog.Logger` 写入 `workflow_node_logs`。消息最多 1000 字符，结构化字段最多 4 KiB，只保留受限标量；密钥、令牌、授权头、Cookie、DSN 和原始载荷统一丢弃或脱敏。不提供第二套 Activity API。运行详情 WebSocket 使用 `coinsphere.workflow-runs.v1` 子协议、同源 Origin 和超级管理员 Access Token，只发送轻量更新通知；客户端仍从 HTTP API 读取持久事实。
 - `ArtifactStore` 将最多 1 GiB 的正文用标准库 gzip 压缩并按未压缩正文 SHA-256 寻址。Checkpoint 原子引用清单；Manifest 在服务端重新计算大小和摘要，Web 下载后再次校验摘要。
@@ -97,15 +99,15 @@
 
 - `schemaVersion` 当前固定为 `1`。
 - `id` 是稳定的小写点分名称；`version` 是严格 SemVer。
-- `sdkMajor` 必须等于当前 SDK major `3`，`requiresCore` 必须包含当前 Core `3.0.0`；`requiresPlugins` 按依赖拓扑排序并校验 SemVer。
+- `sdkMajor` 必须等于当前 SDK major `4`，`requiresCore` 必须包含当前 Core `4.0.0`；`requiresPlugins` 按依赖拓扑排序并校验 SemVer。
 - Backend 入口必须是拥有匹配 module 名的 Go module；Frontend 和 migration 路径必须留在插件根目录内。可选 `menu` 支持 `own`、`existing` 和 `direct` 三种页面菜单定位方式。
-- `contributes` 只接受 `nodes`、`triggers`、`strategies`、`apiRoutes`、`pages`、`resultPages`、`assistantQueries` 和 `migrations`，声明的非 migration 贡献必须实际注册。
+- `contributes` 只接受 `nodes`、`triggers`、`strategies`、`profiles`、`apiRoutes`、`pages`、`resultPages`、`assistantQueries` 和 `migrations`，声明的非 migration 贡献必须实际注册。
 
 `plugin validate` 只读校验一个或多个目录。应用启动只执行生成的 Go 注册表，不扫描插件目录或动态加载共享库。
 
 ## SDK
 
-Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、可选固定 `Branches`、执行池、副作用等级和状态模式。需要校验的 Schema 必须声明 JSON Schema 2020-12。分支节点输出 `branch` 后，运行时先选择同名端口，再执行该边原有 Boolean CEL；端口允许零条或多条出边，图仍必须是 DAG，目标节点类型不受限制。
+Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、可选固定 `Branches`、ProfileSlot、执行池、副作用等级和状态模式。需要校验的 Schema 必须声明 JSON Schema 2020-12。分支节点通过结构化输出选择同名端口；端口允许零条或多条出边，图仍必须是 DAG，目标节点类型不受限制。ProfileDescriptor 和 ProfileProvider 由插件注册，Core 只固化引用和版本。
 
 `ActionRequest` 包含固定工作流/修订、节点实例 ID、稳定操作键、已解析输入和配置，以及 SecretReader、StateStore、ArtifactStore 和结构化 Logger。`ActionResult` 只返回 JSON 输出和制品引用。契约测试和工作流运行时使用同一 Registry 与 Handler 接口。
 
@@ -125,21 +127,21 @@ Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、�
 
 内置 `official.connector` 提供 HTTP Action、Webhook Trigger、WebSocket Trigger 和运行诊断结果页；`official.ai` 提供 OpenAI-compatible 结构化模型调用和结果页。两者只访问 `workflow.http_allowed_hosts` 的精确公共域名，禁用环境代理，拨号前后解析并拒绝非公网 IP。Binance 只允许明确列出的公共 GET/公共 WebSocket，授权、私有或未知端点一律拒绝。AI 节点只接收/返回 JSON 对象，不能控制工作流生命周期或交易。
 
-`official.quant@3.0.0` 只提供通用指标、策略、回测、行情信号和 `OrderIntent`。它通过 `MarketDataRegistry` 按 `venue + market + instrument + interval` 读取行情，不包含交易所 URL、签名、行情表或执行账本。策略只接收升序、连续、UTC 闭合 K 线和已校验参数，返回 `-1` 至 `1` 的 Decimal 目标；实时与回测调用同一 `Evaluate`。
+`official.quant@4.0.0` 提供通用指标、策略、回放、行情信号和 `OrderIntent`。指标、策略和回放节点通过 `market.data` Profile 读取统一行情序列，节点配置不再复制交易所、交易对或周期。策略只接收升序、连续、UTC 闭合 K 线和已校验参数，返回 `-1` 至 `1` 的 Decimal 目标；实时与回放调用同一工作流路径。
 
-`official.binance@3.0.0` 提供 Binance Spot/USD-M 公共行情、交易规则、`MarketDataProvider`、Paper 执行和受门禁保护的市价 `ExecutionProvider`。Binance 节点拥有行情、订单、成交、费用、持仓和账户快照数据；代理由该插件选择，私有请求只能通过 `SecretReader` 签名。未来交易所插件只需实现相同 Provider 契约，Core 与 Quant 不需要修改。
+`official.binance@4.0.0` 提供 Binance Spot/USD-M 公共行情、交易规则、`MarketDataProvider`、Paper 执行和受门禁保护的市价 `ExecutionProvider`。Binance 节点拥有行情、订单、成交、费用、持仓和账户快照数据；代理由该插件选择，私有请求只能通过 `SecretReader` 签名。未来交易所插件只需实现相同 Provider 契约，Core 与 Quant 不需要修改。
 
 Binance K 线查询支持 `startTime`、`endTime`、`before` 和 `limit`，响应包含 `items`、`nextBefore` 与 `hasMore`；`/candles/indicators` 返回按 `openTime` 对齐的 Decimal 字符串指标序列，并支持 MA、EMA、BOLL、MACD、RSI、KDJ、WR 参数。`/candles/stream` 是仅超级管理员可用的 WebSocket 公共行情桥接，使用 `coinsphere.plugin.official.binance.v1` 子协议和访问令牌，不允许浏览器直连交易所。
 
-六种 `1.0.0` 判断节点分别是 `official.quant.volume_spike_condition`、`official.quant.price_change_condition`、`official.quant.macd_condition`、`official.quant.kdj_condition`、`official.quant.rsi_condition` 和 `official.quant.bollinger_condition`。一个节点只保存一种指标规则及市场、交易对、检查周期、K 线周期和名称；每次在当前与上一个检查时点截取当时已闭合的 K 线，禁止未来数据。K 线断档、非法参数和数据库错误使节点失败，历史不足则 `ready=false` 并走 `false`。EMA、Wilder RSI、KDJ、布林标准差和有界平方根全部使用确定性 Decimal。
+`official.quant.indicator@2.0.0` 是单节点单指标的统一实现，界面按 `indicator` 展示 RSI、MACD、KDJ、布林带等判断。节点只保存指标规则和参数，并引用一个已发布的 `market.data` Profile；每次由闭合 `market.candle.closed` 事件驱动，历史窗口通过统一行情上下文读取，禁止未来数据。K 线断档、非法参数和数据库错误使节点失败，历史不足走 `unavailable`。EMA、Wilder RSI、KDJ、布林标准差和有界平方根全部使用确定性 Decimal。
 
 `official.quant.market_signal@1.0.0` 只能接收一个指标判断节点的 `true` 分支，保存时由编辑器生成且由后端校验 `market`、`instrument`、`interval`、`formula -> name`、`indicator`、`candleCloseTime`、`summary` 和 `value -> values` 的直接字段绑定。每根命中的闭合 K 线写入一条 `plugin_quant.market_signals` 行；稳定 `operation_key` 使节点重试幂等。该表及查询接口只表示行情信号，不进入现有 `plugin_quant.signals`、审批或 Paper 交易链路。
 
-判断输出包含 `ready`、`matched`、`previousMatched`、`branch`、`entered`、`triggered`、市场、交易对、当前/上一值、UTC 时间、业务键和中文摘要。`true` 串联表达 AND，并行汇合表达 OR，`false` 可连接任意节点。`branch` 始终反映当前结果，连续命中仍执行下游；`entered` 沿判断连线传播路径重新进入状态，`triggered` 只在整条 true 路径重新进入时成立。编辑器连接判断节点到任一通知节点时自动附加 `input.triggered == true` 并聚合摘要，因此连续命中只通知一次，恢复后再次命中会重新通知。
+指标输出通过 `true`、`false`、`unavailable` 端口连接到 `core.condition`、`core.join`、`core.transition`、`core.throttle` 等显式节点。AND、OR、状态变化、连续命中和通知节流都由画布拓扑与结构化控制节点表达，边不保存条件文本。
 
 Paper 由 `official.binance` 执行 `OrderIntent`。默认 Paper；真实执行默认关闭，只有人工确认、全部风险上限和无提现权限 API Key 同时满足时才允许。订单必须携带幂等 `clientOrderId`，订单、成交、费用和账本事实使用 Decimal 与 UTC 保存。
 
-内置 `official.notification@3.0.0` 提供 `in_app`、`dingtalk` 和 `smtp` 三个 Action。三种节点统一接收 `subjectKey/message` 并按稳定操作键幂等；站内节点把用户和当前启用角色成员合并去重，旧配置没有目标时投递给工作流创建者。外部节点失败保存受控错误类别并交给当前节点最多三次重试，已成功操作直接复用。
+内置 `official.notification@4.0.0` 提供 `in_app`、`dingtalk` 和 `smtp` 三个 Action。三种节点统一接收 `subjectKey/message` 并按稳定操作键幂等；站内节点把用户和当前启用角色成员合并去重，旧配置没有目标时投递给工作流创建者。外部节点失败保存受控错误类别并交给当前节点最多三次重试，已成功操作直接复用。
 
 内置 `official.qq@1.0.0` 提供 `receive` Trigger 和 `send` Action。接收节点固定订阅 `GROUP_AND_C2C_EVENT`，仅把 `GROUP_AT_MESSAGE_CREATE` 与 `C2C_MESSAGE_CREATE` 归一化为 CloudEvent；事件以 QQ 消息 ID 和 `urn:coinsphere:qq:<appId>` 全局去重，按群或用户 OpenID 分区。相同 AppID 只允许运行一个接收节点；Gateway 会话支持心跳、Resume、重连和取消关闭，但不持久化会话状态。
 

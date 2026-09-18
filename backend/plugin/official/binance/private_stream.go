@@ -101,6 +101,19 @@ func (q *binanceRuntime) runPrivateAccountStream(ctx context.Context, config pri
 	if err != nil {
 		return err
 	}
+	// A reconnect creates a new listen key. Revoke this one when the stream
+	// exits so transient disconnects cannot accumulate server-side sessions.
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if cleanupErr := q.manageListenKey(cleanupCtx, config, secrets, http.MethodDelete, listenKey); cleanupErr != nil && ctx.Err() == nil {
+			// Do not fail the already completed stream; the next retry will
+			// recreate the key and the warning contains no credential material.
+			if requestLogger := slog.Default(); requestLogger != nil {
+				requestLogger.Warn("Binance User Data Stream listen key cleanup failed", "account", config.Account, "market", config.Market)
+			}
+		}
+	}()
 	streamURL := "wss://stream.binance.com:9443/ws/" + url.PathEscape(listenKey)
 	if config.Market == "usdm" {
 		streamURL = "wss://fstream.binance.com/ws/" + url.PathEscape(listenKey)
