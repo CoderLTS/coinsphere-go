@@ -58,6 +58,9 @@ func (p marketDataProvider) Candles(ctx context.Context, query sdk.CandleQuery) 
 	if !query.EndTime.IsZero() {
 		db = db.Where("open_time < ?", query.EndTime.UTC())
 	}
+	if !query.ClosedThrough.IsZero() {
+		db = db.Where("close_time <= ?", query.ClosedThrough.UTC())
+	}
 	var rows []binanceCandle
 	if err := db.Order("open_time DESC").Limit(limit).Find(&rows).Error; err != nil {
 		return nil, errors.New("load Binance candles failed")
@@ -106,3 +109,28 @@ func (p marketDataProvider) Quote(ctx context.Context, query sdk.QuoteQuery) (sd
 }
 
 var _ sdk.MarketDataProvider = marketDataProvider{}
+
+func (p marketDataProvider) Series(ctx context.Context) ([]sdk.MarketSeries, error) {
+	var rows []sdk.MarketSeries
+	err := p.runtime.db.WithContext(ctx).Model(&binanceCandle{}).Select("market,instrument,interval,MIN(open_time) AS first_open_time,MAX(close_time) AS last_close_time,COUNT(*) AS candle_count").Group("market,instrument,interval").Order("market,instrument,interval").Limit(10000).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	var sources []binanceCandleSource
+	if err := p.runtime.db.WithContext(ctx).Order("workflow_id,node_instance_id").Find(&sources).Error; err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		seen := map[int64]bool{}
+		for _, source := range sources {
+			if source.Market == rows[i].Market && source.Instrument == rows[i].Instrument && source.Interval == rows[i].Interval && !seen[source.WorkflowID] {
+				rows[i].WorkflowIDs = append(rows[i].WorkflowIDs, source.WorkflowID)
+				seen[source.WorkflowID] = true
+			}
+		}
+	}
+	return rows, nil
+}
+func (marketDataProvider) CandleSubscription(query sdk.CandleQuery) sdk.EventSubscription {
+	return sdk.EventSubscription{Types: []string{"market.candle.closed"}, Source: "urn:coinsphere:plugin:official.binance", Subject: fmt.Sprintf("binance:%s:%s:%s", query.Market, query.Instrument, query.Interval)}
+}

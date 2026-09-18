@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,8 +29,7 @@ var workflowNodeIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127
 type validatedWorkflowGraph struct {
 	graphJSON        string
 	nodeVersionsJSON string
-	mainTriggerID    string
-	entryPoints      map[string]string
+	triggerIDs       []string
 	nodes            map[string]workflowGraphNode
 	nodeTypes        map[string]string
 	nodeVersions     map[string]workflowNodeVersion
@@ -44,18 +44,21 @@ type workflowNodeVersion struct {
 
 type workflowGraph struct {
 	SchemaVersion int                 `json:"schemaVersion"`
-	EntryPoints   map[string]string   `json:"entryPoints,omitempty"`
+	ProfileRefs   []sdk.ProfileRef    `json:"profileRefs"`
 	Nodes         []workflowGraphNode `json:"nodes"`
 	Edges         []workflowGraphEdge `json:"edges"`
 }
 
 type workflowGraphNode struct {
-	NodeInstanceID string                          `json:"nodeInstanceId"`
-	NodeType       string                          `json:"nodeType"`
-	NodeVersion    string                          `json:"nodeVersion"`
-	Config         json.RawMessage                 `json:"config"`
-	InputBindings  map[string]workflowInputBinding `json:"inputBindings,omitempty"`
-	Position       *struct {
+	NodeInstanceID  string                          `json:"nodeInstanceId"`
+	Label           string                          `json:"label,omitempty"`
+	ConnectionID    string                          `json:"connectionId,omitempty"`
+	NodeType        string                          `json:"nodeType"`
+	NodeVersion     string                          `json:"nodeVersion"`
+	Config          json.RawMessage                 `json:"config"`
+	ProfileBindings map[string]sdk.ProfileRef       `json:"profileBindings,omitempty"`
+	InputBindings   map[string]workflowInputBinding `json:"inputBindings,omitempty"`
+	Position        *struct {
 		X float64 `json:"x"`
 		Y float64 `json:"y"`
 	} `json:"position"`
@@ -67,28 +70,22 @@ type workflowGraphEdge struct {
 	SourcePort           string `json:"sourcePort"`
 	TargetNodeInstanceID string `json:"targetNodeInstanceId"`
 	TargetPort           string `json:"targetPort"`
-	Condition            string `json:"condition,omitempty"`
+	Label                string `json:"label,omitempty"`
 }
 
 type workflowInputBinding struct {
-	Kind           string                       `json:"kind"`
-	NodeInstanceID string                       `json:"nodeInstanceId,omitempty"`
-	Sources        []workflowInputBindingSource `json:"sources,omitempty"`
-	FieldPath      []string                     `json:"fieldPath,omitempty"`
-	Value          json.RawMessage              `json:"value,omitempty"`
-	Expression     string                       `json:"expression,omitempty"`
-}
-
-type workflowInputBindingSource struct {
-	NodeInstanceID string `json:"nodeInstanceId"`
-	Branch         string `json:"branch,omitempty"`
+	Kind           string          `json:"kind"`
+	NodeInstanceID string          `json:"nodeInstanceId,omitempty"`
+	FieldPath      []string        `json:"fieldPath,omitempty"`
+	ProfileKey     string          `json:"profileKey,omitempty"`
+	Value          json.RawMessage `json:"value,omitempty"`
 }
 
 type workflowLoopConfig struct {
-	MaxIterations  int           `json:"maxIterations"`
-	TimeoutSeconds int           `json:"timeoutSeconds"`
-	ExitCondition  string        `json:"exitCondition"`
-	Body           workflowGraph `json:"body"`
+	MaxIterations  int                     `json:"maxIterations"`
+	TimeoutSeconds int                     `json:"timeoutSeconds"`
+	ExitCondition  workflowConditionConfig `json:"exitCondition"`
+	Body           workflowGraph           `json:"body"`
 }
 
 type validatedWorkflowLoop struct {
@@ -106,6 +103,10 @@ func (a *App) ValidateWorkflowGraph(raw json.RawMessage) error {
 }
 
 func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph, error) {
+	return a.validateWorkflowGraphReferences(raw, true)
+}
+
+func (a *App) validateWorkflowGraphReferences(raw json.RawMessage, newReferences bool) (validatedWorkflowGraph, error) {
 	if len(raw) == 0 || len(raw) > maxWorkflowGraphBytes {
 		return validatedWorkflowGraph{}, fmt.Errorf("workflow graph must contain 1 to %d bytes", maxWorkflowGraphBytes)
 	}
@@ -113,19 +114,38 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&graph); err != nil {
-		return validatedWorkflowGraph{}, errors.New("workflow graph must match schema version 1 or 2")
+		return validatedWorkflowGraph{}, errors.New("workflow graph must match schema version 3")
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return validatedWorkflowGraph{}, errors.New("workflow graph must contain exactly one JSON object")
 	}
-	if graph.SchemaVersion != 1 && graph.SchemaVersion != 2 {
-		return validatedWorkflowGraph{}, errors.New("workflow graph schemaVersion must be 1 or 2")
+	if graph.SchemaVersion != 3 {
+		return validatedWorkflowGraph{}, errors.New("workflow graph schemaVersion must be 3")
+	}
+	if graph.ProfileRefs == nil {
+		graph.ProfileRefs = []sdk.ProfileRef{}
 	}
 	if len(graph.Nodes) == 0 || len(graph.Nodes) > maxWorkflowNodes {
 		return validatedWorkflowGraph{}, fmt.Errorf("workflow graph must contain 1 to %d nodes", maxWorkflowNodes)
 	}
 	if len(graph.Edges) > maxWorkflowEdges {
 		return validatedWorkflowGraph{}, fmt.Errorf("workflow graph must not exceed %d edges", maxWorkflowEdges)
+	}
+	profileRefs := make(map[string]sdk.ProfileRef, len(graph.ProfileRefs))
+	for _, ref := range graph.ProfileRefs {
+		if err := sdk.ValidateProfileRef(ref); err != nil {
+			return validatedWorkflowGraph{}, fmt.Errorf("invalid profile reference: %w", err)
+		}
+		if a.Plugins != nil && newReferences {
+			if err := a.Plugins.ValidateNewReference(context.Background(), ref); err != nil {
+				return validatedWorkflowGraph{}, fmt.Errorf("profile reference %s/%s is unavailable: %w", ref.PluginID, ref.ProfileID, err)
+			}
+		}
+		key := strings.Join([]string{ref.PluginID, ref.ProfileID, ref.Version, ref.Type}, "\x00")
+		if _, exists := profileRefs[key]; exists {
+			return validatedWorkflowGraph{}, fmt.Errorf("duplicate profile reference %q", ref.ProfileID)
+		}
+		profileRefs[key] = ref
 	}
 
 	descriptorCatalog := a.workflowNodeDescriptors()
@@ -134,7 +154,7 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 	descriptors := make(map[string]sdk.NodeDescriptor, len(graph.Nodes))
 	versions := make(map[string]workflowNodeVersion, len(graph.Nodes))
 	requiredSecrets := make(map[workflowSecretKey]bool)
-	triggerID := ""
+	triggerIDs := []string{}
 	for _, node := range graph.Nodes {
 		if !workflowNodeIDPattern.MatchString(node.NodeInstanceID) || nodes[node.NodeInstanceID].NodeInstanceID != "" {
 			return validatedWorkflowGraph{}, fmt.Errorf("invalid or duplicate nodeInstanceId %q", node.NodeInstanceID)
@@ -149,11 +169,14 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 		if node.NodeType == "core.loop_item" || node.NodeType == "core.loop_end" {
 			return validatedWorkflowGraph{}, fmt.Errorf("node %q is only valid inside core.loop", node.NodeInstanceID)
 		}
+		if desc.WorkflowOperation {
+			return validatedWorkflowGraph{}, fmt.Errorf("node %q is a workflow operation, not a canvas node", node.NodeInstanceID)
+		}
 		if desc.Kind == sdk.NodeKindTrigger {
-			if triggerID != "" {
-				return validatedWorkflowGraph{}, errors.New("workflow graph must contain exactly one main trigger")
-			}
-			triggerID = node.NodeInstanceID
+			triggerIDs = append(triggerIDs, node.NodeInstanceID)
+		}
+		if err := validateWorkflowProfiles(node, desc, profileRefs); err != nil {
+			return validatedWorkflowGraph{}, fmt.Errorf("node %q: %w", node.NodeInstanceID, err)
 		}
 		if node.Position == nil {
 			return validatedWorkflowGraph{}, fmt.Errorf("node %q position is required", node.NodeInstanceID)
@@ -167,15 +190,15 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 			if _, exists := config[field]; exists {
 				return validatedWorkflowGraph{}, fmt.Errorf("node %q secret field %q must not be stored in graph config", node.NodeInstanceID, field)
 			}
-			if secretRequired[field] {
+			if secretRequired[field] && desc.ConnectionType == "" {
 				requiredSecrets[workflowSecretKey{node.NodeInstanceID, field}] = true
 			}
 		}
-		ordinarySchema, err := ordinaryWorkflowConfigSchema(desc.ConfigSchema, secretFields)
+		ordinarySchema, err := workflowNodeConfigSchema(desc, node.ConnectionID, secretFields)
 		if err != nil || validateWorkflowSchemaValue(ordinarySchema, config) != nil {
 			return validatedWorkflowGraph{}, fmt.Errorf("node %q config does not match its JSON Schema", node.NodeInstanceID)
 		}
-		if desc.ValidateConfig != nil {
+		if desc.ValidateConfig != nil && desc.ConnectionType == "" {
 			if err := desc.ValidateConfig(node.Config); err != nil {
 				return validatedWorkflowGraph{}, fmt.Errorf("node %q config is invalid: %w", node.NodeInstanceID, err)
 			}
@@ -190,32 +213,14 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 		descriptors[node.NodeInstanceID] = desc
 		versions[node.NodeInstanceID] = workflowNodeVersion{NodeType: node.NodeType, NodeVersion: node.NodeVersion}
 	}
-	if triggerID == "" {
-		return validatedWorkflowGraph{}, errors.New("workflow graph must contain exactly one main trigger")
-	}
-	entryPoints := map[string]string{"realtime": triggerID}
-	if graph.SchemaVersion == 2 {
-		if len(graph.EntryPoints) != 2 || graph.EntryPoints["realtime"] == "" || graph.EntryPoints["backtest"] == "" {
-			return validatedWorkflowGraph{}, errors.New("schema version 2 requires realtime and backtest entryPoints")
-		}
-		for key := range graph.EntryPoints {
-			if key != "realtime" && key != "backtest" {
-				return validatedWorkflowGraph{}, fmt.Errorf("workflow entryPoint %q is unsupported", key)
-			}
-		}
-		if graph.EntryPoints["realtime"] != triggerID {
-			return validatedWorkflowGraph{}, errors.New("workflow realtime entryPoint must reference the main trigger")
-		}
-		if nodes[graph.EntryPoints["backtest"]].NodeInstanceID == "" || graph.EntryPoints["backtest"] == triggerID {
-			return validatedWorkflowGraph{}, errors.New("workflow backtest entryPoint must reference a distinct node")
-		}
-		entryPoints = map[string]string{"realtime": graph.EntryPoints["realtime"], "backtest": graph.EntryPoints["backtest"]}
+	if len(triggerIDs) == 0 {
+		return validatedWorkflowGraph{}, errors.New("workflow requires at least one trigger")
 	}
 	for _, node := range graph.Nodes {
 		if node.NodeType != "core.loop" {
 			continue
 		}
-		loop, err := validateWorkflowLoop(node, descriptorCatalog)
+		loop, err := validateWorkflowLoop(node, descriptorCatalog, profileRefs)
 		if err != nil {
 			return validatedWorkflowGraph{}, fmt.Errorf("node %q: %w", node.NodeInstanceID, err)
 		}
@@ -237,19 +242,11 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 			}
 		}
 	}
-	adjacency, reverse, err := validateWorkflowEdges(graph.Edges, nodes, descriptors, triggerID)
+	adjacency, reverse, err := validateWorkflowEdges(graph.Edges, nodes, descriptors, "")
 	if err != nil {
 		return validatedWorkflowGraph{}, err
 	}
-	for _, edge := range graph.Edges {
-		if edge.TargetNodeInstanceID == entryPoints["backtest"] {
-			return validatedWorkflowGraph{}, fmt.Errorf("edge %q must not target a workflow entryPoint", edge.EdgeID)
-		}
-	}
-	roots := []string{entryPoints["realtime"]}
-	if entryPoints["backtest"] != "" {
-		roots = append(roots, entryPoints["backtest"])
-	}
+	roots := triggerIDs
 	if err := validateWorkflowTopology(nodes, adjacency, reverse, roots); err != nil {
 		return validatedWorkflowGraph{}, err
 	}
@@ -277,12 +274,52 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 		}
 	}
 	return validatedWorkflowGraph{
-		graphJSON: string(canonical), nodeVersionsJSON: string(nodeVersions), mainTriggerID: triggerID, entryPoints: entryPoints,
+		graphJSON: string(canonical), nodeVersionsJSON: string(nodeVersions), triggerIDs: triggerIDs,
 		nodes: nodes, nodeTypes: nodeTypes, nodeVersions: versions, descriptors: descriptors, requiredSecrets: requiredSecrets,
 	}, nil
 }
 
-func validateWorkflowLoop(node workflowGraphNode, catalog map[string]sdk.NodeDescriptor) (validatedWorkflowLoop, error) {
+func validateWorkflowProfiles(node workflowGraphNode, desc sdk.NodeDescriptor, refs map[string]sdk.ProfileRef) error {
+	slots := make(map[string]sdk.ProfileSlot, len(desc.ProfileSlots))
+	for _, slot := range desc.ProfileSlots {
+		slots[slot.Key] = slot
+	}
+	for key, slot := range slots {
+		if slot.Required {
+			if _, ok := node.ProfileBindings[key]; !ok {
+				return fmt.Errorf("required profile slot %q is missing", key)
+			}
+		}
+	}
+	for key, ref := range node.ProfileBindings {
+		slot, ok := slots[key]
+		if !ok {
+			return fmt.Errorf("unknown profile slot %q", key)
+		}
+		if err := sdk.ValidateProfileRef(ref); err != nil {
+			return err
+		}
+		refKey := strings.Join([]string{ref.PluginID, ref.ProfileID, ref.Version, ref.Type}, "\x00")
+		if refs != nil {
+			if _, ok := refs[refKey]; !ok {
+				return fmt.Errorf("profile slot %q is not declared in profileRefs", key)
+			}
+		}
+		compatible := false
+		for _, profileType := range slot.ProfileTypes {
+			if profileType == ref.Type {
+				compatible = true
+				break
+			}
+		}
+		if !compatible {
+			return fmt.Errorf("profile slot %q does not accept type %q", key, ref.Type)
+		}
+	}
+	return nil
+}
+
+func validateWorkflowLoop(node workflowGraphNode, catalog map[string]sdk.NodeDescriptor, profileRefs map[string]sdk.ProfileRef) (validatedWorkflowLoop, error) {
 	var config workflowLoopConfig
 	decoder := json.NewDecoder(bytes.NewReader(node.Config))
 	decoder.DisallowUnknownFields()
@@ -293,12 +330,11 @@ func validateWorkflowLoop(node workflowGraphNode, catalog map[string]sdk.NodeDes
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return validatedWorkflowLoop{}, errors.New("loop config must contain exactly one JSON object")
 	}
-	ast, err := compileWorkflowCEL(config.ExitCondition)
-	if err != nil || ast.OutputType().TypeName() != "bool" {
-		return validatedWorkflowLoop{}, errors.New("exitCondition must compile to Boolean CEL")
+	if err := validateWorkflowCondition(config.ExitCondition); err != nil {
+		return validatedWorkflowLoop{}, err
 	}
-	if config.Body.SchemaVersion != 1 || len(config.Body.Nodes) < 2 || len(config.Body.Nodes) > maxWorkflowNodes || len(config.Body.Edges) > maxWorkflowEdges {
-		return validatedWorkflowLoop{}, errors.New("loop body must be a schema version 1 DAG with valid size limits")
+	if config.Body.SchemaVersion != 3 || len(config.Body.Nodes) < 2 || len(config.Body.Nodes) > maxWorkflowNodes || len(config.Body.Edges) > maxWorkflowEdges {
+		return validatedWorkflowLoop{}, errors.New("loop body must be a schema version 3 DAG with valid size limits")
 	}
 
 	nodes := make(map[string]workflowGraphNode, len(config.Body.Nodes))
@@ -315,6 +351,9 @@ func validateWorkflowLoop(node workflowGraphNode, catalog map[string]sdk.NodeDes
 		}
 		if desc.Kind == sdk.NodeKindTrigger || bodyNode.NodeType == "core.loop" || bodyNode.NodeType == "core.end" || desc.SideEffect == sdk.SideEffectHumanAction {
 			return validatedWorkflowLoop{}, fmt.Errorf("body node %q is not supported inside a loop", bodyNode.NodeInstanceID)
+		}
+		if err := validateWorkflowProfiles(bodyNode, desc, profileRefs); err != nil {
+			return validatedWorkflowLoop{}, fmt.Errorf("body node %q: %w", bodyNode.NodeInstanceID, err)
 		}
 		if bodyNode.NodeType == "core.loop_item" {
 			if itemID != "" {
@@ -340,15 +379,15 @@ func validateWorkflowLoop(node workflowGraphNode, catalog map[string]sdk.NodeDes
 			if _, exists := values[field]; exists {
 				return validatedWorkflowLoop{}, fmt.Errorf("body node %q secret field %q must not be stored in graph config", bodyNode.NodeInstanceID, field)
 			}
-			if secretRequired[field] {
+			if secretRequired[field] && desc.ConnectionType == "" {
 				requiredSecrets[workflowSecretKey{bodyNode.NodeInstanceID, field}] = true
 			}
 		}
-		ordinarySchema, err := ordinaryWorkflowConfigSchema(desc.ConfigSchema, secretFields)
+		ordinarySchema, err := workflowNodeConfigSchema(desc, bodyNode.ConnectionID, secretFields)
 		if err != nil || validateWorkflowSchemaValue(ordinarySchema, values) != nil {
 			return validatedWorkflowLoop{}, fmt.Errorf("body node %q config does not match its JSON Schema", bodyNode.NodeInstanceID)
 		}
-		if desc.ValidateConfig != nil {
+		if desc.ValidateConfig != nil && desc.ConnectionType == "" {
 			if err := desc.ValidateConfig(bodyNode.Config); err != nil {
 				return validatedWorkflowLoop{}, fmt.Errorf("body node %q config is invalid: %w", bodyNode.NodeInstanceID, err)
 			}
@@ -414,26 +453,16 @@ func validateWorkflowEdges(edges []workflowGraphEdge, nodes map[string]workflowG
 			return nil, nil, fmt.Errorf("edge %q references an invalid port", edge.EdgeID)
 		}
 		if edge.TargetNodeInstanceID == triggerID {
-			return nil, nil, fmt.Errorf("edge %q must not target the main trigger", edge.EdgeID)
+			return nil, nil, fmt.Errorf("edge %q must not target the loop entry", edge.EdgeID)
+		}
+		if descriptors[edge.TargetNodeInstanceID].Kind == sdk.NodeKindTrigger {
+			return nil, nil, fmt.Errorf("edge %q must not target a trigger node", edge.EdgeID)
 		}
 		identity := strings.Join([]string{edge.SourceNodeInstanceID, edge.SourcePort, edge.TargetNodeInstanceID, edge.TargetPort}, "\x00")
 		if seenEdges[identity] {
 			return nil, nil, fmt.Errorf("edge %q duplicates an existing connection", edge.EdgeID)
 		}
 		seenEdges[identity] = true
-		if expression := strings.TrimSpace(edge.Condition); expression != "" {
-			ast, err := compileWorkflowCEL(expression)
-			if err != nil || ast.OutputType().TypeName() != "bool" {
-				return nil, nil, fmt.Errorf("edge %q condition must compile to Boolean CEL", edge.EdgeID)
-			}
-			expr, err := workflowCELExpr(ast)
-			if err != nil {
-				return nil, nil, fmt.Errorf("edge %q condition must compile to Boolean CEL", edge.EdgeID)
-			}
-			if celUsesDecimalArithmetic(expr, descriptors[edge.SourceNodeInstanceID].OutputSchema) {
-				return nil, nil, fmt.Errorf("edge %q condition must not perform Decimal arithmetic", edge.EdgeID)
-			}
-		}
 		adjacency[edge.SourceNodeInstanceID] = append(adjacency[edge.SourceNodeInstanceID], edge.TargetNodeInstanceID)
 		reverse[edge.TargetNodeInstanceID] = append(reverse[edge.TargetNodeInstanceID], edge.SourceNodeInstanceID)
 	}
@@ -478,104 +507,75 @@ func validateWorkflowTopology(nodes map[string]workflowGraphNode, adjacency, rev
 		queue = append(queue, adjacency[id]...)
 	}
 	if len(reachable) != len(nodes) {
-		return errors.New("workflow graph contains nodes unreachable from its entryPoints")
+		return errors.New("workflow graph contains nodes unreachable from its triggers")
 	}
 	return nil
 }
 
-func validateWorkflowBindings(nodes map[string]workflowGraphNode, descriptors map[string]sdk.NodeDescriptor, adjacency map[string][]string, edges []workflowGraphEdge, roots map[string]bool) error {
+func validateWorkflowBindings(nodes map[string]workflowGraphNode, descriptors map[string]sdk.NodeDescriptor, adjacency map[string][]string, _ []workflowGraphEdge, roots map[string]bool) error {
 	for nodeID, node := range nodes {
-		targetProperties, required := workflowSchemaProperties(descriptors[nodeID].InputSchema)
+		properties, required := workflowSchemaProperties(descriptors[nodeID].InputSchema)
 		if !roots[nodeID] {
 			for field := range required {
 				if _, ok := node.InputBindings[field]; !ok {
-					return fmt.Errorf("node %q requires input binding %q", nodeID, field)
+					return fmt.Errorf("node %q requires input %q", nodeID, field)
 				}
 			}
 		}
 		for field, binding := range node.InputBindings {
-			targetSchema, ok := targetProperties[field]
+			target, ok := properties[field]
 			if !ok {
-				return fmt.Errorf("node %q input binding %q is not declared by its input schema", nodeID, field)
+				var schema map[string]any
+				_ = json.Unmarshal(descriptors[nodeID].InputSchema, &schema)
+				if additional, declared := schema["additionalProperties"].(bool); declared && !additional {
+					return fmt.Errorf("node %q has unknown input %q", nodeID, field)
+				}
+				target = map[string]any{}
 			}
-			switch binding.Kind {
-			case "field":
-				if binding.NodeInstanceID == "" || len(binding.Sources) != 0 || len(binding.FieldPath) == 0 || len(binding.Value) != 0 || binding.Expression != "" {
-					return fmt.Errorf("node %q input binding %q has invalid field mapping", nodeID, field)
-				}
-				if nodes[binding.NodeInstanceID].NodeInstanceID == "" || !workflowPathExists(adjacency, binding.NodeInstanceID, nodeID) {
-					return fmt.Errorf("node %q input binding %q must reference a topological upstream node", nodeID, field)
-				}
-				sourceSchema, ok := workflowSchemaField(descriptors[binding.NodeInstanceID].OutputSchema, binding.FieldPath)
-				if !ok || !workflowSchemaTypesCompatible(sourceSchema, targetSchema) {
-					return fmt.Errorf("node %q input binding %q has an unknown or incompatible field path", nodeID, field)
-				}
-			case "literal":
-				if binding.NodeInstanceID != "" || len(binding.Sources) != 0 || len(binding.FieldPath) != 0 || len(binding.Value) == 0 || binding.Expression != "" {
-					return fmt.Errorf("node %q input binding %q has invalid literal mapping", nodeID, field)
-				}
-				var value any
-				if json.Unmarshal(binding.Value, &value) != nil || validateWorkflowSchemaValue(schemaFragment(targetSchema), value) != nil {
-					return fmt.Errorf("node %q input binding %q literal has an incompatible type", nodeID, field)
-				}
-			case "cel":
-				if binding.NodeInstanceID != "" || len(binding.Sources) != 0 || len(binding.FieldPath) != 0 || len(binding.Value) != 0 || strings.TrimSpace(binding.Expression) == "" {
-					return fmt.Errorf("node %q input binding %q has invalid CEL mapping", nodeID, field)
-				}
-				ast, err := compileWorkflowCEL(binding.Expression)
-				if err != nil || !workflowCELTypeCompatible(ast.OutputType().TypeName(), targetSchema) {
-					return fmt.Errorf("node %q input binding %q CEL does not compile to a compatible type", nodeID, field)
-				}
-				expr, err := workflowCELExpr(ast)
-				if err != nil {
-					return fmt.Errorf("node %q input binding %q CEL does not compile to a compatible type", nodeID, field)
-				}
-				if celHasArithmetic(expr) && schemaBool(targetSchema, "x-coinsphere-decimal") {
-					return fmt.Errorf("node %q input binding %q must not perform Decimal arithmetic", nodeID, field)
-				}
-			case "condition_entry", "condition_subject", "condition_message":
-				if err := validateWorkflowConditionBinding(nodeID, field, binding, targetSchema, nodes, descriptors, edges); err != nil {
-					return err
-				}
-			case "":
-				return fmt.Errorf("node %q input binding %q kind is required", nodeID, field)
-			default:
-				return fmt.Errorf("node %q input binding %q has unknown kind %q", nodeID, field, binding.Kind)
+			if err := validateWorkflowBinding(binding, target, nodeID, nodes, descriptors, adjacency, 0); err != nil {
+				return fmt.Errorf("node %q input %q: %w", nodeID, field, err)
 			}
 		}
 	}
 	return nil
 }
 
-func validateWorkflowConditionBinding(nodeID, field string, binding workflowInputBinding, targetSchema map[string]any, nodes map[string]workflowGraphNode, descriptors map[string]sdk.NodeDescriptor, edges []workflowGraphEdge) error {
-	if binding.NodeInstanceID != "" || len(binding.FieldPath) != 0 || len(binding.Value) != 0 || binding.Expression != "" || len(binding.Sources) == 0 || len(binding.Sources) > maxWorkflowNodes {
-		return fmt.Errorf("node %q input binding %q has invalid condition sources", nodeID, field)
+func validateWorkflowBinding(binding workflowInputBinding, target map[string]any, nodeID string, nodes map[string]workflowGraphNode, descriptors map[string]sdk.NodeDescriptor, adjacency map[string][]string, depth int) error {
+	if depth > 12 {
+		return errors.New("input binding nesting exceeds 12")
 	}
-	types := schemaTypes(targetSchema)
-	if binding.Kind == "condition_entry" && !types["boolean"] || binding.Kind != "condition_entry" && !types["string"] {
-		return fmt.Errorf("node %q input binding %q has an incompatible condition target", nodeID, field)
-	}
-	seen := map[string]bool{}
-	for _, source := range binding.Sources {
-		if source.NodeInstanceID == "" || seen[source.NodeInstanceID+"\x00"+source.Branch] || nodes[source.NodeInstanceID].NodeInstanceID == "" ||
-			descriptors[source.NodeInstanceID].Capabilities.Deterministic == false {
-			return fmt.Errorf("node %q input binding %q has an invalid condition source", nodeID, field)
+	switch binding.Kind {
+	case "node":
+		if binding.NodeInstanceID == "" || len(binding.FieldPath) == 0 || !workflowPathExists(adjacency, binding.NodeInstanceID, nodeID) {
+			return errors.New("select a topological upstream field")
 		}
-		if !containsString(descriptors[source.NodeInstanceID].Branches, source.Branch) ||
-			binding.Kind != "condition_entry" && source.Branch != "true" {
-			return fmt.Errorf("node %q input binding %q has an invalid condition branch", nodeID, field)
+		source, ok := workflowSchemaField(descriptors[binding.NodeInstanceID].OutputSchema, binding.FieldPath)
+		if !ok || !workflowSchemaTypesCompatible(source, target) {
+			return errors.New("upstream field type is incompatible")
 		}
-		direct := false
-		for _, edge := range edges {
-			if edge.SourceNodeInstanceID == source.NodeInstanceID && edge.SourcePort == source.Branch && edge.TargetNodeInstanceID == nodeID {
-				direct = true
-				break
+	case "event":
+		if len(binding.FieldPath) > 12 {
+			return errors.New("trigger field path exceeds 12")
+		}
+		for _, segment := range binding.FieldPath {
+			if strings.TrimSpace(segment) == "" || len(segment) > 128 {
+				return errors.New("trigger field path is invalid")
 			}
 		}
-		if !direct {
-			return fmt.Errorf("node %q input binding %q must reference a direct condition edge", nodeID, field)
+		if len(binding.FieldPath) == 0 {
+			return errors.New("trigger field path is required")
 		}
-		seen[source.NodeInstanceID+"\x00"+source.Branch] = true
+	case "literal":
+		var value any
+		if json.Unmarshal(binding.Value, &value) != nil || validateWorkflowSchemaValue(schemaFragment(target), value) != nil {
+			return errors.New("literal type is incompatible")
+		}
+	case "profile":
+		if _, ok := nodes[nodeID].ProfileBindings[binding.ProfileKey]; !ok {
+			return errors.New("profile binding must name a bound profile slot")
+		}
+	default:
+		return errors.New("binding must be a node, event, profile or literal")
 	}
 	return nil
 }
@@ -864,7 +864,10 @@ func workflowSchemaField(raw json.RawMessage, path []string) (map[string]any, bo
 			next, _ = current["additionalProperties"].(map[string]any)
 		}
 		if next == nil {
-			return nil, false
+			if additional, declared := current["additionalProperties"].(bool); declared && !additional {
+				return nil, false
+			}
+			next = map[string]any{}
 		}
 		current = next
 	}
@@ -963,4 +966,23 @@ func containsString(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func workflowNodeConfigSchema(desc sdk.NodeDescriptor, connectionID string, secretFields map[string]map[string]any) (json.RawMessage, error) {
+	removed := make(map[string]map[string]any, len(secretFields))
+	for field, schema := range secretFields {
+		removed[field] = schema
+	}
+	if connectionID != "" && desc.ConnectionType == "" {
+		return nil, errors.New("node does not accept a connection")
+	}
+	if desc.ConnectionType != "" {
+		if desc.ConnectionType == "" {
+			return nil, errors.New("node does not accept a connection")
+		}
+		for _, field := range desc.ConnectionFields {
+			removed[field] = map[string]any{}
+		}
+	}
+	return ordinaryWorkflowConfigSchema(desc.ConfigSchema, removed)
 }

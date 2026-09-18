@@ -19,18 +19,30 @@ import (
 func registerPaper(registrar sdk.Registrar, runtime *binanceRuntime) error {
 	return registrar.Action(withNodeMeta(sdk.NodeDescriptor{
 		Type: "official.binance.paper_execute", Version: "1.0.0", Kind: sdk.NodeKindAction,
-		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"initialBalance":{"type":"string","title":"初始余额","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"feeRate":{"type":"string","title":"手续费率","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"maxOrderNotional":{"type":"string","title":"最大订单名义金额","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"maxInstrumentNotional":{"type":"string","title":"单交易对最大名义金额","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true}},"required":["initialBalance","feeRate","maxOrderNotional","maxInstrumentNotional"],"additionalProperties":false}`),
-		UISchema:     json.RawMessage(`{"ui:order":["initialBalance","feeRate","maxOrderNotional","maxInstrumentNotional"]}`),
+		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false}`),
+		UISchema:     json.RawMessage(`{"ui:order":[]}`),
 		InputSchema:  orderIntentSchema(), OutputSchema: orderResultSchema(), Pool: sdk.PoolStream, SideEffect: sdk.SideEffectPaper, State: sdk.StatePersistent,
+		ProfileSlots: []sdk.ProfileSlot{{Key: "account", Title: "交易账户 Profile", ProfileTypes: []string{"trading.account"}, Required: true}, {Key: "risk", Title: "交易风控 Profile", ProfileTypes: []string{"trading.risk"}, Required: true}},
 	}, "Paper 执行", "使用 Binance 最新 Quote 模拟成交并记录订单、成交和持仓。", "strategy", "#2563eb", "flask-conical"), paperExecuteAction{runtime: runtime})
 }
 
 type paperExecuteAction struct{ runtime *binanceRuntime }
 
 func (a paperExecuteAction) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
+	accountRaw, err := resolveTradingProfile(ctx, request.Profiles, request.ProfileBindings, "account", "trading.account")
+	if err != nil {
+		return sdk.ActionResult{}, err
+	}
+	riskRaw, err := resolveTradingProfile(ctx, request.Profiles, request.ProfileBindings, "risk", "trading.risk")
+	if err != nil {
+		return sdk.ActionResult{}, err
+	}
+	var account struct{ Account, Market string }
 	var config struct{ InitialBalance, FeeRate, MaxOrderNotional, MaxInstrumentNotional string }
 	var intent struct{ Venue, Account, Market, Instrument, Side, Quantity, QuoteAmount, PositionEffect, ClientOrderID string }
-	if json.Unmarshal(request.Config, &config) != nil || json.Unmarshal(request.Input, &intent) != nil || intent.Venue != "binance" {
+	if json.Unmarshal(accountRaw, &account) != nil || validateTradingAccountProfile(ctx, accountRaw) != nil ||
+		json.Unmarshal(riskRaw, &config) != nil || validateTradingRiskProfile(ctx, riskRaw) != nil ||
+		json.Unmarshal(request.Input, &intent) != nil || intent.Venue != "binance" {
 		return sdk.ActionResult{}, errors.New("Binance Paper order is invalid")
 	}
 	initialBalance, e1 := decimal.NewFromString(config.InitialBalance)
@@ -42,8 +54,19 @@ func (a paperExecuteAction) Execute(ctx context.Context, request sdk.ActionReque
 	if e1 != nil || e2 != nil || e3 != nil || e4 != nil || e5 != nil || e6 != nil || initialBalance.Sign() <= 0 || feeRate.Sign() < 0 || maxOrder.Sign() <= 0 || maxInstrument.Sign() <= 0 {
 		return sdk.ActionResult{}, errors.New("Binance Paper limits are invalid")
 	}
+	profileMarket := strings.ToLower(strings.TrimSpace(account.Market))
+	profileAccount := strings.TrimSpace(account.Account)
 	intent.Market = strings.ToLower(strings.TrimSpace(intent.Market))
 	intent.Account = strings.TrimSpace(intent.Account)
+	if intent.Market == "" {
+		intent.Market = profileMarket
+	}
+	if intent.Account == "" {
+		intent.Account = profileAccount
+	}
+	if intent.Market != profileMarket || intent.Account != profileAccount {
+		return sdk.ActionResult{}, errors.New("Binance Paper order does not match the selected account profile")
+	}
 	intent.Instrument = strings.ToUpper(strings.TrimSpace(intent.Instrument))
 	intent.Side = strings.ToLower(strings.TrimSpace(intent.Side))
 	intent.PositionEffect = strings.ToLower(strings.TrimSpace(intent.PositionEffect))

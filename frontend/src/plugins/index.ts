@@ -37,6 +37,18 @@ const loadPluginComponent = async (
 export const loadPluginNodeEditor = (typeCode: string) =>
   loadPluginComponent('nodeEditors', typeCode)
 
+export const loadPluginProfileTypes = async (pluginId: string): Promise<readonly string[]> => {
+  const registration = registeredFrontendPlugins.find((plugin) => plugin.id === pluginId)
+  if (!registration) return []
+  const module = await (moduleCache.get(pluginId) ||
+    (() => {
+      const pending = registration.load()
+      moduleCache.set(pluginId, pending)
+      return pending
+    })())
+  return module.profileTypes || []
+}
+
 export const loadPluginNodeRenderer = (typeCode: string) =>
   loadPluginComponent('nodeRenderers', typeCode)
 

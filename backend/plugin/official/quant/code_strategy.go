@@ -25,12 +25,8 @@ const maxQuantCodeBytes = 4096
 var quantCodeNamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`)
 
 type quantCodeSeries struct {
-	Alias      string `json:"alias"`
-	Venue      string `json:"venue"`
-	Market     string `json:"market"`
-	Instrument string `json:"instrument"`
-	Interval   string `json:"interval"`
-	Lookback   int    `json:"lookback"`
+	Alias    string `json:"alias"`
+	Lookback int    `json:"lookback"`
 }
 
 type quantCodeStrategyConfig struct {
@@ -72,9 +68,6 @@ func parseQuantCodeStrategyConfig(raw json.RawMessage) (quantCodeStrategyConfig,
 		if !quantCodeNamePattern.MatchString(series.Alias) || aliases[series.Alias] || series.Lookback < 1 || series.Lookback > 500 {
 			return config, errors.New("code strategy series declaration is invalid")
 		}
-		if _, err := parseQuantSeriesConfig(mustMarshal(quantSeriesConfig{Venue: series.Venue, Market: series.Market, Instrument: series.Instrument, Interval: series.Interval})); err != nil {
-			return config, err
-		}
 		aliases[series.Alias] = true
 	}
 	for _, name := range append(append([]string{}, config.BooleanOutputs...), config.DecimalOutputs...) {
@@ -98,36 +91,41 @@ func (a *quantCodeStrategyAction) Execute(ctx context.Context, request sdk.Actio
 		return sdk.ActionResult{}, err
 	}
 	var input struct {
-		EventTime   string `json:"eventTime"`
-		PathEntered bool   `json:"pathEntered"`
+		Context quantMarketContext `json:"context"`
 	}
 	if !decodeQuantStrict(request.Input, &input) {
 		return sdk.ActionResult{}, errors.New("code strategy input is invalid")
 	}
-	evaluatedAt, err := parseQuantUTCTime(input.EventTime)
+	evaluatedAt, err := parseQuantUTCTime(input.Context.AsOf)
 	if err != nil {
 		return sdk.ActionResult{}, err
 	}
 	ohlcv := map[string]any{}
 	ready := true
 	for _, declaration := range config.Series {
-		candles, err := a.runtime.loadQuantCandlesThroughClose(ctx, quantSeriesConfig{
-			Venue: declaration.Venue, Market: declaration.Market, Instrument: declaration.Instrument, Interval: declaration.Interval,
-		}, evaluatedAt, declaration.Lookback)
+		source, exists := input.Context.Sources[declaration.Alias]
+		if !exists {
+			return sdk.ActionResult{}, fmt.Errorf("来源 %s 未配置", declaration.Alias)
+		}
+		candles, err := a.runtime.loadQuantCandlesThroughClose(ctx, source, evaluatedAt, declaration.Lookback)
 		if err != nil {
 			return sdk.ActionResult{}, err
 		}
-		if len(candles) != declaration.Lookback {
+		if len(candles) != declaration.Lookback || !quantLatestCandleAvailable(candles, evaluatedAt, source.Interval) {
 			ready = false
 			continue
 		}
-		if err := validateStrategyCandles(sdk.EvaluateRequest{
-			Market: declaration.Market, Instrument: declaration.Instrument, Interval: declaration.Interval,
-			Candles: quantSDKCandles(candles), EvaluatedAt: evaluatedAt,
-		}); err != nil {
-			return sdk.ActionResult{}, err
+		if err := validateStrategyCandles(sdk.EvaluateRequest{Market: source.Market, Instrument: source.Instrument, Interval: source.Interval, Candles: quantSDKCandles(candles), EvaluatedAt: evaluatedAt}); err != nil {
+			ready = false
+			continue
 		}
 		ohlcv[declaration.Alias] = quantCodeCandleSeries(candles)
+	}
+	if !ready && request.ExecutionMode != sdk.ExecutionModeBacktestFrame {
+		deadline := request.TriggeredAt.Add(30 * time.Second)
+		if time.Now().UTC().Before(deadline) {
+			return sdk.ActionResult{Wait: &sdk.WaitRequest{BlockFollowingRuns: true, Key: request.OperationKey, Until: deadline, WakeAt: time.Now().UTC().Add(time.Second), Data: json.RawMessage(`{}`)}}, nil
+		}
 	}
 	booleans, decimals := map[string]bool{}, map[string]string{}
 	branch := "false"
@@ -148,7 +146,10 @@ func (a *quantCodeStrategyAction) Execute(ctx context.Context, request sdk.Actio
 			branch = "true"
 		}
 	}
-	return sdk.ActionResult{Output: mustMarshal(map[string]any{
+	if !ready {
+		branch = "unavailable"
+	}
+	return sdk.ActionResult{Port: branch, Output: mustMarshal(map[string]any{
 		"booleans": booleans, "decimals": decimals, "ready": ready, "branch": branch,
 		"entered": branch == "true", "triggered": branch == "true",
 		"evaluatedAt": evaluatedAt.UTC().Format(time.RFC3339Nano),

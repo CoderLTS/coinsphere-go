@@ -329,7 +329,6 @@
     loadError.value = ''
     try {
       const currentRun = await fetchWorkflowRun(runId)
-      if (currentRun.entryPoint !== 'backtest') throw new Error('该运行不是回测任务')
       const nodeOutput = currentRun.runNodes.find(
         (item) => isRecord(item.outputSummary) && 'backtestId' in item.outputSummary
       )?.outputSummary

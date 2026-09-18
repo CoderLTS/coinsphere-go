@@ -99,9 +99,10 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 
 	plugins := sdk.NewRegistry()
 	app := service.NewApp(gdb, cfg, plugins)
+	app.Profiles = plugins
 	host := sdk.Host{
 		Stores: sdk.GormPluginStores{Database: gdb}, Network: official.NetworkClientFactory{},
-		OutboundProxy: app, Realtime: app, Events: app, MarketData: plugins, Execution: plugins, Strategies: plugins,
+		OutboundProxy: app, Realtime: app, Events: app, MarketData: plugins, Execution: plugins, Strategies: plugins, Profiles: plugins,
 		AllowedHTTPHosts: cfg.Workflow.HTTPAllowedHosts,
 	}
 	var enabledOfficialIDs []string

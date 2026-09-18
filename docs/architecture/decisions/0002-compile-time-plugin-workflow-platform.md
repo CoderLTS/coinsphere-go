@@ -1,6 +1,6 @@
 # ADR-0002：编译期插件驱动的工作流平台
 
-- 状态：已接受，数据库部署部分由 [ADR-0003](0003-use-shared-postgresql.md) 替代
+- 状态：部分被 [ADR-0006](0006-workflow-graph-v3-and-plugin-profiles.md) 取代（本文保留为历史背景；Graph v3、多入口和 Profile 语义以 ADR-0006 为准）
 - 日期：2026-08-24
 - 决策所有者：CoinSphere
 - 当前实现：[CoinSphere 当前架构](../overview.md)

@@ -1,116 +1,33 @@
-/** 前端接口封装：scheduler。 */
 import {
   applyWorkflowLifecycle,
-  createWorkflow,
   createWorkflowRun,
   deleteWorkflow,
   deleteWorkflowRevision,
   fetchWorkflow,
   fetchWorkflowRun,
   fetchWorkflowRuns,
-  fetchWorkflowNodeDefinitions,
   fetchWorkflowRevision,
   fetchWorkflowRevisions,
   fetchWorkflows,
-  saveWorkflowRevision,
-  updateWorkflow,
-  validateWorkflowGraph,
   type WorkflowRun,
   type WorkflowNodeLog,
   type WorkflowArtifact,
   type WorkflowRunEvent,
-  type WorkflowDetail,
-  type WorkflowGraph as CurrentWorkflowGraph,
-  type WorkflowInputBinding,
+  type WorkflowGraph,
   type WorkflowItem,
-  type WorkflowNodeDefinition,
   type WorkflowRevision,
-  type WorkflowSecretChange
+  type WorkflowRunCreatePayload
 } from './workflows'
 
-export type WorkflowStartType = 'manual' | 'schedule' | 'event' | 'webhook'
-export type WorkflowTriggerType = WorkflowStartType
-export type WorkflowScheduleType = 'cron' | 'interval' | 'once'
+export type WorkflowTriggerType = WorkflowRun['triggerType']
 export type WorkflowExecutionStatus =
   | 'queued'
   | 'running'
+  | 'waiting'
   | 'retry_waiting'
   | 'success'
   | 'failed'
   | 'canceled'
-export type WorkflowTerminalStatus = 'success' | 'failed' | 'canceled'
-
-/** 工作流可编排的智能体选项。requiresRefId / supportsAnalyze 决定节点表单显示哪些输入项。 */
-export interface WorkflowAgentOption {
-  code: string
-  label: string
-  description: string
-  dataSourceType: string
-  dataSourceLabel?: string
-  requiresRefId: boolean
-  supportsAnalyze: boolean
-}
-
-/** 后端声明的节点"图语义"：决定这个节点在画布上怎么连线（端口、分支、校验）。 */
-export type WorkflowNodeGraphKind = 'plain' | 'start' | 'branch' | 'loop' | 'terminal'
-
-export interface WorkflowNodeDefinitionItem {
-  typeCode: string
-  label: string
-  version?: string
-  description?: string
-  category: string
-  aliases?: string[]
-  tags?: string[]
-  sortOrder: number
-  color?: string
-  icon?: string
-  width?: number
-  height?: number
-  capabilities?: WorkflowNodeDefinition['capabilities']
-  configSchema: Record<string, any>
-  uiSchema?: Record<string, any>
-  secretFields?: { name: string; title: string; required: boolean }[]
-  /** 图语义分类，后端注册表下发；老后端没有这个字段时按 plain 处理。 */
-  kind?: WorkflowNodeGraphKind
-  /** 分支节点必须存在的分支键，如 ['true','false']。 */
-  branches?: string[]
-  /**
-   * 非空表示分支不是固定的，而是从节点 config 的这个数组字段逐项取 key（多路 switch 用）。
-   * 与 extraBranches 一起，决定这个节点实例该有几个出口。
-   */
-  branchesConfigKey?: string
-  /** 动态分支之外总是存在的分支（如 switch 的 default）。 */
-  extraBranches?: string[]
-}
-
-export interface WorkflowNodeItem {
-  id: string
-  type: string
-  label: string
-  config: Record<string, any>
-  position?: {
-    x: number
-    y: number
-  }
-}
-
-export interface WorkflowEdgeItem {
-  id: string
-  source: string
-  target: string
-  branch?: string
-  label?: string
-  condition?: string
-}
-
-export interface WorkflowGraph {
-  schemaVersion?: 1 | 2
-  entryPoints?: { realtime: string; backtest: string }
-  nodes: WorkflowNodeItem[]
-  edges: WorkflowEdgeItem[]
-}
-
 export interface WorkflowDefinitionVersionItem {
   id: number
   version: number
@@ -144,57 +61,6 @@ export interface WorkflowDefinitionItem {
   versions?: WorkflowDefinitionVersionItem[]
 }
 
-export interface WorkflowDefinitionUpsertPayload {
-  code?: string
-  displayName: string
-  description: string
-  graph: WorkflowGraph
-}
-
-export interface WorkflowDefinitionValidationIssue {
-  scope: 'graph' | 'node' | 'edge'
-  level: 'error' | 'warning'
-  message: string
-  nodeId?: string
-  edgeId?: string
-  field?: string
-}
-
-export interface WorkflowDefinitionValidationResult {
-  valid: boolean
-  issues: WorkflowDefinitionValidationIssue[]
-}
-
-export interface WorkflowRuntimeEntryItem {
-  id: number
-  definitionId: number
-  startNodeId: string
-  entryKey: string
-  entryName: string
-  startType: WorkflowStartType
-  isEnabled: boolean
-  registrationStatus: 'ready' | 'registered' | 'failed' | 'disabled' | string
-  nextRunAt: string
-  lastTriggeredAt: string
-  lastErrorMessage: string
-  secretHint: string
-  secretRotatedAt: string
-}
-
-export interface WorkflowRuntimeStateItem {
-  workflowCode: string
-  runtimeStateId: number | null
-  activeDefinitionId: number | null
-  activatedAt: string
-  entries: WorkflowRuntimeEntryItem[]
-}
-
-export interface WorkflowRuntimeSecretRotationResult {
-  entryKey: string
-  secret: string
-  secretHint: string
-}
-
 export interface WorkflowExecutionNodeAttempt {
   id: number
   nodeId: string
@@ -217,7 +83,11 @@ export interface WorkflowExecutionItem {
   workflowDefinitionId: number
   workflowDefinitionVersion: number
   workflowDefinitionName: string
-  entryPoint: 'realtime' | 'backtest'
+  triggerNodeId: string
+  entryNodeInstanceId: string
+  triggerInstanceId: string
+  triggerEventId?: string
+  profileSnapshot: WorkflowRun['profileSnapshot']
   entryName: string
   triggerType: WorkflowTriggerType | string
   triggeredBy?: number | null
@@ -245,382 +115,12 @@ export interface WorkflowExecutionDetail extends WorkflowExecutionItem {
   artifacts: WorkflowArtifact[]
 }
 
-export interface WorkflowManualRunPayload {
-  startEntryKeys: string[]
-  inputs?: Record<string, any>
-  entryPoint?: 'realtime' | 'backtest'
-  revisionId?: number
-}
-
-export interface RunWorkflowDefinitionResponse {
-  executions: WorkflowExecutionItem[]
-}
-
-const versionIDFactor = 1_000_000_000
-const currentNodeDefinitions = new Map<string, WorkflowNodeDefinition>()
-const nodeLabel = (type: string, fallback = type) =>
-  currentNodeDefinitions.get(type)?.title || fallback
-
-const schemaTitleLabels: Record<string, string> = {
-  Value: '值',
-  'Interval (seconds)': '执行间隔（秒）',
-  'Cron expression': 'Cron 表达式',
-  'Time zone': '时区',
-  Markets: '市场类型',
-  'Quote assets': '报价资产',
-  'Base asset allowlist': '基础资产白名单',
-  'Base asset denylist': '基础资产黑名单',
-  'Symbol allowlist': '交易对白名单',
-  'Symbol denylist': '交易对黑名单',
-  'Event types': '事件类型',
-  Source: '事件来源',
-  Subject: '事件主题',
-  Result: '执行结果',
-  'Decision mode': '决策方式',
-  'Task type': '任务类型',
-  Prompt: '提示内容',
-  'Expires after (seconds)': '有效时间（秒）',
-  'Business key': '业务标识',
-  'Maximum iterations': '最大循环次数',
-  'Absolute timeout (seconds)': '总超时时间（秒）',
-  'Boolean exit condition': '布尔退出条件',
-  'Embedded DAG': '内嵌流程',
-  URL: '请求地址',
-  Method: '请求方法',
-  'Timeout (seconds)': '超时时间（秒）',
-  'Use Authorization secret': '使用访问凭据',
-  Authorization: '访问凭据',
-  'JSON body': '请求内容',
-  'CloudEvent type': '事件类型',
-  'Webhook secret': 'Webhook 密钥',
-  'WebSocket URL': 'WebSocket 连接地址',
-  'Event ID field': '事件编号字段',
-  'Partition field': '分区字段',
-  'OpenAI-compatible endpoint': 'OpenAI 兼容接口地址',
-  Model: '模型',
-  'API key': '接口密钥',
-  'Structured data': '结构化数据',
-  Title: '通知标题',
-  Market: '市场类型',
-  Proxy: '代理',
-  Instrument: '交易对',
-  Interval: 'K 线周期',
-  'Check interval': '检查周期',
-  'Condition name': '条件名称',
-  'Candle interval': 'K 线周期',
-  Strategy: '量化策略',
-  Parameters: '参数',
-  'Average candles': '均量周期',
-  'Volume multiplier': '放量倍数',
-  Candles: 'K 线数量',
-  Mode: '判断方式',
-  'Threshold (%)': '阈值（%）',
-  'Fast period': '快线周期',
-  'Slow period': '慢线周期',
-  'Signal period': '信号周期',
-  Rule: '判断规则',
-  Period: '周期',
-  'K smoothing': 'K 平滑周期',
-  'D smoothing': 'D 平滑周期',
-  Threshold: '阈值',
-  'Standard deviations': '标准差倍数',
-  'Start (UTC)': '开始时间（UTC）',
-  'End (UTC)': '结束时间（UTC）',
-  'Initial capital': '初始资金',
-  'Fee rate': '手续费率',
-  'Slippage rate': '滑点率',
-  'Initial balance': '初始余额',
-  'Max total notional': '最大总名义金额',
-  'Max instrument notional': '单交易对最大名义金额',
-  'Max operation notional': '单次操作最大名义金额',
-  'Max daily loss': '单日最大亏损',
-  'Max drawdown ratio': '最大回撤比例',
-  'Max quote age': '行情最大延迟（秒）'
-}
-
-const schemaFieldLabels: Record<string, string> = {
-  action: '操作',
-  pathEntered: '已进入上游路径',
-  eventTime: '事件时间',
-  strategyId: '策略标识',
-  strategyVersion: '策略版本',
-  target: '目标仓位',
-  evaluatedAt: '评估时间',
-  businessKey: '业务标识',
-  signalId: '信号编号',
-  decisionTaskId: '审批任务编号',
-  decisionStatus: '审批状态',
-  subjectKey: '通知对象标识',
-  message: '通知内容'
-}
-
-const schemaEnumLabels: Record<string, Record<string, string>> = {
-  decisionMode: { human: '人工确认', auto: '自动执行' },
-  market: { spot: '现货', usdm: 'U 本位合约' },
-  targetMode: { fixed: '固定目标仓位', input: '引用上游小数' },
-  format: { text: '纯文本', markdown: 'Markdown 文本' },
-  security: { implicit_tls: 'TLS', starttls: 'STARTTLS' },
-  mode: { rise: '上涨', fall: '下跌', absolute: '绝对涨跌幅', amplitude: '最高最低振幅' },
-  direction: { above: '高于阈值', below: '低于阈值' },
-  signal: {
-    golden_cross: '金叉',
-    death_cross: '死叉',
-    dif_above_zero: 'DIF 位于零轴上方',
-    dif_below_zero: 'DIF 位于零轴下方',
-    k_above: 'K 高于阈值',
-    k_below: 'K 低于阈值',
-    d_above: 'D 高于阈值',
-    d_below: 'D 低于阈值',
-    j_above: 'J 高于阈值',
-    j_below: 'J 低于阈值',
-    close_above_upper: '收盘价突破上轨',
-    close_below_lower: '收盘价跌破下轨'
-  },
-  decisionStatus: {
-    approved: '已批准',
-    rejected: '已拒绝',
-    expired: '已过期',
-    superseded: '已替代'
-  }
-}
-
-const schemaDescriptionLabels: Record<string, string> = {
-  'Value emitted by this node.': '该节点输出的值。'
-}
-const legacyNodeTypes: Record<string, string> = {
-  'core.manual': 'start.manual',
-  'core.schedule': 'start.schedule',
-  'core.event': 'start.event',
-  'official.connector.webhook': 'start.webhook',
-  'core.end': 'end'
-}
-
-const encodeVersionID = (workflowID: number, revisionID: number) =>
-  workflowID * versionIDFactor + revisionID
-
-const decodeDefinitionID = (definitionID: number) =>
-  definitionID >= versionIDFactor
-    ? {
-        workflowID: Math.floor(definitionID / versionIDFactor),
-        revisionID: definitionID % versionIDFactor
-      }
-    : { workflowID: definitionID, revisionID: 0 }
-
-const graphKind = (definition: WorkflowNodeDefinition): WorkflowNodeGraphKind => {
-  if (definition.kind === 'trigger') return 'start'
-  if (definition.type === 'core.end' || definition.type === 'core.loop_end') return 'terminal'
-  if (definition.branches?.length) return 'branch'
-  return 'plain'
-}
-
-const inputProperties = (definition?: WorkflowNodeDefinition) =>
-  (definition?.inputSchema?.properties || {}) as Record<string, Record<string, unknown>>
-
-const localizeSchemaProperties = (
-  properties: Record<string, Record<string, unknown>>
-): Record<string, Record<string, unknown>> =>
-  Object.fromEntries(
-    Object.entries(properties).map(([key, schema]) => {
-      const title = String(schema.title || '')
-      const existingEnumLabels = Array.isArray(schema.enumLabels) ? schema.enumLabels : []
-      const enumLabels = (schema.enum as unknown[] | undefined)?.map(
-        (value, index) =>
-          schemaEnumLabels[key]?.[String(value)] || existingEnumLabels[index] || String(value)
-      )
-      return [
-        key,
-        {
-          ...schema,
-          title: schemaTitleLabels[title] || schemaFieldLabels[key] || title || key,
-          ...(schema.description
-            ? {
-                description:
-                  schemaDescriptionLabels[String(schema.description)] || String(schema.description)
-              }
-            : {}),
-          ...(enumLabels ? { enumLabels } : {}),
-          ...(schema.properties
-            ? {
-                properties: localizeSchemaProperties(
-                  schema.properties as Record<string, Record<string, unknown>>
-                )
-              }
-            : {})
-        }
-      ]
-    })
-  )
-
-const legacyConfigSchema = (definition: WorkflowNodeDefinition) => {
-  const config = definition.configSchema || {}
-  const inputs = inputProperties(definition)
-  return {
-    ...config,
-    properties: localizeSchemaProperties({
-      ...((config.properties || {}) as Record<string, Record<string, unknown>>),
-      ...inputs
-    })
-  }
-}
-
-const toLegacyGraph = (graph: CurrentWorkflowGraph): WorkflowGraph => ({
-  schemaVersion: graph.schemaVersion,
-  ...(graph.entryPoints ? { entryPoints: graph.entryPoints } : {}),
-  nodes: (graph.nodes || []).map((node) => {
-    const definition = currentNodeDefinitions.get(node.nodeType)
-    const bindings = node.inputBindings || {}
-    const literalInputs = Object.fromEntries(
-      Object.entries(bindings)
-        .filter(([, binding]) => binding.kind === 'literal')
-        .map(([name, binding]) => [name, binding.value])
-    )
-    const config: Record<string, unknown> = { ...node.config, ...literalInputs }
-    if (definition?.kind === 'trigger') {
-      config.entryKey = node.nodeInstanceId
-      config.displayName = nodeLabel(node.nodeType)
-      config.inputBindings = {}
-    }
-    if (node.nodeType === 'core.schedule') {
-      if (String(config.cronExpression || '').trim()) {
-        config.scheduleType = 'cron'
-        config.timeZone = String(config.timeZone || 'Asia/Shanghai')
-      } else {
-        config.scheduleType = 'interval'
-        config.value = Number(config.everySeconds || 60)
-        config.unit = 'seconds'
-      }
-    }
-    if (node.nodeType === 'core.event') {
-      config.eventType = Array.isArray(config.types) ? config.types[0] || '' : ''
-    }
-    return {
-      id: node.nodeInstanceId,
-      type: legacyNodeTypes[node.nodeType] || node.nodeType,
-      label: nodeLabel(node.nodeType, definition?.title || node.nodeType),
-      config: {
-        ...config,
-        __nodeType: node.nodeType,
-        __nodeVersion: node.nodeVersion,
-        __inputBindings: bindings
-      },
-      position: node.position
-    }
-  }),
-  edges: (graph.edges || []).map((edge) => ({
-    id: edge.edgeId,
-    source: edge.sourceNodeInstanceId,
-    target: edge.targetNodeInstanceId,
-    branch: edge.sourcePort === 'out' ? '' : edge.sourcePort,
-    condition: edge.condition || ''
-  }))
-})
-
-const toCurrentRevision = (graph: WorkflowGraph) => {
-  const secretChanges: WorkflowSecretChange[] = []
-  const currentGraph: CurrentWorkflowGraph = {
-    schemaVersion: graph.schemaVersion || 1,
-    ...(graph.entryPoints ? { entryPoints: graph.entryPoints } : {}),
-    nodes: (graph.nodes || []).map((node) => {
-      const rawConfig = { ...(node.config || {}) }
-      const type = String(
-        rawConfig.__nodeType ||
-          (
-            {
-              'start.manual': 'core.manual',
-              'start.schedule': 'core.schedule',
-              'start.event': 'core.event',
-              'start.webhook': 'official.connector.webhook',
-              end: 'core.end'
-            } as Record<string, string>
-          )[node.type] ||
-          node.type
-      )
-      const definition = currentNodeDefinitions.get(type)
-      const nodeVersion = String(rawConfig.__nodeVersion || definition?.version || '1.0.0')
-      const bindings = {
-        ...((rawConfig.__inputBindings || {}) as Record<string, WorkflowInputBinding>)
-      }
-      delete rawConfig.__nodeType
-      delete rawConfig.__nodeVersion
-      delete rawConfig.__inputBindings
-      definition?.secretFields.forEach((field) => {
-        const value = rawConfig[field.name]
-        delete rawConfig[field.name]
-        if (typeof value === 'string' && value.trim()) {
-          secretChanges.push({ nodeInstanceId: node.id, field: field.name, value })
-        }
-      })
-      if (definition?.kind === 'trigger') {
-        delete rawConfig.entryKey
-        delete rawConfig.displayName
-        delete rawConfig.inputBindings
-      }
-      if (type === 'core.schedule') {
-        if (rawConfig.scheduleType === 'cron') {
-          rawConfig.cronExpression = String(rawConfig.cronExpression || '').trim()
-          rawConfig.timeZone = String(rawConfig.timeZone || 'Asia/Shanghai').trim()
-          delete rawConfig.everySeconds
-        } else {
-          const multiplier =
-            { seconds: 1, minutes: 60, hours: 3600, days: 86400 }[
-              String(rawConfig.unit || 'seconds')
-            ] || 1
-          rawConfig.everySeconds =
-            Math.max(1, Number(rawConfig.value || rawConfig.everySeconds || 60)) * multiplier
-          delete rawConfig.cronExpression
-          delete rawConfig.timeZone
-        }
-        for (const key of [
-          'entryKey',
-          'displayName',
-          'inputBindings',
-          'scheduleType',
-          'value',
-          'unit',
-          'runAt'
-        ])
-          delete rawConfig[key]
-      }
-      if (type === 'core.event') {
-        const eventType = String(rawConfig.eventType || '').trim()
-        if (eventType) rawConfig.types = [eventType]
-        for (const key of ['entryKey', 'displayName', 'inputBindings', 'eventType', 'filters'])
-          delete rawConfig[key]
-      }
-      Object.keys(inputProperties(definition)).forEach((name) => {
-        if (!(name in rawConfig)) return
-        if (!(name in bindings) && rawConfig[name] !== '') {
-          bindings[name] = { kind: 'literal', value: rawConfig[name] }
-        }
-        delete rawConfig[name]
-      })
-      return {
-        nodeInstanceId: node.id,
-        nodeType: type,
-        nodeVersion,
-        config: rawConfig,
-        ...(Object.keys(bindings).length ? { inputBindings: bindings } : {}),
-        position: node.position || { x: 0, y: 0 }
-      }
-    }),
-    edges: (graph.edges || []).map((edge) => ({
-      edgeId: edge.id,
-      sourceNodeInstanceId: edge.source,
-      sourcePort: edge.branch || 'out',
-      targetNodeInstanceId: edge.target,
-      targetPort: 'in',
-      ...(edge.condition ? { condition: edge.condition } : {})
-    }))
-  }
-  return { graph: currentGraph, secretChanges }
-}
-
 const runStatus = (status: WorkflowRun['status']): WorkflowExecutionStatus => {
   const mapped: Partial<Record<WorkflowRun['status'], WorkflowExecutionStatus>> = {
     succeeded: 'success',
     cancelled: 'canceled',
     retrying: 'retry_waiting',
-    waiting: 'queued'
+    waiting: 'waiting'
   }
   return mapped[status] || (status as WorkflowExecutionStatus)
 }
@@ -633,6 +133,7 @@ const nodeAttemptStatus = (status: string): WorkflowExecutionStatus | string => 
 
 const statusLabel = (status: WorkflowExecutionStatus | string) =>
   ({
+    waiting: '等待数据',
     queued: '排队中',
     running: '运行中',
     retry_waiting: '等待重试',
@@ -669,12 +170,18 @@ const toExecution = (
     workflowDefinitionId: workflow.id,
     workflowDefinitionVersion: revision?.revisionNumber || 1,
     workflowDefinitionName: workflow.name,
-    entryPoint: run.entryPoint,
-    entryName: run.entryPoint === 'backtest' ? '回测开始' : workflow.mainTriggerNodeId,
+    triggerNodeId: run.triggerNodeId,
+    entryNodeInstanceId: run.entryNodeInstanceId,
+    triggerInstanceId: run.triggerInstanceId,
+    triggerEventId: run.triggerEventId,
+    profileSnapshot: run.profileSnapshot,
+    entryName:
+      revision?.graph.nodes.find((node) => node.nodeInstanceId === run.entryNodeInstanceId)
+        ?.label || run.entryNodeInstanceId,
     triggerType: run.triggerType,
     status,
     statusLabel: statusLabel(status),
-    triggerLabel: run.entryPoint === 'backtest' ? '回测' : triggerLabel(run.triggerType),
+    triggerLabel: triggerLabel(run.triggerType),
     queuedAt: run.triggeredAt,
     claimedAt: run.startedAt || '',
     startedAt: run.startedAt || '',
@@ -694,7 +201,8 @@ const toExecution = (
 }
 
 const loadDefinition = async (definitionID: number): Promise<WorkflowDefinitionItem> => {
-  const { workflowID, revisionID } = decodeDefinitionID(definitionID)
+  const workflowID = definitionID
+  const revisionID = 0
   const [workflow, revisionResult, runResult] = await Promise.all([
     fetchWorkflow(workflowID),
     fetchWorkflowRevisions(workflowID),
@@ -720,19 +228,19 @@ const loadDefinition = async (definitionID: number): Promise<WorkflowDefinitionI
     displayName: workflow.name,
     description: workflow.description,
     groupId: workflow.groupId,
-    graph: toLegacyGraph(selected.graph),
+    graph: selected.graph,
     isLatest: selected.id === revisions[0]?.id,
     isBuiltin: false,
     isActive: workflow.status === 'active' && selected.id === workflow.activeRevisionId,
     isWorkflowActive: workflow.status === 'active',
     workflowStatus: workflow.status,
-    activeDefinitionId: encodeVersionID(workflow.id, workflow.activeRevisionId),
+    activeDefinitionId: workflow.activeRevisionId,
     activeVersion: activeVersion || null,
     executionCount: runResult.total,
     createdBy: workflow.createdBy,
     createdAt: selected.createdAt,
     versions: revisions.map((revision) => ({
-      id: encodeVersionID(workflow.id, revision.id),
+      id: revision.id,
       version: revision.revisionNumber,
       displayName: workflow.name,
       isLatest: revision.id === revisions[0]?.id,
@@ -745,241 +253,24 @@ const loadDefinition = async (definitionID: number): Promise<WorkflowDefinitionI
   }
 }
 
-export async function fetchNodeDefinitions() {
-  const result = await fetchWorkflowNodeDefinitions()
-  result.items.forEach((item) => currentNodeDefinitions.set(item.type, item))
-  return result.items
-    .filter((item) => item.available)
-    .map((item) => ({
-      typeCode: legacyNodeTypes[item.type] || item.type,
-      label: nodeLabel(item.type, item.title),
-      version: item.version,
-      description: item.description,
-      category: item.category,
-      aliases: item.aliases,
-      tags: item.tags,
-      sortOrder: item.sortOrder,
-      color: item.color,
-      icon: item.icon,
-      width: item.width,
-      height: item.height,
-      capabilities: item.capabilities,
-      configSchema: legacyConfigSchema(item),
-      uiSchema: item.uiSchema,
-      secretFields: item.secretFields,
-      kind: graphKind(item),
-      branches: item.branches
-    }))
-}
-
 export async function fetchWorkflowDefinitionList() {
   const { items } = await fetchWorkflows()
   return Promise.all(items.map((item) => loadDefinition(item.id)))
 }
-
-export const fetchWorkflowDefinitionDetail = (definitionID: number) => loadDefinition(definitionID)
-
-export async function fetchCreateWorkflowDefinition(params: WorkflowDefinitionUpsertPayload) {
-  const workflow = await createWorkflow({
-    name: params.displayName,
-    description: params.description,
-    templateKey: 'blank'
-  })
-  const revision = toCurrentRevision(params.graph)
-  await saveWorkflowRevision(workflow.id, {
-    expectedActiveRevisionId: workflow.activeRevisionId,
-    graph: revision.graph,
-    secretChanges: revision.secretChanges,
-    resetStateNodeInstanceIds: []
-  })
-  return loadDefinition(workflow.id)
-}
-
-export interface WorkflowDefinitionSaveContext {
-  workflow: WorkflowDetail
-  resetStateNodeInstanceIds: string[]
-}
-
-export async function fetchWorkflowDefinitionSaveContext(
-  definitionID: number,
-  params: WorkflowDefinitionUpsertPayload
-): Promise<WorkflowDefinitionSaveContext> {
-  const { workflowID } = decodeDefinitionID(definitionID)
-  const workflow = await fetchWorkflow(workflowID)
-  const activeRevision = await fetchWorkflowRevision(workflowID, workflow.activeRevisionId)
-  const nextVersions = new Map(
-    toCurrentRevision(params.graph).graph.nodes.map((node) => [
-      node.nodeInstanceId,
-      { nodeType: node.nodeType, nodeVersion: node.nodeVersion }
-    ])
-  )
-  const resetStateNodeInstanceIds = workflow.stateNodeInstanceIds.filter((nodeID) => {
-    const previous = activeRevision.nodeVersions[nodeID]
-    const next = nextVersions.get(nodeID)
-    return (
-      !previous ||
-      !next ||
-      previous.nodeType !== next.nodeType ||
-      previous.nodeVersion !== next.nodeVersion
-    )
-  })
-  return { workflow, resetStateNodeInstanceIds }
-}
-
-export async function fetchUpdateWorkflowDefinition(
-  definitionID: number,
-  params: WorkflowDefinitionUpsertPayload,
-  context: WorkflowDefinitionSaveContext
-) {
-  const { workflowID } = decodeDefinitionID(definitionID)
-  const { workflow } = context
-  if (workflow.name !== params.displayName || workflow.description !== params.description) {
-    await updateWorkflow(workflowID, {
-      name: params.displayName,
-      description: params.description
-    })
-  }
-  const revision = toCurrentRevision(params.graph)
-  await saveWorkflowRevision(workflowID, {
-    expectedActiveRevisionId: workflow.activeRevisionId,
-    graph: revision.graph,
-    secretChanges: revision.secretChanges,
-    resetStateNodeInstanceIds: context.resetStateNodeInstanceIds
-  })
-  return loadDefinition(workflowID)
-}
-
-export const fetchValidateWorkflowDefinition = async (params: WorkflowDefinitionUpsertPayload) => {
-  const result = await validateWorkflowGraph(toCurrentRevision(params.graph).graph)
-  return result as WorkflowDefinitionValidationResult
-}
-
-export async function fetchActivateWorkflowDefinition(definitionID: number) {
-  const { workflowID, revisionID } = decodeDefinitionID(definitionID)
-  const workflow = await fetchWorkflow(workflowID)
-  if (revisionID && revisionID !== workflow.activeRevisionId) {
-    const revision = await fetchWorkflowRevision(workflowID, revisionID)
-    await saveWorkflowRevision(workflowID, {
-      expectedActiveRevisionId: workflow.activeRevisionId,
-      graph: revision.graph,
-      secretChanges: [],
-      resetStateNodeInstanceIds: []
-    })
-  }
-  await applyWorkflowLifecycle(workflowID, 'activate')
-  return fetchWorkflowRuntime(workflowID)
-}
-
-export async function fetchDeactivateWorkflowDefinition(definitionID: number) {
-  const { workflowID } = decodeDefinitionID(definitionID)
-  await applyWorkflowLifecycle(workflowID, 'deactivate')
-  return fetchWorkflowRuntime(workflowID)
-}
-
-export async function fetchDeleteWorkflowDefinition(definitionID: number) {
-  const { workflowID, revisionID } = decodeDefinitionID(definitionID)
-  if (!revisionID) throw new Error('请选择要删除的历史版本')
-  return deleteWorkflowRevision(workflowID, revisionID)
-}
-
-export async function fetchDeleteWorkflow(workflowID: number) {
-  return deleteWorkflow(workflowID)
-}
-
-const startType = (nodeType: string): WorkflowStartType => {
-  if (nodeType === 'core.manual') return 'manual'
-  if (nodeType === 'core.schedule') return 'schedule'
-  return 'event'
-}
-
-export async function fetchWorkflowRuntime(
-  definitionID: number
-): Promise<WorkflowRuntimeStateItem> {
-  const { workflowID } = decodeDefinitionID(definitionID)
+export const fetchWorkflowDefinitionDetail = loadDefinition
+export const fetchActivateWorkflowDefinition = (id: number) =>
+  applyWorkflowLifecycle(id, 'activate')
+export const fetchDeactivateWorkflowDefinition = (id: number) =>
+  applyWorkflowLifecycle(id, 'deactivate')
+export const fetchDeleteWorkflowDefinition = deleteWorkflowRevision
+export const fetchDeleteWorkflow = deleteWorkflow
+export async function fetchRunWorkflowDefinition(id: number, params: WorkflowRunCreatePayload) {
+  const run = await createWorkflowRun(id, params)
   const [workflow, revision] = await Promise.all([
-    fetchWorkflow(workflowID),
-    fetchWorkflow(workflowID).then((item) =>
-      fetchWorkflowRevision(workflowID, item.activeRevisionId)
-    )
+    fetchWorkflow(id),
+    fetchWorkflowRevision(id, run.revisionId)
   ])
-  const trigger = revision.graph.nodes.find(
-    (node) => node.nodeInstanceId === workflow.mainTriggerNodeId
-  )
-  const activeID = encodeVersionID(workflowID, workflow.activeRevisionId)
-  return {
-    workflowCode: String(workflowID),
-    runtimeStateId: workflowID,
-    activeDefinitionId: workflow.status === 'active' ? activeID : null,
-    activatedAt: workflow.updatedAt,
-    entries: trigger
-      ? [
-          {
-            id: workflowID,
-            definitionId: activeID,
-            startNodeId: trigger.nodeInstanceId,
-            entryKey: trigger.nodeInstanceId,
-            entryName: nodeLabel(trigger.nodeType),
-            startType: startType(trigger.nodeType),
-            isEnabled: workflow.status === 'active',
-            registrationStatus: workflow.status === 'active' ? 'registered' : 'disabled',
-            nextRunAt: '',
-            lastTriggeredAt: '',
-            lastErrorMessage: '',
-            secretHint: '',
-            secretRotatedAt: ''
-          }
-        ]
-      : []
-  }
-}
-
-export async function fetchUpdateWorkflowRuntimeEntryStatus(
-  definitionID: number,
-  _entryKey: string,
-  isEnabled: boolean
-) {
-  const { workflowID } = decodeDefinitionID(definitionID)
-  await applyWorkflowLifecycle(workflowID, isEnabled ? 'activate' : 'deactivate')
-  return fetchWorkflowRuntime(workflowID)
-}
-
-export const fetchRotateWorkflowRuntimeEntrySecret = async (
-  definitionID: number,
-  entryKey: string
-): Promise<WorkflowRuntimeSecretRotationResult> => {
-  void definitionID
-  void entryKey
-  throw new Error('当前连接器的 Secret 在节点配置中管理')
-}
-
-export async function fetchRunWorkflowDefinition(
-  definitionID: number,
-  params: WorkflowManualRunPayload
-): Promise<RunWorkflowDefinitionResponse> {
-  const decoded = decodeDefinitionID(definitionID)
-  const workflowID = decoded.workflowID
-  const [run, workflow, revisions] = await Promise.all([
-    createWorkflowRun(
-      workflowID,
-      {
-        entryPoint: params.entryPoint,
-        revisionId: params.revisionId || decoded.revisionID || undefined,
-        input: params.inputs
-      },
-      params.entryPoint !== 'backtest'
-    ),
-    fetchWorkflow(workflowID),
-    fetchWorkflowRevisions(workflowID)
-  ])
-  return {
-    executions: [
-      toExecution(
-        run,
-        workflow,
-        revisions.items.find((revision) => revision.id === run.revisionId)
-      )
-    ]
-  }
+  return { executions: [toExecution(run, workflow, revision)] }
 }
 
 export async function fetchWorkflowExecutionDetail(
@@ -990,16 +281,15 @@ export async function fetchWorkflowExecutionDetail(
     fetchWorkflow(run.workflowId),
     fetchWorkflowRevision(run.workflowId, run.revisionId)
   ])
-  const graph = toLegacyGraph(revision.graph)
-  const names = new Map(graph.nodes.map((node) => [node.id, node.label]))
+  const graph = revision.graph
+  const names = new Map(
+    graph.nodes.map((node) => [node.nodeInstanceId, node.label || node.nodeType])
+  )
   const execution = toExecution(run, workflow, revision)
   return {
     ...execution,
     graph,
-    startNodeId:
-      run.entryPoint === 'backtest'
-        ? revision.graph.entryPoints?.backtest || revision.mainTriggerNodeId
-        : revision.mainTriggerNodeId,
+    startNodeId: run.entryNodeInstanceId,
     logs: run.logs,
     event: run.event,
     resultSummary: run.resultSummary,

@@ -275,18 +275,14 @@
                       @click="toggleLifecycle(row)"
                     />
                   </ElTooltip>
-                  <ElTooltip
-                    :content="isBacktestWorkflow(row) ? '运行回测' : '手动运行'"
-                    placement="top"
-                  >
+                  <ElTooltip content="手动运行" placement="top">
                     <ElButton
                       circle
                       plain
                       size="small"
                       type="primary"
                       :icon="VideoPlay"
-                      :disabled="!isBacktestWorkflow(row) && row.workflowStatus !== 'active'"
-                      :loading="runningId === row.id"
+                      :disabled="row.workflowStatus !== 'active'"
                       @click="runWorkflow(row)"
                     />
                   </ElTooltip>
@@ -314,42 +310,6 @@
         </section>
       </div>
     </ElCard>
-
-    <ElDialog v-model="createVisible" title="新建工作流" width="min(520px, calc(100vw - 32px))">
-      <ElForm label-position="top">
-        <ElFormItem label="工作流名称">
-          <ElInput v-model="createForm.name" maxlength="120" show-word-limit />
-        </ElFormItem>
-        <ElFormItem label="模板">
-          <ElSelect v-model="createForm.templateKey" class="backtest-form__full">
-            <ElOption
-              v-for="template in workflowTemplates"
-              :key="template.key"
-              :label="template.name"
-              :value="template.key"
-            />
-          </ElSelect>
-        </ElFormItem>
-        <ElFormItem label="分组">
-          <ElSelect v-model="createForm.groupId" class="backtest-form__full">
-            <ElOption label="未分组" :value="0" />
-            <ElOption
-              v-for="group in workflowGroups"
-              :key="group.id"
-              :label="group.name"
-              :value="group.id"
-            />
-          </ElSelect>
-        </ElFormItem>
-        <div v-if="selectedTemplate?.description" class="create-template-description">
-          {{ selectedTemplate.description }}
-        </div>
-      </ElForm>
-      <template #footer>
-        <ElButton @click="createVisible = false">取消</ElButton>
-        <ElButton type="primary" :loading="creating" @click="submitCreateWorkflow">创建</ElButton>
-      </template>
-    </ElDialog>
 
     <ElDialog
       v-model="versionDialogVisible"
@@ -437,58 +397,6 @@
         </ElTable>
       </div>
     </ElDialog>
-
-    <ElDialog v-model="backtestVisible" title="运行回测" width="min(560px, calc(100vw - 32px))">
-      <ElAlert
-        v-if="backtestError"
-        class="backtest-form__error"
-        type="error"
-        show-icon
-        :closable="false"
-        :title="backtestError"
-      />
-      <ElForm label-position="top">
-        <ElFormItem label="策略版本">
-          <ElSelect v-model="backtestForm.definitionId" class="backtest-form__full">
-            <ElOption
-              v-for="revision in backtestWorkflow?.versions || []"
-              :key="revision.id"
-              :label="`v${revision.version}${revision.isActive ? '（当前激活）' : ''}`"
-              :value="revision.id"
-            />
-          </ElSelect>
-        </ElFormItem>
-        <div class="backtest-form__times">
-          <ElFormItem label="开始时间（UTC+8）">
-            <ElDatePicker
-              v-model="backtestForm.startTime"
-              type="datetime"
-              class="backtest-form__full"
-            />
-          </ElFormItem>
-          <ElFormItem label="结束时间（UTC+8）">
-            <ElDatePicker
-              v-model="backtestForm.endTime"
-              type="datetime"
-              class="backtest-form__full"
-            />
-          </ElFormItem>
-        </div>
-        <div class="backtest-form__numbers">
-          <ElFormItem label="初始资金"
-            ><ElInput v-model="backtestForm.initialCapital"
-          /></ElFormItem>
-          <ElFormItem label="手续费率"><ElInput v-model="backtestForm.feeRate" /></ElFormItem>
-          <ElFormItem label="滑点率"><ElInput v-model="backtestForm.slippageRate" /></ElFormItem>
-        </div>
-      </ElForm>
-      <template #footer>
-        <ElButton @click="backtestVisible = false">取消</ElButton>
-        <ElButton type="primary" :loading="Boolean(runningId)" @click="submitBacktest"
-          >开始回测</ElButton
-        >
-      </template>
-    </ElDialog>
   </div>
 </template>
 
@@ -515,7 +423,6 @@
     fetchDeactivateWorkflowDefinition,
     fetchDeleteWorkflow,
     fetchDeleteWorkflowDefinition,
-    fetchRunWorkflowDefinition,
     fetchWorkflowDefinitionList,
     type WorkflowDefinitionItem,
     type WorkflowDefinitionVersionItem
@@ -523,16 +430,13 @@
   import {
     assignWorkflowGroup,
     createWorkflowGroup,
-    createWorkflow,
     deleteWorkflowGroup,
     fetchWorkflowGroups,
     fetchWorkflowRuns,
-    fetchWorkflowTemplates,
     updateWorkflowGroup,
     updateWorkflowGroupOrder,
     type WorkflowGroup,
-    type WorkflowStatus,
-    type WorkflowTemplate
+    type WorkflowStatus
   } from '@/api/workflows'
   import { formatDateTime } from '@/utils/date'
 
@@ -542,14 +446,6 @@
   const { hasAuth } = useAuth()
   const loading = ref(false)
   const actingId = ref<number>()
-  const runningId = ref<number>()
-  const creating = ref(false)
-  const createVisible = ref(false)
-  const workflowTemplates = ref<WorkflowTemplate[]>([])
-  const createForm = reactive({ name: '', templateKey: 'blank', groupId: 0 })
-  const selectedTemplate = computed(() =>
-    workflowTemplates.value.find((item) => item.key === createForm.templateKey)
-  )
   const definitions = ref<WorkflowDefinitionItem[]>([])
   const workflowGroups = ref<WorkflowGroup[]>([])
   const selectedGroup = ref<'all' | 'ungrouped' | number>('all')
@@ -561,41 +457,6 @@
   const deletingVersionId = ref<number>()
   const deletingWorkflowId = ref<number>()
   const versionRows = computed(() => versionDetail.value?.versions || [])
-  const utc8OffsetMs = 8 * 60 * 60 * 1000
-  const utc8PickerDate = (timestamp = Date.now()) => {
-    const shifted = new Date(timestamp + utc8OffsetMs)
-    return new Date(
-      shifted.getUTCFullYear(),
-      shifted.getUTCMonth(),
-      shifted.getUTCDate(),
-      shifted.getUTCHours(),
-      shifted.getUTCMinutes(),
-      shifted.getUTCSeconds()
-    )
-  }
-  const utc8PickerISOString = (value: Date) =>
-    new Date(
-      Date.UTC(
-        value.getFullYear(),
-        value.getMonth(),
-        value.getDate(),
-        value.getHours(),
-        value.getMinutes(),
-        value.getSeconds(),
-        value.getMilliseconds()
-      ) - utc8OffsetMs
-    ).toISOString()
-  const backtestVisible = ref(false)
-  const backtestWorkflow = ref<WorkflowDefinitionItem | null>(null)
-  const backtestError = ref('')
-  const backtestForm = reactive({
-    definitionId: 0,
-    startTime: utc8PickerDate(Date.now() - 30 * 24 * 60 * 60 * 1000),
-    endTime: utc8PickerDate(),
-    initialCapital: '10000',
-    feeRate: '0.001',
-    slippageRate: '0.0005'
-  })
   const initialFilters = { keyword: '', status: '' }
   const formFilters = reactive({ ...initialFilters })
   const appliedFilters = reactive({ ...initialFilters })
@@ -832,7 +693,7 @@
 
   const openVersionEditor = async (row: WorkflowDefinitionVersionItem) => {
     versionDialogVisible.value = false
-    await router.push(`/scheduler/workflow/${row.id}/edit`)
+    await router.push(`/scheduler/workflow/${versionDetail.value!.id}/edit?revisionId=${row.id}`)
   }
 
   const deleteVersion = async (row: WorkflowDefinitionVersionItem) => {
@@ -847,7 +708,7 @@
     }
     deletingVersionId.value = row.id
     try {
-      await fetchDeleteWorkflowDefinition(row.id)
+      await fetchDeleteWorkflowDefinition(versionDetail.value!.id, row.id)
       if (versionDetail.value?.versions) {
         versionDetail.value.versions = versionDetail.value.versions.filter(
           (version) => version.id !== row.id
@@ -897,107 +758,14 @@
     }
   }
 
-  const isBacktestWorkflow = (row: WorkflowDefinitionItem) =>
-    row.graph.schemaVersion === 2 && Boolean(row.graph.entryPoints?.backtest)
-
-  const openCreateWorkflow = async () => {
-    if (!workflowTemplates.value.length) {
-      workflowTemplates.value = (await fetchWorkflowTemplates()).items
-    }
-    createForm.name = ''
-    createForm.templateKey = 'blank'
-    createForm.groupId = typeof selectedGroup.value === 'number' ? selectedGroup.value : 0
-    createVisible.value = true
-  }
-
-  const submitCreateWorkflow = async () => {
-    const name = createForm.name.trim()
-    if (!name) {
-      ElMessage.warning('请输入工作流名称')
-      return
-    }
-    creating.value = true
-    try {
-      const workflow = await createWorkflow({
-        name,
-        description: '',
-        templateKey: createForm.templateKey as Parameters<typeof createWorkflow>[0]['templateKey'],
-        groupId: createForm.groupId || null
-      })
-      createVisible.value = false
-      await router.push(`/scheduler/workflow/${workflow.id}/edit`)
-    } finally {
-      creating.value = false
-    }
-  }
+  const openCreateWorkflow = () =>
+    router.push({
+      path: '/scheduler/workflow/create',
+      query: typeof selectedGroup.value === 'number' ? { groupId: selectedGroup.value } : {}
+    })
 
   const runWorkflow = async (row: WorkflowDefinitionItem) => {
-    if (isBacktestWorkflow(row)) {
-      backtestWorkflow.value = row
-      backtestError.value = ''
-      backtestForm.definitionId =
-        row.versions?.find((revision) => revision.isActive)?.id || row.versions?.[0]?.id || row.id
-      backtestForm.endTime = utc8PickerDate()
-      backtestForm.startTime = utc8PickerDate(Date.now() - 30 * 24 * 60 * 60 * 1000)
-      backtestVisible.value = true
-      return
-    }
-    runningId.value = row.id
-    try {
-      const result = await fetchRunWorkflowDefinition(row.id, { startEntryKeys: [] })
-      const run = result.executions[0]
-      ElMessage.success('运行已加入队列')
-      if (run) {
-        await router.push({
-          path: `/scheduler/execution/${run.id}/detail`,
-          query: { workflowId: row.code, workflowName: row.displayName }
-        })
-      }
-    } finally {
-      runningId.value = undefined
-    }
-  }
-
-  const submitBacktest = async () => {
-    const row = backtestWorkflow.value
-    backtestError.value = ''
-    if (!row || !backtestForm.definitionId || !backtestForm.startTime || !backtestForm.endTime) {
-      backtestError.value = '请选择策略版本和回测时间'
-      return
-    }
-    if (backtestForm.startTime >= backtestForm.endTime) {
-      backtestError.value = '开始时间必须早于结束时间'
-      return
-    }
-    runningId.value = row.id
-    let result
-    try {
-      result = await fetchRunWorkflowDefinition(backtestForm.definitionId, {
-        startEntryKeys: ['backtest'],
-        entryPoint: 'backtest',
-        inputs: {
-          startTime: utc8PickerISOString(backtestForm.startTime),
-          endTime: utc8PickerISOString(backtestForm.endTime),
-          initialCapital: backtestForm.initialCapital,
-          feeRate: backtestForm.feeRate,
-          slippageRate: backtestForm.slippageRate
-        }
-      })
-    } catch {
-      backtestError.value = '回测启动失败，请检查所选策略版本和工作流配置'
-      return
-    } finally {
-      runningId.value = undefined
-    }
-    backtestVisible.value = false
-    const run = result.executions[0]
-    ElMessage.success('回测已加入队列')
-    if (run) {
-      await router.push({
-        path: `/scheduler/execution/${run.id}/detail`,
-        query: { workflowId: row.code, workflowName: row.displayName }
-      })
-    }
+    await router.push({ path: `/scheduler/workflow/${row.id}/edit`, query: { run: '1' } })
   }
 
   const handleSearch = () => {

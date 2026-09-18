@@ -14,6 +14,7 @@ import (
 	"coinsphere/backend/internal/db"
 	"coinsphere/backend/internal/security"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const aiProviderResponseLimit = 2 << 20
@@ -168,21 +169,23 @@ func (a *App) PatchAIModel(ctx context.Context, modelID int64, payload AIModelPa
 }
 
 func (a *App) DeleteAIModel(ctx context.Context, modelID int64) error {
-	var count int64
-	if err := a.DB.WithContext(ctx).Model(&db.AssistantSession{}).Where("model_config_id = ?", modelID).Count(&count).Error; err != nil {
-		return errors.New("count AI model sessions failed")
-	}
-	if count > 0 {
-		return fmt.Errorf("%w: AI model is referenced by assistant sessions", ErrConflict)
-	}
-	result := a.DB.WithContext(ctx).Delete(&db.AIModelConfig{}, modelID)
-	if result.Error != nil {
-		return errors.New("delete AI model failed")
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("%w: AI model", ErrNotFound)
-	}
-	return nil
+	return a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var model db.AIModelConfig
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&model, modelID).Error; err != nil {
+			return err
+		}
+		if err := ensureConnectionUnreferenced(tx, fmt.Sprintf("ai:%d", modelID)); err != nil {
+			return err
+		}
+		var count int64
+		if err := tx.Model(&db.AssistantSession{}).Where("model_config_id=?", modelID).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return fmt.Errorf("%w: AI model is referenced by assistant sessions", ErrConflict)
+		}
+		return tx.Delete(&model).Error
+	})
 }
 
 func (a *App) ValidateAIModel(ctx context.Context, modelID int64) (M, error) {

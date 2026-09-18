@@ -18,29 +18,37 @@ type WorkflowSecretFieldView struct {
 }
 
 type WorkflowNodeDefinitionView struct {
-	Type         string                    `json:"type"`
-	Version      string                    `json:"version"`
-	Title        string                    `json:"title"`
-	Description  string                    `json:"description"`
-	Kind         sdk.NodeKind              `json:"kind"`
-	Category     string                    `json:"category"`
-	Aliases      []string                  `json:"aliases,omitempty"`
-	Tags         []string                  `json:"tags,omitempty"`
-	SortOrder    int                       `json:"sortOrder"`
-	Color        string                    `json:"color"`
-	Icon         string                    `json:"icon"`
-	Width        int                       `json:"width"`
-	Height       int                       `json:"height"`
-	Capabilities sdk.NodeCapabilities      `json:"capabilities"`
-	ConfigSchema json.RawMessage           `json:"configSchema"`
-	UISchema     json.RawMessage           `json:"uiSchema"`
-	InputSchema  json.RawMessage           `json:"inputSchema"`
-	OutputSchema json.RawMessage           `json:"outputSchema"`
-	Branches     []string                  `json:"branches,omitempty"`
-	InputPorts   []string                  `json:"inputPorts"`
-	OutputPorts  []string                  `json:"outputPorts"`
-	SecretFields []WorkflowSecretFieldView `json:"secretFields"`
-	Available    bool                      `json:"available"`
+	ConnectionType    string                    `json:"connectionType,omitempty"`
+	ConnectionFields  []string                  `json:"connectionFields,omitempty"`
+	WorkflowOperation bool                      `json:"workflowOperation,omitempty"`
+	Type              string                    `json:"type"`
+	Version           string                    `json:"version"`
+	Title             string                    `json:"title"`
+	Description       string                    `json:"description"`
+	Kind              sdk.NodeKind              `json:"kind"`
+	Role              sdk.NodeRole              `json:"role"`
+	Visibility        sdk.NodeVisibility        `json:"visibility"`
+	Category          string                    `json:"category"`
+	Aliases           []string                  `json:"aliases,omitempty"`
+	Tags              []string                  `json:"tags,omitempty"`
+	SortOrder         int                       `json:"sortOrder"`
+	Color             string                    `json:"color"`
+	Icon              string                    `json:"icon"`
+	Width             int                       `json:"width"`
+	Height            int                       `json:"height"`
+	Capabilities      sdk.NodeCapabilities      `json:"capabilities"`
+	FrameSourcePorts  []string                  `json:"frameSourcePorts,omitempty"`
+	ProfileSlots      []sdk.ProfileSlot         `json:"profileSlots,omitempty"`
+	ConfigGroups      []sdk.ConfigGroup         `json:"configGroups,omitempty"`
+	ConfigSchema      json.RawMessage           `json:"configSchema"`
+	UISchema          json.RawMessage           `json:"uiSchema"`
+	InputSchema       json.RawMessage           `json:"inputSchema"`
+	OutputSchema      json.RawMessage           `json:"outputSchema"`
+	Branches          []string                  `json:"branches,omitempty"`
+	InputPorts        []string                  `json:"inputPorts"`
+	OutputPorts       []string                  `json:"outputPorts"`
+	SecretFields      []WorkflowSecretFieldView `json:"secretFields"`
+	Available         bool                      `json:"available"`
 }
 
 func (a *App) ListWorkflowNodeDefinitions() []WorkflowNodeDefinitionView {
@@ -48,13 +56,15 @@ func (a *App) ListWorkflowNodeDefinitions() []WorkflowNodeDefinitionView {
 	items := make([]WorkflowNodeDefinitionView, 0, len(descriptors))
 	for _, desc := range descriptors {
 		inputPorts, outputPorts := workflowPorts(desc)
-		available := desc.Type != "core.loop_item" && desc.Type != "core.loop_end"
+		available := desc.Type != "core.loop_item" && desc.Type != "core.loop_end" && !desc.WorkflowOperation
 		items = append(items, WorkflowNodeDefinitionView{
-			Type: desc.Type, Version: desc.Version, Title: desc.Title,
-			Description: desc.Description, Kind: desc.Kind, Category: desc.Category,
+			Type: desc.Type, Version: desc.Version, Title: desc.Title, ConnectionType: desc.ConnectionType, ConnectionFields: desc.ConnectionFields, WorkflowOperation: desc.WorkflowOperation,
+			Description: desc.Description, Kind: desc.Kind, Role: desc.Role, Visibility: desc.Visibility, Category: desc.Category,
 			Aliases: append([]string(nil), desc.Aliases...), Tags: append([]string(nil), desc.Tags...), SortOrder: desc.SortOrder,
 			Color: desc.Color, Icon: desc.Icon, Width: desc.Width, Height: desc.Height,
-			Capabilities: desc.Capabilities,
+			Capabilities:     desc.Capabilities,
+			FrameSourcePorts: append([]string(nil), desc.FrameSourcePorts...),
+			ProfileSlots:     append([]sdk.ProfileSlot(nil), desc.ProfileSlots...), ConfigGroups: append([]sdk.ConfigGroup(nil), desc.ConfigGroups...),
 			ConfigSchema: desc.ConfigSchema, UISchema: desc.UISchema,
 			InputSchema: desc.InputSchema, OutputSchema: desc.OutputSchema,
 			Branches:   append([]string(nil), desc.Branches...),
@@ -101,26 +111,27 @@ func (a *App) workflowNodeDescriptors() map[string]sdk.NodeDescriptor {
 
 func coreWorkflowNodeDescriptors() []sdk.NodeDescriptor {
 	empty := json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false}`)
+	dynamicObject := json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object"}`)
 	valueInput := json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"value":{"type":"object","title":"值","x-coinsphere-field-source":true}},"additionalProperties":false}`)
 	items := []sdk.NodeDescriptor{
 		{
 			Type: "core.manual", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
 			ConfigSchema: empty, UISchema: json.RawMessage(`{"ui:order":[]}`), InputSchema: empty,
-			OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"triggeredAt":{"type":"string","format":"date-time"}},"required":["triggeredAt"],"additionalProperties":false}`),
-			Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
+			OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"triggeredAt":{"type":"string","format":"date-time"},"data":{"type":"object"}},"required":["triggeredAt","data"],"additionalProperties":false}`),
+			Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless, Capabilities: sdk.NodeCapabilities{ManualTrigger: true},
 		},
 		{
 			Type: "core.schedule", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
 			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"everySeconds":{"type":"integer","title":"执行间隔（秒）","minimum":60,"maximum":86400,"default":3600},"cronExpression":{"type":"string","title":"Cron 表达式","minLength":1,"maxLength":255},"timeZone":{"type":"string","title":"时区","minLength":1,"maxLength":255,"default":"Asia/Shanghai"}},"oneOf":[{"required":["everySeconds"]},{"required":["cronExpression","timeZone"]}],"additionalProperties":false}`),
 			UISchema:     json.RawMessage(`{"ui:order":["everySeconds","cronExpression","timeZone"]}`), InputSchema: empty,
-			OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"triggeredAt":{"type":"string","format":"date-time"}},"required":["triggeredAt"],"additionalProperties":false}`),
+			OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"triggeredAt":{"type":"string","format":"date-time"},"data":{"type":"object"}},"required":["triggeredAt","data"],"additionalProperties":false}`),
 			Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
 		},
 		{
 			Type: "core.event", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
 			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"types":{"type":"array","title":"事件类型","items":{"type":"string","minLength":1,"maxLength":255},"minItems":1,"uniqueItems":true},"source":{"type":"string","title":"事件来源","maxLength":500},"subject":{"type":"string","title":"事件主题","maxLength":500}},"required":["types"],"additionalProperties":false}`),
 			UISchema:     json.RawMessage(`{"ui:order":["types","source","subject"]}`), InputSchema: empty,
-			OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object"}`),
+			OutputSchema: dynamicObject,
 			Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
 		},
 		{
@@ -146,7 +157,7 @@ func coreWorkflowNodeDescriptors() []sdk.NodeDescriptor {
 		},
 		{
 			Type: "core.loop", Version: "1.0.0", Kind: sdk.NodeKindAction,
-			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"maxIterations":{"type":"integer","title":"最大循环次数","minimum":1,"maximum":100,"default":10},"timeoutSeconds":{"type":"integer","title":"总超时时间（秒）","minimum":1,"maximum":86400,"default":60},"exitCondition":{"type":"string","title":"布尔退出条件","minLength":1,"maxLength":4096,"default":"input.iteration >= 1"},"body":{"type":"object","title":"内嵌流程","default":{"schemaVersion":1,"nodes":[{"nodeInstanceId":"item","nodeType":"core.loop_item","nodeVersion":"1.0.0","config":{},"position":{"x":80,"y":80}},{"nodeInstanceId":"done","nodeType":"core.loop_end","nodeVersion":"1.0.0","config":{},"position":{"x":360,"y":80}}],"edges":[{"edgeId":"item-done","sourceNodeInstanceId":"item","sourcePort":"out","targetNodeInstanceId":"done","targetPort":"in"}]}}},"required":["maxIterations","timeoutSeconds","exitCondition","body"],"additionalProperties":false}`),
+			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"maxIterations":{"type":"integer","title":"最大循环次数","minimum":1,"maximum":100,"default":10},"timeoutSeconds":{"type":"integer","title":"总超时时间（秒）","minimum":1,"maximum":86400,"default":60},"exitCondition":{"type":"object","title":"退出条件","default":{"match":"all","rules":[{"fieldPath":["iteration"],"operator":"gte","value":1}]}},"body":{"type":"object","title":"内嵌流程","default":{"schemaVersion":3,"nodes":[{"nodeInstanceId":"item","nodeType":"core.loop_item","nodeVersion":"1.0.0","config":{},"position":{"x":80,"y":80}},{"nodeInstanceId":"done","nodeType":"core.loop_end","nodeVersion":"1.0.0","config":{},"position":{"x":360,"y":80}}],"edges":[{"edgeId":"item-done","sourceNodeInstanceId":"item","sourcePort":"out","targetNodeInstanceId":"done","targetPort":"in"}]}}},"required":["maxIterations","timeoutSeconds","exitCondition","body"],"additionalProperties":false}`),
 			UISchema:     json.RawMessage(`{"ui:order":["maxIterations","timeoutSeconds","exitCondition","body"],"exitCondition":{"ui:widget":"textarea"}}`),
 			InputSchema:  valueInput,
 			OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"iterations":{"type":"integer"},"exited":{"type":"boolean"},"value":{"type":"object"}},"required":["iterations","exited","value"],"additionalProperties":false}`),
@@ -172,9 +183,9 @@ func coreWorkflowNodeDescriptors() []sdk.NodeDescriptor {
 		sortOrder                                 int
 	}
 	meta := map[string]catalogMeta{
-		"core.manual":         {"手动开始", "声明手动触发入口节点", "start", "#2563eb", "play", []string{"手动触发", "启动"}, []string{"入口", "触发"}, 10},
-		"core.schedule":       {"定时开始", "声明定时触发入口节点", "start", "#1d4ed8", "clock", []string{"定时触发", "周期执行"}, []string{"入口", "调度"}, 20},
-		"core.event":          {"事件开始", "声明事件触发入口节点", "start", "#0f766e", "radio", []string{"事件触发", "事件入口"}, []string{"入口", "事件"}, 30},
+		"core.manual":         {"手动触发", "声明手动触发入口节点", "start", "#2563eb", "play", []string{"手动触发", "启动"}, []string{"入口", "触发"}, 10},
+		"core.schedule":       {"定时触发", "声明定时触发入口节点", "start", "#1d4ed8", "clock", []string{"定时触发", "周期执行"}, []string{"入口", "调度"}, 20},
+		"core.event":          {"事件触发", "声明事件触发入口节点", "start", "#0f766e", "radio", []string{"事件触发", "事件入口"}, []string{"入口", "事件"}, 30},
 		"core.constant":       {"常量", "输出配置的常量文本", "data", "#0891b2", "braces", []string{"固定值", "文本值"}, []string{"数据", "值"}, 10},
 		"core.end":            {"结束", "声明当前执行链路结束", "end", "#dc2626", "circle-stop", []string{"结束节点", "终点"}, []string{"输出", "终点"}, 10},
 		"core.human_approval": {"人工审批", "创建人工审批任务并等待处理", "control", "#d97706", "user-check", []string{"人工确认", "审批"}, []string{"控制", "人工"}, 10},
@@ -188,10 +199,32 @@ func coreWorkflowNodeDescriptors() []sdk.NodeDescriptor {
 		items[index].Aliases, items[index].Tags, items[index].SortOrder = value.aliases, value.tags, value.sortOrder
 		items[index].Color, items[index].Icon = value.color, value.icon
 		items[index].Width, items[index].Height = 220, 72
+		if items[index].Role == "" {
+			if items[index].Kind == sdk.NodeKindTrigger {
+				items[index].Role = sdk.NodeRoleTrigger
+			} else if items[index].Type == "core.end" || items[index].Type == "core.loop_end" {
+				items[index].Role = sdk.NodeRoleEnd
+			} else if items[index].Category == "control" {
+				items[index].Role = sdk.NodeRoleControl
+			} else {
+				items[index].Role = sdk.NodeRoleCompute
+			}
+		}
+		if items[index].Visibility == "" {
+			items[index].Visibility = sdk.NodeVisibilityBasic
+		}
 		items[index].Capabilities.Stateless = items[index].State == sdk.StateStateless
 		items[index].Capabilities.Deterministic = items[index].SideEffect == sdk.SideEffectNone
 	}
-	return items
+	controls := workflowConditionDescriptors()
+	for index := range controls {
+		controls[index].Role = sdk.NodeRoleControl
+		controls[index].Visibility = sdk.NodeVisibilityAdvanced
+		if controls[index].Type == "core.condition" || controls[index].Type == "core.switch" || controls[index].Type == "core.join" {
+			controls[index].Visibility = sdk.NodeVisibilityBasic
+		}
+	}
+	return append(items, controls...)
 }
 
 func workflowPorts(desc sdk.NodeDescriptor) ([]string, []string) {
