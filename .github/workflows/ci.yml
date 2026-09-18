@@ -12,59 +12,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  changes:
-    name: Change scope
-    runs-on: ubuntu-latest
-    outputs:
-      backend: ${{ steps.scope.outputs.backend }}
-      frontend: ${{ steps.scope.outputs.frontend }}
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          fetch-depth: 0
-      - name: Select affected modules
-        id: scope
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -Eeuo pipefail
-          backend=false
-          frontend=false
-
-          if [[ "$EVENT_NAME" != "pull_request" ]]; then
-            backend=true
-            frontend=true
-          else
-            while IFS= read -r file; do
-              case "$file" in
-                backend/*|plugins/*/backend/*) backend=true ;;
-                frontend/*|plugins/*/frontend/*) frontend=true ;;
-                plugins/*/coinsphere-plugin.json|plugins/*/migrations/*|.github/workflows/ci.yml)
-                  backend=true
-                  frontend=true
-                  ;;
-              esac
-            done < <(git diff --name-only --diff-filter=ACMRTD "$BASE_SHA" "$HEAD_SHA")
-          fi
-
-          {
-            echo "backend=$backend"
-            echo "frontend=$frontend"
-          } >>"$GITHUB_OUTPUT"
-
   backend:
     name: Go backend
-    needs: changes
-    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: backend
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: backend/go.mod
@@ -82,14 +41,16 @@ jobs:
 
   frontend:
     name: Vue frontend
-    needs: changes
-    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: frontend
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
         with:
           version: 10.33.0
