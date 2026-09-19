@@ -36,7 +36,7 @@ type quantWorkflowBinding struct {
 func validateQuantWorkflow(input sdk.WorkflowValidationContext) error {
 	var graph quantWorkflowGraph
 	if json.Unmarshal(input.Graph, &graph) != nil {
-		return errors.New("Quant workflow graph is invalid")
+		return errors.New("quant workflow graph is invalid")
 	}
 	nodes := make(map[string]struct {
 		Type   string
@@ -72,11 +72,11 @@ func validateQuantWorkflow(input sdk.WorkflowValidationContext) error {
 			}
 			incoming++
 			if nodes[edge.Source].Type != "official.quant.position" {
-				return fmt.Errorf("Quant output signal %q only accepts position candidates", node.ID)
+				return fmt.Errorf("quant output signal %q only accepts position candidates", node.ID)
 			}
 		}
 		if incoming == 0 {
-			return fmt.Errorf("Quant output signal %q requires a position candidate", node.ID)
+			return fmt.Errorf("quant output signal %q requires a position candidate", node.ID)
 		}
 	}
 	return nil
@@ -116,16 +116,6 @@ func validateQuantBindings(graph quantWorkflowGraph, nodes map[string]struct {
 			if !containsQuantString(declared, binding.FieldPath[1]) {
 				return fmt.Errorf("node %q input binding %q references an undeclared code strategy output", node.ID, field)
 			}
-		}
-	}
-	return nil
-}
-
-func validateFieldBindings(nodeID, sourceID string, bindings map[string]quantWorkflowBinding, expected map[string]string) error {
-	for targetField, sourceField := range expected {
-		binding, ok := bindings[targetField]
-		if !ok || binding.Kind != "node" || binding.NodeInstanceID != sourceID || len(binding.FieldPath) != 1 || binding.FieldPath[0] != sourceField {
-			return fmt.Errorf("node %q input binding %q must use its Quant condition source", nodeID, targetField)
 		}
 	}
 	return nil

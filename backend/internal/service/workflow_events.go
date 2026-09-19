@@ -290,9 +290,9 @@ func (a *App) deliverWorkflowEventTx(tx *gorm.DB, record db.WorkflowEventRecord,
 				return errors.New("create workflow event run failed")
 			}
 			runGraph := buildWorkflowRunGraph(graph.graph, graph.nodes, graph.descriptors, trigger.NodeInstanceID)
-			if err := tx.Transaction(func(savepoint *gorm.DB) error { return a.snapshotRunConnections(savepoint, run, runGraph) }); err != nil {
+			if err := tx.Transaction(func(savepoint *gorm.DB) error { return a.snapshotRunProfiles(savepoint, run, runGraph) }); err != nil {
 				// 配置故障属于此入口的运行；保留投递去重，继续投递其他入口。
-				if err := tx.Model(&run).Updates(map[string]any{"status": RunStatusFailed, "completed_at": now, "error_category": "connection", "error_message": "运行连接不可用", "updated_at": now}).Error; err != nil {
+				if err := tx.Model(&run).Updates(map[string]any{"status": RunStatusFailed, "completed_at": now, "error_category": "profile", "error_message": "运行 Profile 不可用", "updated_at": now}).Error; err != nil {
 					return err
 				}
 			}

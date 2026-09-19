@@ -15,13 +15,12 @@ const protectedSuperUsername = "coinsphere"
 
 // protectedRoleCodes 用 map 当"集合":把内置角色编码放进来(值填 true 只是占位),
 // 后面用来禁止修改/删除这些系统角色。
-var protectedRoleCodes = map[string]bool{"R_SUPER": true, "R_GUEST": true}
+var protectedRoleCodes = map[string]bool{"R_SUPER": true}
 
 // ---------- 查询 ----------
 
 // UserListQuery 用户分页过滤。
 // 注意 ID *int64、IsActive *bool 用的是指针:nil 表示"这个条件没填、不参与过滤",
-// 以此区分于 0 / false 这种"填了、但值恰好是零"的情况。见 GO入门笔记『复合类型』。
 type UserListQuery struct {
 	Page     CursorPage
 	ID       *int64
@@ -38,7 +37,6 @@ type UserListQuery struct {
 // 先 Count 出总数,再用 Offset/Limit 取当前页,最后把结果序列化成前端要的形状。
 func (a *App) ListUsers(query UserListQuery) (M, error) {
 	// q 是一个可复用的"查询构造器":GORM 链式调用每步都返回它,可以边判断边往上叠加条件。
-	// 只对非空/非 nil 的过滤项才 .Where,避免把空条件也拼进 SQL。见 GO入门笔记『框架:GORM』。
 	q := a.DB.Model(&db.SystemUser{})
 	// 指针字段要先判 != nil,再用 *query.ID 解引用取出它指向的值(* 顺着指针拿到真正的数字)。
 	if query.ID != nil {
@@ -226,7 +224,6 @@ func (a *App) GetI18nDict(scope string) M {
 
 // UserUpsertPayload 用户创建/更新载荷。
 // 反引号里的 `json:"username"` 是 struct tag(标签):告诉 JSON 库前端传来的字段名怎么对应到这里。
-// IsActive *bool 用指针,能区分"没传"(nil)和"传了 false"。[]string 是字符串切片。见 GO入门笔记『复合类型』。
 type UserUpsertPayload struct {
 	Username  string   `json:"username"`
 	Nickname  string   `json:"nickname"`
@@ -265,7 +262,7 @@ func (a *App) CreateUser(payload UserUpsertPayload, principal *Principal) (M, er
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now()
+	now := time.Now().UTC()
 	fullName := payload.FullName
 	if fullName == "" {
 		fullName = payload.Nickname
@@ -320,7 +317,7 @@ func (a *App) UpdateUser(userID int64, payload UserUpsertPayload, principal *Pri
 		"username": payload.Username, "nickname": payload.Nickname, "full_name": fullName,
 		"gender": normalizeGender(payload.Gender), "phone": strings.TrimSpace(payload.Phone),
 		"email": strings.TrimSpace(payload.Email), "avatar": strings.TrimSpace(payload.Avatar),
-		"is_active": payload.isActive(), "updated_by": principal.User.Username, "updated_at": time.Now(),
+		"is_active": payload.isActive(), "updated_by": principal.User.Username, "updated_at": time.Now().UTC(),
 	}
 	if payload.Password != "" {
 		if len(payload.Password) < 6 {
@@ -385,7 +382,7 @@ func (a *App) CreateRole(payload RoleUpsertPayload) (M, error) {
 	if count > 0 {
 		return nil, bizErr("角色编码已存在")
 	}
-	now := time.Now()
+	now := time.Now().UTC()
 	role := db.SystemRole{
 		DisplayName: roleName, Code: roleCode, Description: strings.TrimSpace(payload.Description),
 		IsEnabled: payload.isEnabled(), CreatedAt: now, UpdatedAt: now,
@@ -420,7 +417,7 @@ func (a *App) UpdateRole(roleID int64, payload RoleUpsertPayload) (M, error) {
 	updates := map[string]any{
 		"display_name": roleName, "code": roleCode,
 		"description": strings.TrimSpace(payload.Description),
-		"is_enabled":  payload.isEnabled(), "updated_at": time.Now(),
+		"is_enabled":  payload.isEnabled(), "updated_at": time.Now().UTC(),
 	}
 	if err := a.DB.Model(role).Updates(updates).Error; err != nil {
 		return nil, err
@@ -494,7 +491,7 @@ func (a *App) SaveRolePermissions(roleID int64, payload RolePermissionPayload) e
 			return err
 		}
 		for _, menuID := range menuIDs {
-			if err := tx.Create(&db.SystemRoleMenu{RoleID: roleID, MenuID: menuID, CreatedAt: time.Now()}).Error; err != nil {
+			if err := tx.Create(&db.SystemRoleMenu{RoleID: roleID, MenuID: menuID, CreatedAt: time.Now().UTC()}).Error; err != nil {
 				return err
 			}
 		}
@@ -502,7 +499,7 @@ func (a *App) SaveRolePermissions(roleID int64, payload RolePermissionPayload) e
 			return err
 		}
 		for _, buttonID := range buttonIDs {
-			if err := tx.Create(&db.SystemRoleButton{RoleID: roleID, ButtonID: buttonID, CreatedAt: time.Now()}).Error; err != nil {
+			if err := tx.Create(&db.SystemRoleButton{RoleID: roleID, ButtonID: buttonID, CreatedAt: time.Now().UTC()}).Error; err != nil {
 				return err
 			}
 		}
@@ -530,8 +527,6 @@ type MenuUpsertPayload struct {
 	KeepAlive      bool             `json:"keepAlive"`
 	IsHidden       bool             `json:"isHidden"`
 	HideTab        bool             `json:"hideTab"`
-	ExternalURL    string           `json:"externalUrl"`
-	UseIframe      bool             `json:"useIframe"`
 	BadgeLabel     string           `json:"badgeLabel"`
 	FixedTab       bool             `json:"fixedTab"`
 	ActiveMenuPath string           `json:"activeMenuPath"`
@@ -593,15 +588,15 @@ func (a *App) upsertMenu(existing *db.SystemMenu, payload MenuUpsertPayload) (M,
 		"parent_id": parentID, "path": strings.TrimSpace(payload.Path), "name": strings.TrimSpace(payload.Name),
 		"permission_code": permCodePtr, "component": strings.TrimSpace(payload.Component),
 		"title": strings.TrimSpace(payload.Title), "icon": strings.TrimSpace(payload.Icon),
-		"external_url": strings.TrimSpace(payload.ExternalURL), "active_menu_path": strings.TrimSpace(payload.ActiveMenuPath),
-		"sort": payload.Sort, "keep_alive": payload.KeepAlive, "is_hidden": payload.IsHidden,
+		"active_menu_path": strings.TrimSpace(payload.ActiveMenuPath),
+		"sort":             payload.Sort, "keep_alive": payload.KeepAlive, "is_hidden": payload.IsHidden,
 		"is_hide_tab": payload.HideTab, "is_full_screen": payload.IsFullScreen, "is_active": isActive,
-		"use_iframe": payload.UseIframe, "fixed_tab": payload.FixedTab,
-		"badge_label": strings.TrimSpace(payload.BadgeLabel), "updated_at": time.Now(),
+		"fixed_tab":   payload.FixedTab,
+		"badge_label": strings.TrimSpace(payload.BadgeLabel), "updated_at": time.Now().UTC(),
 	}
 	var menuID int64
 	if existing == nil {
-		menu := db.SystemMenu{Name: strings.TrimSpace(payload.Name), CreatedAt: time.Now()}
+		menu := db.SystemMenu{Name: strings.TrimSpace(payload.Name), CreatedAt: time.Now().UTC()}
 		if err := a.DB.Create(&menu).Error; err != nil {
 			return nil, err
 		}
@@ -723,7 +718,7 @@ func (a *App) upsertButton(existing *db.SystemMenuButton, payload MenuButtonUpse
 	if existing == nil {
 		button := db.SystemMenuButton{
 			MenuID: payload.MenuID, Title: strings.TrimSpace(payload.Title),
-			PermissionCode: permissionCode, Sort: payload.Sort, CreatedAt: time.Now(),
+			PermissionCode: permissionCode, Sort: payload.Sort, CreatedAt: time.Now().UTC(),
 		}
 		if err := a.DB.Create(&button).Error; err != nil {
 			return nil, err
@@ -779,11 +774,6 @@ func (a *App) resolveAssignableRoles(roleCodes []string) ([]db.SystemRole, error
 	roles, err := a.resolveRoleCodes(roleCodes, true)
 	if err != nil {
 		return nil, err
-	}
-	for _, role := range roles {
-		if role.Code == guestRoleCode {
-			return nil, bizErr("游客角色只能用于匿名访问")
-		}
 	}
 	return roles, nil
 }
@@ -874,14 +864,14 @@ func (a *App) upsertI18nPair(bizType string, bizID int64, i18nKey string, texts 
 		// 先查这条文案。若返回哨兵错误 gorm.ErrRecordNotFound(表示"没查到")就走 Create 新增;
 		// 是别的错误就直接返回;否则说明查到了,走 Updates 更新。用 == 直接比对这个特定错误值。
 		if err == gorm.ErrRecordNotFound {
-			row = db.SystemI18nText{BizType: bizType, BizID: bizID, I18nKey: i18nKey, Locale: locale, Text: text, UpdatedAt: time.Now()}
+			row = db.SystemI18nText{BizType: bizType, BizID: bizID, I18nKey: i18nKey, Locale: locale, Text: text, UpdatedAt: time.Now().UTC()}
 			if err := a.DB.Create(&row).Error; err != nil {
 				return err
 			}
 		} else if err != nil {
 			return err
 		} else {
-			updates := map[string]any{"i18n_key": i18nKey, "text": text, "updated_at": time.Now()}
+			updates := map[string]any{"i18n_key": i18nKey, "text": text, "updated_at": time.Now().UTC()}
 			if err := a.DB.Model(&row).Updates(updates).Error; err != nil {
 				return err
 			}
@@ -897,7 +887,7 @@ func (a *App) replaceUserRoles(userID int64, roles []db.SystemRole) error {
 		return err
 	}
 	for _, role := range roles {
-		if err := a.DB.Create(&db.SystemUserRole{UserID: userID, RoleID: role.ID, CreatedAt: time.Now()}).Error; err != nil {
+		if err := a.DB.Create(&db.SystemUserRole{UserID: userID, RoleID: role.ID, CreatedAt: time.Now().UTC()}).Error; err != nil {
 			return err
 		}
 	}
@@ -909,7 +899,7 @@ func (a *App) replaceMenuRoles(menuID int64, roles []db.SystemRole) error {
 		return err
 	}
 	for _, role := range roles {
-		if err := a.DB.Create(&db.SystemRoleMenu{RoleID: role.ID, MenuID: menuID, CreatedAt: time.Now()}).Error; err != nil {
+		if err := a.DB.Create(&db.SystemRoleMenu{RoleID: role.ID, MenuID: menuID, CreatedAt: time.Now().UTC()}).Error; err != nil {
 			return err
 		}
 	}
@@ -921,7 +911,7 @@ func (a *App) replaceButtonRoles(buttonID int64, roles []db.SystemRole) error {
 		return err
 	}
 	for _, role := range roles {
-		if err := a.DB.Create(&db.SystemRoleButton{RoleID: role.ID, ButtonID: buttonID, CreatedAt: time.Now()}).Error; err != nil {
+		if err := a.DB.Create(&db.SystemRoleButton{RoleID: role.ID, ButtonID: buttonID, CreatedAt: time.Now().UTC()}).Error; err != nil {
 			return err
 		}
 	}
@@ -1080,7 +1070,7 @@ func (a *App) buildMenuTreePayload(menus []db.SystemMenu, buttons []db.SystemMen
 			"title": menu.Title, "permissionCode": permissionCode,
 			"i18nKey": i18nKey, "i18nTexts": i18nTexts,
 			"keepAlive": menu.KeepAlive, "isHide": menu.IsHidden, "isHideTab": menu.IsHideTab,
-			"isFullPage": menu.IsFullScreen, "isIframe": menu.UseIframe, "fixedTab": menu.FixedTab,
+			"isFullPage": menu.IsFullScreen, "fixedTab": menu.FixedTab,
 			"isEnable": menu.IsActive, "sort": menu.Sort, "roles": roles,
 		}
 		if menu.Icon != "" {
@@ -1088,9 +1078,6 @@ func (a *App) buildMenuTreePayload(menus []db.SystemMenu, buttons []db.SystemMen
 		}
 		if menu.ActiveMenuPath != "" {
 			meta["activePath"] = menu.ActiveMenuPath
-		}
-		if menu.ExternalURL != "" {
-			meta["link"] = menu.ExternalURL
 		}
 		if menu.BadgeLabel != "" {
 			meta["showBadge"] = true
@@ -1101,7 +1088,7 @@ func (a *App) buildMenuTreePayload(menus []db.SystemMenu, buttons []db.SystemMen
 		}
 
 		component := menu.Component
-		if component == "" && menu.ParentID == nil && len(childrenMap[menu.ID]) > 0 && menu.ExternalURL == "" && !menu.UseIframe {
+		if component == "" && menu.ParentID == nil && len(childrenMap[menu.ID]) > 0 {
 			component = layoutComponent
 		}
 		var parentID any
@@ -1226,7 +1213,6 @@ func dedupeInt64(items []int64) []int64 {
 }
 
 // collectIDs 是泛型工具:[T any] 表示对任意元素类型 T 都能用;第二个参数 id 是"函数作为参数"——
-// 调用方传一个"怎么从元素取出 int64 ID"的小函数进来。返回所有元素的 ID 组成的切片。见 GO入门笔记『泛型』。
 func collectIDs[T any](items []T, id func(T) int64) []int64 {
 	result := make([]int64, 0, len(items))
 	for _, item := range items {

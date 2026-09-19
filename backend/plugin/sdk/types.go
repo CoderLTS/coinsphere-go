@@ -215,8 +215,8 @@ type NodeDescriptor struct {
 	SideEffect       SideEffectClass
 	State            StateMode
 	ValidateConfig   func(json.RawMessage) error
-	ConnectionType   string
-	ConnectionFields []string
+	ProfileType      string
+	ProfileFields    []string
 	// EventSubscription 声明本地事件入口，不启动重复的外部连接。
 	EventSubscription func(json.RawMessage) (EventSubscription, error)
 	TriggerOutput     func(json.RawMessage, json.RawMessage, time.Time) (json.RawMessage, error)

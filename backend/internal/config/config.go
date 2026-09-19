@@ -16,6 +16,7 @@ const (
 )
 
 const DefaultInsecureSecret = "coinsphere-dev-secret"
+const DefaultBootstrapAdminPassword = "coinsphere"
 
 type DatabaseConfig struct {
 	DSN                    string `yaml:"dsn"`
@@ -114,7 +115,7 @@ func (c *AppConfig) normalize() {
 		c.Database.ConnMaxIdleTimeSeconds = 300
 	}
 	if c.Auth.BootstrapAdminPassword == "" {
-		c.Auth.BootstrapAdminPassword = "coinsphere"
+		c.Auth.BootstrapAdminPassword = DefaultBootstrapAdminPassword
 	}
 	if c.Auth.AccessTokenTTLMinutes < 1 {
 		c.Auth.AccessTokenTTLMinutes = 7 * 24 * 60
@@ -135,6 +136,10 @@ func (c *AppConfig) Validate() error {
 		if os.Getenv("COINSPHERE_ALLOW_INSECURE_SECRET") != "1" {
 			return fmt.Errorf("auth.secret_key 未设置或仍为默认值,存在令牌伪造风险:请用环境变量 COINSPHERE_AUTH__SECRET_KEY 或 config.yml 配一个随机密钥(如 `openssl rand -hex 32`);本地开发可临时设 COINSPHERE_ALLOW_INSECURE_SECRET=1 放行")
 		}
+	}
+	if c.Auth.BootstrapAdminPassword == DefaultBootstrapAdminPassword &&
+		os.Getenv("COINSPHERE_ALLOW_INSECURE_BOOTSTRAP") != "1" {
+		return fmt.Errorf("auth.bootstrap_admin_password 仍为默认值,请配置随机初始密码；本地开发可临时设 COINSPHERE_ALLOW_INSECURE_BOOTSTRAP=1 放行")
 	}
 	return nil
 }

@@ -97,7 +97,6 @@ declare namespace Api {
       username: string
       email: string
       avatar?: string
-      accessMode: 'guest' | 'authenticated'
     }
   }
 

@@ -18,8 +18,9 @@ type WorkflowSecretFieldView struct {
 }
 
 type WorkflowNodeDefinitionView struct {
-	ConnectionType    string                    `json:"connectionType,omitempty"`
-	ConnectionFields  []string                  `json:"connectionFields,omitempty"`
+	PluginID          string                    `json:"pluginId"`
+	ProfileType       string                    `json:"profileType,omitempty"`
+	ProfileFields     []string                  `json:"profileFields,omitempty"`
 	WorkflowOperation bool                      `json:"workflowOperation,omitempty"`
 	Type              string                    `json:"type"`
 	Version           string                    `json:"version"`
@@ -57,8 +58,14 @@ func (a *App) ListWorkflowNodeDefinitions() []WorkflowNodeDefinitionView {
 	for _, desc := range descriptors {
 		inputPorts, outputPorts := workflowPorts(desc)
 		available := desc.Type != "core.loop_item" && desc.Type != "core.loop_end" && !desc.WorkflowOperation
+		pluginID := "core"
+		if a.Plugins != nil {
+			if owner, ok := a.Plugins.NodePluginID(desc.Type); ok && owner != "" {
+				pluginID = owner
+			}
+		}
 		items = append(items, WorkflowNodeDefinitionView{
-			Type: desc.Type, Version: desc.Version, Title: desc.Title, ConnectionType: desc.ConnectionType, ConnectionFields: desc.ConnectionFields, WorkflowOperation: desc.WorkflowOperation,
+			PluginID: pluginID, Type: desc.Type, Version: desc.Version, Title: desc.Title, ProfileType: desc.ProfileType, ProfileFields: desc.ProfileFields, WorkflowOperation: desc.WorkflowOperation,
 			Description: desc.Description, Kind: desc.Kind, Role: desc.Role, Visibility: desc.Visibility, Category: desc.Category,
 			Aliases: append([]string(nil), desc.Aliases...), Tags: append([]string(nil), desc.Tags...), SortOrder: desc.SortOrder,
 			Color: desc.Color, Icon: desc.Icon, Width: desc.Width, Height: desc.Height,

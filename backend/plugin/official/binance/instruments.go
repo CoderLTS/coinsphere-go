@@ -36,7 +36,7 @@ func (a binanceInstrumentSyncAction) Execute(ctx context.Context, request sdk.Ac
 	}
 	workflowID, err := strconv.ParseInt(request.Revision.WorkflowID, 10, 64)
 	if err != nil || workflowID <= 0 {
-		return sdk.ActionResult{}, errors.New("Binance workflow identity is invalid")
+		return sdk.ActionResult{}, errors.New("binance workflow identity is invalid")
 	}
 	now := time.Now().UTC()
 	fetchedCount := 0

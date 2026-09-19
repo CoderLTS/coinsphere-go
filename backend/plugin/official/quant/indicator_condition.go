@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"regexp"
-	"sort"
 	"time"
 
 	"coinsphere/backend/plugin/sdk"
@@ -236,7 +235,7 @@ func parseQuantIndicatorParameters(indicator string, raw json.RawMessage) (quant
 		}{FastPeriod: 12, SlowPeriod: 26, SignalPeriod: 9, Signal: "golden_cross"}
 		if !decodeQuantStrict(raw, &value) || value.FastPeriod < 1 || value.FastPeriod > 100 || value.SlowPeriod <= value.FastPeriod || value.SlowPeriod > 200 || value.SignalPeriod < 1 || value.SignalPeriod > 100 ||
 			value.Signal != "golden_cross" && value.Signal != "death_cross" && value.Signal != "dif_above_zero" && value.Signal != "dif_below_zero" {
-			return parameters, errors.New("MACD parameters are invalid")
+			return parameters, errors.New("mACD parameters are invalid")
 		}
 		parameters.FastPeriod, parameters.SlowPeriod, parameters.SignalPeriod, parameters.Signal = value.FastPeriod, value.SlowPeriod, value.SignalPeriod, value.Signal
 	case "kdj":
@@ -248,11 +247,11 @@ func parseQuantIndicatorParameters(indicator string, raw json.RawMessage) (quant
 			Threshold  string `json:"threshold"`
 		}{Period: 9, KSmoothing: 3, DSmoothing: 3, Signal: "golden_cross", Threshold: "80"}
 		if !decodeQuantStrict(raw, &value) || value.Period < 2 || value.Period > 200 || value.KSmoothing < 1 || value.KSmoothing > 50 || value.DSmoothing < 1 || value.DSmoothing > 50 || !quantKDJSignal(value.Signal) {
-			return parameters, errors.New("KDJ parameters are invalid")
+			return parameters, errors.New("kDJ parameters are invalid")
 		}
 		threshold, err := parseQuantConditionDecimal(value.Threshold, decimal.NewFromInt(-1000), decimal.NewFromInt(1000), true)
 		if err != nil {
-			return parameters, errors.New("KDJ threshold is invalid")
+			return parameters, errors.New("kDJ threshold is invalid")
 		}
 		parameters.Period, parameters.KSmoothing, parameters.DSmoothing = value.Period, value.KSmoothing, value.DSmoothing
 		parameters.Signal, parameters.Threshold = value.Signal, threshold
@@ -263,11 +262,11 @@ func parseQuantIndicatorParameters(indicator string, raw json.RawMessage) (quant
 			Threshold string `json:"threshold"`
 		}{Period: 14, Direction: "below", Threshold: "30"}
 		if !decodeQuantStrict(raw, &value) || value.Period < 2 || value.Period > 200 || value.Direction != "above" && value.Direction != "below" {
-			return parameters, errors.New("RSI parameters are invalid")
+			return parameters, errors.New("rSI parameters are invalid")
 		}
 		threshold, err := parseQuantConditionDecimal(value.Threshold, decimal.Zero, quantHundred, true)
 		if err != nil {
-			return parameters, errors.New("RSI threshold is invalid")
+			return parameters, errors.New("rSI threshold is invalid")
 		}
 		parameters.Period, parameters.Mode, parameters.Threshold = value.Period, value.Direction, threshold
 	case "bollinger":
@@ -277,11 +276,11 @@ func parseQuantIndicatorParameters(indicator string, raw json.RawMessage) (quant
 			Signal     string `json:"signal"`
 		}{Period: 20, Multiplier: "2", Signal: "close_above_upper"}
 		if !decodeQuantStrict(raw, &value) || value.Period < 2 || value.Period > 500 || value.Signal != "close_above_upper" && value.Signal != "close_below_lower" {
-			return parameters, errors.New("Bollinger parameters are invalid")
+			return parameters, errors.New("bollinger parameters are invalid")
 		}
 		multiplier, err := parseQuantConditionDecimal(value.Multiplier, decimal.Zero, decimal.NewFromInt(20), false)
 		if err != nil {
-			return parameters, errors.New("Bollinger multiplier is invalid")
+			return parameters, errors.New("bollinger multiplier is invalid")
 		}
 		parameters.Period, parameters.StandardDeviation, parameters.Signal = value.Period, multiplier, value.Signal
 	default:
@@ -305,7 +304,7 @@ func parseQuantConditionDecimal(raw string, minimum, maximum decimal.Decimal, al
 	}
 	value, err := decimal.NewFromString(raw)
 	if err != nil || value.GreaterThan(maximum) || allowMinimum && value.LessThan(minimum) || !allowMinimum && !value.GreaterThan(minimum) {
-		return decimal.Zero, errors.New("Decimal is outside limits")
+		return decimal.Zero, errors.New("decimal is outside limits")
 	}
 	return value, nil
 }
@@ -351,14 +350,6 @@ func quantIndicatorLookback(leaf *quantIndicatorLeaf) int {
 	default:
 		return 1
 	}
-}
-
-func quantCandlesAt(candles []quantCandle, cutoff time.Time, lookback int) []quantCandle {
-	end := sort.Search(len(candles), func(index int) bool { return candles[index].CloseTime.After(cutoff) })
-	if end < lookback {
-		return nil
-	}
-	return candles[end-lookback : end]
 }
 
 func evaluateQuantIndicatorLeaf(leaf *quantIndicatorLeaf, candles []quantCandle) (quantIndicatorPoint, error) {
@@ -427,7 +418,7 @@ func evaluateQuantIndicatorLeaf(leaf *quantIndicatorLeaf, candles []quantCandle)
 	case "macd":
 		differences, signals := quantMACD(candles, p.FastPeriod, p.SlowPeriod, p.SignalPeriod)
 		if len(differences) == 0 {
-			return quantIndicatorPoint{}, errors.New("MACD lookback is invalid")
+			return quantIndicatorPoint{}, errors.New("mACD lookback is invalid")
 		}
 		dif := differences[len(differences)-1]
 		dea := decimal.Zero
@@ -449,7 +440,7 @@ func evaluateQuantIndicatorLeaf(leaf *quantIndicatorLeaf, candles []quantCandle)
 	case "kdj":
 		ks, ds, js := quantKDJ(candles, p.Period, p.KSmoothing, p.DSmoothing)
 		if len(ks) == 0 {
-			return quantIndicatorPoint{}, errors.New("KDJ lookback is invalid")
+			return quantIndicatorPoint{}, errors.New("kDJ lookback is invalid")
 		}
 		k, d, j := ks[len(ks)-1], ds[len(ds)-1], js[len(js)-1]
 		switch p.Signal {

@@ -90,43 +90,28 @@
           <ElFormItem label="名称">
             <ElInput v-model="createForm.name" maxlength="120" show-word-limit />
           </ElFormItem>
-          <ElFormItem label="工作流">
-            <ElSelect v-model="createForm.workflowId" filterable @change="loadWorkflowNodes">
+          <ElFormItem label="结果页面">
+            <ElSelect v-model="createForm.pageRef" filterable>
               <ElOption
-                v-for="workflow in workflowOptions"
-                :key="workflow.id"
-                :label="workflow.name"
-                :value="workflow.id"
+                v-for="page in resultPages"
+                :key="`${page.pluginId}/${page.pageKey}`"
+                :label="`${page.pluginId} / ${page.title || page.pageKey}`"
+                :value="`${page.pluginId}/${page.pageKey}`"
               />
             </ElSelect>
           </ElFormItem>
         </div>
-        <ElFormItem label="市场">
-          <ElSegmented v-model="createForm.market" :options="marketOptions" />
+        <ElFormItem label="结果范围（JSON）">
+          <ElInput v-model="createForm.scopeText" type="textarea" :rows="3" />
         </ElFormItem>
-        <div class="dialog-grid">
-          <ElFormItem label="Paper 节点">
-            <ElSelect v-model="createForm.paperNodeInstanceId" filterable allow-create>
-              <ElOption v-for="node in paperNodes" :key="node" :label="node" :value="node" />
-            </ElSelect>
-          </ElFormItem>
-          <ElFormItem label="品种过滤">
-            <ElInput v-model="createForm.instrument" maxlength="32" />
-          </ElFormItem>
-          <ElFormItem label="状态过滤">
-            <ElSelect v-model="createForm.status" clearable>
-              <ElOption label="待成交" value="new" />
-              <ElOption label="部分成交" value="partially_filled" />
-              <ElOption label="已成交" value="filled" />
-              <ElOption label="已撤单" value="canceled" />
-              <ElOption label="已拒绝" value="rejected" />
-              <ElOption label="已过期" value="expired" />
-            </ElSelect>
-          </ElFormItem>
-        </div>
+        <ElFormItem label="过滤条件（JSON）">
+          <ElInput v-model="createForm.filtersText" type="textarea" :rows="3" />
+        </ElFormItem>
         <ElFormItem label="允许操作">
           <ElCheckboxGroup v-model="createForm.allowedActions">
-            <ElCheckbox value="export">导出</ElCheckbox>
+            <ElCheckbox v-for="action in selectedPage?.actions || []" :key="action" :value="action">
+              {{ action }}
+            </ElCheckbox>
           </ElCheckboxGroup>
         </ElFormItem>
         <div class="dialog-grid">
@@ -196,18 +181,14 @@
   import { ElMessageBox } from 'element-plus'
   import {
     createResultView,
+    fetchResultPages,
     fetchResultViews,
     replaceResultViewGrants,
     revokeResultView,
+    type ResultPageDescriptor,
     type ResultView
   } from '@/api/resultViews'
   import { fetchGetRoleList, fetchGetUserList } from '@/api/system'
-  import {
-    fetchWorkflowRevision,
-    fetchWorkflows,
-    type WorkflowGraphNode,
-    type WorkflowItem
-  } from '@/api/workflows'
   import { registeredFrontendPlugins } from '@/plugins'
   import { useUserStore } from '@/store/modules/user'
   import { formatDateTime as formatTime } from '@/utils/date'
@@ -221,25 +202,17 @@
   const resultComponent = shallowRef<Component>()
   const userOptions = ref<Api.System.UserListItem[]>([])
   const roleOptions = ref<Api.System.RoleListItem[]>([])
-  const workflowOptions = ref<WorkflowItem[]>([])
-  const paperNodes = ref<string[]>([])
-  const paperPluginId = ref('')
+  const resultPages = ref<ResultPageDescriptor[]>([])
   const loading = ref(false)
   const saving = ref(false)
   const createVisible = ref(false)
   const grantsVisible = ref(false)
   const grantViewId = ref<number>()
-  const marketOptions = [
-    { label: 'Spot', value: 'spot' },
-    { label: 'USD-M', value: 'usdm' }
-  ]
   const createForm = reactive({
     name: '',
-    workflowId: 1,
-    market: 'spot' as 'spot' | 'usdm',
-    instrument: 'BTCUSDT',
-    status: '',
-    paperNodeInstanceId: 'paper',
+    pageRef: '',
+    scopeText: '{}',
+    filtersText: '{}',
     allowedActions: ['export'],
     userIds: [] as number[],
     roleCodes: ['R_USER'] as string[]
@@ -249,10 +222,11 @@
   const canCreate = computed(() =>
     Boolean(
       createForm.name.trim() &&
-        workflowOptions.value.some((workflow) => workflow.id === createForm.workflowId) &&
-        createForm.paperNodeInstanceId.trim() &&
-        paperPluginId.value
+        resultPages.value.some((page) => `${page.pluginId}/${page.pageKey}` === createForm.pageRef)
     )
+  )
+  const selectedPage = computed(() =>
+    resultPages.value.find((page) => `${page.pluginId}/${page.pageKey}` === createForm.pageRef)
   )
 
   const pageLabel = (view: ResultView) => `${view.pluginId} / ${view.pageKey}`
@@ -283,7 +257,7 @@
   const loadViews = async () => {
     loading.value = true
     try {
-      views.value = (await fetchResultViews()).items.filter((view) => view.pageKey === 'paper')
+      views.value = (await fetchResultViews()).items
       const next =
         activeViews.value.find((view) => view.id === selectedView.value?.id) || activeViews.value[0]
       selectedView.value = undefined
@@ -294,57 +268,40 @@
     }
   }
   const loadGrantOptions = async () => {
-    if (!isAdmin.value || workflowOptions.value.length) return
-    const [users, roles, workflows] = await Promise.all([
+    if (!isAdmin.value || userOptions.value.length) return
+    const [users, roles] = await Promise.all([
       fetchGetUserList({ limit: 200 }),
-      fetchGetRoleList({ limit: 200 }),
-      fetchWorkflows()
+      fetchGetRoleList({ limit: 200 })
     ])
     userOptions.value = users.records
     roleOptions.value = roles.records
-    workflowOptions.value = workflows.items
-    if (!workflowOptions.value.some((workflow) => workflow.id === createForm.workflowId)) {
-      createForm.workflowId = workflowOptions.value[0]?.id || 1
+    resultPages.value = (await fetchResultPages()).items
+    if (!createForm.pageRef && resultPages.value[0]) {
+      createForm.pageRef = `${resultPages.value[0].pluginId}/${resultPages.value[0].pageKey}`
     }
-    await loadWorkflowNodes(createForm.workflowId)
-  }
-  const nodesOfType = (nodes: WorkflowGraphNode[], suffix: string) =>
-    nodes
-      .filter((node) => node.nodeType.split('.').at(-1) === suffix)
-      .map((node) => node.nodeInstanceId)
-  const pluginIDForNode = (nodes: WorkflowGraphNode[], nodeID: string) => {
-    const type = nodes.find((node) => node.nodeInstanceId === nodeID)?.nodeType || ''
-    const parts = type.split('.')
-    return parts.length >= 2 ? parts.slice(0, 2).join('.') : ''
-  }
-  const loadWorkflowNodes = async (workflowId: number) => {
-    const workflow = workflowOptions.value.find((item) => item.id === workflowId)
-    if (!workflow) return
-    const revision = await fetchWorkflowRevision(workflow.id, workflow.activeRevisionId)
-    paperNodes.value = nodesOfType(revision.graph.nodes, 'paper_execute')
-    createForm.paperNodeInstanceId = paperNodes.value[0] || createForm.paperNodeInstanceId
-    paperPluginId.value = pluginIDForNode(revision.graph.nodes, createForm.paperNodeInstanceId)
   }
   const openCreate = async () => {
     await loadGrantOptions()
     createVisible.value = true
   }
   const submitCreate = async () => {
-    const scope = {
-      workflowId: createForm.workflowId,
-      paperNodeInstanceId: createForm.paperNodeInstanceId.trim()
+    const page = selectedPage.value
+    if (!page) return
+    let scope: Record<string, unknown>
+    let filters: Record<string, unknown>
+    try {
+      scope = JSON.parse(createForm.scopeText) as Record<string, unknown>
+      filters = JSON.parse(createForm.filtersText) as Record<string, unknown>
+    } catch {
+      ElMessage.error('结果范围和过滤条件必须是合法 JSON')
+      return
     }
-    const filters: Record<string, string> = {}
-    filters.market = createForm.market
-    if (createForm.instrument.trim())
-      filters.instrument = createForm.instrument.trim().toUpperCase()
-    if (createForm.status) filters.status = createForm.status
     saving.value = true
     try {
       const created = await createResultView({
         name: createForm.name.trim(),
-        pluginId: paperPluginId.value,
-        pageKey: 'paper',
+        pluginId: page.pluginId,
+        pageKey: page.pageKey,
         scope,
         filters,
         allowedActions: [...createForm.allowedActions],
@@ -392,6 +349,12 @@
   }
 
   onMounted(loadViews)
+  watch(
+    () => createForm.pageRef,
+    () => {
+      createForm.allowedActions = [...(selectedPage.value?.actions || [])]
+    }
+  )
 </script>
 
 <style scoped>

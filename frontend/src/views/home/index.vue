@@ -706,21 +706,18 @@
   }
 
   .range-control {
-    height: 42px;
-    color: var(--ops-ink);
-    background: #233249;
-    border: 1px solid #40536e;
-    border-radius: 10px;
-  }
-
-  .range-control {
     position: relative;
     display: flex;
     gap: 8px;
     align-items: center;
     min-width: 148px;
+    height: 42px;
     padding: 0 12px;
     font-size: 12px;
+    color: var(--ops-ink);
+    background: #233249;
+    border: 1px solid #40536e;
+    border-radius: 10px;
   }
 
   .range-control span {

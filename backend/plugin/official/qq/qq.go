@@ -87,7 +87,7 @@ func (q *qqRuntime) register(registrar sdk.Registrar) error {
 	if err := registrar.Trigger(sdk.NodeDescriptor{
 		Type: "official.qq.receive", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
 		Title: "QQ 消息接收", Description: "接收 QQ 群聊 @ 消息或单聊消息", Category: "start", Aliases: []string{"QQ 接收", "QQ群消息", "单聊消息"}, Tags: []string{"入口", "QQ", "消息"}, SortOrder: 70, Color: "#0891b2", Icon: "message-square", Width: 220, Height: 72,
-		ConnectionType: "qq", ConnectionFields: []string{"appId", "clientSecret"},
+		ProfileType: "qq", ProfileFields: []string{"appId", "clientSecret"},
 		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"appId":{"type":"string","title":"应用 ID","pattern":"^[A-Za-z0-9_-]{1,128}$"},"clientSecret":{"type":"string","title":"客户端密钥","x-coinsphere-secret":true}},"required":["appId","clientSecret"],"additionalProperties":false}`),
 		UISchema:     json.RawMessage(`{"ui:order":["appId","clientSecret"]}`),
 		InputSchema:  emptyObjectSchema,
@@ -99,7 +99,7 @@ func (q *qqRuntime) register(registrar sdk.Registrar) error {
 	return registrar.Action(sdk.NodeDescriptor{
 		Type: "official.qq.send", Version: "1.0.0", Kind: sdk.NodeKindAction,
 		Title: "QQ 消息发送", Description: "向 QQ 群聊或用户发送消息", Category: "integration", Aliases: []string{"QQ 发送", "QQ群消息", "单聊消息"}, Tags: []string{"集成", "QQ", "消息"}, SortOrder: 20, Color: "#0891b2", Icon: "send", Width: 220, Height: 72,
-		ConnectionType: "qq", ConnectionFields: []string{"appId", "clientSecret"},
+		ProfileType: "qq", ProfileFields: []string{"appId", "clientSecret"},
 		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"appId":{"type":"string","title":"应用 ID","pattern":"^[A-Za-z0-9_-]{1,128}$"},"clientSecret":{"type":"string","title":"客户端密钥","x-coinsphere-secret":true}},"required":["appId","clientSecret"],"additionalProperties":false}`),
 		UISchema:     json.RawMessage(`{"ui:order":["appId","clientSecret"]}`),
 		InputSchema:  qqSendInputSchema(),
@@ -119,7 +119,7 @@ func qqReceiveOutputSchema() json.RawMessage {
 func (a qqSendAction) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
 	var input qqSendInput
 	if json.Unmarshal(request.Input, &input) != nil {
-		return sdk.ActionResult{}, errors.New("QQ send input is invalid")
+		return sdk.ActionResult{}, errors.New("qQ send input is invalid")
 	}
 	if err := validateQQSendInput(&input); err != nil {
 		return sdk.ActionResult{}, err
@@ -131,7 +131,7 @@ func (a qqSendAction) Execute(ctx context.Context, request sdk.ActionRequest) (s
 	workflowID, workflowErr := strconv.ParseInt(request.Revision.WorkflowID, 10, 64)
 	revisionID, revisionErr := strconv.ParseInt(request.Revision.RevisionID, 10, 64)
 	if workflowErr != nil || revisionErr != nil {
-		return sdk.ActionResult{}, errors.New("QQ workflow identity is invalid")
+		return sdk.ActionResult{}, errors.New("qQ workflow identity is invalid")
 	}
 	title, auditMessage := qqAuditText(input)
 	delivery, err := notification.BeginExternalDelivery(ctx, a.runtime.db, request, workflowID, revisionID, "qq", title, notification.ExternalDeliveryInput{
@@ -148,7 +148,7 @@ func (a qqSendAction) Execute(ctx context.Context, request sdk.ActionRequest) (s
 		if updateErr := notification.FinishExternalDelivery(ctx, a.runtime.db, delivery.ID, "failed", category); updateErr != nil {
 			return sdk.ActionResult{}, updateErr
 		}
-		return sdk.ActionResult{}, errors.New("QQ provider delivery failed: " + category)
+		return sdk.ActionResult{}, errors.New("qQ provider delivery failed: " + category)
 	}
 	if err := notification.FinishExternalDelivery(ctx, a.runtime.db, delivery.ID, "delivered", ""); err != nil {
 		return sdk.ActionResult{}, err
@@ -181,20 +181,20 @@ func validateQQSendInput(input *qqSendInput) error {
 		input.TargetType != "group" && input.TargetType != "user" ||
 		utf8.RuneCountInString(input.ReplyToMessageID) > 128 || input.ReplySequence < 1 || input.ReplySequence > maxReplySequence ||
 		utf8.RuneCountInString(input.KeyboardTemplateID) > 128 || utf8.RuneCountInString(input.MediaFilename) > 255 {
-		return errors.New("QQ send target or reply configuration is invalid")
+		return errors.New("qQ send target or reply configuration is invalid")
 	}
 	switch input.MessageType {
 	case "text", "markdown":
 		if strings.TrimSpace(input.Content) == "" || utf8.RuneCountInString(input.Content) > 2000 ||
 			input.MediaType != "" || input.MediaURL != "" || input.MediaFilename != "" {
-			return errors.New("QQ text or Markdown content is invalid")
+			return errors.New("qQ text or Markdown content is invalid")
 		}
 	case "media":
 		if input.Content != "" || !validQQMediaType(input.MediaType) || !validQQMediaURL(input.MediaURL) {
-			return errors.New("QQ media content is invalid")
+			return errors.New("qQ media content is invalid")
 		}
 	default:
-		return errors.New("QQ message type is invalid")
+		return errors.New("qQ message type is invalid")
 	}
 	return nil
 }
@@ -240,13 +240,13 @@ func (q *qqRuntime) readCredentials(ctx context.Context, raw json.RawMessage, se
 		AppID string `json:"appId"`
 	}
 	if json.Unmarshal(raw, &config) != nil {
-		return qqCredentials{}, errors.New("QQ configuration is invalid")
+		return qqCredentials{}, errors.New("qQ configuration is invalid")
 	}
 	secret, err := secrets.Read(ctx, "clientSecret")
 	credentials := qqCredentials{AppID: strings.TrimSpace(config.AppID), ClientSecret: strings.TrimSpace(string(secret))}
 	if err != nil || !validQQAppID(credentials.AppID) ||
 		credentials.ClientSecret == "" || len(credentials.ClientSecret) > 4096 {
-		return qqCredentials{}, errors.New("QQ credentials are unavailable")
+		return qqCredentials{}, errors.New("qQ credentials are unavailable")
 	}
 	return credentials, nil
 }
@@ -298,7 +298,7 @@ func (q *qqRuntime) send(ctx context.Context, credentials qqCredentials, input q
 		return "", category, err
 	}
 	if status < http.StatusOK || status >= http.StatusMultipleChoices {
-		return "", qqStatusCategory(status), errors.New("QQ rejected message")
+		return "", qqStatusCategory(status), errors.New("qQ rejected message")
 	}
 	var result struct {
 		ID string `json:"id"`
@@ -324,7 +324,7 @@ func (q *qqRuntime) uploadMedia(ctx context.Context, credentials qqCredentials, 
 		return "", category, err
 	}
 	if status < http.StatusOK || status >= http.StatusMultipleChoices {
-		return "", qqStatusCategory(status), errors.New("QQ rejected media upload")
+		return "", qqStatusCategory(status), errors.New("qQ rejected media upload")
 	}
 	var result struct {
 		FileInfo string `json:"file_info"`
@@ -355,18 +355,18 @@ func (q *qqRuntime) accessToken(ctx context.Context, credentials qqCredentials) 
 		ExpiresIn   json.RawMessage `json:"expires_in"`
 	}
 	if status < http.StatusOK || status >= http.StatusMultipleChoices {
-		return "", qqStatusCategory(status), errors.New("QQ access token request rejected")
+		return "", qqStatusCategory(status), errors.New("qQ access token request rejected")
 	}
 	if json.Unmarshal(raw, &result) != nil {
 		return "", "invalid_response", errors.New("decode QQ access token response")
 	}
 	token := strings.TrimSpace(result.AccessToken)
 	if result.Code != 0 || token == "" || len(token) > 16<<10 {
-		return "", "authentication", errors.New("QQ access token request rejected")
+		return "", "authentication", errors.New("qQ access token request rejected")
 	}
 	ttl, err := qqTokenTTL(result.ExpiresIn)
 	if err != nil || ttl <= 0 || ttl > int64((24*time.Hour)/time.Second) {
-		return "", "invalid_response", errors.New("QQ access token expiry is invalid")
+		return "", "invalid_response", errors.New("qQ access token expiry is invalid")
 	}
 	q.tokens[fingerprint] = qqAccessToken{Value: token, ExpiresAt: time.Now().UTC().Add(time.Duration(ttl) * time.Second)}
 	return token, "", nil
@@ -441,7 +441,7 @@ func readQQResponse(reader io.Reader) ([]byte, error) {
 		return nil, err
 	}
 	if len(body) > qqResponseLimit {
-		return nil, errors.New("QQ response is too large")
+		return nil, errors.New("qQ response is too large")
 	}
 	return body, nil
 }

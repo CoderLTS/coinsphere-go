@@ -15,7 +15,6 @@
         >{{ revision ? `修订 ${revision.revisionNumber}` : '未保存'
         }}{{ dirty ? ' · 有更改' : '' }}</span
       >
-      <ElButton @click="connectionsVisible = true">连接</ElButton>
       <ElButton @click="validate">检查</ElButton>
       <ElButton type="primary" :loading="saving" @click="save">保存</ElButton>
       <ElButton :disabled="!workflow || dirty" @click="toggleLifecycle">{{
@@ -144,18 +143,6 @@
                 ></div
               >
             </template>
-            <template v-if="definition.connectionType">
-              <h4>连接</h4>
-              <ElSelect v-model="selected.connectionId" placeholder="选择可复用连接" clearable
-                ><ElOption
-                  v-for="connection in matchingConnections"
-                  :key="connection.id"
-                  :value="connection.id"
-                  :label="`${connection.name}${connection.enabled ? '' : '（已停用）'}`"
-                  :disabled="!connection.enabled"
-              /></ElSelect>
-              <ElButton text @click="connectionsVisible = true">管理连接</ElButton>
-            </template>
             <template v-for="field in localSecrets" :key="field.name">
               <ElFormItem :label="field.title"
                 ><ElInput
@@ -215,7 +202,6 @@
         </template>
       </aside>
     </div>
-    <WorkflowConnections v-model="connectionsVisible" @changed="loadConnections" />
     <ElDialog v-model="runVisible" title="运行工作流" width="min(600px, 95vw)">
       <ElAlert title="使用已保存的修订执行" type="info" :closable="false" />
       <ElForm label-position="top">
@@ -277,21 +263,18 @@
   import { onBeforeRouteLeave } from 'vue-router'
   import { useElementSize } from '@vueuse/core'
   import * as api from '@/api/workflows'
-  import { fetchConnections, type Connection } from '@/api/connections'
   import { loadPluginNodeEditor } from '@/plugins'
   import { canvasNode, canvasEdges, schemaDefaults, outputFields } from './canvas'
   import WorkflowSchemaFields from './components/WorkflowSchemaFields.vue'
   import WorkflowBindingEditor from './components/WorkflowBindingEditor.vue'
   import WorkflowConditionEditor from './components/WorkflowConditionEditor.vue'
-  import WorkflowConnections from './components/WorkflowConnections.vue'
   import WorkflowProfileBindings from './components/WorkflowProfileBindings.vue'
   const router = useRouter(),
     route = useRoute()
   const loading = ref(true),
     saving = ref(false),
     running = ref(false)
-  const definitions = ref<api.WorkflowNodeDefinition[]>([]),
-    connections = ref<Connection[]>([])
+  const definitions = ref<api.WorkflowNodeDefinition[]>([])
   const workflow = ref<api.WorkflowDetail>(),
     revision = ref<api.WorkflowRevision>()
   const graph = ref<api.WorkflowGraph>({ schemaVersion: 3, profileRefs: [], nodes: [], edges: [] })
@@ -307,7 +290,6 @@
   const search = ref(''),
     pluginFilter = ref(''),
     newInput = ref(''),
-    connectionsVisible = ref(false),
     showAdvanced = ref(false)
   const secretChanges = ref<api.WorkflowSecretChange[]>([])
   const snapshot = () =>
@@ -360,13 +342,10 @@
       }))
       .filter((g) => g.nodes.length)
   })
-  const matchingConnections = computed(() =>
-    connections.value.filter((c) => c.type === definition.value?.connectionType)
-  )
   const localSecrets = computed(
     () =>
       definition.value?.secretFields.filter(
-        (f) => !definition.value?.connectionFields?.includes(f.name)
+        (f) => !definition.value?.profileFields?.includes(f.name)
       ) || []
   )
   function configSchema(advanced: boolean) {
@@ -377,7 +356,7 @@
       Object.entries(schema.properties || {}).filter(([key, value]) => {
         const field = value as Record<string, any>
         return (
-          !desc?.connectionFields?.includes(key) &&
+          !desc?.profileFields?.includes(key) &&
           !field['x-coinsphere-secret'] &&
           Boolean(
             desc?.configGroups?.some((group) => group.advanced && group.fields.includes(key)) ||
@@ -508,7 +487,7 @@
       config: schemaDefaults({
         properties: Object.fromEntries(
           Object.entries(desc.configSchema.properties || {}).filter(
-            ([k]) => !desc.connectionFields?.includes(k)
+            ([k]) => !desc.profileFields?.includes(k)
           )
         )
       }),
@@ -562,9 +541,6 @@
         }
       }
     }
-  }
-  async function loadConnections() {
-    connections.value = (await fetchConnections()).items
   }
   async function validate() {
     const result = await api.validateWorkflowGraph(graph.value)
@@ -707,7 +683,6 @@
   onMounted(async () => {
     try {
       definitions.value = (await api.fetchWorkflowNodeDefinitions()).items
-      await loadConnections()
       const id = Number(route.params.definitionId)
       if (id) {
         workflow.value = await api.fetchWorkflow(id)
@@ -781,93 +756,109 @@
 </script>
 <style scoped>
   .workflow-editor {
-    height: calc(100vh - 125px);
-    min-height: 600px;
     display: flex;
     flex-direction: column;
-    border: 1px solid var(--el-border-color);
-    border-radius: 8px;
+    height: calc(100vh - 125px);
+    min-height: 600px;
     overflow: hidden;
     background: var(--el-bg-color);
+    border: 1px solid var(--el-border-color);
+    border-radius: 8px;
   }
+
   .workflow-editor__toolbar {
     display: flex;
-    align-items: center;
     flex-wrap: wrap;
     gap: 8px;
+    align-items: center;
     padding: 12px;
     border-bottom: 1px solid var(--el-border-color);
   }
+
   .workflow-editor__toolbar .el-button + .el-button {
     margin-left: 0;
   }
+
   .workflow-editor__name {
     width: 190px;
   }
+
   .workflow-editor__revision {
     margin-right: auto;
     font-size: 12px;
     color: var(--el-text-color-secondary);
   }
+
   .workflow-editor__body {
     display: grid;
-    grid-template-columns: 220px minmax(280px, 1fr) 350px;
     flex: 1;
+    grid-template-columns: 220px minmax(280px, 1fr) 350px;
     min-height: 0;
   }
+
   .workflow-editor__library,
   .workflow-editor__inspector {
     padding: 16px;
     overflow: auto;
   }
+
   .workflow-editor__library {
-    border-right: 1px solid var(--el-border-color);
     display: flex;
     flex-direction: column;
     gap: 12px;
+    border-right: 1px solid var(--el-border-color);
   }
+
   .workflow-editor__inspector {
     border-left: 1px solid var(--el-border-color);
   }
+
   .workflow-editor h3 {
-    font-size: 14px;
     margin: 12px 0;
+    font-size: 14px;
   }
+
   .workflow-editor h4 {
     margin: 22px 0 12px;
     font-size: 13px;
   }
+
   .workflow-editor__material {
     display: block;
     width: 100%;
-    margin: 8px 0;
-    text-align: left;
     padding: 12px;
+    margin: 8px 0;
+    color: var(--el-text-color-primary);
+    text-align: left;
+    cursor: pointer;
+    background: var(--el-fill-color-blank);
     border: 1px solid var(--el-border-color);
     border-left: 3px solid;
     border-radius: 6px;
-    background: var(--el-fill-color-blank);
-    color: var(--el-text-color-primary);
-    cursor: pointer;
   }
+
   .workflow-editor__material:hover {
     background: var(--el-fill-color-light);
   }
+
   .workflow-editor__material small {
     display: block;
     margin-top: 5px;
-    color: var(--el-text-color-secondary);
     line-height: 1.5;
+    color: var(--el-text-color-secondary);
   }
+
   .workflow-editor__canvas {
     position: relative;
     min-height: 0;
     background: var(--el-fill-color-lighter);
   }
+
   .workflow-editor__graph {
     position: absolute;
     inset: 0;
   }
+
   .workflow-editor__zoom {
     position: absolute;
     bottom: 16px;
@@ -875,41 +866,48 @@
     display: flex;
     gap: 4px;
   }
+
   .workflow-editor__empty {
     position: absolute;
-    left: 20%;
     top: 40%;
+    left: 20%;
     max-width: 260px;
     color: var(--el-text-color-secondary);
     pointer-events: none;
   }
+
   .workflow-editor__hint {
     font-size: 12px;
     line-height: 1.7;
     color: var(--el-text-color-secondary);
     overflow-wrap: anywhere;
   }
+
   .workflow-editor__panel-title,
   .workflow-editor__add-input {
     display: flex;
+    gap: 8px;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
   }
+
   .workflow-editor__trigger {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    border-bottom: 1px solid var(--el-border-color-lighter);
     padding: 8px 0;
+    border-bottom: 1px solid var(--el-border-color-lighter);
   }
+
   .workflow-editor details {
     margin-top: 24px;
   }
+
   .workflow-editor summary {
-    cursor: pointer;
     margin-bottom: 16px;
+    cursor: pointer;
   }
+
   @media (max-width: 1100px) {
     .workflow-editor__body {
       grid-template-columns: 160px minmax(180px, 1fr) 310px;

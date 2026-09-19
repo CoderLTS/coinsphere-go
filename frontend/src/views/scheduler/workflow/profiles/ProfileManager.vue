@@ -205,24 +205,28 @@
 
 <style scoped>
   .profile-manager {
-    padding: 24px;
     min-height: calc(100vh - 140px);
+    padding: 24px;
     background: var(--el-bg-color);
   }
+
   .profile-manager__header {
     display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
     gap: 16px;
+    align-items: flex-start;
+    justify-content: space-between;
     margin-bottom: 20px;
   }
+
   .profile-manager__header h2 {
     margin: 0 0 6px;
   }
+
   .profile-manager__header p {
     margin: 0;
     color: var(--el-text-color-secondary);
   }
+
   .profile-manager__actions {
     display: flex;
     gap: 8px;

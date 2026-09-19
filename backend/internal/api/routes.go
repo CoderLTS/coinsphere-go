@@ -16,7 +16,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// registerRoutes 只暴露 V2 基线仍保留的认证、监控与系统管理边界。
+// registerRoutes exposes the Core4 authentication, monitoring, administration
+// and workflow boundaries.
 func (s *Server) registerRoutes(router *gin.Engine) {
 	get(router, "/health", s.handleReady)
 	get(router, "/health/live", func(c *gin.Context) {
@@ -71,11 +72,6 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 	super.POST("/events", s.handlePublishWorkflowEvent)
 	get(super, "/human-tasks", s.handleListWorkflowHumanTasks)
 	super.POST("/human-tasks/:taskId", s.handleDecideWorkflowHumanTask)
-	get(super, "/connections", s.handleListConnections)
-	get(super, "/connections/types", s.handleConnectionTypes)
-	super.POST("/connections", s.handleSaveConnection)
-	super.PUT("/connections/:connectionId", s.handleSaveConnection)
-	super.DELETE("/connections/:connectionId", s.handleDeleteConnection)
 	get(super, "/workflows/node-definitions", s.handleListWorkflowNodeDefinitions)
 	super.POST("/workflows/validate", s.handleValidateWorkflowGraph)
 	get(super, "/workflow-groups", s.handleListWorkflowGroups)
@@ -88,11 +84,11 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 	super.PATCH("/workflows/group-assignment", s.handleAssignWorkflowGroup)
 	get(super, "/workflows/:workflowId", s.handleGetWorkflow)
 	super.PATCH("/workflows/:workflowId", s.handleUpdateWorkflow)
-	super.DELETE("/workflows/:workflowId", s.requirePermission(perm.SchedulerWorkflowDefinitionsDelete), s.handleDeleteWorkflow)
+	super.DELETE("/workflows/:workflowId", s.handleDeleteWorkflow)
 	get(super, "/workflows/:workflowId/revisions", s.handleListWorkflowRevisions)
 	super.POST("/workflows/:workflowId/revisions", s.handleSaveWorkflowRevision)
 	get(super, "/workflows/:workflowId/revisions/:revisionId", s.handleGetWorkflowRevision)
-	super.DELETE("/workflows/:workflowId/revisions/:revisionId", s.requirePermission(perm.SchedulerWorkflowDefinitionsDelete), s.handleDeleteWorkflowRevision)
+	super.DELETE("/workflows/:workflowId/revisions/:revisionId", s.handleDeleteWorkflowRevision)
 	super.POST("/workflows/:workflowId/lifecycle", s.handleWorkflowLifecycle)
 	get(super, "/workflows/:workflowId/runs", s.handleListWorkflowRuns)
 	super.POST("/workflows/:workflowId/runs", s.handleCreateWorkflowRun)
@@ -106,6 +102,7 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 	get(super, "/artifacts/:sha256/manifest", s.handleGetWorkflowArtifactManifest)
 	get(super, "/artifacts/:sha256/download", s.handleDownloadWorkflowArtifact)
 	get(authenticated, "/result-views", s.requirePermission(perm.ResultViewsAccess), s.handleListResultViews)
+	get(authenticated, "/result-pages", s.requirePermission(perm.ResultViewsAccess), s.handleListResultPages)
 	super.POST("/result-views", s.handleCreateResultView)
 	get(authenticated, "/result-views/:viewId", s.requirePermission(perm.ResultViewsAccess), s.handleGetResultView)
 	super.PUT("/result-views/:viewId/grants", s.handleReplaceResultViewGrants)
@@ -183,30 +180,9 @@ func (s *Server) registerResultPluginRoutes(routes gin.IRoutes) {
 				respond(c, nil, fmt.Errorf("%w: result view", service.ErrNotFound), "")
 				return
 			}
-			if !authorizeResultAction(c, principal, registered.Descriptor.Action) {
-				return
-			}
 			registered.Handler(c, scope)
 		})
 	}
-}
-
-var resultActionPermissions = map[string]string{
-	"approve": perm.ResultViewsApprove, "reject": perm.ResultViewsReject,
-	"retry": perm.ResultViewsRetry, "cancel": perm.ResultViewsCancel,
-	"pause": perm.ResultViewsPause, "export": perm.ResultViewsExport,
-}
-
-func authorizeResultAction(c *gin.Context, principal *service.Principal, action string) bool {
-	if action == "" {
-		return true
-	}
-	permission, known := resultActionPermissions[action]
-	if known && (principal.HasRole("R_SUPER") || principal.HasPermission(permission)) {
-		return true
-	}
-	writeProblem(c, http.StatusForbidden, service.ErrPermission.Error())
-	return false
 }
 
 func (s *Server) registerSystemPluginRoutes(routes, publicRoutes gin.IRoutes) {

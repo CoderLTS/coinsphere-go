@@ -2,10 +2,9 @@
 import { AppRouteRecordRaw } from '@/utils/router'
 import { useUserStore } from '@/store/modules/user'
 
-const createPermissionGuard = (permissionCode: string) => {
+const createAdminGuard = () => {
   return () => {
-    const permissions = useUserStore().info?.permissions || []
-    return permissions.includes(permissionCode) ? true : { name: 'Exception403' }
+    return useUserStore().info?.roleCodes?.includes('R_SUPER') ? true : { name: 'Exception403' }
   }
 }
 
@@ -35,20 +34,6 @@ export const staticRoutes: AppRouteRecordRaw[] = [
     meta: { title: '500', isHideTab: true }
   },
   {
-    path: '/outside',
-    component: () => import('@views/index/index.vue'),
-    name: 'Outside',
-    meta: { title: 'menus.outside.title' },
-    children: [
-      {
-        path: '/outside/iframe/:path',
-        name: 'Iframe',
-        component: () => import('@/views/outside/Iframe.vue'),
-        meta: { title: 'iframe' }
-      }
-    ]
-  },
-  {
     path: '/',
     component: () => import('@views/index/index.vue'),
     name: 'WorkflowEditorShell',
@@ -58,52 +43,46 @@ export const staticRoutes: AppRouteRecordRaw[] = [
         path: '/scheduler/workflow/create',
         name: 'SchedulerWorkflowDefinitionCreate',
         component: () => import('@views/scheduler/workflow/editor/index.vue'),
-        beforeEnter: createPermissionGuard('scheduler.workflow_definitions.create'),
+        beforeEnter: createAdminGuard(),
         meta: {
           title: '创建工作流定义',
           isHideTab: true,
           isHide: true,
           activePath: '/scheduler/definition',
-          actionList: [
-            { title: '保存定义', permissionCode: 'scheduler.workflow_definitions.create' }
-          ]
+          actionList: [{ title: '保存定义', permissionCode: 'R_SUPER' }]
         }
       },
       {
         path: '/scheduler/workflow/:definitionId/edit',
         name: 'SchedulerWorkflowDefinitionEdit',
         component: () => import('@views/scheduler/workflow/editor/index.vue'),
-        beforeEnter: createPermissionGuard('scheduler.workflow_definitions.update'),
+        beforeEnter: createAdminGuard(),
         meta: {
           title: '编辑工作流定义',
           isHideTab: true,
           isHide: true,
           activePath: '/scheduler/definition',
-          actionList: [
-            { title: '保存定义', permissionCode: 'scheduler.workflow_definitions.update' }
-          ]
+          actionList: [{ title: '保存定义', permissionCode: 'R_SUPER' }]
         }
       },
       {
         path: '/scheduler/workflow/:definitionId/version',
         name: 'SchedulerWorkflowDefinitionVersion',
         redirect: (to) => `/scheduler/workflow/${to.params.definitionId}/edit`,
-        beforeEnter: createPermissionGuard('scheduler.workflow_definitions.update'),
+        beforeEnter: createAdminGuard(),
         meta: {
           title: '编辑工作流定义',
           isHideTab: true,
           isHide: true,
           activePath: '/scheduler/definition',
-          actionList: [
-            { title: '保存定义', permissionCode: 'scheduler.workflow_definitions.update' }
-          ]
+          actionList: [{ title: '保存定义', permissionCode: 'R_SUPER' }]
         }
       },
       {
         path: '/scheduler/execution',
         name: 'SchedulerWorkflowExecutions',
         component: () => import('@views/scheduler/execution/index.vue'),
-        beforeEnter: createPermissionGuard('scheduler.workflow_definitions.view'),
+        beforeEnter: createAdminGuard(),
         meta: {
           title: '历史运行日志',
           isHideTab: true,
@@ -115,7 +94,7 @@ export const staticRoutes: AppRouteRecordRaw[] = [
         path: '/scheduler/execution/:executionId/detail',
         name: 'SchedulerWorkflowExecutionDetail',
         component: () => import('@views/scheduler/execution/detail/index.vue'),
-        beforeEnter: createPermissionGuard('scheduler.workflow_definitions.view'),
+        beforeEnter: createAdminGuard(),
         meta: {
           title: '执行详情',
           isHideTab: true,
@@ -127,7 +106,7 @@ export const staticRoutes: AppRouteRecordRaw[] = [
         path: '/scheduler/execution/:runId/backtest',
         name: 'SchedulerWorkflowBacktestAnalysis',
         component: () => import('@views/scheduler/execution/backtest/index.vue'),
-        beforeEnter: createPermissionGuard('scheduler.workflow_definitions.view'),
+        beforeEnter: createAdminGuard(),
         meta: {
           title: '回测分析',
           isHideTab: true,
@@ -136,5 +115,11 @@ export const staticRoutes: AppRouteRecordRaw[] = [
         }
       }
     ]
+  },
+  {
+    path: '/results',
+    name: 'Results',
+    component: () => import('@views/results/index.vue'),
+    meta: { title: 'menus.results.title' }
   }
 ]

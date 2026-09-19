@@ -24,7 +24,6 @@
       "github": "Github",
       "lockScreen": "Lock screen",
       "logout": "Log out",
-      "guest": "Guest",
       "toLogin": "Sign in"
     },
     "guide": {
@@ -544,10 +543,6 @@
         "hasData": "The latest news record was stored at {time}.",
         "empty": "There is no news data yet. Check the sync task or add records manually."
       }
-    },
-    "guest": {
-      "title": "Guest Mode",
-      "description": "You are currently browsing as a guest. Sign in to access scheduler, data management, and system pages."
     }
   },
   "trading": {

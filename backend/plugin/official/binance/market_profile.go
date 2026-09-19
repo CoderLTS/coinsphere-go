@@ -64,10 +64,10 @@ func validateMarketDataProfileConfig(raw json.RawMessage) error {
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&config) != nil || config.Market != "spot" && config.Market != "usdm" ||
 		!instrumentPattern.MatchString(config.Instrument) {
-		return errors.New("Binance market profile configuration is invalid")
+		return errors.New("binance market profile configuration is invalid")
 	}
 	if _, ok := binanceIntervals[config.Interval]; !ok || config.ProxyID < 0 {
-		return errors.New("Binance market profile configuration is invalid")
+		return errors.New("binance market profile configuration is invalid")
 	}
 	return nil
 }

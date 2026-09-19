@@ -189,10 +189,7 @@
         return
       }
 
-      if (
-        lowerItemTitle.includes(lowerVal) &&
-        ((item.path && item.path.trim()) || item.meta.link || item.meta.isIframe)
-      ) {
+      if (lowerItemTitle.includes(lowerVal) && item.path && item.path.trim()) {
         result.push({ ...item, children: undefined })
       }
     }
@@ -315,10 +312,9 @@
   }
 
   const addHistory = (item: AppRouteRecord) => {
-    const itemKey = item.path || String(item.meta.link || '')
+    const itemKey = item.path || ''
     const hasItemIndex = historyResult.value.findIndex(
-      (historyItem: AppRouteRecord) =>
-        (historyItem.path || String(historyItem.meta.link || '')) === itemKey
+      (historyItem: AppRouteRecord) => (historyItem.path || '') === itemKey
     )
 
     if (hasItemIndex !== -1) {

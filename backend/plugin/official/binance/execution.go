@@ -45,7 +45,7 @@ func (p executionProvider) PlaceOrder(ctx context.Context, request sdk.OrderRequ
 	} else if request.Market == "spot" {
 		values.Set("quoteOrderQty", request.QuoteAmount.String())
 	} else {
-		return sdk.OrderResult{}, errors.New("Binance USD-M market order requires quantity")
+		return sdk.OrderResult{}, errors.New("binance USD-M market order requires quantity")
 	}
 	if request.Market == "usdm" && request.PositionEffect == "reduce" {
 		values.Set("reduceOnly", "true")
@@ -114,13 +114,13 @@ func (a liveExecuteAction) Execute(ctx context.Context, request sdk.ActionReques
 	}
 	var intent struct{ Venue, Account, Market, Instrument, Side, Quantity, QuoteAmount, PositionEffect, ClientOrderID, ReferencePrice, QuotedAt string }
 	if json.Unmarshal(request.Config, &config) != nil || json.Unmarshal(request.Input, &intent) != nil {
-		return sdk.ActionResult{}, errors.New("Binance live order configuration is invalid")
+		return sdk.ActionResult{}, errors.New("binance live order configuration is invalid")
 	}
 	if !config.LiveTradingEnabled || !config.AccountConfirmed {
-		return sdk.ActionResult{}, errors.New("Binance live trading is disabled or not manually confirmed")
+		return sdk.ActionResult{}, errors.New("binance live trading is disabled or not manually confirmed")
 	}
 	if intent.Venue != "binance" || intent.ClientOrderID == "" {
-		return sdk.ActionResult{}, errors.New("Binance order intent is invalid")
+		return sdk.ActionResult{}, errors.New("binance order intent is invalid")
 	}
 	quantity, quantityErr := decimal.NewFromString(zeroIfEmpty(intent.Quantity))
 	quoteAmount, quoteErr := decimal.NewFromString(zeroIfEmpty(intent.QuoteAmount))
@@ -128,7 +128,7 @@ func (a liveExecuteAction) Execute(ctx context.Context, request sdk.ActionReques
 	quotedAt, timeErr := time.Parse(time.RFC3339, intent.QuotedAt)
 	limits, limitErr := parseRiskLimits(config.MaxOrderNotional, config.MaxInstrumentNotional, config.MaxDailyLoss, config.MaxSlippage, config.MaxDailyOrders, config.MaxQuoteAgeSeconds)
 	if quantityErr != nil || quoteErr != nil || referenceErr != nil || timeErr != nil || limitErr != nil {
-		return sdk.ActionResult{}, errors.New("Binance order intent or risk limits are invalid")
+		return sdk.ActionResult{}, errors.New("binance order intent or risk limits are invalid")
 	}
 	intent.Account = strings.TrimSpace(intent.Account)
 	intent.Market = strings.ToLower(strings.TrimSpace(intent.Market))
@@ -139,14 +139,14 @@ func (a liveExecuteAction) Execute(ctx context.Context, request sdk.ActionReques
 		Account: intent.Account, Market: intent.Market, Instrument: intent.Instrument, Side: intent.Side,
 		Quantity: quantity, QuoteAmount: quoteAmount, PositionEffect: intent.PositionEffect, ClientOrderID: intent.ClientOrderID,
 	}) != nil {
-		return sdk.ActionResult{}, errors.New("Binance order intent is invalid")
+		return sdk.ActionResult{}, errors.New("binance order intent is invalid")
 	}
 	unlock := a.runtime.lockLiveAccount(intent.Account, intent.Market)
 	defer unlock()
 	var release liveAccountRelease
 	releaseErr := a.runtime.db.WithContext(ctx).Where("account = ? AND market = ? AND enabled", intent.Account, intent.Market).First(&release).Error
 	if errors.Is(releaseErr, gorm.ErrRecordNotFound) {
-		return sdk.ActionResult{}, errors.New("Binance live account has not been manually released")
+		return sdk.ActionResult{}, errors.New("binance live account has not been manually released")
 	}
 	if releaseErr != nil {
 		return sdk.ActionResult{}, errors.New("load Binance live account release failed")
@@ -155,10 +155,10 @@ func (a liveExecuteAction) Execute(ctx context.Context, request sdk.ActionReques
 		return sdk.ActionResult{}, err
 	} else if ok {
 		if !matchesOrderIntent(existing, "live", intent.Account, intent.Market, intent.Instrument, intent.Side, intent.PositionEffect, intent.ClientOrderID, quantity, quoteAmount) {
-			return sdk.ActionResult{}, errors.New("Binance clientOrderId belongs to a different order intent")
+			return sdk.ActionResult{}, errors.New("binance clientOrderId belongs to a different order intent")
 		}
 		if existing.Status == "reconciling" {
-			result, queryErr := (executionProvider{runtime: a.runtime}).GetOrder(ctx, sdk.OrderQuery{Account: intent.Account, Market: intent.Market, Instrument: intent.Instrument, ClientOrderID: intent.ClientOrderID, Secrets: request.Secrets, ProxyID: config.ProxyID})
+			result, queryErr := executionProvider(a).GetOrder(ctx, sdk.OrderQuery{Account: intent.Account, Market: intent.Market, Instrument: intent.Instrument, ClientOrderID: intent.ClientOrderID, Secrets: request.Secrets, ProxyID: config.ProxyID})
 			if queryErr == nil {
 				_ = a.runtime.updateReconciledOrder(ctx, existing, result)
 				existing, _, _ = a.runtime.orderByClientID(ctx, intent.ClientOrderID)
@@ -166,7 +166,7 @@ func (a liveExecuteAction) Execute(ctx context.Context, request sdk.ActionReques
 		}
 		return sdk.ActionResult{Output: marshalOrder(existing)}, nil
 	}
-	quote, err := (marketDataProvider{runtime: a.runtime}).Quote(ctx, sdk.QuoteQuery{Market: intent.Market, Instrument: intent.Instrument, ProxyID: config.ProxyID})
+	quote, err := marketDataProvider(a).Quote(ctx, sdk.QuoteQuery{Market: intent.Market, Instrument: intent.Instrument, ProxyID: config.ProxyID})
 	if err != nil {
 		return sdk.ActionResult{}, err
 	}
@@ -188,7 +188,7 @@ func (a liveExecuteAction) Execute(ctx context.Context, request sdk.ActionReques
 	}
 	workflowID, workflowErr := strconv.ParseInt(request.Revision.WorkflowID, 10, 64)
 	if workflowErr != nil || workflowID <= 0 || strings.TrimSpace(request.NodeInstanceID) == "" {
-		return sdk.ActionResult{}, errors.New("Binance live workflow identity is invalid")
+		return sdk.ActionResult{}, errors.New("binance live workflow identity is invalid")
 	}
 	now := time.Now().UTC()
 	pending := tradingOrder{WorkflowID: workflowID, NodeInstanceID: request.NodeInstanceID, Account: intent.Account, Market: intent.Market, Instrument: intent.Instrument, ClientOrderID: intent.ClientOrderID, Side: intent.Side, RequestQuantity: quantity, RequestQuoteAmount: quoteAmount, PositionEffect: intent.PositionEffect, Quantity: quantity, Status: "reconciling", Mode: "live", OperationKey: request.OperationKey, CreatedAt: now, UpdatedAt: now}
@@ -202,11 +202,11 @@ func (a liveExecuteAction) Execute(ctx context.Context, request sdk.ActionReques
 			return sdk.ActionResult{}, loadErr
 		}
 		if !matchesOrderIntent(existing, "live", intent.Account, intent.Market, intent.Instrument, intent.Side, intent.PositionEffect, intent.ClientOrderID, quantity, quoteAmount) {
-			return sdk.ActionResult{}, errors.New("Binance clientOrderId belongs to a different order intent")
+			return sdk.ActionResult{}, errors.New("binance clientOrderId belongs to a different order intent")
 		}
 		return sdk.ActionResult{Output: marshalOrder(existing)}, nil
 	}
-	result, err := (executionProvider{runtime: a.runtime}).PlaceOrder(ctx, sdk.OrderRequest{Account: intent.Account, Market: intent.Market, Instrument: intent.Instrument, Side: intent.Side, Quantity: quantity, QuoteAmount: quoteAmount, PositionEffect: intent.PositionEffect, ClientOrderID: intent.ClientOrderID, Secrets: request.Secrets, ProxyID: config.ProxyID})
+	result, err := executionProvider(a).PlaceOrder(ctx, sdk.OrderRequest{Account: intent.Account, Market: intent.Market, Instrument: intent.Instrument, Side: intent.Side, Quantity: quantity, QuoteAmount: quoteAmount, PositionEffect: intent.PositionEffect, ClientOrderID: intent.ClientOrderID, Secrets: request.Secrets, ProxyID: config.ProxyID})
 	if err != nil {
 		return sdk.ActionResult{}, err
 	}
@@ -243,17 +243,17 @@ func parseRiskLimits(order, instrument, loss, slippage string, dailyOrders, quot
 func (q *binanceRuntime) checkLiveRisk(ctx context.Context, account, market, instrument, side, positionEffect string, quantity, quoteAmount, reference decimal.Decimal, quotedAt time.Time, quote sdk.Quote, limits riskLimits) error {
 	now := time.Now().UTC()
 	if account == "" || quotedAt.After(now) || quote.QuotedAt.After(now) || now.Sub(quotedAt) > time.Duration(limits.quoteAge)*time.Second || now.Sub(quote.QuotedAt) > time.Duration(limits.quoteAge)*time.Second {
-		return errors.New("Binance quote is stale")
+		return errors.New("binance quote is stale")
 	}
 	if reference.Sign() <= 0 || quote.Price.Sub(reference).Abs().Div(reference).GreaterThan(limits.slippage) {
-		return errors.New("Binance quote exceeds the slippage limit")
+		return errors.New("binance quote exceeds the slippage limit")
 	}
 	notional := quoteAmount
 	if notional.Sign() == 0 {
 		notional = quantity.Mul(quote.Price)
 	}
 	if notional.Sign() <= 0 || notional.GreaterThan(limits.orderNotional) {
-		return errors.New("Binance order exceeds the order notional limit")
+		return errors.New("binance order exceeds the order notional limit")
 	}
 	var count int64
 	day := time.Now().UTC().Truncate(24 * time.Hour)
@@ -261,7 +261,7 @@ func (q *binanceRuntime) checkLiveRisk(ctx context.Context, account, market, ins
 		return errors.New("load Binance daily order count failed")
 	}
 	if count >= int64(limits.dailyOrders) {
-		return errors.New("Binance daily order limit reached")
+		return errors.New("binance daily order limit reached")
 	}
 	var position tradingPosition
 	positionErr := q.db.WithContext(ctx).Where("account = ? AND mode = 'live' AND market = ? AND instrument = ?", account, market, instrument).First(&position).Error
@@ -277,14 +277,14 @@ func (q *binanceRuntime) checkLiveRisk(ctx context.Context, account, market, ins
 	}
 	nextQuantity := position.Quantity.Add(delta)
 	if nextQuantity.Abs().Mul(quote.Price).GreaterThan(limits.instrumentNotional) {
-		return errors.New("Binance instrument notional limit exceeded")
+		return errors.New("binance instrument notional limit exceeded")
 	}
 	if market == "spot" && nextQuantity.Sign() < 0 {
-		return errors.New("Binance Spot position is insufficient")
+		return errors.New("binance Spot position is insufficient")
 	}
 	if market == "usdm" && positionEffect == "reduce" &&
 		(position.Quantity.IsZero() || position.Quantity.Sign() == delta.Sign() || nextQuantity.Sign() != 0 && nextQuantity.Sign() != position.Quantity.Sign()) {
-		return errors.New("Binance reduce order would increase or reverse the position")
+		return errors.New("binance reduce order would increase or reverse the position")
 	}
 	asset := "USD"
 	if market == "spot" {
@@ -298,10 +298,10 @@ func (q *binanceRuntime) checkLiveRisk(ctx context.Context, account, market, ins
 	firstErr := q.db.WithContext(ctx).Where("account = ? AND market = ? AND asset = ? AND captured_at >= ?", account, market, asset, day).Order("captured_at").First(&first).Error
 	latestErr := q.db.WithContext(ctx).Where("account = ? AND market = ? AND asset = ? AND captured_at >= ?", account, market, asset, day).Order("captured_at DESC").First(&latest).Error
 	if firstErr != nil || latestErr != nil {
-		return errors.New("Binance daily loss evidence is unavailable")
+		return errors.New("binance daily loss evidence is unavailable")
 	}
 	if first.Equity.Sub(latest.Equity).GreaterThanOrEqual(limits.dailyLoss) {
-		return errors.New("Binance daily loss limit reached")
+		return errors.New("binance daily loss limit reached")
 	}
 	return nil
 }
@@ -314,7 +314,7 @@ func (q *binanceRuntime) verifyNoWithdrawalPermission(ctx context.Context, marke
 		return errors.New("verify Binance API key permissions failed")
 	}
 	if payload.EnableWithdrawals {
-		return errors.New("Binance API key with withdrawal permission is prohibited")
+		return errors.New("binance API key with withdrawal permission is prohibited")
 	}
 	return nil
 }
@@ -327,7 +327,7 @@ func (q *binanceRuntime) verifyOneWayMode(ctx context.Context, secrets sdk.Secre
 		return errors.New("verify Binance USD-M position mode failed")
 	}
 	if payload.DualSidePosition {
-		return errors.New("Binance USD-M hedge mode is unsupported")
+		return errors.New("binance USD-M hedge mode is unsupported")
 	}
 	return nil
 }
@@ -338,25 +338,25 @@ func (q *binanceRuntime) validateOrderRules(ctx context.Context, request sdk.Ord
 	}
 	var instrument binanceInstrument
 	if err := q.db.WithContext(ctx).Where("market = ? AND symbol = ?", request.Market, strings.ToUpper(request.Instrument)).First(&instrument).Error; err != nil {
-		return errors.New("Binance instrument rules are unavailable")
+		return errors.New("binance instrument rules are unavailable")
 	}
 	if request.Quantity.LessThan(instrument.MinQuantity) || !request.Quantity.Mod(instrument.QuantityStep).IsZero() {
-		return errors.New("Binance order quantity violates instrument rules")
+		return errors.New("binance order quantity violates instrument rules")
 	}
 	return nil
 }
 
 func (q *binanceRuntime) privateJSON(ctx context.Context, market, method, path string, values url.Values, secrets sdk.SecretReader, proxyID int64, destination any) error {
 	if secrets == nil {
-		return errors.New("Binance credentials are unavailable")
+		return errors.New("binance credentials are unavailable")
 	}
 	apiKey, err := secrets.Read(ctx, "apiKey")
 	if err != nil || len(apiKey) == 0 || len(apiKey) > 512 {
-		return errors.New("Binance API key is unavailable")
+		return errors.New("binance API key is unavailable")
 	}
 	secret, err := secrets.Read(ctx, "apiSecret")
 	if err != nil || len(secret) == 0 || len(secret) > 512 {
-		return errors.New("Binance API secret is unavailable")
+		return errors.New("binance API secret is unavailable")
 	}
 	values.Set("timestamp", strconv.FormatInt(time.Now().UTC().UnixMilli(), 10))
 	values.Set("recvWindow", "5000")
@@ -394,10 +394,10 @@ func (q *binanceRuntime) privateJSON(ctx context.Context, market, method, path s
 	defer response.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(response.Body, maxPrivateResponseBytes+1))
 	if err != nil || len(raw) > maxPrivateResponseBytes {
-		return errors.New("Binance private response exceeds limit")
+		return errors.New("binance private response exceeds limit")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("Binance private response status %d", response.StatusCode)
+		return fmt.Errorf("binance private response status %d", response.StatusCode)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
@@ -413,7 +413,7 @@ func validateOrderRequest(r sdk.OrderRequest) error {
 		!clientOrderIDPattern.MatchString(r.ClientOrderID) || (r.Quantity.Sign() <= 0 && r.QuoteAmount.Sign() <= 0) ||
 		r.Quantity.Sign() > 0 && r.QuoteAmount.Sign() > 0 || r.Market == "usdm" && r.QuoteAmount.Sign() > 0 ||
 		(r.PositionEffect != "open" && r.PositionEffect != "reduce") {
-		return errors.New("Binance order request is invalid")
+		return errors.New("binance order request is invalid")
 	}
 	return nil
 }
@@ -422,7 +422,7 @@ func validateOrderQuery(r sdk.OrderQuery) error {
 	if !accountIDPattern.MatchString(r.Account) || (r.Market != "spot" && r.Market != "usdm") ||
 		!instrumentPattern.MatchString(strings.ToUpper(r.Instrument)) ||
 		(r.OrderID == "" && r.ClientOrderID == "") || (r.OrderID != "" && r.ClientOrderID != "") {
-		return errors.New("Binance order query is invalid")
+		return errors.New("binance order query is invalid")
 	}
 	return nil
 }
@@ -446,7 +446,7 @@ func parseOrderResult(market string, payload map[string]any) (sdk.OrderResult, e
 	if average.Sign() == 0 {
 		quote, quoteErr := decimal.NewFromString(zeroIfEmpty(text("cummulativeQuoteQty")))
 		if quoteErr != nil {
-			return sdk.OrderResult{}, errors.New("Binance order response is invalid")
+			return sdk.OrderResult{}, errors.New("binance order response is invalid")
 		}
 		if executed.Sign() > 0 {
 			average = quote.Div(executed)
@@ -457,7 +457,7 @@ func parseOrderResult(market string, payload map[string]any) (sdk.OrderResult, e
 		!clientOrderIDPattern.MatchString(result.ClientOrderID) || !instrumentPattern.MatchString(result.Instrument) ||
 		(result.Side != "buy" && result.Side != "sell") || !validOrderStatus(result.Status) || quantity.Sign() < 0 ||
 		executed.Sign() < 0 || average.Sign() < 0 || quantity.Sign() > 0 && executed.GreaterThan(quantity) {
-		return sdk.OrderResult{}, errors.New("Binance order response is invalid")
+		return sdk.OrderResult{}, errors.New("binance order response is invalid")
 	}
 	return result, nil
 }

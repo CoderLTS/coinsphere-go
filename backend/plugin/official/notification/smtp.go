@@ -45,19 +45,19 @@ func (n *notificationRuntime) sendSMTP(ctx context.Context, request sdk.ActionRe
 	if err != nil || !validHost || config.Port < 1 || config.Port > 65535 ||
 		config.Security != "implicit_tls" && config.Security != "starttls" ||
 		config.Username == "" || config.Password == "" || len(config.Recipients) == 0 || len(config.Recipients) > 100 {
-		return "configuration", errors.New("SMTP credentials or settings are invalid")
+		return "configuration", errors.New("sMTP credentials or settings are invalid")
 	}
 	config.Host = host
 	from, err := mail.ParseAddress(config.FromEmail)
 	if err != nil || from.Address != config.FromEmail {
-		return "configuration", errors.New("SMTP sender address is invalid")
+		return "configuration", errors.New("sMTP sender address is invalid")
 	}
 	recipients := make([]string, 0, len(config.Recipients))
 	seen := map[string]struct{}{}
 	for _, raw := range config.Recipients {
 		address, parseErr := mail.ParseAddress(strings.TrimSpace(raw))
 		if parseErr != nil || address.Address != strings.TrimSpace(raw) {
-			return "configuration", errors.New("SMTP recipient address is invalid")
+			return "configuration", errors.New("sMTP recipient address is invalid")
 		}
 		if _, exists := seen[address.Address]; !exists {
 			seen[address.Address] = struct{}{}
@@ -96,7 +96,7 @@ func (n *notificationRuntime) sendSMTP(ctx context.Context, request sdk.ActionRe
 	defer client.Close()
 	if config.Security == "starttls" {
 		if ok, _ := client.Extension("STARTTLS"); !ok {
-			return "tls", errors.New("SMTP server does not support STARTTLS")
+			return "tls", errors.New("sMTP server does not support STARTTLS")
 		}
 		if err := client.StartTLS(tlsConfig); err != nil {
 			return "tls", err
@@ -154,5 +154,5 @@ func dialSMTPPublic(ctx context.Context, addresses []netip.Addr, port int) (net.
 	if lastErr != nil {
 		return nil, lastErr
 	}
-	return nil, errors.New("SMTP host has no public addresses")
+	return nil, errors.New("sMTP host has no public addresses")
 }

@@ -1,10 +1,7 @@
-// 本文件是 HTTP 接口层的地基:统一响应格式、请求参数解析、登录/权限中间件。新手可对照 GO入门笔记.md 阅读。
-// package:同一文件夹下所有 .go 文件都写 package api,包内函数/变量互相直接可见(见 GO入门笔记『项目怎么组织』)。
 // internal/ 是 Go 的特殊约定:里面的包只能被本项目引用,用来放内部实现,外部项目无法 import。
 // Package api HTTP 路由与中间件。
 package api
 
-// import:声明本文件用到的外部包。第一组是 Go 自带的标准库,空行后一组是本项目内部包(见 GO入门笔记『项目怎么组织』)。
 import (
 	"crypto/sha256"
 	"encoding/json"
@@ -21,14 +18,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// map[键类型]值类型 是 Go 的字典;any 表示"任意类型"(见 GO入门笔记『复合类型』)。
 // type X = Y 是"类型别名",下面的 M 就完全等价于 map[string]any,只是写起来更短、语义更清楚。
 
 // M JSON 对象别名。
 type M = map[string]any
 
-// struct(结构体)把一组字段打包成一个类型,类似别的语言的对象/类(见 GO入门笔记『复合类型』)。
-// 字段 App 的类型是 *service.App —— 开头的 * 表示"指针",即指向 service.App 的地址而非整份拷贝(见 GO入门笔记『指针』)。
 // 字段名首字母大写(App/StaticDir)= 导出,能被别的包访问;小写则只在本包可见。
 
 // Server HTTP 服务。
@@ -45,7 +39,6 @@ type Server struct {
 // 返回 http.Handler，使全部路由统一经过可观测性中间件。
 // NewServer 创建服务并注册全部路由。
 func NewServer(app *service.App, webDir, staticDir, uploadsDir string) http.Handler {
-	// &Server{...} 新建 Server 并用 & 取地址得到指针;:= 是函数内的短变量声明,自动推断类型(见 GO入门笔记『变量声明』)。
 	s := &Server{
 		App:          app,
 		WebDir:       webDir,
@@ -88,7 +81,7 @@ func NewServer(app *service.App, webDir, staticDir, uploadsDir string) http.Hand
 	return router
 }
 
-const webContentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws://%s wss://%s https://api.iconify.design https://api.unisvg.com https://api.simplesvg.com; media-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; frame-src 'self'"
+const webContentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws://%s wss://%s; media-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; frame-src 'none'"
 
 func (s *Server) serveWeb(c *gin.Context) bool {
 	name := strings.TrimPrefix(c.Request.URL.Path, "/")
@@ -138,7 +131,6 @@ func writeJSON(c *gin.Context, status int, payload any) {
 	c.Status(status)
 	encoder := json.NewEncoder(c.Writer)
 	encoder.SetEscapeHTML(false)
-	// _ = ... 表示故意丢弃返回值(这里丢弃 Encode 的 error),见 GO入门笔记『其它会撞见的小语法』。
 	_ = encoder.Encode(payload)
 }
 
@@ -195,25 +187,24 @@ func statusForProblem(status, code int) int {
 	return http.StatusBadRequest
 }
 
-// respond 业务结果统一出口:多数处理函数拿到 (data, err) 后直接交给它,由它决定成功/失败怎么回。
-// Go 不用异常,而是把"出错了吗"作为最后一个返回值 err 传出来;err != nil 即代表出错(见 GO入门笔记『错误处理』)。
-// respond 业务结果统一出口:权限错误 403,其余业务错误 400。
+// respond is the single HTTP error boundary. Internal errors are never sent
+// to clients verbatim because database and plugin errors may contain secrets
+// or deployment details.
 func respond(c *gin.Context, data any, err error, successMsg string) {
 	if err != nil {
-		// errors.Is 判断 err 是否就是(或包裹了)指定的哨兵错误 ErrPermission;是权限问题就回 403。
 		if errors.Is(err, service.ErrPermission) {
-			failStatus(c, http.StatusForbidden, err.Error())
+			failStatus(c, http.StatusForbidden, service.ErrPermission.Error())
 			return
 		}
 		if errors.Is(err, service.ErrNotFound) {
-			failStatus(c, http.StatusNotFound, err.Error())
+			failStatus(c, http.StatusNotFound, service.ErrNotFound.Error())
 			return
 		}
 		if errors.Is(err, service.ErrConflict) {
-			failStatus(c, http.StatusConflict, strings.TrimPrefix(err.Error(), service.ErrConflict.Error()+": "))
+			failStatus(c, http.StatusConflict, "request conflicts with the current state")
 			return
 		}
-		fail(c, err.Error())
+		fail(c, "request could not be completed")
 		return
 	}
 	if successMsg == "" {
@@ -231,7 +222,6 @@ func decodeBody[T any](c *gin.Context) (*T, error) {
 	// var payload T 声明一个 T 类型的零值变量。
 	var payload T
 	if c.Request.Body == nil {
-		// &payload 取它的地址返回;nil 表示"没有错误"(见 GO入门笔记『错误处理』)。
 		return &payload, nil
 	}
 	decoder := json.NewDecoder(c.Request.Body)
@@ -335,7 +325,6 @@ func (s *Server) requireAuth() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		// 一次接住两个返回值:principal 是解析出的用户,err 是错误。这就是 Go 的多返回值(见 GO入门笔记『函数 & 多返回值』)。
 		principal, err := s.App.AuthenticateAccessToken(token)
 		if err != nil {
 			writeProblem(c, http.StatusUnauthorized, "invalid access token")

@@ -195,7 +195,7 @@
 
   const loadRoles = async () => {
     const data = await fetchGetRoleList({ limit: 50, isEnabled: true })
-    roleList.value = data.records.filter((role) => role.code !== 'R_GUEST')
+    roleList.value = data.records
   }
 
   watch(

@@ -24,7 +24,6 @@
       "github": "Github",
       "lockScreen": "锁定屏幕",
       "logout": "退出登录",
-      "guest": "游客",
       "toLogin": "去登录"
     },
     "guide": {
@@ -544,10 +543,6 @@
         "hasData": "最近一条新闻入库时间为 {time}。",
         "empty": "当前暂无新闻数据，请先检查采集任务或手工录入。"
       }
-    },
-    "guest": {
-      "title": "游客模式",
-      "description": "当前以游客身份访问，仅开放首页浏览。登录后可查看定时任务、数据管理和系统管理页面。"
     }
   },
   "trading": {

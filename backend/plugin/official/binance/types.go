@@ -21,7 +21,6 @@ var instrumentPattern = regexp.MustCompile(`^[A-Z0-9]{2,32}$`)
 var clientOrderIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:/-]{1,36}$`)
 var accountIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 var binanceInstrumentPattern = regexp.MustCompile(`^\S{1,32}$`)
-var binanceSeriesInstrumentPattern = instrumentPattern
 var emptyObjectSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false}`)
 var binanceIntervals = map[string]time.Duration{
 	"1m": time.Minute, "3m": 3 * time.Minute, "5m": 5 * time.Minute, "15m": 15 * time.Minute,
@@ -122,30 +121,20 @@ func parseBinanceSeriesConfig(raw json.RawMessage) (binanceSeriesConfig, error) 
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&config) != nil {
-		return config, errors.New("Binance series configuration is invalid")
+		return config, errors.New("binance series configuration is invalid")
 	}
 	config.Market = strings.ToLower(strings.TrimSpace(config.Market))
 	config.Instrument = strings.ToUpper(strings.TrimSpace(config.Instrument))
 	config.Interval = strings.TrimSpace(config.Interval)
 	if config.Market != "spot" && config.Market != "usdm" || !instrumentPattern.MatchString(config.Instrument) || config.ProxyID < 0 {
-		return config, errors.New("Binance market or instrument is invalid")
+		return config, errors.New("binance market or instrument is invalid")
 	}
 	if config.Interval != "" {
 		if _, ok := binanceIntervals[config.Interval]; !ok {
-			return config, errors.New("Binance interval is unsupported")
+			return config, errors.New("binance interval is unsupported")
 		}
 	}
 	return config, nil
-}
-
-func parseBinanceCandleStreamConfig(raw json.RawMessage) (binanceCandleStreamConfig, error) {
-	var config binanceCandleStreamConfig
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if decoder.Decode(&config) != nil {
-		return config, errors.New("Binance candle stream configuration is invalid")
-	}
-	return normalizeBinanceCandleStreamConfig(config)
 }
 
 func parseBinanceCandleBackfillConfig(raw json.RawMessage, profile marketDataProfileConfig, now time.Time) (binanceCandleBackfillConfig, error) {
@@ -156,7 +145,7 @@ func parseBinanceCandleBackfillConfig(raw json.RawMessage, profile marketDataPro
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&payload) != nil || payload.CandleCount < 1 || payload.CandleCount > 10000 {
-		return binanceCandleBackfillConfig{}, errors.New("Binance candle backfill configuration is invalid")
+		return binanceCandleBackfillConfig{}, errors.New("binance candle backfill configuration is invalid")
 	}
 	stream, err := normalizeBinanceCandleStreamConfig(binanceCandleStreamConfig{Market: profile.Market, Instrument: profile.Instrument, Intervals: []string{profile.Interval}, ProxyID: profile.ProxyID})
 	if err != nil {
@@ -167,7 +156,7 @@ func parseBinanceCandleBackfillConfig(raw json.RawMessage, profile marketDataPro
 		end, err = time.Parse(time.RFC3339, value)
 		_, offset := end.Zone()
 		if err != nil || offset != 0 || end.After(now) {
-			return binanceCandleBackfillConfig{}, errors.New("Binance candle backfill end time is invalid")
+			return binanceCandleBackfillConfig{}, errors.New("binance candle backfill end time is invalid")
 		}
 	}
 	return binanceCandleBackfillConfig{binanceCandleStreamConfig: stream, CandleCount: payload.CandleCount, EndTime: end.UTC()}, nil
@@ -178,12 +167,12 @@ func normalizeBinanceCandleStreamConfig(config binanceCandleStreamConfig) (binan
 	config.Instrument = strings.ToUpper(strings.TrimSpace(config.Instrument))
 	if config.Market != "spot" && config.Market != "usdm" || !instrumentPattern.MatchString(config.Instrument) ||
 		len(config.Intervals) == 0 || len(config.Intervals) > len(binanceIntervalOrder) || config.ProxyID < 0 {
-		return config, errors.New("Binance candle stream configuration is invalid")
+		return config, errors.New("binance candle stream configuration is invalid")
 	}
 	selected := make(map[string]bool, len(config.Intervals))
 	for _, interval := range config.Intervals {
 		if _, ok := binanceIntervals[interval]; !ok || selected[interval] {
-			return config, errors.New("Binance candle interval is unsupported or duplicated")
+			return config, errors.New("binance candle interval is unsupported or duplicated")
 		}
 		selected[interval] = true
 	}
@@ -201,7 +190,7 @@ func parseBinanceInstrumentSyncConfig(raw json.RawMessage) (binanceInstrumentSyn
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&config) != nil {
-		return config, errors.New("Binance instrument sync configuration is invalid")
+		return config, errors.New("binance instrument sync configuration is invalid")
 	}
 	config.Markets = normalizeBinanceFilter(config.Markets, true)
 	config.QuoteAssets = normalizeBinanceFilter(config.QuoteAssets, false)
@@ -210,11 +199,11 @@ func parseBinanceInstrumentSyncConfig(raw json.RawMessage) (binanceInstrumentSyn
 	config.SymbolAllowlist = normalizeBinanceFilter(config.SymbolAllowlist, false)
 	config.SymbolDenylist = normalizeBinanceFilter(config.SymbolDenylist, false)
 	if len(config.Markets) == 0 || len(config.QuoteAssets) == 0 || config.ProxyID < 0 {
-		return config, errors.New("Binance instrument sync markets and quote assets are required")
+		return config, errors.New("binance instrument sync markets and quote assets are required")
 	}
 	for _, market := range config.Markets {
 		if market != "spot" && market != "usdm" {
-			return config, errors.New("Binance instrument sync market is invalid")
+			return config, errors.New("binance instrument sync market is invalid")
 		}
 	}
 	return config, nil

@@ -64,3 +64,25 @@ func (a *App) PublishWorkflowRunUpdated(workflowID, runID int64) {
 		}
 	}
 }
+
+// CloseWorkflowEvents releases websocket subscribers and asks in-flight runs
+// to stop when the application is shutting down.
+func (a *App) CloseWorkflowEvents() {
+	a.workflowWatchMu.Lock()
+	for workflowID, watchers := range a.workflowWatchers {
+		for updates := range watchers {
+			close(updates)
+		}
+		delete(a.workflowWatchers, workflowID)
+	}
+	a.workflowWatchMu.Unlock()
+
+	a.runCancelMu.Lock()
+	for runID, cancel := range a.runCancels {
+		if cancel != nil {
+			cancel()
+		}
+		delete(a.runCancels, runID)
+	}
+	a.runCancelMu.Unlock()
+}

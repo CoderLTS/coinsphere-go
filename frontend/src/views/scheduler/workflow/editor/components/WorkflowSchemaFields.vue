@@ -199,17 +199,20 @@
     gap: 8px;
     width: 100%;
   }
+
   .schema-fields__row {
-    border-left: 2px solid var(--el-border-color);
     padding-left: 12px;
+    border-left: 2px solid var(--el-border-color);
   }
+
   .schema-fields__head {
     display: flex;
     gap: 8px;
     margin-bottom: 10px;
   }
+
   .schema-fields small {
-    color: var(--el-text-color-secondary);
     line-height: 1.5;
+    color: var(--el-text-color-secondary);
   }
 </style>

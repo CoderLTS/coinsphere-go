@@ -30,11 +30,11 @@ const (
 )
 
 type workflowTriggerRun struct {
-	connectionVersion int64
-	revisionID        int64
-	cancel            context.CancelFunc
-	token             chan struct{}
-	done              chan struct{}
+	profileVersion int64
+	revisionID     int64
+	cancel         context.CancelFunc
+	token          chan struct{}
+	done           chan struct{}
 }
 
 type workflowTriggerEmitter struct {
@@ -166,14 +166,14 @@ func (a *App) syncWorkflowTriggers(ctx context.Context) error {
 		}
 		node := graph.nodes[row.NodeInstanceID]
 		key := workflowTriggerKey{row.WorkflowID, row.NodeInstanceID}
-		if desc := graph.descriptors[row.NodeInstanceID]; desc.ConnectionType != "" {
+		if desc := graph.descriptors[row.NodeInstanceID]; desc.ProfileType != "" {
 			err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-				_, _, version, err := a.currentConnection(tx, node.ConnectionID, desc.ConnectionType)
+				_, _, version, err := a.currentProfileSnapshot(tx, node.ProfileID, desc.ProfileType)
 				versions[key] = version
 				return err
 			})
 			if err != nil {
-				a.workflowTriggerError(row, "connection")
+				a.workflowTriggerError(row, "profile")
 				continue
 			}
 		}
@@ -186,7 +186,7 @@ func (a *App) syncWorkflowTriggers(ctx context.Context) error {
 	a.triggerMu.Lock()
 	for key, running := range a.triggerRuns {
 		row, exists := desired[key]
-		if !exists || row.RevisionID != running.revisionID || versions[key] != running.connectionVersion {
+		if !exists || row.RevisionID != running.revisionID || versions[key] != running.profileVersion {
 			running.cancel()
 			select {
 			case <-running.done:
@@ -226,7 +226,7 @@ func (a *App) workflowTriggerError(row db.WorkflowTriggerRuntime, category strin
 	slog.Error("workflow trigger failed", "component", "workflow.runtime", "workflow_id", row.WorkflowID, "node_instance_id", row.NodeInstanceID, "error_category", category)
 }
 
-func (a *App) startWorkflowTrigger(parent context.Context, runtime db.WorkflowTriggerRuntime, connectionVersion int64) error {
+func (a *App) startWorkflowTrigger(parent context.Context, runtime db.WorkflowTriggerRuntime, profileVersion int64) error {
 	revisionID := runtime.RevisionID
 	key := workflowTriggerKey{runtime.WorkflowID, runtime.NodeInstanceID}
 	var revision db.WorkflowRevision
@@ -251,7 +251,7 @@ func (a *App) startWorkflowTrigger(parent context.Context, runtime db.WorkflowTr
 		return nil
 	}
 	done := make(chan struct{})
-	a.triggerRuns[key] = workflowTriggerRun{connectionVersion: connectionVersion, revisionID: revisionID, cancel: cancel, token: token, done: done}
+	a.triggerRuns[key] = workflowTriggerRun{profileVersion: profileVersion, revisionID: revisionID, cancel: cancel, token: token, done: done}
 	a.triggerMu.Unlock()
 	request := sdk.TriggerRequest{
 		Revision:       sdk.RevisionRef{WorkflowID: fmt.Sprint(runtime.WorkflowID), RevisionID: fmt.Sprint(revisionID)},
@@ -260,8 +260,8 @@ func (a *App) startWorkflowTrigger(parent context.Context, runtime db.WorkflowTr
 		State:   workflowTriggerState{app: a, workflowID: runtime.WorkflowID, revisionID: revisionID, node: node, stateMode: desc.State},
 		Logger:  slog.Default().With("event_category", "workflow_trigger", "node_type", node.NodeType),
 	}
-	if desc.ConnectionType != "" {
-		config, secrets, err := a.workflowConnection(ctx, 0, node, desc)
+	if desc.ProfileType != "" {
+		config, secrets, err := a.workflowProfileSnapshot(ctx, 0, node, desc)
 		if err != nil {
 			cancel()
 			a.triggerMu.Lock()

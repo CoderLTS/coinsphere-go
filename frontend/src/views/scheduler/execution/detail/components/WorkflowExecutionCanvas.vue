@@ -8,7 +8,7 @@
 <script setup lang="ts">
   import { Graph } from '@antv/x6'
   import { useElementSize } from '@vueuse/core'
-  import type { WorkflowExecutionNodeAttempt } from '@/api/scheduler'
+  import type { WorkflowExecutionNodeAttempt } from '@/api/workflows'
   import {
     fetchWorkflowNodeDefinitions,
     type WorkflowGraph,
@@ -130,11 +130,12 @@
 <style scoped>
   .execution-canvas {
     position: relative;
-    height: 100%;
     width: 100%;
+    height: 100%;
     background: var(--el-fill-color-lighter);
     border-radius: 8px;
   }
+
   .execution-canvas__graph {
     position: absolute;
     inset: 0;
