@@ -107,7 +107,7 @@ export const useNotificationStore = defineStore('notificationStore', () => {
   }
 
   const loadNotices = async (options?: { append?: boolean }) => {
-    if (loading.value || !userStore.isLogin || !userStore.accessToken) {
+    if (loading.value || userStore.accessMode !== 'authenticated') {
       return
     }
     loading.value = true
@@ -194,7 +194,7 @@ export const useNotificationStore = defineStore('notificationStore', () => {
   }
 
   const scheduleReconnect = () => {
-    if (manualClose || !userStore.isLogin) {
+    if (manualClose || userStore.accessMode !== 'authenticated') {
       return
     }
     if (reconnectTimer) {
@@ -206,7 +206,7 @@ export const useNotificationStore = defineStore('notificationStore', () => {
   }
 
   const connect = () => {
-    if (!userStore.isLogin || !userStore.accessToken) {
+    if (userStore.accessMode !== 'authenticated' || !userStore.accessToken) {
       return
     }
     const accessToken = userStore.accessToken

@@ -94,7 +94,7 @@ type SystemLogRuntimeStatus struct {
 }
 
 func NewSystemLogRuntime(gdb *gorm.DB, cfg config.LogConfig, levelVar *slog.LevelVar) (*SystemLogRuntime, error) {
-	_, levelText, err := parseSystemLogLevel(cfg.Level)
+	level, levelText, err := parseSystemLogLevel(cfg.Level)
 	if err != nil {
 		return nil, err
 	}
@@ -104,12 +104,11 @@ func NewSystemLogRuntime(gdb *gorm.DB, cfg config.LogConfig, levelVar *slog.Leve
 	if err := gdb.Where("id = ?", settings.ID).FirstOrCreate(&settings).Error; err != nil {
 		return nil, fmt.Errorf("initialize system log settings: %w", err)
 	}
-	storedLevel, storedLevelText, parseErr := parseSystemLogLevel(settings.Level)
-	if parseErr != nil || settings.RetentionDays < 1 || settings.RetentionDays > 365 {
+	level, settings.Level, err = parseSystemLogLevel(settings.Level)
+	if err != nil || settings.RetentionDays < 1 || settings.RetentionDays > 365 {
 		return nil, errors.New("stored system log settings are invalid")
 	}
-	settings.Level = storedLevelText
-	levelVar.Set(storedLevel)
+	levelVar.Set(level)
 	runtime := &SystemLogRuntime{
 		db: gdb, level: levelVar, queue: make(chan db.SystemLog, systemLogQueueCapacity),
 		stop: make(chan struct{}), done: make(chan struct{}), cleanup: make(chan struct{}, 1),

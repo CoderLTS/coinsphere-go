@@ -78,3 +78,9 @@ func RenderFrontendWithDependencies(plugins []manifest.Package, available map[st
 	source.WriteString("]\n")
 	return source.Bytes(), nil
 }
+
+func sortedPlugins(plugins []manifest.Package) []manifest.Package {
+	result := append([]manifest.Package(nil), plugins...)
+	sort.Slice(result, func(i, j int) bool { return result[i].Manifest.ID < result[j].Manifest.ID })
+	return result
+}

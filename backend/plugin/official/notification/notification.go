@@ -62,14 +62,14 @@ func (n *notificationRuntime) register(registrar sdk.Registrar) error {
 			UISchema:     json.RawMessage(`{"ui:order":["title","targets"]}`),
 		},
 		{
-			ProfileType: "dingtalk", ProfileFields: []string{"signed", "accessToken", "signingSecret"},
+			ConnectionType: "dingtalk", ConnectionFields: []string{"signed", "accessToken", "signingSecret"},
 			Type: "official.notification.dingtalk", Version: "1.0.0", Kind: sdk.NodeKindAction,
 			Title: "钉钉通知", Description: "通过钉钉机器人发送通知", Category: "notification", Aliases: []string{"钉钉消息", "DingTalk"}, Tags: []string{"通知", "钉钉", "机器人"}, SortOrder: 20, Color: "#2563eb", Icon: "message-circle", Width: 220, Height: 72,
 			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"title":{"type":"string","title":"通知标题","minLength":1,"maxLength":160},"format":{"type":"string","title":"消息格式","enum":["text","markdown"],"enumLabels":["纯文本","Markdown 文本"],"default":"markdown"},"signed":{"type":"boolean","title":"启用加签","default":false},"accessToken":{"type":"string","title":"访问令牌","x-coinsphere-secret":true},"signingSecret":{"type":"string","title":"签名密钥","x-coinsphere-secret":true}},"required":["title","format","signed","accessToken"],"additionalProperties":false}`),
 			UISchema:     json.RawMessage(`{"ui:order":["title","format","signed","accessToken","signingSecret"]}`),
 		},
 		{
-			ProfileType: "smtp", ProfileFields: []string{"host", "port", "security", "username", "fromEmail", "fromName", "password"},
+			ConnectionType: "smtp", ConnectionFields: []string{"host", "port", "security", "username", "fromEmail", "fromName", "password"},
 			Type: "official.notification.smtp", Version: "1.0.0", Kind: sdk.NodeKindAction,
 			Title: "邮件通知", Description: "通过 TLS SMTP 发送邮件通知", Category: "notification", Aliases: []string{"邮件", "SMTP"}, Tags: []string{"通知", "邮件", "SMTP"}, SortOrder: 30, Color: "#15803d", Icon: "mail", Width: 220, Height: 72,
 			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"title":{"type":"string","title":"邮件主题","minLength":1,"maxLength":160},"host":{"type":"string","title":"SMTP 公网域名","minLength":1,"maxLength":253},"port":{"type":"integer","title":"端口","minimum":1,"maximum":65535,"default":465},"security":{"type":"string","title":"连接安全","enum":["implicit_tls","starttls"],"enumLabels":["TLS","STARTTLS"],"default":"implicit_tls"},"username":{"type":"string","title":"用户名","minLength":1,"maxLength":320},"fromEmail":{"type":"string","title":"发件邮箱","format":"email","maxLength":320},"fromName":{"type":"string","title":"发件名称","maxLength":160},"recipients":{"type":"array","title":"收件人","minItems":1,"maxItems":100,"uniqueItems":true,"items":{"type":"string","format":"email","maxLength":320}},"password":{"type":"string","title":"密码","x-coinsphere-secret":true}},"required":["title","host","port","security","username","fromEmail","recipients","password"],"additionalProperties":false}`),

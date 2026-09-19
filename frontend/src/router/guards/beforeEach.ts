@@ -8,7 +8,7 @@
  *
  * - 登录状态验证和重定向
  * - 动态路由注册和权限控制
- * - 菜单数据获取和处理（以后端返回为准）
+ * - 菜单数据获取和处理（前端/后端模式）
  * - 用户信息获取和缓存
  * - 页面标题设置
  * - 工作标签页管理
@@ -52,7 +52,7 @@ import { fetchGetUserInfo } from '@/api/auth'
 import { fetchGetMenuI18nDict } from '@/api/system'
 import { ApiStatus } from '@/utils/http/status'
 import { isHttpError } from '@/utils/http/error'
-import { RouteRegistry, MenuProcessor, RoutePermissionValidator } from '../core'
+import { RouteRegistry, MenuProcessor, IframeRouteManager, RoutePermissionValidator } from '../core'
 import { mergeRuntimeMenuI18nDict } from '@/locales'
 
 // 路由注册器实例
@@ -290,7 +290,7 @@ async function handleDynamicRoutes(
     // 1. 获取用户信息
     await fetchUserInfo()
 
-    // 2. 注入后端菜单字典
+    // 2. 注入后端菜单字典（后端优先，前端静态语言包兜底）
     await refreshMenuI18nDict()
 
     // 3. 获取菜单数据
@@ -309,10 +309,13 @@ async function handleDynamicRoutes(
     menuStore.setMenuList(menuList)
     menuStore.addRemoveRouteFns(routeRegistry?.getRemoveRouteFns() || [])
 
-    // 7. 验证工作标签页
+    // 7. 保存 iframe 路由
+    IframeRouteManager.getInstance().save()
+
+    // 8. 验证工作标签页
     useWorktabStore().validateWorktabs(router)
 
-    // 8. 静态路由不依赖菜单权限，初始化后直接恢复目标地址。
+    // 9. 静态路由不依赖菜单权限，初始化后直接恢复目标地址。
     if (isStaticRoute(to.path)) {
       routeInitInProgress = false
       next({
@@ -324,7 +327,7 @@ async function handleDynamicRoutes(
       return
     }
 
-    // 9. 验证目标路径权限
+    // 10. 验证目标路径权限
     const { homePath } = useCommon()
     const { path: validatedPath, hasPermission } = RoutePermissionValidator.validatePath(
       to.path,
@@ -335,7 +338,7 @@ async function handleDynamicRoutes(
     // 初始化成功，重置进行中标记
     routeInitInProgress = false
 
-    // 10. 重新导航到目标路由
+    // 11. 重新导航到目标路由
     if (!hasPermission) {
       // 无权限访问，跳转到首页
       closeLoading()
@@ -410,6 +413,8 @@ async function refreshMenuI18nDict(): Promise<void> {
 export function resetRouterState(delay: number): void {
   const doReset = () => {
     routeRegistry?.unregister()
+    IframeRouteManager.getInstance().clear()
+
     const menuStore = useMenuStore()
     menuStore.removeAllDynamicRoutes()
     menuStore.setMenuList([])

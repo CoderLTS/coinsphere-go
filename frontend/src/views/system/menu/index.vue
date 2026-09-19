@@ -157,7 +157,7 @@
     if (row.meta?.isAuthButton) {
       return '--'
     }
-    return row.path || '--'
+    return row.meta?.link || row.path || '--'
   }
 
   const getMenuPermissionCode = (row: MenuTableRow): string => {
@@ -195,13 +195,16 @@
   ): 'primary' | 'success' | 'warning' | 'info' | 'danger' => {
     if (row.meta?.isAuthButton) return 'danger'
     if (row.children?.some((child) => !child.meta?.isAuthButton)) return 'info'
+    if (row.meta?.link && row.meta?.isIframe) return 'success'
     if (row.path) return 'primary'
+    if (row.meta?.link) return 'warning'
     return 'info'
   }
 
   const getMenuTypeText = (row: MenuTableRow): string => {
     if (row.meta?.isAuthButton) return '按钮'
     if (row.children?.some((child) => !child.meta?.isAuthButton)) return '目录'
+    if (row.meta?.link && row.meta?.isIframe) return '内嵌'
     return '菜单'
   }
 
@@ -384,7 +387,9 @@
         String(item.meta?.i18nKey || ''),
         String(item.meta?.title || '')
       ).toLowerCase()
-      const routeValue = (item.meta?.isAuthButton ? '' : item.path || '').toLowerCase()
+      const routeValue = (
+        item.meta?.isAuthButton ? '' : item.meta?.link || item.path || ''
+      ).toLowerCase()
       const permissionValue = String(item.meta?.permissionCode || '').toLowerCase()
       const nameMatch = !searchName || menuTitle.includes(searchName)
       const routeMatch = !searchRoute || routeValue.includes(searchRoute)
@@ -485,6 +490,8 @@
         keepAlive: payload.keepAlive,
         isHidden: payload.isHide,
         hideTab: payload.isHideTab,
+        externalUrl: payload.link,
+        useIframe: payload.isIframe,
         badgeLabel: payload.badgeText,
         fixedTab: payload.fixedTab,
         activeMenuPath: payload.activePath,

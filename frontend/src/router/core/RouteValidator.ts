@@ -104,8 +104,10 @@ export class RouteValidator {
     parentPath = ''
   ): void {
     routes.forEach((route) => {
+      const hasExternalLink = !!route.meta?.link?.trim()
       const hasChildren = Array.isArray(route.children) && route.children.length > 0
       const routePath = route.path || '[未定义路径]'
+      const isIframe = route.meta?.isIframe
 
       // 如果配置了 component，则无需校验
       if (route.component) {
@@ -117,14 +119,14 @@ export class RouteValidator {
         return
       }
 
-      // 一级菜单必须指定 Layout。
-      if (parentPath === '') {
+      // 一级菜单：必须指定 Layout，除非是外链或 iframe
+      if (parentPath === '' && !hasExternalLink && !isIframe) {
         errors.push(`一级菜单(${routePath}) 缺少 component，必须指向 ${RoutesAlias.Layout}`)
         return
       }
 
-      // 非一级菜单必须配置组件或子路由。
-      if (!hasChildren) {
+      // 非一级菜单：如果既不是外链、iframe，也没有子路由，则必须配置 component
+      if (!hasExternalLink && !isIframe && !hasChildren) {
         errors.push(`路由(${routePath}) 缺少 component 配置`)
       }
 

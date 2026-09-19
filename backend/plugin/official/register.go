@@ -2,10 +2,6 @@
 package official
 
 import (
-	"fmt"
-	"sort"
-	"strings"
-
 	"coinsphere/backend/plugin/official/ai"
 	"coinsphere/backend/plugin/official/binance"
 	"coinsphere/backend/plugin/official/connector"
@@ -28,78 +24,38 @@ func RegisterAll(registry *sdk.Registry, host sdk.Host, enabled map[string]bool)
 		{sdk.PluginDescriptor{ID: "official.quant", Name: "量化", Version: "4.0.0", Contributes: []string{"nodes", "triggers", "strategies", "profiles", "apiRoutes", "pages", "resultPages", "assistantQueries", "workflowValidators", "templates"}}, quant.Register},
 		{sdk.PluginDescriptor{ID: "official.binance", Name: "Binance", Menu: sdk.PluginMenuDescriptor{Mode: sdk.PluginMenuOwn, Title: "币安数据", Icon: "ri:line-chart-line"}, Version: "4.0.0", RequiresPlugins: version.BuiltinPluginDependencies["official.binance"], Contributes: []string{"nodes", "triggers", "profiles", "marketDataProviders", "executionProviders", "apiRoutes", "pages", "resultPages", "templates"}}, binance.Register},
 	}
-	// Validate the enabled set before registration. A dependency that is
-	// disabled or missing must fail startup instead of silently dropping the
-	// dependent plugin and leaving a partially usable registry.
-	byID := make(map[string]struct {
+	registered := make(map[string]bool, len(plugins))
+	for pending := append([]struct {
 		descriptor sdk.PluginDescriptor
 		register   sdk.RegisterFunc
-	}, len(plugins))
-	for _, plugin := range plugins {
-		byID[plugin.descriptor.ID] = plugin
-	}
-	for _, plugin := range plugins {
-		if !enabled[plugin.descriptor.ID] {
-			continue
-		}
-		for requiredID := range plugin.descriptor.RequiresPlugins {
-			if _, exists := byID[requiredID]; !exists {
-				return fmt.Errorf("enabled plugin %q requires unknown plugin %q", plugin.descriptor.ID, requiredID)
+	}{}, plugins...); len(pending) > 0; {
+		next := pending[:0]
+		progress := false
+		for _, plugin := range pending {
+			if !enabled[plugin.descriptor.ID] {
+				continue
 			}
-			if !enabled[requiredID] {
-				return fmt.Errorf("enabled plugin %q requires disabled plugin %q", plugin.descriptor.ID, requiredID)
+			ready := true
+			for requiredID := range plugin.descriptor.RequiresPlugins {
+				if !registered[requiredID] {
+					ready = false
+					break
+				}
 			}
-		}
-	}
-
-	// Kahn's algorithm gives deterministic dependency order and reports cycles
-	// explicitly. Keep the source order as the tie breaker so generated plugin
-	// registries remain stable across runs.
-	indegree := make(map[string]int, len(plugins))
-	dependents := make(map[string][]string, len(plugins))
-	for _, plugin := range plugins {
-		if !enabled[plugin.descriptor.ID] {
-			continue
-		}
-		indegree[plugin.descriptor.ID] = len(plugin.descriptor.RequiresPlugins)
-		for requiredID := range plugin.descriptor.RequiresPlugins {
-			dependents[requiredID] = append(dependents[requiredID], plugin.descriptor.ID)
-		}
-	}
-	for requiredID := range dependents {
-		sort.Strings(dependents[requiredID])
-	}
-	queue := make([]string, 0, len(indegree))
-	for _, plugin := range plugins {
-		if enabled[plugin.descriptor.ID] && indegree[plugin.descriptor.ID] == 0 {
-			queue = append(queue, plugin.descriptor.ID)
-		}
-	}
-	registered := 0
-	for len(queue) > 0 {
-		id := queue[0]
-		queue = queue[1:]
-		plugin := byID[id]
-		if err := registry.RegisterPlugin(plugin.descriptor, host, plugin.register); err != nil {
-			return err
-		}
-		registered++
-		for _, dependentID := range dependents[id] {
-			indegree[dependentID]--
-			if indegree[dependentID] == 0 {
-				queue = append(queue, dependentID)
+			if !ready {
+				next = append(next, plugin)
+				continue
 			}
-		}
-	}
-	if registered != len(indegree) {
-		cycle := make([]string, 0)
-		for id, degree := range indegree {
-			if degree > 0 {
-				cycle = append(cycle, id)
+			if err := registry.RegisterPlugin(plugin.descriptor, host, plugin.register); err != nil {
+				return err
 			}
+			registered[plugin.descriptor.ID] = true
+			progress = true
 		}
-		sort.Strings(cycle)
-		return fmt.Errorf("enabled plugin dependency cycle: %s", strings.Join(cycle, ", "))
+		if !progress {
+			break
+		}
+		pending = next
 	}
 	return nil
 }

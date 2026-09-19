@@ -352,7 +352,7 @@ func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payloa
 		if workflow.ActiveRevisionID == nil || *workflow.ActiveRevisionID != payload.ExpectedActiveRevisionID {
 			return fmt.Errorf("%w: active workflow revision changed", ErrConflict)
 		}
-		if err := validateWorkflowProfileSnapshotReferences(tx, graph); err != nil {
+		if err := validateWorkflowConnectionReferences(tx, graph); err != nil {
 			return err
 		}
 

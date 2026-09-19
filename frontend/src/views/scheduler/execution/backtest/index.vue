@@ -485,10 +485,10 @@
   }
 
   .metric-strip__item strong {
+    overflow-wrap: anywhere;
     font-family: 'Cascadia Code', SFMono-Regular, Consolas, monospace;
     font-size: 18px;
     line-height: 22px;
-    overflow-wrap: anywhere;
   }
 
   [data-tone='positive'],
@@ -530,7 +530,7 @@
     height: 7px;
     margin-right: 6px;
     content: '';
-    background: currentcolor;
+    background: currentColor;
     border-radius: 50%;
   }
 
@@ -560,10 +560,10 @@
   }
 
   .signal-detail dd {
+    overflow-wrap: anywhere;
     font-family: 'Cascadia Code', SFMono-Regular, Consolas, monospace;
     font-size: 12px;
     text-align: right;
-    overflow-wrap: anywhere;
   }
 
   .action {

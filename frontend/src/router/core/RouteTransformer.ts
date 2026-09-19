@@ -11,6 +11,7 @@
 import type { RouteRecordRaw } from 'vue-router'
 import type { AppRouteRecord } from '@/types/router'
 import { ComponentLoader } from './ComponentLoader'
+import { IframeRouteManager } from './IframeRouteManager'
 
 interface ConvertedRoute extends Omit<RouteRecordRaw, 'children'> {
   id?: number
@@ -20,9 +21,11 @@ interface ConvertedRoute extends Omit<RouteRecordRaw, 'children'> {
 
 export class RouteTransformer {
   private componentLoader: ComponentLoader
+  private iframeManager: IframeRouteManager
 
   constructor(componentLoader: ComponentLoader) {
     this.componentLoader = componentLoader
+    this.iframeManager = IframeRouteManager.getInstance()
   }
 
   /**
@@ -38,7 +41,9 @@ export class RouteTransformer {
     }
 
     // 处理不同类型的路由
-    if (this.isFirstLevelRoute(route, depth)) {
+    if (route.meta.isIframe) {
+      this.handleIframeRoute(converted, route, depth)
+    } else if (this.isFirstLevelRoute(route, depth)) {
       this.handleFirstLevelRoute(converted, route, component as string)
     } else {
       this.handleNormalRoute(converted, component as string)
@@ -57,6 +62,35 @@ export class RouteTransformer {
    */
   private isFirstLevelRoute(route: AppRouteRecord, depth: number): boolean {
     return depth === 0 && (!route.children || route.children.length === 0)
+  }
+
+  /**
+   * 处理 iframe 类型路由
+   */
+  private handleIframeRoute(
+    targetRoute: ConvertedRoute,
+    sourceRoute: AppRouteRecord,
+    depth: number
+  ): void {
+    if (depth === 0) {
+      // 顶级 iframe：用 Layout 包裹
+      targetRoute.component = this.componentLoader.loadLayout()
+      targetRoute.path = this.extractFirstSegment(sourceRoute.path || '')
+      targetRoute.name = ''
+
+      targetRoute.children = [
+        {
+          ...sourceRoute,
+          component: this.componentLoader.loadIframe()
+        } as ConvertedRoute
+      ]
+    } else {
+      // 非顶级（嵌套）iframe：直接使用 Iframe.vue
+      targetRoute.component = this.componentLoader.loadIframe()
+    }
+
+    // 记录 iframe 路由
+    this.iframeManager.add(sourceRoute)
   }
 
   /**

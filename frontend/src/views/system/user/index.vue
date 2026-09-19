@@ -259,7 +259,8 @@
         userId: currentInfo.userId || savedUser.id,
         username: savedUser.username,
         email: savedUser.email,
-        avatar: savedUser.avatar
+        avatar: savedUser.avatar,
+        accessMode: currentInfo.accessMode || 'authenticated'
       })
     }
 

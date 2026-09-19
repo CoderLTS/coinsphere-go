@@ -9,10 +9,11 @@ import (
 	"coinsphere/backend/internal/security"
 )
 
-// Principal 当前请求主体。
+// Principal 当前请求主体(登录用户或游客)。
 //
 // Principal 把"当前是谁 + 他能干什么"打包在一起,几乎每个接口都会先构造它再做鉴权。
 // PermissionCodes 用 map[string]bool 当"集合"来使:判断有没有某个权限码时直接查 key,速度是 O(1)。
+// []int64 / []string 是切片(可变长数组)。见 GO入门笔记『复合类型』。
 type Principal struct {
 	User            *db.SystemUser
 	RoleIDs         []int64
@@ -25,6 +26,7 @@ type Principal struct {
 
 // HasPermission 判断是否拥有权限码。
 // (p *Principal) 叫"接收者":它把这个函数挂成 Principal 的方法,函数内用 p 指代当前对象
+// (相当于别的语言的 this / self),调用时写 principal.HasPermission("x")。见 GO入门笔记『方法与接收者』。
 // 查 map 里不存在的 key 会返回该类型的零值(bool 的零值是 false),所以这里天然表示"没有该权限"。
 func (p *Principal) HasPermission(code string) bool { return p.PermissionCodes[code] }
 
@@ -38,6 +40,10 @@ func (p *Principal) HasRole(code string) bool {
 	}
 	return false
 }
+
+// guestRoleCode remains a seed identifier for existing role data; no HTTP route
+// constructs a guest principal after the authentication boundary migration.
+const guestRoleCode = "R_GUEST"
 
 // AuthSession 是登录后签发的短期 access-token 会话。
 type AuthSession struct {
@@ -58,11 +64,9 @@ func (a *App) Login(username, password string, keepLoggedIn bool) (*AuthSession,
 		return nil, bizErr("用户名或密码错误")
 	}
 	accessToken := a.Tokens.CreateAccessToken(user.ID, keepLoggedIn)
-	now := time.Now().UTC()
-	if err := a.DB.Model(&db.SystemUser{}).Where("id = ?", user.ID).
-		Updates(map[string]any{"last_login_at": now, "updated_at": now}).Error; err != nil {
-		return nil, bizErr("登录状态更新失败")
-	}
+	now := time.Now()
+	a.DB.Model(&db.SystemUser{}).Where("id = ?", user.ID).
+		Updates(map[string]any{"last_login_at": now, "updated_at": now})
 	return &AuthSession{
 		UserID: user.ID, AccessToken: accessToken.Value,
 	}, nil
@@ -109,15 +113,11 @@ func (a *App) buildPrincipal(userID int64) (*Principal, error) {
 		roleIDs = append(roleIDs, role.ID)
 		roleCodes = append(roleCodes, role.Code)
 	}
-	permissions, err := a.listPermissionCodesForRoleIDs(roleIDs)
-	if err != nil {
-		// 权限读取失败必须 fail-closed，避免数据库故障把请求误判为已授权。
-		return nil, security.ErrInvalidToken
-	}
 	// 用结构体字面量组装并返回指针 &Principal{...};User 存的是 &user(用户的地址)。
+	// PermissionCodes 交给下面的方法按这些角色查出"权限码集合"。
 	return &Principal{
 		User: &user, RoleIDs: roleIDs, RoleCodes: roleCodes,
-		PermissionCodes: permissions,
+		PermissionCodes: a.listPermissionCodesForRoleIDs(roleIDs),
 		AccessMode:      "authenticated",
 	}, nil
 }
@@ -164,7 +164,7 @@ func (a *App) Reauthenticate(principal *Principal, password string) (string, err
 		!a.Hasher.VerifyPassword(password, user.PasswordHash) {
 		return "", security.ErrInvalidToken
 	}
-	return a.issueReauthToken(principal, time.Now().UTC()), nil
+	return a.issueReauthToken(principal, time.Now()), nil
 }
 
 func (a *App) issueReauthToken(principal *Principal, now time.Time) string {
@@ -187,7 +187,7 @@ func (a *App) ConsumeReauthToken(raw string, principal *Principal) bool {
 		return false
 	}
 	hash := security.HashToken(raw)
-	now := time.Now().UTC()
+	now := time.Now()
 	a.authStateMu.Lock()
 	defer a.authStateMu.Unlock()
 	a.pruneAuthStateLocked(now)
@@ -206,7 +206,7 @@ func (a *App) LogoutAccessToken(principal *Principal) {
 		return
 	}
 	a.authStateMu.Lock()
-	a.pruneAuthStateLocked(time.Now().UTC())
+	a.pruneAuthStateLocked(time.Now())
 	a.revokedAccessTokens[principal.AccessTokenID] = principal.AccessTokenExp
 	a.authStateMu.Unlock()
 }
@@ -217,7 +217,7 @@ func (a *App) isAccessTokenRevoked(tokenID string) bool {
 	}
 	a.authStateMu.Lock()
 	defer a.authStateMu.Unlock()
-	a.pruneAuthStateLocked(time.Now().UTC())
+	a.pruneAuthStateLocked(time.Now())
 	_, revoked := a.revokedAccessTokens[tokenID]
 	return revoked
 }
@@ -240,6 +240,8 @@ func (a *App) pruneAuthStateLocked(now time.Time) {
 //	SELECT roles.* FROM roles
 //	JOIN user_roles ON user_roles.role_id = roles.id
 //	WHERE user_roles.user_id = ? AND roles.is_enabled = ? ORDER BY roles.id ASC
+//
+// .Find(&roles) 把查到的多行结果写回切片。见 GO入门笔记『框架:GORM』。
 func (a *App) listRolesForUser(userID int64) ([]db.SystemRole, error) {
 	var roles []db.SystemRole
 	err := a.DB.
@@ -253,25 +255,21 @@ func (a *App) listRolesForUser(userID int64) ([]db.SystemRole, error) {
 // listPermissionCodesForRoleIDs 把这些角色能碰到的"菜单权限码 + 按钮权限码"汇总成一个集合。
 // GORM 要点:Where("... IN ?", roleIDs) 传一个切片,会展开成 SQL 的 IN (...);Distinct 去重;
 // Pluck("列名", &切片) 只取某一列的值填进切片。最后用 map[string]bool 去重合并成权限集合返回。
-func (a *App) listPermissionCodesForRoleIDs(roleIDs []int64) (map[string]bool, error) {
+func (a *App) listPermissionCodesForRoleIDs(roleIDs []int64) map[string]bool {
 	result := map[string]bool{}
 	if len(roleIDs) == 0 {
-		return result, nil
+		return result
 	}
 	var menuCodes []string
-	if err := a.DB.Model(&db.SystemMenu{}).Distinct("menus.permission_code").
+	a.DB.Model(&db.SystemMenu{}).Distinct("menus.permission_code").
 		Joins("JOIN role_menus ON role_menus.menu_id = menus.id").
 		Where("role_menus.role_id IN ? AND menus.permission_code IS NOT NULL AND menus.permission_code <> ''", roleIDs).
-		Pluck("menus.permission_code", &menuCodes).Error; err != nil {
-		return nil, err
-	}
+		Pluck("menus.permission_code", &menuCodes)
 	var buttonCodes []string
-	if err := a.DB.Model(&db.SystemMenuButton{}).Distinct("menu_buttons.permission_code").
+	a.DB.Model(&db.SystemMenuButton{}).Distinct("menu_buttons.permission_code").
 		Joins("JOIN role_menu_buttons ON role_menu_buttons.button_id = menu_buttons.id").
 		Where("role_menu_buttons.role_id IN ?", roleIDs).
-		Pluck("menu_buttons.permission_code", &buttonCodes).Error; err != nil {
-		return nil, err
-	}
+		Pluck("menu_buttons.permission_code", &buttonCodes)
 	for _, code := range menuCodes {
 		if code != "" {
 			result[code] = true
@@ -282,5 +280,5 @@ func (a *App) listPermissionCodesForRoleIDs(roleIDs []int64) (map[string]bool, e
 			result[code] = true
 		}
 	}
-	return result, nil
+	return result
 }

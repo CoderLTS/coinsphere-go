@@ -1,15 +1,34 @@
 /** 动态路由核心模块：MenuProcessor。 */
 import type { AppRouteRecord } from '@/types/router'
+import { useUserStore } from '@/store/modules/user'
+import { useAppMode } from '@/hooks/core/useAppMode'
 import { fetchGetMenuList } from '@/api/system'
+import { asyncRoutes } from '../routes/asyncRoutes'
 import { RoutesAlias } from '../routesAlias'
 import { formatMenuTitle } from '@/utils'
 
 export class MenuProcessor {
   async getMenuList(): Promise<AppRouteRecord[]> {
-    const menuList = await this.processBackendMenu()
+    const { isFrontendMode } = useAppMode()
+
+    const menuList = isFrontendMode.value
+      ? await this.processFrontendMenu()
+      : await this.processBackendMenu()
 
     this.validateMenuPaths(menuList)
     return this.normalizeMenuPaths(menuList)
+  }
+
+  private async processFrontendMenu(): Promise<AppRouteRecord[]> {
+    const userStore = useUserStore()
+    const roles = userStore.info?.roleCodes
+    let menuList = [...asyncRoutes]
+
+    if (roles?.length) {
+      menuList = this.filterMenuByRoles(menuList, roles)
+    }
+
+    return this.filterEmptyMenus(menuList)
   }
 
   private async processBackendMenu(): Promise<AppRouteRecord[]> {
@@ -36,6 +55,23 @@ export class MenuProcessor {
     })
   }
 
+  private filterMenuByRoles(menu: AppRouteRecord[], roles: string[]): AppRouteRecord[] {
+    return menu.reduce((acc: AppRouteRecord[], item) => {
+      const itemRoles = item.meta?.roles
+      const hasPermission = !itemRoles || itemRoles.some((role) => roles.includes(role))
+
+      if (hasPermission) {
+        const filteredItem = { ...item }
+        if (filteredItem.children?.length) {
+          filteredItem.children = this.filterMenuByRoles(filteredItem.children, roles)
+        }
+        acc.push(filteredItem)
+      }
+
+      return acc
+    }, [])
+  }
+
   private filterEmptyMenus(menuList: AppRouteRecord[]): AppRouteRecord[] {
     return menuList
       .map((item) => {
@@ -49,6 +85,10 @@ export class MenuProcessor {
       })
       .filter((item) => {
         if ('children' in item) {
+          return true
+        }
+
+        if (item.meta?.isIframe === true || item.meta?.link) {
           return true
         }
 
@@ -99,7 +139,14 @@ export class MenuProcessor {
   }
 
   private isNavigableRoute(route: AppRouteRecord): boolean {
-    return Boolean(route.path && route.path !== '/' && route.component && route.component !== '')
+    return Boolean(
+      route.path &&
+        route.path !== '/' &&
+        !route.meta?.link &&
+        route.meta?.isIframe !== true &&
+        route.component &&
+        route.component !== ''
+    )
   }
 
   private validateMenuPaths(menuList: AppRouteRecord[], level = 1): void {
@@ -123,7 +170,11 @@ export class MenuProcessor {
   }
 
   private isValidAbsolutePath(path: string): boolean {
-    return path.startsWith('http://') || path.startsWith('https://')
+    return (
+      path.startsWith('http://') ||
+      path.startsWith('https://') ||
+      path.startsWith('/outside/iframe/')
+    )
   }
 
   private logPathError(
@@ -147,6 +198,10 @@ export class MenuProcessor {
 
   private buildFullPath(path: string, parentPath: string): string {
     if (!path) return ''
+
+    if (path.startsWith('http://') || path.startsWith('https://')) {
+      return path
+    }
 
     if (path.startsWith('/')) {
       return path

@@ -193,8 +193,8 @@
 
   .release-table {
     min-width: 0;
-    margin-top: 0;
     overflow: hidden;
+    margin-top: 0;
   }
 
   .table-actions {

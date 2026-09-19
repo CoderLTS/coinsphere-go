@@ -38,21 +38,21 @@ func (p tradingProfileProvider) Resolve(ctx context.Context, ref sdk.ProfileRef)
 func validateTradingAccountProfile(_ context.Context, raw json.RawMessage) error {
 	var value struct{ Account, Market string }
 	if json.Unmarshal(raw, &value) != nil || !accountIDPattern.MatchString(value.Account) || value.Market != "spot" && value.Market != "usdm" {
-		return errors.New("binance account profile is invalid")
+		return errors.New("Binance account profile is invalid")
 	}
 	return nil
 }
 func validateTradingRiskProfile(_ context.Context, raw json.RawMessage) error {
 	var value struct{ InitialBalance, FeeRate, MaxOrderNotional, MaxInstrumentNotional string }
 	if json.Unmarshal(raw, &value) != nil {
-		return errors.New("binance risk profile is invalid")
+		return errors.New("Binance risk profile is invalid")
 	}
 	initial, e1 := decimal.NewFromString(value.InitialBalance)
 	fee, e2 := decimal.NewFromString(value.FeeRate)
 	order, e3 := decimal.NewFromString(value.MaxOrderNotional)
 	instrument, e4 := decimal.NewFromString(value.MaxInstrumentNotional)
 	if e1 != nil || e2 != nil || e3 != nil || e4 != nil || initial.Sign() <= 0 || fee.Sign() < 0 || order.Sign() <= 0 || instrument.Sign() <= 0 {
-		return errors.New("binance risk profile Decimal values are invalid")
+		return errors.New("Binance risk profile Decimal values are invalid")
 	}
 	return nil
 }

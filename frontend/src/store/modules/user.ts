@@ -1,4 +1,4 @@
-/** 用户会话状态；普通会话保存在当前标签页，长期会话才跨刷新持久化。 */
+/** 用户会话状态；普通会话保存在当前标签页，30 天会话才跨刷新持久化。 */
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { LanguageEnum } from '@/enums/appEnum'
@@ -14,13 +14,14 @@ import { StorageConfig } from '@/utils/storage/storage-config'
 export const useUserStore = defineStore(
   'userStore',
   () => {
-    const createEmptyUserInfo = (): Api.Auth.UserInfo => ({
+    const createGuestUserInfo = (): Api.Auth.UserInfo => ({
       permissions: [],
-      roleCodes: [],
+      roleCodes: ['R_GUEST'],
       userId: 0,
-      username: '',
+      username: '游客',
       email: '',
-      avatar: ''
+      avatar: '',
+      accessMode: 'guest'
     })
 
     // 语言设置
@@ -31,12 +32,15 @@ export const useUserStore = defineStore(
       ''
     // 登录状态
     const isLogin = ref(Boolean(storedAccessToken))
+    const accessMode = ref<Api.Auth.UserInfo['accessMode']>(
+      storedAccessToken ? 'authenticated' : 'guest'
+    )
     // 锁屏状态
     const isLock = ref(false)
     // 锁屏密码
     const lockPassword = ref('')
     // 用户信息
-    const info = ref<Api.Auth.UserInfo>(createEmptyUserInfo())
+    const info = ref<Api.Auth.UserInfo>(createGuestUserInfo())
     // 搜索历史记录
     const searchHistory = ref<AppRouteRecord[]>([])
     // 访问令牌
@@ -44,6 +48,7 @@ export const useUserStore = defineStore(
 
     // 计算属性：获取用户信息
     const getUserInfo = computed(() => info.value)
+    const isGuest = computed(() => accessMode.value === 'guest')
     // 计算属性：获取设置状态
     const getSettingState = computed(() => useSettingStore().$state)
     // 计算属性：获取工作台状态
@@ -55,7 +60,8 @@ export const useUserStore = defineStore(
      */
     const setUserInfo = (newInfo: Api.Auth.UserInfo) => {
       info.value = newInfo
-      isLogin.value = true
+      accessMode.value = newInfo.accessMode
+      isLogin.value = newInfo.accessMode === 'authenticated'
     }
 
     /**
@@ -64,6 +70,7 @@ export const useUserStore = defineStore(
      */
     const setLoginStatus = (status: boolean) => {
       isLogin.value = status
+      accessMode.value = status ? 'authenticated' : 'guest'
     }
 
     /**
@@ -114,14 +121,15 @@ export const useUserStore = defineStore(
     const clearSession = () => {
       // 保存当前用户 ID，用于下次登录时判断是否为同一用户
       const currentUserId = info.value.userId
-      if (currentUserId && isLogin.value) {
+      if (currentUserId && accessMode.value === 'authenticated') {
         localStorage.setItem(StorageConfig.LAST_USER_ID_KEY, String(currentUserId))
       }
 
       // 清空用户信息
-      info.value = createEmptyUserInfo()
+      info.value = createGuestUserInfo()
       // 重置登录状态
       isLogin.value = false
+      accessMode.value = 'guest'
       // 重置锁屏状态
       isLock.value = false
       // 清空锁屏密码
@@ -130,7 +138,9 @@ export const useUserStore = defineStore(
       accessToken.value = ''
       sessionStorage.removeItem(StorageConfig.ACCESS_TOKEN_KEY)
       localStorage.removeItem(StorageConfig.REMEMBERED_ACCESS_TOKEN_KEY)
+      // 移除iframe路由缓存
       useWorktabStore().clearAll()
+      sessionStorage.removeItem('iframeRoutes')
       // 清空主页路径
       useMenuStore().setHomePath('')
       // 重置路由状态
@@ -153,6 +163,12 @@ export const useUserStore = defineStore(
      * 应在登录成功后调用
      */
     const checkAndClearWorktabs = () => {
+      if (accessMode.value === 'guest') {
+        useWorktabStore().clearAll()
+        localStorage.removeItem(StorageConfig.LAST_USER_ID_KEY)
+        return
+      }
+
       const lastUserId = localStorage.getItem(StorageConfig.LAST_USER_ID_KEY)
       const currentUserId = info.value.userId
 
@@ -178,12 +194,14 @@ export const useUserStore = defineStore(
     return {
       language,
       isLogin,
+      accessMode,
       isLock,
       lockPassword,
       info,
       searchHistory,
       accessToken,
       getUserInfo,
+      isGuest,
       getSettingState,
       getWorktabState,
       setUserInfo,

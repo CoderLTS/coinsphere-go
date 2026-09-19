@@ -12,9 +12,7 @@ go run ./cmd/migrate -config ./config.yml -direction up
 go run .
 ```
 
-服务只读校验 migration 版本，不在启动时执行 DDL。首次启动会幂等写入内置角色、菜单和超级管理员；密码使用配置的初始密码，登录后必须立即修改密码。
-
-本地临时使用默认密码时需显式设置 `COINSPHERE_ALLOW_INSECURE_BOOTSTRAP=1`；其他环境设置 `COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD`。
+服务只读校验 migration 版本，不在启动时执行 DDL。首次启动会幂等写入内置角色、菜单和超级管理员；默认账号为 `coinsphere` / `coinsphere`，登录后必须立即修改密码。
 
 ## 数据基线
 
@@ -34,7 +32,7 @@ go run .
 - `system_log_settings`、`system_logs`
 - Goose 管理的 `schema_migrations`
 
-Binance 闭合 K 线使用普通 PostgreSQL 表和联合索引。项目不提供旧数据库运行时兼容层；重置和导入步骤见[设计与运行手册](../docs/design.md)。
+Binance 闭合 K 线使用普通 PostgreSQL 表和联合索引。项目不提供旧数据库运行时兼容层；重置和回滚步骤见[数据库迁移手册](../docs/runbooks/database-migrations.md)。
 
 ## 命令
 
@@ -51,7 +49,7 @@ go run ./cmd/coinsphere plugin uninstall --config ./config.yml --backend-root . 
 go run ./cmd/coinsphere plugin purge-data --config ./config.yml --backend-root . --confirm "PURGE <插件ID>" <插件ID>
 ```
 
-`plugin validate` 只读校验；`install`/`upgrade` 执行插件 migration、更新静态注册和构建输入，`uninstall` 保留数据，`purge-data` 需要精确确认且拒绝删除仍有引用的数据。插件包结构与 SDK 示例见[设计与运行手册](../docs/design.md)。
+`plugin validate` 只读校验；`install`/`upgrade` 执行插件 migration、更新静态注册和构建输入，`uninstall` 保留数据，`purge-data` 需要精确确认且拒绝删除仍有引用的数据。插件包结构与 SDK 示例见[插件开发指南](../docs/plugin-development.md)。
 
 执行后端门禁：
 
@@ -83,4 +81,4 @@ plugin/sdk           插件节点、处理器、作用域和注册协议
 version              Core 与 SDK 兼容版本
 ```
 
-更完整的模块与文件职责、运行数据流和迁移边界见[设计与运行手册](../docs/design.md)。
+更完整的模块与文件职责见[代码结构](../docs/code-structure.md)，运行数据流见[当前架构](../docs/architecture/overview.md)。

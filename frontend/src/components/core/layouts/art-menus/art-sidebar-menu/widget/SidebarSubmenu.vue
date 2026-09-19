@@ -27,7 +27,7 @@
 
     <ElMenuItem
       v-else
-      :index="item.path || item.meta.title"
+      :index="isExternalLink(item) ? undefined : item.path || item.meta.title"
       :level-item="level + 1"
       @click="goPage(item)"
     >
@@ -127,7 +127,11 @@
    * 判断菜单项本身是否可以作为可点击页面保留在菜单中
    */
   const isNavigableRoute = (item: AppRouteRecord): boolean => {
-    return !!(!item.meta.isHide && item.path && item.path.trim() && item.component)
+    return !!(
+      !item.meta.isHide &&
+      ((item.path && item.path.trim()) || item.meta.link || item.meta.isIframe === true) &&
+      (item.component || item.meta.link || item.meta.isIframe === true)
+    )
   }
 
   /**
@@ -172,6 +176,15 @@
     // 递归检查是否有可见的子菜单
     const filteredChildren = filterRoutes(item.children)
     return filteredChildren.length > 0
+  }
+
+  /**
+   * 判断是否为外部链接
+   * @param item 菜单项数据
+   * @returns 是否为外部链接
+   */
+  const isExternalLink = (item: AppRouteRecord): boolean => {
+    return !!(item.meta.link && !item.meta.isIframe)
   }
 
   /**

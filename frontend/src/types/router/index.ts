@@ -8,6 +8,8 @@ export interface RouteMeta extends Record<string | number | symbol, unknown> {
   showTextBadge?: string
   isHide?: boolean
   isHideTab?: boolean
+  link?: string
+  isIframe?: boolean
   keepAlive?: boolean
   actionList?: Array<{
     id?: number

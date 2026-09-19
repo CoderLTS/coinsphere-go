@@ -162,7 +162,7 @@ func (a *App) CreateWorkflowRun(ctx context.Context, workflowID int64, payload W
 		if err := tx.Create(&run).Error; err != nil {
 			return errors.New("创建工作流运行记录失败")
 		}
-		return a.snapshotRunProfiles(tx, run, graph)
+		return a.snapshotRunConnections(tx, run, graph)
 	})
 	if err != nil {
 		return WorkflowRunView{}, err
@@ -688,11 +688,11 @@ func (a *App) executeWorkflowNode(ctx context.Context, run db.WorkflowRun, revis
 		Incoming: workflowIncomingOutputs(graph.incoming[node.NodeInstanceID], outputs, event),
 		Logger:   a.workflowNodeLogger(run.WorkflowID, run.ID, runNode.ID, node.NodeType),
 	}
-	if desc.ProfileType != "" {
-		config, secrets, err := a.workflowProfileSnapshot(ctx, run.ID, node, desc)
+	if desc.ConnectionType != "" {
+		config, secrets, err := a.workflowConnection(ctx, run.ID, node, desc)
 		if err != nil {
-			a.finishWorkflowRunNode(run.WorkflowID, runNode, RunStatusFailed, "profile", "Profile 不可用", startedAt)
-			return workflowNodeOutcome{attempt: attempt, category: "profile", err: err}
+			a.finishWorkflowRunNode(run.WorkflowID, runNode, RunStatusFailed, "connection", "连接不可用", startedAt)
+			return workflowNodeOutcome{attempt: attempt, category: "connection", err: err}
 		}
 		request.Config = config
 		request.Secrets = secrets
@@ -1580,7 +1580,7 @@ func (a *App) enqueueScheduledRuns(ctx context.Context, now time.Time) error {
 			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&created).Error; err != nil {
 				return err
 			}
-			if err := a.snapshotRunProfiles(tx, created, graph); err != nil {
+			if err := a.snapshotRunConnections(tx, created, graph); err != nil {
 				return err
 			}
 			next, err := nextWorkflowScheduledAt(trigger.Config, now)
@@ -1694,7 +1694,7 @@ func (a *App) createDiagnosticReplay(ctx context.Context, runID int64) (Workflow
 		if err := tx.Create(&replay).Error; err != nil {
 			return errors.New("create diagnostic replay failed")
 		}
-		return tx.Exec(`INSERT INTO workflow_run_profile_snapshots(run_id,node_instance_id,profile_id,version,config_json,secrets_ciphertext) SELECT ?,node_instance_id,profile_id,version,config_json,secrets_ciphertext FROM workflow_run_profile_snapshots WHERE run_id=?`, replay.ID, original.ID).Error
+		return tx.Exec(`INSERT INTO workflow_run_connections(run_id,node_instance_id,connection_id,version,config_json,secrets_ciphertext) SELECT ?,node_instance_id,connection_id,version,config_json,secrets_ciphertext FROM workflow_run_connections WHERE run_id=?`, replay.ID, original.ID).Error
 	})
 	if err != nil {
 		return WorkflowRunView{}, err

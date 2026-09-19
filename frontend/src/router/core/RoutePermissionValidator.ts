@@ -7,7 +7,9 @@
  * ## 主要功能
  *
  * - 验证路径是否在用户菜单权限中
+ * - 构建菜单路径集合（扁平化处理）
  * - 支持动态路由参数匹配
+ * - 路径前缀匹配
  *
  * ## 使用场景
  *
@@ -32,7 +34,61 @@ export class RoutePermissionValidator {
    * @returns 是否有权限访问
    */
   static hasPermission(targetPath: string, menuList: AppRouteRecord[]): boolean {
+    // 根路径始终允许访问
+    if (targetPath === '/') {
+      return true
+    }
+
     return this.matchRoute(targetPath, menuList)
+  }
+
+  /**
+   * 构建菜单路径集合（扁平化处理）
+   * @param menuList 菜单列表
+   * @param pathSet 路径集合
+   * @returns 路径集合
+   */
+  static buildMenuPathSet(
+    menuList: AppRouteRecord[],
+    pathSet: Set<string> = new Set()
+  ): Set<string> {
+    if (!Array.isArray(menuList) || menuList.length === 0) {
+      return pathSet
+    }
+
+    for (const menuItem of menuList) {
+      if (!menuItem.path) {
+        continue
+      }
+
+      // 标准化路径并添加到集合
+      const menuPath = menuItem.path.startsWith('/') ? menuItem.path : `/${menuItem.path}`
+      pathSet.add(menuPath)
+
+      // 递归处理子菜单
+      if (menuItem.children?.length) {
+        this.buildMenuPathSet(menuItem.children, pathSet)
+      }
+    }
+
+    return pathSet
+  }
+
+  /**
+   * 检查目标路径是否匹配集合中的某个路径前缀
+   * 用于支持动态路由参数匹配，如 /user/123 匹配 /user
+   * @param targetPath 目标路径
+   * @param pathSet 路径集合
+   * @returns 是否匹配
+   */
+  static checkPathPrefix(targetPath: string, pathSet: Set<string>): boolean {
+    // 遍历路径集合，检查是否有前缀匹配
+    for (const menuPath of pathSet) {
+      if (targetPath.startsWith(`${menuPath}/`)) {
+        return true
+      }
+    }
+    return false
   }
 
   /**
@@ -50,7 +106,11 @@ export class RoutePermissionValidator {
 
       const routePath = route.path.startsWith('/') ? route.path : `/${route.path}`
 
-      if (routePath === targetPath || this.isDynamicRouteMatch(targetPath, routePath)) {
+      if (
+        routePath === targetPath ||
+        this.isDynamicRouteMatch(targetPath, routePath) ||
+        targetPath.startsWith(`${routePath}/`)
+      ) {
         return true
       }
 

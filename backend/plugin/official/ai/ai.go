@@ -31,7 +31,7 @@ func Register(registrar sdk.Registrar, host sdk.Host) error {
 	if err := registrar.Action(sdk.NodeDescriptor{
 		Type: "official.ai.model_call", Version: "1.0.0", Kind: sdk.NodeKindAction,
 		Title: "AI 模型调用", Description: "调用已配置的 AI 模型", Category: "agent", Aliases: []string{"AI", "大模型", "模型调用"}, Tags: []string{"智能体", "推理", "模型"}, SortOrder: 10, Color: "#0ea5e9", Icon: "bot", Width: 220, Height: 72,
-		ProfileType: "ai", ProfileFields: []string{"endpoint", "model", "timeoutSeconds", "apiKey"},
+		ConnectionType: "ai", ConnectionFields: []string{"endpoint", "model", "timeoutSeconds", "apiKey"},
 		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"endpoint":{"type":"string","title":"OpenAI 兼容接口地址","format":"uri","maxLength":2048},"model":{"type":"string","title":"模型","minLength":1,"maxLength":200},"timeoutSeconds":{"type":"integer","title":"超时时间（秒）","minimum":1,"maximum":120,"default":30},"apiKey":{"type":"string","title":"接口密钥","x-coinsphere-secret":true}},"required":["endpoint","model","timeoutSeconds","apiKey"],"additionalProperties":false}`),
 		UISchema:     json.RawMessage(`{"ui:order":["endpoint","model","timeoutSeconds","apiKey"]}`),
 		InputSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"prompt":{"type":"string","title":"提示内容","minLength":1,"maxLength":32768,"x-coinsphere-field-source":true},"data":{"type":"object","title":"结构化数据","x-coinsphere-field-source":true}},"required":["prompt","data"],"additionalProperties":false}`),
@@ -60,7 +60,7 @@ func (a aiModelCallAction) Execute(ctx context.Context, request sdk.ActionReques
 	}
 	if json.Unmarshal(request.Config, &config) != nil || json.Unmarshal(request.Input, &input) != nil ||
 		strings.TrimSpace(input.Prompt) == "" || input.Data == nil {
-		return sdk.ActionResult{}, errors.New("aI model call configuration or input is invalid")
+		return sdk.ActionResult{}, errors.New("AI model call configuration or input is invalid")
 	}
 	target, err := url.ParseRequestURI(config.Endpoint)
 	if err != nil || !target.IsAbs() || safehttp.IsBinanceDomain(target.Hostname()) {
@@ -68,7 +68,7 @@ func (a aiModelCallAction) Execute(ctx context.Context, request sdk.ActionReques
 	}
 	content, err := json.Marshal(map[string]any{"prompt": input.Prompt, "data": input.Data})
 	if err != nil || len(content) > maxAIResponseBytes {
-		return sdk.ActionResult{}, errors.New("aI model input exceeds the 1 MiB limit")
+		return sdk.ActionResult{}, errors.New("AI model input exceeds the 1 MiB limit")
 	}
 	payload, err := json.Marshal(map[string]any{
 		"model":           config.Model,
@@ -80,7 +80,7 @@ func (a aiModelCallAction) Execute(ctx context.Context, request sdk.ActionReques
 	}
 	apiKey, err := request.Secrets.Read(ctx, "apiKey")
 	if err != nil || len(apiKey) == 0 || len(apiKey) > 16<<10 {
-		return sdk.ActionResult{}, errors.New("aI API key is unavailable")
+		return sdk.ActionResult{}, errors.New("AI API key is unavailable")
 	}
 	callCtx, cancel := context.WithTimeout(ctx, time.Duration(config.TimeoutSeconds)*time.Second)
 	defer cancel()
@@ -100,10 +100,10 @@ func (a aiModelCallAction) Execute(ctx context.Context, request sdk.ActionReques
 	defer response.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(response.Body, maxAIResponseBytes+1))
 	if err != nil || len(raw) > maxAIResponseBytes {
-		return sdk.ActionResult{}, errors.New("aI model response exceeds the 1 MiB limit")
+		return sdk.ActionResult{}, errors.New("AI model response exceeds the 1 MiB limit")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return sdk.ActionResult{}, fmt.Errorf("aI model response status %d", response.StatusCode)
+		return sdk.ActionResult{}, fmt.Errorf("AI model response status %d", response.StatusCode)
 	}
 	var modelResponse struct {
 		Model   string `json:"model"`
@@ -115,11 +115,11 @@ func (a aiModelCallAction) Execute(ctx context.Context, request sdk.ActionReques
 		Usage map[string]any `json:"usage"`
 	}
 	if json.Unmarshal(raw, &modelResponse) != nil || len(modelResponse.Choices) != 1 || modelResponse.Usage == nil {
-		return sdk.ActionResult{}, errors.New("aI model response is invalid")
+		return sdk.ActionResult{}, errors.New("AI model response is invalid")
 	}
 	var data map[string]any
 	if json.Unmarshal([]byte(modelResponse.Choices[0].Message.Content), &data) != nil || data == nil {
-		return sdk.ActionResult{}, errors.New("aI model response content must be a JSON object")
+		return sdk.ActionResult{}, errors.New("AI model response content must be a JSON object")
 	}
 	if modelResponse.Model == "" {
 		modelResponse.Model = config.Model

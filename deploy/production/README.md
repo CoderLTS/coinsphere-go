@@ -23,4 +23,4 @@ COINSPHERE_DEPLOY_DIR=/path/to/coinsphere-go ./deploy.sh vX.Y.Z release-manifest
 
 应用 schema 来自 Backend 镜像内的版本化 migration。数据库由服务器 PostgreSQL 数据栈持久化，Backend 文件绑定到部署目录下的 `data/backend`；回滚不会自动执行 migration Down。
 
-完整发布、失败恢复和 migration 规则见[设计与运行手册](../../docs/design.md)。
+完整发布、失败恢复和 migration 规则见[发布与回滚](../../docs/runbooks/release.md)和[数据库迁移](../../docs/runbooks/database-migrations.md)。

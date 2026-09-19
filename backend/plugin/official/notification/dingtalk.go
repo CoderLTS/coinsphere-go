@@ -31,13 +31,13 @@ func (n *notificationRuntime) sendDingTalk(ctx context.Context, request sdk.Acti
 	}
 	accessToken, err := request.Secrets.Read(ctx, "accessToken")
 	if err != nil || strings.TrimSpace(string(accessToken)) == "" {
-		return "configuration", errors.New("dingTalk access token is unavailable")
+		return "configuration", errors.New("DingTalk access token is unavailable")
 	}
 	query := url.Values{"access_token": []string{strings.TrimSpace(string(accessToken))}}
 	if config.Signed {
 		secret, readErr := request.Secrets.Read(ctx, "signingSecret")
 		if readErr != nil || strings.TrimSpace(string(secret)) == "" {
-			return "configuration", errors.New("dingTalk signing secret is unavailable")
+			return "configuration", errors.New("DingTalk signing secret is unavailable")
 		}
 		timestamp := strconv.FormatInt(time.Now().UTC().UnixMilli(), 10)
 		signer := hmac.New(sha256.New, []byte(strings.TrimSpace(string(secret))))
@@ -76,7 +76,7 @@ func (n *notificationRuntime) sendDingTalk(ctx context.Context, request sdk.Acti
 		return "invalid_response", errors.New("decode DingTalk response")
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices || result.ErrorCode != 0 {
-		return "provider_rejected", errors.New("dingTalk rejected notification")
+		return "provider_rejected", errors.New("DingTalk rejected notification")
 	}
 	return "", nil
 }

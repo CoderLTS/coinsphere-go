@@ -17,7 +17,7 @@ CoinSphere 是以可视化工作流为核心、由编译期可信插件提供业
 | Notification 与共享结果              | 工作流 + 结果页 | 站内幂等投递、固定范围授权与移动端审批            |
 | 旧工作流、新闻、策略、交易和通知接口 | -               | 已从公开运行面移除                                |
 
-详细操作、接口语义、插件契约和迁移步骤见[设计与运行手册](docs/design.md)。
+详细操作见[使用手册](docs/user-guide.md)，接口语义见[公共契约](docs/contracts/README.md)。
 
 ## 架构
 
@@ -52,9 +52,7 @@ docker compose up -d --build
 docker compose ps
 ```
 
-浏览器打开 <http://localhost:8080>。初始超级管理员用户名是 `coinsphere`，密码使用 `COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD` 配置；首次登录后立即在“用户管理”中修改密码。`COINSPHERE_AUTH__SECRET_KEY` 必须长期保持一致，变更后已有登录令牌会失效。
-
-生产或共享环境必须同时设置 `COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD`；只有明确设置 `COINSPHERE_ALLOW_INSECURE_BOOTSTRAP=1` 时才允许使用本地默认密码。
+浏览器打开 <http://localhost:8080>。初始超级管理员是 `coinsphere` / `coinsphere`；首次登录后立即在“用户管理”中修改密码。`COINSPHERE_AUTH__SECRET_KEY` 必须长期保持一致，变更后已有登录令牌会失效。
 
 本地 Compose 会启动 `postgresql`、一次性 `migrate` 和内置 Web 产物的 `backend`。停止服务不会删除数据：
 
@@ -62,7 +60,7 @@ docker compose ps
 docker compose down
 ```
 
-完整安装、首次配置、备份和排障步骤见[设计与运行手册](docs/design.md)。
+完整安装、首次配置、备份和排障步骤见[使用手册](docs/user-guide.md)。
 
 ## 目录
 
@@ -70,7 +68,7 @@ docker compose down
 backend/             Go App、版本化 migration、工作流与系统模块
 frontend/            Vue 3 + Vite Web
 deploy/production/   生产 Compose 模板
-docs/                统一设计与运行手册
+docs/                架构、契约、代码/插件指南、质量门禁和 Runbook
 scripts/             验证、发布和部署脚本
 ```
 
@@ -86,11 +84,18 @@ scripts/             验证、发布和部署脚本
 ./scripts/verify.sh
 ```
 
-按模块启动与诊断、数据库重建和迁移导入见[设计与运行手册](docs/design.md)。
+按模块启动与诊断见[本地开发手册](docs/runbooks/development.md)，数据库变更见[迁移手册](docs/runbooks/database-migrations.md)。
 
 ## 文档
 
-- [设计与运行手册](docs/design.md)：架构、插件、权限、页面、Graph v3、迁移、质量门禁和运维边界
+- [使用手册](docs/user-guide.md)：安装、系统管理、插件、备份、升级和排障
+- [当前架构](docs/architecture/overview.md)：系统边界、组件职责、状态流与数据所有权
+- [代码结构](docs/code-structure.md)：目录、模块职责和常见修改入口
+- [插件开发指南](docs/plugin-development.md)：manifest、SDK、Vue、migration、测试和生命周期
+- [公共契约](docs/contracts/README.md)：`/api/v1`、插件 SDK 和生命周期语义
+- [质量门禁](docs/quality/quality-gates.md)：测试与验收要求
+- [发布与回滚](docs/runbooks/release.md)：手工发布、固定 digest 部署和回滚
+- [Paper 恢复与观察](docs/runbooks/paper-recovery.md)：重启、积压、账本重建与观察证据
 
 ## 安全边界
 

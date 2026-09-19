@@ -86,12 +86,12 @@ func parsePrivateAccountStreamConfig(raw json.RawMessage) (privateAccountStreamC
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&config) != nil {
-		return config, errors.New("binance private account configuration is invalid")
+		return config, errors.New("Binance private account configuration is invalid")
 	}
 	config.Account = strings.TrimSpace(config.Account)
 	config.Market = strings.ToLower(strings.TrimSpace(config.Market))
 	if !accountIDPattern.MatchString(config.Account) || config.Market != "spot" && config.Market != "usdm" || config.ProxyID < 0 || config.ReconciliationSeconds < 30 || config.ReconciliationSeconds > 3600 {
-		return config, errors.New("binance private account configuration is invalid")
+		return config, errors.New("Binance private account configuration is invalid")
 	}
 	return config, nil
 }
@@ -210,7 +210,7 @@ func (q *binanceRuntime) manageListenKey(ctx context.Context, config privateAcco
 	if method == http.MethodPost {
 		listenKey = strings.TrimSpace(payload.ListenKey)
 		if listenKey == "" || len(listenKey) > 512 {
-			return "", errors.New("binance listen key response is invalid")
+			return "", errors.New("Binance listen key response is invalid")
 		}
 	}
 	return listenKey, nil
@@ -218,11 +218,11 @@ func (q *binanceRuntime) manageListenKey(ctx context.Context, config privateAcco
 
 func (q *binanceRuntime) privateAPIKeyJSON(ctx context.Context, market, method, path string, values url.Values, secrets sdk.SecretReader, proxyID int64, destination any) error {
 	if secrets == nil {
-		return errors.New("binance credentials are unavailable")
+		return errors.New("Binance credentials are unavailable")
 	}
 	apiKey, err := secrets.Read(ctx, "apiKey")
 	if err != nil || len(apiKey) == 0 || len(apiKey) > 512 {
-		return errors.New("binance API key is unavailable")
+		return errors.New("Binance API key is unavailable")
 	}
 	base := "https://api.binance.com"
 	if market == "usdm" {
@@ -254,10 +254,10 @@ func (q *binanceRuntime) privateAPIKeyJSON(ctx context.Context, market, method, 
 	defer response.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(response.Body, maxPrivateResponseBytes+1))
 	if err != nil || len(raw) > maxPrivateResponseBytes {
-		return errors.New("binance private stream response exceeds limit")
+		return errors.New("Binance private stream response exceeds limit")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("binance private stream response status %d", response.StatusCode)
+		return fmt.Errorf("Binance private stream response status %d", response.StatusCode)
 	}
 	if len(bytes.TrimSpace(raw)) == 0 {
 		raw = []byte(`{}`)
@@ -275,7 +275,7 @@ func (q *binanceRuntime) handlePrivateAccountEvent(ctx context.Context, config p
 		Event string `json:"e"`
 	}
 	if json.Unmarshal(raw, &envelope) != nil {
-		return errors.New("binance User Data Stream payload is invalid")
+		return errors.New("Binance User Data Stream payload is invalid")
 	}
 	var update privateOrderUpdate
 	var ok bool
@@ -287,7 +287,7 @@ func (q *binanceRuntime) handlePrivateAccountEvent(ctx context.Context, config p
 		return nil
 	}
 	if !ok {
-		return errors.New("binance order event is invalid")
+		return errors.New("Binance order event is invalid")
 	}
 	owned, err := q.persistPrivateOrderUpdate(ctx, config, update)
 	if err != nil || !owned {
@@ -386,7 +386,7 @@ func (q *binanceRuntime) persistPrivateOrderUpdate(ctx context.Context, config p
 		return false, errors.New("load Binance live order failed")
 	}
 	if order.Instrument != update.Instrument || order.Side != update.Side || order.ProviderOrderID != "" && order.ProviderOrderID != update.ProviderOrderID {
-		return false, errors.New("binance live order event identity does not match")
+		return false, errors.New("Binance live order event identity does not match")
 	}
 	if err := q.db.WithContext(ctx).Model(&order).Updates(map[string]any{"provider_order_id": update.ProviderOrderID, "quantity": update.Quantity, "executed": update.Executed, "average_price": update.AveragePrice, "notional": update.Executed.Mul(update.AveragePrice), "status": update.Status, "updated_at": update.UpdatedAt}).Error; err != nil {
 		return false, errors.New("update Binance live order failed")
@@ -477,7 +477,7 @@ func (q *binanceRuntime) updateReconciledOrder(ctx context.Context, order tradin
 		result.Side != order.Side || result.ProviderOrderID == "" || order.ProviderOrderID != "" && result.ProviderOrderID != order.ProviderOrderID ||
 		!validOrderStatus(result.Status) || result.Quantity.Sign() < 0 || result.Executed.Sign() < 0 || result.AveragePrice.Sign() < 0 ||
 		result.Quantity.Sign() > 0 && result.Executed.GreaterThan(result.Quantity) {
-		return errors.New("binance reconciled order identity or amounts are invalid")
+		return errors.New("Binance reconciled order identity or amounts are invalid")
 	}
 	return q.db.WithContext(ctx).Model(&order).Updates(map[string]any{"provider_order_id": result.ProviderOrderID, "quantity": result.Quantity, "executed": result.Executed, "average_price": result.AveragePrice, "notional": result.Executed.Mul(result.AveragePrice), "status": result.Status, "updated_at": result.UpdatedAt.UTC()}).Error
 }
@@ -511,7 +511,7 @@ func (q *binanceRuntime) reconcileOrderTrades(ctx context.Context, order trading
 		fee, e3 := decimal.NewFromString(zeroIfEmpty(trade.Fee))
 		if e1 != nil || e2 != nil || e3 != nil || quantity.Sign() <= 0 || price.Sign() <= 0 || fee.Sign() < 0 ||
 			trade.ID < 0 || trade.Time <= 0 || fee.Sign() > 0 && strings.TrimSpace(trade.FeeAsset) == "" {
-			return errors.New("binance trade reconciliation payload is invalid")
+			return errors.New("Binance trade reconciliation payload is invalid")
 		}
 		tradeOrder := order
 		if config.Market == "spot" {
@@ -523,7 +523,7 @@ func (q *binanceRuntime) reconcileOrderTrades(ctx context.Context, order trading
 		} else {
 			tradeOrder.Side = strings.ToLower(trade.Side)
 			if tradeOrder.Side != "buy" && tradeOrder.Side != "sell" {
-				return errors.New("binance trade reconciliation side is invalid")
+				return errors.New("Binance trade reconciliation side is invalid")
 			}
 		}
 		if err := q.persistLiveFill(ctx, tradeOrder, liveTradeOperationKey(order.Account, config.Market, order.Instrument, strconv.FormatInt(trade.ID, 10)), quantity, price, fee, trade.FeeAsset, time.UnixMilli(trade.Time).UTC()); err != nil {
@@ -556,13 +556,13 @@ func (q *binanceRuntime) reconcileAccountState(ctx context.Context, config priva
 		equity, e1 := decimal.NewFromString(account.Equity)
 		available, e2 := decimal.NewFromString(account.Available)
 		if e1 != nil || e2 != nil {
-			return errors.New("binance USD-M account payload is invalid")
+			return errors.New("Binance USD-M account payload is invalid")
 		}
 		for _, item := range account.Positions {
 			quantity, qErr := decimal.NewFromString(item.Quantity)
 			price, pErr := decimal.NewFromString(item.EntryPrice)
 			if qErr != nil || pErr != nil {
-				return errors.New("binance USD-M position payload is invalid")
+				return errors.New("Binance USD-M position payload is invalid")
 			}
 			position := tradingPosition{Account: config.Account, Mode: "live", Market: config.Market, Instrument: strings.ToUpper(item.Instrument), Quantity: quantity, AveragePrice: price, UpdatedAt: now}
 			if err := q.upsertLivePosition(ctx, position); err != nil {
@@ -586,7 +586,7 @@ func (q *binanceRuntime) reconcileAccountState(ctx context.Context, config priva
 		free, e1 := decimal.NewFromString(item.Free)
 		locked, e2 := decimal.NewFromString(item.Locked)
 		if e1 != nil || e2 != nil {
-			return errors.New("binance Spot account payload is invalid")
+			return errors.New("Binance Spot account payload is invalid")
 		}
 		balances[strings.ToUpper(item.Asset)] = free.Add(locked)
 	}

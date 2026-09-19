@@ -3,5 +3,11 @@
 
 declare module 'nprogress'
 
+declare module 'crypto-js'
+
+declare module 'vue-img-cutter'
+
+declare module 'file-saver'
+
 // 全局变量声明
 declare const __APP_VERSION__: string // 版本号

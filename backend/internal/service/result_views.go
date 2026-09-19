@@ -46,43 +46,6 @@ type ResultViewView struct {
 	RevokedAt      string          `json:"revokedAt,omitempty"`
 }
 
-// ResultPageView exposes plugin-owned result schemas to the generic ResultView
-// management page. It contains descriptors only; plugin execution remains
-// behind the ResultView scope boundary.
-type ResultPageView struct {
-	PluginID     string          `json:"pluginId"`
-	PageKey      string          `json:"pageKey"`
-	Title        string          `json:"title"`
-	ScopeSchema  json.RawMessage `json:"scopeSchema,omitempty"`
-	FilterSchema json.RawMessage `json:"filterSchema,omitempty"`
-	Actions      []string        `json:"actions"`
-	Mobile       bool            `json:"mobile"`
-}
-
-func (a *App) ListResultPages() []ResultPageView {
-	if a.Plugins == nil {
-		return []ResultPageView{}
-	}
-	items := make([]ResultPageView, 0)
-	for _, plugin := range a.Plugins.Plugins() {
-		for _, page := range a.Plugins.PluginResultPages(plugin.ID) {
-			items = append(items, ResultPageView{
-				PluginID: plugin.ID, PageKey: page.PageKey, Title: page.Title,
-				ScopeSchema:  append(json.RawMessage(nil), page.ScopeSchema...),
-				FilterSchema: append(json.RawMessage(nil), page.FilterSchema...),
-				Actions:      append([]string(nil), page.Actions...), Mobile: page.Mobile,
-			})
-		}
-	}
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].PluginID != items[j].PluginID {
-			return items[i].PluginID < items[j].PluginID
-		}
-		return items[i].PageKey < items[j].PageKey
-	})
-	return items
-}
-
 type ResultViewRun struct {
 	ID                    int64  `json:"id"`
 	Status                string `json:"status"`

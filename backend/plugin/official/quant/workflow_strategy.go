@@ -36,7 +36,7 @@ type quantOutputSignalAction struct{ runtime *quantRuntime }
 type quantReplayTrigger struct{ runtime *quantRuntime }
 
 func (t quantReplayTrigger) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
-	return quantWorkflowBacktestAction(t).Execute(ctx, request)
+	return (quantWorkflowBacktestAction{runtime: t.runtime}).Execute(ctx, request)
 }
 
 func (quantReplayTrigger) Run(ctx context.Context, _ sdk.TriggerRequest, _ sdk.Emitter) error {
@@ -239,7 +239,7 @@ func (a quantOutputSignalAction) Execute(ctx context.Context, request sdk.Action
 	if !target.Equal(previous) {
 		branch = "realtime"
 		if request.ExecutionMode != sdk.ExecutionModeBacktestFrame {
-			result, err := quantSignalAction(a).Execute(ctx, sdk.ActionRequest{
+			result, err := (quantSignalAction{runtime: a.runtime}).Execute(ctx, sdk.ActionRequest{
 				Revision: request.Revision, NodeInstanceID: request.NodeInstanceID, OperationKey: request.OperationKey,
 				Config: mustMarshal(series), ExecutionMode: request.ExecutionMode,
 				Input: mustMarshal(map[string]any{"strategyId": "workflow", "strategyVersion": request.Revision.RevisionID,

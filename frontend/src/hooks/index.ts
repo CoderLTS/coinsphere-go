@@ -2,6 +2,9 @@
 // 通用功能集合
 export { useCommon } from './core/useCommon'
 
+// 应用模式
+export { useAppMode } from './core/useAppMode'
+
 // 权限控制
 export { useAuth } from './core/useAuth'
 

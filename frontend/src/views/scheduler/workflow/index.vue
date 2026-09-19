@@ -14,7 +14,11 @@
         <aside class="workflow-groups" aria-label="工作流分组">
           <div class="workflow-groups__header">
             <span>分组</span>
-            <ElTooltip v-if="hasAuth('R_SUPER')" content="新建分组" placement="top">
+            <ElTooltip
+              v-if="hasAuth('scheduler.workflow_definitions.create')"
+              content="新建分组"
+              placement="top"
+            >
               <ElButton text circle :icon="Plus" aria-label="新建分组" @click="createGroup" />
             </ElTooltip>
           </div>
@@ -48,11 +52,15 @@
               class="workflow-groups__custom"
               handle=".workflow-group-filter__drag"
               :animation="150"
-              :disabled="!hasAuth('R_SUPER')"
+              :disabled="!hasAuth('scheduler.workflow_definitions.update')"
               @end="persistGroupOrder"
             >
               <div v-for="(group, index) in workflowGroups" :key="group.id" class="workflow-group">
-                <ElTooltip v-if="hasAuth('R_SUPER')" content="拖动排序" placement="top">
+                <ElTooltip
+                  v-if="hasAuth('scheduler.workflow_definitions.update')"
+                  content="拖动排序"
+                  placement="top"
+                >
                   <ElButton
                     text
                     circle
@@ -72,7 +80,10 @@
                   <span class="workflow-group-filter__count">{{ groupCount(group.id) }}</span>
                 </button>
                 <ElDropdown
-                  v-if="hasAuth('R_SUPER') || hasAuth('R_SUPER')"
+                  v-if="
+                    hasAuth('scheduler.workflow_definitions.update') ||
+                    hasAuth('scheduler.workflow_definitions.delete')
+                  "
                   trigger="click"
                   @command="(command) => handleGroupCommand(command, group, index)"
                 >
@@ -85,24 +96,31 @@
                   />
                   <template #dropdown>
                     <ElDropdownMenu>
-                      <ElDropdownItem v-if="hasAuth('R_SUPER')" command="rename">
+                      <ElDropdownItem
+                        v-if="hasAuth('scheduler.workflow_definitions.update')"
+                        command="rename"
+                      >
                         重命名
                       </ElDropdownItem>
                       <ElDropdownItem
-                        v-if="hasAuth('R_SUPER')"
+                        v-if="hasAuth('scheduler.workflow_definitions.update')"
                         command="up"
                         :disabled="index === 0"
                       >
                         上移
                       </ElDropdownItem>
                       <ElDropdownItem
-                        v-if="hasAuth('R_SUPER')"
+                        v-if="hasAuth('scheduler.workflow_definitions.update')"
                         command="down"
                         :disabled="index === workflowGroups.length - 1"
                       >
                         下移
                       </ElDropdownItem>
-                      <ElDropdownItem v-if="hasAuth('R_SUPER')" command="delete" divided>
+                      <ElDropdownItem
+                        v-if="hasAuth('scheduler.workflow_definitions.delete')"
+                        command="delete"
+                        divided
+                      >
                         删除分组
                       </ElDropdownItem>
                     </ElDropdownMenu>
@@ -122,11 +140,17 @@
           >
             <template #left>
               <ElSpace wrap>
-                <ElButton v-if="hasAuth('R_SUPER')" type="primary" @click="openCreateWorkflow">
+                <ElButton
+                  v-if="hasAuth('scheduler.workflow_definitions.create')"
+                  type="primary"
+                  @click="openCreateWorkflow"
+                >
                   新建工作流
                 </ElButton>
                 <ElDropdown
-                  v-if="selectedDefinitions.length && hasAuth('R_SUPER')"
+                  v-if="
+                    selectedDefinitions.length && hasAuth('scheduler.workflow_definitions.update')
+                  "
                   trigger="click"
                   @command="assignSelectedToGroup"
                 >
@@ -163,7 +187,7 @@
             @selection-change="handleSelectionChange"
           >
             <ElTableColumn
-              v-if="hasAuth('R_SUPER')"
+              v-if="hasAuth('scheduler.workflow_definitions.update')"
               type="selection"
               width="48"
               reserve-selection
@@ -177,7 +201,7 @@
             <ElTableColumn label="分组" min-width="180">
               <template #default="{ row }">
                 <ElSelect
-                  v-if="hasAuth('R_SUPER')"
+                  v-if="hasAuth('scheduler.workflow_definitions.update')"
                   :model-value="row.groupId || 0"
                   size="small"
                   :disabled="assigning"
@@ -263,7 +287,7 @@
                     />
                   </ElTooltip>
                   <ElTooltip
-                    v-if="hasAuth('R_SUPER')"
+                    v-if="hasAuth('scheduler.workflow_definitions.delete')"
                     :content="row.workflowStatus === 'active' ? '请先停用工作流' : '删除工作流'"
                     placement="top"
                   >
@@ -327,14 +351,21 @@
             <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
           </ElTableColumn>
           <ElTableColumn
-            v-if="hasAuth('R_SUPER') || hasAuth('R_SUPER')"
+            v-if="
+              hasAuth('scheduler.workflow_definitions.update') ||
+              hasAuth('scheduler.workflow_definitions.delete')
+            "
             label="操作"
             width="100"
             align="center"
           >
             <template #default="{ row }">
               <ElSpace size="small">
-                <ElTooltip v-if="hasAuth('R_SUPER')" content="打开版本" placement="top">
+                <ElTooltip
+                  v-if="hasAuth('scheduler.workflow_definitions.update')"
+                  content="打开版本"
+                  placement="top"
+                >
                   <ElButton
                     circle
                     plain
@@ -345,7 +376,7 @@
                   />
                 </ElTooltip>
                 <ElTooltip
-                  v-if="hasAuth('R_SUPER') && !row.isLatest"
+                  v-if="hasAuth('scheduler.workflow_definitions.delete') && !row.isLatest"
                   content="删除版本"
                   placement="top"
                 >
@@ -386,6 +417,7 @@
   } from '@element-plus/icons-vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { VueDraggable } from 'vue-draggable-plus'
+  import { useAuth } from '@/hooks/core/useAuth'
   import {
     fetchActivateWorkflowDefinition,
     fetchDeactivateWorkflowDefinition,
@@ -394,7 +426,7 @@
     fetchWorkflowDefinitionList,
     type WorkflowDefinitionItem,
     type WorkflowDefinitionVersionItem
-  } from '@/api/workflows'
+  } from '@/api/scheduler'
   import {
     assignWorkflowGroup,
     createWorkflowGroup,
@@ -411,12 +443,7 @@
   defineOptions({ name: 'SchedulerWorkflowDefinitionsPage' })
 
   const router = useRouter()
-  // The route is restricted to R_SUPER; controls do not duplicate obsolete
-  // workflow permission codes in the page.
-  const hasAuth = (...args: unknown[]) => {
-    void args
-    return true
-  }
+  const { hasAuth } = useAuth()
   const loading = ref(false)
   const actingId = ref<number>()
   const definitions = ref<WorkflowDefinitionItem[]>([])
@@ -927,7 +954,8 @@
       gap: 4px;
       max-height: none;
       padding-bottom: 4px;
-      overflow: auto hidden;
+      overflow-x: auto;
+      overflow-y: hidden;
     }
 
     .workflow-groups__fixed,

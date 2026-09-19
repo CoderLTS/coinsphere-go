@@ -1,3 +1,3 @@
 export const resultPages = {
-  diagnostics: () => import('./ResultPage.vue')
+  connections: () => import('./ResultPage.vue')
 }

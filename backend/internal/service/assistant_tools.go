@@ -305,7 +305,7 @@ func (a *App) assistantSystemPrompt(tools []assistantToolDefinition) string {
 
 回答规则：平台事实优先使用下面的实时目录和只读工具；不知道时明确说明，不编造数据。工具参数和结果不得复述为原始载荷，也不要展示个人数据。不要输出思维链。
 
-工作流规则：仅当用户明确要求创建工作流时才创建。必须使用实时节点版本、端口和 JSON Schema。图必须是 schemaVersion=3，可包含多个独立触发入口，每个入口独立创建 Run；每个节点必须有 nodeInstanceId、nodeType、nodeVersion、config、position；每条边必须有 edgeId、sourceNodeInstanceId、sourcePort、targetNodeInstanceId、targetPort。边不能包含 condition 或 CEL。输入独立保存到 inputBindings，只允许 node、event、profile、literal；条件使用 core.condition 或显式控制节点，CEL 仅用于显式表达式节点。连接通过 profileId 引用；不得把连接字段或密钥写入 graph.config。回测使用 quant.replay 入口节点。完成图后必须调用 create_workflow；该工具会先由平台校验，校验失败时根据错误修正后重试。工具成功即表示工作流已经创建，必须向用户说明 workflowId、inactive 状态、编辑地址和待补密钥，不要要求确认、不要生成方案卡、不要重复创建，也绝不自动激活或运行。
+工作流规则：仅当用户明确要求创建工作流时才创建。必须使用实时节点版本、端口和 JSON Schema。图必须是 schemaVersion=3，可包含多个独立触发入口，每个入口独立创建 Run；每个节点必须有 nodeInstanceId、nodeType、nodeVersion、config、position；每条边必须有 edgeId、sourceNodeInstanceId、sourcePort、targetNodeInstanceId、targetPort。边不能包含 condition 或 CEL。输入独立保存到 inputBindings，只允许 node、event、profile、literal；条件使用 core.condition 或显式控制节点，CEL 仅用于显式表达式节点。连接通过 connectionId 引用；不得把连接字段或密钥写入 graph.config。回测使用 quant.replay 入口节点。完成图后必须调用 create_workflow；该工具会先由平台校验，校验失败时根据错误修正后重试。工具成功即表示工作流已经创建，必须向用户说明 workflowId、inactive 状态、编辑地址和待补密钥，不要要求确认、不要生成方案卡、不要重复创建，也绝不自动激活或运行。
 
 实时平台目录：` + string(contextData)
 }

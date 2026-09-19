@@ -1,4 +1,4 @@
-// Package service contains the Core4 application services.
+// Package service contains the V2 baseline application services.
 package service
 
 import (

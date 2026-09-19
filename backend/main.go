@@ -137,7 +137,7 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 		defer closeCancel()
 		runErr = errors.Join(runErr, systemLogs.Close(closeCtx))
 	}()
-	if cfg.Auth.BootstrapAdminPassword == config.DefaultBootstrapAdminPassword {
+	if cfg.Auth.BootstrapAdminPassword == "coinsphere" {
 		slog.Warn("内置超管仍使用默认初始密码，请登录后尽快修改", "component", "runtime")
 	}
 	slog.Info("database ready", "component", "runtime", "engine", "postgres")
@@ -188,7 +188,6 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 
 	// 一个取消信号同时阻止新请求并传到在途外部 I/O。
 	cancel()
-	app.CloseWorkflowEvents()
 	app.CloseNotificationEvents()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer shutdownCancel()

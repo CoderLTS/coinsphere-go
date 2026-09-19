@@ -412,7 +412,7 @@
 <script setup lang="ts">
   import { ArrowLeft, Clock, Download, Hide, View } from '@element-plus/icons-vue'
   import { ElMessage } from 'element-plus'
-  import { fetchWorkflowExecutionDetail, type WorkflowExecutionDetail } from '@/api/workflows'
+  import { fetchWorkflowExecutionDetail, type WorkflowExecutionDetail } from '@/api/scheduler'
   import {
     buildWorkflowRunsWsUrl,
     downloadWorkflowArtifact,
@@ -738,7 +738,8 @@
   const connectWorkflowSocket = () => {
     closeWorkflowSocket()
     const workflowId = activeWorkflowId.value
-    if (workflowId <= 0 || !userStore.isLogin || !userStore.accessToken) return
+    if (workflowId <= 0 || userStore.accessMode !== 'authenticated' || !userStore.accessToken)
+      return
     const socket = new WebSocket(buildWorkflowRunsWsUrl(window.location.origin, workflowId), [
       WORKFLOW_RUNS_WS_PROTOCOL,
       userStore.accessToken
@@ -932,7 +933,8 @@
     min-width: 0;
     height: 100%;
     min-height: 0;
-    overflow: hidden auto;
+    overflow-x: hidden;
+    overflow-y: auto;
     overscroll-behavior: contain;
     background: var(--workflow-page-bg);
   }
@@ -1059,7 +1061,7 @@
     overflow: hidden;
   }
 
-  .workflow-execution-detail__summary-grid .workflow-execution-detail__summary-item {
+  .workflow-execution-detail__summary-item {
     display: flex;
     flex: 0 1 auto;
     flex-direction: row;
@@ -1078,7 +1080,7 @@
     white-space: nowrap;
   }
 
-  .workflow-execution-detail__summary-grid .workflow-execution-detail__summary-item strong {
+  .workflow-execution-detail__summary-item strong {
     overflow: hidden;
     font-size: 11px;
     line-height: 15px;
@@ -1115,8 +1117,8 @@
     position: relative;
     display: block;
     flex: 0 0 clamp(520px, 62vh, 720px);
-    min-width: 0;
     height: clamp(520px, 62vh, 720px);
+    min-width: 0;
     min-height: 520px;
     overflow: hidden;
     isolation: isolate;
@@ -1250,15 +1252,15 @@
 
   .workflow-execution-detail__live-log-content {
     display: flex;
+    min-width: 0;
     flex-direction: column;
     gap: 6px;
-    min-width: 0;
   }
 
   .workflow-execution-detail__live-log-fields {
     max-height: 180px;
-    padding: 6px 8px;
     margin: 0;
+    padding: 6px 8px;
     overflow: auto;
     font-size: 11px;
     line-height: 16px;
@@ -1286,8 +1288,8 @@
     display: flex;
     flex-direction: column;
     width: 100%;
-    min-width: 0;
     height: clamp(520px, calc(100vh - 160px), 720px);
+    min-width: 0;
     min-height: 520px;
     overflow: hidden;
     isolation: isolate;

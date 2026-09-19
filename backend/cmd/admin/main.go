@@ -161,7 +161,7 @@ func resetPassword(
 			}
 			return err
 		}
-		now := time.Now().UTC()
+		now := time.Now()
 		if err := tx.Model(&db.SystemUser{}).Where("id = ?", user.ID).Updates(map[string]any{
 			"password_hash": hasher.HashPassword(password),
 			"updated_at":    now, "updated_by": "admin-cli",

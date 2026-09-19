@@ -49,7 +49,7 @@ func (p marketDataProvider) Candles(ctx context.Context, query sdk.CandleQuery) 
 	}
 	limit := query.Limit
 	if limit <= 0 || limit > 1_000_001 {
-		return nil, errors.New("binance candle limit is invalid")
+		return nil, errors.New("Binance candle limit is invalid")
 	}
 	db := p.runtime.db.WithContext(ctx).Where("market = ? AND instrument = ? AND interval = ?", config.Market, config.Instrument, config.Interval)
 	if !query.StartTime.IsZero() {
@@ -91,7 +91,7 @@ func (p marketDataProvider) Quote(ctx context.Context, query sdk.QuoteQuery) (sd
 		return sdk.Quote{}, err
 	}
 	if strings.ToUpper(payload.Symbol) != config.Instrument {
-		return sdk.Quote{}, errors.New("binance quote instrument mismatch")
+		return sdk.Quote{}, errors.New("Binance quote instrument mismatch")
 	}
 	var text string
 	if json.Unmarshal(payload.Price, &text) != nil {
@@ -99,7 +99,7 @@ func (p marketDataProvider) Quote(ctx context.Context, query sdk.QuoteQuery) (sd
 	}
 	price, err := decimal.NewFromString(text)
 	if err != nil || price.Sign() <= 0 {
-		return sdk.Quote{}, fmt.Errorf("binance quote price is invalid")
+		return sdk.Quote{}, fmt.Errorf("Binance quote price is invalid")
 	}
 	quotedAt := time.Now().UTC()
 	if payload.Time > 0 {

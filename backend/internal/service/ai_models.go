@@ -174,7 +174,7 @@ func (a *App) DeleteAIModel(ctx context.Context, modelID int64) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&model, modelID).Error; err != nil {
 			return err
 		}
-		if err := ensureProfileSnapshotUnreferenced(tx, fmt.Sprintf("ai:%d", modelID)); err != nil {
+		if err := ensureConnectionUnreferenced(tx, fmt.Sprintf("ai:%d", modelID)); err != nil {
 			return err
 		}
 		var count int64

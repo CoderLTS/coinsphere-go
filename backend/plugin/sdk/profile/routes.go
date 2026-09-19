@@ -126,7 +126,7 @@ func (s *Store) handleDraft(c *gin.Context, scope sdk.RouteScope, operation stri
 	if operation == "update" {
 		payload.ID = c.Param("profileId")
 	}
-	draft := Draft(payload)
+	draft := Draft{ID: payload.ID, Name: payload.Name, Summary: payload.Summary, Config: payload.Config}
 	var item sdk.ProfileSummary
 	var err error
 	if operation == "create" {
@@ -152,7 +152,7 @@ func (s *Store) handleCopy(c *gin.Context, scope sdk.RouteScope) {
 		writeProfileError(c, http.StatusBadRequest, "invalid profile payload")
 		return
 	}
-	item, err := s.Copy(c.Request.Context(), actor, c.Param("profileId"), Draft(payload))
+	item, err := s.Copy(c.Request.Context(), actor, c.Param("profileId"), Draft{ID: payload.ID, Name: payload.Name, Summary: payload.Summary, Config: payload.Config})
 	if err != nil {
 		writeProfileError(c, profileErrorStatus(err), err.Error())
 		return

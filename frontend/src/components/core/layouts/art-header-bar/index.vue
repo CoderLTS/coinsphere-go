@@ -140,7 +140,7 @@
         </ElTooltip>
 
         <ArtIconButton
-          v-if="shouldShowNotification && userStore.isLogin"
+          v-if="shouldShowNotification && userStore.accessMode === 'authenticated'"
           icon="ri:notification-2-line"
           class="notice-button relative"
           @click="visibleNotice"
@@ -238,7 +238,7 @@
   })
 
   watch(
-    () => [userStore.isLogin, userStore.accessToken],
+    () => [userStore.accessMode, userStore.accessToken],
     () => syncNotificationConnection()
   )
 
@@ -310,7 +310,7 @@
 
   const syncNotificationConnection = () => {
     notificationStore.disconnect()
-    if (userStore.isLogin) notificationStore.connect()
+    if (userStore.accessMode === 'authenticated') notificationStore.connect()
   }
 
   /**

@@ -43,7 +43,7 @@ func (a paperExecuteAction) Execute(ctx context.Context, request sdk.ActionReque
 	if json.Unmarshal(accountRaw, &account) != nil || validateTradingAccountProfile(ctx, accountRaw) != nil ||
 		json.Unmarshal(riskRaw, &config) != nil || validateTradingRiskProfile(ctx, riskRaw) != nil ||
 		json.Unmarshal(request.Input, &intent) != nil || intent.Venue != "binance" {
-		return sdk.ActionResult{}, errors.New("binance Paper order is invalid")
+		return sdk.ActionResult{}, errors.New("Binance Paper order is invalid")
 	}
 	initialBalance, e1 := decimal.NewFromString(config.InitialBalance)
 	feeRate, e2 := decimal.NewFromString(config.FeeRate)
@@ -52,7 +52,7 @@ func (a paperExecuteAction) Execute(ctx context.Context, request sdk.ActionReque
 	quantity, e5 := decimal.NewFromString(zeroIfEmpty(intent.Quantity))
 	quoteAmount, e6 := decimal.NewFromString(zeroIfEmpty(intent.QuoteAmount))
 	if e1 != nil || e2 != nil || e3 != nil || e4 != nil || e5 != nil || e6 != nil || initialBalance.Sign() <= 0 || feeRate.Sign() < 0 || maxOrder.Sign() <= 0 || maxInstrument.Sign() <= 0 {
-		return sdk.ActionResult{}, errors.New("binance Paper limits are invalid")
+		return sdk.ActionResult{}, errors.New("Binance Paper limits are invalid")
 	}
 	profileMarket := strings.ToLower(strings.TrimSpace(account.Market))
 	profileAccount := strings.TrimSpace(account.Account)
@@ -65,7 +65,7 @@ func (a paperExecuteAction) Execute(ctx context.Context, request sdk.ActionReque
 		intent.Account = profileAccount
 	}
 	if intent.Market != profileMarket || intent.Account != profileAccount {
-		return sdk.ActionResult{}, errors.New("binance Paper order does not match the selected account profile")
+		return sdk.ActionResult{}, errors.New("Binance Paper order does not match the selected account profile")
 	}
 	intent.Instrument = strings.ToUpper(strings.TrimSpace(intent.Instrument))
 	intent.Side = strings.ToLower(strings.TrimSpace(intent.Side))
@@ -74,24 +74,24 @@ func (a paperExecuteAction) Execute(ctx context.Context, request sdk.ActionReque
 		(intent.Market != "spot" && intent.Market != "usdm") || !instrumentPattern.MatchString(intent.Instrument) ||
 		(intent.Side != "buy" && intent.Side != "sell") || (intent.PositionEffect != "open" && intent.PositionEffect != "reduce") ||
 		intent.Market == "usdm" && quoteAmount.Sign() > 0 {
-		return sdk.ActionResult{}, errors.New("binance Paper order identity is invalid")
+		return sdk.ActionResult{}, errors.New("Binance Paper order identity is invalid")
 	}
 	if existing, ok, err := a.runtime.orderByClientID(ctx, intent.ClientOrderID); err != nil {
 		return sdk.ActionResult{}, err
 	} else if ok {
 		if !matchesOrderIntent(existing, "paper", intent.Account, intent.Market, intent.Instrument, intent.Side, intent.PositionEffect, intent.ClientOrderID, quantity, quoteAmount) {
-			return sdk.ActionResult{}, errors.New("binance clientOrderId belongs to a different order intent")
+			return sdk.ActionResult{}, errors.New("Binance clientOrderId belongs to a different order intent")
 		}
 		return sdk.ActionResult{Output: marshalOrder(existing)}, nil
 	}
 	workflowID, workflowErr := strconv.ParseInt(request.Revision.WorkflowID, 10, 64)
 	if workflowErr != nil || workflowID <= 0 || strings.TrimSpace(request.NodeInstanceID) == "" {
-		return sdk.ActionResult{}, errors.New("binance Paper workflow identity is invalid")
+		return sdk.ActionResult{}, errors.New("Binance Paper workflow identity is invalid")
 	}
 	requestedQuantity, requestedQuoteAmount := quantity, quoteAmount
-	quote, err := marketDataProvider(a).Quote(ctx, sdk.QuoteQuery{Market: intent.Market, Instrument: intent.Instrument})
+	quote, err := (marketDataProvider{runtime: a.runtime}).Quote(ctx, sdk.QuoteQuery{Market: intent.Market, Instrument: intent.Instrument})
 	if err != nil || quote.Price.Sign() <= 0 {
-		return sdk.ActionResult{}, errors.New("binance Paper quote is unavailable")
+		return sdk.ActionResult{}, errors.New("Binance Paper quote is unavailable")
 	}
 	if quantity.Sign() <= 0 {
 		quantity = quoteAmount.Div(quote.Price)
@@ -103,7 +103,7 @@ func (a paperExecuteAction) Execute(ctx context.Context, request sdk.ActionReque
 	}
 	notional := quantity.Mul(quote.Price)
 	if notional.Sign() <= 0 || notional.GreaterThan(maxOrder) {
-		return sdk.ActionResult{}, errors.New("binance Paper order exceeds the order notional limit")
+		return sdk.ActionResult{}, errors.New("Binance Paper order exceeds the order notional limit")
 	}
 	var stored tradingOrder
 	err = a.runtime.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -117,7 +117,7 @@ func (a paperExecuteAction) Execute(ctx context.Context, request sdk.ActionReque
 		}
 		var persistedOpening paperLedgerEntry
 		if err := tx.Where("operation_key = ? AND entry_type = 'opening_balance'", openingKey).First(&persistedOpening).Error; err != nil || persistedOpening.Account != intent.Account || !persistedOpening.Amount.Equal(initialBalance) {
-			return errors.New("binance Paper initial balance conflicts with the existing account")
+			return errors.New("Binance Paper initial balance conflicts with the existing account")
 		}
 		var position tradingPosition
 		positionErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("account = ? AND mode = 'paper' AND market = ? AND instrument = ?", intent.Account, intent.Market, strings.ToUpper(intent.Instrument)).First(&position).Error
@@ -130,14 +130,14 @@ func (a paperExecuteAction) Execute(ctx context.Context, request sdk.ActionReque
 		}
 		nextQuantity := position.Quantity.Add(delta)
 		if nextQuantity.Abs().Mul(quote.Price).GreaterThan(maxInstrument) {
-			return errors.New("binance Paper instrument notional limit exceeded")
+			return errors.New("Binance Paper instrument notional limit exceeded")
 		}
 		if intent.Market == "spot" && nextQuantity.Sign() < 0 {
-			return errors.New("binance Paper position is insufficient")
+			return errors.New("Binance Paper position is insufficient")
 		}
 		if intent.Market == "usdm" && intent.PositionEffect == "reduce" &&
 			(position.Quantity.IsZero() || position.Quantity.Sign() == delta.Sign() || nextQuantity.Sign() != 0 && nextQuantity.Sign() != position.Quantity.Sign()) {
-			return errors.New("binance Paper reduce order would increase or reverse the position")
+			return errors.New("Binance Paper reduce order would increase or reverse the position")
 		}
 		fee := notional.Mul(feeRate)
 		var cash decimal.Decimal
@@ -146,7 +146,7 @@ func (a paperExecuteAction) Execute(ctx context.Context, request sdk.ActionReque
 		}
 		if intent.Market == "spot" && intent.Side == "buy" && cash.LessThan(notional.Add(fee)) ||
 			intent.Market == "usdm" && cash.LessThan(fee) {
-			return errors.New("binance Paper cash balance is insufficient")
+			return errors.New("Binance Paper cash balance is insufficient")
 		}
 		now := time.Now().UTC()
 		stored = tradingOrder{WorkflowID: workflowID, NodeInstanceID: request.NodeInstanceID, Account: intent.Account, Market: strings.ToLower(intent.Market), Instrument: strings.ToUpper(intent.Instrument), ClientOrderID: intent.ClientOrderID, Side: strings.ToLower(intent.Side), RequestQuantity: requestedQuantity, RequestQuoteAmount: requestedQuoteAmount, PositionEffect: intent.PositionEffect, Quantity: quantity, Executed: quantity, AveragePrice: quote.Price, Notional: notional, Status: "filled", Mode: "paper", OperationKey: request.OperationKey, CreatedAt: now, UpdatedAt: now}
@@ -158,7 +158,7 @@ func (a paperExecuteAction) Execute(ctx context.Context, request sdk.ActionReque
 				return err
 			}
 			if !matchesOrderIntent(stored, "paper", intent.Account, intent.Market, intent.Instrument, intent.Side, intent.PositionEffect, intent.ClientOrderID, requestedQuantity, requestedQuoteAmount) {
-				return errors.New("binance clientOrderId belongs to a different order intent")
+				return errors.New("Binance clientOrderId belongs to a different order intent")
 			}
 			return nil
 		}

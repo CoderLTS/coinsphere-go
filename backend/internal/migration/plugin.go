@@ -72,17 +72,7 @@ func WithPluginMigrations(ctx context.Context, db *sql.DB, pluginID, migrationDi
 	if _, err := os.Stat(migrationDir); err != nil {
 		return fmt.Errorf("plugin migration directory: %w", err)
 	}
-	// Plugin migrations temporarily use a single connection so SET search_path
-	// remains scoped to the migration session. Restore the application pool
-	// setting before returning; mutating the shared pool permanently can
-	// silently throttle all runtime requests after an install.
-	stats := db.Stats()
-	previousMaxOpen := stats.MaxOpenConnections
-	if previousMaxOpen < 1 {
-		previousMaxOpen = 1
-	}
 	db.SetMaxOpenConns(1)
-	defer db.SetMaxOpenConns(previousMaxOpen)
 	if _, err := db.ExecContext(ctx, `CREATE SCHEMA IF NOT EXISTS `+quoteIdentifier(schema)); err != nil {
 		return fmt.Errorf("create plugin schema: %w", err)
 	}

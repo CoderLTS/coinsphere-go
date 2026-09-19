@@ -1,6 +1,17 @@
 <!-- 通用组件：widget/ArtUserMenu。 -->
 <template>
+  <div v-if="isGuest" class="guest-entry">
+    <div class="guest-chip">
+      <img class="guest-chip__avatar" :src="userAvatar" alt="游客头像" />
+      <span>{{ $t('topBar.user.guest') }}</span>
+    </div>
+    <ElButton text class="guest-entry__login" @click="goLogin">
+      {{ $t('topBar.user.toLogin') }}
+    </ElButton>
+  </div>
+
   <ElPopover
+    v-else
     ref="userMenuPopover"
     placement="bottom-end"
     :width="240"
@@ -77,6 +88,7 @@
   const { getUserInfo: userInfo } = storeToRefs(userStore)
   const userMenuPopover = ref()
   const userAvatar = computed(() => userInfo.value.avatar || defaultAvatar)
+  const isGuest = computed(() => userInfo.value.accessMode === 'guest')
 
   /**
    * 页面跳转
@@ -84,6 +96,18 @@
    */
   const goPage = (path: string): void => {
     router.push(path)
+  }
+
+  /**
+   * 跳转到登录页，登录后优先回到当前页面。
+   */
+  const goLogin = (): void => {
+    router.push({
+      name: 'Login',
+      query: router.currentRoute.value.fullPath
+        ? { redirect: router.currentRoute.value.fullPath }
+        : undefined
+    })
   }
 
   /**
@@ -137,6 +161,18 @@
   @reference '@styles/core/tailwind.css';
 
   @layer components {
+    .guest-entry {
+      @apply flex items-center mr-5 gap-2 max-sm:mr-[16px];
+    }
+
+    .guest-chip {
+      @apply inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-g-300/80 bg-white/90 text-xs text-g-700;
+    }
+
+    .guest-chip__avatar {
+      @apply w-6 h-6 rounded-full;
+    }
+
     .btn-item {
       @apply flex items-center p-2 mb-3 select-none rounded-md cursor-pointer last:mb-0;
 
@@ -165,5 +201,11 @@
     transition-all
     duration-200
     hover:shadow-xl;
+  }
+
+  .guest-entry__login {
+    --el-button-text-color: var(--main-color);
+    --el-button-hover-text-color: var(--main-color);
+    --el-button-hover-bg-color: transparent;
   }
 </style>

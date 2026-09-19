@@ -49,7 +49,7 @@ type quantBacktestCandleCache struct {
 
 func (a quantWorkflowBacktestAction) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
 	if request.Frames == nil {
-		return sdk.ActionResult{}, errors.New("quant backtest frame executor is unavailable")
+		return sdk.ActionResult{}, errors.New("Quant backtest frame executor is unavailable")
 	}
 	series, err := resolveQuantMarketProfile(ctx, request.Profiles, request.ProfileBindings, "market")
 	if err != nil {
@@ -67,7 +67,7 @@ func (a quantWorkflowBacktestAction) Execute(ctx context.Context, request sdk.Ac
 	if startErr != nil || endErr != nil || !start.Before(end) || capitalErr != nil || capital.Sign() <= 0 ||
 		feeErr != nil || feeRate.Sign() < 0 || feeRate.GreaterThan(quantOne) ||
 		slippageErr != nil || slippageRate.Sign() < 0 || slippageRate.GreaterThan(quantOne) {
-		return sdk.ActionResult{}, errors.New("quant workflow backtest parameters are invalid")
+		return sdk.ActionResult{}, errors.New("Quant workflow backtest parameters are invalid")
 	}
 	if existing, ok, err := a.runtime.loadQuantBacktestByOperation(ctx, request.OperationKey); err != nil {
 		return sdk.ActionResult{}, err
@@ -79,10 +79,10 @@ func (a quantWorkflowBacktestAction) Execute(ctx context.Context, request sdk.Ac
 		return sdk.ActionResult{}, err
 	}
 	if len(candles) > 1_000_000 {
-		return sdk.ActionResult{}, errors.New("quant workflow backtest exceeds the 1,000,000 candle limit")
+		return sdk.ActionResult{}, errors.New("Quant workflow backtest exceeds the 1,000,000 candle limit")
 	}
 	if len(candles) < 2 {
-		return sdk.ActionResult{}, errors.New("quant workflow backtest requires at least two candles")
+		return sdk.ActionResult{}, errors.New("Quant workflow backtest requires at least two candles")
 	}
 	cacheKey := quantCandleSeriesKey(series)
 	cache := &quantBacktestCandleCache{
@@ -109,7 +109,7 @@ func (a quantWorkflowBacktestAction) Execute(ctx context.Context, request sdk.Ac
 	workflowID, workflowErr := quantInt64(request.Revision.WorkflowID)
 	revisionID, revisionErr := quantInt64(request.Revision.RevisionID)
 	if workflowErr != nil || revisionErr != nil {
-		return sdk.ActionResult{}, errors.New("quant workflow backtest identity is invalid")
+		return sdk.ActionResult{}, errors.New("Quant workflow backtest identity is invalid")
 	}
 	parameters, _ := json.Marshal(profile)
 	manifest, _ := json.Marshal(map[string]any{
@@ -147,7 +147,7 @@ func (c *quantBacktestCandleCache) candlesThroughClose(ctx context.Context, runt
 	if c.lookbacks[key] < limit {
 		available := 1_000_000 - (c.total - len(candles))
 		if available < 1 {
-			return nil, errors.New("quant workflow backtest exceeds the 1,000,000 candle limit")
+			return nil, errors.New("Quant workflow backtest exceeds the 1,000,000 candle limit")
 		}
 		duration := quantIntervals[config.Interval]
 		lowerBound := c.start.Add(-duration * time.Duration(limit+2))
@@ -156,7 +156,7 @@ func (c *quantBacktestCandleCache) candlesThroughClose(ctx context.Context, runt
 			return nil, err
 		}
 		if len(loaded) > available {
-			return nil, errors.New("quant workflow backtest exceeds the 1,000,000 candle limit")
+			return nil, errors.New("Quant workflow backtest exceeds the 1,000,000 candle limit")
 		}
 		c.total += len(loaded) - len(candles)
 		c.series[key] = loaded
@@ -200,7 +200,7 @@ func executeQuantWorkflowBacktest(ctx context.Context, frames sdk.FrameExecutor,
 			}
 			candidate, err := decimal.NewFromString(signal.TargetPosition)
 			if err != nil || !nextTarget.Equal(target) && !nextTarget.Equal(candidate) {
-				return quantWorkflowBacktestSimulation{}, fmt.Errorf("quant workflow signal conflict at %s", current.CloseTime.UTC().Format(time.RFC3339Nano))
+				return quantWorkflowBacktestSimulation{}, fmt.Errorf("Quant workflow signal conflict at %s", current.CloseTime.UTC().Format(time.RFC3339Nano))
 			}
 			nextTarget, action = candidate, signal.Action
 		}
@@ -223,7 +223,7 @@ func executeQuantWorkflowBacktest(ctx context.Context, frames sdk.FrameExecutor,
 		}
 		equity := cash.Add(quantity.Mul(next.Close))
 		if equity.Sign() < 0 {
-			return quantWorkflowBacktestSimulation{}, errors.New("quant workflow backtest equity was depleted")
+			return quantWorkflowBacktestSimulation{}, errors.New("Quant workflow backtest equity was depleted")
 		}
 		if equity.GreaterThan(peak) {
 			peak = equity

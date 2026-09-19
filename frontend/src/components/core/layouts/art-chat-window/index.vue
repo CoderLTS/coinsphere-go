@@ -636,9 +636,9 @@
   .assistant-message__bubble {
     max-width: 100%;
     padding: 12px 14px;
+    overflow-wrap: anywhere;
     font-size: 13px;
     line-height: 1.7;
-    overflow-wrap: anywhere;
     white-space: pre-wrap;
     background: var(--el-fill-color-light);
     border-radius: 16px;
@@ -857,7 +857,6 @@
       opacity: 0.35;
       transform: scale(0.82);
     }
-
     40% {
       opacity: 1;
       transform: scale(1);
