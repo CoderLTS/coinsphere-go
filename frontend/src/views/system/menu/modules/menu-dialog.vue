@@ -82,9 +82,6 @@
             </ElFormItem>
           </ElCol>
         </ElRow>
-        <ElFormItem label="外部链接" prop="link">
-          <ElInput v-model.trim="form.link" placeholder="如：https://example.com" />
-        </ElFormItem>
         <ElFormItem label="激活路径" prop="activePath">
           <ElInput v-model.trim="form.activePath" placeholder="用于隐藏详情页高亮父菜单" />
         </ElFormItem>
@@ -102,9 +99,6 @@
         <ElRow :gutter="16">
           <ElCol :span="8"
             ><ElFormItem label="隐藏标签"><ElSwitch v-model="form.isHideTab" /></ElFormItem
-          ></ElCol>
-          <ElCol :span="8"
-            ><ElFormItem label="内嵌页面"><ElSwitch v-model="form.isIframe" /></ElFormItem
           ></ElCol>
           <ElCol :span="8"
             ><ElFormItem label="固定标签"><ElSwitch v-model="form.fixedTab" /></ElFormItem
@@ -141,10 +135,7 @@
           <ElInput v-model.trim="form.i18nTexts.en" placeholder="请输入英文文案" />
         </ElFormItem>
         <ElFormItem label="权限码" prop="permissionCode">
-          <ElInput
-            v-model.trim="form.permissionCode"
-            placeholder="如：scheduler.workflow_definitions.view"
-          />
+          <ElInput v-model.trim="form.permissionCode" placeholder="如：system.user.view" />
         </ElFormItem>
         <ElFormItem label="角色范围" prop="roleCodes">
           <ElSelect v-model="form.roleCodes" multiple filterable placeholder="请选择角色">
@@ -192,8 +183,6 @@
     keepAlive: boolean
     isHide: boolean
     isHideTab: boolean
-    link: string
-    isIframe: boolean
     badgeText: string
     fixedTab: boolean
     activePath: string
@@ -244,8 +233,6 @@
     keepAlive: false,
     isHide: false,
     isHideTab: false,
-    link: '',
-    isIframe: false,
     badgeText: '',
     fixedTab: false,
     activePath: '',
@@ -373,8 +360,6 @@
       keepAlive: false,
       isHide: false,
       isHideTab: false,
-      link: '',
-      isIframe: false,
       badgeText: '',
       fixedTab: false,
       activePath: '',
@@ -415,8 +400,6 @@
         keepAlive: row.meta?.keepAlive ?? false,
         isHide: row.meta?.isHide ?? false,
         isHideTab: row.meta?.isHideTab ?? false,
-        link: row.meta?.link || '',
-        isIframe: row.meta?.isIframe ?? false,
         badgeText: row.meta?.showTextBadge || '',
         fixedTab: row.meta?.fixedTab ?? false,
         activePath: row.meta?.activePath || '',

@@ -4,32 +4,36 @@
       <div class="results-header__identity">
         <span><ArtSvgIcon icon="ri:file-chart-line" /></span>
         <div>
-          <p>Shared results</p>
-          <h1>共享结果</h1>
+          <p>{{ t('results.eyebrow') }}</p>
+          <h1>{{ t('results.title') }}</h1>
         </div>
       </div>
       <div class="results-header__actions">
-        <ElButton circle title="刷新" :loading="loading" @click="loadViews">
+        <ElButton circle :title="t('results.refresh')" :loading="loading" @click="loadViews">
           <ArtSvgIcon icon="ri:refresh-line" />
         </ElButton>
         <ElButton v-if="isAdmin" type="primary" @click="openCreate">
           <ArtSvgIcon icon="ri:add-line" />
-          创建视图
+          {{ t('results.create') }}
         </ElButton>
       </div>
     </header>
 
     <div class="results-mobile-select">
-      <ElSelect :model-value="selectedView?.id" placeholder="选择结果视图" @change="selectById">
+      <ElSelect
+        :model-value="selectedView?.id"
+        :placeholder="t('results.selectPlaceholder')"
+        @change="selectById"
+      >
         <ElOption v-for="view in activeViews" :key="view.id" :label="view.name" :value="view.id" />
       </ElSelect>
     </div>
 
     <main v-loading="loading" class="results-layout">
-      <aside class="results-rail" aria-label="共享结果视图">
+      <aside class="results-rail" :aria-label="t('results.ariaLabel')">
         <div class="results-rail__heading">
-          <span>结果视图</span>
-          <small>{{ activeViews.length }} active</small>
+          <span>{{ t('results.title') }}</span>
+          <small>{{ t('results.activeCount', { count: activeViews.length }) }}</small>
         </div>
         <div class="results-rail__list">
           <button
@@ -47,12 +51,14 @@
               <strong>{{ view.name }}</strong>
               <small>{{ pageLabel(view) }}</small>
             </span>
-            <ElTag v-if="view.status === 'revoked'" type="info" effect="plain" size="small"
-              >撤销</ElTag
-            >
+            <ElTag v-if="view.status === 'revoked'" type="info" effect="plain" size="small">{{
+              t('results.revoked')
+            }}</ElTag>
             <ArtSvgIcon v-else icon="ri:arrow-right-s-line" />
           </button>
-          <div v-if="!views.length" class="results-rail__empty">暂无获授权结果</div>
+          <div v-if="!views.length" class="results-rail__empty">{{
+            t('results.emptyAuthorized')
+          }}</div>
         </div>
       </aside>
 
@@ -63,10 +69,16 @@
             <small>{{ formatTime(selectedView.createdAt) }}</small>
           </div>
           <div v-if="isAdmin" class="results-stage__commands">
-            <ElButton circle title="管理授权" @click="openGrants(selectedView)">
+            <ElButton circle :title="t('results.manageGrants')" @click="openGrants(selectedView)">
               <ArtSvgIcon icon="ri:user-shared-line" />
             </ElButton>
-            <ElButton circle title="撤销视图" type="danger" plain @click="revoke(selectedView)">
+            <ElButton
+              circle
+              :title="t('results.revokeView')"
+              type="danger"
+              plain
+              @click="revoke(selectedView)"
+            >
               <ArtSvgIcon icon="ri:stop-circle-line" />
             </ElButton>
           </div>
@@ -79,58 +91,47 @@
         />
         <div v-else class="results-stage__empty">
           <ArtSvgIcon icon="ri:file-chart-line" />
-          <strong>{{ views.length ? '选择一个可用结果视图' : '暂无共享结果' }}</strong>
+          <strong>{{ views.length ? t('results.selectAvailable') : t('results.empty') }}</strong>
         </div>
       </section>
     </main>
 
-    <ElDialog v-model="createVisible" title="创建共享结果视图" width="min(620px, 94vw)">
+    <ElDialog
+      v-model="createVisible"
+      :title="t('results.createDialogTitle')"
+      width="min(620px, 94vw)"
+    >
       <ElForm label-position="top">
         <div class="dialog-grid">
-          <ElFormItem label="名称">
+          <ElFormItem :label="t('results.name')">
             <ElInput v-model="createForm.name" maxlength="120" show-word-limit />
           </ElFormItem>
-          <ElFormItem label="工作流">
-            <ElSelect v-model="createForm.workflowId" filterable @change="loadWorkflowNodes">
+          <ElFormItem :label="t('results.resultPage')">
+            <ElSelect v-model="createForm.pageRef" filterable>
               <ElOption
-                v-for="workflow in workflowOptions"
-                :key="workflow.id"
-                :label="workflow.name"
-                :value="workflow.id"
+                v-for="page in resultPages"
+                :key="`${page.pluginId}/${page.pageKey}`"
+                :label="`${page.pluginId} / ${page.title || page.pageKey}`"
+                :value="`${page.pluginId}/${page.pageKey}`"
               />
             </ElSelect>
           </ElFormItem>
         </div>
-        <ElFormItem label="市场">
-          <ElSegmented v-model="createForm.market" :options="marketOptions" />
+        <ElFormItem :label="t('results.scope')">
+          <ElInput v-model="createForm.scopeText" type="textarea" :rows="3" />
         </ElFormItem>
-        <div class="dialog-grid">
-          <ElFormItem label="Paper 节点">
-            <ElSelect v-model="createForm.paperNodeInstanceId" filterable allow-create>
-              <ElOption v-for="node in paperNodes" :key="node" :label="node" :value="node" />
-            </ElSelect>
-          </ElFormItem>
-          <ElFormItem label="品种过滤">
-            <ElInput v-model="createForm.instrument" maxlength="32" />
-          </ElFormItem>
-          <ElFormItem label="状态过滤">
-            <ElSelect v-model="createForm.status" clearable>
-              <ElOption label="待成交" value="new" />
-              <ElOption label="部分成交" value="partially_filled" />
-              <ElOption label="已成交" value="filled" />
-              <ElOption label="已撤单" value="canceled" />
-              <ElOption label="已拒绝" value="rejected" />
-              <ElOption label="已过期" value="expired" />
-            </ElSelect>
-          </ElFormItem>
-        </div>
-        <ElFormItem label="允许操作">
+        <ElFormItem :label="t('results.filters')">
+          <ElInput v-model="createForm.filtersText" type="textarea" :rows="3" />
+        </ElFormItem>
+        <ElFormItem :label="t('results.allowedActions')">
           <ElCheckboxGroup v-model="createForm.allowedActions">
-            <ElCheckbox value="export">导出</ElCheckbox>
+            <ElCheckbox v-for="action in selectedPage?.actions || []" :key="action" :value="action">
+              {{ action }}
+            </ElCheckbox>
           </ElCheckboxGroup>
         </ElFormItem>
         <div class="dialog-grid">
-          <ElFormItem label="授权用户">
+          <ElFormItem :label="t('results.users')">
             <ElSelect v-model="createForm.userIds" multiple filterable collapse-tags>
               <ElOption
                 v-for="user in userOptions"
@@ -140,7 +141,7 @@
               />
             </ElSelect>
           </ElFormItem>
-          <ElFormItem label="授权角色">
+          <ElFormItem :label="t('results.roles')">
             <ElSelect v-model="createForm.roleCodes" multiple filterable collapse-tags>
               <ElOption
                 v-for="role in roleOptions"
@@ -153,16 +154,20 @@
         </div>
       </ElForm>
       <template #footer>
-        <ElButton @click="createVisible = false">取消</ElButton>
+        <ElButton @click="createVisible = false">{{ t('results.cancel') }}</ElButton>
         <ElButton type="primary" :loading="saving" :disabled="!canCreate" @click="submitCreate">
-          创建视图
+          {{ t('results.createView') }}
         </ElButton>
       </template>
     </ElDialog>
 
-    <ElDialog v-model="grantsVisible" title="管理视图授权" width="min(520px, 94vw)">
+    <ElDialog
+      v-model="grantsVisible"
+      :title="t('results.grantDialogTitle')"
+      width="min(520px, 94vw)"
+    >
       <ElForm label-position="top">
-        <ElFormItem label="授权用户">
+        <ElFormItem :label="t('results.users')">
           <ElSelect v-model="grantForm.userIds" multiple filterable collapse-tags>
             <ElOption
               v-for="user in userOptions"
@@ -172,7 +177,7 @@
             />
           </ElSelect>
         </ElFormItem>
-        <ElFormItem label="授权角色">
+        <ElFormItem :label="t('results.roles')">
           <ElSelect v-model="grantForm.roleCodes" multiple filterable collapse-tags>
             <ElOption
               v-for="role in roleOptions"
@@ -184,8 +189,10 @@
         </ElFormItem>
       </ElForm>
       <template #footer>
-        <ElButton @click="grantsVisible = false">取消</ElButton>
-        <ElButton type="primary" :loading="saving" @click="submitGrants">保存授权</ElButton>
+        <ElButton @click="grantsVisible = false">{{ t('results.cancel') }}</ElButton>
+        <ElButton type="primary" :loading="saving" @click="submitGrants">
+          {{ t('results.saveGrants') }}
+        </ElButton>
       </template>
     </ElDialog>
   </div>
@@ -194,25 +201,23 @@
 <script setup lang="ts">
   import type { Component } from 'vue'
   import { ElMessageBox } from 'element-plus'
+  import { useI18n } from 'vue-i18n'
   import {
     createResultView,
+    fetchResultPages,
     fetchResultViews,
     replaceResultViewGrants,
     revokeResultView,
+    type ResultPageDescriptor,
     type ResultView
   } from '@/api/resultViews'
   import { fetchGetRoleList, fetchGetUserList } from '@/api/system'
-  import {
-    fetchWorkflowRevision,
-    fetchWorkflows,
-    type WorkflowGraphNode,
-    type WorkflowItem
-  } from '@/api/workflows'
   import { registeredFrontendPlugins } from '@/plugins'
   import { useUserStore } from '@/store/modules/user'
   import { formatDateTime as formatTime } from '@/utils/date'
 
   defineOptions({ name: 'Results' })
+  const { t } = useI18n()
 
   const userStore = useUserStore()
   const isAdmin = computed(() => userStore.info.roleCodes.includes('R_SUPER'))
@@ -221,25 +226,17 @@
   const resultComponent = shallowRef<Component>()
   const userOptions = ref<Api.System.UserListItem[]>([])
   const roleOptions = ref<Api.System.RoleListItem[]>([])
-  const workflowOptions = ref<WorkflowItem[]>([])
-  const paperNodes = ref<string[]>([])
-  const paperPluginId = ref('')
+  const resultPages = ref<ResultPageDescriptor[]>([])
   const loading = ref(false)
   const saving = ref(false)
   const createVisible = ref(false)
   const grantsVisible = ref(false)
   const grantViewId = ref<number>()
-  const marketOptions = [
-    { label: 'Spot', value: 'spot' },
-    { label: 'USD-M', value: 'usdm' }
-  ]
   const createForm = reactive({
     name: '',
-    workflowId: 1,
-    market: 'spot' as 'spot' | 'usdm',
-    instrument: 'BTCUSDT',
-    status: '',
-    paperNodeInstanceId: 'paper',
+    pageRef: '',
+    scopeText: '{}',
+    filtersText: '{}',
     allowedActions: ['export'],
     userIds: [] as number[],
     roleCodes: ['R_USER'] as string[]
@@ -249,10 +246,11 @@
   const canCreate = computed(() =>
     Boolean(
       createForm.name.trim() &&
-        workflowOptions.value.some((workflow) => workflow.id === createForm.workflowId) &&
-        createForm.paperNodeInstanceId.trim() &&
-        paperPluginId.value
+        resultPages.value.some((page) => `${page.pluginId}/${page.pageKey}` === createForm.pageRef)
     )
+  )
+  const selectedPage = computed(() =>
+    resultPages.value.find((page) => `${page.pluginId}/${page.pageKey}` === createForm.pageRef)
   )
 
   const pageLabel = (view: ResultView) => `${view.pluginId} / ${view.pageKey}`
@@ -273,7 +271,7 @@
       await loadComponent(view)
     } catch {
       resultComponent.value = undefined
-      ElMessage.error('结果页加载失败')
+      ElMessage.error(t('results.loadFailed'))
     }
   }
   const selectById = (viewId: number) => {
@@ -283,7 +281,7 @@
   const loadViews = async () => {
     loading.value = true
     try {
-      views.value = (await fetchResultViews()).items.filter((view) => view.pageKey === 'paper')
+      views.value = (await fetchResultViews()).items
       const next =
         activeViews.value.find((view) => view.id === selectedView.value?.id) || activeViews.value[0]
       selectedView.value = undefined
@@ -294,57 +292,40 @@
     }
   }
   const loadGrantOptions = async () => {
-    if (!isAdmin.value || workflowOptions.value.length) return
-    const [users, roles, workflows] = await Promise.all([
+    if (!isAdmin.value || userOptions.value.length) return
+    const [users, roles] = await Promise.all([
       fetchGetUserList({ limit: 200 }),
-      fetchGetRoleList({ limit: 200 }),
-      fetchWorkflows()
+      fetchGetRoleList({ limit: 200 })
     ])
     userOptions.value = users.records
     roleOptions.value = roles.records
-    workflowOptions.value = workflows.items
-    if (!workflowOptions.value.some((workflow) => workflow.id === createForm.workflowId)) {
-      createForm.workflowId = workflowOptions.value[0]?.id || 1
+    resultPages.value = (await fetchResultPages()).items
+    if (!createForm.pageRef && resultPages.value[0]) {
+      createForm.pageRef = `${resultPages.value[0].pluginId}/${resultPages.value[0].pageKey}`
     }
-    await loadWorkflowNodes(createForm.workflowId)
-  }
-  const nodesOfType = (nodes: WorkflowGraphNode[], suffix: string) =>
-    nodes
-      .filter((node) => node.nodeType.split('.').at(-1) === suffix)
-      .map((node) => node.nodeInstanceId)
-  const pluginIDForNode = (nodes: WorkflowGraphNode[], nodeID: string) => {
-    const type = nodes.find((node) => node.nodeInstanceId === nodeID)?.nodeType || ''
-    const parts = type.split('.')
-    return parts.length >= 2 ? parts.slice(0, 2).join('.') : ''
-  }
-  const loadWorkflowNodes = async (workflowId: number) => {
-    const workflow = workflowOptions.value.find((item) => item.id === workflowId)
-    if (!workflow) return
-    const revision = await fetchWorkflowRevision(workflow.id, workflow.activeRevisionId)
-    paperNodes.value = nodesOfType(revision.graph.nodes, 'paper_execute')
-    createForm.paperNodeInstanceId = paperNodes.value[0] || createForm.paperNodeInstanceId
-    paperPluginId.value = pluginIDForNode(revision.graph.nodes, createForm.paperNodeInstanceId)
   }
   const openCreate = async () => {
     await loadGrantOptions()
     createVisible.value = true
   }
   const submitCreate = async () => {
-    const scope = {
-      workflowId: createForm.workflowId,
-      paperNodeInstanceId: createForm.paperNodeInstanceId.trim()
+    const page = selectedPage.value
+    if (!page) return
+    let scope: Record<string, unknown>
+    let filters: Record<string, unknown>
+    try {
+      scope = JSON.parse(createForm.scopeText) as Record<string, unknown>
+      filters = JSON.parse(createForm.filtersText) as Record<string, unknown>
+    } catch {
+      ElMessage.error(t('results.invalidJson'))
+      return
     }
-    const filters: Record<string, string> = {}
-    filters.market = createForm.market
-    if (createForm.instrument.trim())
-      filters.instrument = createForm.instrument.trim().toUpperCase()
-    if (createForm.status) filters.status = createForm.status
     saving.value = true
     try {
       const created = await createResultView({
         name: createForm.name.trim(),
-        pluginId: paperPluginId.value,
-        pageKey: 'paper',
+        pluginId: page.pluginId,
+        pageKey: page.pageKey,
         scope,
         filters,
         allowedActions: [...createForm.allowedActions],
@@ -382,9 +363,9 @@
     }
   }
   const revoke = async (view: ResultView) => {
-    await ElMessageBox.confirm('撤销后所有普通用户立即失去访问权限。', '撤销结果视图', {
-      confirmButtonText: '撤销',
-      cancelButtonText: '取消',
+    await ElMessageBox.confirm(t('results.revokeConfirm'), t('results.revokeTitle'), {
+      confirmButtonText: t('results.revoked'),
+      cancelButtonText: t('results.cancel'),
       type: 'warning'
     })
     await revokeResultView(view.id)
@@ -392,6 +373,12 @@
   }
 
   onMounted(loadViews)
+  watch(
+    () => createForm.pageRef,
+    () => {
+      createForm.allowedActions = [...(selectedPage.value?.actions || [])]
+    }
+  )
 </script>
 
 <style scoped>

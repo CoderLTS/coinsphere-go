@@ -1,4 +1,4 @@
-// Package db owns the PostgreSQL models used by the V2 application baseline.
+// Package db owns the PostgreSQL models used by the Core4 application baseline.
 package db
 
 import "time"
@@ -63,7 +63,6 @@ type SystemMenu struct {
 	Title          string      `gorm:"size:100"`
 	Icon           string      `gorm:"size:100"`
 	MenuType       string      `gorm:"size:20;default:menu"`
-	ExternalURL    string      `gorm:"column:external_url;size:500"`
 	ActiveMenuPath string      `gorm:"size:255"`
 	Sort           int         `gorm:"default:0"`
 	KeepAlive      bool        `gorm:"default:false"`
@@ -71,7 +70,6 @@ type SystemMenu struct {
 	IsHideTab      bool        `gorm:"default:false"`
 	IsFullScreen   bool        `gorm:"default:false"`
 	IsActive       bool        `gorm:"default:true"`
-	UseIframe      bool        `gorm:"default:false"`
 	FixedTab       bool        `gorm:"default:false"`
 	BadgeLabel     string      `gorm:"size:50"`
 	CreatedAt      time.Time
@@ -562,7 +560,7 @@ type WorkflowWait struct {
 
 func (WorkflowWait) TableName() string { return "workflow_waits" }
 
-type WorkflowConnection struct {
+type WorkflowProfileSnapshot struct {
 	ID                string `gorm:"primaryKey"`
 	Name              string
 	Type              string
@@ -575,15 +573,15 @@ type WorkflowConnection struct {
 	UpdatedAt         time.Time
 }
 
-func (WorkflowConnection) TableName() string { return "workflow_connections" }
+func (WorkflowProfileSnapshot) TableName() string { return "workflow_profile_snapshots" }
 
-type WorkflowRunConnection struct {
+type WorkflowRunProfileSnapshot struct {
 	RunID             int64  `gorm:"primaryKey"`
 	NodeInstanceID    string `gorm:"primaryKey"`
-	ConnectionID      string
+	ProfileID         string
 	Version           int64
 	ConfigJSON        string `gorm:"type:jsonb"`
 	SecretsCiphertext string
 }
 
-func (WorkflowRunConnection) TableName() string { return "workflow_run_connections" }
+func (WorkflowRunProfileSnapshot) TableName() string { return "workflow_run_profile_snapshots" }

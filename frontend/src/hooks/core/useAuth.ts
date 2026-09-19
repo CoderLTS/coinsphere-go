@@ -1,7 +1,6 @@
 /** 组合式函数模块：useAuth。 */
 import { storeToRefs } from 'pinia'
 import { useRoute } from 'vue-router'
-import { useAppMode } from '@/hooks/core/useAppMode'
 import { useUserStore } from '@/store/modules/user'
 import type { AppRouteRecord } from '@/types/router'
 
@@ -11,7 +10,6 @@ const userStore = useUserStore()
 
 export const useAuth = () => {
   const route = useRoute()
-  const { isFrontendMode } = useAppMode()
   const { info } = storeToRefs(userStore)
 
   const frontendPermissions = info.value?.permissions ?? []
@@ -20,11 +18,12 @@ export const useAuth = () => {
     : []
 
   const hasAuth = (permissionCode: string): boolean => {
-    if (isFrontendMode.value) {
-      return frontendPermissions.includes(permissionCode)
-    }
-
-    return backendActionList.some((item) => item?.permissionCode === permissionCode)
+    if (permissionCode === 'R_SUPER') return info.value.roleCodes.includes('R_SUPER')
+    return (
+      info.value.roleCodes.includes('R_SUPER') ||
+      frontendPermissions.includes(permissionCode) ||
+      backendActionList.some((item) => item?.permissionCode === permissionCode)
+    )
   }
 
   return {

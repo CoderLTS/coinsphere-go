@@ -36,8 +36,70 @@ jobs:
           test -z "$unformatted" || { printf '%s\n' "$unformatted"; exit 1; }
       - name: Vet
         run: go vet ./...
+      - name: Staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
+      - name: Vulnerability scan
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+      - name: Test
+        run: go test ./...
       - name: Build
         run: go build ./...
+
+  migration:
+    name: PostgreSQL 16 migration and transfer
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: coinsphere
+          POSTGRES_PASSWORD: coinsphere
+          POSTGRES_DB: coinsphere
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U coinsphere -d coinsphere"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Apply Core4 baseline
+        env:
+          COINSPHERE_AUTH__SECRET_KEY: ci-only-secret
+          COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD: ci-only-password
+        run: |
+          cat > /tmp/coinsphere-ci.yml <<'EOF'
+          database:
+            dsn: postgres://coinsphere:coinsphere@127.0.0.1:5432/coinsphere?sslmode=disable
+          auth:
+            secret_key: ci-only-secret
+            bootstrap_admin_password: ci-only-password
+          EOF
+          go run ./cmd/migrate --config /tmp/coinsphere-ci.yml
+      - name: Verify export and atomic import interface
+        env:
+          COINSPHERE_AUTH__SECRET_KEY: ci-only-secret
+          COINSPHERE_AUTH__BOOTSTRAP_ADMIN_PASSWORD: ci-only-password
+        run: |
+          cat > /tmp/coinsphere-transfer.json <<'EOF'
+          {"schemaVersion":1,"exportedAt":"2026-01-01T00:00:00Z","groups":[],"workflows":[]}
+          EOF
+          go run ./cmd/coinsphere workflow import-v3 --config /tmp/coinsphere-ci.yml --in /tmp/coinsphere-transfer.json --report /tmp/coinsphere-report.json
+          go run ./cmd/coinsphere workflow export-legacy --config /tmp/coinsphere-ci.yml --out /tmp/coinsphere-export.json
+          test -s /tmp/coinsphere-report.json
+          test -s /tmp/coinsphere-export.json
 
   frontend:
     name: Vue frontend
@@ -63,5 +125,7 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Lint
         run: pnpm lint
+      - name: Stylelint
+        run: pnpm lint:stylelint
       - name: Type check and build
         run: pnpm build

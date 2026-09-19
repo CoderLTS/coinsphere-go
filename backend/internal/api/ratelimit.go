@@ -34,7 +34,6 @@ func newRateLimiter(limitPerMinute int) *rateLimiter {
 }
 
 // allow 记录一次访问:窗口内首次或窗口已过则重置计数并放行;否则计数 +1,超过上限返回 false。
-// 用 mu 加锁保证多 goroutine(每个请求一个)并发读写 counts 时安全。见 GO入门笔记『并发』。
 func (rl *rateLimiter) allow(key string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()

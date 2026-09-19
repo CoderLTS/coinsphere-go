@@ -185,7 +185,7 @@ func quantMarketSignalQueryTime(r *http.Request, key string) (time.Time, bool, e
 	}
 	value, err := parseQuantUTCTime(raw)
 	if err != nil {
-		return time.Time{}, false, errors.New("Quant market signal time must use RFC3339 UTC")
+		return time.Time{}, false, errors.New("quant market signal time must use RFC3339 UTC")
 	}
 	return value, true, nil
 }

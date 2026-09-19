@@ -96,11 +96,6 @@ export default ({ mode }: { mode: string }) => {
         'echarts/charts',
         'echarts/components',
         'echarts/renderers',
-        'xlsx',
-        'xgplayer',
-        'crypto-js',
-        'file-saver',
-        'vue-img-cutter',
         'element-plus/es',
         'element-plus/es/components/*/style/css',
         'element-plus/es/components/*/style/index'

@@ -130,23 +130,26 @@
 
 <style scoped>
   .profile-bindings {
-    border-top: 1px solid var(--el-border-color-lighter);
     padding-top: 4px;
+    border-top: 1px solid var(--el-border-color-lighter);
   }
+
   .profile-bindings__title {
     margin: 18px 0 12px;
     font-size: 13px;
     font-weight: 600;
   }
+
   .profile-bindings__summary {
     margin-top: 4px;
-    color: var(--el-text-color-secondary);
     font-size: 12px;
     line-height: 1.5;
+    color: var(--el-text-color-secondary);
   }
+
   .profile-bindings__option-summary {
     display: block;
-    color: var(--el-text-color-secondary);
     font-size: 11px;
+    color: var(--el-text-color-secondary);
   }
 </style>

@@ -32,7 +32,7 @@ type binanceCandleBackfillAction struct{ runtime *binanceRuntime }
 func (t binanceCandleRealtimeTrigger) Run(ctx context.Context, request sdk.TriggerRequest, emitter sdk.Emitter) error {
 	ref, ok := request.ProfileBindings["market"]
 	if !ok {
-		return errors.New("Binance realtime trigger requires a market profile")
+		return errors.New("binance realtime trigger requires a market profile")
 	}
 	profile, err := resolveMarketDataProfile(ctx, request.Profiles, ref)
 	if err != nil {
@@ -53,7 +53,7 @@ func (a binanceCandleBackfillAction) Execute(ctx context.Context, request sdk.Ac
 	now := time.Now().UTC()
 	ref, ok := request.ProfileBindings["market"]
 	if !ok {
-		return sdk.ActionResult{}, errors.New("Binance candle backfill requires a market profile")
+		return sdk.ActionResult{}, errors.New("binance candle backfill requires a market profile")
 	}
 	profile, err := resolveMarketDataProfile(ctx, request.Profiles, ref)
 	if err != nil {
@@ -203,7 +203,7 @@ func (h *binanceCandleHub) run(key string, subscription *binanceCandleSubscripti
 		}
 		select {
 		case <-subscription.ctx.Done():
-			break
+			return
 		case <-time.After(time.Second):
 		}
 	}
@@ -505,7 +505,7 @@ func (q *binanceRuntime) streamBinanceCandles(ctx context.Context, subscription 
 			}
 		}
 		if envelope.Code != nil {
-			return errors.New("Binance WebSocket subscription rejected")
+			return errors.New("binance WebSocket subscription rejected")
 		}
 		if envelope.Stream == "" {
 			if envelope.ID == nil {

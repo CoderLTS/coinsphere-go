@@ -570,6 +570,17 @@ func (r *Registry) PluginNodes(pluginID string) []NodeDescriptor {
 	return nodes
 }
 
+// NodePluginID returns the plugin that owns a registered node type. Core uses
+// this metadata to route editor components directly to the generated plugin
+// bundle instead of scanning every loaded module.
+func (r *Registry) NodePluginID(nodeType string) (string, bool) {
+	node, ok := r.nodes[nodeType]
+	if !ok {
+		return "", false
+	}
+	return node.pluginID, true
+}
+
 type registrationCollector struct {
 	plugin           PluginDescriptor
 	declared         map[string]bool
@@ -1173,7 +1184,7 @@ func cloneNodeDescriptor(desc NodeDescriptor) NodeDescriptor {
 	desc.Tags = append([]string(nil), desc.Tags...)
 	desc.Branches = append([]string(nil), desc.Branches...)
 	desc.FrameSourcePorts = append([]string(nil), desc.FrameSourcePorts...)
-	desc.ConnectionFields = append([]string(nil), desc.ConnectionFields...)
+	desc.ProfileFields = append([]string(nil), desc.ProfileFields...)
 	desc.ConfigSchema = append(json.RawMessage(nil), desc.ConfigSchema...)
 	desc.UISchema = append(json.RawMessage(nil), desc.UISchema...)
 	desc.InputSchema = append(json.RawMessage(nil), desc.InputSchema...)

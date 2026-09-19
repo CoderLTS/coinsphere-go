@@ -62,7 +62,7 @@ func Register(registrar sdk.Registrar, host sdk.Host) error {
 		return err
 	}
 	return registrar.ResultPage(sdk.ResultPageDescriptor{
-		PageKey: "connections", Title: "连接诊断",
+		PageKey: "diagnostics", Title: "连接诊断",
 		ComponentEntry: "./official/connector/ResultPage.vue", ScopeSchema: emptyObjectSchema, Mobile: true,
 	})
 }

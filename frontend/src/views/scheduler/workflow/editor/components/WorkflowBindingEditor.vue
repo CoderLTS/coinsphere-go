@@ -149,19 +149,22 @@
     gap: 8px;
     width: 100%;
   }
+
   .binding__head {
     display: flex;
-    align-items: center;
     gap: 8px;
+    align-items: center;
   }
+
   .binding__child {
-    border-left: 2px solid var(--el-border-color);
     padding-left: 10px;
+    border-left: 2px solid var(--el-border-color);
   }
+
   .binding__preview {
-    white-space: pre-wrap;
     padding: 10px;
-    background: var(--el-fill-color-light);
     overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    background: var(--el-fill-color-light);
   }
 </style>

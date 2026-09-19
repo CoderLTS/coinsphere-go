@@ -24,7 +24,6 @@
       "github": "Github",
       "lockScreen": "锁定屏幕",
       "logout": "退出登录",
-      "guest": "游客",
       "toLogin": "去登录"
     },
     "guide": {
@@ -224,6 +223,9 @@
     "scheduler": {
       "title": "工作流"
     },
+    "results": {
+      "title": "结果视图"
+    },
     "config": {
       "title": "配置管理",
       "overview": "配置概览",
@@ -269,6 +271,37 @@
     "assign": "分配权限",
     "toggleTask": "启停任务",
     "viewAnalysis": "查看分析"
+  },
+  "results": {
+    "eyebrow": "共享结果",
+    "title": "共享结果",
+    "refresh": "刷新",
+    "create": "创建视图",
+    "selectPlaceholder": "选择结果视图",
+    "ariaLabel": "共享结果视图",
+    "activeCount": "{count} 个活动",
+    "revoked": "撤销",
+    "emptyAuthorized": "暂无获授权结果",
+    "manageGrants": "管理授权",
+    "revokeView": "撤销视图",
+    "selectAvailable": "选择一个可用结果视图",
+    "empty": "暂无共享结果",
+    "createDialogTitle": "创建共享结果视图",
+    "name": "名称",
+    "resultPage": "结果页面",
+    "scope": "结果范围（JSON）",
+    "filters": "过滤条件（JSON）",
+    "allowedActions": "允许操作",
+    "users": "授权用户",
+    "roles": "授权角色",
+    "cancel": "取消",
+    "createView": "创建视图",
+    "grantDialogTitle": "管理视图授权",
+    "saveGrants": "保存授权",
+    "loadFailed": "结果页加载失败",
+    "invalidJson": "结果范围和过滤条件必须是合法 JSON",
+    "revokeConfirm": "撤销后所有普通用户立即失去访问权限。",
+    "revokeTitle": "撤销结果视图"
   },
   "assistant": {
     "title": "智能助手",
@@ -544,10 +577,6 @@
         "hasData": "最近一条新闻入库时间为 {time}。",
         "empty": "当前暂无新闻数据，请先检查采集任务或手工录入。"
       }
-    },
-    "guest": {
-      "title": "游客模式",
-      "description": "当前以游客身份访问，仅开放首页浏览。登录后可查看定时任务、数据管理和系统管理页面。"
     }
   },
   "trading": {

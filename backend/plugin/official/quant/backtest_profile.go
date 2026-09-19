@@ -64,7 +64,7 @@ func validateQuantBacktestProfileConfig(raw json.RawMessage) error {
 	decoder := json.NewDecoder(strings.NewReader(string(raw)))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&config) != nil {
-		return errors.New("Quant backtest profile configuration is invalid")
+		return errors.New("quant backtest profile configuration is invalid")
 	}
 	start, startErr := time.Parse(time.RFC3339, config.StartTime)
 	end, endErr := time.Parse(time.RFC3339, config.EndTime)
@@ -73,7 +73,7 @@ func validateQuantBacktestProfileConfig(raw json.RawMessage) error {
 	slippage, slippageErr := decimal.NewFromString(config.SlippageRate)
 	if startErr != nil || endErr != nil || !start.Before(end) || initialErr != nil || initial.Sign() <= 0 ||
 		feeErr != nil || fee.Sign() < 0 || fee.GreaterThan(quantOne) || slippageErr != nil || slippage.Sign() < 0 || slippage.GreaterThan(quantOne) {
-		return errors.New("Quant backtest profile values are invalid")
+		return errors.New("quant backtest profile values are invalid")
 	}
 	return nil
 }

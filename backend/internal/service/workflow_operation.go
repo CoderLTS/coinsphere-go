@@ -83,7 +83,7 @@ func (a *App) prepareWorkflowOperation(graph workflowRunGraph, operationType str
 	}
 	for id := range allowed {
 		nodeDesc := graph.descriptors[id]
-		if !nodeDesc.Capabilities.FrameSafe || !nodeDesc.Capabilities.Deterministic || graph.nodes[id].ConnectionID != "" {
+		if !nodeDesc.Capabilities.FrameSafe || !nodeDesc.Capabilities.Deterministic || graph.nodes[id].ProfileID != "" {
 			return workflowOperation{}, fmt.Errorf("节点 %s 不支持确定性回测；等待、人工和外部调用不能位于策略结果之前", graph.nodes[id].Label)
 		}
 	}

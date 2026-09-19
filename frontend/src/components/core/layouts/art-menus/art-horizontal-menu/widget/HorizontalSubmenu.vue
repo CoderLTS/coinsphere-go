@@ -84,10 +84,9 @@
   const isNavigableRoute = computed(() => {
     return !!(
       !props.item.meta.isHide &&
-      ((props.item.path && props.item.path.trim()) ||
-        props.item.meta.link ||
-        props.item.meta.isIframe === true) &&
-      (props.item.component || props.item.meta.link || props.item.meta.isIframe === true)
+      props.item.path &&
+      props.item.path.trim() &&
+      props.item.component
     )
   })
 

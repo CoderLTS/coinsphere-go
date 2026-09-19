@@ -17,6 +17,16 @@ export interface ResultView {
   revokedAt?: string
 }
 
+export interface ResultPageDescriptor {
+  pluginId: string
+  pageKey: string
+  title: string
+  scopeSchema?: Record<string, unknown>
+  filterSchema?: Record<string, unknown>
+  actions: string[]
+  mobile: boolean
+}
+
 export interface ResultViewCreatePayload {
   name: string
   pluginId: string
@@ -56,6 +66,9 @@ export interface ResultViewRun {
 
 export const fetchResultViews = () =>
   request.get<{ items: ResultView[] }>({ url: '/api/v1/result-views' })
+
+export const fetchResultPages = () =>
+  request.get<{ items: ResultPageDescriptor[] }>({ url: '/api/v1/result-pages' })
 
 export const createResultView = (params: ResultViewCreatePayload) =>
   request.post<ResultView>({ url: '/api/v1/result-views', params, showSuccessMessage: true })

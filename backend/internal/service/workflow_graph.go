@@ -12,10 +12,8 @@ import (
 	"time"
 
 	"cel.dev/cel-go/cel"
-	"cel.dev/cel-go/common/operators"
 	"coinsphere/backend/plugin/sdk"
 	"github.com/santhosh-tekuri/jsonschema/v6"
-	exprpb "google.golang.org/genproto/googleapis/api/expr/v1alpha1"
 )
 
 const (
@@ -52,7 +50,7 @@ type workflowGraph struct {
 type workflowGraphNode struct {
 	NodeInstanceID  string                          `json:"nodeInstanceId"`
 	Label           string                          `json:"label,omitempty"`
-	ConnectionID    string                          `json:"connectionId,omitempty"`
+	ProfileID       string                          `json:"profileId,omitempty"`
 	NodeType        string                          `json:"nodeType"`
 	NodeVersion     string                          `json:"nodeVersion"`
 	Config          json.RawMessage                 `json:"config"`
@@ -190,15 +188,15 @@ func (a *App) validateWorkflowGraphReferences(raw json.RawMessage, newReferences
 			if _, exists := config[field]; exists {
 				return validatedWorkflowGraph{}, fmt.Errorf("node %q secret field %q must not be stored in graph config", node.NodeInstanceID, field)
 			}
-			if secretRequired[field] && desc.ConnectionType == "" {
+			if secretRequired[field] && desc.ProfileType == "" {
 				requiredSecrets[workflowSecretKey{node.NodeInstanceID, field}] = true
 			}
 		}
-		ordinarySchema, err := workflowNodeConfigSchema(desc, node.ConnectionID, secretFields)
+		ordinarySchema, err := workflowNodeConfigSchema(desc, node.ProfileID, secretFields)
 		if err != nil || validateWorkflowSchemaValue(ordinarySchema, config) != nil {
 			return validatedWorkflowGraph{}, fmt.Errorf("node %q config does not match its JSON Schema", node.NodeInstanceID)
 		}
-		if desc.ValidateConfig != nil && desc.ConnectionType == "" {
+		if desc.ValidateConfig != nil && desc.ProfileType == "" {
 			if err := desc.ValidateConfig(node.Config); err != nil {
 				return validatedWorkflowGraph{}, fmt.Errorf("node %q config is invalid: %w", node.NodeInstanceID, err)
 			}
@@ -379,15 +377,15 @@ func validateWorkflowLoop(node workflowGraphNode, catalog map[string]sdk.NodeDes
 			if _, exists := values[field]; exists {
 				return validatedWorkflowLoop{}, fmt.Errorf("body node %q secret field %q must not be stored in graph config", bodyNode.NodeInstanceID, field)
 			}
-			if secretRequired[field] && desc.ConnectionType == "" {
+			if secretRequired[field] && desc.ProfileType == "" {
 				requiredSecrets[workflowSecretKey{bodyNode.NodeInstanceID, field}] = true
 			}
 		}
-		ordinarySchema, err := workflowNodeConfigSchema(desc, bodyNode.ConnectionID, secretFields)
+		ordinarySchema, err := workflowNodeConfigSchema(desc, bodyNode.ProfileID, secretFields)
 		if err != nil || validateWorkflowSchemaValue(ordinarySchema, values) != nil {
 			return validatedWorkflowLoop{}, fmt.Errorf("body node %q config does not match its JSON Schema", bodyNode.NodeInstanceID)
 		}
-		if desc.ValidateConfig != nil && desc.ConnectionType == "" {
+		if desc.ValidateConfig != nil && desc.ProfileType == "" {
 			if err := desc.ValidateConfig(bodyNode.Config); err != nil {
 				return validatedWorkflowLoop{}, fmt.Errorf("body node %q config is invalid: %w", bodyNode.NodeInstanceID, err)
 			}
@@ -460,7 +458,7 @@ func validateWorkflowEdges(edges []workflowGraphEdge, nodes map[string]workflowG
 		}
 		identity := strings.Join([]string{edge.SourceNodeInstanceID, edge.SourcePort, edge.TargetNodeInstanceID, edge.TargetPort}, "\x00")
 		if seenEdges[identity] {
-			return nil, nil, fmt.Errorf("edge %q duplicates an existing connection", edge.EdgeID)
+			return nil, nil, fmt.Errorf("edge %q duplicates an existing edge", edge.EdgeID)
 		}
 		seenEdges[identity] = true
 		adjacency[edge.SourceNodeInstanceID] = append(adjacency[edge.SourceNodeInstanceID], edge.TargetNodeInstanceID)
@@ -603,189 +601,6 @@ func workflowCELEnvironment() (*cel.Env, error) {
 	)
 }
 
-func workflowCELExpr(ast *cel.Ast) (*exprpb.Expr, error) {
-	checked, err := cel.AstToCheckedExpr(ast)
-	if err != nil {
-		return nil, err
-	}
-	return checked.Expr, nil
-}
-
-func celHasArithmetic(expr *exprpb.Expr) bool {
-	if expr == nil {
-		return false
-	}
-	if call := expr.GetCallExpr(); call != nil {
-		switch call.Function {
-		case operators.Add, operators.Subtract, operators.Multiply, operators.Divide, operators.Modulo, operators.Negate:
-			return true
-		}
-		if celHasArithmetic(call.Target) {
-			return true
-		}
-		for _, arg := range call.Args {
-			if celHasArithmetic(arg) {
-				return true
-			}
-		}
-	}
-	if selectExpr := expr.GetSelectExpr(); selectExpr != nil {
-		return celHasArithmetic(selectExpr.Operand)
-	}
-	if list := expr.GetListExpr(); list != nil {
-		for _, element := range list.Elements {
-			if celHasArithmetic(element) {
-				return true
-			}
-		}
-	}
-	if object := expr.GetStructExpr(); object != nil {
-		for _, entry := range object.Entries {
-			if celHasArithmetic(entry.GetMapKey()) || celHasArithmetic(entry.Value) {
-				return true
-			}
-		}
-	}
-	if comprehension := expr.GetComprehensionExpr(); comprehension != nil {
-		return celHasArithmetic(comprehension.IterRange) || celHasArithmetic(comprehension.AccuInit) ||
-			celHasArithmetic(comprehension.LoopCondition) || celHasArithmetic(comprehension.LoopStep) || celHasArithmetic(comprehension.Result)
-	}
-	return false
-}
-
-func celUsesDecimalArithmetic(expr *exprpb.Expr, schema json.RawMessage) bool {
-	fields := workflowDecimalFields(schema)
-	if expr == nil || len(fields) == 0 {
-		return false
-	}
-	if call := expr.GetCallExpr(); call != nil {
-		switch call.Function {
-		case operators.Add, operators.Subtract, operators.Multiply, operators.Divide, operators.Modulo, operators.Negate:
-			if celReferencesDecimal(call.Target, fields) {
-				return true
-			}
-			for _, arg := range call.Args {
-				if celReferencesDecimal(arg, fields) {
-					return true
-				}
-			}
-		}
-		if celUsesDecimalArithmetic(call.Target, schema) {
-			return true
-		}
-		for _, arg := range call.Args {
-			if celUsesDecimalArithmetic(arg, schema) {
-				return true
-			}
-		}
-	}
-	if selectExpr := expr.GetSelectExpr(); selectExpr != nil {
-		return celUsesDecimalArithmetic(selectExpr.Operand, schema)
-	}
-	return false
-}
-
-func celReferencesDecimal(expr *exprpb.Expr, fields map[string]bool) bool {
-	if expr == nil {
-		return false
-	}
-	path := make([]string, 0, 4)
-	current := expr
-	for current != nil {
-		if selectExpr := current.GetSelectExpr(); selectExpr != nil {
-			path = append([]string{selectExpr.Field}, path...)
-			current = selectExpr.Operand
-			continue
-		}
-		call := current.GetCallExpr()
-		if call == nil || call.Function != operators.Index || len(call.Args) != 2 {
-			break
-		}
-		key := call.Args[1].GetConstExpr()
-		if key == nil {
-			return celReferencesInput(call.Args[0])
-		}
-		if _, ok := key.ConstantKind.(*exprpb.Constant_StringValue); !ok {
-			return celReferencesInput(call.Args[0])
-		}
-		path = append([]string{key.GetStringValue()}, path...)
-		current = call.Args[0]
-	}
-	ident := current.GetIdentExpr()
-	if ident != nil && ident.Name == "input" && len(path) > 0 && fields[strings.Join(path, ".")] {
-		return true
-	}
-	if call := expr.GetCallExpr(); call != nil {
-		if celReferencesDecimal(call.Target, fields) {
-			return true
-		}
-		for _, arg := range call.Args {
-			if celReferencesDecimal(arg, fields) {
-				return true
-			}
-		}
-	}
-	if selectExpr := expr.GetSelectExpr(); selectExpr != nil {
-		return celReferencesDecimal(selectExpr.Operand, fields)
-	}
-	if list := expr.GetListExpr(); list != nil {
-		for _, element := range list.Elements {
-			if celReferencesDecimal(element, fields) {
-				return true
-			}
-		}
-	}
-	if object := expr.GetStructExpr(); object != nil {
-		for _, entry := range object.Entries {
-			if celReferencesDecimal(entry.GetMapKey(), fields) || celReferencesDecimal(entry.Value, fields) {
-				return true
-			}
-		}
-	}
-	if comprehension := expr.GetComprehensionExpr(); comprehension != nil {
-		return celReferencesDecimal(comprehension.IterRange, fields) || celReferencesDecimal(comprehension.AccuInit, fields) ||
-			celReferencesDecimal(comprehension.LoopCondition, fields) || celReferencesDecimal(comprehension.LoopStep, fields) ||
-			celReferencesDecimal(comprehension.Result, fields)
-	}
-	return false
-}
-
-func celReferencesInput(expr *exprpb.Expr) bool {
-	if expr == nil {
-		return false
-	}
-	if ident := expr.GetIdentExpr(); ident != nil {
-		return ident.Name == "input"
-	}
-	if selectExpr := expr.GetSelectExpr(); selectExpr != nil {
-		return celReferencesInput(selectExpr.Operand)
-	}
-	if call := expr.GetCallExpr(); call != nil && call.Function == operators.Index && len(call.Args) == 2 {
-		return celReferencesInput(call.Args[0])
-	}
-	return false
-}
-
-func workflowDecimalFields(raw json.RawMessage) map[string]bool {
-	var schema map[string]any
-	_ = json.Unmarshal(raw, &schema)
-	fields := map[string]bool{}
-	var walk func(map[string]any, []string)
-	walk = func(current map[string]any, path []string) {
-		if schemaBool(current, "x-coinsphere-decimal") && len(path) > 0 {
-			fields[strings.Join(path, ".")] = true
-		}
-		properties, _ := current["properties"].(map[string]any)
-		for name, value := range properties {
-			if property, ok := value.(map[string]any); ok {
-				walk(property, append(path, name))
-			}
-		}
-	}
-	walk(schema, nil)
-	return fields
-}
-
 func ordinaryWorkflowConfigSchema(raw json.RawMessage, secretFields map[string]map[string]any) (json.RawMessage, error) {
 	var schema map[string]any
 	if err := json.Unmarshal(raw, &schema); err != nil {
@@ -887,30 +702,6 @@ func workflowSchemaTypesCompatible(source, target map[string]any) bool {
 	return false
 }
 
-func workflowCELTypeCompatible(celType string, target map[string]any) bool {
-	if celType == "dyn" {
-		return true
-	}
-	types := schemaTypes(target)
-	if len(types) == 0 {
-		return true
-	}
-	switch celType {
-	case "int", "uint":
-		return types["integer"] || types["number"]
-	case "double":
-		return types["number"]
-	case "bool":
-		return types["boolean"]
-	case "list":
-		return types["array"]
-	case "map":
-		return types["object"]
-	default:
-		return types[celType]
-	}
-}
-
 func schemaTypes(schema map[string]any) map[string]bool {
 	result := map[string]bool{}
 	switch value := schema["type"].(type) {
@@ -924,11 +715,6 @@ func schemaTypes(schema map[string]any) map[string]bool {
 		}
 	}
 	return result
-}
-
-func schemaBool(schema map[string]any, key string) bool {
-	value, _ := schema[key].(bool)
-	return value
 }
 
 func schemaFragment(schema map[string]any) json.RawMessage {
@@ -968,19 +754,16 @@ func containsString(values []string, target string) bool {
 	return false
 }
 
-func workflowNodeConfigSchema(desc sdk.NodeDescriptor, connectionID string, secretFields map[string]map[string]any) (json.RawMessage, error) {
+func workflowNodeConfigSchema(desc sdk.NodeDescriptor, profileID string, secretFields map[string]map[string]any) (json.RawMessage, error) {
 	removed := make(map[string]map[string]any, len(secretFields))
 	for field, schema := range secretFields {
 		removed[field] = schema
 	}
-	if connectionID != "" && desc.ConnectionType == "" {
-		return nil, errors.New("node does not accept a connection")
+	if profileID != "" && desc.ProfileType == "" {
+		return nil, errors.New("node does not accept a profile")
 	}
-	if desc.ConnectionType != "" {
-		if desc.ConnectionType == "" {
-			return nil, errors.New("node does not accept a connection")
-		}
-		for _, field := range desc.ConnectionFields {
+	if desc.ProfileType != "" {
+		for _, field := range desc.ProfileFields {
 			removed[field] = map[string]any{}
 		}
 	}

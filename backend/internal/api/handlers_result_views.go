@@ -8,6 +8,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func (s *Server) handleListResultPages(c *gin.Context) {
+	respond(c, M{"items": s.App.ListResultPages()}, nil, "")
+}
+
 func (s *Server) handleListResultViews(c *gin.Context) {
 	items, err := s.App.ListResultViews(c.Request.Context(), currentPrincipal(c))
 	respond(c, M{"items": items}, err, "")
@@ -89,9 +93,6 @@ func (s *Server) handleResultViewRunAction(c *gin.Context) {
 		respond(c, nil, fmt.Errorf("%w: result view", service.ErrNotFound), "")
 		return
 	}
-	if !authorizeResultAction(c, principal, action) {
-		return
-	}
 	run, err := s.App.ApplyResultScopeRunAction(c.Request.Context(), scope, runID, action)
 	respond(c, run, err, "")
 }
@@ -106,9 +107,6 @@ func (s *Server) handleResultViewWorkflowPause(c *gin.Context) {
 	scope, err := s.App.ResolveResultScope(c.Request.Context(), viewID, "pause", principal)
 	if err != nil {
 		respond(c, nil, fmt.Errorf("%w: result view", service.ErrNotFound), "")
-		return
-	}
-	if !authorizeResultAction(c, principal, "pause") {
 		return
 	}
 	workflow, err := s.App.PauseResultScopeWorkflow(c.Request.Context(), scope)
