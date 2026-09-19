@@ -215,15 +215,15 @@ const workflow = {
   name: '批处理示例',
   description: 'E2E workflow',
   groupId: 1,
-  status: 'active',
+  mode: 'batch',
+  status: 'running',
   activeRevisionId: 11,
+  mainTriggerNodeId: 'manual-trigger',
   retentionDays: 30,
   createdBy: 1,
   createdAt,
   updatedAt: createdAt,
-  runtime: { maxConcurrentRuns: 2, backlogLimit: 100, updatedAt: createdAt },
-  triggers: [{ nodeInstanceId: 'manual-trigger', status: 'disabled' }],
-  stateNodeInstanceIds: []
+  runtime: { activityCursor: 0, healthSummary: 'idle', updatedAt: createdAt }
 }
 
 const workflowGroupFixtures = [
@@ -236,8 +236,7 @@ const workflowRevision = {
   workflowId: 7,
   revisionNumber: 1,
   graph: {
-    schemaVersion: 3,
-    profileRefs: [],
+    schemaVersion: 1,
     nodes: [
       {
         nodeInstanceId: 'manual-trigger',
@@ -268,6 +267,7 @@ const workflowRevision = {
     'manual-trigger': { nodeType: 'core.manual', nodeVersion: '1.0.0' },
     end: { nodeType: 'core.end', nodeVersion: '1.0.0' }
   },
+  mainTriggerNodeId: 'manual-trigger',
   createdBy: 1,
   createdAt,
   secretFields: {}
@@ -287,11 +287,6 @@ const workflowBatchDetail = {
   id: 21,
   workflowId: 7,
   revisionId: 11,
-  triggerNodeId: 'manual-trigger',
-  entryNodeInstanceId: 'manual-trigger',
-  triggerInstanceId: 'manual-trigger',
-  triggerEventId: '',
-  profileSnapshot: [],
   triggerType: 'manual',
   status: 'succeeded',
   triggeredAt: createdAt,

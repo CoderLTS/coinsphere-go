@@ -1,6 +1,6 @@
 # CoinSphere 当前架构
 
-本文描述当前代码和部署实际采用的架构。历史决策及被替代方案保存在 [ADR](decisions/0002-compile-time-plugin-workflow-platform.md)，当前 Graph v3 与 Profile 边界以 [ADR-0006](decisions/0006-workflow-graph-v3-and-plugin-profiles.md) 为准，接口字段和状态语义以[公共契约](../contracts/README.md)为准，目录与修改入口见[代码结构](../code-structure.md)。
+本文描述当前代码和部署实际采用的架构。历史决策及被替代方案保存在 [ADR](decisions/0002-compile-time-plugin-workflow-platform.md)，接口字段和状态语义以[公共契约](../contracts/README.md)为准，目录与修改入口见[代码结构](../code-structure.md)。
 
 ## 1. 系统定位与边界
 
@@ -85,7 +85,7 @@ sequenceDiagram
 
 Web 负责登录、导航、权限感知页面、系统管理、工作流编辑与运行观察，以及插件页面和共享结果页的呈现。API 模块只负责传输和类型映射，领域状态仍由 Backend 与数据库拥有。
 
-工作流编辑器从 `/api/v1/workflows/node-definitions` 获取核心和插件节点的 JSON Schema/UI Schema、稳定分类 key、别名、标签、排序、ProfileSlot 和固定分支端口；Quant 使用通用的单指标节点，通过同一行情 Profile 和连线组合策略。通知凭据使用修订级 Secret 输入，普通节点仍使用 Schema 表单。节点定义按分类顺序、`sortOrder`、标题和 `type` 稳定排序；编辑器使用标题、说明、别名和标签执行本地检索。运行详情从持久 RunNode attempt 合成开始/业务/结束记录，历史页固定选择的 Run；运行详情和个人通知分别使用 `coinsphere.workflow-runs.v1` 与 `coinsphere.notifications.v1` WebSocket 接收更新。WebSocket 是进程内实时提示，不是第二份事实源。
+工作流编辑器从 `/api/v1/workflows/node-definitions` 获取核心和插件节点的 JSON Schema/UI Schema、稳定分类 key、别名、标签、排序和固定分支端口；六种 Quant 单指标节点使用同一逐项参数编辑器并通过连线组合，通知凭据使用修订级 Secret 输入，普通节点仍使用 Schema 表单。节点定义按分类顺序、`sortOrder`、标题和 `type` 稳定排序；编辑器使用标题、说明、别名和标签执行本地检索。运行详情从持久 RunNode attempt 合成开始/业务/结束记录，历史页固定选择的 Run；运行详情和个人通知分别使用 `coinsphere.workflow-runs.v1` 与 `coinsphere.notifications.v1` WebSocket 接收更新。WebSocket 是进程内实时提示，不是第二份事实源。
 
 前端插件通过生成的 `registry.generated.ts` 与内置插件表静态加入 Vite 构建。普通页面和结果页均是主应用 Vue 组件，不使用 iframe、Web Component 或运行时远程模块。
 
@@ -117,12 +117,13 @@ PostgreSQL 同时承担业务事实、持久队列、Outbox、幂等约束和恢
 
 `workflows` 保存名称、生命周期和活动修订指针；`workflow_revisions` 保存不可变图快照；`workflow_runtimes` 保存并发、积压、保留期和调度字段。每次保存必须携带预期活动修订 ID，服务锁定工作流、校验完整图和密钥变更后创建递增修订并原子切换指针。
 
-图固定为 Graph v3，允许任意数量和类型的 Trigger。节点保存稳定 `nodeInstanceId`、精确节点版本、普通配置、Profile 引用、类型化输入绑定和画布位置；密钥按修订、节点实例和字段独立加密。边只表达端口拓扑，条件、状态、节流、窗口和去重由显式 Core 控制节点表达；端口可扇出且多来源可汇合，拓扑仍保持 DAG。修订响应、日志、导出和复制不会返回密钥值。
+图固定包含一个主 Trigger，并使用 `batch`、`event` 或 `stream` 模式。节点保存稳定 `nodeInstanceId`、精确节点版本、普通配置、输入映射和画布位置；密钥按修订、节点实例和字段独立加密。插件节点可声明固定分支端口，执行器先用输出 `branch` 选择端口，再应用边 CEL；端口可扇出且多来源可汇合，拓扑仍保持 DAG。修订响应、日志、导出和复制不会返回密钥值。
 
 工作流生命周期只有：
 
 - `inactive`：不领取新 Run，也不运行长连接 Trigger。
-- `active`：允许手工/定时 Run、事件投递和连续流 Trigger；每个 Trigger 独立显示 `running / waiting / error / disabled`。
+- `active`：允许手工/定时 Run、事件投递和连续流 Trigger。
+- `error`：Trigger 异常退出，需要先停用再修复并重新激活。
 
 已创建 Run 永远固定创建时的修订。保存新修订不会改变正在排队、运行或等待的 Run。
 
@@ -153,7 +154,7 @@ Run WebSocket 只发送工作流 ID、Run ID 和更新时间等轻量更新。�
 
 外部事件使用 CloudEvents 1.0 结构化 JSON。`(source,id)` 全局去重，`partitionkey` 控制同工作流内的顺序；事件记录、匹配投递和 Run 在同一事务提交。内部失败事件先写 Outbox，再由执行器有界重试发布。
 
-`core.schedule` 支持固定秒数或带 IANA 时区的六段 Cron，服务恢复后最多补一次漏跑。任一插件 `TriggerHandler` 都可以作为画布入口；它用 Emitter 发送事件并必须响应取消与背压。服务启动时扫描 active 工作流的全部连续流入口并独立恢复，单个入口失败不会阻止其他入口创建 Run。
+`core.schedule` 支持固定秒数或带 IANA 时区的六段 Cron，服务恢复后最多补一次漏跑。插件 `TriggerHandler` 用 Emitter 发送事件并必须响应取消与背压；服务启动时扫描 active 连续流并恢复 Trigger。
 
 Connector/AI 的 HTTP 与 WebSocket 访问执行精确域名白名单、公共 DNS 和重定向复核，不继承环境代理。系统代理池由 Service 拥有，密码通过 SecretCipher 加密；Binance 的元数据同步、K 线补数和实时 K 线节点可在修订配置中显式选择 HTTP/SOCKS5 代理。直连继续执行公共 DNS 校验；代理模式仍固定 Binance 主机及允许的 REST/WebSocket 端点，禁用重定向，并按 `proxyId` 隔离实时订阅。Notification 的钉钉节点和独立 QQ 插件只访问固定官方域名，SMTP 只拨号公网域名并强制 TLS 或 STARTTLS；凭据只经节点范围 `SecretReader` 解密。Quant 不包含交易所 URL、代理或签名，只通过 `MarketDataRegistry` 读取行情并执行 Decimal 指标和策略计算；通用节点不能调用交易所私有接口。
 
@@ -202,7 +203,7 @@ flowchart LR
     PAPER --> NOTIFY["幂等多渠道通知"]
 ```
 
-Binance 插件将相同行情 Profile 的公共订阅合并，使用 UTC 和 Decimal 保存已闭合 K 线及交易规则。Quant 节点只通过 `market.data` Profile 和 `MarketDataRegistry` 读取行情；每个指标节点只负责一个指标，串行端口表达 AND，并行汇合表达 OR，控制节点负责状态和节流。实时与回放共用同一张下游图，回放入口通过 `quant.backtest` Profile 逐根产生闭合 K 线帧，按下一根 K 线开盘应用费用和滑点，大明细写入内容寻址制品。
+Binance 插件将相同 `market + instrument + interval` 的公共行情订阅合并，使用 UTC 和 Decimal 保存已闭合 K 线及交易规则。Quant 只通过 `MarketDataRegistry` 读取任意 venue 的行情。放量、价格波动、MACD、KDJ、RSI 和布林带分别由 Quant 独立判断节点执行，串行 true 表达 AND、并行汇合表达 OR、false 表达反向路径。实时策略评估与回测调用同一个无状态 Go `Strategy.Evaluate`；回测按下一根 K 线开盘应用费用和滑点，大明细写入内容寻址制品。
 
 策略目标先持久化为 Signal。默认需要人工决定；自动模式只有在总名义价值、单品种名义价值、单次操作名义价值、最大日亏损和最大回撤全部明确配置后才能启用。决定后重新取得公共报价并复核时效、步进、账户状态和全部风险上限。
 

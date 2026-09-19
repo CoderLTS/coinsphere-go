@@ -78,17 +78,17 @@ docker compose down
 
 ## 5. 工作流定义
 
-只有超级管理员可以访问工作流定义页面和 `/api/v1/workflows`。列表左侧的共享分组栏固定提供“全部”和“未分组”，自定义分组可新建、重命名、删除和拖动排序；每个工作流只能属于一个分组，可在分组列单独移动，也可勾选多行批量移动。删除分组只把其中工作流移至“未分组”，不会删除或停用工作流；在某个自定义分组中新建工作流时默认归入当前组。列表显示名称、分组、版本、`已激活/未激活`、创建时间和操作，不显示执行数、运行态抽屉或归档。每行“工作流日志”打开该工作流的 Run 搜索；编辑器按核心与编译期插件下发的 JSON Schema/UI Schema 展示节点配置，保存后生成新修订。一个工作流可以同时放置多个入口，每个入口独立显示运行状态。
+只有超级管理员可以访问工作流定义页面和 `/api/v1/workflows`。列表左侧的共享分组栏固定提供“全部”和“未分组”，自定义分组可新建、重命名、删除和拖动排序；每个工作流只能属于一个分组，可在分组列单独移动，也可勾选多行批量移动。删除分组只把其中工作流移至“未分组”，不会删除或停用工作流；在某个自定义分组中新建工作流时默认归入当前组。列表显示名称、分组、版本、`已激活/未激活/异常`、创建时间和操作，不显示执行数、运行态抽屉或归档。每行“工作流日志”打开该工作流的 Run 搜索；编辑器按核心与编译期插件下发的 JSON Schema/UI Schema 展示节点配置，保存后生成新修订，手工工作流可从列表立即运行。
 
 保存完整校验通过后才创建新修订。密钥输入只表示替换，留空保持原值；系统只显示是否已配置。同一节点实例的类型和版本不变时保留状态。切换到历史修订时工作台只读。
 
-激活后，管理员可在“运行”对话框选择已保存修订和任一声明 `manualTrigger` 的入口；逐帧入口还要选择一个策略结果节点。定时入口可选择 `everySeconds` 间隔，或配置六段 Cron 和 IANA 时区。服务恢复后最多补一次错过的运行，再计算下一未来时刻。事件按 `partitionkey` 保证同工作流同分区顺序，不同分区可并行。失败节点默认重试三次并从最后成功检查点继续。停用会取消连续流 Trigger，并在当前 Action 完成后停止领取新 Run；待处理 Run 保留，重新激活后续跑。单个入口异常只影响该入口，其他入口仍可运行。
+激活后，手工工作流可用“手动运行”创建固定当前修订的 Run；定时工作流可选择 `everySeconds` 间隔，或配置六段 Cron 和 IANA 时区。服务恢复后最多补一次错过的运行，再计算下一未来时刻。事件按 `partitionkey` 保证同工作流同分区顺序，不同分区可并行。失败节点默认重试三次并从最后成功检查点继续。停用会取消连续流 Trigger，并在当前 Action 完成后停止领取新 Run；待处理 Run 保留，重新激活后续跑。连续流异常进入“异常”后，先停用恢复为“未激活”，确认修复再重新激活。
 
 实时运行日志按每个节点 attempt 展示开始、业务和结束记录：开始记录包含尝试次数、Loop 轮次和脱敏输入，结束记录包含状态、耗时、脱敏输出或受控错误。节点详情只保留状态、耗时、错误和输入输出摘要，不重复展示业务日志。标题栏“历史日志”默认查询最近 24 小时，可按 UTC 时间、运行状态、触发方式和关键词搜索；一行是一条完整 Run，进入详情后固定该 Run，不跟随最新流式运行。详情页通过 `coinsphere.workflow-runs.v1` WebSocket 接收轻量更新通知，再从 HTTP API 刷新持久事实；断线不会改变运行结果。日志不包含原始载荷或密钥，终态历史默认保留 30 天。
 
 `core.human_approval` 进入等待后释放执行与分区容量。批准、拒绝、过期或被相同业务键的新任务取代后，原 Run 从持久检查点继续。每个任务只能决定一次。
 
-`core.loop` 使用内嵌 DAG，必须配置正数迭代上限、绝对超时和结构化退出条件。工作台新建 Loop 时会提供最小 `loop_item -> loop_end` 子图；人工等待节点不能放入 Loop。
+`core.loop` 使用内嵌 DAG，必须配置正数迭代上限、绝对超时和 Boolean CEL 退出条件。工作台新建 Loop 时会提供最小 `loop_item -> loop_end` 子图；人工等待节点不能放入 Loop。
 
 ### 5.1 事件与 Webhook
 
@@ -114,13 +114,13 @@ COINSPHERE_WORKFLOW__HTTP_ALLOWED_HOSTS='[api.example.com,models.example.com]'
 
 Core 启动不会自动创建或激活 Binance 工作流。管理员可从空白或定时模板添加 `official.binance.sync_instruments`，选择 Spot/USD-M、直连或一个已启用代理，并配置报价资产、基础资产和交易对的黑白名单；输入会转大写、去空格和去重，空白名单不限，所有白名单取交集，任一黑名单命中即排除。多个元数据工作流各自保存成功快照，币种目录显示全部来源并集；停用只停止调度并保留上次成功快照。
 
-Binance 插件连接 Spot 和 USD-M 公共 REST/WebSocket。先在 Binance Profiles 页面创建并发布 `market.data` Profile，再在 `official.binance.realtime_candles` 中绑定 Profile；同一 Profile 使用一条 combined-stream WebSocket。Quant 节点只引用相同的 `market.data` Profile，断线只重连，不隐式补数。每根实时闭合 K 线保存一条 Binance 行情和 CloudEvent。
+Binance 插件连接 Spot 和 USD-M 公共 REST/WebSocket。先创建并激活 `binance-market-data`，在 `official.binance.realtime_candles` 中选择市场、代理、单个品种和一个或多个固定周期；同一 `market + instrument + proxyId` 使用一条 combined-stream WebSocket，并在连接内合并所需周期。Quant 节点通过 `venue` 读取这些数据，断线只重连，不隐式补数。每根实时闭合 K 线保存一条 Binance 行情和 CloudEvent；月线不属于当前固定周期集合。
 
 缺口修复使用独立的 `official.binance.backfill_candles` Action，可接手动或定时运行。Quant 回测直接通过 Binance `MarketDataProvider` 读取数据；未来接入其他 Provider 时不修改 Quant 回测代码。补数只写入 Binance K 线表并返回抓取/新增数量，不发布 `market.candle.closed`，重复执行由数据库主键去重。代理只供 Binance 公共行情节点显式选择，不会自动作用于 Connector、AI、通知、QQ 或其他 Quant 节点。
 
-`official.quant` 的策略节点消费 `market.candle.closed` 并调用已编译的 Go 策略。拖入 `official.quant.replay` 后绑定已发布的 `quant.backtest` Profile，即可从同一入口下游逐帧执行实时策略图；回放在下一根 K 线开盘成交并应用 Decimal 手续费和滑点，日期必须是 UTC。运行结果中的 Quant 页面只查看策略和回放摘要，交易所行情由 Binance Profile 页面和 Provider 负责。
+`quant-strategy` 消费 `market.candle.closed` 并调用已编译的 SMA crossover Go 策略。`quant-backtest` 通过所选 `venue` 的 `MarketDataProvider` 读取闭合 K 线，在下一根 K 线开盘成交并应用 Decimal 手续费和滑点；日期必须是 UTC。运行结果中的 Quant 页面只查看策略和回测摘要，交易所行情由对应 Provider 插件页面查看。
 
-量化判断统一为单节点单指标的 `official.quant.indicator`，每个节点只配置一种指标和一种规则，并绑定一个 `market.data` Profile。节点只使用已经闭合且连续的 K 线；历史不足时走 `unavailable`，不会伪造信号。多个指标通过 Condition、Join、Transition 和节流节点在画布上组合。
+量化判断拆分为放量、价格波动、MACD、KDJ、RSI 和布林带六种独立节点，每个节点只配置一种指标和一种规则，并独立选择市场、交易对、检查周期和 K 线周期。当前支持 N 根 K 线首尾上涨/下跌/绝对涨跌、期间振幅、MACD 金叉/死叉/零轴位置、KDJ 金叉/死叉及 K/D/J 阈值、Wilder RSI 阈值和布林带突破。节点只使用已经闭合且连续的 K 线；历史不足时走 false，不发送通知。
 
 需要在 K 线页展示命中结果时，将指标判断节点的 `true` 分支连接到“输出信号”。市场、交易对、周期、名称、指标、命中时间、摘要和值由编辑器自动绑定，无需重复填写。每根命中的闭合 K 线都会生成一条普通行情信号；同一根 K 线的多个信号在图上合并标记，并在右侧逐条展示。普通行情信号不触发审批、Paper 下单或真实交易。
 

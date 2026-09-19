@@ -50,6 +50,19 @@
 
                   <div class="workflow-execution-detail__toolbar-actions">
                     <ElTooltip
+                      v-if="executionDetail.entryPoint === 'backtest'"
+                      content="查看回测分析"
+                      placement="bottom"
+                    >
+                      <ElButton
+                        plain
+                        class="workflow-execution-detail__icon-btn"
+                        @click="handleBacktestAnalysis"
+                      >
+                        <ElIcon><DataAnalysis /></ElIcon>
+                      </ElButton>
+                    </ElTooltip>
+                    <ElTooltip
                       :content="inspectorVisible ? '隐藏详情面板' : '显示详情面板'"
                       placement="bottom"
                     >
@@ -145,7 +158,7 @@
                       <div class="workflow-execution-detail__section-title">节点概览</div>
                       <ElDescriptions :column="1" border size="small">
                         <ElDescriptionsItem label="节点名称">{{
-                          selectedNode.label
+                          selectedNode.data.title
                         }}</ElDescriptionsItem>
                         <ElDescriptionsItem label="执行次数">{{
                           selectedNodeAttempts.length
@@ -265,7 +278,7 @@
                           selectedEdgeTargetTitle
                         }}</ElDescriptionsItem>
                         <ElDescriptionsItem label="连线标签">{{
-                          selectedEdge.label || '--'
+                          selectedEdge.data.label || '--'
                         }}</ElDescriptionsItem>
                       </ElDescriptions>
                     </div>
@@ -410,9 +423,14 @@
 </template>
 
 <script setup lang="ts">
-  import { ArrowLeft, Clock, Download, Hide, View } from '@element-plus/icons-vue'
+  import { ArrowLeft, Clock, DataAnalysis, Download, Hide, View } from '@element-plus/icons-vue'
   import { ElMessage } from 'element-plus'
-  import { fetchWorkflowExecutionDetail, type WorkflowExecutionDetail } from '@/api/scheduler'
+  import type { WorkflowNodeDefinitionItem } from '@/api/scheduler'
+  import {
+    fetchNodeDefinitions,
+    fetchWorkflowExecutionDetail,
+    type WorkflowExecutionDetail
+  } from '@/api/scheduler'
   import {
     buildWorkflowRunsWsUrl,
     downloadWorkflowArtifact,
@@ -424,8 +442,17 @@
   import { useAutoLayoutHeight } from '@/hooks/core/useLayoutHeight'
   import { formatDateTime } from '@/utils/date'
   import WorkflowExecutionCanvas from './components/WorkflowExecutionCanvas.vue'
-  import type { WorkflowGraph, WorkflowGraphNode, WorkflowGraphEdge } from '@/api/workflows'
-  type WorkflowActiveCellType = 'node' | 'edge' | null
+  import {
+    flattenMaterials,
+    mapServerGraphToDomain
+  } from '@/views/scheduler/workflow/editor/workflow-editor.mapper'
+  import { syncNodeDefinitions } from '@/views/scheduler/workflow/editor/node-registry'
+  import type {
+    WorkflowActiveCellType,
+    WorkflowDomainGraphModel,
+    WorkflowDomainNode,
+    WorkflowDomainEdge
+  } from '@/views/scheduler/workflow/editor/types'
 
   defineOptions({ name: 'SchedulerWorkflowExecutionDetailPage' })
 
@@ -435,7 +462,7 @@
   const loadError = ref('')
   const executionDetail = ref<WorkflowExecutionDetail | null>(null)
   const activeExecutionId = ref(Number(route.params.executionId))
-  const domainGraph = ref<WorkflowGraph | null>(null)
+  const domainGraph = ref<WorkflowDomainGraphModel | null>(null)
   const selectedCellId = ref<string | null>(null)
   const selectedCellType = ref<WorkflowActiveCellType>(null)
   const inspectorVisible = ref(true)
@@ -478,10 +505,10 @@
   }))
 
   const nodeMap = computed(
-    () => new Map((domainGraph.value?.nodes || []).map((item) => [item.nodeInstanceId, item]))
+    () => new Map((domainGraph.value?.nodes || []).map((item) => [item.id, item]))
   )
   const edgeMap = computed(
-    () => new Map((domainGraph.value?.edges || []).map((item) => [item.edgeId, item]))
+    () => new Map((domainGraph.value?.edges || []).map((item) => [item.id, item]))
   )
 
   const executedNodeCount = computed(() => {
@@ -492,12 +519,12 @@
 
   const inspectorTitle = computed(() => {
     if (selectedCellType.value === 'node' && selectedNode.value)
-      return `节点详情 · ${selectedNode.value.label}`
+      return `节点详情 · ${selectedNode.value.data.title}`
     if (selectedCellType.value === 'edge' && selectedEdge.value) return '连线详情'
     return '执行总览'
   })
 
-  const selectedNode = computed<WorkflowGraphNode | null>(() => {
+  const selectedNode = computed<WorkflowDomainNode | null>(() => {
     if (selectedCellType.value !== 'node' || !selectedCellId.value) return null
     return nodeMap.value.get(selectedCellId.value) || null
   })
@@ -505,7 +532,7 @@
   const selectedNodeAttempts = computed(() => {
     if (!selectedNode.value) return []
     return (executionDetail.value?.nodeAttempts || []).filter(
-      (item) => item.nodeId === selectedNode.value?.nodeInstanceId
+      (item) => item.nodeId === selectedNode.value?.id
     )
   })
 
@@ -518,16 +545,16 @@
     return 'success'
   })
 
-  const selectedEdge = computed<WorkflowGraphEdge | null>(() => {
+  const selectedEdge = computed<WorkflowDomainEdge | null>(() => {
     if (selectedCellType.value !== 'edge' || !selectedCellId.value) return null
     return edgeMap.value.get(selectedCellId.value) || null
   })
 
   const selectedEdgeSourceTitle = computed(
-    () => nodeMap.value.get(selectedEdge.value?.sourceNodeInstanceId || '')?.label || '--'
+    () => nodeMap.value.get(selectedEdge.value?.source || '')?.data.title || '--'
   )
   const selectedEdgeTargetTitle = computed(
-    () => nodeMap.value.get(selectedEdge.value?.targetNodeInstanceId || '')?.label || '--'
+    () => nodeMap.value.get(selectedEdge.value?.target || '')?.data.title || '--'
   )
 
   const handleBack = () => {
@@ -541,6 +568,13 @@
         workflowId: String(activeWorkflowId.value),
         workflowName: executionDetail.value?.workflowDefinitionName || ''
       }
+    })
+  }
+
+  const handleBacktestAnalysis = () => {
+    router.push({
+      path: `/scheduler/execution/${activeExecutionId.value}/backtest`,
+      query: route.query
     })
   }
 
@@ -856,7 +890,16 @@
         previousDetail?.workflowDefinitionId !== detail.workflowDefinitionId ||
         previousDetail.workflowDefinitionVersion !== detail.workflowDefinitionVersion
       if (graphChanged) {
-        domainGraph.value = detail.graph
+        const nodeDefinitions = await fetchNodeDefinitions().catch(
+          () => [] as WorkflowNodeDefinitionItem[]
+        )
+        if (executionId !== activeExecutionId.value) return
+        syncNodeDefinitions(nodeDefinitions)
+        domainGraph.value = mapServerGraphToDomain(
+          detail.graph || { nodes: [], edges: [] },
+          nodeDefinitions,
+          flattenMaterials(nodeDefinitions)
+        )
       }
       appendLiveLogs(detail)
       executionDetail.value = detail

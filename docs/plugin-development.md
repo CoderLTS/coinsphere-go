@@ -18,8 +18,8 @@ CoinSphere 插件不是运行时扩展包。安装会把源码复制进主仓库
 
 | 项目                     | 当前值        |
 | ------------------------ | ------------- |
-| Core                     | `4.0.0`       |
-| SDK major                | `4`           |
+| Core                     | `3.0.0`       |
+| SDK major                | `3`           |
 | manifest `schemaVersion` | `1`           |
 | Go                       | `1.26.6`      |
 | JSON Schema              | Draft 2020-12 |
@@ -55,8 +55,8 @@ manifest 中的路径使用 `/`，必须是插件根目录内的相对路径。�
   "name": "Hello Plugin",
   "menu": { "mode": "own", "title": "Hello", "icon": "ri:puzzle-line" },
   "version": "1.0.0",
-  "sdkMajor": 4,
-  "requiresCore": ">=4.0.0 <5.0.0",
+  "sdkMajor": 3,
+  "requiresCore": ">=3.0.0 <4.0.0",
   "backend": {
     "module": "example.com/coinsphere/hello",
     "package": "backend"
@@ -80,8 +80,8 @@ manifest 中的路径使用 `/`，必须是插件根目录内的相对路径。�
 | `name`                 | 非空显示名                                                         |
 | `menu`                 | 可选菜单定位：`own` 自建顶级菜单（默认）、`existing` 挂到现有顶级菜单（需 `parent`）、`direct` 页面直接作为顶级菜单 |
 | `version`              | 严格 SemVer，例如 `1.2.3`                                          |
-| `sdkMajor`             | 必须等于当前 SDK major `4`                                         |
-| `requiresCore`         | 合法 SemVer constraint，必须包含当前 Core `4.0.0`                  |
+| `sdkMajor`             | 必须等于当前 SDK major `3`                                         |
+| `requiresCore`         | 合法 SemVer constraint，必须包含当前 Core `3.0.0`                  |
 | `requiresPlugins`      | 可选的插件 ID 到 SemVer constraint 映射；安装与注册按依赖拓扑排序  |
 | `backend.module`       | 必须与 `backend.package` 目录内 `go.mod` 的 module 完全一致        |
 | `frontend.entry`       | 插件根内存在的 TypeScript 入口文件                                 |
@@ -101,7 +101,6 @@ manifest 中的路径使用 `/`，必须是插件根目录内的相对路径。�
 - `executionProviders`
 - `workflowValidators`
 - `templates`
-- `profiles`
 - `migrations`
 
 注册未声明的贡献或声明后没有注册都会失败。重复插件 ID、节点类型、策略 ID、页面 key、结果页 key 或路由也会失败。
@@ -235,7 +234,7 @@ func Register(registrar sdk.Registrar, host sdk.Host) error {
 }
 ```
 
-节点 `Type` 必须是小写点分 key，且不能使用保留前缀 `core.`。节点 `Version` 必须是严格 SemVer。标题、说明、稳定分类 key、别名、标签、排序、颜色、图标和稳定尺寸由 `NodeDescriptor` 唯一提供；分类 key 使用 `start`、`market`、`strategy`、`agent`、`control`、`data`、`notification`、`integration` 或 `end`，未知分类归入前端“其他”。`Aliases` 和 `Tags` 用于工作流编辑器本地检索，`SortOrder` 用于同分类内稳定排序。`Deterministic`、`Stateless` 与 `FrameSafe` 决定通用校验和回测 frame 能力。Config/Input/Output Schema 必须显式声明 Draft 2020-12；UI Schema 只要求是 JSON 对象。需要多出口时在 `NodeDescriptor.Branches` 声明至少两个稳定分支键；运行时以节点输出的端口选择路径，边只表达拓扑，不携带 CEL。
+节点 `Type` 必须是小写点分 key，且不能使用保留前缀 `core.`。节点 `Version` 必须是严格 SemVer。标题、说明、稳定分类 key、别名、标签、排序、颜色、图标和稳定尺寸由 `NodeDescriptor` 唯一提供；分类 key 使用 `start`、`market`、`strategy`、`agent`、`control`、`data`、`notification`、`integration` 或 `end`，未知分类归入前端“其他”。`Aliases` 和 `Tags` 用于工作流编辑器本地检索，`SortOrder` 用于同分类内稳定排序。`Deterministic`、`Stateless` 与 `FrameSafe` 决定通用校验和回测 frame 能力。Config/Input/Output Schema 必须显式声明 Draft 2020-12；UI Schema 只要求是 JSON 对象。需要多出口时在 `NodeDescriptor.Branches` 声明至少两个稳定分支键；运行时以节点输出的字符串 `branch` 选择端口，再执行边上的 Boolean CEL，同一端口可以连接零个或多个下游节点。
 
 Backend 会在执行前后分别校验输入和输出 Schema。插件仍应处理 JSON 解码、外部响应、URL、文件和凭据等信任边界错误，并响应 `context.Context` 取消。
 
@@ -254,12 +253,6 @@ Backend 会在执行前后分别校验输入和输出 Schema。插件仍应处�
 | `State`          | 当前插件/工作流/节点命名空间状态      |
 | `Artifacts`      | 写入或打开内容寻址制品                |
 | `Logger`         | 写入当前节点的结构化日志              |
-
-### Profile
-
-需要外部资源或领域配置的节点通过 `NodeDescriptor.ProfileSlots` 声明能力槽位，并在 `ActionRequest.ProfileBindings` 中接收固定引用。插件通过 `Registrar.Profile` 注册 `ProfileDescriptor` 和 `ProfileProvider`，负责 Schema、UI、权限、凭据、版本、存储和运行时解析。工作流只能引用已发布版本；发布新版本不会改变已经发布的工作流修订。插件可复用 `plugin/sdk/profile` 的 Store 和路由实现草稿、复制、发布、停用与版本查询；Store 不会在应用启动时建表，Profile 表必须由插件 migration 预先创建。
-
-Profile 类型应避免把密钥、连接细节或同一领域事实复制到节点 Config；节点只保存自己的行为参数和 ProfileSlot。运行时解析失败应作为当前节点或当前 Trigger 的领域错误返回，不得绕过 Core 的工作流状态机。
 
 副作用必须以 `OperationKey` 或同等数据库唯一键实现幂等。不要把密钥、授权头、Cookie、DSN、原始请求/响应或个人数据写入 Logger、Output 或 Artifact。
 

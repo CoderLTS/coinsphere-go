@@ -4,35 +4,25 @@ import (
 	"encoding/json"
 
 	"coinsphere/backend/plugin/sdk"
-	profileStore "coinsphere/backend/plugin/sdk/profile"
 	"gorm.io/gorm"
 )
 
 const quantPluginID = "official.quant"
 
 var emptyObjectSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false}`)
-var quantStrategyConfigSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"strategyId":{"type":"string","title":"策略标识","const":"official.quant.sma-crossover"},"parameters":{"type":"object","title":"参数"}},"required":["strategyId","parameters"],"additionalProperties":false}`)
+var quantSeriesConfigSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"venue":{"type":"string","title":"交易所","pattern":"^[a-z][a-z0-9_-]{1,31}$","default":"binance"},"market":{"type":"string","title":"市场类型","minLength":1,"maxLength":32},"instrument":{"type":"string","title":"交易对","pattern":"^[A-Z0-9]{2,32}$"},"interval":{"type":"string","title":"K 线周期","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"]}},"required":["venue","market","instrument","interval"],"additionalProperties":false}`)
+var quantStrategyConfigSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"venue":{"type":"string","title":"交易所","pattern":"^[a-z][a-z0-9_-]{1,31}$","default":"binance"},"strategyId":{"type":"string","title":"策略标识","const":"official.quant.sma-crossover"},"market":{"type":"string","title":"市场类型","minLength":1,"maxLength":32},"instrument":{"type":"string","title":"交易对","pattern":"^[A-Z0-9]{2,32}$"},"interval":{"type":"string","title":"K 线周期","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"]},"parameters":{"type":"object","title":"参数"}},"required":["venue","strategyId","market","instrument","interval","parameters"],"additionalProperties":false}`)
+var quantBacktestConfigSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"venue":{"type":"string","title":"交易所","pattern":"^[a-z][a-z0-9_-]{1,31}$","default":"binance"},"strategyId":{"type":"string","title":"策略标识","const":"official.quant.sma-crossover"},"market":{"type":"string","title":"市场类型","minLength":1,"maxLength":32},"instrument":{"type":"string","title":"交易对","pattern":"^[A-Z0-9]{2,32}$"},"interval":{"type":"string","title":"K 线周期","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"]},"startTime":{"type":"string","title":"开始时间（UTC）","format":"date-time"},"endTime":{"type":"string","title":"结束时间（UTC）","format":"date-time"},"initialCapital":{"type":"string","title":"初始资金","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"feeRate":{"type":"string","title":"手续费率","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"slippageRate":{"type":"string","title":"滑点率","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"parameters":{"type":"object","title":"参数"}},"required":["venue","strategyId","market","instrument","interval","startTime","endTime","initialCapital","feeRate","slippageRate","parameters"],"additionalProperties":false}`)
 
 type quantRuntime struct {
 	db         *gorm.DB
 	registry   sdk.StrategyRegistry
 	marketData sdk.MarketDataRegistry
-	profiles   sdk.ProfileResolver
 }
 
 func Register(registrar sdk.Registrar, host sdk.Host) error {
 	runtime := &quantRuntime{
-		db: host.Store.DB(), registry: host.Strategies, marketData: host.MarketData, profiles: host.Profiles,
-	}
-	backtestProfiles, err := newQuantBacktestProfileProvider(host)
-	if err != nil {
-		return err
-	}
-	if err := registrar.Profile(backtestProfiles.store.Descriptor(), backtestProfiles); err != nil {
-		return err
-	}
-	if err := profileStore.RegisterRoutes(registrar, backtestProfiles.store); err != nil {
-		return err
+		db: host.Store.DB(), registry: host.Strategies, marketData: host.MarketData,
 	}
 	return runtime.register(registrar)
 }
@@ -50,31 +40,25 @@ func (q *quantRuntime) register(registrar sdk.Registrar) error {
 	if err := registrar.Action(quantNodeMeta(sdk.NodeDescriptor{
 		Type: "official.quant.evaluate", Version: "1.0.0", Kind: sdk.NodeKindAction,
 		ConfigSchema: quantStrategyConfigSchema,
-		UISchema:     json.RawMessage(`{"ui:order":["strategyId","parameters"]}`),
+		UISchema:     json.RawMessage(`{"ui:order":["venue","strategyId","market","instrument","interval","parameters"]}`),
 		InputSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"eventTime":{"type":"string","format":"date-time"}},"required":["eventTime"],"additionalProperties":false}`),
 		OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"venue":{"type":"string"},"strategyId":{"type":"string"},"strategyVersion":{"type":"string"},"target":{"type":"string","pattern":"^-?[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"evaluatedAt":{"type":"string","format":"date-time"}},"required":["venue","strategyId","strategyVersion","target","evaluatedAt"],"additionalProperties":false}`),
 		Pool:         sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
 		Capabilities: sdk.NodeCapabilities{FrameSafe: true},
-		ProfileSlots: []sdk.ProfileSlot{{Key: "market", Title: "行情 Profile", ProfileTypes: []string{"market.data"}, Required: true}},
 	}, "量化策略评估", "使用行情 Provider 运行通用量化策略。", "strategy", "#2563eb", "chart-no-axes-combined"), quantEvaluateAction{runtime: q}); err != nil {
 		return err
 	}
-	if err := registrar.Action(quantNodeMeta(sdk.NodeDescriptor{
-		Type: "official.quant.indicator", Version: "2.0.0", Kind: sdk.NodeKindAction,
-		Branches:     []string{"true", "false", "unavailable"},
-		ConfigSchema: quantIndicatorConfigSchema(),
-		UISchema:     json.RawMessage(`{"ui:order":["indicator","parameters"]}`),
-		InputSchema:  quantIndicatorInputSchema, OutputSchema: quantIndicatorOutputSchema,
-		Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
-		Capabilities: sdk.NodeCapabilities{FrameSafe: true},
-		Role:         sdk.NodeRoleCompute,
-		ConfigGroups: []sdk.ConfigGroup{{Key: "indicator", Title: "指标", Fields: []string{"indicator", "parameters"}}},
-		ProfileSlots: []sdk.ProfileSlot{{Key: "market", Title: "行情 Profile", ProfileTypes: []string{"market.data"}, Required: true}},
-	}, "指标判断", "基于闭合 K 线确定性计算一个指标；RSI、MACD 等通过指标字段区分。", "compute", "#0f766e", "chart-candlestick"), quantIndicatorAction{runtime: q}); err != nil {
-		return err
-	}
-	if err := q.registerMarketContext(registrar); err != nil {
-		return err
+	for _, indicator := range quantIndicatorDefinitions {
+		if err := registrar.Action(quantNodeMeta(sdk.NodeDescriptor{
+			Type: indicator.NodeType, Version: "1.0.0", Kind: sdk.NodeKindAction,
+			Branches: []string{"true", "false"}, ConfigSchema: quantIndicatorConfigSchema(indicator.Indicator),
+			UISchema:    json.RawMessage(`{"ui:order":["venue","market","instrument","checkInterval","name","interval","parameters"]}`),
+			InputSchema: quantIndicatorInputSchema, OutputSchema: quantIndicatorOutputSchema,
+			Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
+			Capabilities: sdk.NodeCapabilities{FrameSafe: true},
+		}, indicator.Title, "基于闭合 K 线确定性计算 "+indicator.Title+"。", "market", "#0f766e", indicator.Icon), quantIndicatorAction{runtime: q, indicator: indicator.Indicator}); err != nil {
+			return err
+		}
 	}
 	if err := q.registerWorkflowStrategyNodes(registrar); err != nil {
 		return err
@@ -85,7 +69,14 @@ func (q *quantRuntime) register(registrar sdk.Registrar) error {
 	if err := q.registerOrderIntent(registrar); err != nil {
 		return err
 	}
-	if err := registrar.Page(sdk.PageDescriptor{PageKey: "profiles", Title: "量化 Profiles", Icon: "ri:settings-3-line"}); err != nil {
+	if err := registrar.Action(quantNodeMeta(sdk.NodeDescriptor{
+		Type: "official.quant.backtest", Version: "1.0.0", Kind: sdk.NodeKindAction,
+		ConfigSchema: quantBacktestConfigSchema,
+		UISchema:     json.RawMessage(`{"ui:order":["venue","strategyId","market","instrument","interval","startTime","endTime","initialCapital","feeRate","slippageRate","parameters"]}`),
+		InputSchema:  emptyObjectSchema,
+		OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"backtestId":{"type":"integer"},"venue":{"type":"string"},"strategyId":{"type":"string"},"strategyVersion":{"type":"string"},"finalEquity":{"type":"string","x-coinsphere-decimal":true},"totalReturn":{"type":"string","x-coinsphere-decimal":true},"maxDrawdown":{"type":"string","x-coinsphere-decimal":true},"totalFees":{"type":"string","x-coinsphere-decimal":true},"tradeCount":{"type":"integer"},"candleCount":{"type":"integer"}},"required":["backtestId","venue","strategyId","strategyVersion","finalEquity","totalReturn","maxDrawdown","totalFees","tradeCount","candleCount"],"additionalProperties":false}`),
+		Pool:         sdk.PoolCompute, SideEffect: sdk.SideEffectData, State: sdk.StateStateless,
+	}, "量化策略回测", "通过任意行情 Provider 执行确定性回测。", "strategy", "#7c3aed", "history"), quantBacktestAction{runtime: q}); err != nil {
 		return err
 	}
 	for _, route := range []struct {

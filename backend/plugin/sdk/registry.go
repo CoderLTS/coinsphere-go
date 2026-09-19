@@ -37,7 +37,6 @@ type RegisterFunc func(Registrar, Host) error
 type Registrar interface {
 	Action(NodeDescriptor, ActionHandler) error
 	Trigger(NodeDescriptor, TriggerHandler) error
-	Profile(ProfileDescriptor, ProfileProvider) error
 	Strategy(Strategy) error
 	Page(PageDescriptor) error
 	ResultPage(ResultPageDescriptor) error
@@ -52,7 +51,6 @@ type Registrar interface {
 type Registry struct {
 	plugins          map[string]PluginDescriptor
 	nodes            map[string]registeredNode
-	profiles         map[string]registeredProfile
 	strategies       map[string]registeredStrategy
 	pages            map[string]PageDescriptor
 	resultPages      map[string]ResultPageDescriptor
@@ -62,12 +60,6 @@ type Registry struct {
 	execution        map[string]registeredExecutionProvider
 	validators       map[string]WorkflowValidator
 	templates        map[string]registeredTemplate
-}
-
-type registeredProfile struct {
-	pluginID string
-	desc     ProfileDescriptor
-	provider ProfileProvider
 }
 
 type registeredNode struct {
@@ -114,7 +106,6 @@ type registeredTemplate struct {
 func NewRegistry() *Registry {
 	return &Registry{
 		plugins: make(map[string]PluginDescriptor), nodes: make(map[string]registeredNode),
-		profiles:   make(map[string]registeredProfile),
 		strategies: make(map[string]registeredStrategy),
 		pages:      make(map[string]PageDescriptor), resultPages: make(map[string]ResultPageDescriptor),
 		routes: make(map[string]registeredRoute), assistantQueries: make(map[string]registeredAssistantQuery),
@@ -173,11 +164,6 @@ func (r *Registry) RegisterPlugin(plugin PluginDescriptor, host Host, register R
 			return fmt.Errorf("node type %q conflicts between plugins %q and %q", node.desc.Type, previous.pluginID, plugin.ID)
 		}
 	}
-	for key := range collector.profiles {
-		if previous, exists := r.profiles[key]; exists {
-			return fmt.Errorf("profile type %q conflicts between plugins %q and %q", key, previous.pluginID, plugin.ID)
-		}
-	}
 	for _, strategy := range collector.strategies {
 		if previous, exists := r.strategies[strategy.desc.ID]; exists {
 			return fmt.Errorf("strategy %q conflicts between plugins %q and %q", strategy.desc.ID, previous.pluginID, plugin.ID)
@@ -222,9 +208,6 @@ func (r *Registry) RegisterPlugin(plugin PluginDescriptor, host Host, register R
 	r.plugins[plugin.ID] = plugin
 	for _, node := range collector.nodes {
 		r.nodes[node.desc.Type] = node
-	}
-	for key, profile := range collector.profiles {
-		r.profiles[key] = profile
 	}
 	for _, strategy := range collector.strategies {
 		r.strategies[strategy.desc.ID] = strategy
@@ -299,7 +282,8 @@ func (r *Registry) Action(nodeType string) (NodeDescriptor, ActionHandler, bool)
 	if !ok || node.action == nil {
 		return NodeDescriptor{}, nil, false
 	}
-	desc := cloneNodeDescriptor(node.desc)
+	desc := node.desc
+	desc.Branches = append([]string(nil), desc.Branches...)
 	return desc, node.action, true
 }
 
@@ -308,118 +292,9 @@ func (r *Registry) Trigger(nodeType string) (NodeDescriptor, TriggerHandler, boo
 	if !ok || node.trigger == nil {
 		return NodeDescriptor{}, nil, false
 	}
-	desc := cloneNodeDescriptor(node.desc)
+	desc := node.desc
+	desc.Branches = append([]string(nil), desc.Branches...)
 	return desc, node.trigger, true
-}
-
-// TriggerAction exposes a trigger that also implements ActionHandler, which
-// is how plugins provide manually started batch/replay entry nodes.
-func (r *Registry) TriggerAction(nodeType string) (NodeDescriptor, ActionHandler, bool) {
-	node, ok := r.nodes[nodeType]
-	if !ok || node.trigger == nil || node.action == nil {
-		return NodeDescriptor{}, nil, false
-	}
-	return cloneNodeDescriptor(node.desc), node.action, true
-}
-
-func profileKey(pluginID, profileType string) string {
-	return pluginID + "/" + profileType
-}
-
-func (r *Registry) Profile(pluginID, profileType string) (ProfileDescriptor, ProfileProvider, bool) {
-	profile, ok := r.profiles[profileKey(pluginID, profileType)]
-	if !ok {
-		return ProfileDescriptor{}, nil, false
-	}
-	desc := profile.desc
-	desc.ConfigSchema = append(json.RawMessage(nil), desc.ConfigSchema...)
-	desc.UISchema = append(json.RawMessage(nil), desc.UISchema...)
-	return desc, profile.provider, true
-}
-
-func (r *Registry) ProfileDescriptors() []ProfileDescriptor {
-	profiles := make([]ProfileDescriptor, 0, len(r.profiles))
-	for _, profile := range r.profiles {
-		desc := profile.desc
-		desc.ConfigSchema = append(json.RawMessage(nil), desc.ConfigSchema...)
-		desc.UISchema = append(json.RawMessage(nil), desc.UISchema...)
-		profiles = append(profiles, desc)
-	}
-	sort.Slice(profiles, func(i, j int) bool {
-		if profiles[i].Type != profiles[j].Type {
-			return profiles[i].Type < profiles[j].Type
-		}
-		return profiles[i].Version < profiles[j].Version
-	})
-	return profiles
-}
-
-func (r *Registry) ListProfiles(ctx context.Context, query ProfileListQuery) ([]ProfileSummary, error) {
-	result := make([]ProfileSummary, 0)
-	for key, profile := range r.profiles {
-		pluginID, _ := strings.CutSuffix(key, "/"+profile.desc.Type)
-		if query.PluginID != "" && query.PluginID != pluginID {
-			continue
-		}
-		if query.Type != "" && query.Type != profile.desc.Type {
-			continue
-		}
-		items, err := profile.provider.List(ctx, query)
-		if err != nil {
-			return nil, fmt.Errorf("list profiles for %s: %w", pluginID, err)
-		}
-		for _, item := range items {
-			if item.PluginID == "" {
-				item.PluginID = pluginID
-			}
-			if item.Type == "" {
-				item.Type = profile.desc.Type
-			}
-			if len(item.ConfigSchema) == 0 {
-				item.ConfigSchema = append(json.RawMessage(nil), profile.desc.ConfigSchema...)
-			}
-			if len(item.UISchema) == 0 {
-				item.UISchema = append(json.RawMessage(nil), profile.desc.UISchema...)
-			}
-			result = append(result, item)
-		}
-	}
-	sort.Slice(result, func(i, j int) bool {
-		left, right := result[i].PluginID+"/"+result[i].ID, result[j].PluginID+"/"+result[j].ID
-		return left < right
-	})
-	if query.Limit > 0 && len(result) > query.Limit {
-		result = result[:query.Limit]
-	}
-	return result, nil
-}
-
-func (r *Registry) ValidateNewReference(ctx context.Context, ref ProfileRef) error {
-	if err := ValidateProfileRef(ref); err != nil {
-		return err
-	}
-	_, provider, ok := r.Profile(ref.PluginID, ref.Type)
-	if !ok {
-		return fmt.Errorf("profile type %q is not registered by plugin %q", ref.Type, ref.PluginID)
-	}
-	return provider.ValidateNewReference(ctx, ref)
-}
-
-func (r *Registry) Resolve(ctx context.Context, ref ProfileRef) (ResolvedProfile, error) {
-	if err := ValidateProfileRef(ref); err != nil {
-		return ResolvedProfile{}, err
-	}
-	_, provider, ok := r.Profile(ref.PluginID, ref.Type)
-	if !ok {
-		return ResolvedProfile{}, fmt.Errorf("profile type %q is not registered by plugin %q", ref.Type, ref.PluginID)
-	}
-	resolved, err := provider.Resolve(ctx, ref)
-	if err != nil {
-		return ResolvedProfile{}, err
-	}
-	resolved.Ref = ref
-	resolved.Config = append(json.RawMessage(nil), resolved.Config...)
-	return resolved, nil
 }
 
 func (r *Registry) Strategy(strategyID string) (StrategyDescriptor, Strategy, bool) {
@@ -554,7 +429,13 @@ func (r *Registry) Plugins() []PluginDescriptor {
 func (r *Registry) Nodes() []NodeDescriptor {
 	nodes := make([]NodeDescriptor, 0, len(r.nodes))
 	for _, node := range r.nodes {
-		nodes = append(nodes, cloneNodeDescriptor(node.desc))
+		desc := node.desc
+		desc.Branches = append([]string(nil), desc.Branches...)
+		desc.ConfigSchema = append(json.RawMessage(nil), desc.ConfigSchema...)
+		desc.UISchema = append(json.RawMessage(nil), desc.UISchema...)
+		desc.InputSchema = append(json.RawMessage(nil), desc.InputSchema...)
+		desc.OutputSchema = append(json.RawMessage(nil), desc.OutputSchema...)
+		nodes = append(nodes, desc)
 	}
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Type < nodes[j].Type })
 	return nodes
@@ -575,7 +456,6 @@ type registrationCollector struct {
 	declared         map[string]bool
 	used             map[string]bool
 	nodes            []registeredNode
-	profiles         map[string]registeredProfile
 	strategies       []registeredStrategy
 	pages            map[string]PageDescriptor
 	resultPages      map[string]ResultPageDescriptor
@@ -598,36 +478,13 @@ func (c *registrationCollector) Action(desc NodeDescriptor, handler ActionHandle
 }
 
 func (c *registrationCollector) Trigger(desc NodeDescriptor, handler TriggerHandler) error {
-	if handler == nil && desc.EventSubscription == nil {
-		return errors.New("trigger handler or event subscription is required")
+	if handler == nil {
+		return errors.New("trigger handler is required")
 	}
 	if desc.Kind != NodeKindTrigger {
 		return fmt.Errorf("trigger node %q must use kind %q", desc.Type, NodeKindTrigger)
 	}
-	node := registeredNode{pluginID: c.plugin.ID, desc: desc, trigger: handler}
-	if action, ok := handler.(ActionHandler); ok {
-		node.action = action
-	}
-	return c.addNode("triggers", node)
-}
-
-func (c *registrationCollector) Profile(desc ProfileDescriptor, provider ProfileProvider) error {
-	if provider == nil {
-		return errors.New("profile provider is required")
-	}
-	if err := ValidateProfileDescriptor(desc); err != nil {
-		return err
-	}
-	if c.profiles == nil {
-		c.profiles = make(map[string]registeredProfile)
-	}
-	key := profileKey(c.plugin.ID, desc.Type)
-	if _, exists := c.profiles[key]; exists {
-		return fmt.Errorf("duplicate profile type %q", desc.Type)
-	}
-	c.markUsed("profiles")
-	c.profiles[key] = registeredProfile{pluginID: c.plugin.ID, desc: desc, provider: provider}
-	return nil
+	return c.addNode("triggers", registeredNode{pluginID: c.plugin.ID, desc: desc, trigger: handler})
 }
 
 func (c *registrationCollector) Strategy(strategy Strategy) error {
@@ -697,16 +554,6 @@ func normalizeNodeDescriptor(desc NodeDescriptor, pluginName string) NodeDescrip
 	}
 	if desc.Height == 0 {
 		desc.Height = 72
-	}
-	if desc.Role == "" {
-		if desc.Kind == NodeKindTrigger {
-			desc.Role = NodeRoleTrigger
-		} else {
-			desc.Role = NodeRoleCompute
-		}
-	}
-	if desc.Visibility == "" {
-		desc.Visibility = NodeVisibilityBasic
 	}
 	desc.Capabilities.Stateless = desc.State == StateStateless
 	if desc.SideEffect == SideEffectNone {
@@ -887,7 +734,7 @@ func (c *registrationCollector) WorkflowValidator(validator WorkflowValidator) e
 
 func (c *registrationCollector) Template(desc TemplateDescriptor) error {
 	if !contributionKeyPattern.MatchString(desc.Key) || strings.TrimSpace(desc.Name) == "" ||
-		strings.TrimSpace(desc.Description) == "" || !json.Valid(desc.Graph) {
+		strings.TrimSpace(desc.Description) == "" || strings.TrimSpace(desc.Mode) == "" || !json.Valid(desc.Graph) {
 		return errors.New("workflow template requires a valid key, metadata, and graph")
 	}
 	if c.templates == nil {
@@ -976,9 +823,9 @@ func validateNodeDescriptor(desc NodeDescriptor) error {
 	if desc.Capabilities.Stateless != (desc.State == StateStateless) {
 		return fmt.Errorf("node %q stateless capability must match state mode", desc.Type)
 	}
-	if desc.Capabilities.FrameSafe && (!desc.Capabilities.Deterministic ||
+	if desc.Capabilities.FrameSafe && (!desc.Capabilities.Deterministic || !desc.Capabilities.Stateless ||
 		desc.SideEffect != SideEffectNone && !desc.Capabilities.FrameResult) {
-		return fmt.Errorf("node %q frame-safe capability requires deterministic execution without frame side effects", desc.Type)
+		return fmt.Errorf("node %q frame-safe capability requires deterministic stateless execution without frame side effects", desc.Type)
 	}
 	if desc.Pool != PoolStream && desc.Pool != PoolCompute {
 		return fmt.Errorf("node %q has invalid pool %q", desc.Type, desc.Pool)
@@ -988,18 +835,6 @@ func validateNodeDescriptor(desc NodeDescriptor) error {
 	}
 	if desc.State != StateStateless && desc.State != StatePersistent {
 		return fmt.Errorf("node %q has invalid state mode %q", desc.Type, desc.State)
-	}
-	if !validNodeRole(desc.Role) {
-		return fmt.Errorf("node %q has invalid role %q", desc.Type, desc.Role)
-	}
-	if desc.Visibility != NodeVisibilityBasic && desc.Visibility != NodeVisibilityAdvanced {
-		return fmt.Errorf("node %q has invalid visibility %q", desc.Type, desc.Visibility)
-	}
-	if err := validateProfileSlots(desc.ProfileSlots); err != nil {
-		return fmt.Errorf("node %q: %w", desc.Type, err)
-	}
-	if err := validateConfigGroups(desc.ConfigGroups); err != nil {
-		return fmt.Errorf("node %q: %w", desc.Type, err)
 	}
 	branches := map[string]bool{}
 	for _, branch := range desc.Branches {
@@ -1022,177 +857,6 @@ func validateNodeDescriptor(desc NodeDescriptor) error {
 		return fmt.Errorf("node %q: %w", desc.Type, err)
 	}
 	return nil
-}
-
-func validNodeRole(role NodeRole) bool {
-	switch role {
-	case NodeRoleTrigger, NodeRoleEntry, NodeRoleData, NodeRoleCompute, NodeRoleControl, NodeRoleEffect, NodeRoleEnd:
-		return true
-	default:
-		return false
-	}
-}
-
-func validateProfileSlots(slots []ProfileSlot) error {
-	keys := make(map[string]bool, len(slots))
-	for _, slot := range slots {
-		if !contributionKeyPattern.MatchString(slot.Key) || strings.Contains(slot.Key, ".") {
-			return fmt.Errorf("profile slot %q has an invalid key", slot.Key)
-		}
-		if keys[slot.Key] {
-			return fmt.Errorf("profile slot %q is duplicated", slot.Key)
-		}
-		keys[slot.Key] = true
-		if strings.TrimSpace(slot.Title) == "" {
-			return fmt.Errorf("profile slot %q requires a title", slot.Key)
-		}
-		if len(slot.ProfileTypes) == 0 {
-			return fmt.Errorf("profile slot %q requires at least one profile type", slot.Key)
-		}
-		types := make(map[string]bool, len(slot.ProfileTypes))
-		for _, profileType := range slot.ProfileTypes {
-			if !contributionKeyPattern.MatchString(profileType) || !strings.Contains(profileType, ".") {
-				return fmt.Errorf("profile slot %q has invalid profile type %q", slot.Key, profileType)
-			}
-			if types[profileType] {
-				return fmt.Errorf("profile slot %q has duplicate profile type %q", slot.Key, profileType)
-			}
-			types[profileType] = true
-		}
-	}
-	return nil
-}
-
-func validateConfigGroups(groups []ConfigGroup) error {
-	keys := make(map[string]bool, len(groups))
-	for _, group := range groups {
-		if !contributionKeyPattern.MatchString(group.Key) || strings.Contains(group.Key, ".") {
-			return fmt.Errorf("config group %q has an invalid key", group.Key)
-		}
-		if keys[group.Key] {
-			return fmt.Errorf("config group %q is duplicated", group.Key)
-		}
-		keys[group.Key] = true
-		if strings.TrimSpace(group.Title) == "" {
-			return fmt.Errorf("config group %q requires a title", group.Key)
-		}
-		fields := make(map[string]bool, len(group.Fields))
-		for _, field := range group.Fields {
-			field = strings.TrimSpace(field)
-			if field == "" || fields[field] {
-				return fmt.Errorf("config group %q has an invalid or duplicate field", group.Key)
-			}
-			fields[field] = true
-		}
-	}
-	return nil
-}
-
-// ValidateProfileDescriptor checks plugin-owned profile metadata before it is
-// exposed to the editor or persisted by a host integration.
-func ValidateProfileDescriptor(desc ProfileDescriptor) error {
-	if !contributionKeyPattern.MatchString(desc.Type) || !strings.Contains(desc.Type, ".") {
-		return errors.New("profile type must be a dotted lowercase key")
-	}
-	if !validProfileVersion(desc.Version) {
-		return errors.New("profile version must be a non-empty opaque version")
-	}
-	if strings.TrimSpace(desc.Title) == "" || strings.TrimSpace(desc.Description) == "" {
-		return errors.New("profile requires a title and description")
-	}
-	if err := validateSchema("configSchema", desc.ConfigSchema, true); err != nil {
-		return err
-	}
-	if err := validateSchema("uiSchema", desc.UISchema, false); err != nil {
-		return err
-	}
-	return nil
-}
-
-// ValidateProfileConfig validates a concrete profile payload against the
-// descriptor schema without exposing the payload to Core-owned persistence.
-func ValidateProfileConfig(desc ProfileDescriptor, raw json.RawMessage) error {
-	if err := ValidateProfileDescriptor(desc); err != nil {
-		return err
-	}
-	var value any
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	if decoder.Decode(&value) != nil {
-		return errors.New("profile config must be valid JSON")
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return errors.New("profile config must contain exactly one JSON value")
-	}
-	compiler := jsonschema.NewCompiler()
-	compiler.DefaultDraft(jsonschema.Draft2020)
-	resource := "profile-config.json"
-	var schemaValue any
-	if err := json.Unmarshal(desc.ConfigSchema, &schemaValue); err != nil {
-		return errors.New("profile config schema is invalid")
-	}
-	if err := compiler.AddResource(resource, schemaValue); err != nil {
-		return errors.New("profile config schema is invalid")
-	}
-	schema, err := compiler.Compile(resource)
-	if err != nil {
-		return errors.New("profile config schema is invalid")
-	}
-	if err := schema.Validate(value); err != nil {
-		return fmt.Errorf("profile config is invalid: %w", err)
-	}
-	return nil
-}
-
-// ValidateProfileRef checks the immutable reference stored in a workflow
-// revision.  It intentionally does not verify that the profile exists; that
-// lookup belongs to the owning plugin at publish/runtime time.
-func ValidateProfileRef(ref ProfileRef) error {
-	if !contributionKeyPattern.MatchString(ref.PluginID) || !strings.Contains(ref.PluginID, ".") {
-		return errors.New("profile reference requires a dotted plugin id")
-	}
-	if strings.TrimSpace(ref.ProfileID) == "" {
-		return errors.New("profile reference requires a profile id")
-	}
-	if !validProfileVersion(ref.Version) {
-		return errors.New("profile reference version must be a non-empty opaque version")
-	}
-	if !contributionKeyPattern.MatchString(ref.Type) || !strings.Contains(ref.Type, ".") {
-		return errors.New("profile reference requires a dotted profile type")
-	}
-	return nil
-}
-
-func validProfileVersion(version string) bool {
-	version = strings.TrimSpace(version)
-	return version != "" && len(version) <= 128 && !strings.ContainsAny(version, "\r\n")
-}
-
-func cloneNodeDescriptor(desc NodeDescriptor) NodeDescriptor {
-	desc.Aliases = append([]string(nil), desc.Aliases...)
-	desc.Tags = append([]string(nil), desc.Tags...)
-	desc.Branches = append([]string(nil), desc.Branches...)
-	desc.FrameSourcePorts = append([]string(nil), desc.FrameSourcePorts...)
-	desc.ConnectionFields = append([]string(nil), desc.ConnectionFields...)
-	desc.ConfigSchema = append(json.RawMessage(nil), desc.ConfigSchema...)
-	desc.UISchema = append(json.RawMessage(nil), desc.UISchema...)
-	desc.InputSchema = append(json.RawMessage(nil), desc.InputSchema...)
-	desc.OutputSchema = append(json.RawMessage(nil), desc.OutputSchema...)
-	if desc.ProfileSlots != nil {
-		desc.ProfileSlots = make([]ProfileSlot, len(desc.ProfileSlots))
-		for i, slot := range desc.ProfileSlots {
-			desc.ProfileSlots[i] = slot
-			desc.ProfileSlots[i].ProfileTypes = append([]string(nil), slot.ProfileTypes...)
-		}
-	}
-	if desc.ConfigGroups != nil {
-		desc.ConfigGroups = make([]ConfigGroup, len(desc.ConfigGroups))
-		for i, group := range desc.ConfigGroups {
-			desc.ConfigGroups[i] = group
-			desc.ConfigGroups[i].Fields = append([]string(nil), group.Fields...)
-		}
-	}
-	return desc
 }
 
 func validateSchema(name string, raw json.RawMessage, requireDraft bool) error {

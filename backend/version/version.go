@@ -2,8 +2,8 @@
 package version
 
 const (
-	Core     = "4.0.0"
-	SDKMajor = 4
+	Core     = "3.0.0"
+	SDKMajor = 3
 )
 
 var BuiltinPlugins = map[string]string{
@@ -16,5 +16,5 @@ var BuiltinPlugins = map[string]string{
 }
 
 var BuiltinPluginDependencies = map[string]map[string]string{
-	"official.binance": {"official.quant": "^4.0.0"},
+	"official.binance": {"official.quant": "^3.0.0"},
 }

@@ -37,7 +37,7 @@ func (s *Server) handlePublishWorkflowWebhook(c *gin.Context) {
 		writeProblem(c, http.StatusBadRequest, "webhook body must be a JSON object no larger than 1 MiB")
 		return
 	}
-	data, err := s.App.PublishWorkflowWebhook(c.Request.Context(), workflowID, c.Param("triggerNodeId"), secret, eventID, partitionKey, *payload)
+	data, err := s.App.PublishWorkflowWebhook(c.Request.Context(), workflowID, secret, eventID, partitionKey, *payload)
 	respond(c, data, err, "")
 }
 

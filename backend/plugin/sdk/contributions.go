@@ -25,6 +25,7 @@ type TemplateDescriptor struct {
 	Key         string
 	Name        string
 	Description string
+	Mode        string
 	Graph       json.RawMessage
 }
 

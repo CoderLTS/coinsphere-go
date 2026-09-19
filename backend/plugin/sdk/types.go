@@ -22,143 +22,6 @@ type NodeKind string
 type ExecutionPool string
 type SideEffectClass string
 type StateMode string
-type NodeRole string
-type NodeVisibility string
-
-// NodeRole controls how a node is presented and composed in the workflow
-// editor.  Kind still determines the executable contract; Role only carries
-// the editor/runtime intent of the node.
-const (
-	NodeRoleTrigger NodeRole = "trigger"
-	// NodeRoleEntry is the editor-oriented spelling for an entry node. New
-	// descriptors should prefer NodeRoleTrigger when the node emits events.
-	NodeRoleEntry   NodeRole = "entry"
-	NodeRoleData    NodeRole = "data"
-	NodeRoleCompute NodeRole = "compute"
-	NodeRoleControl NodeRole = "control"
-	NodeRoleEffect  NodeRole = "effect"
-	NodeRoleEnd     NodeRole = "end"
-)
-
-const (
-	NodeVisibilityBasic    NodeVisibility = "basic"
-	NodeVisibilityAdvanced NodeVisibility = "advanced"
-)
-
-// ConfigGroup lets a plugin arrange a node's configuration into small,
-// discoverable sections without putting presentation rules into core.
-type ConfigGroup struct {
-	Key         string   `json:"key"`
-	Title       string   `json:"title"`
-	Description string   `json:"description,omitempty"`
-	Fields      []string `json:"fields,omitempty"`
-	Advanced    bool     `json:"advanced"`
-}
-
-// ProfileDescriptor describes a profile type owned by a plugin.  Core stores
-// references to profile instances and versions; the plugin owns the profile's
-// schema, UI and runtime resolution.
-type ProfileDescriptor struct {
-	Type         string          `json:"type"`
-	Version      string          `json:"version"`
-	Title        string          `json:"title"`
-	Description  string          `json:"description"`
-	ConfigSchema json.RawMessage `json:"configSchema"`
-	UISchema     json.RawMessage `json:"uiSchema"`
-}
-
-// ProfileRef is the immutable reference embedded in a workflow revision and
-// run snapshot.  Version is required so publishing a new profile never
-// changes an existing revision implicitly.
-type ProfileRef struct {
-	PluginID  string `json:"pluginId"`
-	ProfileID string `json:"profileId"`
-	Version   string `json:"version"`
-	Type      string `json:"type"`
-}
-
-// ProfileSlot declares the profile capability a node needs.  The editor can
-// offer only compatible profile types while the runtime persists the stable
-// profile id and pinned version.
-type ProfileSlot struct {
-	Key          string   `json:"key"`
-	Title        string   `json:"title"`
-	ProfileTypes []string `json:"profileTypes"`
-	Required     bool     `json:"required"`
-}
-
-// ResolvedProfile is the runtime value returned by the owning plugin. Core
-// never interprets Config; it only pins Ref into a revision/run snapshot.
-type ResolvedProfile struct {
-	Ref     ProfileRef      `json:"ref"`
-	Name    string          `json:"name"`
-	Summary string          `json:"summary"`
-	Config  json.RawMessage `json:"config"`
-	Secrets SecretReader    `json:"-"`
-}
-
-type ProfileResolver interface {
-	Resolve(context.Context, ProfileRef) (ResolvedProfile, error)
-}
-
-type ProfileStatus string
-
-const (
-	ProfileStatusDraft     ProfileStatus = "draft"
-	ProfileStatusActive    ProfileStatus = "active"
-	ProfileStatusDisabled  ProfileStatus = "disabled"
-	ProfileStatusPublished ProfileStatus = "published"
-)
-
-type ProfileVersionSummary struct {
-	Version     string        `json:"version"`
-	Status      ProfileStatus `json:"status"`
-	PublishedAt *time.Time    `json:"publishedAt,omitempty"`
-}
-
-type ProfileSummary struct {
-	PluginID               string                  `json:"pluginId"`
-	ID                     string                  `json:"id"`
-	Name                   string                  `json:"name"`
-	Summary                string                  `json:"summary"`
-	Type                   string                  `json:"type"`
-	Status                 ProfileStatus           `json:"status"`
-	LatestPublishedVersion string                  `json:"latestPublishedVersion,omitempty"`
-	Versions               []ProfileVersionSummary `json:"versions,omitempty"`
-	Config                 json.RawMessage         `json:"config,omitempty"`
-	ConfigSchema           json.RawMessage         `json:"configSchema"`
-	UISchema               json.RawMessage         `json:"uiSchema"`
-}
-
-type ProfileListQuery struct {
-	PluginID        string
-	Type            string
-	IncludeDisabled bool
-	Limit           int
-}
-
-type ProfileActor struct {
-	UserID    int64
-	RoleCodes []string
-}
-
-type ProfilePermission string
-
-const (
-	ProfilePermissionRead    ProfilePermission = "profile.read"
-	ProfilePermissionWrite   ProfilePermission = "profile.write"
-	ProfilePermissionPublish ProfilePermission = "profile.publish"
-	ProfilePermissionDisable ProfilePermission = "profile.disable"
-)
-
-// ProfileProvider is implemented by the plugin that owns a profile type.
-// Core can list and pin references through this interface but never owns the
-// profile configuration or secrets.
-type ProfileProvider interface {
-	List(context.Context, ProfileListQuery) ([]ProfileSummary, error)
-	ValidateNewReference(context.Context, ProfileRef) error
-	Resolve(context.Context, ProfileRef) (ResolvedProfile, error)
-}
 
 type NodeCapabilities struct {
 	Deterministic bool `json:"deterministic"`
@@ -166,7 +29,6 @@ type NodeCapabilities struct {
 	FrameSafe     bool `json:"frameSafe"`
 	FrameDriver   bool `json:"frameDriver"`
 	FrameResult   bool `json:"frameResult"`
-	ManualTrigger bool `json:"manualTrigger"`
 }
 
 const (
@@ -187,51 +49,29 @@ const (
 )
 
 type NodeDescriptor struct {
-	Type         string
-	Version      string
-	Kind         NodeKind
-	Title        string
-	Description  string
-	Category     string
-	Aliases      []string
-	Tags         []string
-	SortOrder    int
-	Color        string
-	Icon         string
-	Width        int
-	Height       int
-	Capabilities NodeCapabilities
-	Branches     []string
-	// FrameSourcePorts limits the output ports that a frame-driven operation
-	// may use to enter its deterministic per-item subgraph. An empty value
-	// keeps the legacy descriptor behavior of allowing the operation to choose
-	// its port at runtime.
-	FrameSourcePorts []string
-	ConfigSchema     json.RawMessage
-	UISchema         json.RawMessage
-	InputSchema      json.RawMessage
-	OutputSchema     json.RawMessage
-	Pool             ExecutionPool
-	SideEffect       SideEffectClass
-	State            StateMode
-	ValidateConfig   func(json.RawMessage) error
-	ConnectionType   string
-	ConnectionFields []string
-	// EventSubscription 声明本地事件入口，不启动重复的外部连接。
-	EventSubscription func(json.RawMessage) (EventSubscription, error)
-	TriggerOutput     func(json.RawMessage, json.RawMessage, time.Time) (json.RawMessage, error)
-	OperationConfig   func(json.RawMessage, []json.RawMessage) (json.RawMessage, error)
-	WorkflowOperation bool
-	Role              NodeRole
-	Visibility        NodeVisibility
-	ProfileSlots      []ProfileSlot
-	ConfigGroups      []ConfigGroup
-}
-
-type EventSubscription struct {
-	Types   []string `json:"types"`
-	Source  string   `json:"source,omitempty"`
-	Subject string   `json:"subject,omitempty"`
+	Type           string
+	Version        string
+	Kind           NodeKind
+	Title          string
+	Description    string
+	Category       string
+	Aliases        []string
+	Tags           []string
+	SortOrder      int
+	Color          string
+	Icon           string
+	Width          int
+	Height         int
+	Capabilities   NodeCapabilities
+	Branches       []string
+	ConfigSchema   json.RawMessage
+	UISchema       json.RawMessage
+	InputSchema    json.RawMessage
+	OutputSchema   json.RawMessage
+	Pool           ExecutionPool
+	SideEffect     SideEffectClass
+	State          StateMode
+	ValidateConfig func(json.RawMessage) error
 }
 
 type PluginMenuMode string
@@ -257,7 +97,6 @@ type RevisionRef struct {
 type ActionRequest struct {
 	Revision           RevisionRef
 	NodeInstanceID     string
-	ProfileBindings    map[string]ProfileRef
 	OperationKey       string
 	Input              json.RawMessage
 	Config             json.RawMessage
@@ -270,24 +109,6 @@ type ActionRequest struct {
 	FrameResultNodeIDs []string
 	ExecutionMode      string
 	Logger             *slog.Logger
-	TriggeredAt        time.Time
-	Resume             *ResumeContext
-	Profiles           ProfileResolver
-}
-
-type ResumeContext struct {
-	Data     json.RawMessage
-	TimedOut bool
-}
-
-// 等待状态由核心持久化；插件只声明唤醒条件和需要保留的领域上下文。
-type WaitRequest struct {
-	BlockFollowingRuns bool
-	Key                string
-	Until              time.Time
-	WakeAt             time.Time
-	Subscription       EventSubscription
-	Data               json.RawMessage
 }
 
 const (
@@ -320,9 +141,6 @@ type NodeOutput struct {
 type ActionResult struct {
 	Output    json.RawMessage
 	Artifacts []Artifact
-	Port      string
-	Skip      bool
-	Wait      *WaitRequest
 }
 
 type ActionHandler interface {
@@ -330,14 +148,12 @@ type ActionHandler interface {
 }
 
 type TriggerRequest struct {
-	Revision        RevisionRef
-	NodeInstanceID  string
-	ProfileBindings map[string]ProfileRef
-	Profiles        ProfileResolver
-	Config          json.RawMessage
-	Secrets         SecretReader
-	State           StateStore
-	Logger          *slog.Logger
+	Revision       RevisionRef
+	NodeInstanceID string
+	Config         json.RawMessage
+	Secrets        SecretReader
+	State          StateStore
+	Logger         *slog.Logger
 }
 
 type TriggerHandler interface {
@@ -503,14 +319,13 @@ type InstrumentQuery struct {
 }
 
 type CandleQuery struct {
-	ClosedThrough time.Time
-	Market        string
-	Instrument    string
-	Interval      string
-	StartTime     time.Time
-	EndTime       time.Time
-	Limit         int
-	ProxyID       int64
+	Market     string
+	Instrument string
+	Interval   string
+	StartTime  time.Time
+	EndTime    time.Time
+	Limit      int
+	ProxyID    int64
 }
 
 type QuoteQuery struct {
@@ -524,19 +339,7 @@ type Quote struct {
 	QuotedAt time.Time
 }
 
-type MarketSeries struct {
-	Market        string
-	Instrument    string
-	Interval      string
-	FirstOpenTime time.Time
-	LastCloseTime time.Time
-	CandleCount   int64
-	WorkflowIDs   []int64
-}
-
 type MarketDataProvider interface {
-	Series(context.Context) ([]MarketSeries, error)
-	CandleSubscription(CandleQuery) EventSubscription
 	ID() string
 	Instruments(context.Context, InstrumentQuery) ([]Instrument, error)
 	Candles(context.Context, CandleQuery) ([]Candle, error)
@@ -647,7 +450,6 @@ type Host struct {
 	MarketData       MarketDataRegistry
 	Execution        ExecutionRegistry
 	Strategies       StrategyRegistry
-	Profiles         ProfileResolver
 	AllowedHTTPHosts []string
 }
 

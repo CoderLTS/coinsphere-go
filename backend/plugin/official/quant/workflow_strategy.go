@@ -12,51 +12,41 @@ import (
 	"gorm.io/gorm"
 )
 
-var quantCodeStrategyConfigSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"series":{"type":"array","title":"来源别名与回看范围","minItems":1,"maxItems":8,"items":{"type":"object","properties":{"alias":{"type":"string","title":"别名","pattern":"^[A-Za-z][A-Za-z0-9_]{0,63}$"},"lookback":{"type":"integer","title":"回看根数","minimum":1,"maximum":500}},"required":["alias","lookback"],"additionalProperties":false},"default":[{"alias":"main","lookback":30}]},"parameters":{"type":"object","title":"参数（小数使用字符串）","default":{"target":"1"}},"source":{"type":"string","title":"CEL 表达式","minLength":1,"maxLength":4096,"default":"{\"long\": decimalGt(last(ohlcv.main.close), sma(ohlcv.main.close, 20)), \"target\": params.target}"},"booleanOutputs":{"type":"array","title":"布尔输出","items":{"type":"string","pattern":"^[A-Za-z][A-Za-z0-9_]{0,63}$"},"minItems":1,"maxItems":32,"uniqueItems":true,"default":["long"]},"decimalOutputs":{"type":"array","title":"小数输出","items":{"type":"string","pattern":"^[A-Za-z][A-Za-z0-9_]{0,63}$"},"maxItems":32,"uniqueItems":true,"default":["target"]},"branchField":{"type":"string","title":"分支字段","pattern":"^[A-Za-z][A-Za-z0-9_]{0,63}$","default":"long"}},"required":["series","parameters","source","booleanOutputs","decimalOutputs","branchField"],"additionalProperties":false}`)
+var quantCodeStrategyConfigSchema = json.RawMessage(`{
+  "$schema":"https://json-schema.org/draft/2020-12/schema","type":"object",
+  "properties":{
+    "series":{"type":"array","title":"行情序列","minItems":1,"maxItems":8,"items":{"type":"object","properties":{"alias":{"type":"string","title":"别名","pattern":"^[A-Za-z][A-Za-z0-9_]{0,63}$"},"venue":{"type":"string","title":"交易所","pattern":"^[a-z][a-z0-9_-]{1,31}$","default":"binance"},"market":{"type":"string","title":"市场","minLength":1,"maxLength":32},"instrument":{"type":"string","title":"品种","pattern":"^[A-Z0-9]{2,32}$"},"interval":{"type":"string","title":"周期","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"]},"lookback":{"type":"integer","title":"回看根数","minimum":1,"maximum":500}},"required":["alias","venue","market","instrument","interval","lookback"],"additionalProperties":false},"default":[{"alias":"main","venue":"binance","market":"spot","instrument":"BTCUSDT","interval":"1h","lookback":30}]},
+    "parameters":{"type":"object","title":"参数（小数使用字符串）","default":{"target":"1"}},
+    "source":{"type":"string","title":"CEL 表达式","minLength":1,"maxLength":4096,"default":"{\"long\": decimalGt(last(ohlcv.main.close), sma(ohlcv.main.close, 20)), \"target\": params.target}"},
+    "booleanOutputs":{"type":"array","title":"布尔输出","items":{"type":"string","pattern":"^[A-Za-z][A-Za-z0-9_]{0,63}$"},"minItems":1,"maxItems":32,"uniqueItems":true,"default":["long"]},
+    "decimalOutputs":{"type":"array","title":"小数输出","items":{"type":"string","pattern":"^[A-Za-z][A-Za-z0-9_]{0,63}$"},"maxItems":32,"uniqueItems":true,"default":["target"]},
+    "branchField":{"type":"string","title":"分支字段","pattern":"^[A-Za-z][A-Za-z0-9_]{0,63}$","default":"long"}
+  },"required":["series","parameters","source","booleanOutputs","decimalOutputs","branchField"],"additionalProperties":false
+}`)
 
-var quantCodeStrategyOutputSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"booleans":{"type":"object","additionalProperties":{"type":"boolean"}},"decimals":{"type":"object","additionalProperties":{"type":"string","pattern":"^-?[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true}},"ready":{"type":"boolean"},"branch":{"type":"string","enum":["true","false","unavailable"]},"entered":{"type":"boolean"},"triggered":{"type":"boolean"},"evaluatedAt":{"type":"string","format":"date-time"}},"required":["booleans","decimals","ready","branch","entered","triggered","evaluatedAt"],"additionalProperties":false}`)
+var quantCodeStrategyOutputSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"booleans":{"type":"object","additionalProperties":{"type":"boolean"}},"decimals":{"type":"object","additionalProperties":{"type":"string","pattern":"^-?[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true}},"ready":{"type":"boolean"},"branch":{"type":"string","enum":["true","false"]},"entered":{"type":"boolean"},"triggered":{"type":"boolean"},"evaluatedAt":{"type":"string","format":"date-time"}},"required":["booleans","decimals","ready","branch","entered","triggered","evaluatedAt"],"additionalProperties":false}`)
 
-var quantPositionConfigSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"market":{"type":"string","title":"市场","enum":["spot","usdm"],"default":"spot"},"targetMode":{"type":"string","title":"目标来源","enum":["fixed","input"],"enumLabels":["固定目标仓位","引用上游小数"],"default":"fixed"},"fixedTarget":{"type":"string","title":"固定目标仓位","pattern":"^-?[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true,"default":"1","x-visible-when":{"targetMode":"fixed"}}},"required":["market","targetMode"],"additionalProperties":false,"allOf":[{"if":{"properties":{"targetMode":{"const":"fixed"}}},"then":{"required":["fixedTarget"]}}]}`)
+var quantPositionConfigSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"market":{"type":"string","title":"市场","enum":["spot","usdm"],"default":"spot"},"targetMode":{"type":"string","title":"目标来源","enum":["fixed","input"],"enumLabels":["固定目标仓位","引用上游小数"],"default":"fixed"},"fixedTarget":{"type":"string","title":"固定目标仓位","pattern":"^-?[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true,"default":"1"},"decimalField":{"type":"string","title":"小数字段名","pattern":"^[A-Za-z][A-Za-z0-9_]{0,63}$","default":"target"}},"required":["market","targetMode","fixedTarget","decimalField"],"additionalProperties":false}`)
 var quantPositionInputSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"target":{"type":"string","pattern":"^-?[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true,"x-coinsphere-field-source":true},"evaluatedAt":{"type":"string","format":"date-time","x-coinsphere-field-source":true}},"required":["evaluatedAt"],"additionalProperties":false}`)
 var quantPositionOutputSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"targetPosition":{"type":"string","x-coinsphere-decimal":true},"evaluatedAt":{"type":"string","format":"date-time"},"sourceNodeInstanceId":{"type":"string"}},"required":["targetPosition","evaluatedAt","sourceNodeInstanceId"],"additionalProperties":false}`)
 
 var quantOutputSignalInputSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false}`)
 var quantOutputSignalOutputSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"signalId":{"type":"integer","minimum":0},"businessKey":{"type":"string"},"action":{"type":"string","enum":["buy","sell","hold"]},"previousTargetPosition":{"type":"string","x-coinsphere-decimal":true},"targetPosition":{"type":"string","x-coinsphere-decimal":true},"target":{"type":"string","x-coinsphere-decimal":true},"evaluatedAt":{"type":"string","format":"date-time"},"nodeValues":{"type":"object"},"branch":{"type":"string","enum":["realtime","unchanged"]}},"required":["signalId","businessKey","action","previousTargetPosition","targetPosition","target","evaluatedAt","nodeValues","branch"],"additionalProperties":false}`)
 
-var quantBacktestStartConfigSchema = emptyObjectSchema
-var quantBacktestStartInputSchema = emptyObjectSchema
+var quantBacktestStartConfigSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"venue":{"type":"string","title":"交易所","pattern":"^[a-z][a-z0-9_-]{1,31}$","default":"binance"},"market":{"type":"string","title":"市场","minLength":1,"maxLength":32},"instrument":{"type":"string","title":"主品种","pattern":"^[A-Z0-9]{2,32}$","default":"BTCUSDT"},"interval":{"type":"string","title":"主周期","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"],"default":"1h"}},"required":["venue","market","instrument","interval"],"additionalProperties":false}`)
+var quantBacktestStartInputSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"startTime":{"type":"string","format":"date-time"},"endTime":{"type":"string","format":"date-time"},"initialCapital":{"type":"string","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"feeRate":{"type":"string","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"slippageRate":{"type":"string","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true}},"required":["startTime","endTime","initialCapital","feeRate","slippageRate"],"additionalProperties":false}`)
 var quantBacktestStartOutputSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"branch":{"type":"string","enum":["each","completed"]},"backtestId":{"type":"integer"},"venue":{"type":"string"},"strategyId":{"type":"string"},"strategyVersion":{"type":"string"},"finalEquity":{"type":"string","x-coinsphere-decimal":true},"totalReturn":{"type":"string","x-coinsphere-decimal":true},"maxDrawdown":{"type":"string","x-coinsphere-decimal":true},"totalFees":{"type":"string","x-coinsphere-decimal":true},"tradeCount":{"type":"integer"},"candleCount":{"type":"integer"}},"required":["branch","backtestId","venue","strategyId","strategyVersion","finalEquity","totalReturn","maxDrawdown","totalFees","tradeCount","candleCount"],"additionalProperties":false}`)
 
 type quantPositionAction struct{}
 type quantOutputSignalAction struct{ runtime *quantRuntime }
 
-// quantReplayTrigger is a draggable manual entry node. Core invokes its
-// ActionHandler for a replay operation; Run only keeps the trigger dormant when
-// a workflow is activated, so replay never creates a second realtime source.
-type quantReplayTrigger struct{ runtime *quantRuntime }
-
-func (t quantReplayTrigger) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
-	return (quantWorkflowBacktestAction{runtime: t.runtime}).Execute(ctx, request)
-}
-
-func (quantReplayTrigger) Run(ctx context.Context, _ sdk.TriggerRequest, _ sdk.Emitter) error {
-	<-ctx.Done()
-	return ctx.Err()
-}
-
 func validateQuantPositionConfig(raw json.RawMessage) error {
 	var config struct {
-		Market, TargetMode, FixedTarget string
+		Market, TargetMode, FixedTarget, DecimalField string
 	}
-	if !decodeQuantStrict(raw, &config) ||
+	if !decodeQuantStrict(raw, &config) || !quantCodeNamePattern.MatchString(config.DecimalField) ||
 		config.TargetMode != "fixed" && config.TargetMode != "input" {
 		return errors.New("quant position configuration is invalid")
-	}
-	if config.Market != "spot" && config.Market != "usdm" {
-		return errors.New("invalid position market")
-	}
-	if config.TargetMode == "input" {
-		return nil
 	}
 	target, err := decimal.NewFromString(config.FixedTarget)
 	if err != nil || config.Market != "spot" && config.Market != "usdm" || config.TargetMode == "fixed" &&
@@ -68,24 +58,6 @@ func validateQuantPositionConfig(raw json.RawMessage) error {
 }
 
 func (q *quantRuntime) registerWorkflowStrategyNodes(registrar sdk.Registrar) error {
-	replayDescriptor := quantNodeMeta(sdk.NodeDescriptor{
-		Type: "official.quant.replay", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
-		Branches: []string{"each", "completed"}, ConfigSchema: quantBacktestStartConfigSchema,
-		FrameSourcePorts: []string{"each"},
-		UISchema:         json.RawMessage(`{"ui:order":[]}`), InputSchema: quantBacktestStartInputSchema, OutputSchema: quantBacktestStartOutputSchema,
-		Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
-		Capabilities: sdk.NodeCapabilities{FrameDriver: true, ManualTrigger: true}, Role: sdk.NodeRoleEntry,
-		ProfileSlots: []sdk.ProfileSlot{{Key: "market", Title: "行情 Profile", ProfileTypes: []string{"market.data"}, Required: true}, {Key: "backtest", Title: "回放参数 Profile", ProfileTypes: []string{"quant.backtest"}, Required: true}},
-		// The same descriptor is a canvas trigger and an explicit frame-driven
-		// operation. The operation carries the selected trigger's profiles and
-		// result node configuration; replay itself needs no extra node config.
-		OperationConfig: func(_ json.RawMessage, _ []json.RawMessage) (json.RawMessage, error) {
-			return json.RawMessage(`{}`), nil
-		},
-	}, "回放", "手动逐帧重放行情并复用实时策略下游。", "start", "#7c3aed", "history")
-	if err := registrar.Trigger(replayDescriptor, quantReplayTrigger{runtime: q}); err != nil {
-		return err
-	}
 	nodes := []struct {
 		descriptor  sdk.NodeDescriptor
 		handler     sdk.ActionHandler
@@ -96,10 +68,18 @@ func (q *quantRuntime) registerWorkflowStrategyNodes(registrar sdk.Registrar) er
 		icon        string
 	}{
 		{sdk.NodeDescriptor{
+			Type: "official.quant.backtest_start", Version: "1.0.0", Kind: sdk.NodeKindAction,
+			Branches: []string{"each", "completed"}, ConfigSchema: quantBacktestStartConfigSchema,
+			UISchema:    json.RawMessage(`{"ui:order":["venue","market","instrument","interval"]}`),
+			InputSchema: quantBacktestStartInputSchema, OutputSchema: quantBacktestStartOutputSchema,
+			Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
+			Capabilities: sdk.NodeCapabilities{FrameDriver: true},
+		}, quantWorkflowBacktestAction{runtime: q}, "回测开始", "逐帧执行通用量化工作流并汇总回测结果。", "start", "#7c3aed", "history"},
+		{sdk.NodeDescriptor{
 			Type: "official.quant.code_strategy", Version: "1.0.0", Kind: sdk.NodeKindAction,
-			Branches: []string{"true", "false", "unavailable"}, ConfigSchema: quantCodeStrategyConfigSchema,
+			Branches: []string{"true", "false"}, ConfigSchema: quantCodeStrategyConfigSchema,
 			UISchema:     json.RawMessage(`{"ui:order":["series","parameters","source","booleanOutputs","decimalOutputs","branchField"],"source":{"ui:widget":"code","ui:language":"cel"}}`),
-			InputSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"context":{"type":"object","title":"行情上下文"}},"required":["context"],"additionalProperties":false}`),
+			InputSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"eventTime":{"type":"string","format":"date-time"},"pathEntered":{"type":"boolean"}},"required":["eventTime"],"additionalProperties":false}`),
 			OutputSchema: quantCodeStrategyOutputSchema, Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
 			Capabilities:   sdk.NodeCapabilities{FrameSafe: true},
 			ValidateConfig: validateQuantCodeStrategyConfig,
@@ -114,13 +94,12 @@ func (q *quantRuntime) registerWorkflowStrategyNodes(registrar sdk.Registrar) er
 		}, quantPositionAction{}, "仓位计算", "将策略输出转换为通用目标仓位。", "strategy", "#2563eb", "percent"},
 		{sdk.NodeDescriptor{
 			Type: "official.quant.output_signal", Version: "1.0.0", Kind: sdk.NodeKindAction,
-			Branches: []string{"realtime", "unchanged"}, ConfigSchema: emptyObjectSchema,
-			UISchema:    json.RawMessage(`{"ui:order":[]}`),
+			Branches: []string{"realtime", "unchanged"}, ConfigSchema: quantSeriesConfigSchema,
+			UISchema:    json.RawMessage(`{"ui:order":["venue","market","instrument","interval"]}`),
 			InputSchema: quantOutputSignalInputSchema, OutputSchema: quantOutputSignalOutputSchema,
 			Pool: sdk.PoolStream, SideEffect: sdk.SideEffectData, State: sdk.StateStateless,
 			Capabilities: sdk.NodeCapabilities{Deterministic: true, FrameSafe: true, FrameResult: true},
-			ProfileSlots: []sdk.ProfileSlot{{Key: "market", Title: "行情 Profile", ProfileTypes: []string{"market.data"}, Required: true}},
-		}, quantOutputSignalAction{runtime: q}, "策略信号", "汇总目标仓位并持久化通用量化 Signal。", "strategy", "#0f766e", "radio"},
+		}, quantOutputSignalAction{runtime: q}, "输出策略信号", "汇总目标仓位并持久化通用量化 Signal。", "strategy", "#0f766e", "radio"},
 	}
 	for _, node := range nodes {
 		if err := registrar.Action(quantNodeMeta(node.descriptor, node.title, node.description, node.category, node.color, node.icon), node.handler); err != nil {
@@ -132,7 +111,7 @@ func (q *quantRuntime) registerWorkflowStrategyNodes(registrar sdk.Registrar) er
 
 func (quantPositionAction) Execute(_ context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
 	var config struct {
-		Market, TargetMode, FixedTarget string
+		Market, TargetMode, FixedTarget, DecimalField string
 	}
 	var input struct {
 		Target, EvaluatedAt string
@@ -161,7 +140,7 @@ func (quantPositionAction) Execute(_ context.Context, request sdk.ActionRequest)
 }
 
 func (a quantOutputSignalAction) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
-	series, err := resolveQuantMarketProfile(ctx, request.Profiles, request.ProfileBindings, "market")
+	config, err := parseQuantSeriesConfig(request.Config)
 	if err != nil {
 		return sdk.ActionResult{}, err
 	}
@@ -217,7 +196,7 @@ func (a quantOutputSignalAction) Execute(ctx context.Context, request sdk.Action
 	if err != nil {
 		return sdk.ActionResult{}, errors.New("quant workflow identity is invalid")
 	}
-	businessKey := fmt.Sprintf("quant:%s:%s:%s", series.Market, series.Instrument, request.NodeInstanceID)
+	businessKey := fmt.Sprintf("quant:%s:%s:%s", config.Market, config.Instrument, request.NodeInstanceID)
 	previous := decimal.Zero
 	if request.ExecutionMode == sdk.ExecutionModeBacktestFrame {
 		if input.PreviousTargetPosition != "" {
@@ -241,7 +220,7 @@ func (a quantOutputSignalAction) Execute(ctx context.Context, request sdk.Action
 		if request.ExecutionMode != sdk.ExecutionModeBacktestFrame {
 			result, err := (quantSignalAction{runtime: a.runtime}).Execute(ctx, sdk.ActionRequest{
 				Revision: request.Revision, NodeInstanceID: request.NodeInstanceID, OperationKey: request.OperationKey,
-				Config: mustMarshal(series), ExecutionMode: request.ExecutionMode,
+				Config: request.Config, ExecutionMode: request.ExecutionMode,
 				Input: mustMarshal(map[string]any{"strategyId": "workflow", "strategyVersion": request.Revision.RevisionID,
 					"target": target.String(), "evaluatedAt": evaluatedAt.Format(time.RFC3339Nano), "businessKey": businessKey}),
 			})
@@ -255,7 +234,7 @@ func (a quantOutputSignalAction) Execute(ctx context.Context, request sdk.Action
 			signalID = persisted.SignalID
 		}
 	}
-	return sdk.ActionResult{Port: branch, Output: mustMarshal(map[string]any{
+	return sdk.ActionResult{Output: mustMarshal(map[string]any{
 		"signalId": signalID, "businessKey": businessKey, "action": action,
 		"previousTargetPosition": previous.String(), "targetPosition": target.String(), "target": target.String(),
 		"evaluatedAt": evaluatedAt.Format(time.RFC3339Nano), "nodeValues": nodeValues, "branch": branch,

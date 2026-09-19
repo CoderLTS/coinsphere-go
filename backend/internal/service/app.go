@@ -27,7 +27,6 @@ type App struct {
 	Tokens       *security.TokenManager
 	Cipher       *security.SecretCipher
 	Plugins      *sdk.Registry
-	Profiles     sdk.ProfileResolver
 	ArtifactRoot string
 	SystemLogs   *SystemLogRuntime
 
@@ -44,7 +43,7 @@ type App struct {
 	notificationWatches map[int64]map[chan NotificationEvent]struct{}
 	runWG               sync.WaitGroup
 	triggerMu           sync.Mutex
-	triggerRuns         map[workflowTriggerKey]workflowTriggerRun
+	triggerRuns         map[int64]workflowTriggerRun
 	triggerWG           sync.WaitGroup
 	streamSlots         chan struct{}
 	computeSlots        chan struct{}
@@ -66,7 +65,7 @@ func NewApp(gdb *gorm.DB, cfg *config.AppConfig, plugins *sdk.Registry) *App {
 		runCancels:          map[int64]context.CancelFunc{},
 		workflowWatchers:    map[int64]map[chan WorkflowRunUpdate]struct{}{},
 		notificationWatches: map[int64]map[chan NotificationEvent]struct{}{},
-		triggerRuns:         map[workflowTriggerKey]workflowTriggerRun{},
+		triggerRuns:         map[int64]workflowTriggerRun{},
 		streamSlots:         make(chan struct{}, 4),
 		computeSlots:        make(chan struct{}, 1),
 	}

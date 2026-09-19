@@ -1,11 +1,8 @@
 export const pages = {
   instruments: () => import('./InstrumentsPage.vue'),
   candles: () => import('./CandlesPage.vue'),
-  'live-accounts': () => import('./LiveAccountsPage.vue'),
-  profiles: () => import('@/views/scheduler/workflow/profiles/ProfileManager.vue')
+  'live-accounts': () => import('./LiveAccountsPage.vue')
 }
-
-export const profileTypes = ['market.data', 'trading.account', 'trading.risk'] as const
 
 export const resultPages = {
   paper: () => import('./PaperResultPage.vue')

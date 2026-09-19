@@ -2,15 +2,12 @@ package quant
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
-
-	"coinsphere/backend/plugin/sdk"
 
 	"github.com/shopspring/decimal"
 )
@@ -23,44 +20,6 @@ type quantSeriesConfig struct {
 	Market     string `json:"market"`
 	Instrument string `json:"instrument"`
 	Interval   string `json:"interval"`
-}
-
-// resolveQuantMarketProfile turns a node's market profile binding into the
-// provider query used by indicators, strategies and replay. The workflow graph
-// carries only a stable profile reference; market identity is never duplicated
-// in each node's config.
-func resolveQuantMarketProfile(ctx context.Context, resolver sdk.ProfileResolver, bindings map[string]sdk.ProfileRef, slot string) (quantSeriesConfig, error) {
-	ref, ok := bindings[slot]
-	if !ok {
-		return quantSeriesConfig{}, errors.New("market profile binding is required")
-	}
-	if ref.Type != "market.data" {
-		return quantSeriesConfig{}, errors.New("market profile type is invalid")
-	}
-	if resolver == nil {
-		return quantSeriesConfig{}, errors.New("profile resolver is unavailable")
-	}
-	resolved, err := resolver.Resolve(ctx, ref)
-	if err != nil {
-		return quantSeriesConfig{}, err
-	}
-	var payload struct {
-		Market     string `json:"market"`
-		Instrument string `json:"instrument"`
-		Interval   string `json:"interval"`
-		ProxyID    int64  `json:"proxyId"`
-	}
-	decoder := json.NewDecoder(bytes.NewReader(resolved.Config))
-	decoder.DisallowUnknownFields()
-	if decoder.Decode(&payload) != nil {
-		return quantSeriesConfig{}, errors.New("resolved market profile is invalid")
-	}
-	venue := strings.TrimPrefix(ref.PluginID, "official.")
-	series, err := parseQuantSeriesConfig(mustMarshal(map[string]any{"venue": venue, "market": payload.Market, "instrument": payload.Instrument, "interval": payload.Interval}))
-	if err != nil {
-		return quantSeriesConfig{}, err
-	}
-	return series, nil
 }
 
 type quantStrategyConfig struct {

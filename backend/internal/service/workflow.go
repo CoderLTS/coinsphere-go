@@ -18,8 +18,12 @@ import (
 )
 
 const (
+	WorkflowModeBatch        = "batch"
+	WorkflowModeEvent        = "event"
+	WorkflowModeStream       = "stream"
 	WorkflowStatusInactive   = "inactive"
 	WorkflowStatusActive     = "active"
+	WorkflowStatusError      = "error"
 	WorkflowTemplateBlank    = "blank"
 	WorkflowTemplateSchedule = "scheduled"
 	WorkflowTemplateEvent    = "event"
@@ -28,7 +32,7 @@ const (
 )
 
 const blankWorkflowGraph = `{
-  "schemaVersion": 3,
+  "schemaVersion": 1,
   "nodes": [
     {"nodeInstanceId":"manual-trigger","nodeType":"core.manual","nodeVersion":"1.0.0","config":{},"position":{"x":160,"y":220}},
     {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":520,"y":220}}
@@ -39,7 +43,7 @@ const blankWorkflowGraph = `{
 }`
 
 const scheduledWorkflowGraph = `{
-  "schemaVersion": 3,
+  "schemaVersion": 1,
   "nodes": [
     {"nodeInstanceId":"schedule-trigger","nodeType":"core.schedule","nodeVersion":"1.0.0","config":{"everySeconds":3600},"position":{"x":160,"y":220}},
     {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":520,"y":220}}
@@ -50,7 +54,7 @@ const scheduledWorkflowGraph = `{
 }`
 
 const eventWorkflowGraph = `{
-  "schemaVersion": 3,
+  "schemaVersion": 1,
   "nodes": [
     {"nodeInstanceId":"event-trigger","nodeType":"core.event","nodeVersion":"1.0.0","config":{"types":["example.event"]},"position":{"x":160,"y":220}},
     {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":520,"y":220}}
@@ -64,6 +68,7 @@ type WorkflowTemplate struct {
 	Key         string `json:"key"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	Mode        string `json:"mode"`
 }
 
 type WorkflowCreatePayload struct {
@@ -90,51 +95,55 @@ type WorkflowLifecyclePayload struct {
 }
 
 type WorkflowView struct {
-	ID               int64  `json:"id"`
-	Name             string `json:"name"`
-	Description      string `json:"description"`
-	GroupID          *int64 `json:"groupId"`
-	Status           string `json:"status"`
-	ActiveRevisionID int64  `json:"activeRevisionId"`
-	RetentionDays    int    `json:"retentionDays"`
-	CreatedBy        int64  `json:"createdBy"`
-	CreatedAt        string `json:"createdAt"`
-	UpdatedAt        string `json:"updatedAt"`
+	ID                int64  `json:"id"`
+	Name              string `json:"name"`
+	Description       string `json:"description"`
+	GroupID           *int64 `json:"groupId"`
+	Mode              string `json:"mode"`
+	Status            string `json:"status"`
+	ActiveRevisionID  int64  `json:"activeRevisionId"`
+	MainTriggerNodeID string `json:"mainTriggerNodeId"`
+	RetentionDays     int    `json:"retentionDays"`
+	CreatedBy         int64  `json:"createdBy"`
+	CreatedAt         string `json:"createdAt"`
+	UpdatedAt         string `json:"updatedAt"`
 }
 
 type WorkflowRuntimeView struct {
 	MaxConcurrentRuns int    `json:"maxConcurrentRuns"`
 	BacklogLimit      int    `json:"backlogLimit"`
+	NextScheduledAt   string `json:"nextScheduledAt,omitempty"`
+	LastScheduledAt   string `json:"lastScheduledAt,omitempty"`
 	UpdatedAt         string `json:"updatedAt"`
 }
 
 type WorkflowDetail struct {
-	Triggers []db.WorkflowTriggerRuntime `json:"triggers"`
 	WorkflowView
 	Runtime              WorkflowRuntimeView `json:"runtime"`
 	StateNodeInstanceIDs []string            `json:"stateNodeInstanceIds"`
 }
 
 type WorkflowRevisionView struct {
-	ID             int64                      `json:"id"`
-	WorkflowID     int64                      `json:"workflowId"`
-	RevisionNumber int64                      `json:"revisionNumber"`
-	Graph          json.RawMessage            `json:"graph"`
-	NodeVersions   json.RawMessage            `json:"nodeVersions"`
-	CreatedBy      int64                      `json:"createdBy"`
-	CreatedAt      string                     `json:"createdAt"`
-	SecretFields   map[string]map[string]bool `json:"secretFields"`
+	ID                int64                      `json:"id"`
+	WorkflowID        int64                      `json:"workflowId"`
+	RevisionNumber    int64                      `json:"revisionNumber"`
+	Graph             json.RawMessage            `json:"graph"`
+	NodeVersions      json.RawMessage            `json:"nodeVersions"`
+	MainTriggerNodeID string                     `json:"mainTriggerNodeId"`
+	CreatedBy         int64                      `json:"createdBy"`
+	CreatedAt         string                     `json:"createdAt"`
+	SecretFields      map[string]map[string]bool `json:"secretFields"`
 }
 
 func (a *App) ListWorkflowTemplates() []WorkflowTemplate {
 	items := []WorkflowTemplate{
-		{Key: WorkflowTemplateBlank, Name: "空白工作流", Description: "从手动触发节点创建空白流程。"},
-		{Key: WorkflowTemplateSchedule, Name: "定时工作流", Description: "按固定间隔或 Cron 调度流程。"},
-		{Key: WorkflowTemplateEvent, Name: "事件工作流", Description: "接收匹配的 CloudEvent 后运行。"},
+		{Key: WorkflowTemplateBlank, Name: "空白工作流", Mode: WorkflowModeBatch, Description: "从手动开始节点创建空白流程。"},
+		{Key: WorkflowTemplateSchedule, Name: "定时工作流", Mode: WorkflowModeBatch, Description: "按固定间隔或 Cron 调度流程。"},
+		{Key: WorkflowTemplateEvent, Name: "事件工作流", Mode: WorkflowModeEvent, Description: "接收匹配的 CloudEvent 后运行。"},
 	}
 	if a.Plugins != nil {
 		for _, template := range a.Plugins.Templates() {
-			items = append(items, WorkflowTemplate{Key: template.Key, Name: template.Name, Description: template.Description})
+			items = append(items, WorkflowTemplate{Key: template.Key, Name: template.Name, Description: template.Description, Mode: template.Mode})
 		}
 	}
 	return items
@@ -182,8 +191,8 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 
 	now := time.Now().UTC()
 	workflow := db.Workflow{
-		Name: name, Description: description, Status: WorkflowStatusInactive,
-		RetentionDays: 30, CreatedBy: principal.User.ID,
+		Name: name, Description: description, Mode: workflowModeForTrigger(graph.nodes[graph.mainTriggerID].NodeType), Status: WorkflowStatusInactive,
+		MainTriggerNodeID: graph.mainTriggerID, RetentionDays: 30, CreatedBy: principal.User.ID,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	err = a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -202,15 +211,15 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 
 func createWorkflowRecord(tx *gorm.DB, name, description string, groupID *int64, graph validatedWorkflowGraph, userID int64, now time.Time) (db.Workflow, error) {
 	workflow := db.Workflow{
-		Name: name, Description: description, GroupID: groupID, Status: WorkflowStatusInactive,
-		RetentionDays: 30, CreatedBy: userID, CreatedAt: now, UpdatedAt: now,
+		Name: name, Description: description, GroupID: groupID, Mode: workflowModeForTrigger(graph.nodes[graph.mainTriggerID].NodeType), Status: WorkflowStatusInactive,
+		MainTriggerNodeID: graph.mainTriggerID, RetentionDays: 30, CreatedBy: userID, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := tx.Create(&workflow).Error; err != nil {
 		return db.Workflow{}, errors.New("create workflow failed")
 	}
 	revision := db.WorkflowRevision{
 		WorkflowID: workflow.ID, RevisionNumber: 1, GraphJSON: graph.graphJSON,
-		NodeVersions: graph.nodeVersionsJSON, CreatedBy: userID, CreatedAt: now,
+		NodeVersions: graph.nodeVersionsJSON, MainTriggerNodeID: graph.mainTriggerID, CreatedBy: userID, CreatedAt: now,
 	}
 	if err := tx.Create(&revision).Error; err != nil {
 		return db.Workflow{}, errors.New("create initial workflow revision failed")
@@ -223,9 +232,6 @@ func createWorkflowRecord(tx *gorm.DB, name, description string, groupID *int64,
 		WorkflowID: workflow.ID, MaxConcurrentRuns: 2, BacklogLimit: 100, UpdatedAt: now,
 	}).Error; err != nil {
 		return db.Workflow{}, errors.New("create workflow runtime failed")
-	}
-	if err := syncWorkflowTriggerRuntimes(tx, workflow.ID, revision.ID, graph, false, now); err != nil {
-		return db.Workflow{}, err
 	}
 	return workflow, nil
 }
@@ -271,14 +277,15 @@ func (a *App) GetWorkflow(ctx context.Context, workflowID int64) (WorkflowDetail
 		MaxConcurrentRuns: runtime.MaxConcurrentRuns, BacklogLimit: runtime.BacklogLimit,
 		UpdatedAt: formatWorkflowTime(runtime.UpdatedAt),
 	}
-	var triggers []db.WorkflowTriggerRuntime
-	if err := a.DB.WithContext(ctx).Where("workflow_id = ?", workflowID).Order("node_instance_id").Find(&triggers).Error; err != nil {
-		return WorkflowDetail{}, err
+	if runtime.NextScheduledAt != nil {
+		runtimeView.NextScheduledAt = formatWorkflowTime(*runtime.NextScheduledAt)
+	}
+	if runtime.LastScheduledAt != nil {
+		runtimeView.LastScheduledAt = formatWorkflowTime(*runtime.LastScheduledAt)
 	}
 	return WorkflowDetail{
 		WorkflowView:         workflowView(workflow),
 		Runtime:              runtimeView,
-		Triggers:             triggers,
 		StateNodeInstanceIDs: stateNodeInstanceIDs,
 	}, nil
 }
@@ -352,15 +359,11 @@ func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payloa
 		if workflow.ActiveRevisionID == nil || *workflow.ActiveRevisionID != payload.ExpectedActiveRevisionID {
 			return fmt.Errorf("%w: active workflow revision changed", ErrConflict)
 		}
-		if err := validateWorkflowConnectionReferences(tx, graph); err != nil {
-			return err
-		}
-
 		var activeRevision db.WorkflowRevision
 		if err := tx.Where("workflow_id = ? AND id = ?", workflowID, *workflow.ActiveRevisionID).First(&activeRevision).Error; err != nil {
 			return errors.New("load active workflow revision failed")
 		}
-		activeGraph, err := a.validateWorkflowGraphReferences(json.RawMessage(activeRevision.GraphJSON), false)
+		activeGraph, err := a.validateWorkflowGraph(json.RawMessage(activeRevision.GraphJSON))
 		if err != nil {
 			return errors.New("active workflow revision graph is invalid")
 		}
@@ -405,8 +408,8 @@ func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payloa
 		now := time.Now().UTC()
 		revision = db.WorkflowRevision{
 			WorkflowID: workflowID, RevisionNumber: latest + 1, GraphJSON: graph.graphJSON,
-			NodeVersions: graph.nodeVersionsJSON,
-			CreatedBy:    principal.User.ID, CreatedAt: now,
+			NodeVersions: graph.nodeVersionsJSON, MainTriggerNodeID: graph.mainTriggerID,
+			CreatedBy: principal.User.ID, CreatedAt: now,
 		}
 		if err := tx.Create(&revision).Error; err != nil {
 			return errors.New("create workflow revision failed")
@@ -415,12 +418,26 @@ func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payloa
 			return err
 		}
 		if err := tx.Model(&db.Workflow{}).Where("id = ?", workflowID).Updates(map[string]any{
-			"active_revision_id": revision.ID, "updated_at": now,
+			"active_revision_id": revision.ID, "main_trigger_node_id": graph.mainTriggerID,
+			"mode": workflowModeForTrigger(graph.nodes[graph.mainTriggerID].NodeType), "updated_at": now,
 		}).Error; err != nil {
 			return errors.New("activate workflow revision failed")
 		}
-		if err := syncWorkflowTriggerRuntimes(tx, workflowID, revision.ID, graph, workflow.Status == WorkflowStatusActive, now); err != nil {
-			return err
+		if workflow.Status == WorkflowStatusActive {
+			nextScheduledAt := any(nil)
+			trigger := graph.nodes[graph.mainTriggerID]
+			if trigger.NodeType == "core.schedule" {
+				next, err := nextWorkflowScheduledAt(trigger.Config, now)
+				if err != nil {
+					return errors.New("schedule config is invalid")
+				}
+				nextScheduledAt = next
+			}
+			if err := tx.Model(&db.WorkflowRuntime{}).Where("workflow_id = ?", workflowID).Updates(map[string]any{
+				"next_scheduled_at": nextScheduledAt, "updated_at": now,
+			}).Error; err != nil {
+				return errors.New("update workflow runtime schedule failed")
+			}
 		}
 		if err := pruneWorkflowRevisions(tx, workflowID, revision.ID); err != nil {
 			return err
@@ -470,16 +487,13 @@ func deleteWorkflowRevisionRecord(tx *gorm.DB, workflowID, revisionID, retainedR
 			return err
 		}
 	}
-	if err := tx.Where("workflow_id = ? AND revision_id = ?", workflowID, revisionID).Delete(&db.WorkflowNodeState{}).Error; err != nil {
-		return errors.New("delete workflow revision states failed")
+	if err := tx.Model(&db.WorkflowNodeState{}).Where("workflow_id = ? AND revision_id = ?", workflowID, revisionID).
+		Update("revision_id", retainedRevisionID).Error; err != nil {
+		return errors.New("carry workflow node states forward failed")
 	}
 	if err := tx.Where("workflow_id = ? AND revision_id = ?", workflowID, revisionID).
 		Delete(&db.WorkflowSecretBinding{}).Error; err != nil {
 		return errors.New("delete workflow revision secrets failed")
-	}
-	if err := tx.Where("workflow_id = ? AND revision_id = ?", workflowID, revisionID).
-		Delete(&db.WorkflowTriggerRuntime{}).Error; err != nil {
-		return errors.New("delete workflow trigger runtimes failed")
 	}
 	if err := tx.Where("workflow_id = ? AND id = ?", workflowID, revisionID).
 		Delete(&db.WorkflowRevision{}).Error; err != nil {
@@ -630,9 +644,6 @@ func (a *App) DeleteWorkflow(ctx context.Context, workflowID int64) error {
 		}
 		if err := tx.Where("workflow_id = ?", workflowID).Delete(&db.WorkflowSecretBinding{}).Error; err != nil {
 			return errors.New("delete workflow secrets failed")
-		}
-		if err := tx.Where("workflow_id = ?", workflowID).Delete(&db.WorkflowTriggerRuntime{}).Error; err != nil {
-			return errors.New("delete workflow trigger runtimes failed")
 		}
 		if err := tx.Model(&workflow).Updates(map[string]any{
 			"active_revision_id": nil, "updated_at": time.Now().UTC(),
@@ -871,30 +882,39 @@ func (a *App) ApplyWorkflowLifecycle(ctx context.Context, workflowID int64, payl
 		}
 		now := time.Now().UTC()
 		updates := map[string]any{"status": next, "updated_at": now}
+		var runtimeUpdates map[string]any
 		if action == "activate" {
 			var revision db.WorkflowRevision
 			if err := tx.First(&revision, *workflow.ActiveRevisionID).Error; err != nil {
 				return errors.New("load active workflow revision failed")
 			}
-			validated, err := a.validateWorkflowGraphReferences(json.RawMessage(revision.GraphJSON), false)
+			validated, err := a.validateWorkflowGraph(json.RawMessage(revision.GraphJSON))
 			if err != nil {
 				return fmt.Errorf("%w: active workflow revision is invalid", ErrConflict)
 			}
 			if err := ensureWorkflowRevisionSecrets(tx, workflow.ID, revision.ID, validated); err != nil {
 				return err
 			}
-			if err := syncWorkflowTriggerRuntimes(tx, workflowID, revision.ID, validated, true, now); err != nil {
-				return err
+			runtimeUpdates = map[string]any{"updated_at": now, "next_scheduled_at": nil}
+			trigger := validated.nodes[validated.mainTriggerID]
+			if trigger.NodeType == "core.schedule" {
+				next, err := nextWorkflowScheduledAt(trigger.Config, now)
+				if err != nil {
+					return fmt.Errorf("%w: schedule config is invalid", ErrConflict)
+				}
+				runtimeUpdates["next_scheduled_at"] = next
 			}
 		} else if action == "deactivate" {
-			if err := tx.Model(&db.WorkflowTriggerRuntime{}).Where("workflow_id = ?", workflowID).Updates(map[string]any{"status": WorkflowTriggerStatusDisabled, "next_scheduled_at": nil, "updated_at": now}).Error; err != nil {
-				return err
-			}
+			runtimeUpdates = map[string]any{"updated_at": now, "next_scheduled_at": nil}
 		}
 		if err := tx.Model(&db.Workflow{}).Where("id = ?", workflowID).Updates(updates).Error; err != nil {
 			return errors.New("update workflow lifecycle failed")
 		}
-
+		if runtimeUpdates != nil {
+			if err := tx.Model(&db.WorkflowRuntime{}).Where("workflow_id = ?", workflowID).Updates(runtimeUpdates).Error; err != nil {
+				return errors.New("update workflow runtime schedule failed")
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -913,7 +933,7 @@ func nextWorkflowStatus(current, action string) (string, error) {
 			return WorkflowStatusActive, nil
 		}
 	case "deactivate":
-		if current == WorkflowStatusActive {
+		if current == WorkflowStatusActive || current == WorkflowStatusError {
 			return WorkflowStatusInactive, nil
 		}
 	default:
@@ -928,10 +948,10 @@ func workflowView(workflow db.Workflow) WorkflowView {
 		activeRevisionID = *workflow.ActiveRevisionID
 	}
 	view := WorkflowView{
-		ID: workflow.ID, Name: workflow.Name, Description: workflow.Description, GroupID: workflow.GroupID,
+		ID: workflow.ID, Name: workflow.Name, Description: workflow.Description, GroupID: workflow.GroupID, Mode: workflow.Mode,
 		Status: workflow.Status, ActiveRevisionID: activeRevisionID,
-		RetentionDays: workflow.RetentionDays,
-		CreatedBy:     workflow.CreatedBy, CreatedAt: formatWorkflowTime(workflow.CreatedAt),
+		MainTriggerNodeID: workflow.MainTriggerNodeID, RetentionDays: workflow.RetentionDays,
+		CreatedBy: workflow.CreatedBy, CreatedAt: formatWorkflowTime(workflow.CreatedAt),
 		UpdatedAt: formatWorkflowTime(workflow.UpdatedAt),
 	}
 	return view
@@ -941,7 +961,7 @@ func workflowRevisionView(revision db.WorkflowRevision) WorkflowRevisionView {
 	return WorkflowRevisionView{
 		ID: revision.ID, WorkflowID: revision.WorkflowID, RevisionNumber: revision.RevisionNumber,
 		Graph: json.RawMessage(revision.GraphJSON), NodeVersions: json.RawMessage(revision.NodeVersions),
-		CreatedBy: revision.CreatedBy,
+		MainTriggerNodeID: revision.MainTriggerNodeID, CreatedBy: revision.CreatedBy,
 		CreatedAt: formatWorkflowTime(revision.CreatedAt), SecretFields: map[string]map[string]bool{},
 	}
 }
@@ -949,5 +969,16 @@ func workflowRevisionView(revision db.WorkflowRevision) WorkflowRevisionView {
 func formatWorkflowTime(value time.Time) string { return value.UTC().Format(time.RFC3339Nano) }
 
 func validWorkflowStatus(status string) bool {
-	return status == WorkflowStatusInactive || status == WorkflowStatusActive
+	return status == WorkflowStatusInactive || status == WorkflowStatusActive || status == WorkflowStatusError
+}
+
+func workflowModeForTrigger(nodeType string) string {
+	switch nodeType {
+	case "core.manual", "core.schedule", "official.connector.webhook":
+		return WorkflowModeBatch
+	case "core.event":
+		return WorkflowModeEvent
+	default:
+		return WorkflowModeStream
+	}
 }

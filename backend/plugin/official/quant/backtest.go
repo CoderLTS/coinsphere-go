@@ -18,14 +18,7 @@ import (
 type quantEvaluateAction struct{ runtime *quantRuntime }
 
 func (a quantEvaluateAction) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
-	var config struct {
-		StrategyID string          `json:"strategyId"`
-		Parameters json.RawMessage `json:"parameters"`
-	}
-	if !decodeQuantStrict(request.Config, &config) || config.StrategyID == "" || len(config.Parameters) == 0 {
-		return sdk.ActionResult{}, errors.New("quant strategy configuration is invalid")
-	}
-	series, err := resolveQuantMarketProfile(ctx, request.Profiles, request.ProfileBindings, "market")
+	config, err := parseQuantStrategyConfig(request.Config)
 	if err != nil {
 		return sdk.ActionResult{}, err
 	}
@@ -50,7 +43,7 @@ func (a quantEvaluateAction) Execute(ctx context.Context, request sdk.ActionRequ
 	if err != nil {
 		return sdk.ActionResult{}, err
 	}
-	candles, err := a.runtime.loadQuantCandlesThroughClose(ctx, series, eventTime, lookback)
+	candles, err := a.runtime.loadQuantCandlesThroughClose(ctx, config.quantSeriesConfig, eventTime, lookback)
 	if err != nil {
 		return sdk.ActionResult{}, err
 	}
@@ -58,7 +51,7 @@ func (a quantEvaluateAction) Execute(ctx context.Context, request sdk.ActionRequ
 		return sdk.ActionResult{}, errors.New("quant strategy has insufficient closed lookback")
 	}
 	target, err := strategy.Evaluate(ctx, sdk.EvaluateRequest{
-		Market: series.Market, Instrument: series.Instrument, Interval: series.Interval,
+		Market: config.Market, Instrument: config.Instrument, Interval: config.Interval,
 		Candles: quantSDKCandles(candles), Parameters: config.Parameters,
 		EvaluatedAt: candles[len(candles)-1].CloseTime.UTC(),
 	})
@@ -69,7 +62,7 @@ func (a quantEvaluateAction) Execute(ctx context.Context, request sdk.ActionRequ
 		return sdk.ActionResult{}, errors.New("quant strategy target must be between -1 and 1")
 	}
 	return sdk.ActionResult{Output: mustMarshal(map[string]any{
-		"venue": series.Venue, "strategyId": desc.ID, "strategyVersion": desc.Version, "target": target.String(),
+		"venue": config.Venue, "strategyId": desc.ID, "strategyVersion": desc.Version, "target": target.String(),
 		"evaluatedAt": candles[len(candles)-1].CloseTime.UTC().Format(time.RFC3339Nano),
 	})}, nil
 }
@@ -245,7 +238,7 @@ func (q *quantRuntime) loadQuantCandles(ctx context.Context, config quantSeriesC
 	}
 	items, err := provider.Candles(ctx, sdk.CandleQuery{
 		Market: config.Market, Instrument: config.Instrument, Interval: config.Interval,
-		StartTime: start.UTC(), EndTime: end.UTC(), ClosedThrough: end.UTC(), Limit: limit,
+		StartTime: start.UTC(), EndTime: end.UTC(), Limit: limit,
 	})
 	if err != nil {
 		return nil, err

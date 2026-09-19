@@ -30,20 +30,8 @@ type binanceCandleRealtimeTrigger struct{ runtime *binanceRuntime }
 type binanceCandleBackfillAction struct{ runtime *binanceRuntime }
 
 func (t binanceCandleRealtimeTrigger) Run(ctx context.Context, request sdk.TriggerRequest, emitter sdk.Emitter) error {
-	ref, ok := request.ProfileBindings["market"]
-	if !ok {
-		return errors.New("Binance realtime trigger requires a market profile")
-	}
-	profile, err := resolveMarketDataProfile(ctx, request.Profiles, ref)
+	config, err := parseBinanceCandleStreamConfig(request.Config)
 	if err != nil {
-		return err
-	}
-	config := binanceCandleStreamConfig{Market: profile.Market, Instrument: profile.Instrument, Intervals: []string{profile.Interval}, ProxyID: profile.ProxyID}
-	config, err = normalizeBinanceCandleStreamConfig(config)
-	if err != nil {
-		return err
-	}
-	if err := t.runtime.recordCandleSources(ctx, request.Revision.WorkflowID, request.NodeInstanceID, config.Market, config.Instrument, config.Intervals); err != nil {
 		return err
 	}
 	return t.runtime.hub.subscribe(ctx, config, emitter)
@@ -51,19 +39,8 @@ func (t binanceCandleRealtimeTrigger) Run(ctx context.Context, request sdk.Trigg
 
 func (a binanceCandleBackfillAction) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
 	now := time.Now().UTC()
-	ref, ok := request.ProfileBindings["market"]
-	if !ok {
-		return sdk.ActionResult{}, errors.New("Binance candle backfill requires a market profile")
-	}
-	profile, err := resolveMarketDataProfile(ctx, request.Profiles, ref)
+	config, err := parseBinanceCandleBackfillConfig(request.Config, now)
 	if err != nil {
-		return sdk.ActionResult{}, err
-	}
-	config, err := parseBinanceCandleBackfillConfig(request.Config, profile, now)
-	if err != nil {
-		return sdk.ActionResult{}, err
-	}
-	if err := a.runtime.recordCandleSources(ctx, request.Revision.WorkflowID, request.NodeInstanceID, config.Market, config.Instrument, config.Intervals); err != nil {
 		return sdk.ActionResult{}, err
 	}
 	requestedCount := config.CandleCount
@@ -646,29 +623,3 @@ func binanceSDKCandle(candle binanceCandle) sdk.Candle {
 
 var _ sdk.TriggerHandler = binanceCandleRealtimeTrigger{}
 var _ sdk.ActionHandler = binanceCandleBackfillAction{}
-
-type binanceCandleSource struct {
-	WorkflowID                                   int64
-	NodeInstanceID, Market, Instrument, Interval string
-	UpdatedAt                                    time.Time
-}
-
-func (binanceCandleSource) TableName() string { return "plugin_binance.candle_sources" }
-func (q *binanceRuntime) recordCandleSources(ctx context.Context, workflow, node, market, instrument string, intervals []string) error {
-	id, err := strconv.ParseInt(workflow, 10, 64)
-	if err != nil || id <= 0 {
-		return errors.New("invalid collection workflow")
-	}
-	rows := make([]binanceCandleSource, 0, len(intervals))
-	for _, interval := range intervals {
-		rows = append(rows, binanceCandleSource{WorkflowID: id, NodeInstanceID: node, Market: market, Instrument: instrument, Interval: interval, UpdatedAt: time.Now().UTC()})
-	}
-	db := q.db.WithContext(ctx)
-	if err := db.Where("workflow_id=? AND node_instance_id=? AND market=? AND instrument=?", id, node, market, instrument).Delete(&binanceCandleSource{}).Error; err != nil {
-		return err
-	}
-	if len(rows) == 0 {
-		return nil
-	}
-	return db.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "workflow_id"}, {Name: "node_instance_id"}, {Name: "market"}, {Name: "instrument"}, {Name: "interval"}}, DoUpdates: clause.AssignmentColumns([]string{"updated_at"})}).Create(&rows).Error
-}

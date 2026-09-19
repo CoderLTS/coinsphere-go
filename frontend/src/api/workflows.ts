@@ -12,27 +12,33 @@ export function buildWorkflowRunsWsUrl(pageOrigin: string, workflowId: number) {
 }
 
 export type WorkflowStatus = 'inactive' | 'active' | 'error'
-export type WorkflowBindingKind = 'node' | 'event' | 'profile' | 'literal'
+export type WorkflowBindingKind =
+  | 'field'
+  | 'literal'
+  | 'cel'
+  | 'condition_entry'
+  | 'condition_subject'
+  | 'condition_message'
+
+export interface WorkflowConditionBindingSource {
+  nodeInstanceId: string
+  branch?: string
+}
 
 export interface WorkflowInputBinding {
   kind: WorkflowBindingKind
   nodeInstanceId?: string
+  sources?: WorkflowConditionBindingSource[]
   fieldPath?: string[]
-  profileKey?: string
   value?: unknown
+  expression?: string
 }
 
 export interface WorkflowGraphNode {
   nodeInstanceId: string
   nodeType: string
   nodeVersion: string
-  label?: string
-  connectionId?: string
   config: Record<string, unknown>
-  profileBindings?: Record<
-    string,
-    { pluginId: string; profileId: string; version: string; type: string }
-  >
   inputBindings?: Record<string, WorkflowInputBinding>
   position: { x: number; y: number }
 }
@@ -43,12 +49,12 @@ export interface WorkflowGraphEdge {
   sourcePort: string
   targetNodeInstanceId: string
   targetPort: string
-  label?: string
+  condition?: string
 }
 
 export interface WorkflowGraph {
-  schemaVersion: 3
-  profileRefs: { pluginId: string; profileId: string; version: string; type: string }[]
+  schemaVersion: 1 | 2
+  entryPoints?: { realtime: string; backtest: string }
   nodes: WorkflowGraphNode[]
   edges: WorkflowGraphEdge[]
 }
@@ -58,8 +64,10 @@ export interface WorkflowItem {
   name: string
   description: string
   groupId: number | null
+  mode: 'batch' | 'event' | 'stream'
   status: WorkflowStatus
   activeRevisionId: number
+  mainTriggerNodeId: string
   retentionDays: number
   createdBy: number
   createdAt: string
@@ -70,21 +78,17 @@ export interface WorkflowDetail extends WorkflowItem {
   runtime: {
     maxConcurrentRuns: number
     backlogLimit: number
-    updatedAt: string
-  }
-  triggers: {
-    nodeInstanceId: string
-    status: string
-    errorCategory?: string
     nextScheduledAt?: string
     lastScheduledAt?: string
-  }[]
+    updatedAt: string
+  }
   stateNodeInstanceIds: string[]
 }
 
 export interface WorkflowTemplate {
   key: string
   name: string
+  mode: 'batch' | 'event' | 'stream'
   description: string
 }
 
@@ -102,6 +106,7 @@ export interface WorkflowRevision {
   revisionNumber: number
   graph: WorkflowGraph
   nodeVersions: Record<string, { nodeType: string; nodeVersion: string }>
+  mainTriggerNodeId: string
   createdBy: number
   createdAt: string
   secretFields: Record<string, Record<string, boolean>>
@@ -115,15 +120,11 @@ export interface WorkflowSecretField {
 }
 
 export interface WorkflowNodeDefinition {
-  connectionType?: string
-  connectionFields?: string[]
   type: string
   version: string
   title: string
   description: string
   kind: 'action' | 'trigger'
-  role: string
-  visibility: 'basic' | 'advanced'
   category: string
   aliases?: string[]
   tags?: string[]
@@ -138,22 +139,7 @@ export interface WorkflowNodeDefinition {
     frameDriver?: boolean
     frameSafe?: boolean
     frameResult?: boolean
-    manualTrigger?: boolean
   }
-  frameSourcePorts?: string[]
-  profileSlots?: Array<{
-    key: string
-    title: string
-    profileTypes: string[]
-    required: boolean
-  }>
-  configGroups?: Array<{
-    key: string
-    title: string
-    description?: string
-    fields: string[]
-    advanced: boolean
-  }>
   configSchema: Record<string, unknown>
   uiSchema: Record<string, unknown>
   inputSchema: Record<string, unknown>
@@ -176,12 +162,7 @@ export interface WorkflowRun {
   id: number
   workflowId: number
   revisionId: number
-  operationType?: string
-  triggerNodeId: string
-  entryNodeInstanceId: string
-  triggerInstanceId: string
-  triggerEventId?: string
-  profileSnapshot: ProfileRef[]
+  entryPoint: 'realtime' | 'backtest'
   input: Record<string, unknown>
   triggerType: 'manual' | 'schedule' | 'event' | 'stream' | 'webhook' | 'failure'
   status: 'queued' | 'running' | 'waiting' | 'retrying' | 'succeeded' | 'failed' | 'cancelled'
@@ -196,28 +177,6 @@ export interface WorkflowRun {
   partitionKey?: string
   diagnostic: boolean
   originalRunId?: number
-}
-
-export interface ProfileRef {
-  pluginId: string
-  profileId: string
-  version: string
-  type: string
-}
-
-export interface ProfileSummary {
-  pluginId: string
-  id: string
-  name: string
-  summary: string
-  type: string
-  status: 'draft' | 'published' | 'disabled' | string
-  version?: string
-  latestPublishedVersion?: string
-  config?: Record<string, unknown>
-  configSchema?: Record<string, unknown>
-  uiSchema?: Record<string, unknown>
-  updatedAt?: string
 }
 
 export interface WorkflowNodeLog {
@@ -412,16 +371,14 @@ export const applyWorkflowLifecycle = (workflowId: number, action: 'activate' | 
   })
 
 export interface WorkflowRunCreatePayload {
-  triggerNodeId: string
+  entryPoint?: 'realtime' | 'backtest'
   revisionId?: number
-  operationType?: string
-  resultNodeIds?: string[]
   input?: Record<string, unknown>
 }
 
 export const createWorkflowRun = (
   workflowId: number,
-  params: WorkflowRunCreatePayload,
+  params: WorkflowRunCreatePayload = {},
   showErrorMessage = true
 ) =>
   request.post<WorkflowRun>({

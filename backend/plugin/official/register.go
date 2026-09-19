@@ -17,12 +17,12 @@ func RegisterAll(registry *sdk.Registry, host sdk.Host, enabled map[string]bool)
 		descriptor sdk.PluginDescriptor
 		register   sdk.RegisterFunc
 	}{
-		{sdk.PluginDescriptor{ID: "official.ai", Name: "人工智能", Version: "4.0.0", Contributes: []string{"nodes", "resultPages"}}, ai.Register},
-		{sdk.PluginDescriptor{ID: "official.connector", Name: "连接器", Version: "4.0.0", Contributes: []string{"nodes", "triggers", "resultPages"}}, connector.Register},
-		{sdk.PluginDescriptor{ID: "official.notification", Name: "通知", Version: "4.0.0", Contributes: []string{"nodes"}}, notification.Register},
-		{sdk.PluginDescriptor{ID: "official.qq", Name: "QQ机器人", Version: "4.0.0", Contributes: []string{"nodes", "triggers"}}, qq.Register},
-		{sdk.PluginDescriptor{ID: "official.quant", Name: "量化", Version: "4.0.0", Contributes: []string{"nodes", "triggers", "strategies", "profiles", "apiRoutes", "pages", "resultPages", "assistantQueries", "workflowValidators", "templates"}}, quant.Register},
-		{sdk.PluginDescriptor{ID: "official.binance", Name: "Binance", Menu: sdk.PluginMenuDescriptor{Mode: sdk.PluginMenuOwn, Title: "币安数据", Icon: "ri:line-chart-line"}, Version: "4.0.0", RequiresPlugins: version.BuiltinPluginDependencies["official.binance"], Contributes: []string{"nodes", "triggers", "profiles", "marketDataProviders", "executionProviders", "apiRoutes", "pages", "resultPages", "templates"}}, binance.Register},
+		{sdk.PluginDescriptor{ID: "official.ai", Name: "人工智能", Version: "3.0.0", Contributes: []string{"nodes", "resultPages"}}, ai.Register},
+		{sdk.PluginDescriptor{ID: "official.connector", Name: "连接器", Version: "3.0.0", Contributes: []string{"nodes", "triggers", "resultPages"}}, connector.Register},
+		{sdk.PluginDescriptor{ID: "official.notification", Name: "通知", Version: "3.0.0", Contributes: []string{"nodes"}}, notification.Register},
+		{sdk.PluginDescriptor{ID: "official.qq", Name: "QQ机器人", Version: "3.0.0", Contributes: []string{"nodes", "triggers"}}, qq.Register},
+		{sdk.PluginDescriptor{ID: "official.quant", Name: "量化", Version: "3.0.0", Contributes: []string{"nodes", "strategies", "apiRoutes", "resultPages", "assistantQueries", "workflowValidators", "templates"}}, quant.Register},
+		{sdk.PluginDescriptor{ID: "official.binance", Name: "Binance", Menu: sdk.PluginMenuDescriptor{Mode: sdk.PluginMenuOwn, Title: "币安数据", Icon: "ri:line-chart-line"}, Version: "3.0.0", RequiresPlugins: version.BuiltinPluginDependencies["official.binance"], Contributes: []string{"nodes", "triggers", "marketDataProviders", "executionProviders", "apiRoutes", "pages", "resultPages", "templates"}}, binance.Register},
 	}
 	registered := make(map[string]bool, len(plugins))
 	for pending := append([]struct {

@@ -48,7 +48,7 @@
 </template>
 
 <script setup lang="ts">
-  import { View } from '@element-plus/icons-vue'
+  import { DataAnalysis, View } from '@element-plus/icons-vue'
   import { ElButton, ElSpace, ElTag } from 'element-plus'
   import { useCursorPagination } from '@/hooks/core/useCursorPagination'
   import { useTableColumns } from '@/hooks/core/useTableColumns'
@@ -198,6 +198,12 @@
       }
     })
 
+  const openBacktest = (run: WorkflowRun) =>
+    router.push({
+      path: `/scheduler/execution/${run.id}/backtest`,
+      query: { workflowId: String(workflowId.value), workflowName: workflowName.value }
+    })
+
   const { columns, columnChecks } = useTableColumns<WorkflowRun>(() => [
     { prop: 'id', label: 'Run ID', width: 100, align: 'center' },
     {
@@ -267,7 +273,19 @@
             icon: View,
             title: '查看详情',
             onClick: () => openDetail(row)
-          })
+          }),
+          ...(row.entryPoint === 'backtest' && row.status === 'succeeded'
+            ? [
+                h(ElButton, {
+                  circle: true,
+                  plain: true,
+                  size: 'small',
+                  icon: DataAnalysis,
+                  title: '查看回测分析',
+                  onClick: () => openBacktest(row)
+                })
+              ]
+            : [])
         ])
     }
   ])

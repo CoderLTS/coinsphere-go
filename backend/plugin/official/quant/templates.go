@@ -6,65 +6,36 @@ import (
 	"coinsphere/backend/plugin/sdk"
 )
 
-// Realtime and replay templates bind the same profile and downstream graph.
 var quantStrategyTemplate = json.RawMessage(`{
-  "schemaVersion":3,
-  "profileRefs":[{"pluginId":"official.binance","profileId":"btc-1m","version":"v1","type":"market.data"}],
+  "schemaVersion":1,
   "nodes":[
-    {"nodeInstanceId":"market","nodeType":"official.binance.realtime_candles","nodeVersion":"1.0.0","profileBindings":{"market":{"pluginId":"official.binance","profileId":"btc-1m","version":"v1","type":"market.data"}},"config":{},"position":{"x":80,"y":220}},
-    {"nodeInstanceId":"context","nodeType":"official.quant.market_context","nodeVersion":"1.0.0","profileBindings":{"market":{"pluginId":"official.binance","profileId":"btc-1m","version":"v1","type":"market.data"}},"config":{},"position":{"x":260,"y":220},"inputBindings":{"asOf":{"kind":"event","fieldPath":["closeTime"]}}},
-    {"nodeInstanceId":"strategy","nodeType":"official.quant.code_strategy","nodeVersion":"1.0.0","config":{"series":[{"alias":"main","lookback":30}],"parameters":{"target":"1"},"source":"{\"long\": decimalGt(last(ohlcv.main.close), sma(ohlcv.main.close, 20)), \"target\": params.target}","booleanOutputs":["long"],"decimalOutputs":["target"],"branchField":"long"},"position":{"x":520,"y":220},"inputBindings":{"context":{"kind":"node","nodeInstanceId":"context","fieldPath":["context"]}}},
-    {"nodeInstanceId":"position","nodeType":"official.quant.position","nodeVersion":"1.0.0","config":{"market":"spot","targetMode":"input"},"position":{"x":760,"y":220},"inputBindings":{"target":{"kind":"node","nodeInstanceId":"strategy","fieldPath":["decimals","target"]},"evaluatedAt":{"kind":"node","nodeInstanceId":"strategy","fieldPath":["evaluatedAt"]}}},
-    {"nodeInstanceId":"signal","nodeType":"official.quant.output_signal","nodeVersion":"1.0.0","profileBindings":{"market":{"pluginId":"official.binance","profileId":"btc-1m","version":"v1","type":"market.data"}},"config":{},"position":{"x":1040,"y":220}}
+    {"nodeInstanceId":"candle-event","nodeType":"core.event","nodeVersion":"1.0.0","config":{"types":["market.candle.closed"]},"position":{"x":80,"y":220}},
+    {"nodeInstanceId":"strategy","nodeType":"official.quant.evaluate","nodeVersion":"1.0.0","config":{"venue":"binance","strategyId":"official.quant.sma-crossover","market":"spot","instrument":"BTCUSDT","interval":"1h","parameters":{"fastPeriod":3,"slowPeriod":5}},"inputBindings":{"eventTime":{"kind":"cel","expression":"event.time"}},"position":{"x":380,"y":220}},
+    {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":700,"y":220}}
   ],
   "edges":[
-    {"edgeId":"market-context","sourceNodeInstanceId":"market","sourcePort":"out","targetNodeInstanceId":"context","targetPort":"in"},
-    {"edgeId":"context-strategy","sourceNodeInstanceId":"context","sourcePort":"out","targetNodeInstanceId":"strategy","targetPort":"in"},
-    {"edgeId":"strategy-position","sourceNodeInstanceId":"strategy","sourcePort":"true","targetNodeInstanceId":"position","targetPort":"in"},
-    {"edgeId":"position-signal","sourceNodeInstanceId":"position","sourcePort":"out","targetNodeInstanceId":"signal","targetPort":"in"}
+    {"edgeId":"event-strategy","sourceNodeInstanceId":"candle-event","sourcePort":"out","targetNodeInstanceId":"strategy","targetPort":"in"},
+    {"edgeId":"strategy-end","sourceNodeInstanceId":"strategy","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}
   ]
 }`)
 
-var quantReplayTemplate = json.RawMessage(`{
-  "schemaVersion":3,
-  "profileRefs":[
-    {"pluginId":"official.binance","profileId":"btc-1m","version":"v1","type":"market.data"},
-    {"pluginId":"official.quant","profileId":"default-backtest","version":"v1","type":"quant.backtest"}
-  ],
+var quantBacktestTemplate = json.RawMessage(`{
+  "schemaVersion":1,
   "nodes":[
-    {"nodeInstanceId":"replay","nodeType":"official.quant.replay","nodeVersion":"1.0.0","profileBindings":{"market":{"pluginId":"official.binance","profileId":"btc-1m","version":"v1","type":"market.data"},"backtest":{"pluginId":"official.quant","profileId":"default-backtest","version":"v1","type":"quant.backtest"}},"config":{},"position":{"x":80,"y":220}},
-    {"nodeInstanceId":"context","nodeType":"official.quant.market_context","nodeVersion":"1.0.0","profileBindings":{"market":{"pluginId":"official.binance","profileId":"btc-1m","version":"v1","type":"market.data"}},"config":{},"position":{"x":300,"y":220},"inputBindings":{"asOf":{"kind":"event","fieldPath":["closeTime"]}}},
-    {"nodeInstanceId":"strategy","nodeType":"official.quant.code_strategy","nodeVersion":"1.0.0","config":{"series":[{"alias":"main","lookback":30}],"parameters":{"target":"1"},"source":"{\"long\": decimalGt(last(ohlcv.main.close), sma(ohlcv.main.close, 20)), \"target\": params.target}","booleanOutputs":["long"],"decimalOutputs":["target"],"branchField":"long"},"position":{"x":560,"y":220},"inputBindings":{"context":{"kind":"node","nodeInstanceId":"context","fieldPath":["context"]}}},
-    {"nodeInstanceId":"position","nodeType":"official.quant.position","nodeVersion":"1.0.0","config":{"market":"spot","targetMode":"input"},"position":{"x":800,"y":220},"inputBindings":{"target":{"kind":"node","nodeInstanceId":"strategy","fieldPath":["decimals","target"]},"evaluatedAt":{"kind":"node","nodeInstanceId":"strategy","fieldPath":["evaluatedAt"]}}},
-    {"nodeInstanceId":"signal","nodeType":"official.quant.output_signal","nodeVersion":"1.0.0","profileBindings":{"market":{"pluginId":"official.binance","profileId":"btc-1m","version":"v1","type":"market.data"}},"config":{},"position":{"x":1080,"y":220}}
+    {"nodeInstanceId":"manual","nodeType":"core.manual","nodeVersion":"1.0.0","config":{},"position":{"x":80,"y":220}},
+    {"nodeInstanceId":"backtest","nodeType":"official.quant.backtest","nodeVersion":"1.0.0","config":{"venue":"binance","strategyId":"official.quant.sma-crossover","market":"spot","instrument":"BTCUSDT","interval":"1h","startTime":"2026-01-01T00:00:00Z","endTime":"2026-02-01T00:00:00Z","initialCapital":"10000","feeRate":"0.001","slippageRate":"0.0005","parameters":{"fastPeriod":3,"slowPeriod":5}},"position":{"x":380,"y":220}},
+    {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":700,"y":220}}
   ],
   "edges":[
-    {"edgeId":"replay-context","sourceNodeInstanceId":"replay","sourcePort":"each","targetNodeInstanceId":"context","targetPort":"in"},
-    {"edgeId":"context-strategy","sourceNodeInstanceId":"context","sourcePort":"out","targetNodeInstanceId":"strategy","targetPort":"in"},
-    {"edgeId":"strategy-position","sourceNodeInstanceId":"strategy","sourcePort":"true","targetNodeInstanceId":"position","targetPort":"in"},
-    {"edgeId":"position-signal","sourceNodeInstanceId":"position","sourcePort":"out","targetNodeInstanceId":"signal","targetPort":"in"}
-  ]
-}`)
-
-var quantObservationTemplate = json.RawMessage(`{
-  "schemaVersion":3,
-  "profileRefs":[{"pluginId":"official.binance","profileId":"btc-1m","version":"v1","type":"market.data"}],
-  "nodes":[
-    {"nodeInstanceId":"market","nodeType":"official.binance.realtime_candles","nodeVersion":"1.0.0","profileBindings":{"market":{"pluginId":"official.binance","profileId":"btc-1m","version":"v1","type":"market.data"}},"config":{},"position":{"x":80,"y":200}},
-    {"nodeInstanceId":"indicator","nodeType":"official.quant.indicator","nodeVersion":"2.0.0","profileBindings":{"market":{"pluginId":"official.binance","profileId":"btc-1m","version":"v1","type":"market.data"}},"config":{"indicator":"price_change","parameters":{"lookback":1,"mode":"rise","threshold":"1"}},"position":{"x":360,"y":200}},
-    {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":680,"y":200}}
-  ],
-  "edges":[
-    {"edgeId":"market-indicator","sourceNodeInstanceId":"market","sourcePort":"out","targetNodeInstanceId":"indicator","targetPort":"in"},
-    {"edgeId":"indicator-end","sourceNodeInstanceId":"indicator","sourcePort":"true","targetNodeInstanceId":"end","targetPort":"in"}
+    {"edgeId":"manual-backtest","sourceNodeInstanceId":"manual","sourcePort":"out","targetNodeInstanceId":"backtest","targetPort":"in"},
+    {"edgeId":"backtest-end","sourceNodeInstanceId":"backtest","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}
   ]
 }`)
 
 func registerTemplates(registrar sdk.Registrar) error {
 	for _, template := range []sdk.TemplateDescriptor{
-		{Key: "quant-strategy", Name: "量化策略与实时行情", Description: "实时行情触发策略；行情配置由 Profile 统一提供。", Graph: quantStrategyTemplate},
-		{Key: "quant-replay", Name: "量化回放", Description: "手动回放入口与实时策略共享同一组下游节点。", Graph: quantReplayTemplate},
-		{Key: "quant-observation", Name: "指标观察", Description: "单节点单指标，行情配置由 Profile 统一提供。", Graph: quantObservationTemplate},
+		{Key: "quant-strategy", Name: "通用量化策略", Description: "使用 venue 选择任意行情 Provider。", Mode: "event", Graph: quantStrategyTemplate},
+		{Key: "quant-backtest", Name: "通用量化回测", Description: "通过行情 Provider 执行确定性回测。", Mode: "batch", Graph: quantBacktestTemplate},
 	} {
 		if err := registrar.Template(template); err != nil {
 			return err
