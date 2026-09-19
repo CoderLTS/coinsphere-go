@@ -223,6 +223,9 @@
     "scheduler": {
       "title": "Workflow"
     },
+    "results": {
+      "title": "Results"
+    },
     "config": {
       "title": "Configuration",
       "overview": "Configuration Overview",
@@ -268,6 +271,37 @@
     "assign": "Assign Permission",
     "toggleTask": "Toggle Task",
     "viewAnalysis": "View Analysis"
+  },
+  "results": {
+    "eyebrow": "Shared results",
+    "title": "Shared results",
+    "refresh": "Refresh",
+    "create": "Create view",
+    "selectPlaceholder": "Select a result view",
+    "ariaLabel": "Shared result views",
+    "activeCount": "{count} active",
+    "revoked": "Revoked",
+    "emptyAuthorized": "No authorized result views",
+    "manageGrants": "Manage access",
+    "revokeView": "Revoke view",
+    "selectAvailable": "Select an available result view",
+    "empty": "No shared results",
+    "createDialogTitle": "Create shared result view",
+    "name": "Name",
+    "resultPage": "Result page",
+    "scope": "Result scope (JSON)",
+    "filters": "Filters (JSON)",
+    "allowedActions": "Allowed actions",
+    "users": "Authorized users",
+    "roles": "Authorized roles",
+    "cancel": "Cancel",
+    "createView": "Create view",
+    "grantDialogTitle": "Manage view access",
+    "saveGrants": "Save access",
+    "loadFailed": "Failed to load result page",
+    "invalidJson": "Scope and filters must be valid JSON",
+    "revokeConfirm": "Revoking removes access for regular users immediately.",
+    "revokeTitle": "Revoke result view"
   },
   "assistant": {
     "title": "Smart Assistant",

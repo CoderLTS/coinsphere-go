@@ -4,32 +4,36 @@
       <div class="results-header__identity">
         <span><ArtSvgIcon icon="ri:file-chart-line" /></span>
         <div>
-          <p>Shared results</p>
-          <h1>共享结果</h1>
+          <p>{{ t('results.eyebrow') }}</p>
+          <h1>{{ t('results.title') }}</h1>
         </div>
       </div>
       <div class="results-header__actions">
-        <ElButton circle title="刷新" :loading="loading" @click="loadViews">
+        <ElButton circle :title="t('results.refresh')" :loading="loading" @click="loadViews">
           <ArtSvgIcon icon="ri:refresh-line" />
         </ElButton>
         <ElButton v-if="isAdmin" type="primary" @click="openCreate">
           <ArtSvgIcon icon="ri:add-line" />
-          创建视图
+          {{ t('results.create') }}
         </ElButton>
       </div>
     </header>
 
     <div class="results-mobile-select">
-      <ElSelect :model-value="selectedView?.id" placeholder="选择结果视图" @change="selectById">
+      <ElSelect
+        :model-value="selectedView?.id"
+        :placeholder="t('results.selectPlaceholder')"
+        @change="selectById"
+      >
         <ElOption v-for="view in activeViews" :key="view.id" :label="view.name" :value="view.id" />
       </ElSelect>
     </div>
 
     <main v-loading="loading" class="results-layout">
-      <aside class="results-rail" aria-label="共享结果视图">
+      <aside class="results-rail" :aria-label="t('results.ariaLabel')">
         <div class="results-rail__heading">
-          <span>结果视图</span>
-          <small>{{ activeViews.length }} active</small>
+          <span>{{ t('results.title') }}</span>
+          <small>{{ t('results.activeCount', { count: activeViews.length }) }}</small>
         </div>
         <div class="results-rail__list">
           <button
@@ -47,12 +51,14 @@
               <strong>{{ view.name }}</strong>
               <small>{{ pageLabel(view) }}</small>
             </span>
-            <ElTag v-if="view.status === 'revoked'" type="info" effect="plain" size="small"
-              >撤销</ElTag
-            >
+            <ElTag v-if="view.status === 'revoked'" type="info" effect="plain" size="small">{{
+              t('results.revoked')
+            }}</ElTag>
             <ArtSvgIcon v-else icon="ri:arrow-right-s-line" />
           </button>
-          <div v-if="!views.length" class="results-rail__empty">暂无获授权结果</div>
+          <div v-if="!views.length" class="results-rail__empty">{{
+            t('results.emptyAuthorized')
+          }}</div>
         </div>
       </aside>
 
@@ -63,10 +69,16 @@
             <small>{{ formatTime(selectedView.createdAt) }}</small>
           </div>
           <div v-if="isAdmin" class="results-stage__commands">
-            <ElButton circle title="管理授权" @click="openGrants(selectedView)">
+            <ElButton circle :title="t('results.manageGrants')" @click="openGrants(selectedView)">
               <ArtSvgIcon icon="ri:user-shared-line" />
             </ElButton>
-            <ElButton circle title="撤销视图" type="danger" plain @click="revoke(selectedView)">
+            <ElButton
+              circle
+              :title="t('results.revokeView')"
+              type="danger"
+              plain
+              @click="revoke(selectedView)"
+            >
               <ArtSvgIcon icon="ri:stop-circle-line" />
             </ElButton>
           </div>
@@ -79,18 +91,22 @@
         />
         <div v-else class="results-stage__empty">
           <ArtSvgIcon icon="ri:file-chart-line" />
-          <strong>{{ views.length ? '选择一个可用结果视图' : '暂无共享结果' }}</strong>
+          <strong>{{ views.length ? t('results.selectAvailable') : t('results.empty') }}</strong>
         </div>
       </section>
     </main>
 
-    <ElDialog v-model="createVisible" title="创建共享结果视图" width="min(620px, 94vw)">
+    <ElDialog
+      v-model="createVisible"
+      :title="t('results.createDialogTitle')"
+      width="min(620px, 94vw)"
+    >
       <ElForm label-position="top">
         <div class="dialog-grid">
-          <ElFormItem label="名称">
+          <ElFormItem :label="t('results.name')">
             <ElInput v-model="createForm.name" maxlength="120" show-word-limit />
           </ElFormItem>
-          <ElFormItem label="结果页面">
+          <ElFormItem :label="t('results.resultPage')">
             <ElSelect v-model="createForm.pageRef" filterable>
               <ElOption
                 v-for="page in resultPages"
@@ -101,13 +117,13 @@
             </ElSelect>
           </ElFormItem>
         </div>
-        <ElFormItem label="结果范围（JSON）">
+        <ElFormItem :label="t('results.scope')">
           <ElInput v-model="createForm.scopeText" type="textarea" :rows="3" />
         </ElFormItem>
-        <ElFormItem label="过滤条件（JSON）">
+        <ElFormItem :label="t('results.filters')">
           <ElInput v-model="createForm.filtersText" type="textarea" :rows="3" />
         </ElFormItem>
-        <ElFormItem label="允许操作">
+        <ElFormItem :label="t('results.allowedActions')">
           <ElCheckboxGroup v-model="createForm.allowedActions">
             <ElCheckbox v-for="action in selectedPage?.actions || []" :key="action" :value="action">
               {{ action }}
@@ -115,7 +131,7 @@
           </ElCheckboxGroup>
         </ElFormItem>
         <div class="dialog-grid">
-          <ElFormItem label="授权用户">
+          <ElFormItem :label="t('results.users')">
             <ElSelect v-model="createForm.userIds" multiple filterable collapse-tags>
               <ElOption
                 v-for="user in userOptions"
@@ -125,7 +141,7 @@
               />
             </ElSelect>
           </ElFormItem>
-          <ElFormItem label="授权角色">
+          <ElFormItem :label="t('results.roles')">
             <ElSelect v-model="createForm.roleCodes" multiple filterable collapse-tags>
               <ElOption
                 v-for="role in roleOptions"
@@ -138,16 +154,20 @@
         </div>
       </ElForm>
       <template #footer>
-        <ElButton @click="createVisible = false">取消</ElButton>
+        <ElButton @click="createVisible = false">{{ t('results.cancel') }}</ElButton>
         <ElButton type="primary" :loading="saving" :disabled="!canCreate" @click="submitCreate">
-          创建视图
+          {{ t('results.createView') }}
         </ElButton>
       </template>
     </ElDialog>
 
-    <ElDialog v-model="grantsVisible" title="管理视图授权" width="min(520px, 94vw)">
+    <ElDialog
+      v-model="grantsVisible"
+      :title="t('results.grantDialogTitle')"
+      width="min(520px, 94vw)"
+    >
       <ElForm label-position="top">
-        <ElFormItem label="授权用户">
+        <ElFormItem :label="t('results.users')">
           <ElSelect v-model="grantForm.userIds" multiple filterable collapse-tags>
             <ElOption
               v-for="user in userOptions"
@@ -157,7 +177,7 @@
             />
           </ElSelect>
         </ElFormItem>
-        <ElFormItem label="授权角色">
+        <ElFormItem :label="t('results.roles')">
           <ElSelect v-model="grantForm.roleCodes" multiple filterable collapse-tags>
             <ElOption
               v-for="role in roleOptions"
@@ -169,8 +189,10 @@
         </ElFormItem>
       </ElForm>
       <template #footer>
-        <ElButton @click="grantsVisible = false">取消</ElButton>
-        <ElButton type="primary" :loading="saving" @click="submitGrants">保存授权</ElButton>
+        <ElButton @click="grantsVisible = false">{{ t('results.cancel') }}</ElButton>
+        <ElButton type="primary" :loading="saving" @click="submitGrants">
+          {{ t('results.saveGrants') }}
+        </ElButton>
       </template>
     </ElDialog>
   </div>
@@ -179,6 +201,7 @@
 <script setup lang="ts">
   import type { Component } from 'vue'
   import { ElMessageBox } from 'element-plus'
+  import { useI18n } from 'vue-i18n'
   import {
     createResultView,
     fetchResultPages,
@@ -194,6 +217,7 @@
   import { formatDateTime as formatTime } from '@/utils/date'
 
   defineOptions({ name: 'Results' })
+  const { t } = useI18n()
 
   const userStore = useUserStore()
   const isAdmin = computed(() => userStore.info.roleCodes.includes('R_SUPER'))
@@ -247,7 +271,7 @@
       await loadComponent(view)
     } catch {
       resultComponent.value = undefined
-      ElMessage.error('结果页加载失败')
+      ElMessage.error(t('results.loadFailed'))
     }
   }
   const selectById = (viewId: number) => {
@@ -293,7 +317,7 @@
       scope = JSON.parse(createForm.scopeText) as Record<string, unknown>
       filters = JSON.parse(createForm.filtersText) as Record<string, unknown>
     } catch {
-      ElMessage.error('结果范围和过滤条件必须是合法 JSON')
+      ElMessage.error(t('results.invalidJson'))
       return
     }
     saving.value = true
@@ -339,9 +363,9 @@
     }
   }
   const revoke = async (view: ResultView) => {
-    await ElMessageBox.confirm('撤销后所有普通用户立即失去访问权限。', '撤销结果视图', {
-      confirmButtonText: '撤销',
-      cancelButtonText: '取消',
+    await ElMessageBox.confirm(t('results.revokeConfirm'), t('results.revokeTitle'), {
+      confirmButtonText: t('results.revoked'),
+      cancelButtonText: t('results.cancel'),
       type: 'warning'
     })
     await revokeResultView(view.id)

@@ -1735,4 +1735,3 @@ CREATE TABLE plugin_binance.candle_sources (
  PRIMARY KEY(workflow_id,node_instance_id,market,instrument,interval)
 );
 CREATE INDEX ix_binance_candle_sources_series ON plugin_binance.candle_sources(market,instrument,interval);
-

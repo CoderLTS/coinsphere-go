@@ -35,7 +35,7 @@ const (
 )
 
 var MenuPermissionCodes = map[string]string{
-	"Home": HomeView, "SchedulerCenter": "",
+	"Home": HomeView, "Results": ResultViewsAccess, "SchedulerCenter": "",
 	"WorkflowDefinitions": "",
 	"System":              "", "User": SystemUsersView, "Role": SystemRolesView,
 	"Menus": SystemMenusView, "Plugins": SystemPluginsView, "OutboundProxies": SystemProxiesView, "UserCenter": "",

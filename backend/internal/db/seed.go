@@ -27,6 +27,7 @@ type menuItem struct {
 
 var coreMenuItems = []menuItem{
 	{"Home", "首页", "/home", "/home/index", "ri:home-5-line", "", true, true, false},
+	{"Results", "结果视图", "/results", "/results", "ri:file-chart-line", "", true, false, false},
 	{"SchedulerCenter", "工作流", "/scheduler", "/index/index", "ri:time-line", "", false, false, false},
 	{"WorkflowDefinitions", "工作流定义", "definition", "/scheduler/workflow", "ri:node-tree", "SchedulerCenter", true, false, false},
 	{"ConfigCenter", "配置管理", "/config", "/index/index", "ri:tools-line", "", false, false, false},
@@ -42,6 +43,7 @@ var coreMenuItems = []menuItem{
 
 var menuI18n = map[string][2]string{
 	"Home":                {"首页", "Home"},
+	"Results":             {"结果视图", "Results"},
 	"SchedulerCenter":     {"工作流", "Workflow"},
 	"WorkflowDefinitions": {"工作流定义", "Workflow Definitions"},
 	"System":              {"系统管理", "System Management"},
@@ -280,7 +282,7 @@ func seedRoleBindings(
 
 	roleMenus := map[string][]string{
 		"R_SUPER": allMenuNames,
-		"R_USER":  {"Home", "UserCenter"},
+		"R_USER":  {"Home", "Results", "UserCenter"},
 	}
 	superButtons := make([]string, 0)
 	for _, specs := range perm.ButtonSpecs {
