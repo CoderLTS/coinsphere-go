@@ -52,7 +52,7 @@ func TestBusiness(t *testing.T) {
  if !ok {t.Fatal("node missing")}
  result,err:=action.Execute(context.Background(),sdk.ActionRequest{Input:json.RawMessage("{}"),Config:json.RawMessage("{}")})
  if err!=nil || string(result.Output)!="{\"message\":\"业务事项可读取\"}" {t.Fatal("node failed",err)}
- if len(r.RunPanels())!=1 {t.Fatal("panel missing")}
+ if len(r.RunPanels("example.business"))!=1 {t.Fatal("panel missing")}
  page,ok:=r.ResultPage("example.business","tasks")
  if !ok || page.ActionPermissions["ack"]=="" {t.Fatal("result action missing")}
  for _,route:=range r.Routes(){

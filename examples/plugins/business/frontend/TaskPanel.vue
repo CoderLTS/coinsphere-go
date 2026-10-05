@@ -5,6 +5,6 @@
   </section>
 </template>
 <script setup lang="ts">
-import type { WorkflowRunDetail, WorkflowRunNode } from "@/api/workflows";
-defineProps<{ result: { run: WorkflowRunDetail; runNode: WorkflowRunNode } }>();
+  import type { WorkflowRunDetail, WorkflowRunNode } from '@/api/workflows'
+  defineProps<{ result: { run: WorkflowRunDetail; runNode: WorkflowRunNode } }>()
 </script>
