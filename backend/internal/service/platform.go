@@ -16,33 +16,7 @@ import (
 
 func (a *App) SyncCapabilities(ctx context.Context) error {
 	return a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		catalog := map[string]db.Permission{}
-		add := func(code, title string, protected bool) {
-			if code != "" {
-				catalog[code] = db.Permission{Code: code, Title: title, Protected: protected}
-			}
-		}
-		for _, code := range perm.MenuPermissionCodes {
-			add(code, code, false)
-		}
-		for _, buttons := range perm.ButtonSpecs {
-			for _, b := range buttons {
-				add(b.Code, b.Title, false)
-			}
-		}
-		for code, title := range map[string]string{"workflows.read": "查看工作流", "workflows.create": "创建工作流", "workflows.update": "编辑工作流", "workflows.publish": "发布工作流", "workflows.activate": "启停工作流", "workflows.run": "手工运行与诊断", "workflows.cancel": "取消运行", "workflows.retry": "重试运行", "workflows.delete": "删除工作流及修订", "workflows.share": "授权工作流", "workflows.secrets.manage": "管理工作流凭据", "human_tasks.read": "查看待办", "human_tasks.decide": "处理待办", "workflow_groups.manage": "管理分组", "result_views.read": "查看结果", "result_views.manage": "管理结果授权", "result_views.export": "导出结果", "notifications.read": "查看个人通知", "assistant.use": "使用助手", "system.observe": "系统观测", "config.ai.manage": "管理模型", "system.users.assign_roles": "授予用户角色"} {
-			add(code, title, false)
-		}
-		for code := range sdk.CoreScopePermissions {
-			if catalog[code].Code == "" {
-				add(code, code, false)
-			}
-		}
-		for _, plugin := range a.Plugins.Plugins() {
-			for _, p := range plugin.Permissions {
-				catalog[p.Code] = db.Permission{Code: p.Code, Title: p.Title, PluginID: plugin.ID, Protected: p.Protected}
-			}
-		}
+		catalog := a.CapabilityCatalog()
 		for _, p := range catalog {
 			if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "code"}}, DoUpdates: clause.AssignmentColumns([]string{"title", "plugin_id", "protected"})}).Create(&p).Error; err != nil {
 				return err
@@ -51,6 +25,37 @@ func (a *App) SyncCapabilities(ctx context.Context) error {
 		return nil
 	})
 }
+func (a *App) CapabilityCatalog() map[string]db.Permission {
+	catalog := map[string]db.Permission{}
+	add := func(code, title string, protected bool) {
+		if code != "" {
+			catalog[code] = db.Permission{Code: code, Title: title, Protected: protected}
+		}
+	}
+	for _, code := range perm.MenuPermissionCodes {
+		add(code, code, false)
+	}
+	for _, buttons := range perm.ButtonSpecs {
+		for _, b := range buttons {
+			add(b.Code, b.Title, false)
+		}
+	}
+	for code, title := range map[string]string{"workflows.read": "查看工作流", "workflows.create": "创建工作流", "workflows.update": "编辑工作流", "workflows.publish": "发布工作流", "workflows.activate": "启停工作流", "workflows.run": "手工运行与诊断", "workflows.cancel": "取消运行", "workflows.retry": "重试运行", "workflows.delete": "删除工作流及修订", "workflows.share": "授权工作流", "workflows.secrets.manage": "管理工作流凭据", "human_tasks.read": "查看待办", "human_tasks.decide": "处理待办", "workflow_groups.manage": "管理分组", "result_views.read": "查看结果", "result_views.manage": "管理结果授权", "result_views.export": "导出结果", "notifications.read": "查看个人通知", "assistant.use": "使用助手", "system.observe": "系统观测", "config.ai.manage": "管理模型", "system.users.assign_roles": "授予用户角色"} {
+		add(code, title, false)
+	}
+	for code := range sdk.CoreScopePermissions {
+		if catalog[code].Code == "" {
+			add(code, code, false)
+		}
+	}
+	for _, plugin := range a.Plugins.Plugins() {
+		for _, p := range plugin.Permissions {
+			catalog[p.Code] = db.Permission{Code: p.Code, Title: p.Title, PluginID: plugin.ID, Protected: p.Protected}
+		}
+	}
+	return catalog
+}
+
 func (a *App) ListCapabilities(ctx context.Context) ([]M, error) {
 	var rows []db.Permission
 	if err := a.DB.WithContext(ctx).Order("plugin_id, code").Find(&rows).Error; err != nil {

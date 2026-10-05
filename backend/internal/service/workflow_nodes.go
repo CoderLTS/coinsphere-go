@@ -89,6 +89,8 @@ func workflowCategoryOrder(category string) int {
 	return 100
 }
 
+func (a *App) WorkflowNodeCatalog() map[string]sdk.NodeDescriptor { return a.workflowNodeDescriptors() }
+
 func (a *App) workflowNodeDescriptors() map[string]sdk.NodeDescriptor {
 	items := coreWorkflowNodeDescriptors()
 	if a.Plugins != nil {

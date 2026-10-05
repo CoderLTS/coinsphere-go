@@ -184,7 +184,7 @@ func (a *App) GetMenuTree(principal *Principal) ([]M, error) {
 	}
 	visibleMenus := menus[:0]
 	for _, menu := range menus {
-		if menu.PermissionCode == "" || principal.HasPermission(menu.PermissionCode) {
+		if (menu.PermissionCode == nil || *menu.PermissionCode == "") || principal.HasPermission(*menu.PermissionCode) {
 			visibleMenus = append(visibleMenus, menu)
 		}
 	}

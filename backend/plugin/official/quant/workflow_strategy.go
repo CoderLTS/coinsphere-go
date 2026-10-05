@@ -220,7 +220,7 @@ func (a quantOutputSignalAction) Execute(ctx context.Context, request sdk.Action
 		if !isQuantFrame(ctx) {
 			result, err := (quantSignalAction{runtime: a.runtime}).Execute(ctx, sdk.ActionRequest{
 				Revision: request.Revision, NodeInstanceID: request.NodeInstanceID, OperationKey: request.OperationKey,
-				Config: request.Config, ExecutionMode: request.ExecutionMode,
+				Config: request.Config,
 				Input: mustMarshal(map[string]any{"strategyId": "workflow", "strategyVersion": request.Revision.RevisionID,
 					"target": target.String(), "evaluatedAt": evaluatedAt.Format(time.RFC3339Nano), "businessKey": businessKey}),
 			})

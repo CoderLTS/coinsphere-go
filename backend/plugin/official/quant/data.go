@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"coinsphere/backend/plugin/contracts/trading"
-	"coinsphere/backend/plugin/sdk"
 )
 
 func quantPathInt64(value string) (int64, error) {

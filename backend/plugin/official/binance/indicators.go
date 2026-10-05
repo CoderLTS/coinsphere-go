@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"coinsphere/backend/plugin/contracts/trading"
-	"coinsphere/backend/plugin/sdk"
 	"github.com/shopspring/decimal"
 )
 

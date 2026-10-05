@@ -24,10 +24,11 @@ type composeAction struct{}
 func registerCompose(registrar sdk.Registrar) error {
 	return registrar.Action(sdk.NodeDescriptor{
 		Type: "official.notification.compose", Version: "1.0.0", Kind: sdk.NodeKindAction,
-		Title: "通知内容组合", Description: "按配置顺序组合实际触发的条件来源", Category: "notification",
+		Title: "通知内容组合", Description: "按配置顺序组合实际触发的条件来源", Category: "notification", Color: "#7c3aed", Icon: "combine", Width: 220, Height: 72,
+		ExecutionPermissions: []string{"plugins.official.notification.execute"}, Capabilities: sdk.NodeCapabilities{Deterministic: true, Stateless: true},
 		Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
 		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"subjectSources":{"type":"array","maxItems":256,"items":{"$ref":"#/$defs/source"}},"messageSources":{"type":"array","maxItems":256,"items":{"$ref":"#/$defs/source"}}},"required":["subjectSources","messageSources"],"additionalProperties":false,"$defs":{"source":{"type":"object","properties":{"nodeInstanceId":{"type":"string","minLength":1,"maxLength":128},"branch":{"type":"string","minLength":1,"maxLength":32}},"required":["nodeInstanceId","branch"],"additionalProperties":false}}}`),
-		InputSchema:  json.RawMessage(`{"type":"object","additionalProperties":false}`),
+		InputSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false}`),
 		OutputSchema: notificationInputSchema(),
 	}, composeAction{})
 }
