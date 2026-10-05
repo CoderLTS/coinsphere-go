@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"coinsphere/backend/internal/service"
@@ -24,38 +23,14 @@ func (s *Server) handlePublishWorkflowWebhook(c *gin.Context) {
 		writeProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	secret, secretOK := singleWorkflowSecretHeader(c.Request)
-	eventID, eventIDOK := singleWorkflowHeader(c.Request, "Idempotency-Key")
-	partitionKey, partitionOK := singleWorkflowHeader(c.Request, "X-CoinSphere-Partition-Key")
-	if !secretOK || !eventIDOK || !partitionOK {
-		writeProblem(c, http.StatusBadRequest, "webhook requires one secret, idempotency key, and partition key header")
-		return
-	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxWorkflowEventRequestBytes)
-	payload, err := decodeBody[map[string]any](c)
+	payload, err := decodeBody[json.RawMessage](c)
 	if err != nil || payload == nil {
 		writeProblem(c, http.StatusBadRequest, "webhook body must be a JSON object no larger than 1 MiB")
 		return
 	}
-	data, err := s.App.PublishWorkflowWebhook(c.Request.Context(), workflowID, secret, eventID, partitionKey, *payload)
+	data, err := s.App.PublishWorkflowWebhook(c.Request.Context(), workflowID, c.Request, *payload)
 	respond(c, data, err, "")
-}
-
-func singleWorkflowHeader(r *http.Request, name string) (string, bool) {
-	values := r.Header.Values(name)
-	if len(values) != 1 {
-		return "", false
-	}
-	value := strings.TrimSpace(values[0])
-	return value, value != ""
-}
-
-func singleWorkflowSecretHeader(r *http.Request) (string, bool) {
-	values := r.Header.Values("X-CoinSphere-Webhook-Secret")
-	if len(values) != 1 || strings.TrimSpace(values[0]) == "" {
-		return "", false
-	}
-	return values[0], true
 }
 
 func (s *Server) handlePublishWorkflowEvent(c *gin.Context) {
@@ -182,8 +157,12 @@ func (s *Server) handleValidateWorkflowGraph(c *gin.Context) {
 }
 
 func (s *Server) handleListWorkflows(c *gin.Context) {
-	items, err := s.App.ListWorkflows(c.Request.Context(), queryStr(c, "status"))
-	respond(c, M{"items": items}, err, "")
+	page, valid := cursorPage(c)
+	if !valid {
+		return
+	}
+	data, err := s.App.PageWorkflows(c.Request.Context(), page, queryStr(c, "status"), queryStr(c, "keyword"), queryInt64Ptr(c, "groupId"))
+	respond(c, data, err, "")
 }
 
 func (s *Server) handleCreateWorkflow(c *gin.Context) {

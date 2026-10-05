@@ -9,9 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"coinsphere/backend/plugin/contracts/trading"
 	"coinsphere/backend/plugin/sdk"
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 )
 
 type paperResultScope struct {
@@ -130,7 +132,7 @@ func (q *binanceRuntime) paperAccounts(ctx context.Context, accountIDs map[strin
 		equity := cash
 		positionViews := make([]map[string]any, len(positions))
 		for index, position := range positions {
-			quote, err := (marketDataProvider{runtime: q}).Quote(ctx, sdk.QuoteQuery{Market: position.Market, Instrument: position.Instrument})
+			quote, err := (marketDataProvider{runtime: q}).Quote(ctx, trading.QuoteQuery{Market: position.Market, Instrument: position.Instrument})
 			if err != nil || quote.Price.Sign() <= 0 {
 				return nil, errors.New("load Binance Paper position quote failed")
 			}
@@ -144,4 +146,40 @@ func (q *binanceRuntime) paperAccounts(ctx context.Context, accountIDs map[strin
 		result = append(result, map[string]any{"id": accountID, "cashBalance": cash.String(), "equity": equity.String(), "positions": positionViews})
 	}
 	return result, nil
+}
+
+func (q *binanceRuntime) validatePaperScope(ctx context.Context, tx *gorm.DB, raw json.RawMessage) error {
+	var scope paperResultScope
+	if json.Unmarshal(raw, &scope) != nil {
+		return errors.New("invalid Paper scope")
+	}
+	var rows []struct{ GraphJSON string }
+	if err := tx.WithContext(ctx).Table("workflow_revisions").Select("graph_json").Where("workflow_id=?", scope.WorkflowID).Find(&rows).Error; err != nil {
+		return err
+	}
+	for _, row := range rows {
+		var g struct {
+			Nodes []struct {
+				NodeInstanceID string `json:"nodeInstanceId"`
+				NodeType       string `json:"nodeType"`
+			}
+		}
+		if json.Unmarshal([]byte(row.GraphJSON), &g) != nil {
+			return errors.New("invalid workflow graph")
+		}
+		for _, n := range g.Nodes {
+			if n.NodeInstanceID == scope.PaperNodeInstanceID && n.NodeType == "official.binance.paper_execute" {
+				return nil
+			}
+		}
+	}
+	return errors.New("scope must reference a Paper node in the workflow")
+}
+
+func paperScopeResources(raw json.RawMessage) ([]sdk.WorkflowResource, error) {
+	var fixed paperResultScope
+	if json.Unmarshal(raw, &fixed) != nil || fixed.WorkflowID <= 0 || fixed.PaperNodeInstanceID == "" {
+		return nil, errors.New("invalid Paper scope")
+	}
+	return []sdk.WorkflowResource{{WorkflowID: fixed.WorkflowID, NodeInstanceID: fixed.PaperNodeInstanceID}}, nil
 }

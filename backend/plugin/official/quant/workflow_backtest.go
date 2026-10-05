@@ -48,8 +48,9 @@ type quantBacktestCandleCache struct {
 }
 
 func (a quantWorkflowBacktestAction) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
-	if request.Frames == nil {
-		return sdk.ActionResult{}, errors.New("Quant backtest frame executor is unavailable")
+	frames, err := a.runtime.compileWorkflowFrames(request)
+	if err != nil {
+		return sdk.ActionResult{}, err
 	}
 	series, err := parseQuantSeriesConfig(request.Config)
 	if err != nil {
@@ -92,7 +93,7 @@ func (a quantWorkflowBacktestAction) Execute(ctx context.Context, request sdk.Ac
 		series: map[string][]quantCandle{cacheKey: candles}, lookbacks: map[string]int{},
 	}
 	ctx = context.WithValue(ctx, quantBacktestCandleCacheContextKey{}, cache)
-	simulation, err := executeQuantWorkflowBacktest(ctx, request.Frames, request.FrameResultNodeIDs, series, candles, capital, feeRate, slippageRate)
+	simulation, err := executeQuantWorkflowBacktest(ctx, frames, frames.resultIDs, series, candles, capital, feeRate, slippageRate)
 	if err != nil {
 		return sdk.ActionResult{}, err
 	}
@@ -173,7 +174,7 @@ func (c *quantBacktestCandleCache) candlesThroughClose(ctx context.Context, runt
 	return candles[start:end], nil
 }
 
-func executeQuantWorkflowBacktest(ctx context.Context, frames sdk.FrameExecutor, resultNodeIDs []string, series quantSeriesConfig, candles []quantCandle, capital, feeRate, slippageRate decimal.Decimal) (quantWorkflowBacktestSimulation, error) {
+func executeQuantWorkflowBacktest(ctx context.Context, frames quantFrameExecutor, resultNodeIDs []string, series quantSeriesConfig, candles []quantCandle, capital, feeRate, slippageRate decimal.Decimal) (quantWorkflowBacktestSimulation, error) {
 	cash, quantity, target := capital, decimal.Zero, decimal.Zero
 	peak, maxDrawdown, totalFees := capital, decimal.Zero, decimal.Zero
 	points := make([]quantWorkflowBacktestPoint, 0, len(candles)-1)
@@ -183,7 +184,7 @@ func executeQuantWorkflowBacktest(ctx context.Context, frames sdk.FrameExecutor,
 			return quantWorkflowBacktestSimulation{}, err
 		}
 		current, next := candles[index], candles[index+1]
-		frame, err := frames.ExecuteFrame(ctx, sdk.FrameRequest{
+		frame, err := frames.ExecuteFrame(ctx, quantFrameRequest{
 			SourcePort: "each",
 			SourceOutput: mustMarshal(map[string]any{
 				"branch": "each", "eventTime": current.CloseTime.UTC().Format(time.RFC3339Nano),

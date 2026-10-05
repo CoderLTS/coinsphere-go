@@ -1,1213 +1,423 @@
-<!-- 工作流定义列表。 -->
 <template>
-  <div class="workflow-definition-page art-full-height">
-    <ArtSearchBar
-      v-model="formFilters"
-      :items="formItems"
-      :show-expand="false"
-      @search="handleSearch"
-      @reset="handleReset"
-    />
-
-    <ElCard class="art-table-card">
-      <div class="workflow-library">
-        <aside class="workflow-groups" aria-label="工作流分组">
-          <div class="workflow-groups__header">
-            <span>分组</span>
-            <ElTooltip
-              v-if="hasAuth('scheduler.workflow_definitions.create')"
-              content="新建分组"
-              placement="top"
-            >
-              <ElButton text circle :icon="Plus" aria-label="新建分组" @click="createGroup" />
-            </ElTooltip>
-          </div>
-
-          <div class="workflow-groups__scroll">
-            <div class="workflow-groups__fixed">
-              <button
-                type="button"
-                class="workflow-group-filter"
-                :class="{ 'is-active': selectedGroup === 'all' }"
-                @click="selectGroup('all')"
-              >
-                <ElIcon><FolderOpened /></ElIcon>
-                <span class="workflow-group-filter__name">全部</span>
-                <span class="workflow-group-filter__count">{{ definitions.length }}</span>
-              </button>
-              <button
-                type="button"
-                class="workflow-group-filter"
-                :class="{ 'is-active': selectedGroup === 'ungrouped' }"
-                @click="selectGroup('ungrouped')"
-              >
-                <ElIcon><Folder /></ElIcon>
-                <span class="workflow-group-filter__name">未分组</span>
-                <span class="workflow-group-filter__count">{{ ungroupedCount }}</span>
-              </button>
-            </div>
-
-            <VueDraggable
-              v-model="workflowGroups"
-              class="workflow-groups__custom"
-              handle=".workflow-group-filter__drag"
-              :animation="150"
-              :disabled="!hasAuth('scheduler.workflow_definitions.update')"
-              @end="persistGroupOrder"
-            >
-              <div v-for="(group, index) in workflowGroups" :key="group.id" class="workflow-group">
-                <ElTooltip
-                  v-if="hasAuth('scheduler.workflow_definitions.update')"
-                  content="拖动排序"
-                  placement="top"
-                >
-                  <ElButton
-                    text
-                    circle
-                    class="workflow-group-filter__drag"
-                    :icon="Rank"
-                    :aria-label="`拖动分组 ${group.name}`"
-                  />
-                </ElTooltip>
-                <button
-                  type="button"
-                  class="workflow-group-filter workflow-group-filter--custom"
-                  :class="{ 'is-active': selectedGroup === group.id }"
-                  @click="selectGroup(group.id)"
-                >
-                  <ElIcon><Folder /></ElIcon>
-                  <span class="workflow-group-filter__name">{{ group.name }}</span>
-                  <span class="workflow-group-filter__count">{{ groupCount(group.id) }}</span>
-                </button>
-                <ElDropdown
-                  v-if="
-                    hasAuth('scheduler.workflow_definitions.update') ||
-                    hasAuth('scheduler.workflow_definitions.delete')
-                  "
-                  trigger="click"
-                  @command="(command) => handleGroupCommand(command, group, index)"
-                >
-                  <ElButton
-                    text
-                    circle
-                    :icon="MoreFilled"
-                    :aria-label="`管理分组 ${group.name}`"
-                    @click.stop
-                  />
-                  <template #dropdown>
-                    <ElDropdownMenu>
-                      <ElDropdownItem
-                        v-if="hasAuth('scheduler.workflow_definitions.update')"
-                        command="rename"
-                      >
-                        重命名
-                      </ElDropdownItem>
-                      <ElDropdownItem
-                        v-if="hasAuth('scheduler.workflow_definitions.update')"
-                        command="up"
-                        :disabled="index === 0"
-                      >
-                        上移
-                      </ElDropdownItem>
-                      <ElDropdownItem
-                        v-if="hasAuth('scheduler.workflow_definitions.update')"
-                        command="down"
-                        :disabled="index === workflowGroups.length - 1"
-                      >
-                        下移
-                      </ElDropdownItem>
-                      <ElDropdownItem
-                        v-if="hasAuth('scheduler.workflow_definitions.delete')"
-                        command="delete"
-                        divided
-                      >
-                        删除分组
-                      </ElDropdownItem>
-                    </ElDropdownMenu>
-                  </template>
-                </ElDropdown>
-              </div>
-            </VueDraggable>
-          </div>
-        </aside>
-
-        <section class="workflow-table">
-          <ArtTableHeader
-            :loading="loading"
-            :show-zebra="false"
-            layout="refresh,size,fullscreen,settings"
-            @refresh="loadPageData"
-          >
-            <template #left>
-              <ElSpace wrap>
-                <ElButton
-                  v-if="hasAuth('scheduler.workflow_definitions.create')"
-                  type="primary"
-                  @click="openCreateWorkflow"
-                >
-                  新建工作流
-                </ElButton>
-                <ElDropdown
-                  v-if="
-                    selectedDefinitions.length && hasAuth('scheduler.workflow_definitions.update')
-                  "
-                  trigger="click"
-                  @command="assignSelectedToGroup"
-                >
-                  <ElButton :loading="assigning">
-                    移至分组（{{ selectedDefinitions.length }}）<ElIcon class="el-icon--right"
-                      ><ArrowDown
-                    /></ElIcon>
-                  </ElButton>
-                  <template #dropdown>
-                    <ElDropdownMenu>
-                      <ElDropdownItem :command="0">未分组</ElDropdownItem>
-                      <ElDropdownItem
-                        v-for="group in workflowGroups"
-                        :key="group.id"
-                        :command="group.id"
-                      >
-                        {{ group.name }}
-                      </ElDropdownItem>
-                    </ElDropdownMenu>
-                  </template>
-                </ElDropdown>
-              </ElSpace>
-            </template>
-          </ArtTableHeader>
-
-          <ArtTable
-            ref="tableRef"
-            row-key="id"
-            :loading="loading"
-            :data="filteredDefinitions"
-            :stripe="false"
-            table-layout="fixed"
-            empty-height="320px"
-            @selection-change="handleSelectionChange"
-          >
-            <ElTableColumn
-              v-if="hasAuth('scheduler.workflow_definitions.update')"
-              type="selection"
-              width="48"
-              reserve-selection
-            />
-            <ElTableColumn
-              prop="displayName"
-              label="工作流名称"
-              min-width="240"
-              show-overflow-tooltip
-            />
-            <ElTableColumn label="分组" min-width="180">
-              <template #default="{ row }">
-                <ElSelect
-                  v-if="hasAuth('scheduler.workflow_definitions.update')"
-                  :model-value="row.groupId || 0"
-                  size="small"
-                  :disabled="assigning"
-                  @change="(groupId) => assignDefinitions([row], Number(groupId) || null)"
-                >
-                  <ElOption label="未分组" :value="0" />
-                  <ElOption
-                    v-for="group in workflowGroups"
-                    :key="group.id"
-                    :label="group.name"
-                    :value="group.id"
-                  />
-                </ElSelect>
-                <span v-else>{{ groupName(row.groupId) }}</span>
-              </template>
-            </ElTableColumn>
-            <ElTableColumn label="版本" width="100" align="center">
-              <template #default="{ row }">v{{ row.version }}</template>
-            </ElTableColumn>
-            <ElTableColumn label="状态" width="110" align="center">
-              <template #default="{ row }">
-                <ElTag :type="statusTagType(row.workflowStatus)" effect="plain">
-                  {{ statusLabel(row.workflowStatus) }}
-                </ElTag>
-              </template>
-            </ElTableColumn>
-            <ElTableColumn label="创建时间" min-width="180">
-              <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
-            </ElTableColumn>
-            <ElTableColumn label="操作" width="260" align="center">
-              <template #default="{ row }">
-                <ElSpace size="small">
-                  <ElTooltip content="工作流日志" placement="top">
-                    <ElButton
-                      circle
-                      plain
-                      size="small"
-                      type="primary"
-                      :icon="Clock"
-                      @click="openLogs(row)"
-                    />
-                  </ElTooltip>
-                  <ElTooltip content="编辑" placement="top">
-                    <ElButton
-                      circle
-                      plain
-                      size="small"
-                      type="primary"
-                      :icon="Edit"
-                      @click="router.push(`/scheduler/workflow/${row.id}/edit`)"
-                    />
-                  </ElTooltip>
-                  <ElTooltip content="版本记录" placement="top">
-                    <ElButton
-                      circle
-                      plain
-                      size="small"
-                      type="primary"
-                      :icon="Collection"
-                      @click="openVersionDialog(row)"
-                    />
-                  </ElTooltip>
-                  <ElTooltip :content="lifecycleLabel(row.workflowStatus)" placement="top">
-                    <ElButton
-                      circle
-                      plain
-                      size="small"
-                      :type="row.workflowStatus === 'inactive' ? 'success' : 'warning'"
-                      :icon="SwitchButton"
-                      :loading="actingId === row.id"
-                      @click="toggleLifecycle(row)"
-                    />
-                  </ElTooltip>
-                  <ElTooltip
-                    :content="isBacktestWorkflow(row) ? '运行回测' : '手动运行'"
-                    placement="top"
-                  >
-                    <ElButton
-                      circle
-                      plain
-                      size="small"
-                      type="primary"
-                      :icon="VideoPlay"
-                      :disabled="!isBacktestWorkflow(row) && row.workflowStatus !== 'active'"
-                      :loading="runningId === row.id"
-                      @click="runWorkflow(row)"
-                    />
-                  </ElTooltip>
-                  <ElTooltip
-                    v-if="hasAuth('scheduler.workflow_definitions.delete')"
-                    :content="row.workflowStatus === 'active' ? '请先停用工作流' : '删除工作流'"
-                    placement="top"
-                  >
-                    <ElButton
-                      circle
-                      plain
-                      size="small"
-                      type="danger"
-                      :icon="Delete"
-                      :disabled="row.workflowStatus === 'active'"
-                      :loading="deletingWorkflowId === row.id"
-                      aria-label="删除工作流"
-                      @click="deleteWorkflowRow(row)"
-                    />
-                  </ElTooltip>
-                </ElSpace>
-              </template>
-            </ElTableColumn>
-          </ArtTable>
-        </section>
-      </div>
-    </ElCard>
-
-    <ElDialog v-model="createVisible" title="新建工作流" width="min(520px, calc(100vw - 32px))">
-      <ElForm label-position="top">
-        <ElFormItem label="工作流名称">
-          <ElInput v-model="createForm.name" maxlength="120" show-word-limit />
-        </ElFormItem>
-        <ElFormItem label="模板">
-          <ElSelect v-model="createForm.templateKey" class="backtest-form__full">
-            <ElOption
-              v-for="template in workflowTemplates"
-              :key="template.key"
-              :label="template.name"
-              :value="template.key"
-            />
-          </ElSelect>
-        </ElFormItem>
-        <ElFormItem label="分组">
-          <ElSelect v-model="createForm.groupId" class="backtest-form__full">
-            <ElOption label="未分组" :value="0" />
-            <ElOption
-              v-for="group in workflowGroups"
+  <main class="workflow-library">
+    <header class="library-header"
+      ><div><h1>工作流</h1><p>编辑草稿，发布后启用自动运行</p></div
+      ><ElSpace
+        ><ElButton @click="load">刷新</ElButton
+        ><ElButton v-if="hasAuth('workflow_groups.manage')" @click="groupsVisible = true"
+          >管理分组</ElButton
+        ><ElButton v-if="hasAuth('workflows.create')" type="primary" @click="openCreate"
+          >创建工作流</ElButton
+        ></ElSpace
+      ></header
+    >
+    <ElForm inline @submit.prevent="search"
+      ><ElFormItem label="名称"
+        ><ElInput v-model="filters.keyword" clearable @keyup.enter="search" /></ElFormItem
+      ><ElFormItem label="状态"
+        ><ElSelect v-model="filters.status" clearable style="width: 150px"
+          ><ElOption label="未启用" value="inactive" /><ElOption
+            label="已启用"
+            value="active" /><ElOption label="异常" value="error" /></ElSelect></ElFormItem
+      ><ElFormItem label="分组"
+        ><ElSelect v-model="filters.groupId" clearable style="width: 170px"
+          ><ElOption label="未分组" :value="0" /><ElOption
+            v-for="group in groups"
+            :key="group.id"
+            :label="group.name"
+            :value="group.id" /></ElSelect></ElFormItem
+      ><ElButton @click="search">查询</ElButton></ElForm
+    >
+    <ElAlert v-if="error" type="error" :title="error" :closable="false" />
+    <ElTable
+      v-loading="loading"
+      :data="page.records"
+      row-key="id"
+      empty-text="暂无工作流，创建一个工作流开始使用"
+    >
+      <ElTableColumn label="工作流" min-width="220"
+        ><template #default="{ row }"
+          ><ElButton
+            link
+            type="primary"
+            @click="router.push(`/scheduler/workflow/${row.id}/edit`)"
+            >{{ row.name }}</ElButton
+          ><p class="row-description">{{ row.description }}</p></template
+        ></ElTableColumn
+      >
+      <ElTableColumn label="状态" width="110"
+        ><template #default="{ row }"
+          ><ElTag
+            :type="row.status === 'active' ? 'success' : row.status === 'error' ? 'danger' : 'info'"
+            >{{ statusLabels[row.status] }}</ElTag
+          ></template
+        ></ElTableColumn
+      >
+      <ElTableColumn label="版本" min-width="180"
+        ><template #default="{ row }"
+          >草稿 #{{ row.draftRevisionId }}<br />已发布
+          {{ row.publishedRevisionId ? '#' + row.publishedRevisionId : '暂无' }}</template
+        ></ElTableColumn
+      >
+      <ElTableColumn label="最近运行" min-width="120"
+        ><template #default="{ row }"
+          ><ElButton
+            v-if="row.latestRunId"
+            link
+            @click="router.push(`/scheduler/execution/${row.latestRunId}/detail`)"
+            >{{ runStatusLabel(row.latestRunStatus) }}</ElButton
+          ><span v-else>暂无运行</span></template
+        ></ElTableColumn
+      >
+      <ElTableColumn label="分组" min-width="140"
+        ><template #default="{ row }"
+          ><ElSelect
+            v-if="row.permissions.includes('workflows.update')"
+            :model-value="row.groupId || 0"
+            @update:model-value="move(row, $event)"
+            ><ElOption label="未分组" :value="0" /><ElOption
+              v-for="group in groups"
               :key="group.id"
               :label="group.name"
-              :value="group.id"
-            />
-          </ElSelect>
-        </ElFormItem>
-        <div v-if="selectedTemplate?.description" class="create-template-description">
-          {{ selectedTemplate.description }}
-        </div>
-      </ElForm>
-      <template #footer>
-        <ElButton @click="createVisible = false">取消</ElButton>
-        <ElButton type="primary" :loading="creating" @click="submitCreateWorkflow">创建</ElButton>
-      </template>
-    </ElDialog>
-
-    <ElDialog
-      v-model="versionDialogVisible"
-      title="版本记录"
-      width="min(920px, calc(100vw - 32px))"
+              :value="group.id" /></ElSelect
+          ><span v-else>{{
+            groups.find((group) => group.id === row.groupId)?.name || '未分组'
+          }}</span></template
+        ></ElTableColumn
+      >
+      <ElTableColumn label="操作" min-width="280"
+        ><template #default="{ row }"
+          ><ElSpace wrap
+            ><ElButton
+              v-if="row.permissions.includes('workflows.activate')"
+              link
+              :disabled="!row.publishedRevisionId"
+              @click="lifecycle(row)"
+              >{{ row.status === 'active' ? '停用' : '启用' }}</ElButton
+            ><ElButton
+              link
+              @click="router.push({ path: '/scheduler/execution', query: { workflowId: row.id } })"
+              >历史运行</ElButton
+            ><ElButton
+              v-if="row.permissions.includes('workflows.share')"
+              link
+              @click="openGrants(row)"
+              >授权</ElButton
+            ><ElButton
+              v-if="row.permissions.includes('workflows.delete')"
+              link
+              type="danger"
+              @click="remove(row)"
+              >删除</ElButton
+            ></ElSpace
+          ></template
+        ></ElTableColumn
+      >
+    </ElTable>
+    <footer class="page-footer"
+      ><span>共 {{ page.total }} 个工作流</span
+      ><ElSpace
+        ><ElButton :disabled="!cursors.length" @click="previous">上一页</ElButton
+        ><ElButton :disabled="!page.hasMore" @click="next">下一页</ElButton></ElSpace
+      ></footer
     >
-      <div>
-        <div v-if="versionDetail" class="version-header">
-          <div>
-            <div class="version-header__title">{{ versionDetail.displayName }}</div>
-            <div v-if="versionDetail.description" class="version-header__description">
-              {{ versionDetail.description }}
-            </div>
-          </div>
-          <ElTag effect="plain" type="info">{{ versionRows.length }} 个版本</ElTag>
-        </div>
-
-        <ElTable :data="versionRows" empty-text="暂无版本记录">
-          <ElTableColumn label="版本" width="100" align="center">
-            <template #default="{ row }">
-              <ElTag :type="row.isLatest ? 'primary' : 'info'" effect="plain">
-                v{{ row.version }}
-              </ElTag>
-            </template>
-          </ElTableColumn>
-          <ElTableColumn label="状态" min-width="220">
-            <template #default="{ row }">
-              <ElSpace size="small" wrap>
-                <ElTag v-if="row.isLatest" type="primary" effect="plain">最新版本</ElTag>
-                <ElTag v-if="row.isActive" type="success" effect="plain">当前激活</ElTag>
-                <ElTag v-if="!row.isLatest && !row.isActive" type="info" effect="plain">
-                  历史版本
-                </ElTag>
-              </ElSpace>
-            </template>
-          </ElTableColumn>
-          <ElTableColumn prop="executionCount" label="执行数" width="100" align="center" />
-          <ElTableColumn label="创建时间" min-width="180">
-            <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
-          </ElTableColumn>
-          <ElTableColumn
-            v-if="
-              hasAuth('scheduler.workflow_definitions.update') ||
-              hasAuth('scheduler.workflow_definitions.delete')
-            "
-            label="操作"
-            width="100"
-            align="center"
-          >
-            <template #default="{ row }">
-              <ElSpace size="small">
-                <ElTooltip
-                  v-if="hasAuth('scheduler.workflow_definitions.update')"
-                  content="打开版本"
-                  placement="top"
-                >
-                  <ElButton
-                    circle
-                    plain
-                    size="small"
-                    type="primary"
-                    :icon="Edit"
-                    @click="openVersionEditor(row)"
-                  />
-                </ElTooltip>
-                <ElTooltip
-                  v-if="hasAuth('scheduler.workflow_definitions.delete') && !row.isLatest"
-                  content="删除版本"
-                  placement="top"
-                >
-                  <ElButton
-                    circle
-                    plain
-                    size="small"
-                    type="danger"
-                    :icon="Delete"
-                    :loading="deletingVersionId === row.id"
-                    aria-label="删除版本"
-                    @click="deleteVersion(row)"
-                  />
-                </ElTooltip>
-              </ElSpace>
-            </template>
-          </ElTableColumn>
-        </ElTable>
-      </div>
-    </ElDialog>
-
-    <ElDialog v-model="backtestVisible" title="运行回测" width="min(560px, calc(100vw - 32px))">
-      <ElAlert
-        v-if="backtestError"
-        class="backtest-form__error"
-        type="error"
-        show-icon
-        :closable="false"
-        :title="backtestError"
-      />
-      <ElForm label-position="top">
-        <ElFormItem label="策略版本">
-          <ElSelect v-model="backtestForm.definitionId" class="backtest-form__full">
-            <ElOption
-              v-for="revision in backtestWorkflow?.versions || []"
-              :key="revision.id"
-              :label="`v${revision.version}${revision.isActive ? '（当前激活）' : ''}`"
-              :value="revision.id"
-            />
-          </ElSelect>
-        </ElFormItem>
-        <div class="backtest-form__times">
-          <ElFormItem label="开始时间（UTC+8）">
-            <ElDatePicker
-              v-model="backtestForm.startTime"
-              type="datetime"
-              class="backtest-form__full"
-            />
-          </ElFormItem>
-          <ElFormItem label="结束时间（UTC+8）">
-            <ElDatePicker
-              v-model="backtestForm.endTime"
-              type="datetime"
-              class="backtest-form__full"
-            />
-          </ElFormItem>
-        </div>
-        <div class="backtest-form__numbers">
-          <ElFormItem label="初始资金"
-            ><ElInput v-model="backtestForm.initialCapital"
-          /></ElFormItem>
-          <ElFormItem label="手续费率"><ElInput v-model="backtestForm.feeRate" /></ElFormItem>
-          <ElFormItem label="滑点率"><ElInput v-model="backtestForm.slippageRate" /></ElFormItem>
-        </div>
-      </ElForm>
-      <template #footer>
-        <ElButton @click="backtestVisible = false">取消</ElButton>
-        <ElButton type="primary" :loading="Boolean(runningId)" @click="submitBacktest"
-          >开始回测</ElButton
-        >
-      </template>
-    </ElDialog>
-  </div>
+    <ElDialog v-model="createVisible" title="创建工作流" width="min(500px, 94vw)"
+      ><ElForm label-position="top"
+        ><ElFormItem label="名称"><ElInput v-model="createForm.name" maxlength="120" /></ElFormItem
+        ><ElFormItem label="模板"
+          ><ElSelect v-model="createForm.templateKey"
+            ><ElOption
+              v-for="template in templates"
+              :key="template.key"
+              :label="template.name"
+              :value="template.key" /></ElSelect
+          ><p>{{
+            templates.find((item) => item.key === createForm.templateKey)?.description
+          }}</p></ElFormItem
+        ></ElForm
+      ><template #footer
+        ><ElButton @click="createVisible = false">取消</ElButton
+        ><ElButton type="primary" :loading="creating" @click="create"
+          >创建并编辑</ElButton
+        ></template
+      ></ElDialog
+    >
+    <ElDialog
+      v-model="grantsVisible"
+      :title="`授权 · ${grantWorkflow?.name || ''}`"
+      width="min(780px, 94vw)"
+      ><p>授权只在接收者同时拥有对应角色能力时生效。</p
+      ><div v-for="(grant, index) in grants" :key="index" class="grant-row"
+        ><ElSelect
+          :model-value="grant.userId ? 'user' : 'role'"
+          @update:model-value="
+            Object.assign(grant, {
+              userId: $event === 'user' ? 1 : undefined,
+              roleId: $event === 'role' ? 1 : undefined
+            })
+          "
+          ><ElOption label="用户 ID" value="user" /><ElOption
+            label="角色 ID"
+            value="role" /></ElSelect
+        ><ElInputNumber v-if="grant.userId" v-model="grant.userId" :min="1" /><ElInputNumber
+          v-else
+          v-model="grant.roleId"
+          :min="1"
+        /><ElSelect v-model="grant.permissions" multiple placeholder="允许操作"
+          ><ElOption
+            v-for="permission in workflowPermissions"
+            :key="permission.code"
+            :label="permission.title"
+            :value="permission.code"
+            :disabled="!grantWorkflow?.permissions.includes(permission.code)" /></ElSelect
+        ><ElButton type="danger" link @click="grants.splice(index, 1)">删除</ElButton></div
+      ><ElButton @click="grants.push({ userId: 1, permissions: ['workflows.read'] })"
+        >添加授权</ElButton
+      ><template #footer
+        ><ElButton @click="grantsVisible = false">取消</ElButton
+        ><ElButton type="primary" @click="saveGrants">保存授权</ElButton></template
+      ></ElDialog
+    >
+    <ElDialog v-model="groupsVisible" title="管理分组" width="min(560px, 94vw)"
+      ><div v-for="(group, index) in groups" :key="group.id" class="group-row"
+        ><span>{{ group.name }}</span
+        ><ElButton @click="renameGroup(group)">重命名</ElButton
+        ><ElButton :disabled="index === 0" @click="reorderGroup(index)">上移</ElButton
+        ><ElButton type="danger" @click="removeGroup(group)">删除</ElButton></div
+      ><ElButton @click="addGroup">新建分组</ElButton></ElDialog
+    >
+  </main>
 </template>
-
 <script setup lang="ts">
-  import {
-    ArrowDown,
-    Clock,
-    Collection,
-    Delete,
-    Edit,
-    Folder,
-    FolderOpened,
-    MoreFilled,
-    Plus,
-    Rank,
-    SwitchButton,
-    VideoPlay
-  } from '@element-plus/icons-vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
-  import { VueDraggable } from 'vue-draggable-plus'
   import { useAuth } from '@/hooks/core/useAuth'
   import {
-    fetchActivateWorkflowDefinition,
-    fetchDeactivateWorkflowDefinition,
-    fetchDeleteWorkflow,
-    fetchDeleteWorkflowDefinition,
-    fetchRunWorkflowDefinition,
-    fetchWorkflowDefinitionList,
-    type WorkflowDefinitionItem,
-    type WorkflowDefinitionVersionItem
-  } from '@/api/scheduler'
-  import {
-    assignWorkflowGroup,
-    createWorkflowGroup,
-    createWorkflow,
-    deleteWorkflowGroup,
+    fetchWorkflows,
     fetchWorkflowGroups,
-    fetchWorkflowRuns,
     fetchWorkflowTemplates,
+    createWorkflow,
+    deleteWorkflow,
+    applyWorkflowLifecycle,
+    assignWorkflowGroup,
+    fetchWorkflowGrants,
+    replaceWorkflowGrants,
+    createWorkflowGroup,
     updateWorkflowGroup,
+    deleteWorkflowGroup,
     updateWorkflowGroupOrder,
+    type WorkflowSummary,
+    type WorkflowTemplate,
     type WorkflowGroup,
-    type WorkflowStatus,
-    type WorkflowTemplate
+    type WorkflowGrant
   } from '@/api/workflows'
-  import { formatDateTime } from '@/utils/date'
-
-  defineOptions({ name: 'SchedulerWorkflowDefinitionsPage' })
-
-  const router = useRouter()
-  const { hasAuth } = useAuth()
-  const loading = ref(false)
-  const actingId = ref<number>()
-  const runningId = ref<number>()
-  const creating = ref(false)
-  const createVisible = ref(false)
-  const workflowTemplates = ref<WorkflowTemplate[]>([])
-  const createForm = reactive({ name: '', templateKey: 'blank', groupId: 0 })
-  const selectedTemplate = computed(() =>
-    workflowTemplates.value.find((item) => item.key === createForm.templateKey)
-  )
-  const definitions = ref<WorkflowDefinitionItem[]>([])
-  const workflowGroups = ref<WorkflowGroup[]>([])
-  const selectedGroup = ref<'all' | 'ungrouped' | number>('all')
-  const selectedDefinitions = ref<WorkflowDefinitionItem[]>([])
-  const tableRef = ref<{ elTableRef?: { clearSelection: () => void } }>()
-  const assigning = ref(false)
-  const versionDialogVisible = ref(false)
-  const versionDetail = ref<WorkflowDefinitionItem | null>(null)
-  const deletingVersionId = ref<number>()
-  const deletingWorkflowId = ref<number>()
-  const versionRows = computed(() => versionDetail.value?.versions || [])
-  const utc8OffsetMs = 8 * 60 * 60 * 1000
-  const utc8PickerDate = (timestamp = Date.now()) => {
-    const shifted = new Date(timestamp + utc8OffsetMs)
-    return new Date(
-      shifted.getUTCFullYear(),
-      shifted.getUTCMonth(),
-      shifted.getUTCDate(),
-      shifted.getUTCHours(),
-      shifted.getUTCMinutes(),
-      shifted.getUTCSeconds()
-    )
-  }
-  const utc8PickerISOString = (value: Date) =>
-    new Date(
-      Date.UTC(
-        value.getFullYear(),
-        value.getMonth(),
-        value.getDate(),
-        value.getHours(),
-        value.getMinutes(),
-        value.getSeconds(),
-        value.getMilliseconds()
-      ) - utc8OffsetMs
-    ).toISOString()
-  const backtestVisible = ref(false)
-  const backtestWorkflow = ref<WorkflowDefinitionItem | null>(null)
-  const backtestError = ref('')
-  const backtestForm = reactive({
-    definitionId: 0,
-    startTime: utc8PickerDate(Date.now() - 30 * 24 * 60 * 60 * 1000),
-    endTime: utc8PickerDate(),
-    initialCapital: '10000',
-    feeRate: '0.001',
-    slippageRate: '0.0005'
+  import { runStatusLabel } from '@/components/workflow/status'
+  const router = useRouter(),
+    { hasAuth } = useAuth()
+  const loading = ref(false),
+    creating = ref(false),
+    error = ref(''),
+    groups = ref<WorkflowGroup[]>([]),
+    templates = ref<WorkflowTemplate[]>([])
+  const page = ref<Api.Common.PaginatedResponse<WorkflowSummary>>({
+    records: [],
+    total: 0,
+    hasMore: false,
+    nextCursor: ''
   })
-  const initialFilters = { keyword: '', status: '' }
-  const formFilters = reactive({ ...initialFilters })
-  const appliedFilters = reactive({ ...initialFilters })
-
-  const formItems = computed(() => [
-    {
-      label: '名称',
-      key: 'keyword',
-      type: 'input',
-      props: { clearable: true, placeholder: '搜索工作流名称' }
-    },
-    {
-      label: '状态',
-      key: 'status',
-      type: 'select',
-      props: {
-        clearable: true,
-        options: [
-          { label: '已激活', value: 'active' },
-          { label: '未激活', value: 'inactive' },
-          { label: '异常', value: 'error' }
-        ]
-      }
-    }
-  ])
-
-  const ungroupedCount = computed(
-    () => definitions.value.filter((item) => item.groupId === null).length
-  )
-
-  const groupCount = (groupId: number) =>
-    definitions.value.filter((item) => item.groupId === groupId).length
-
-  const groupName = (groupId: number | null) =>
-    groupId === null
-      ? '未分组'
-      : workflowGroups.value.find((group) => group.id === groupId)?.name || '未分组'
-
-  const filteredDefinitions = computed(() => {
-    const keyword = appliedFilters.keyword.trim().toLowerCase()
-    return definitions.value.filter(
-      (item) =>
-        (selectedGroup.value === 'all' ||
-          (selectedGroup.value === 'ungrouped'
-            ? item.groupId === null
-            : item.groupId === selectedGroup.value)) &&
-        (!keyword || item.displayName.toLowerCase().includes(keyword)) &&
-        (!appliedFilters.status || item.workflowStatus === appliedFilters.status)
-    )
-  })
-
-  const clearSelection = () => {
-    selectedDefinitions.value = []
-    tableRef.value?.elTableRef?.clearSelection()
+  const filters = reactive({ keyword: '', status: '', groupId: undefined as number | undefined }),
+    applied = reactive({ ...filters })
+  const cursor = ref(''),
+    cursors = ref<string[]>([])
+  const statusLabels: Record<string, string> = {
+    inactive: '未启用',
+    active: '已启用',
+    error: '异常'
   }
-
-  const selectGroup = (group: 'all' | 'ungrouped' | number) => {
-    selectedGroup.value = group
-    clearSelection()
-  }
-
-  const statusLabel = (status: WorkflowStatus) =>
-    ({ inactive: '未激活', active: '已激活', error: '异常' })[status]
-
-  const statusTagType = (status: WorkflowStatus) => {
-    if (status === 'active') return 'success'
-    if (status === 'error') return 'danger'
-    return 'info'
-  }
-
-  const lifecycleLabel = (status: WorkflowStatus) =>
-    status === 'inactive' ? '激活' : status === 'error' ? '恢复为未激活' : '停用'
-
-  const loadPageData = async () => {
+  const load = async () => {
     loading.value = true
+    error.value = ''
     try {
-      const [groupResult, items] = await Promise.all([
-        fetchWorkflowGroups(),
-        fetchWorkflowDefinitionList()
-      ])
-      workflowGroups.value = groupResult.items
-      definitions.value = items
-      if (
-        typeof selectedGroup.value === 'number' &&
-        !workflowGroups.value.some((group) => group.id === selectedGroup.value)
-      ) {
-        selectedGroup.value = 'all'
-      }
-      clearSelection()
+      page.value = await fetchWorkflows({ ...applied, cursor: cursor.value, limit: 20 })
+    } catch (cause: any) {
+      error.value = cause.message
     } finally {
       loading.value = false
     }
   }
-
-  const promptGroupName = async (title: string, initialValue = '') => {
-    try {
-      const { value } = await ElMessageBox.prompt('', title, {
-        inputValue: initialValue,
-        inputPlaceholder: '请输入分组名称',
-        inputValidator: (input) => {
-          const length = [...String(input || '').trim()].length
-          return (length > 0 && length <= 80) || '分组名称须为 1 至 80 个字符'
-        },
-        confirmButtonText: '保存',
-        cancelButtonText: '取消'
-      })
-      return String(value || '').trim()
-    } catch {
-      return ''
-    }
+  const search = () => {
+    Object.assign(applied, filters)
+    cursor.value = ''
+    cursors.value = []
+    void load()
   }
-
-  const createGroup = async () => {
-    const name = await promptGroupName('新建分组')
-    if (!name) return
-    const group = await createWorkflowGroup(name)
-    workflowGroups.value.push(group)
-    selectGroup(group.id)
-    ElMessage.success('分组已创建')
+  const next = () => {
+    cursors.value.push(cursor.value)
+    cursor.value = page.value.nextCursor
+    void load()
   }
-
-  const renameGroup = async (group: WorkflowGroup) => {
-    const name = await promptGroupName('重命名分组', group.name)
-    if (!name || name === group.name) return
-    const updated = await updateWorkflowGroup(group.id, name)
-    const index = workflowGroups.value.findIndex((item) => item.id === group.id)
-    if (index >= 0) workflowGroups.value[index] = updated
-    ElMessage.success('分组已重命名')
+  const previous = () => {
+    cursor.value = cursors.value.pop() || ''
+    void load()
   }
-
-  const deleteGroup = async (group: WorkflowGroup) => {
-    const count = groupCount(group.id)
-    try {
-      await ElMessageBox.confirm(
-        count
-          ? `删除分组“${group.name}”？其中 ${count} 个工作流将移至“未分组”。`
-          : `删除空分组“${group.name}”？`,
-        '删除分组',
-        { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
-      )
-    } catch {
-      return
-    }
-    await deleteWorkflowGroup(group.id)
-    definitions.value.forEach((item) => {
-      if (item.groupId === group.id) item.groupId = null
-    })
-    workflowGroups.value = workflowGroups.value.filter((item) => item.id !== group.id)
-    if (selectedGroup.value === group.id) selectGroup('ungrouped')
-    ElMessage.success('分组已删除')
+  const move = async (row: WorkflowSummary, id: number) => {
+    await assignWorkflowGroup([row.id], id || null)
+    await load()
   }
-
-  const persistGroupOrder = async () => {
-    try {
-      const result = await updateWorkflowGroupOrder(workflowGroups.value.map((group) => group.id))
-      workflowGroups.value = result.items
-    } catch {
-      workflowGroups.value = (await fetchWorkflowGroups()).items
-      ElMessage.error('保存分组顺序失败，已恢复服务器顺序')
-    }
-  }
-
-  const moveGroup = async (index: number, offset: -1 | 1) => {
-    const target = index + offset
-    if (target < 0 || target >= workflowGroups.value.length) return
-    const [group] = workflowGroups.value.splice(index, 1)
-    workflowGroups.value.splice(target, 0, group)
-    await persistGroupOrder()
-  }
-
-  const handleGroupCommand = async (
-    command: string | number | Record<string, unknown>,
-    group: WorkflowGroup,
-    index: number
-  ) => {
-    if (command === 'rename') await renameGroup(group)
-    if (command === 'up') await moveGroup(index, -1)
-    if (command === 'down') await moveGroup(index, 1)
-    if (command === 'delete') await deleteGroup(group)
-  }
-
-  const handleSelectionChange = (rows: WorkflowDefinitionItem[]) => {
-    selectedDefinitions.value = rows
-  }
-
-  const assignDefinitions = async (rows: WorkflowDefinitionItem[], groupId: number | null) => {
-    if (!rows.length || assigning.value) return
-    assigning.value = true
-    try {
-      await assignWorkflowGroup(
-        rows.map((row) => Number(row.code)),
-        groupId
-      )
-      const rowIDs = new Set(rows.map((row) => row.id))
-      definitions.value.forEach((item) => {
-        if (rowIDs.has(item.id)) item.groupId = groupId
-      })
-      clearSelection()
-      ElMessage.success(rows.length === 1 ? '工作流已移动' : `已移动 ${rows.length} 个工作流`)
-    } finally {
-      assigning.value = false
-    }
-  }
-
-  const assignSelectedToGroup = async (command: number | string | Record<string, unknown>) => {
-    await assignDefinitions(selectedDefinitions.value, Number(command) || null)
-  }
-
-  const openLogs = async (row: WorkflowDefinitionItem) => {
-    try {
-      const result = await fetchWorkflowRuns(row.id, { limit: 1 })
-      const run = result.records[0]
-      if (!run) {
-        ElMessage.info('该工作流暂无运行记录')
-        return
-      }
-      await router.push({
-        path: `/scheduler/execution/${run.id}/detail`,
-        query: {
-          workflowId: row.code,
-          workflowName: row.displayName,
-          ...(run.triggerType === 'stream' ? { followLatest: '1' } : {})
-        }
-      })
-    } catch (error: any) {
-      ElMessage.error(error?.message || '加载工作流运行日志失败')
-    }
-  }
-
-  const openVersionDialog = (row: WorkflowDefinitionItem) => {
-    versionDetail.value = row
-    versionDialogVisible.value = true
-  }
-
-  const openVersionEditor = async (row: WorkflowDefinitionVersionItem) => {
-    versionDialogVisible.value = false
-    await router.push(`/scheduler/workflow/${row.id}/edit`)
-  }
-
-  const deleteVersion = async (row: WorkflowDefinitionVersionItem) => {
-    try {
-      await ElMessageBox.confirm(
-        `删除历史版本 v${row.version}？版本配置、执行记录及密钥将永久删除。`,
-        '删除版本',
-        { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
-      )
-    } catch {
-      return
-    }
-    deletingVersionId.value = row.id
-    try {
-      await fetchDeleteWorkflowDefinition(row.id)
-      if (versionDetail.value?.versions) {
-        versionDetail.value.versions = versionDetail.value.versions.filter(
-          (version) => version.id !== row.id
-        )
-      }
-      ElMessage.success(`历史版本 v${row.version} 已删除`)
-    } finally {
-      deletingVersionId.value = undefined
-    }
-  }
-
-  const deleteWorkflowRow = async (row: WorkflowDefinitionItem) => {
-    try {
-      await ElMessageBox.confirm(
-        `删除工作流“${row.displayName}”？所有版本、执行记录和关联结果都将永久删除。`,
-        '删除工作流',
-        { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
-      )
-    } catch {
-      return
-    }
-    deletingWorkflowId.value = row.id
-    try {
-      await fetchDeleteWorkflow(Number(row.code))
-      definitions.value = definitions.value.filter((item) => item.id !== row.id)
-      clearSelection()
-      ElMessage.success(`工作流“${row.displayName}”已删除`)
-    } finally {
-      deletingWorkflowId.value = undefined
-    }
-  }
-
-  const toggleLifecycle = async (row: WorkflowDefinitionItem) => {
-    const activate = row.workflowStatus === 'inactive'
+  const lifecycle = async (row: WorkflowSummary) => {
+    const action = row.status === 'active' ? 'deactivate' : 'activate'
     await ElMessageBox.confirm(
-      `${activate ? '激活' : '停用'}工作流“${row.displayName}”？`,
-      lifecycleLabel(row.workflowStatus),
-      { type: activate ? 'info' : 'warning' }
+      `${action === 'activate' ? '启用' : '停用'}“${row.name}”？`,
+      '工作流状态'
     )
-    actingId.value = row.id
-    try {
-      if (activate) await fetchActivateWorkflowDefinition(row.id)
-      else await fetchDeactivateWorkflowDefinition(row.id)
-      await loadPageData()
-    } finally {
-      actingId.value = undefined
-    }
+    await applyWorkflowLifecycle(row.id, action)
+    await load()
   }
-
-  const isBacktestWorkflow = (row: WorkflowDefinitionItem) =>
-    row.graph.schemaVersion === 2 && Boolean(row.graph.entryPoints?.backtest)
-
-  const openCreateWorkflow = async () => {
-    if (!workflowTemplates.value.length) {
-      workflowTemplates.value = (await fetchWorkflowTemplates()).items
-    }
-    createForm.name = ''
-    createForm.templateKey = 'blank'
-    createForm.groupId = typeof selectedGroup.value === 'number' ? selectedGroup.value : 0
+  const remove = async (row: WorkflowSummary) => {
+    await ElMessageBox.confirm(`删除“${row.name}”及其版本和运行记录？`, '删除工作流', {
+      type: 'warning'
+    })
+    await deleteWorkflow(row.id)
+    await load()
+  }
+  const createVisible = ref(false),
+    createForm = reactive({ name: '', templateKey: 'blank' })
+  const openCreate = async () => {
+    templates.value = (await fetchWorkflowTemplates()).items
     createVisible.value = true
   }
-
-  const submitCreateWorkflow = async () => {
-    const name = createForm.name.trim()
-    if (!name) {
-      ElMessage.warning('请输入工作流名称')
+  const create = async () => {
+    if (!createForm.name.trim()) {
+      ElMessage.warning('请输入名称')
       return
     }
     creating.value = true
     try {
-      const workflow = await createWorkflow({
-        name,
+      const row = await createWorkflow({
+        ...createForm,
         description: '',
-        templateKey: createForm.templateKey as Parameters<typeof createWorkflow>[0]['templateKey'],
-        groupId: createForm.groupId || null
+        groupId: applied.groupId || null
       })
       createVisible.value = false
-      await router.push(`/scheduler/workflow/${workflow.id}/edit`)
+      await router.push(`/scheduler/workflow/${row.id}/edit`)
     } finally {
       creating.value = false
     }
   }
-
-  const runWorkflow = async (row: WorkflowDefinitionItem) => {
-    if (isBacktestWorkflow(row)) {
-      backtestWorkflow.value = row
-      backtestError.value = ''
-      backtestForm.definitionId =
-        row.versions?.find((revision) => revision.isActive)?.id || row.versions?.[0]?.id || row.id
-      backtestForm.endTime = utc8PickerDate()
-      backtestForm.startTime = utc8PickerDate(Date.now() - 30 * 24 * 60 * 60 * 1000)
-      backtestVisible.value = true
-      return
-    }
-    runningId.value = row.id
-    try {
-      const result = await fetchRunWorkflowDefinition(row.id, { startEntryKeys: [] })
-      const run = result.executions[0]
-      ElMessage.success('运行已加入队列')
-      if (run) {
-        await router.push({
-          path: `/scheduler/execution/${run.id}/detail`,
-          query: { workflowId: row.code, workflowName: row.displayName }
-        })
-      }
-    } finally {
-      runningId.value = undefined
-    }
+  const grantsVisible = ref(false),
+    grantWorkflow = ref<WorkflowSummary>(),
+    grants = ref<WorkflowGrant[]>([])
+  const workflowPermissions = [
+    { code: 'workflows.read', title: '查看' },
+    { code: 'workflows.update', title: '编辑' },
+    { code: 'workflows.publish', title: '发布' },
+    { code: 'workflows.activate', title: '启停' },
+    { code: 'workflows.run', title: '运行' },
+    { code: 'workflows.cancel', title: '取消运行' },
+    { code: 'workflows.retry', title: '重试运行' },
+    { code: 'workflows.delete', title: '删除' },
+    { code: 'workflows.share', title: '授权' },
+    { code: 'workflows.secrets.manage', title: '凭据' },
+    { code: 'human_tasks.read', title: '查看待办' },
+    { code: 'human_tasks.decide', title: '处理待办' }
+  ]
+  const openGrants = async (row: WorkflowSummary) => {
+    grantWorkflow.value = row
+    grants.value = (await fetchWorkflowGrants(row.id)).items
+    grantsVisible.value = true
   }
-
-  const submitBacktest = async () => {
-    const row = backtestWorkflow.value
-    backtestError.value = ''
-    if (!row || !backtestForm.definitionId || !backtestForm.startTime || !backtestForm.endTime) {
-      backtestError.value = '请选择策略版本和回测时间'
-      return
-    }
-    if (backtestForm.startTime >= backtestForm.endTime) {
-      backtestError.value = '开始时间必须早于结束时间'
-      return
-    }
-    runningId.value = row.id
-    let result
-    try {
-      result = await fetchRunWorkflowDefinition(backtestForm.definitionId, {
-        startEntryKeys: ['backtest'],
-        entryPoint: 'backtest',
-        inputs: {
-          startTime: utc8PickerISOString(backtestForm.startTime),
-          endTime: utc8PickerISOString(backtestForm.endTime),
-          initialCapital: backtestForm.initialCapital,
-          feeRate: backtestForm.feeRate,
-          slippageRate: backtestForm.slippageRate
-        }
-      })
-    } catch {
-      backtestError.value = '回测启动失败，请检查所选策略版本和工作流配置'
-      return
-    } finally {
-      runningId.value = undefined
-    }
-    backtestVisible.value = false
-    const run = result.executions[0]
-    ElMessage.success('回测已加入队列')
-    if (run) {
-      await router.push({
-        path: `/scheduler/execution/${run.id}/detail`,
-        query: { workflowId: row.code, workflowName: row.displayName }
-      })
-    }
+  const saveGrants = async () => {
+    if (!grantWorkflow.value) return
+    await replaceWorkflowGrants(grantWorkflow.value.id, grants.value)
+    grantsVisible.value = false
+    ElMessage.success('授权已保存')
   }
-
-  const handleSearch = () => {
-    Object.assign(appliedFilters, formFilters)
-    clearSelection()
+  const groupsVisible = ref(false)
+  const namePrompt = async (title: string, value = '') => {
+    const result = await ElMessageBox.prompt('名称为 1 至 80 个字符', title, {
+      inputValue: value,
+      inputValidator: (value) => Boolean(value.trim()) && [...value.trim()].length <= 80
+    })
+    return result.value.trim()
   }
-  const handleReset = () => {
-    Object.assign(formFilters, initialFilters)
-    Object.assign(appliedFilters, initialFilters)
-    clearSelection()
+  const refreshGroups = async () => {
+    groups.value = (await fetchWorkflowGroups()).items
   }
-
-  onMounted(loadPageData)
+  const addGroup = async () => {
+    await createWorkflowGroup(await namePrompt('新建分组'))
+    await refreshGroups()
+  }
+  const renameGroup = async (group: WorkflowGroup) => {
+    await updateWorkflowGroup(group.id, await namePrompt('重命名分组', group.name))
+    await refreshGroups()
+  }
+  const removeGroup = async (group: WorkflowGroup) => {
+    await ElMessageBox.confirm('删除分组后工作流移至未分组', '删除分组')
+    await deleteWorkflowGroup(group.id)
+    await refreshGroups()
+    search()
+  }
+  const reorderGroup = async (index: number) => {
+    const ids = groups.value.map((group) => group.id)
+    ;[ids[index - 1], ids[index]] = [ids[index], ids[index - 1]]
+    groups.value = (await updateWorkflowGroupOrder(ids)).items
+  }
+  onMounted(async () => {
+    await Promise.all([refreshGroups(), load()])
+  })
 </script>
-
-<style scoped lang="scss">
+<style scoped>
   .workflow-library {
-    display: grid;
-    grid-template-columns: 220px minmax(0, 1fr);
-    min-height: 420px;
-  }
-
-  .workflow-groups {
-    min-width: 0;
-    padding-right: 16px;
-    border-right: 1px solid var(--el-border-color-lighter);
-  }
-
-  .workflow-groups__header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    min-height: 40px;
-    margin-bottom: 8px;
-    font-size: 14px;
-    font-weight: 600;
+    padding: 24px;
+    background: var(--el-bg-color);
     color: var(--el-text-color-primary);
   }
-
-  .workflow-groups__scroll {
-    max-height: calc(100vh - 300px);
-    overflow-y: auto;
-  }
-
-  .workflow-groups__fixed,
-  .workflow-groups__custom {
+  .library-header {
     display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .workflow-groups__custom {
-    margin-top: 4px;
-  }
-
-  .workflow-group {
-    display: flex;
-    gap: 2px;
+    justify-content: space-between;
+    flex-wrap: wrap;
     align-items: center;
-    min-width: 0;
+    gap: 16px;
+    margin-bottom: 28px;
   }
-
-  .workflow-group-filter {
+  h1 {
+    margin: 0 0 8px;
+    font-size: 26px;
+    font-weight: 600;
+  }
+  p {
+    color: var(--el-text-color-secondary);
+  }
+  .row-description {
+    margin: 4px 0;
+    font-size: 12px;
+  }
+  .page-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 20px;
+  }
+  .grant-row {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: 110px 140px minmax(0, 1fr) auto;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .group-row {
+    display: flex;
     gap: 8px;
     align-items: center;
-    width: 100%;
-    min-height: 36px;
-    padding: 0 10px;
-    font: inherit;
-    color: var(--el-text-color-regular);
-    text-align: left;
-    letter-spacing: 0;
-    cursor: pointer;
-    background: transparent;
-    border: 0;
-    border-radius: 4px;
+    margin-bottom: 12px;
   }
-
-  .workflow-group-filter:hover {
-    background: var(--el-fill-color-light);
-  }
-
-  .workflow-group-filter.is-active {
-    color: var(--el-color-primary);
-    background: var(--el-color-primary-light-9);
-  }
-
-  .workflow-group-filter--custom {
+  .group-row span {
     flex: 1;
-    min-width: 0;
   }
-
-  .workflow-group-filter__drag {
-    flex: 0 0 28px;
-    width: 28px;
-    height: 28px;
-    cursor: move;
-  }
-
-  .workflow-group-filter__name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .workflow-group-filter__count {
-    min-width: 20px;
-    font-size: 12px;
-    color: var(--el-text-color-secondary);
-    text-align: right;
-  }
-
-  .workflow-table {
-    min-width: 0;
-    padding-left: 16px;
-  }
-
-  .version-header {
-    display: flex;
-    gap: 16px;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 16px;
-  }
-
-  .version-header__title {
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--el-text-color-primary);
-  }
-
-  .version-header__description {
-    margin-top: 6px;
-    font-size: 12px;
-    color: var(--el-text-color-secondary);
-  }
-
-  .backtest-form__full {
-    width: 100%;
-  }
-
-  .backtest-form__error {
-    margin-bottom: 16px;
-  }
-
-  .create-template-description {
-    margin-top: -6px;
-    color: var(--el-text-color-secondary);
-  }
-
-  .backtest-form__times,
-  .backtest-form__numbers {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
-  }
-
-  .backtest-form__numbers {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  @media (width <= 640px) {
-    .backtest-form__times,
-    .backtest-form__numbers {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  @media (width <= 900px) {
+  @media (max-width: 760px) {
     .workflow-library {
-      display: block;
+      padding: 12px;
     }
-
-    .workflow-groups {
-      padding-right: 0;
-      padding-bottom: 12px;
-      margin-bottom: 8px;
-      border-right: 0;
-      border-bottom: 1px solid var(--el-border-color-lighter);
-    }
-
-    .workflow-groups__scroll {
-      display: flex;
-      gap: 4px;
-      max-height: none;
-      padding-bottom: 4px;
-      overflow-x: auto;
-      overflow-y: hidden;
-    }
-
-    .workflow-groups__fixed,
-    .workflow-groups__custom {
-      flex-direction: row;
-      flex-shrink: 0;
-      margin-top: 0;
-    }
-
-    .workflow-group {
-      flex: 0 0 auto;
-      min-width: 160px;
-    }
-
-    .workflow-group-filter {
-      min-width: 128px;
-    }
-
-    .workflow-table {
-      padding-left: 0;
+    .grant-row {
+      grid-template-columns: 1fr;
     }
   }
 </style>

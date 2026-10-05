@@ -1,6 +1,6 @@
 import request from '@/utils/http'
 
-export type ResultViewStatus = 'active' | 'revoked'
+export type ResultViewStatus = 'active' | 'inactive' | 'revoked'
 
 export interface ResultView {
   id: number
@@ -11,6 +11,7 @@ export interface ResultView {
   filters?: Record<string, unknown>
   allowedActions: string[]
   status: ResultViewStatus
+  canManage: boolean
   userIds?: number[]
   roleCodes?: string[]
   createdAt: string
@@ -70,6 +71,13 @@ export const replaceResultViewGrants = (viewId: number, params: ResultViewGrantP
 export const revokeResultView = (viewId: number) =>
   request.post<ResultView>({
     url: `/api/v1/result-views/${viewId}/revoke`,
+    showSuccessMessage: true
+  })
+
+export const setResultViewStatus = (viewId: number, status: 'active' | 'inactive') =>
+  request.post<ResultView>({
+    url: `/api/v1/result-views/${viewId}/status`,
+    params: { status },
     showSuccessMessage: true
   })
 

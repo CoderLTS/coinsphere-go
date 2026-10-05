@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "example.business",
+  "name": "业务事项",
+  "version": "1.0.0",
+  "sdkMajor": 4,
+  "requiresCore": ">=4.0.0 <5.0.0",
+  "backend": {
+    "module": "example.test/coinsphere/business",
+    "package": "backend"
+  },
+  "frontend": { "entry": "frontend/index.ts" },
+  "migrations": { "directory": "migrations" },
+  "contributes": [
+    "nodes",
+    "apiRoutes",
+    "resultPages",
+    "runPanels",
+    "migrations"
+  ],
+  "permissions": [
+    { "code": "plugins.example.business.read", "title": "查看业务事项" },
+    { "code": "plugins.example.business.execute", "title": "处理业务事项" }
+  ]
+}

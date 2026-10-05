@@ -42,7 +42,7 @@ func (q *quantRuntime) handleQuantBacktests(c *gin.Context, scope sdk.RouteScope
 		writeQuantProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	query := q.db.WithContext(c.Request.Context()).Omit("detail").Order("created_at DESC, id DESC").Limit(limit)
+	query := sdk.ScopeWorkflows(q.db.WithContext(c.Request.Context()), scope, "workflow_id").Omit("detail").Order("created_at DESC, id DESC").Limit(limit)
 	if venue := strings.ToLower(strings.TrimSpace(c.Query("venue"))); venue != "" {
 		if !quantProviderPattern.MatchString(venue) {
 			writeQuantProblem(c, http.StatusBadRequest, "venue is invalid")
@@ -86,7 +86,7 @@ func (q *quantRuntime) handleQuantSignals(c *gin.Context, scope sdk.RouteScope) 
 		writeQuantProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	query := q.db.WithContext(c.Request.Context()).Order("created_at DESC, id DESC").Limit(limit)
+	query := sdk.ScopeWorkflows(q.db.WithContext(c.Request.Context()), scope, "workflow_id").Order("created_at DESC, id DESC").Limit(limit)
 	for column, value := range map[string]string{
 		"venue":      strings.ToLower(strings.TrimSpace(c.Query("venue"))),
 		"market":     strings.ToLower(strings.TrimSpace(c.Query("market"))),
@@ -126,7 +126,7 @@ func (q *quantRuntime) handleQuantBacktest(c *gin.Context, scope sdk.RouteScope)
 		return
 	}
 	var backtest quantBacktest
-	if err := q.db.WithContext(c.Request.Context()).Select("detail").First(&backtest, backtestID).Error; err != nil {
+	if err := sdk.ScopeWorkflows(q.db.WithContext(c.Request.Context()), scope, "workflow_id").Select("detail").First(&backtest, backtestID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			writeQuantProblem(c, http.StatusNotFound, "Quant backtest not found")
 			return

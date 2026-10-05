@@ -3,6 +3,8 @@ package connector
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,18 +35,18 @@ func Register(registrar sdk.Registrar, host sdk.Host) error {
 		return err
 	}
 	if err := registrar.Action(sdk.NodeDescriptor{
-		Type: "official.connector.http", Version: "1.0.0", Kind: sdk.NodeKindAction,
+		ExecutionPermissions: []string{"plugins.official.connector.execute"}, Type: "official.connector.http", Version: "1.0.0", Kind: sdk.NodeKindAction,
 		Title: "HTTP 请求", Description: "向外部服务发起受控 HTTP 请求", Category: "integration", Aliases: []string{"接口请求", "HTTP 调用"}, Tags: []string{"集成", "网络"}, SortOrder: 10, Color: "#0f766e", Icon: "globe", Width: 220, Height: 72,
 		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"url":{"type":"string","title":"请求地址","format":"uri","maxLength":2048},"method":{"type":"string","title":"请求方法","enum":["GET","POST","PUT","PATCH"],"default":"GET"},"timeoutSeconds":{"type":"integer","title":"超时时间（秒）","minimum":1,"maximum":60,"default":15},"useAuthorization":{"type":"boolean","title":"使用访问凭据","default":false},"authorization":{"type":"string","title":"访问凭据","x-coinsphere-secret":true}},"required":["url","method","timeoutSeconds","useAuthorization"],"additionalProperties":false}`),
 		UISchema:     json.RawMessage(`{"ui:order":["url","method","timeoutSeconds","useAuthorization","authorization"]}`),
 		InputSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"body":{"type":"object","title":"请求内容","x-coinsphere-field-source":true}},"additionalProperties":false}`),
 		OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"status":{"type":"integer"},"data":{"type":"object"}},"required":["status","data"],"additionalProperties":false}`),
-		Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
+		Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectExternal, State: sdk.StateStateless,
 	}, connectorHTTPAction{client: client}); err != nil {
 		return err
 	}
 	if err := registrar.Trigger(sdk.NodeDescriptor{
-		Type: "official.connector.webhook", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
+		ExecutionPermissions: []string{"plugins.official.connector.execute"}, Type: "official.connector.webhook", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
 		Title: "Webhook 触发", Description: "声明 Webhook 触发入口节点", Category: "start", Aliases: []string{"Webhook", "回调入口"}, Tags: []string{"入口", "事件", "HTTP"}, SortOrder: 50, Color: "#1e40af", Icon: "webhook", Width: 220, Height: 72,
 		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"eventType":{"type":"string","title":"事件类型","minLength":1,"maxLength":255},"secret":{"type":"string","title":"Webhook 密钥","x-coinsphere-secret":true}},"required":["eventType","secret"],"additionalProperties":false}`),
 		UISchema:     json.RawMessage(`{"ui:order":["eventType","secret"]}`), InputSchema: emptyObjectSchema,
@@ -53,21 +55,28 @@ func Register(registrar sdk.Registrar, host sdk.Host) error {
 		return err
 	}
 	if err := registrar.Trigger(sdk.NodeDescriptor{
-		Type: "official.connector.websocket", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
+		ExecutionPermissions: []string{"plugins.official.connector.execute"}, Type: "official.connector.websocket", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
 		Title: "WebSocket 触发", Description: "从 WebSocket 消息触发工作流", Category: "start", Aliases: []string{"WebSocket", "长连接入口"}, Tags: []string{"入口", "事件", "实时"}, SortOrder: 60, Color: "#0f766e", Icon: "radio", Width: 220, Height: 72,
 		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"url":{"type":"string","title":"WebSocket 连接地址","format":"uri","maxLength":2048},"eventType":{"type":"string","title":"事件类型","minLength":1,"maxLength":255},"idField":{"type":"string","title":"事件编号字段","pattern":"^[A-Za-z0-9_.-]{1,128}$"},"partitionField":{"type":"string","title":"分区字段","pattern":"^[A-Za-z0-9_.-]{1,128}$"},"useAuthorization":{"type":"boolean","title":"使用访问凭据","default":false},"authorization":{"type":"string","title":"访问凭据","x-coinsphere-secret":true}},"required":["url","eventType","idField","partitionField","useAuthorization"],"additionalProperties":false}`),
 		UISchema:     json.RawMessage(`{"ui:order":["url","eventType","idField","partitionField","useAuthorization","authorization"]}`), InputSchema: emptyObjectSchema,
-		OutputSchema: dynamicObjectSchema, Pool: sdk.PoolStream, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
+		OutputSchema: dynamicObjectSchema, Pool: sdk.PoolStream, SideEffect: sdk.SideEffectExternal, State: sdk.StateStateless,
 	}, websocketTrigger{client: client}); err != nil {
 		return err
 	}
-	return registrar.ResultPage(sdk.ResultPageDescriptor{
-		PageKey: "connections", Title: "连接诊断",
-		ComponentEntry: "./official/connector/ResultPage.vue", ScopeSchema: emptyObjectSchema, Mobile: true,
-	})
+	if err := registrar.Ingress("official.connector.webhook", receiveWebhook); err != nil {
+		return err
+	}
+	return registrar.RunPanel(sdk.RunPanelDescriptor{PanelKey: "connections", Title: "连接诊断", ComponentEntry: "./official/connector/ResultPage.vue", NodeTypes: []string{"official.connector.http"}})
 }
 
 type connectorHTTPAction struct{ client sdk.NetworkClient }
+
+func (connectorHTTPAction) RetrySafe(raw json.RawMessage) bool {
+	var config struct {
+		Method string `json:"method"`
+	}
+	return json.Unmarshal(raw, &config) == nil && config.Method == http.MethodGet
+}
 
 func (a connectorHTTPAction) Execute(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
 	var config struct {
@@ -118,12 +127,20 @@ func (a connectorHTTPAction) Execute(ctx context.Context, request sdk.ActionRequ
 	}
 	response, err := a.client.Do(httpRequest)
 	if err != nil {
-		return sdk.ActionResult{}, err
+		class := sdk.ErrorUnknownResult
+		if config.Method == http.MethodGet {
+			class = sdk.ErrorTransient
+		}
+		return sdk.ActionResult{}, &sdk.ExecutionError{Class: class, Err: errors.New("connector HTTP request did not return a result")}
 	}
 	defer response.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(response.Body, maxConnectorPayloadBytes+1))
 	if err != nil || len(raw) > maxConnectorPayloadBytes {
-		return sdk.ActionResult{}, errors.New("connector HTTP response exceeds the 1 MiB limit")
+		class := sdk.ErrorUnknownResult
+		if config.Method == http.MethodGet {
+			class = sdk.ErrorPermanent
+		}
+		return sdk.ActionResult{}, &sdk.ExecutionError{Class: class, Err: errors.New("connector HTTP response is unreadable or exceeds the 1 MiB limit")}
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return sdk.ActionResult{}, fmt.Errorf("connector HTTP response status %d", response.StatusCode)
@@ -270,3 +287,42 @@ func mustMarshal(value any) json.RawMessage {
 var _ sdk.ActionHandler = connectorHTTPAction{}
 var _ sdk.TriggerHandler = webhookTrigger{}
 var _ sdk.TriggerHandler = websocketTrigger{}
+
+func receiveWebhook(ctx context.Context, request sdk.IngressRequest) (cloudevents.Event, error) {
+	readHeader := func(name string) (string, bool) {
+		v := request.Request.Header.Values(name)
+		if len(v) != 1 {
+			return "", false
+		}
+		return v[0], strings.TrimSpace(v[0]) != ""
+	}
+	secret, ok := readHeader("X-CoinSphere-Webhook-Secret")
+	id, idOK := readHeader("Idempotency-Key")
+	partition, partitionOK := readHeader("X-CoinSphere-Partition-Key")
+	if !ok || !idOK || !partitionOK || len(secret) > 16384 || len(id) > 128 || len(partition) > 256 {
+		return cloudevents.Event{}, errors.New("invalid ingress headers")
+	}
+	expected, err := request.Secrets.Read(ctx, "secret")
+	if err != nil {
+		return cloudevents.Event{}, err
+	}
+	a, b := sha256.Sum256(expected), sha256.Sum256([]byte(secret))
+	if subtle.ConstantTimeCompare(a[:], b[:]) != 1 {
+		return cloudevents.Event{}, errors.New("invalid ingress authentication")
+	}
+	var config struct {
+		EventType string `json:"eventType"`
+	}
+	var data map[string]any
+	if json.Unmarshal(request.Config, &config) != nil || json.Unmarshal(request.Data, &data) != nil || data == nil {
+		return cloudevents.Event{}, errors.New("invalid ingress data")
+	}
+	event := cloudevents.NewEvent()
+	event.SetID(strings.TrimSpace(id))
+	event.SetSource("urn:coinsphere:connector:webhook:" + request.Revision.WorkflowID)
+	event.SetType(config.EventType)
+	event.SetTime(request.EventTime.UTC())
+	event.SetExtension("partitionkey", strings.TrimSpace(partition))
+	err = event.SetData(cloudevents.ApplicationJSON, data)
+	return event, err
+}

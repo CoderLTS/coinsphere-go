@@ -15,6 +15,7 @@ import (
 	"cel.dev/cel-go/common/operators"
 	"cel.dev/cel-go/common/types"
 	"cel.dev/cel-go/common/types/ref"
+	"coinsphere/backend/plugin/contracts/trading"
 	"coinsphere/backend/plugin/sdk"
 	"github.com/shopspring/decimal"
 	exprpb "google.golang.org/genproto/googleapis/api/expr/v1alpha1"
@@ -121,7 +122,7 @@ func (a *quantCodeStrategyAction) Execute(ctx context.Context, request sdk.Actio
 			ready = false
 			continue
 		}
-		if err := validateStrategyCandles(sdk.EvaluateRequest{
+		if err := validateStrategyCandles(trading.EvaluateRequest{
 			Market: declaration.Market, Instrument: declaration.Instrument, Interval: declaration.Interval,
 			Candles: quantSDKCandles(candles), EvaluatedAt: evaluatedAt,
 		}); err != nil {

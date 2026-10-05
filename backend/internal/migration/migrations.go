@@ -14,15 +14,17 @@ import (
 	"github.com/pressly/goose/v3/lock"
 )
 
-const versionTable = "schema_migrations"
+const versionTable = "schema_migrations_g4"
+const Generation = 4
 
-//go:embed sql/*.sql
+//go:embed generation4/*.sql
 var embeddedSQL embed.FS
 
 // Runner applies the immutable SQL migrations bundled into the backend binary.
 type Runner struct {
 	provider *goose.Provider
 	db       *sql.DB
+	table    string
 }
 
 // Result describes one migration applied by an up or down operation.
@@ -42,7 +44,14 @@ type Status struct {
 
 // New creates a runner for the bundled production migrations.
 func New(db *sql.DB) (*Runner, error) {
-	f, err := fs.Sub(embeddedSQL, "sql")
+	var legacy bool
+	if err := db.QueryRow("SELECT to_regclass('public.schema_migrations') IS NOT NULL").Scan(&legacy); err != nil {
+		return nil, err
+	}
+	if legacy {
+		return nil, errors.New("legacy database detected; use a separate generation 4 database")
+	}
+	f, err := fs.Sub(embeddedSQL, "generation4")
 	if err != nil {
 		return nil, fmt.Errorf("open embedded migrations: %w", err)
 	}
@@ -65,7 +74,7 @@ func newWithFS(db *sql.DB, migrations fs.FS) (*Runner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create migration provider: %w", err)
 	}
-	return &Runner{provider: provider, db: db}, nil
+	return &Runner{provider: provider, db: db, table: versionTable}, nil
 }
 
 // Up applies all pending migrations, or stops at target when target is greater than zero.
@@ -156,20 +165,28 @@ func (r *Runner) Versions(ctx context.Context) (current int64, latest int64, err
 
 // ValidateCurrent 只读校验数据库最后一条 migration 记录，服务启动不会创建版本表或执行 DDL。
 func (r *Runner) ValidateCurrent(ctx context.Context) error {
-	var version int64
-	var applied bool
-	query := fmt.Sprintf("SELECT version_id, is_applied FROM %s ORDER BY id DESC LIMIT 1", versionTable)
-	if err := r.db.QueryRowContext(ctx, query).Scan(&version, &applied); err != nil {
-		return fmt.Errorf("read application migration version: %w", err)
+	if err := ValidateGeneration(ctx, r.db); err != nil {
+		return err
 	}
 	sources := r.provider.ListSources()
 	if len(sources) == 0 {
 		return errors.New("migration bundle is empty")
 	}
 	latest := sources[len(sources)-1].Version
+	return validateLatestVersion(ctx, r.db, r.table, latest)
+}
+
+func validateLatestVersion(ctx context.Context, database *sql.DB, table string, latest int64) error {
+	var version int64
+	var applied bool
+	query := fmt.Sprintf("SELECT version_id, is_applied FROM %s ORDER BY id DESC LIMIT 1", table)
+	if err := database.QueryRowContext(ctx, query).Scan(&version, &applied); err != nil {
+		return fmt.Errorf("read migration version for %s: %w", table, err)
+	}
 	if !applied || version != latest {
 		return fmt.Errorf(
-			"database migration is not current: latest record version=%d applied=%t, binary latest=%d; run coinsphere-migrate -direction up",
+			"database migration %s is not current: latest record version=%d applied=%t, binary latest=%d; apply the matching migrations before startup",
+			table,
 			version,
 			applied,
 			latest,

@@ -2,6 +2,7 @@
 package official
 
 import (
+	"coinsphere/backend/plugin/contracts/trading"
 	"coinsphere/backend/plugin/official/ai"
 	"coinsphere/backend/plugin/official/binance"
 	"coinsphere/backend/plugin/official/connector"
@@ -10,19 +11,25 @@ import (
 	"coinsphere/backend/plugin/official/quant"
 	"coinsphere/backend/plugin/sdk"
 	"coinsphere/backend/version"
+	"fmt"
 )
 
 func RegisterAll(registry *sdk.Registry, host sdk.Host, enabled map[string]bool) error {
+	financial := trading.NewRegistry()
+	handlers := map[string]sdk.RegisterFunc{
+		"official.ai": ai.Register, "official.connector": connector.Register, "official.notification": notification.Register, "official.qq": qq.Register,
+		"official.quant":   func(r sdk.Registrar, h sdk.Host) error { return quant.Register(r, h, financial) },
+		"official.binance": func(r sdk.Registrar, h sdk.Host) error { return binance.Register(r, h, financial) },
+	}
 	plugins := []struct {
 		descriptor sdk.PluginDescriptor
 		register   sdk.RegisterFunc
-	}{
-		{sdk.PluginDescriptor{ID: "official.ai", Name: "人工智能", Version: "3.0.0", Contributes: []string{"nodes", "resultPages"}}, ai.Register},
-		{sdk.PluginDescriptor{ID: "official.connector", Name: "连接器", Version: "3.0.0", Contributes: []string{"nodes", "triggers", "resultPages"}}, connector.Register},
-		{sdk.PluginDescriptor{ID: "official.notification", Name: "通知", Version: "3.0.0", Contributes: []string{"nodes"}}, notification.Register},
-		{sdk.PluginDescriptor{ID: "official.qq", Name: "QQ机器人", Version: "3.0.0", Contributes: []string{"nodes", "triggers"}}, qq.Register},
-		{sdk.PluginDescriptor{ID: "official.quant", Name: "量化", Version: "3.0.0", Contributes: []string{"nodes", "strategies", "apiRoutes", "resultPages", "assistantQueries", "workflowValidators", "templates"}}, quant.Register},
-		{sdk.PluginDescriptor{ID: "official.binance", Name: "Binance", Menu: sdk.PluginMenuDescriptor{Mode: sdk.PluginMenuOwn, Title: "币安数据", Icon: "ri:line-chart-line"}, Version: "3.0.0", RequiresPlugins: version.BuiltinPluginDependencies["official.binance"], Contributes: []string{"nodes", "triggers", "marketDataProviders", "executionProviders", "apiRoutes", "pages", "resultPages", "templates"}}, binance.Register},
+	}{}
+	for _, item := range version.BuiltinCatalog {
+		plugins = append(plugins, struct {
+			descriptor sdk.PluginDescriptor
+			register   sdk.RegisterFunc
+		}{sdk.PluginDescriptor{ID: item.ID, Name: item.Name, Version: item.Version, Contributes: item.Contributes, RequiresPlugins: item.RequiresPlugins, Menu: sdk.PluginMenuDescriptor{Mode: sdk.PluginMenuMode(item.Menu.Mode), Title: item.Menu.Title, Icon: item.Menu.Icon}}, handlers[item.ID]})
 	}
 	registered := make(map[string]bool, len(plugins))
 	for pending := append([]struct {
@@ -32,6 +39,11 @@ func RegisterAll(registry *sdk.Registry, host sdk.Host, enabled map[string]bool)
 		next := pending[:0]
 		progress := false
 		for _, plugin := range pending {
+			plugin.descriptor.RequiresPlugins = version.BuiltinPluginDependencies[plugin.descriptor.ID]
+			plugin.descriptor.Permissions = nil
+			for _, capability := range []string{"read", "manage", "execute", "live_release"} {
+				plugin.descriptor.Permissions = append(plugin.descriptor.Permissions, sdk.PermissionDescriptor{Code: "plugins." + plugin.descriptor.ID + "." + capability, Title: plugin.descriptor.Name + " " + capability, Protected: capability == "live_release"})
+			}
 			if !enabled[plugin.descriptor.ID] {
 				continue
 			}
@@ -51,6 +63,9 @@ func RegisterAll(registry *sdk.Registry, host sdk.Host, enabled map[string]bool)
 			}
 			registered[plugin.descriptor.ID] = true
 			progress = true
+		}
+		if !progress && len(next) > 0 {
+			return fmt.Errorf("enabled plugins have missing or cyclic dependencies")
 		}
 		if !progress {
 			break

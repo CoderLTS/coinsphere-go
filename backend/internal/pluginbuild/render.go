@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"go/format"
+	"os"
 	"path"
 	"sort"
 	"strconv"
 	"strings"
 
 	"coinsphere/backend/plugin/manifest"
+	"github.com/pressly/goose/v3"
 )
 
 func RenderBackend(plugins []manifest.Package) ([]byte, error) {
@@ -31,14 +33,45 @@ func RenderBackendWithDependencies(plugins []manifest.Package, available map[str
 	for index, plugin := range plugins {
 		fmt.Fprintf(&source, "import plugin%d %s\n", index, strconv.Quote(plugin.Manifest.Backend.Module))
 	}
-	source.WriteString("\nfunc RegisterAll(registry *sdk.Registry, host sdk.Host) error {\n")
-	for index, plugin := range plugins {
+	source.WriteString("\nvar CompiledPlugins = []sdk.PluginDescriptor{\n")
+	for _, plugin := range plugins {
 		contributes := append([]string(nil), plugin.Manifest.Contributes...)
 		sort.Strings(contributes)
-		fmt.Fprintf(&source, "if err := registry.RegisterPlugin(sdk.PluginDescriptor{ID: %s, Name: %s, Menu: sdk.PluginMenuDescriptor{Mode: %s, Title: %s, Icon: %s, Parent: %s}, Version: %s, Contributes: %#v, RequiresPlugins: %#v}, host, plugin%d.Register); err != nil { return err }\n",
-			strconv.Quote(plugin.Manifest.ID), strconv.Quote(plugin.Manifest.Name), strconv.Quote(plugin.Manifest.Menu.Mode), strconv.Quote(plugin.Manifest.Menu.Title), strconv.Quote(plugin.Manifest.Menu.Icon), strconv.Quote(plugin.Manifest.Menu.Parent), strconv.Quote(plugin.Manifest.Version), contributes, plugin.Manifest.RequiresPlugins, index)
+		fmt.Fprintf(&source, "{ID: %s, Name: %s, Menu: sdk.PluginMenuDescriptor{Mode: %s, Title: %s, Icon: %s, Parent: %s}, Version: %s, Contributes: %#v, RequiresPlugins: %#v, Permissions: []sdk.PermissionDescriptor{",
+			strconv.Quote(plugin.Manifest.ID), strconv.Quote(plugin.Manifest.Name), strconv.Quote(plugin.Manifest.Menu.Mode), strconv.Quote(plugin.Manifest.Menu.Title), strconv.Quote(plugin.Manifest.Menu.Icon), strconv.Quote(plugin.Manifest.Menu.Parent), strconv.Quote(plugin.Manifest.Version), contributes, plugin.Manifest.RequiresPlugins)
+		for _, p := range plugin.Manifest.Permissions {
+			fmt.Fprintf(&source, "{Code:%s,Title:%s,Protected:%t},", strconv.Quote(p.Code), strconv.Quote(p.Title), p.Protected)
+		}
+		source.WriteString("}},\n")
+	}
+	source.WriteString("}\n\nfunc RegisterAll(registry *sdk.Registry, host sdk.Host, enabled map[string]bool) error {\n")
+	for index := range plugins {
+		fmt.Fprintf(&source, "if enabled[CompiledPlugins[%d].ID] { if err := registry.RegisterPlugin(CompiledPlugins[%d],host,plugin%d.Register); err != nil { return err } }\n", index, index, index)
 	}
 	source.WriteString("return nil\n}\n")
+	source.WriteString("\nvar CompiledMigrationVersions = map[string]int64{\n")
+	for _, plugin := range plugins {
+		entries, err := os.ReadDir(plugin.MigrationsPath)
+		if err != nil {
+			return nil, fmt.Errorf("read migrations for %s: %w", plugin.Manifest.ID, err)
+		}
+		var latest int64
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+				continue
+			}
+			version, err := goose.NumericComponent(entry.Name())
+			if err != nil {
+				return nil, err
+			}
+			latest = max(latest, version)
+		}
+		if latest == 0 {
+			return nil, fmt.Errorf("migration bundle for %s is empty", plugin.Manifest.ID)
+		}
+		fmt.Fprintf(&source, "%s: %d,\n", strconv.Quote(plugin.Manifest.ID), latest)
+	}
+	source.WriteString("}\n")
 	formatted, err := format.Source([]byte(source.String()))
 	if err != nil {
 		return nil, fmt.Errorf("format backend registry: %w", err)
@@ -70,6 +103,7 @@ func RenderFrontendWithDependencies(plugins []manifest.Package, available map[st
 		}
 		directories[directory] = plugin.Manifest.ID
 		entry := "./installed/" + directory + "/" + strings.TrimPrefix(path.Clean(plugin.Manifest.Frontend.Entry), "./")
+		entry = strings.TrimSuffix(entry, ".ts")
 		id, _ := json.Marshal(plugin.Manifest.ID)
 		version, _ := json.Marshal(plugin.Manifest.Version)
 		importPath, _ := json.Marshal(entry)

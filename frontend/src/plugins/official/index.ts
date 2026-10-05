@@ -1,8 +1,11 @@
 import type { FrontendPluginRegistration } from '../registry.generated'
-
-export const officialFrontendPlugins: readonly FrontendPluginRegistration[] = [
-  { id: 'official.ai', version: '3.0.0', load: () => import('./ai') },
-  { id: 'official.connector', version: '3.0.0', load: () => import('./connector') },
-  { id: 'official.quant', version: '3.0.0', load: () => import('./quant') },
-  { id: 'official.binance', version: '3.0.0', load: () => import('./binance') }
-]
+import catalog from '../../../../backend/version/builtin.json'
+const loaders: Record<string, FrontendPluginRegistration['load']> = {
+  'official.ai': () => import('./ai'),
+  'official.connector': () => import('./connector'),
+  'official.quant': () => import('./quant'),
+  'official.binance': () => import('./binance')
+}
+export const officialFrontendPlugins: readonly FrontendPluginRegistration[] = catalog
+  .filter((plugin) => loaders[plugin.id])
+  .map((plugin) => ({ id: plugin.id, version: plugin.version, load: loaders[plugin.id] }))

@@ -56,45 +56,7 @@ func validateQuantWorkflow(input sdk.WorkflowValidationContext) error {
 	if quantNodes == 0 {
 		return nil
 	}
-	if graph.SchemaVersion == 2 {
-		entryID := graph.EntryPoints["backtest"]
-		entry, exists := nodes[entryID]
-		desc, descriptorExists := input.Nodes[entry.Type]
-		if !exists || !descriptorExists || !desc.Capabilities.FrameDriver {
-			return errors.New("Quant backtest entryPoint must reference its frame driver")
-		}
-		queue := make([]string, 0)
-		for _, edge := range graph.RawEdges {
-			if edge.Source == graph.EntryPoints["backtest"] && edge.Port == "each" {
-				queue = append(queue, edge.Target)
-			}
-		}
-		seen, resultFound := map[string]bool{}, false
-		for len(queue) > 0 {
-			id := queue[0]
-			queue = queue[1:]
-			if seen[id] {
-				continue
-			}
-			seen[id] = true
-			desc, ok := input.Nodes[nodes[id].Type]
-			if !ok || !desc.Capabilities.FrameSafe || !desc.Capabilities.Deterministic || !desc.Capabilities.Stateless {
-				return fmt.Errorf("Quant backtest node %q must be frame-safe", id)
-			}
-			if desc.Capabilities.FrameResult {
-				resultFound = true
-				continue
-			}
-			for _, edge := range graph.RawEdges {
-				if edge.Source == id {
-					queue = append(queue, edge.Target)
-				}
-			}
-		}
-		if !resultFound {
-			return errors.New("Quant backtest frame must reach a result node")
-		}
-	}
+
 	if err := validateQuantBindings(graph, nodes); err != nil {
 		return err
 	}
@@ -194,12 +156,49 @@ func validateQuantSeriesIdentity(graph quantWorkflowGraph, nodes map[string]stru
 	Type   string
 	Config json.RawMessage
 }) error {
-	var main struct{ Venue, Market, Instrument, Interval string }
-	if entry := graph.EntryPoints["backtest"]; entry != "" {
-		if node, ok := nodes[entry]; ok && json.Unmarshal(node.Config, &main) != nil {
-			return errors.New("Quant backtest entry identity is invalid")
+	for _, driver := range graph.Nodes {
+		if driver.Type != "official.quant.backtest_start" {
+			continue
+		}
+		var main struct{ Venue, Market, Instrument, Interval string }
+		if json.Unmarshal(driver.Config, &main) != nil {
+			return errors.New("Quant backtest series is invalid")
+		}
+		queue := []string{}
+		for _, edge := range graph.RawEdges {
+			if edge.Source == driver.ID && edge.Port == "each" {
+				queue = append(queue, edge.Target)
+			}
+		}
+		seen := map[string]bool{}
+		outputs := 0
+		for len(queue) > 0 {
+			id := queue[0]
+			queue = queue[1:]
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			node := nodes[id]
+			if node.Type == "official.quant.output_signal" {
+				var output struct{ Venue, Market, Instrument, Interval string }
+				if json.Unmarshal(node.Config, &output) != nil || output != main {
+					return fmt.Errorf("node %q must use backtest driver %q series", id, driver.ID)
+				}
+				outputs++
+				continue
+			}
+			for _, edge := range graph.RawEdges {
+				if edge.Source == id {
+					queue = append(queue, edge.Target)
+				}
+			}
+		}
+		if outputs == 0 {
+			return fmt.Errorf("backtest driver %q must reach an output signal through each", driver.ID)
 		}
 	}
+
 	for _, node := range graph.Nodes {
 		if node.Type != "official.quant.output_signal" {
 			continue
@@ -208,9 +207,7 @@ func validateQuantSeriesIdentity(graph quantWorkflowGraph, nodes map[string]stru
 		if json.Unmarshal(node.Config, &output) != nil {
 			return fmt.Errorf("node %q output signal identity is invalid", node.ID)
 		}
-		if main.Venue != "" && (output.Venue != main.Venue || output.Market != main.Market || output.Instrument != main.Instrument || output.Interval != main.Interval) {
-			return fmt.Errorf("node %q must use the Quant backtest main series", node.ID)
-		}
+
 		incoming := 0
 		for _, edge := range graph.RawEdges {
 			if edge.Target != node.ID {

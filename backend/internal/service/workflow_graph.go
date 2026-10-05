@@ -13,7 +13,7 @@ import (
 	"cel.dev/cel-go/cel"
 	"cel.dev/cel-go/common/operators"
 	"coinsphere/backend/plugin/sdk"
-	"github.com/santhosh-tekuri/jsonschema/v6"
+	workflowgraph "coinsphere/backend/workflow/graph"
 	exprpb "google.golang.org/genproto/googleapis/api/expr/v1alpha1"
 )
 
@@ -42,47 +42,10 @@ type workflowNodeVersion struct {
 	NodeVersion string `json:"nodeVersion"`
 }
 
-type workflowGraph struct {
-	SchemaVersion int                 `json:"schemaVersion"`
-	EntryPoints   map[string]string   `json:"entryPoints,omitempty"`
-	Nodes         []workflowGraphNode `json:"nodes"`
-	Edges         []workflowGraphEdge `json:"edges"`
-}
-
-type workflowGraphNode struct {
-	NodeInstanceID string                          `json:"nodeInstanceId"`
-	NodeType       string                          `json:"nodeType"`
-	NodeVersion    string                          `json:"nodeVersion"`
-	Config         json.RawMessage                 `json:"config"`
-	InputBindings  map[string]workflowInputBinding `json:"inputBindings,omitempty"`
-	Position       *struct {
-		X float64 `json:"x"`
-		Y float64 `json:"y"`
-	} `json:"position"`
-}
-
-type workflowGraphEdge struct {
-	EdgeID               string `json:"edgeId"`
-	SourceNodeInstanceID string `json:"sourceNodeInstanceId"`
-	SourcePort           string `json:"sourcePort"`
-	TargetNodeInstanceID string `json:"targetNodeInstanceId"`
-	TargetPort           string `json:"targetPort"`
-	Condition            string `json:"condition,omitempty"`
-}
-
-type workflowInputBinding struct {
-	Kind           string                       `json:"kind"`
-	NodeInstanceID string                       `json:"nodeInstanceId,omitempty"`
-	Sources        []workflowInputBindingSource `json:"sources,omitempty"`
-	FieldPath      []string                     `json:"fieldPath,omitempty"`
-	Value          json.RawMessage              `json:"value,omitempty"`
-	Expression     string                       `json:"expression,omitempty"`
-}
-
-type workflowInputBindingSource struct {
-	NodeInstanceID string `json:"nodeInstanceId"`
-	Branch         string `json:"branch,omitempty"`
-}
+type workflowGraph = workflowgraph.Graph
+type workflowGraphNode = workflowgraph.Node
+type workflowGraphEdge = workflowgraph.Edge
+type workflowInputBinding = workflowgraph.Binding
 
 type workflowLoopConfig struct {
 	MaxIterations  int           `json:"maxIterations"`
@@ -113,13 +76,13 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&graph); err != nil {
-		return validatedWorkflowGraph{}, errors.New("workflow graph must match schema version 1 or 2")
+		return validatedWorkflowGraph{}, errors.New("workflow graph must match schema version 3")
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return validatedWorkflowGraph{}, errors.New("workflow graph must contain exactly one JSON object")
 	}
-	if graph.SchemaVersion != 1 && graph.SchemaVersion != 2 {
-		return validatedWorkflowGraph{}, errors.New("workflow graph schemaVersion must be 1 or 2")
+	if graph.SchemaVersion != 3 {
+		return validatedWorkflowGraph{}, errors.New("workflow graph schemaVersion must be 3")
 	}
 	if len(graph.Nodes) == 0 || len(graph.Nodes) > maxWorkflowNodes {
 		return validatedWorkflowGraph{}, fmt.Errorf("workflow graph must contain 1 to %d nodes", maxWorkflowNodes)
@@ -193,24 +156,16 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 	if triggerID == "" {
 		return validatedWorkflowGraph{}, errors.New("workflow graph must contain exactly one main trigger")
 	}
-	entryPoints := map[string]string{"realtime": triggerID}
-	if graph.SchemaVersion == 2 {
-		if len(graph.EntryPoints) != 2 || graph.EntryPoints["realtime"] == "" || graph.EntryPoints["backtest"] == "" {
-			return validatedWorkflowGraph{}, errors.New("schema version 2 requires realtime and backtest entryPoints")
-		}
-		for key := range graph.EntryPoints {
-			if key != "realtime" && key != "backtest" {
-				return validatedWorkflowGraph{}, fmt.Errorf("workflow entryPoint %q is unsupported", key)
-			}
-		}
-		if graph.EntryPoints["realtime"] != triggerID {
-			return validatedWorkflowGraph{}, errors.New("workflow realtime entryPoint must reference the main trigger")
-		}
-		if nodes[graph.EntryPoints["backtest"]].NodeInstanceID == "" || graph.EntryPoints["backtest"] == triggerID {
-			return validatedWorkflowGraph{}, errors.New("workflow backtest entryPoint must reference a distinct node")
-		}
-		entryPoints = map[string]string{"realtime": graph.EntryPoints["realtime"], "backtest": graph.EntryPoints["backtest"]}
+	entryPoints := graph.EntryPoints
+	if len(entryPoints) == 0 || entryPoints["main"] != triggerID {
+		return validatedWorkflowGraph{}, errors.New("entryPoints.main must reference the main trigger")
 	}
+	for key, id := range entryPoints {
+		if !workflowNodeIDPattern.MatchString(key) || len(key) > 32 || nodes[id].NodeInstanceID == "" {
+			return validatedWorkflowGraph{}, fmt.Errorf("invalid workflow entryPoint %q", key)
+		}
+	}
+
 	for _, node := range graph.Nodes {
 		if node.NodeType != "core.loop" {
 			continue
@@ -241,15 +196,18 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 	if err != nil {
 		return validatedWorkflowGraph{}, err
 	}
+	roots := make([]string, 0, len(entryPoints))
+	for _, root := range entryPoints {
+		roots = append(roots, root)
+	}
 	for _, edge := range graph.Edges {
-		if edge.TargetNodeInstanceID == entryPoints["backtest"] {
-			return validatedWorkflowGraph{}, fmt.Errorf("edge %q must not target a workflow entryPoint", edge.EdgeID)
+		for _, root := range roots {
+			if edge.TargetNodeInstanceID == root {
+				return validatedWorkflowGraph{}, fmt.Errorf("edge %q must not target an entryPoint", edge.EdgeID)
+			}
 		}
 	}
-	roots := []string{entryPoints["realtime"]}
-	if entryPoints["backtest"] != "" {
-		roots = append(roots, entryPoints["backtest"])
-	}
+
 	if err := validateWorkflowTopology(nodes, adjacency, reverse, roots); err != nil {
 		return validatedWorkflowGraph{}, err
 	}
@@ -258,6 +216,10 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 		rootSet[root] = true
 	}
 	if err := validateWorkflowBindings(nodes, descriptors, adjacency, graph.Edges, rootSet); err != nil {
+		return validatedWorkflowGraph{}, err
+	}
+
+	if err := validateWorkflowExpressions(nodes, descriptors, adjacency, graph.Edges, rootSet); err != nil {
 		return validatedWorkflowGraph{}, err
 	}
 
@@ -270,9 +232,25 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 		return validatedWorkflowGraph{}, errors.New("encode workflow node versions failed")
 	}
 	if a.Plugins != nil {
+		definitions := []json.RawMessage{canonical}
+		for _, node := range graph.Nodes {
+			if node.NodeType == "core.loop" {
+				var config workflowLoopConfig
+				if err := json.Unmarshal(node.Config, &config); err != nil {
+					return validatedWorkflowGraph{}, err
+				}
+				raw, err := json.Marshal(config.Body)
+				if err != nil {
+					return validatedWorkflowGraph{}, err
+				}
+				definitions = append(definitions, raw)
+			}
+		}
 		for _, validator := range a.Plugins.WorkflowValidators() {
-			if err := validator.ValidateWorkflow(sdk.WorkflowValidationContext{Graph: canonical, Nodes: descriptorCatalog}); err != nil {
-				return validatedWorkflowGraph{}, err
+			for _, definition := range definitions {
+				if err := validator.ValidateWorkflow(sdk.WorkflowValidationContext{Graph: definition, Nodes: descriptorCatalog}); err != nil {
+					return validatedWorkflowGraph{}, err
+				}
 			}
 		}
 	}
@@ -297,8 +275,8 @@ func validateWorkflowLoop(node workflowGraphNode, catalog map[string]sdk.NodeDes
 	if err != nil || ast.OutputType().TypeName() != "bool" {
 		return validatedWorkflowLoop{}, errors.New("exitCondition must compile to Boolean CEL")
 	}
-	if config.Body.SchemaVersion != 1 || len(config.Body.Nodes) < 2 || len(config.Body.Nodes) > maxWorkflowNodes || len(config.Body.Edges) > maxWorkflowEdges {
-		return validatedWorkflowLoop{}, errors.New("loop body must be a schema version 1 DAG with valid size limits")
+	if config.Body.SchemaVersion != 3 || len(config.Body.Nodes) < 2 || len(config.Body.Nodes) > maxWorkflowNodes || len(config.Body.Edges) > maxWorkflowEdges {
+		return validatedWorkflowLoop{}, errors.New("loop body must be a schema version 3 DAG with valid size limits")
 	}
 
 	nodes := make(map[string]workflowGraphNode, len(config.Body.Nodes))
@@ -374,6 +352,22 @@ func validateWorkflowLoop(node workflowGraphNode, catalog map[string]sdk.NodeDes
 	if err := validateWorkflowBindings(nodes, descriptors, adjacency, config.Body.Edges, map[string]bool{itemID: true}); err != nil {
 		return validatedWorkflowLoop{}, err
 	}
+	if err := validateWorkflowExpressions(nodes, descriptors, adjacency, config.Body.Edges, map[string]bool{itemID: true}); err != nil {
+		return validatedWorkflowLoop{}, err
+	}
+	allowed := map[string]bool{}
+	decimalSchemas := map[string]json.RawMessage{"input": descriptors[itemID].InputSchema}
+	for id, d := range descriptors {
+		allowed[id] = true
+		decimalSchemas["nodes."+id] = d.OutputSchema
+	}
+	if err := workflowgraph.ValidateNodeReferences(config.ExitCondition, allowed); err != nil {
+		return validatedWorkflowLoop{}, err
+	}
+	if workflowgraph.HasDecimalArithmetic(config.ExitCondition, decimalSchemas) {
+		return validatedWorkflowLoop{}, errors.New("Loop exit condition must not perform Decimal arithmetic")
+	}
+
 	return validatedWorkflowLoop{
 		config: config, itemID: itemID, endID: endID, nodes: nodes,
 		descriptors: descriptors, requiredSecrets: requiredSecrets,
@@ -425,13 +419,6 @@ func validateWorkflowEdges(edges []workflowGraphEdge, nodes map[string]workflowG
 			ast, err := compileWorkflowCEL(expression)
 			if err != nil || ast.OutputType().TypeName() != "bool" {
 				return nil, nil, fmt.Errorf("edge %q condition must compile to Boolean CEL", edge.EdgeID)
-			}
-			expr, err := workflowCELExpr(ast)
-			if err != nil {
-				return nil, nil, fmt.Errorf("edge %q condition must compile to Boolean CEL", edge.EdgeID)
-			}
-			if celUsesDecimalArithmetic(expr, descriptors[edge.SourceNodeInstanceID].OutputSchema) {
-				return nil, nil, fmt.Errorf("edge %q condition must not perform Decimal arithmetic", edge.EdgeID)
 			}
 		}
 		adjacency[edge.SourceNodeInstanceID] = append(adjacency[edge.SourceNodeInstanceID], edge.TargetNodeInstanceID)
@@ -500,7 +487,7 @@ func validateWorkflowBindings(nodes map[string]workflowGraphNode, descriptors ma
 			}
 			switch binding.Kind {
 			case "field":
-				if binding.NodeInstanceID == "" || len(binding.Sources) != 0 || len(binding.FieldPath) == 0 || len(binding.Value) != 0 || binding.Expression != "" {
+				if binding.NodeInstanceID == "" || len(binding.FieldPath) == 0 || len(binding.Value) != 0 || binding.Expression != "" {
 					return fmt.Errorf("node %q input binding %q has invalid field mapping", nodeID, field)
 				}
 				if nodes[binding.NodeInstanceID].NodeInstanceID == "" || !workflowPathExists(adjacency, binding.NodeInstanceID, nodeID) {
@@ -511,7 +498,7 @@ func validateWorkflowBindings(nodes map[string]workflowGraphNode, descriptors ma
 					return fmt.Errorf("node %q input binding %q has an unknown or incompatible field path", nodeID, field)
 				}
 			case "literal":
-				if binding.NodeInstanceID != "" || len(binding.Sources) != 0 || len(binding.FieldPath) != 0 || len(binding.Value) == 0 || binding.Expression != "" {
+				if binding.NodeInstanceID != "" || len(binding.FieldPath) != 0 || len(binding.Value) == 0 || binding.Expression != "" {
 					return fmt.Errorf("node %q input binding %q has invalid literal mapping", nodeID, field)
 				}
 				var value any
@@ -519,7 +506,7 @@ func validateWorkflowBindings(nodes map[string]workflowGraphNode, descriptors ma
 					return fmt.Errorf("node %q input binding %q literal has an incompatible type", nodeID, field)
 				}
 			case "cel":
-				if binding.NodeInstanceID != "" || len(binding.Sources) != 0 || len(binding.FieldPath) != 0 || len(binding.Value) != 0 || strings.TrimSpace(binding.Expression) == "" {
+				if binding.NodeInstanceID != "" || len(binding.FieldPath) != 0 || len(binding.Value) != 0 || strings.TrimSpace(binding.Expression) == "" {
 					return fmt.Errorf("node %q input binding %q has invalid CEL mapping", nodeID, field)
 				}
 				ast, err := compileWorkflowCEL(binding.Expression)
@@ -533,9 +520,9 @@ func validateWorkflowBindings(nodes map[string]workflowGraphNode, descriptors ma
 				if celHasArithmetic(expr) && schemaBool(targetSchema, "x-coinsphere-decimal") {
 					return fmt.Errorf("node %q input binding %q must not perform Decimal arithmetic", nodeID, field)
 				}
-			case "condition_entry", "condition_subject", "condition_message":
-				if err := validateWorkflowConditionBinding(nodeID, field, binding, targetSchema, nodes, descriptors, edges); err != nil {
-					return err
+			case "input":
+				if binding.NodeInstanceID != "" || len(binding.FieldPath) == 0 || len(binding.Value) != 0 || binding.Expression != "" {
+					return fmt.Errorf("node %q has an invalid entry input binding", nodeID)
 				}
 			case "":
 				return fmt.Errorf("node %q input binding %q kind is required", nodeID, field)
@@ -547,61 +534,10 @@ func validateWorkflowBindings(nodes map[string]workflowGraphNode, descriptors ma
 	return nil
 }
 
-func validateWorkflowConditionBinding(nodeID, field string, binding workflowInputBinding, targetSchema map[string]any, nodes map[string]workflowGraphNode, descriptors map[string]sdk.NodeDescriptor, edges []workflowGraphEdge) error {
-	if binding.NodeInstanceID != "" || len(binding.FieldPath) != 0 || len(binding.Value) != 0 || binding.Expression != "" || len(binding.Sources) == 0 || len(binding.Sources) > maxWorkflowNodes {
-		return fmt.Errorf("node %q input binding %q has invalid condition sources", nodeID, field)
-	}
-	types := schemaTypes(targetSchema)
-	if binding.Kind == "condition_entry" && !types["boolean"] || binding.Kind != "condition_entry" && !types["string"] {
-		return fmt.Errorf("node %q input binding %q has an incompatible condition target", nodeID, field)
-	}
-	seen := map[string]bool{}
-	for _, source := range binding.Sources {
-		if source.NodeInstanceID == "" || seen[source.NodeInstanceID+"\x00"+source.Branch] || nodes[source.NodeInstanceID].NodeInstanceID == "" ||
-			descriptors[source.NodeInstanceID].Capabilities.Deterministic == false {
-			return fmt.Errorf("node %q input binding %q has an invalid condition source", nodeID, field)
-		}
-		if !containsString(descriptors[source.NodeInstanceID].Branches, source.Branch) ||
-			binding.Kind != "condition_entry" && source.Branch != "true" {
-			return fmt.Errorf("node %q input binding %q has an invalid condition branch", nodeID, field)
-		}
-		direct := false
-		for _, edge := range edges {
-			if edge.SourceNodeInstanceID == source.NodeInstanceID && edge.SourcePort == source.Branch && edge.TargetNodeInstanceID == nodeID {
-				direct = true
-				break
-			}
-		}
-		if !direct {
-			return fmt.Errorf("node %q input binding %q must reference a direct condition edge", nodeID, field)
-		}
-		seen[source.NodeInstanceID+"\x00"+source.Branch] = true
-	}
-	return nil
-}
-
 func compileWorkflowCEL(expression string) (*cel.Ast, error) {
-	expression = strings.TrimSpace(expression)
-	if len(expression) == 0 || len(expression) > maxWorkflowCELBytes {
-		return nil, fmt.Errorf("CEL expression must contain 1 to %d bytes", maxWorkflowCELBytes)
-	}
-	env, err := workflowCELEnvironment()
-	if err != nil {
-		return nil, err
-	}
-	ast, issues := env.Compile(expression)
-	if issues != nil && issues.Err() != nil {
-		return nil, issues.Err()
-	}
-	return ast, nil
+	return workflowgraph.Compile(expression)
 }
-
-func workflowCELEnvironment() (*cel.Env, error) {
-	return cel.NewEnv(
-		cel.Variable("event", cel.MapType(cel.StringType, cel.StringType)),
-		cel.Variable("input", cel.MapType(cel.StringType, cel.DynType)),
-	)
-}
+func workflowCELEnvironment() (*cel.Env, error) { return workflowgraph.Environment() }
 
 func workflowCELExpr(ast *cel.Ast) (*exprpb.Expr, error) {
 	checked, err := cel.AstToCheckedExpr(ast)
@@ -653,137 +589,56 @@ func celHasArithmetic(expr *exprpb.Expr) bool {
 	return false
 }
 
-func celUsesDecimalArithmetic(expr *exprpb.Expr, schema json.RawMessage) bool {
-	fields := workflowDecimalFields(schema)
-	if expr == nil || len(fields) == 0 {
-		return false
-	}
-	if call := expr.GetCallExpr(); call != nil {
-		switch call.Function {
-		case operators.Add, operators.Subtract, operators.Multiply, operators.Divide, operators.Modulo, operators.Negate:
-			if celReferencesDecimal(call.Target, fields) {
-				return true
+func validateWorkflowExpressions(nodes map[string]workflowGraphNode, descriptors map[string]sdk.NodeDescriptor, adjacency map[string][]string, edges []workflowGraphEdge, roots map[string]bool) error {
+	validate := func(expression, target string, includeTarget bool) error {
+		allowed := map[string]bool{}
+		schemas := map[string]json.RawMessage{}
+		for id := range nodes {
+			if workflowPathExists(adjacency, id, target) || includeTarget && id == target {
+				allowed[id] = true
+				schemas["nodes."+id] = descriptors[id].OutputSchema
+				schemas["incoming."+id+".output"] = descriptors[id].OutputSchema
 			}
-			for _, arg := range call.Args {
-				if celReferencesDecimal(arg, fields) {
-					return true
+			if roots[id] && (id == target || workflowPathExists(adjacency, id, target)) {
+				schemas["input"] = descriptors[id].InputSchema
+			}
+		}
+		if err := workflowgraph.ValidateNodeReferences(expression, allowed); err != nil {
+			return err
+		}
+		if workflowgraph.HasDecimalArithmetic(expression, schemas) {
+			return errors.New("CEL must not perform Decimal arithmetic")
+		}
+		return nil
+	}
+	for id, node := range nodes {
+		targetFields, _ := workflowSchemaProperties(descriptors[id].InputSchema)
+		for field, binding := range node.InputBindings {
+			if binding.Kind == "cel" {
+				if err := validate(binding.Expression, id, false); err != nil {
+					return fmt.Errorf("node %q binding %q: %w", id, field, err)
+				}
+			}
+			if binding.Kind == "input" {
+				for root := range roots {
+					if root == id || workflowPathExists(adjacency, root, id) {
+						source, ok := workflowSchemaField(descriptors[root].InputSchema, binding.FieldPath)
+						if !ok || !workflowSchemaTypesCompatible(source, targetFields[field]) {
+							return fmt.Errorf("node %q binding %q has an unavailable entry input field", id, field)
+						}
+					}
 				}
 			}
 		}
-		if celUsesDecimalArithmetic(call.Target, schema) {
-			return true
-		}
-		for _, arg := range call.Args {
-			if celUsesDecimalArithmetic(arg, schema) {
-				return true
+	}
+	for _, edge := range edges {
+		if strings.TrimSpace(edge.Condition) != "" {
+			if err := validate(edge.Condition, edge.SourceNodeInstanceID, true); err != nil {
+				return fmt.Errorf("edge %q: %w", edge.EdgeID, err)
 			}
 		}
 	}
-	if selectExpr := expr.GetSelectExpr(); selectExpr != nil {
-		return celUsesDecimalArithmetic(selectExpr.Operand, schema)
-	}
-	return false
-}
-
-func celReferencesDecimal(expr *exprpb.Expr, fields map[string]bool) bool {
-	if expr == nil {
-		return false
-	}
-	path := make([]string, 0, 4)
-	current := expr
-	for current != nil {
-		if selectExpr := current.GetSelectExpr(); selectExpr != nil {
-			path = append([]string{selectExpr.Field}, path...)
-			current = selectExpr.Operand
-			continue
-		}
-		call := current.GetCallExpr()
-		if call == nil || call.Function != operators.Index || len(call.Args) != 2 {
-			break
-		}
-		key := call.Args[1].GetConstExpr()
-		if key == nil {
-			return celReferencesInput(call.Args[0])
-		}
-		if _, ok := key.ConstantKind.(*exprpb.Constant_StringValue); !ok {
-			return celReferencesInput(call.Args[0])
-		}
-		path = append([]string{key.GetStringValue()}, path...)
-		current = call.Args[0]
-	}
-	ident := current.GetIdentExpr()
-	if ident != nil && ident.Name == "input" && len(path) > 0 && fields[strings.Join(path, ".")] {
-		return true
-	}
-	if call := expr.GetCallExpr(); call != nil {
-		if celReferencesDecimal(call.Target, fields) {
-			return true
-		}
-		for _, arg := range call.Args {
-			if celReferencesDecimal(arg, fields) {
-				return true
-			}
-		}
-	}
-	if selectExpr := expr.GetSelectExpr(); selectExpr != nil {
-		return celReferencesDecimal(selectExpr.Operand, fields)
-	}
-	if list := expr.GetListExpr(); list != nil {
-		for _, element := range list.Elements {
-			if celReferencesDecimal(element, fields) {
-				return true
-			}
-		}
-	}
-	if object := expr.GetStructExpr(); object != nil {
-		for _, entry := range object.Entries {
-			if celReferencesDecimal(entry.GetMapKey(), fields) || celReferencesDecimal(entry.Value, fields) {
-				return true
-			}
-		}
-	}
-	if comprehension := expr.GetComprehensionExpr(); comprehension != nil {
-		return celReferencesDecimal(comprehension.IterRange, fields) || celReferencesDecimal(comprehension.AccuInit, fields) ||
-			celReferencesDecimal(comprehension.LoopCondition, fields) || celReferencesDecimal(comprehension.LoopStep, fields) ||
-			celReferencesDecimal(comprehension.Result, fields)
-	}
-	return false
-}
-
-func celReferencesInput(expr *exprpb.Expr) bool {
-	if expr == nil {
-		return false
-	}
-	if ident := expr.GetIdentExpr(); ident != nil {
-		return ident.Name == "input"
-	}
-	if selectExpr := expr.GetSelectExpr(); selectExpr != nil {
-		return celReferencesInput(selectExpr.Operand)
-	}
-	if call := expr.GetCallExpr(); call != nil && call.Function == operators.Index && len(call.Args) == 2 {
-		return celReferencesInput(call.Args[0])
-	}
-	return false
-}
-
-func workflowDecimalFields(raw json.RawMessage) map[string]bool {
-	var schema map[string]any
-	_ = json.Unmarshal(raw, &schema)
-	fields := map[string]bool{}
-	var walk func(map[string]any, []string)
-	walk = func(current map[string]any, path []string) {
-		if schemaBool(current, "x-coinsphere-decimal") && len(path) > 0 {
-			fields[strings.Join(path, ".")] = true
-		}
-		properties, _ := current["properties"].(map[string]any)
-		for name, value := range properties {
-			if property, ok := value.(map[string]any); ok {
-				walk(property, append(path, name))
-			}
-		}
-	}
-	walk(schema, nil)
-	return fields
+	return nil
 }
 
 func ordinaryWorkflowConfigSchema(raw json.RawMessage, secretFields map[string]map[string]any) (json.RawMessage, error) {
@@ -809,20 +664,7 @@ func ordinaryWorkflowConfigSchema(raw json.RawMessage, secretFields map[string]m
 }
 
 func validateWorkflowSchemaValue(raw json.RawMessage, value any) error {
-	var document any
-	if err := json.Unmarshal(raw, &document); err != nil {
-		return err
-	}
-	compiler := jsonschema.NewCompiler()
-	compiler.DefaultDraft(jsonschema.Draft2020)
-	if err := compiler.AddResource("schema.json", document); err != nil {
-		return err
-	}
-	schema, err := compiler.Compile("schema.json")
-	if err != nil {
-		return err
-	}
-	return schema.Validate(value)
+	return workflowgraph.ValidateValue(raw, value)
 }
 
 func decodeJSONObject(raw json.RawMessage) (map[string]any, error) {

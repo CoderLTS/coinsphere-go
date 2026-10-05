@@ -24,6 +24,8 @@ CoinSphere 不再部署到 sub2api 或其他应用的 Compose 项目。发布只
 
 ## 发布流程
 
+generation 3 → 4 必须先按[工作流迁移维护窗口](database-migrations.md)创建独立目标库并完成 inspect/plan/apply/verify。正常部署 Up 会拒绝旧账本，不执行跨 generation 转换，也不自动重置数据；候选应用不得在导入前启动。回退时数据库、镜像、配置和独占文件必须来自同一恢复点。
+
 1. 目标 PR 合并到最新 `main`，CI 和最终只读复审通过。
 2. 涉及 Paper 时，按[数据库迁移手册](database-migrations.md)保存一致备份；只有首次进入正式 Paper 观察时，才在发布记录中把目标 commit 记为 migration freeze 提交。
 3. 在 GitHub Actions 手工运行 `Release and deploy`，输入未使用的 `vX.Y.Z`。
@@ -43,7 +45,7 @@ bash deploy/production/deploy.sh vX.Y.Z /path/to/release-manifest.json
 
 ## 首次独立部署
 
-首次独立部署创建 `data/backend`，并在空的 `coinsphere_go` 数据库应用当前 migration。后续部署默认只执行 Up，不自动重置数据库、执行 Down 或删除数据；任何破坏性基线变更必须按独立 migration PR 和数据库 Runbook 获得明确授权。
+首次全新部署创建独占 `data/backend`，并在空数据库应用 generation 4 migration。后续部署默认只执行当前 generation Up，不重置数据库或执行 Down。本次通用平台的跨域基线与迁移工具在同一 PR 交付，操作授权和维护窗口按数据库 Runbook 单独执行。
 
 部署成功后确认：
 

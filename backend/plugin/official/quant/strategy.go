@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"coinsphere/backend/plugin/sdk"
+	"coinsphere/backend/plugin/contracts/trading"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/shopspring/decimal"
 )
@@ -32,14 +32,14 @@ var quantIntervalOrder = []string{
 
 type smaCrossoverStrategy struct{}
 
-func (smaCrossoverStrategy) Descriptor() sdk.StrategyDescriptor {
-	return sdk.StrategyDescriptor{
+func (smaCrossoverStrategy) Descriptor() trading.StrategyDescriptor {
+	return trading.StrategyDescriptor{
 		ID: smaStrategyID, Version: "1.0.0", Name: "SMA crossover",
 		ParameterSchema: smaParameterSchema, MinimumLookback: 2,
 	}
 }
 
-func (smaCrossoverStrategy) Evaluate(ctx context.Context, request sdk.EvaluateRequest) (decimal.Decimal, error) {
+func (smaCrossoverStrategy) Evaluate(ctx context.Context, request trading.EvaluateRequest) (decimal.Decimal, error) {
 	if err := ctx.Err(); err != nil {
 		return decimal.Zero, err
 	}
@@ -61,7 +61,7 @@ func (smaCrossoverStrategy) Evaluate(ctx context.Context, request sdk.EvaluateRe
 	return decimal.NewFromInt(int64(fast.Cmp(slow))), nil
 }
 
-func candleCloseAverage(candles []sdk.Candle) decimal.Decimal {
+func candleCloseAverage(candles []trading.Candle) decimal.Decimal {
 	total := decimal.Zero
 	for _, candle := range candles {
 		total = total.Add(candle.Close)
@@ -69,7 +69,7 @@ func candleCloseAverage(candles []sdk.Candle) decimal.Decimal {
 	return total.Div(decimal.NewFromInt(int64(len(candles))))
 }
 
-func validateStrategyParameters(desc sdk.StrategyDescriptor, parameters json.RawMessage) error {
+func validateStrategyParameters(desc trading.StrategyDescriptor, parameters json.RawMessage) error {
 	value, err := jsonschema.UnmarshalJSON(bytes.NewReader(parameters))
 	if err != nil {
 		return errors.New("strategy parameters must be valid JSON")
@@ -90,7 +90,7 @@ func validateStrategyParameters(desc sdk.StrategyDescriptor, parameters json.Raw
 	return nil
 }
 
-func validateStrategyCandles(request sdk.EvaluateRequest) error {
+func validateStrategyCandles(request trading.EvaluateRequest) error {
 	duration, ok := quantIntervals[request.Interval]
 	if !ok || request.Market != "spot" && request.Market != "usdm" || request.Instrument == "" || request.EvaluatedAt.IsZero() {
 		return errors.New("strategy context is invalid")
@@ -116,4 +116,4 @@ func validateStrategyCandles(request sdk.EvaluateRequest) error {
 	return nil
 }
 
-var _ sdk.Strategy = smaCrossoverStrategy{}
+var _ trading.Strategy = smaCrossoverStrategy{}

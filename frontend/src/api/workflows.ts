@@ -12,23 +12,11 @@ export function buildWorkflowRunsWsUrl(pageOrigin: string, workflowId: number) {
 }
 
 export type WorkflowStatus = 'inactive' | 'active' | 'error'
-export type WorkflowBindingKind =
-  | 'field'
-  | 'literal'
-  | 'cel'
-  | 'condition_entry'
-  | 'condition_subject'
-  | 'condition_message'
-
-export interface WorkflowConditionBindingSource {
-  nodeInstanceId: string
-  branch?: string
-}
+export type WorkflowBindingKind = 'field' | 'literal' | 'cel' | 'input'
 
 export interface WorkflowInputBinding {
   kind: WorkflowBindingKind
   nodeInstanceId?: string
-  sources?: WorkflowConditionBindingSource[]
   fieldPath?: string[]
   value?: unknown
   expression?: string
@@ -53,8 +41,8 @@ export interface WorkflowGraphEdge {
 }
 
 export interface WorkflowGraph {
-  schemaVersion: 1 | 2
-  entryPoints?: { realtime: string; backtest: string }
+  schemaVersion: 3
+  entryPoints: Record<string, string>
   nodes: WorkflowGraphNode[]
   edges: WorkflowGraphEdge[]
 }
@@ -66,7 +54,9 @@ export interface WorkflowItem {
   groupId: number | null
   mode: 'batch' | 'event' | 'stream'
   status: WorkflowStatus
-  activeRevisionId: number
+  draftRevisionId: number
+  publishedRevisionId: number
+  ownerUserId: number
   mainTriggerNodeId: string
   retentionDays: number
   createdBy: number
@@ -75,6 +65,7 @@ export interface WorkflowItem {
 }
 
 export interface WorkflowDetail extends WorkflowItem {
+  permissions: string[]
   runtime: {
     maxConcurrentRuns: number
     backlogLimit: number
@@ -120,6 +111,8 @@ export interface WorkflowSecretField {
 }
 
 export interface WorkflowNodeDefinition {
+  pluginId?: string
+  editorKey?: string
   type: string
   version: string
   title: string
@@ -136,9 +129,6 @@ export interface WorkflowNodeDefinition {
   capabilities: {
     deterministic: boolean
     stateless: boolean
-    frameDriver?: boolean
-    frameSafe?: boolean
-    frameResult?: boolean
   }
   configSchema: Record<string, unknown>
   uiSchema: Record<string, unknown>
@@ -162,7 +152,7 @@ export interface WorkflowRun {
   id: number
   workflowId: number
   revisionId: number
-  entryPoint: 'realtime' | 'backtest'
+  entryPoint: string
   input: Record<string, unknown>
   triggerType: 'manual' | 'schedule' | 'event' | 'stream' | 'webhook' | 'failure'
   status: 'queued' | 'running' | 'waiting' | 'retrying' | 'succeeded' | 'failed' | 'cancelled'
@@ -232,6 +222,7 @@ export interface WorkflowRunEvent {
 }
 
 export interface WorkflowRunDetail extends WorkflowRun {
+  permissions: string[]
   event?: WorkflowRunEvent
   runNodes: WorkflowRunNode[]
   logs: WorkflowNodeLog[]
@@ -266,11 +257,23 @@ export interface WorkflowRunQuery {
   keyword?: string
 }
 
-export const fetchWorkflows = (status = '') =>
-  request.get<ItemList<WorkflowItem>>({
-    url: '/api/v1/workflows',
-    params: status ? { status } : {}
-  })
+export interface WorkflowSummary extends WorkflowItem {
+  permissions: string[]
+  latestRunId?: number
+  latestRunStatus?: WorkflowRun['status']
+  maxConcurrentRuns: number
+  backlogLimit: number
+}
+export const fetchWorkflows = (
+  params: {
+    cursor?: string
+    limit?: number
+    status?: string
+    keyword?: string
+    groupId?: number
+  } = {}
+) =>
+  request.get<Api.Common.PaginatedResponse<WorkflowSummary>>({ url: '/api/v1/workflows', params })
 
 export const fetchWorkflow = (workflowId: number) =>
   request.get<WorkflowDetail>({ url: `/api/v1/workflows/${workflowId}` })
@@ -352,15 +355,17 @@ export const createWorkflow = (params: {
   description: string
   templateKey: string
   groupId?: number | null
+  graph?: WorkflowGraph
+  secretChanges?: WorkflowSecretChange[]
 }) => request.post<WorkflowDetail>({ url: '/api/v1/workflows', params })
 
 export const saveWorkflowRevision = (
   workflowId: number,
   params: {
-    expectedActiveRevisionId: number
+    expectedDraftRevisionId: number
+    metadata?: { name: string; description: string }
     graph: WorkflowGraph
     secretChanges: WorkflowSecretChange[]
-    resetStateNodeInstanceIds: string[]
   }
 ) => request.post<WorkflowRevision>({ url: `/api/v1/workflows/${workflowId}/revisions`, params })
 
@@ -371,7 +376,7 @@ export const applyWorkflowLifecycle = (workflowId: number, action: 'activate' | 
   })
 
 export interface WorkflowRunCreatePayload {
-  entryPoint?: 'realtime' | 'backtest'
+  entryPoint?: string
   revisionId?: number
   input?: Record<string, unknown>
 }
@@ -416,3 +421,32 @@ export const fetchWorkflowArtifactManifest = (sha256: string) =>
 
 export const downloadWorkflowArtifact = (url: string) =>
   request.request<Blob>({ url, method: 'GET', responseType: 'blob', rawResponse: true })
+
+export const publishWorkflow = (
+  workflowId: number,
+  revisionId: number,
+  expectedPublishedRevisionId: number
+) =>
+  request.post<WorkflowDetail>({
+    url: `/api/v1/workflows/${workflowId}/publish`,
+    params: { revisionId, expectedPublishedRevisionId }
+  })
+export interface WorkflowGrant {
+  userId?: number
+  roleId?: number
+  permissions: string[]
+}
+export const fetchWorkflowGrants = (workflowId: number) =>
+  request.get<ItemList<WorkflowGrant>>({ url: `/api/v1/workflows/${workflowId}/grants` })
+export const replaceWorkflowGrants = (workflowId: number, grants: WorkflowGrant[]) =>
+  request.request({
+    url: `/api/v1/workflows/${workflowId}/grants`,
+    method: 'PUT',
+    data: { grants }
+  })
+export const fetchWorkbench = () =>
+  request.get<{
+    workflows?: Api.Common.PaginatedResponse<WorkflowSummary>
+    tasks?: WorkflowHumanTask[]
+    resultViews?: unknown[]
+  }>({ url: '/api/v1/workbench' })

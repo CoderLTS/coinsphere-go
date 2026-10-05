@@ -1,12 +1,12 @@
 package service
 
 import (
+	"coinsphere/backend/plugin/sdk"
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -43,79 +43,44 @@ func (a *App) Emit(ctx context.Context, event cloudevents.Event) error {
 	return err
 }
 
-func (a *App) PublishWorkflowWebhook(ctx context.Context, workflowID int64, secret, eventID, partitionKey string, data map[string]any) (WorkflowEventView, error) {
-	eventID = strings.TrimSpace(eventID)
-	partitionKey = strings.TrimSpace(partitionKey)
-	if workflowID <= 0 || strings.TrimSpace(secret) == "" || len(secret) > maxWorkflowSecretBytes || eventID == "" || len(eventID) > 128 ||
-		partitionKey == "" || len(partitionKey) > 256 || data == nil {
-		return WorkflowEventView{}, errors.New("webhook request is invalid")
-	}
+func (a *App) PublishWorkflowWebhook(ctx context.Context, workflowID int64, request *http.Request, data json.RawMessage) (WorkflowEventView, error) {
 	var record db.WorkflowEventRecord
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var workflow db.Workflow
-		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).First(&workflow, workflowID).Error; err != nil ||
-			workflow.Status != WorkflowStatusActive || workflow.ActiveRevisionID == nil {
-			return fmt.Errorf("%w: webhook", ErrNotFound)
+		var w db.Workflow
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&w, workflowID).Error; err != nil || w.Status != WorkflowStatusActive || w.PublishedRevisionID == nil {
+			return ErrNotFound
 		}
 		var revision db.WorkflowRevision
-		if err := tx.First(&revision, *workflow.ActiveRevisionID).Error; err != nil {
-			return fmt.Errorf("%w: webhook", ErrNotFound)
+		if err := tx.First(&revision, *w.PublishedRevisionID).Error; err != nil {
+			return err
 		}
-		graph, err := a.buildWorkflowRunGraph(revision.GraphJSON)
+		g, err := a.validateWorkflowGraph(json.RawMessage(revision.GraphJSON))
 		if err != nil {
-			return errors.New("load webhook workflow graph failed")
+			return err
 		}
-		trigger := graph.nodes[revision.MainTriggerNodeID]
-		if trigger.NodeType != "official.connector.webhook" {
-			return fmt.Errorf("%w: webhook", ErrNotFound)
+		if err := a.authorizeExecution(w.OwnerUserID, g); err != nil {
+			return err
 		}
-		var binding db.WorkflowSecretBinding
-		if err := tx.Where("revision_id = ? AND node_instance_id = ? AND field_name = 'secret'", revision.ID, trigger.NodeInstanceID).
-			First(&binding).Error; err != nil {
-			return fmt.Errorf("%w: webhook", ErrNotFound)
+		node := g.nodes[g.mainTriggerID]
+		handler, ok := a.Plugins.Ingress(node.NodeType)
+		if !ok {
+			return ErrNotFound
 		}
-		expected, err := a.Cipher.Decrypt(binding.EncryptedValue)
+		event, err := handler(ctx, sdk.IngressRequest{Revision: sdk.RevisionRef{WorkflowID: fmt.Sprint(w.ID), RevisionID: fmt.Sprint(revision.ID)}, NodeInstanceID: node.NodeInstanceID, Config: node.Config, Secrets: workflowSecretReader{app: a, database: tx, revisionID: revision.ID, nodeInstanceID: node.NodeInstanceID}, Request: request, Data: data, EventTime: time.Now().UTC()})
 		if err != nil {
-			return errors.New("decrypt webhook secret failed")
+			return ErrPermission
 		}
-		expectedHash, actualHash := sha256.Sum256([]byte(expected)), sha256.Sum256([]byte(secret))
-		if subtle.ConstantTimeCompare(expectedHash[:], actualHash[:]) != 1 {
-			return fmt.Errorf("%w: webhook", ErrNotFound)
+		identity := fmt.Sprintf("%d:%s%s", len(event.Source()), event.Source(), event.ID())
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtextextended(?,0))", identity).Error; err != nil {
+			return err
 		}
-		var config struct {
-			EventType string `json:"eventType"`
-		}
-		if json.Unmarshal(trigger.Config, &config) != nil || strings.TrimSpace(config.EventType) == "" {
-			return errors.New("webhook trigger configuration is invalid")
-		}
-		source := fmt.Sprintf("urn:coinsphere:connector:webhook:%d", workflowID)
-		identity := fmt.Sprintf("%d:%s%s", len(source), source, eventID)
-		if err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtextextended(?, 0))`, identity).Error; err != nil {
-			return errors.New("lock webhook event identity failed")
-		}
-		eventTime := time.Now().UTC()
 		var existing db.WorkflowEventRecord
-		if err := tx.Where("source = ? AND event_id = ?", source, eventID).First(&existing).Error; err == nil {
-			var persisted struct {
-				Time time.Time `json:"time"`
-			}
-			if json.Unmarshal([]byte(existing.EventJSON), &persisted) != nil || persisted.Time.IsZero() {
-				return errors.New("load existing webhook event failed")
-			}
-			eventTime = persisted.Time.UTC()
+		if err := tx.Where("source=? AND event_id=?", event.Source(), event.ID()).First(&existing).Error; err == nil {
+			event.SetTime(existing.EventTime)
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return errors.New("load existing webhook event failed")
+			return err
 		}
-		event := cloudevents.NewEvent()
-		event.SetID(eventID)
-		event.SetSource(source)
-		event.SetType(strings.TrimSpace(config.EventType))
-		event.SetTime(eventTime)
-		event.SetExtension("partitionkey", partitionKey)
-		if err := event.SetData(cloudevents.ApplicationJSON, data); err != nil {
-			return errors.New("encode webhook event failed")
-		}
-		record, err = a.persistWorkflowEventTx(tx, event, workflowID)
+		record, err = a.persistWorkflowEventTx(tx, event, w.ID)
 		return err
 	})
 	if err != nil {
@@ -209,14 +174,14 @@ func validateWorkflowCloudEvent(event cloudevents.Event) ([]byte, string, map[st
 }
 
 func (a *App) deliverWorkflowEventTx(tx *gorm.DB, record db.WorkflowEventRecord, event cloudevents.Event, targetWorkflowID int64, now time.Time) error {
-	query := tx.Where("status = ? AND active_revision_id IS NOT NULL", WorkflowStatusActive)
+	query := tx.Where("status = ? AND published_revision_id IS NOT NULL", WorkflowStatusActive)
 	if targetWorkflowID > 0 {
 		query = query.Where("id = ?", targetWorkflowID)
 	} else {
 		query = query.Where("mode = ?", WorkflowModeEvent)
 	}
 	var workflows []db.Workflow
-	if err := query.Order("id").Find(&workflows).Error; err != nil {
+	if err := query.Clauses(clause.Locking{Strength: "UPDATE"}).Order("id").Find(&workflows).Error; err != nil {
 		return errors.New("load workflow event subscribers failed")
 	}
 	if targetWorkflowID > 0 && len(workflows) == 0 {
@@ -224,8 +189,22 @@ func (a *App) deliverWorkflowEventTx(tx *gorm.DB, record db.WorkflowEventRecord,
 	}
 	for _, workflow := range workflows {
 		var revision db.WorkflowRevision
-		if err := tx.First(&revision, *workflow.ActiveRevisionID).Error; err != nil {
+		if err := tx.First(&revision, *workflow.PublishedRevisionID).Error; err != nil {
 			return errors.New("load workflow event revision failed")
+		}
+		validated, err := a.validateWorkflowGraph(json.RawMessage(revision.GraphJSON))
+		if err != nil {
+			return err
+		}
+		actor, err := principalForTx(tx, &Principal{User: &db.SystemUser{ID: workflow.OwnerUserID}})
+		if err != nil {
+			return err
+		}
+		if err := authorizeWorkflowTx(tx, actor, workflow.ID, "workflows.run"); err != nil {
+			return err
+		}
+		if err := authorizePluginExecution(actor, validated); err != nil {
+			return err
 		}
 		graph, err := a.buildWorkflowRunGraph(revision.GraphJSON)
 		if err != nil {
@@ -249,18 +228,21 @@ func (a *App) deliverWorkflowEventTx(tx *gorm.DB, record db.WorkflowEventRecord,
 		triggerType := WorkflowModeEvent
 		if workflow.Mode == WorkflowModeStream {
 			triggerType = WorkflowModeStream
-		} else if trigger.NodeType == "official.connector.webhook" {
+		} else if a.workflowTriggerHasIngress(trigger.NodeType) {
 			triggerType = "webhook"
 		} else if event.Type() == workflowFailureEventType {
 			triggerType = "failure"
 		}
 		run := db.WorkflowRun{
-			WorkflowID: workflow.ID, RevisionID: revision.ID, EntryPoint: "realtime", InputJSON: `{}`, TriggerType: triggerType,
+			ExecutionUserID: workflow.OwnerUserID, RequiresSerial: graphHasPersistentState(validated), WorkflowID: workflow.ID, RevisionID: revision.ID, EntryPoint: "main", InputJSON: `{}`, TriggerType: triggerType,
 			TriggerKey: fmt.Sprint(record.ID), EventRecordID: &record.ID, PartitionKey: record.PartitionKey,
 			Status: RunStatusQueued, NotBefore: now, TriggeredAt: event.Time().UTC(), ResultSummary: `{}`, CreatedAt: now, UpdatedAt: now,
 		}
 		if err := tx.Create(&run).Error; err != nil {
 			return errors.New("create workflow event run failed")
+		}
+		if err := a.syncRunPluginReferences(tx, run, validated); err != nil {
+			return err
 		}
 		delivery := db.WorkflowEventDelivery{
 			EventRecordID: record.ID, WorkflowID: workflow.ID, RevisionID: revision.ID, RunID: run.ID, CreatedAt: now,
@@ -419,4 +401,9 @@ func workflowEventView(record db.WorkflowEventRecord) WorkflowEventView {
 		ID: record.ID, Source: record.Source, EventID: record.EventID, Type: record.EventType,
 		PartitionKey: record.PartitionKey, ReceivedAt: formatWorkflowTime(record.ReceivedAt),
 	}
+}
+
+func (a *App) workflowTriggerHasIngress(nodeType string) bool {
+	_, ok := a.Plugins.Ingress(nodeType)
+	return ok
 }

@@ -58,52 +58,46 @@ export const staticRoutes: AppRouteRecordRaw[] = [
         path: '/scheduler/workflow/create',
         name: 'SchedulerWorkflowDefinitionCreate',
         component: () => import('@views/scheduler/workflow/editor/index.vue'),
-        beforeEnter: createPermissionGuard('scheduler.workflow_definitions.create'),
+        beforeEnter: createPermissionGuard('workflows.create'),
         meta: {
           title: '创建工作流定义',
           isHideTab: true,
           isHide: true,
           activePath: '/scheduler/definition',
-          actionList: [
-            { title: '保存定义', permissionCode: 'scheduler.workflow_definitions.create' }
-          ]
+          actionList: [{ title: '保存定义', permissionCode: 'workflows.create' }]
         }
       },
       {
         path: '/scheduler/workflow/:definitionId/edit',
         name: 'SchedulerWorkflowDefinitionEdit',
         component: () => import('@views/scheduler/workflow/editor/index.vue'),
-        beforeEnter: createPermissionGuard('scheduler.workflow_definitions.update'),
+        beforeEnter: createPermissionGuard('workflows.read'),
         meta: {
           title: '编辑工作流定义',
           isHideTab: true,
           isHide: true,
           activePath: '/scheduler/definition',
-          actionList: [
-            { title: '保存定义', permissionCode: 'scheduler.workflow_definitions.update' }
-          ]
+          actionList: [{ title: '保存定义', permissionCode: 'workflows.update' }]
         }
       },
       {
         path: '/scheduler/workflow/:definitionId/version',
         name: 'SchedulerWorkflowDefinitionVersion',
         redirect: (to) => `/scheduler/workflow/${to.params.definitionId}/edit`,
-        beforeEnter: createPermissionGuard('scheduler.workflow_definitions.update'),
+        beforeEnter: createPermissionGuard('workflows.read'),
         meta: {
           title: '编辑工作流定义',
           isHideTab: true,
           isHide: true,
           activePath: '/scheduler/definition',
-          actionList: [
-            { title: '保存定义', permissionCode: 'scheduler.workflow_definitions.update' }
-          ]
+          actionList: [{ title: '保存定义', permissionCode: 'workflows.update' }]
         }
       },
       {
         path: '/scheduler/execution',
         name: 'SchedulerWorkflowExecutions',
         component: () => import('@views/scheduler/execution/index.vue'),
-        beforeEnter: createPermissionGuard('scheduler.workflow_definitions.view'),
+        beforeEnter: createPermissionGuard('workflows.read'),
         meta: {
           title: '历史运行日志',
           isHideTab: true,
@@ -115,21 +109,9 @@ export const staticRoutes: AppRouteRecordRaw[] = [
         path: '/scheduler/execution/:executionId/detail',
         name: 'SchedulerWorkflowExecutionDetail',
         component: () => import('@views/scheduler/execution/detail/index.vue'),
-        beforeEnter: createPermissionGuard('scheduler.workflow_definitions.view'),
+        beforeEnter: createPermissionGuard('workflows.read'),
         meta: {
           title: '执行详情',
-          isHideTab: true,
-          isHide: true,
-          activePath: '/scheduler/definition'
-        }
-      },
-      {
-        path: '/scheduler/execution/:runId/backtest',
-        name: 'SchedulerWorkflowBacktestAnalysis',
-        component: () => import('@views/scheduler/execution/backtest/index.vue'),
-        beforeEnter: createPermissionGuard('scheduler.workflow_definitions.view'),
-        meta: {
-          title: '回测分析',
           isHideTab: true,
           isHide: true,
           activePath: '/scheduler/definition'

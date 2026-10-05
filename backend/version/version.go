@@ -1,20 +1,42 @@
-// Package version exposes compatibility versions shared by the app and plugin tooling.
+// Package version owns the core versions and the single official plugin catalog.
 package version
 
-const (
-	Core     = "3.0.0"
-	SDKMajor = 3
+import (
+	"embed"
+	"encoding/json"
 )
 
-var BuiltinPlugins = map[string]string{
-	"official.ai":           Core,
-	"official.binance":      Core,
-	"official.connector":    Core,
-	"official.notification": Core,
-	"official.qq":           Core,
-	"official.quant":        Core,
+const (
+	Core     = "4.0.0"
+	SDKMajor = 4
+)
+
+//go:embed builtin.json
+var catalog embed.FS
+
+type BuiltinPlugin struct {
+	ID              string                             `json:"id"`
+	Name            string                             `json:"name"`
+	Version         string                             `json:"version"`
+	Contributes     []string                           `json:"contributes"`
+	RequiresPlugins map[string]string                  `json:"requiresPlugins"`
+	Menu            struct{ Mode, Title, Icon string } `json:"menu"`
 }
 
-var BuiltinPluginDependencies = map[string]map[string]string{
-	"official.binance": {"official.quant": "^3.0.0"},
+var BuiltinCatalog []BuiltinPlugin
+var BuiltinPlugins = map[string]string{}
+var BuiltinPluginDependencies = map[string]map[string]string{}
+
+func init() {
+	raw, err := catalog.ReadFile("builtin.json")
+	if err != nil {
+		panic(err)
+	}
+	if err = json.Unmarshal(raw, &BuiltinCatalog); err != nil {
+		panic(err)
+	}
+	for _, p := range BuiltinCatalog {
+		BuiltinPlugins[p.ID] = p.Version
+		BuiltinPluginDependencies[p.ID] = p.RequiresPlugins
+	}
 }

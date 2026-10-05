@@ -7,7 +7,8 @@ import (
 )
 
 var quantStrategyTemplate = json.RawMessage(`{
-  "schemaVersion":1,
+  "schemaVersion":3,
+  "entryPoints":{"main":"candle-event"},
   "nodes":[
     {"nodeInstanceId":"candle-event","nodeType":"core.event","nodeVersion":"1.0.0","config":{"types":["market.candle.closed"]},"position":{"x":80,"y":220}},
     {"nodeInstanceId":"strategy","nodeType":"official.quant.evaluate","nodeVersion":"1.0.0","config":{"venue":"binance","strategyId":"official.quant.sma-crossover","market":"spot","instrument":"BTCUSDT","interval":"1h","parameters":{"fastPeriod":3,"slowPeriod":5}},"inputBindings":{"eventTime":{"kind":"cel","expression":"event.time"}},"position":{"x":380,"y":220}},
@@ -20,7 +21,8 @@ var quantStrategyTemplate = json.RawMessage(`{
 }`)
 
 var quantBacktestTemplate = json.RawMessage(`{
-  "schemaVersion":1,
+  "schemaVersion":3,
+  "entryPoints":{"main":"manual"},
   "nodes":[
     {"nodeInstanceId":"manual","nodeType":"core.manual","nodeVersion":"1.0.0","config":{},"position":{"x":80,"y":220}},
     {"nodeInstanceId":"backtest","nodeType":"official.quant.backtest","nodeVersion":"1.0.0","config":{"venue":"binance","strategyId":"official.quant.sma-crossover","market":"spot","instrument":"BTCUSDT","interval":"1h","startTime":"2026-01-01T00:00:00Z","endTime":"2026-02-01T00:00:00Z","initialCapital":"10000","feeRate":"0.001","slippageRate":"0.0005","parameters":{"fastPeriod":3,"slowPeriod":5}},"position":{"x":380,"y":220}},

@@ -1,72 +1,60 @@
-# 数据库迁移
+# 数据库迁移与工作流迁移
 
-## 当前基线
+CoinSphere 只支持 PostgreSQL 16。当前为 generation 4：Core 使用 public.schema_migrations_g4，官方业务和外部插件各自使用专属 schema_migrations_g4。旧 00001–00023 SQL 保留且不改写；新 runner 发现旧 public.schema_migrations 时拒绝原地 Up。
 
-CoinSphere 只支持 PostgreSQL 16。`00001` 至 `00005` 创建认证、插件、工作流和运行基线；`00006_quant_market_backtests.sql` 首次创建 Binance 行情表与 Quant 回测表；`00007_paper_results_notifications.sql` 创建 ResultView、Quant Signal 与 Notification 投递；`00008_quant_instrument_sources.sql` 创建 Binance 品种来源；`00009` 至 `00016` 完成日志、通知、工作流和回测明细基线；`00017_quant_binance_split.sql` 创建 Binance 订单、成交、费用、Paper 账本、持仓和账户快照约束；`00018_quant_workflow_venue.sql` 为 Quant 工作流补齐 venue 并移除失效节点；`00019_workflow_groups.sql` 增加全局工作流分组与单一归属；`00020_quant_workflow_backtest_entry.sql` 将旧 Quant 回测入口迁移到回测帧驱动节点；`00021_workflow_revision_retention.sql` 允许保存事务清理超限的最旧修订；`00022_workflow_revision_delete.sql` 允许服务层删除非活动历史修订；`00023_workflow_delete.sql` 为显式工作流删除事务放行不可变执行事实清理。
+## 新基线
 
-服务启动只读校验核心版本，DDL 只由 `coinsphere-migrate` 执行。随应用发布的 Quant、Binance 与 Notification 基线使用核心 migration runner；通过插件 CLI 安装的插件使用 `plugin_<规范化插件 ID>` schema 和自己的 `schema_migrations` 账本。项目不提供旧表、旧接口或旧数据转换器；生产 DSN 和数据库密码只通过服务器配置注入。
+Core 基线位于 backend/internal/migration/generation4，领域基线位于 backend/plugin/official/{quant,binance,notification}/migrations。`/app/coinsphere-migrate -config /server/target.yml -direction up` 建立 Core 和官方基线；可重复执行。应用启动只验证版本，不执行 DDL。
+
+Core 及已启用插件各自校验自己的账本；外部插件的最新 migration 版本由源码安装时写入生成目录。缺账本、版本超前/落后、错误 generation 或 PostgreSQL 主版本均拒绝启动。generation 4 Down 明确拒绝，回退用匹配恢复点。开始正式 Paper 观察后必须冻结已有 migration，随后只追加版本。
+
+## 迁移范围
+
+一次性 `/app/workflow-migrate` 将旧账本版本 23 的当前工作流定义迁入**独立、空的 generation 4 目标数据库**。源只有只读访问，目标应用在导入前不得启动，避免种子和运行数据占用空目标。
+
+保留工作流/当前修订/节点 ID、必要用户角色和分组、模型/代理配置、已知非交易必要凭据、ResultView 固定范围及主体授权。图转 Graph 3，legacy realtime 入口转 main，其他入口保留；Loop Secret 使用实际展开 ID。旧通知组合变为插件节点；同名输出 CEL 不猜来源，要求明确表达式或字段来源。
+
+所有导入工作流、视图、模型及代理保持 inactive/disabled。运行、待办、事件、检查点、状态、通知、账本、行情及旧 Live 放行不迁移；必要行情需补齐。交易与未知插件凭据仅盘点存在性，源密文不读取到工具进程，必须在服务器重新绑定。工具不发外部请求或执行交易。
+
+旧菜单上无效的管理按钮不转为新能力；受保护、工作流/插件执行、凭据和资源管理授权须在目标明确重新配置。缺必要 Secret、inactive owner 等作为启用依赖报告；未知版本、缺定义、CEL 来源不明、结果节点归属或授权主体缺失作为阻断项。
+
+## 维护窗口与恢复点
+
+1. 记录旧/候选 commit、镜像 digest、配置版本、PostgreSQL 主版本、数据库标识、插件清单与 Paper freeze/观察状态。报告不含凭据值、真实 DSN、用户名或原始图。
+2. 在服务器保存旧数据库、配对配置/加密 key 和独占上传/制品的一致恢复点；在隔离副本验证能恢复旧镜像。恢复凭据只由服务器注入，不给 Codex/CI。
+3. 创建独立 generation 4 目标和候选独占文件目录，使用候选镜像建立基线。安装/编译所有需要的 SDK 4 外部插件，确认版本精确一致和依赖完整；不要启动候选应用。
+4. 用 inspect 盘点源资产，建立映射并完成 plan。源还在写入时的 plan 仅供预审；最终维护窗口停止旧应用、Trigger、所有写入者后重新 inspect/plan。
+5. 最终 plan 必须无 issues；每条依赖都有服务器处理记录或明确 inactive 保留。apply 使用 source-stopped 声明，目标仍不运行。verify 完成后保存无密钥报告与完整 planHash。
+6. 先启动受限候选应用，核对工作流/修订/节点数量及图语义、Secret 配置状态、角色能力/资源范围和空执行表；按已批准范围补凭据/行情、发布定义再启用。首轮只使用合成/通用/Paper 路径；Live 状态单独手工放行。
+7. 通过后切换连接/入口，保存新的恢复点。任何阻断、指纹变化或恢复不完整都保持候选关闭，不用手工改账本或删事实绕过。
 
 ## 命令
 
-在 `backend` 目录执行：
+以下在服务器或隔离环境执行，配置文件路径仅示意。源 DSN 与旧非交易加密 key 由权限受限环境注入 `COINSPHERE_MIGRATION_SOURCE_DSN` / `COINSPHERE_MIGRATION_SOURCE_KEY`；不在参数、终端日志或报告中展开。目标连接/key 从 target.yml 或既有环境配置读取。
 
 ```bash
-go run ./cmd/migrate -config ./config.yml -direction status
-go run ./cmd/migrate -config ./config.yml -direction version
-go run ./cmd/migrate -config ./config.yml -direction up
-go run ./cmd/migrate -config ./config.yml -direction down -steps 1
+/app/workflow-migrate -command inspect -source-id instance-a -output /server/inspect.json
+/app/workflow-migrate -command plan -source-id instance-a \
+  -target-config /server/target.yml -mappings /server/mappings.json \
+  -plan /server/plan.json -output /server/plan-report.json
+/app/workflow-migrate -command apply -source-id instance-a -source-stopped \
+  -target-config /server/target.yml -plan /server/plan.json -output /server/apply-report.json
+/app/workflow-migrate -command verify -target-config /server/target.yml \
+  -plan /server/plan.json -output /server/verify-report.json
 ```
 
-镜像内命令为 `/app/coinsphere-migrate`。`up` 可重复执行；数据库版本落后或领先当前二进制时，应用拒绝启动。开发 Compose 由一次性 `migrate` 服务先建 schema，再启动 Backend。
+inspect 不连接目标。plan 保存绑定源身份/内容指纹、目标 database_id、编译目录和映射的哈希；issues 非空仍保存计划但返回失败，apply 被拒绝。apply 重新生成并比较完整计划，用单一 Serializable 事务导入，失败全部回滚。相同批次重跑先验证资产再返回 alreadyApplied，不重复建资产。verify 只读且需在目标开始人工修改之前执行；修改后验证失败是预期保护。
 
-## 退出 TimescaleDB
+映射及去秘密报告样例见 [migration examples](../examples/workflow-migration-mappings.json) 与[报告](../examples/workflow-migration-report.json)。样例 ID 仅为合成值；Hash 样例不能用于 apply。
 
-旧独立数据库从 PostgreSQL 17/TimescaleDB 迁入服务器 PostgreSQL 16 时，必须在发布维护窗口执行一次逻辑迁移：
+## 回退
 
-1. 停止 CoinSphere 应用容器，并保存旧数据库和 `data/backend` 的一致恢复点。
-2. 在旧数据库中把历史 K 线 hypertable 无损转换为与 `plugin_binance.candles` 约束和索引一致的普通表，再卸载 TimescaleDB 扩展。
-3. 在共享 PostgreSQL 中创建独立 `coinsphere_go` 用户和空数据库，不覆盖已有 `coinsphere` 旧库或其他应用数据库。
-4. 使用 PostgreSQL 17 客户端逻辑导出并恢复到 PostgreSQL 16；先在隔离目标验证版本兼容，再切换生产连接。
-5. 对比 migration 版本、schema、关键表行数和数据库大小，运行目标应用镜像健康检查。
-6. 保留旧数据库目录作为人工回滚备份；只有共享数据库备份完成恢复演练后才清理。
+- apply 事务失败：目标无部分资产；保留计划、受控错误与源，修正映射后重新 plan。源内容变化必须生成新计划，不编辑 plan 的 hash。
+- 候选启用前失败：停止候选，旧镜像继续指向未改写源库及原配置/文件；目标隔离保留供调查。
+- 候选启用后失败：停止候选所有写入者，记录已产生的外部副作用，恢复旧数据库/镜像/配置/文件组合并切回入口。禁止把旧镜像指向新库或反向混用。
+- 有通知或外部调用时，先由业务人员核对去重/已发送结果，不自动重放。若涉及交易，先停用账户放行并手工核对订单/成交/持仓，恢复应用不会自动撤单或交易。
+- 不执行 schema Down、手工修改版本表、覆盖源库或清理共享服务。恢复点无法验证时保持服务停止。
 
-任何一步失败都停止候选服务并恢复旧 Compose，不删除旧数据库目录，也不修改其他共享数据库。
+## 验收证据
 
-## 当前基线重置
-
-此流程会永久删除当前 CoinSphere 数据库内容，必须同时满足：
-
-1. 已确认数据库没有需要保留的 Paper 晋级证据或其他业务数据。
-2. 已创建并验证可恢复的数据库备份。
-3. 用户对目标环境和目标 CoinSphere 数据目录给出明确重置授权。
-4. 已只读确认目标 Compose 项目、数据库服务和数据目录，不影响共享服务。
-
-满足条件后，停止 CoinSphere 应用容器，备份并定向重建共享 PostgreSQL 中的 `coinsphere_go` 数据库，清空该部署独占的 `data/backend/artifacts` 目录，再由目标镜像执行 `coinsphere-migrate -direction up`。删除前必须分别解析并核对数据库名和制品绝对路径；禁止手工改写 `schema_migrations` 来伪装重置，也不得触及已有 `coinsphere` 旧库、其他应用数据库、上传目录或真实交易凭据。
-
-## 变更规则
-
-- 开始正式 Paper 观察前必须在 GitHub 验收记录或发布记录中标记 migration freeze 提交；从该提交开始，核心与内置插件 migration 只追加递增版本，已有文件必须保持字节不变。
-- 每个 migration 包含 `-- +goose Up` 和 `-- +goose Down`，默认在事务中执行。
-- 插件 migration 使用独立递增版本；兼容升级只能追加高版本，卸载和应用回滚不执行插件 Down。
-- 金融时间使用 `TIMESTAMPTZ`；价格、数量、金额和费率使用 `NUMERIC(38,18)`。
-- `Down` 必须保护持久数据；插件和工作流 migration 只在所属表为空时允许回滚。
-- `00005` 只有在 Run、RunNode、节点日志、检查点、事件、人工任务、状态和制品全部为空时允许 Down。
-- `00006` 只有在 Binance 品种/K 线和 Quant 回测摘要均为空时允许 Down；应用回滚不得自动删除插件 schema。
-- `00007` 只有在 ResultView、Quant Signal 和 Notification 投递全部为空时允许 Down；存在任一记录时必须恢复备份，不能删除事实来迁就旧应用。
-- `00008` 只有在所有 Binance 品种来源为空时允许 Down；`00009` 只有在系统日志和日志设置都为空时允许 Down。
-- `00010` 只有在不存在外部渠道、站内收件人、已读或错误类别数据时允许 Down；应用回滚不执行该 Down，也不删除通知记录。
-- `00011` 的生产预检清单固定为旧工作流 ID `3`、活动修订 `7` 和图哈希 `ceb29098af6afa49b7a20d9698f53fa7`。发布前旧服务必须已停止并完成数据库备份；清单、活动图、金融事实、共享制品或跨工作流诊断引用任一不符都会终止事务。该 migration 删除旧 Run、通知、日志、检查点、状态、修订和工作流后创建新 ID；Down 永远拒绝，只能恢复发布前备份。
-- `00019` 只有在分组表为空且所有工作流均未分组时允许 Down；应用回滚不得静默丢弃分组元数据。
-- `00020` 通过新 revision 修复旧 Quant 回测入口并保留历史 revision；Down 永远拒绝，只能恢复发布前备份。
-- 无法无损回滚时恢复已验证备份，不提供伪可逆 SQL。
-- 禁止应用启动自动建表、手工修改 migration 账本或用删除业务行修复版本差异。
-
-## 验证
-
-数据库变更在隔离环境通过 migration runner、容器启动和恢复演练验收。最小范围是空库 Up、重复 Up、关键约束与 K 线索引、数据库超前拒绝、非空库保护和 Paper 账本重建；不得连接生产数据库执行验证。恢复演练见 [Paper 恢复与观察](paper-recovery.md)。
-
-## 发布与回滚
-
-本基线不能对旧 version 4 数据库执行原地 Up。部署前必须按上面的授权流程重置 CoinSphere 自有数据库；旧账本与当前迁移文件不一致时，migration runner 也会在缺失的当前表上停止。
-
-应用回滚不自动执行 Down。若需要回滚到重置前版本，停止当前应用并恢复重置前已验证备份及与其匹配的应用镜像。不得把旧应用指向当前基线，也不得把当前应用指向旧 schema。
+远端 PostgreSQL 16 CI 覆盖合成旧库导入、图转换、事务失败回滚、幂等、指纹冲突、作用域与必要凭据阻断、插件版本不符阻断，以及用 PostgreSQL 16 pg_dump/pg_restore 恢复到独立旧库并核对 schema/定义/配置事实。导入后同时核对源指纹未变化；所有网络替身不接触生产。真实源库盘点、外部插件转换、服务器非交易秘密重绑和匹配镜像/数据库/配置/文件恢复演练必须在维护窗口记录，不能宣称 CI 已替代现场证据。

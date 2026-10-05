@@ -41,6 +41,9 @@ type WorkflowGroupAssignmentResult struct {
 }
 
 func (a *App) ListWorkflowGroups(ctx context.Context) ([]WorkflowGroupView, error) {
+	if err := requireCapability(ctx, "workflows.read"); err != nil {
+		return nil, err
+	}
 	var groups []db.WorkflowGroup
 	if err := a.DB.WithContext(ctx).Order("sort_order, id").Find(&groups).Error; err != nil {
 		return nil, errors.New("list workflow groups failed")
@@ -53,9 +56,15 @@ func (a *App) ListWorkflowGroups(ctx context.Context) ([]WorkflowGroupView, erro
 }
 
 func (a *App) CreateWorkflowGroup(ctx context.Context, payload WorkflowGroupUpsertPayload) (WorkflowGroupView, error) {
+	if err := requireCapability(ctx, "workflow_groups.manage"); err != nil {
+		return WorkflowGroupView{}, err
+	}
 	now := time.Now().UTC()
 	group := db.WorkflowGroup{CreatedAt: now, UpdatedAt: now}
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := commandPrincipalTx(tx, ctx, "workflow_groups.manage"); err != nil {
+			return err
+		}
 		if err := tx.Exec("LOCK TABLE workflow_groups IN SHARE ROW EXCLUSIVE MODE").Error; err != nil {
 			return errors.New("lock workflow groups failed")
 		}
@@ -79,8 +88,14 @@ func (a *App) CreateWorkflowGroup(ctx context.Context, payload WorkflowGroupUpse
 }
 
 func (a *App) UpdateWorkflowGroup(ctx context.Context, groupID int64, payload WorkflowGroupUpsertPayload) (WorkflowGroupView, error) {
+	if err := requireCapability(ctx, "workflow_groups.manage"); err != nil {
+		return WorkflowGroupView{}, err
+	}
 	var group db.WorkflowGroup
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := commandPrincipalTx(tx, ctx, "workflow_groups.manage"); err != nil {
+			return err
+		}
 		if err := tx.Exec("LOCK TABLE workflow_groups IN SHARE ROW EXCLUSIVE MODE").Error; err != nil {
 			return errors.New("lock workflow groups failed")
 		}
@@ -107,23 +122,37 @@ func (a *App) UpdateWorkflowGroup(ctx context.Context, groupID int64, payload Wo
 }
 
 func (a *App) DeleteWorkflowGroup(ctx context.Context, groupID int64) error {
-	result := a.DB.WithContext(ctx).Delete(&db.WorkflowGroup{}, groupID)
-	if result.Error != nil {
-		return errors.New("delete workflow group failed")
+	if err := requireCapability(ctx, "workflow_groups.manage"); err != nil {
+		return err
 	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("%w: workflow group", ErrNotFound)
-	}
-	return nil
+	return a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := commandPrincipalTx(tx, ctx, "workflow_groups.manage"); err != nil {
+			return err
+		}
+		result := tx.Delete(&db.WorkflowGroup{}, groupID)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrNotFound
+		}
+		return nil
+	})
 }
 
 func (a *App) UpdateWorkflowGroupOrder(ctx context.Context, payload WorkflowGroupOrderPayload) ([]WorkflowGroupView, error) {
+	if err := requireCapability(ctx, "workflow_groups.manage"); err != nil {
+		return nil, err
+	}
 	groupIDs := uniquePositiveInt64s(payload.GroupIDs)
 	if len(groupIDs) != len(payload.GroupIDs) {
 		return nil, errors.New("groupIds must contain unique positive ids")
 	}
 	now := time.Now().UTC()
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := commandPrincipalTx(tx, ctx, "workflow_groups.manage"); err != nil {
+			return err
+		}
 		if err := tx.Exec("LOCK TABLE workflow_groups IN SHARE ROW EXCLUSIVE MODE").Error; err != nil {
 			return errors.New("lock workflow groups failed")
 		}
@@ -159,6 +188,11 @@ func (a *App) UpdateWorkflowGroupOrder(ctx context.Context, payload WorkflowGrou
 }
 
 func (a *App) AssignWorkflowGroup(ctx context.Context, payload WorkflowGroupAssignmentPayload) (WorkflowGroupAssignmentResult, error) {
+	for _, id := range payload.WorkflowIDs {
+		if err := a.AuthorizeWorkflow(ctx, id, "workflows.update"); err != nil {
+			return WorkflowGroupAssignmentResult{}, err
+		}
+	}
 	workflowIDs := uniquePositiveInt64s(payload.WorkflowIDs)
 	if len(workflowIDs) == 0 || len(workflowIDs) != len(payload.WorkflowIDs) {
 		return WorkflowGroupAssignmentResult{}, errors.New("workflowIds must contain unique positive ids")
@@ -168,6 +202,15 @@ func (a *App) AssignWorkflowGroup(ctx context.Context, payload WorkflowGroupAssi
 	}
 	result := WorkflowGroupAssignmentResult{}
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		p, err := commandPrincipalTx(tx, ctx, "workflows.update")
+		if err != nil {
+			return err
+		}
+		for _, id := range workflowIDs {
+			if err := authorizeWorkflowTx(tx, p, id, "workflows.update"); err != nil {
+				return err
+			}
+		}
 		if err := validateWorkflowGroupID(tx, payload.GroupID); err != nil {
 			return err
 		}

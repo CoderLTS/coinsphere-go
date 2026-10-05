@@ -87,11 +87,6 @@ func (a *App) persistWorkflowSecrets(tx *gorm.DB, workflowID, previousRevisionID
 			return errors.New("encrypt workflow secret failed")
 		}
 	}
-	for key := range graph.requiredSecrets {
-		if values[key] == "" {
-			return fmt.Errorf("node %q requires secret field %q", key.nodeInstanceID, key.field)
-		}
-	}
 
 	keys := make([]workflowSecretKey, 0, len(values))
 	for key := range values {

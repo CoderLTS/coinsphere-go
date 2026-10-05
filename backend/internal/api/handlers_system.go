@@ -37,8 +37,7 @@ func (s *Server) handleLogin(c *gin.Context) {
 }
 
 func (s *Server) handleLogout(c *gin.Context) {
-	s.App.LogoutAccessToken(currentPrincipal(c))
-	ok(c, M{})
+	respond(c, M{}, s.App.LogoutAccessToken(currentPrincipal(c)), "")
 }
 
 func (s *Server) handleReauth(c *gin.Context) {
@@ -190,7 +189,7 @@ func (s *Server) handleCreateRole(c *gin.Context) {
 		fail(c, err.Error())
 		return
 	}
-	data, err := s.App.CreateRole(*payload)
+	data, err := s.App.CreateRole(*payload, currentPrincipal(c))
 	respond(c, data, err, "角色创建成功")
 }
 
@@ -205,7 +204,7 @@ func (s *Server) handleUpdateRole(c *gin.Context) {
 		fail(c, err.Error())
 		return
 	}
-	data, err := s.App.UpdateRole(roleID, *payload)
+	data, err := s.App.UpdateRole(roleID, *payload, currentPrincipal(c))
 	respond(c, data, err, "角色更新成功")
 }
 
@@ -215,7 +214,7 @@ func (s *Server) handleDeleteRole(c *gin.Context) {
 		fail(c, err.Error())
 		return
 	}
-	respond(c, nil, s.App.DeleteRole(roleID), "角色删除成功")
+	respond(c, nil, s.App.DeleteRole(roleID, currentPrincipal(c)), "角色删除成功")
 }
 
 func (s *Server) handleSaveRolePermissions(c *gin.Context) {
@@ -229,7 +228,7 @@ func (s *Server) handleSaveRolePermissions(c *gin.Context) {
 		fail(c, err.Error())
 		return
 	}
-	respond(c, nil, s.App.SaveRolePermissions(roleID, *payload), "角色权限保存成功")
+	respond(c, nil, s.App.SaveRolePermissions(roleID, *payload, currentPrincipal(c)), "角色权限保存成功")
 }
 
 func (s *Server) handleGetMenus(c *gin.Context) {

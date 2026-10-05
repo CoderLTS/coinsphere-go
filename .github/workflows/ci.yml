@@ -16,6 +16,20 @@ jobs:
     name: Go backend
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: coinsphere_test
+          POSTGRES_PASSWORD: ci-only-synthetic
+          POSTGRES_DB: coinsphere_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U coinsphere_test" --health-interval 5s --health-timeout 5s --health-retries 10
+
+    env:
+      COINSPHERE_TEST_DSN: postgres://coinsphere_test:ci-only-synthetic@localhost:5432/coinsphere_test?sslmode=disable
     defaults:
       run:
         working-directory: backend
@@ -36,8 +50,17 @@ jobs:
           test -z "$unformatted" || { printf '%s\n' "$unformatted"; exit 1; }
       - name: Vet
         run: go vet ./...
+      - name: Behavior and race checks
+        env:
+          COINSPHERE_TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: go test -race ./...
       - name: Build
         run: go build ./...
+      - name: Release package behavior
+        working-directory: .
+        run: |
+          bash scripts/release/tests/build-proxy-test.sh
+          bash scripts/release/tests/artifact-scan-test.sh
 
   frontend:
     name: Vue frontend
@@ -61,7 +84,18 @@ jobs:
           cache-dependency-path: frontend/pnpm-lock.yaml
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Compile ordinary business plugin through the frontend registry
+        run: |
+          mkdir -p src/plugins/installed/example_business/frontend
+          cp ../examples/plugins/business/frontend/* src/plugins/installed/example_business/frontend/
+          cp ../examples/plugins/business/registry.fixture.ts src/plugins/registry.generated.ts
       - name: Lint
         run: pnpm lint
       - name: Type check and build
         run: pnpm build
+      - name: Workflow model behavior
+        run: pnpm test:model
+      - name: Browser dependencies
+        run: pnpm exec playwright install --with-deps chromium firefox webkit
+      - name: Critical user journeys
+        run: pnpm test:e2e

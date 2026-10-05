@@ -33,8 +33,13 @@ func (s *Server) handleWorkflowRunsWebSocket(c *gin.Context) {
 	}
 	token := workflowWebSocketToken(c.Request)
 	principal, err := s.App.AuthenticateAccessToken(token)
-	if err != nil || principal == nil || !principal.HasRole("R_SUPER") {
+	if err != nil || principal == nil {
 		writeProblem(c, http.StatusUnauthorized, "invalid access token")
+		return
+	}
+	c.Request = c.Request.WithContext(service.WithPrincipal(c.Request.Context(), principal))
+	if err := s.App.AuthorizeWorkflow(c.Request.Context(), workflowID, "workflows.read"); err != nil {
+		respond(c, nil, err, "")
 		return
 	}
 	conn, err := workflowRunsUpgrader.Upgrade(c.Writer, c.Request, http.Header{
@@ -57,13 +62,20 @@ func (s *Server) handleWorkflowRunsWebSocket(c *gin.Context) {
 	defer close(done)
 	go func() {
 		defer conn.Close()
-		ticker := time.NewTicker(54 * time.Second)
+		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-done:
 				return
-			case update := <-updates:
+			case update, open := <-updates:
+				if !open {
+					return
+				}
+				current, err := s.App.RevalidateSession(principal, "workflows.read")
+				if err != nil || s.App.AuthorizeWorkflow(service.WithPrincipal(c.Request.Context(), current), workflowID, "workflows.read") != nil {
+					return
+				}
 				_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 				if err := conn.WriteJSON(workflowRunWSMessage{
 					Type: "workflow.run.updated", Version: 1,
@@ -72,6 +84,10 @@ func (s *Server) handleWorkflowRunsWebSocket(c *gin.Context) {
 					return
 				}
 			case <-ticker.C:
+				current, err := s.App.RevalidateSession(principal, "workflows.read")
+				if err != nil || s.App.AuthorizeWorkflow(service.WithPrincipal(c.Request.Context(), current), workflowID, "workflows.read") != nil {
+					return
+				}
 				if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second)); err != nil {
 					return
 				}

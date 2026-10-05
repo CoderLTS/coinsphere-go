@@ -24,6 +24,8 @@ var windowsAbsolutePathPattern = regexp.MustCompile(`^[A-Za-z]:/`)
 var assistantQueryNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,47}$`)
 
 type PluginDescriptor struct {
+	Permissions []PermissionDescriptor
+
 	ID              string
 	Name            string
 	Menu            PluginMenuDescriptor
@@ -35,15 +37,16 @@ type PluginDescriptor struct {
 type RegisterFunc func(Registrar, Host) error
 
 type Registrar interface {
+	RunPanel(RunPanelDescriptor) error
+	Cleanup(CleanupHandler) error
+	Ingress(string, IngressHandler) error
+
 	Action(NodeDescriptor, ActionHandler) error
 	Trigger(NodeDescriptor, TriggerHandler) error
-	Strategy(Strategy) error
 	Page(PageDescriptor) error
 	ResultPage(ResultPageDescriptor) error
 	Route(RouteDescriptor, ScopedRouteHandler) error
 	AssistantQuery(AssistantQueryDescriptor, AssistantQueryHandler) error
-	MarketDataProvider(MarketDataProvider) error
-	ExecutionProvider(ExecutionProvider) error
 	WorkflowValidator(WorkflowValidator) error
 	Template(TemplateDescriptor) error
 }
@@ -51,15 +54,15 @@ type Registrar interface {
 type Registry struct {
 	plugins          map[string]PluginDescriptor
 	nodes            map[string]registeredNode
-	strategies       map[string]registeredStrategy
 	pages            map[string]PageDescriptor
 	resultPages      map[string]ResultPageDescriptor
 	routes           map[string]registeredRoute
 	assistantQueries map[string]registeredAssistantQuery
-	marketData       map[string]registeredMarketDataProvider
-	execution        map[string]registeredExecutionProvider
 	validators       map[string]WorkflowValidator
 	templates        map[string]registeredTemplate
+	runPanels        map[string]RunPanelDescriptor
+	cleanups         map[string]CleanupHandler
+	ingresses        map[string]IngressHandler
 }
 
 type registeredNode struct {
@@ -67,12 +70,6 @@ type registeredNode struct {
 	desc     NodeDescriptor
 	action   ActionHandler
 	trigger  TriggerHandler
-}
-
-type registeredStrategy struct {
-	pluginID string
-	desc     StrategyDescriptor
-	strategy Strategy
 }
 
 type registeredRoute struct {
@@ -88,16 +85,6 @@ type registeredAssistantQuery struct {
 	schema   *jsonschema.Schema
 }
 
-type registeredMarketDataProvider struct {
-	pluginID string
-	provider MarketDataProvider
-}
-
-type registeredExecutionProvider struct {
-	pluginID string
-	provider ExecutionProvider
-}
-
 type registeredTemplate struct {
 	pluginID string
 	desc     TemplateDescriptor
@@ -105,11 +92,11 @@ type registeredTemplate struct {
 
 func NewRegistry() *Registry {
 	return &Registry{
+		runPanels: map[string]RunPanelDescriptor{}, cleanups: map[string]CleanupHandler{}, ingresses: map[string]IngressHandler{},
 		plugins: make(map[string]PluginDescriptor), nodes: make(map[string]registeredNode),
-		strategies: make(map[string]registeredStrategy),
-		pages:      make(map[string]PageDescriptor), resultPages: make(map[string]ResultPageDescriptor),
+
+		pages: make(map[string]PageDescriptor), resultPages: make(map[string]ResultPageDescriptor),
 		routes: make(map[string]registeredRoute), assistantQueries: make(map[string]registeredAssistantQuery),
-		marketData: make(map[string]registeredMarketDataProvider), execution: make(map[string]registeredExecutionProvider),
 		validators: make(map[string]WorkflowValidator), templates: make(map[string]registeredTemplate),
 	}
 }
@@ -152,9 +139,12 @@ func (r *Registry) RegisterPlugin(plugin PluginDescriptor, host Host, register R
 		pluginHost.Store = host.Stores.ForPlugin(plugin.ID)
 	}
 	pluginHost.Stores = nil
-	collector := &registrationCollector{plugin: plugin, declared: stringSet(plugin.Contributes)}
+	collector := &registrationCollector{plugin: plugin, declared: stringSet(plugin.Contributes), runPanels: map[string]RunPanelDescriptor{}, ingresses: map[string]IngressHandler{}}
 	if err := register(collector, pluginHost); err != nil {
 		return fmt.Errorf("plugin %q registration failed: %w", plugin.ID, err)
+	}
+	if err := collector.validatePermissions(); err != nil {
+		return err
 	}
 	if err := collector.validateDeclaredContributions(); err != nil {
 		return fmt.Errorf("plugin %q: %w", plugin.ID, err)
@@ -164,11 +154,7 @@ func (r *Registry) RegisterPlugin(plugin PluginDescriptor, host Host, register R
 			return fmt.Errorf("node type %q conflicts between plugins %q and %q", node.desc.Type, previous.pluginID, plugin.ID)
 		}
 	}
-	for _, strategy := range collector.strategies {
-		if previous, exists := r.strategies[strategy.desc.ID]; exists {
-			return fmt.Errorf("strategy %q conflicts between plugins %q and %q", strategy.desc.ID, previous.pluginID, plugin.ID)
-		}
-	}
+
 	for key := range collector.pages {
 		if _, exists := r.pages[key]; exists {
 			return fmt.Errorf("duplicate page %q", key)
@@ -189,28 +175,33 @@ func (r *Registry) RegisterPlugin(plugin PluginDescriptor, host Host, register R
 			return fmt.Errorf("assistant query %q conflicts between plugins %q and %q", key, previous.pluginID, plugin.ID)
 		}
 	}
-	for id := range collector.marketData {
-		if previous, exists := r.marketData[id]; exists {
-			return fmt.Errorf("market data provider %q conflicts between plugins %q and %q", id, previous.pluginID, plugin.ID)
-		}
-	}
-	for id := range collector.execution {
-		if previous, exists := r.execution[id]; exists {
-			return fmt.Errorf("execution provider %q conflicts between plugins %q and %q", id, previous.pluginID, plugin.ID)
-		}
-	}
+
 	for key := range collector.templates {
 		if previous, exists := r.templates[key]; exists {
 			return fmt.Errorf("workflow template %q conflicts between plugins %q and %q", key, previous.pluginID, plugin.ID)
 		}
 	}
 
+	for key := range collector.runPanels {
+		if _, ok := r.runPanels[key]; ok {
+			return fmt.Errorf("duplicate run panel %s", key)
+		}
+	}
+	for node := range collector.ingresses {
+		if r.ingresses[node] != nil {
+			return fmt.Errorf("duplicate ingress %s", node)
+		}
+	}
+	for key, panel := range collector.runPanels {
+		r.runPanels[key] = panel
+	}
+	r.cleanups[plugin.ID] = collector.cleanup
+	for node, handler := range collector.ingresses {
+		r.ingresses[node] = handler
+	}
 	r.plugins[plugin.ID] = plugin
 	for _, node := range collector.nodes {
 		r.nodes[node.desc.Type] = node
-	}
-	for _, strategy := range collector.strategies {
-		r.strategies[strategy.desc.ID] = strategy
 	}
 	for key, page := range collector.pages {
 		r.pages[key] = page
@@ -224,12 +215,6 @@ func (r *Registry) RegisterPlugin(plugin PluginDescriptor, host Host, register R
 	for key, query := range collector.assistantQueries {
 		r.assistantQueries[key] = query
 	}
-	for id, provider := range collector.marketData {
-		r.marketData[id] = provider
-	}
-	for id, provider := range collector.execution {
-		r.execution[id] = provider
-	}
 	if collector.validator != nil {
 		r.validators[plugin.ID] = collector.validator
 	}
@@ -237,16 +222,6 @@ func (r *Registry) RegisterPlugin(plugin PluginDescriptor, host Host, register R
 		r.templates[key] = template
 	}
 	return nil
-}
-
-func (r *Registry) MarketDataProvider(id string) (MarketDataProvider, bool) {
-	provider, ok := r.marketData[id]
-	return provider.provider, ok
-}
-
-func (r *Registry) ExecutionProvider(id string) (ExecutionProvider, bool) {
-	provider, ok := r.execution[id]
-	return provider.provider, ok
 }
 
 func (r *Registry) WorkflowValidators() []WorkflowValidator {
@@ -297,25 +272,6 @@ func (r *Registry) Trigger(nodeType string) (NodeDescriptor, TriggerHandler, boo
 	return desc, node.trigger, true
 }
 
-func (r *Registry) Strategy(strategyID string) (StrategyDescriptor, Strategy, bool) {
-	strategy, ok := r.strategies[strategyID]
-	if !ok {
-		return StrategyDescriptor{}, nil, false
-	}
-	return strategy.desc, strategy.strategy, true
-}
-
-func (r *Registry) Strategies() []StrategyDescriptor {
-	strategies := make([]StrategyDescriptor, 0, len(r.strategies))
-	for _, strategy := range r.strategies {
-		desc := strategy.desc
-		desc.ParameterSchema = append(json.RawMessage(nil), desc.ParameterSchema...)
-		strategies = append(strategies, desc)
-	}
-	sort.Slice(strategies, func(i, j int) bool { return strategies[i].ID < strategies[j].ID })
-	return strategies
-}
-
 func (r *Registry) ResultPage(pluginID, pageKey string) (ResultPageDescriptor, bool) {
 	page, ok := r.resultPages[pluginID+"/"+pageKey]
 	return page, ok
@@ -361,12 +317,9 @@ func (r *Registry) Routes() []RegisteredRoute {
 			if !strings.HasPrefix(key, prefix) {
 				continue
 			}
-			rest := strings.TrimPrefix(key, prefix)
-			parts := strings.SplitN(rest, "/", 2)
-			methodPattern := strings.SplitN(parts[1], " ", 2)
 			routes = append(routes, RegisteredRoute{
 				PluginID:   plugin.ID,
-				Descriptor: RouteDescriptor{Scope: ScopeKind(parts[0]), Method: methodPattern[0], Pattern: methodPattern[1], Action: route.desc.Action, WebSocket: route.desc.WebSocket},
+				Descriptor: route.desc,
 				Handler:    route.handler,
 			})
 		}
@@ -452,17 +405,18 @@ func (r *Registry) PluginNodes(pluginID string) []NodeDescriptor {
 }
 
 type registrationCollector struct {
+	runPanels map[string]RunPanelDescriptor
+	cleanup   CleanupHandler
+	ingresses map[string]IngressHandler
+
 	plugin           PluginDescriptor
 	declared         map[string]bool
 	used             map[string]bool
 	nodes            []registeredNode
-	strategies       []registeredStrategy
 	pages            map[string]PageDescriptor
 	resultPages      map[string]ResultPageDescriptor
 	routes           map[string]registeredRoute
 	assistantQueries map[string]registeredAssistantQuery
-	marketData       map[string]registeredMarketDataProvider
-	execution        map[string]registeredExecutionProvider
 	validator        WorkflowValidator
 	templates        map[string]registeredTemplate
 }
@@ -485,33 +439,6 @@ func (c *registrationCollector) Trigger(desc NodeDescriptor, handler TriggerHand
 		return fmt.Errorf("trigger node %q must use kind %q", desc.Type, NodeKindTrigger)
 	}
 	return c.addNode("triggers", registeredNode{pluginID: c.plugin.ID, desc: desc, trigger: handler})
-}
-
-func (c *registrationCollector) Strategy(strategy Strategy) error {
-	if strategy == nil {
-		return errors.New("strategy is required")
-	}
-	desc := strategy.Descriptor()
-	if !contributionKeyPattern.MatchString(desc.ID) || !strings.Contains(desc.ID, ".") {
-		return errors.New("strategy id must be a dotted lowercase key")
-	}
-	if _, err := semver.StrictNewVersion(desc.Version); err != nil {
-		return fmt.Errorf("strategy %q version must be strict SemVer", desc.ID)
-	}
-	if strings.TrimSpace(desc.Name) == "" || desc.MinimumLookback < 1 {
-		return fmt.Errorf("strategy %q requires a name and positive minimum lookback", desc.ID)
-	}
-	if err := validateSchema("parameterSchema", desc.ParameterSchema, true); err != nil {
-		return fmt.Errorf("strategy %q: %w", desc.ID, err)
-	}
-	for _, existing := range c.strategies {
-		if existing.desc.ID == desc.ID {
-			return fmt.Errorf("duplicate strategy %q", desc.ID)
-		}
-	}
-	c.markUsed("strategies")
-	c.strategies = append(c.strategies, registeredStrategy{pluginID: c.plugin.ID, desc: desc, strategy: strategy})
-	return nil
 }
 
 func (c *registrationCollector) addNode(contribution string, node registeredNode) error {
@@ -693,36 +620,6 @@ func (c *registrationCollector) AssistantQuery(desc AssistantQueryDescriptor, ha
 	return nil
 }
 
-func (c *registrationCollector) MarketDataProvider(provider MarketDataProvider) error {
-	if provider == nil || !contributionKeyPattern.MatchString(provider.ID()) {
-		return errors.New("market data provider requires a valid id")
-	}
-	if c.marketData == nil {
-		c.marketData = make(map[string]registeredMarketDataProvider)
-	}
-	if _, exists := c.marketData[provider.ID()]; exists {
-		return fmt.Errorf("duplicate market data provider %q", provider.ID())
-	}
-	c.markUsed("marketDataProviders")
-	c.marketData[provider.ID()] = registeredMarketDataProvider{pluginID: c.plugin.ID, provider: provider}
-	return nil
-}
-
-func (c *registrationCollector) ExecutionProvider(provider ExecutionProvider) error {
-	if provider == nil || !contributionKeyPattern.MatchString(provider.ID()) {
-		return errors.New("execution provider requires a valid id")
-	}
-	if c.execution == nil {
-		c.execution = make(map[string]registeredExecutionProvider)
-	}
-	if _, exists := c.execution[provider.ID()]; exists {
-		return fmt.Errorf("duplicate execution provider %q", provider.ID())
-	}
-	c.markUsed("executionProviders")
-	c.execution[provider.ID()] = registeredExecutionProvider{pluginID: c.plugin.ID, provider: provider}
-	return nil
-}
-
 func (c *registrationCollector) WorkflowValidator(validator WorkflowValidator) error {
 	if validator == nil || c.validator != nil {
 		return errors.New("plugin may register exactly one non-nil workflow validator")
@@ -823,14 +720,10 @@ func validateNodeDescriptor(desc NodeDescriptor) error {
 	if desc.Capabilities.Stateless != (desc.State == StateStateless) {
 		return fmt.Errorf("node %q stateless capability must match state mode", desc.Type)
 	}
-	if desc.Capabilities.FrameSafe && (!desc.Capabilities.Deterministic || !desc.Capabilities.Stateless ||
-		desc.SideEffect != SideEffectNone && !desc.Capabilities.FrameResult) {
-		return fmt.Errorf("node %q frame-safe capability requires deterministic stateless execution without frame side effects", desc.Type)
-	}
 	if desc.Pool != PoolStream && desc.Pool != PoolCompute {
 		return fmt.Errorf("node %q has invalid pool %q", desc.Type, desc.Pool)
 	}
-	if desc.SideEffect != SideEffectNone && desc.SideEffect != SideEffectData && desc.SideEffect != SideEffectNotification && desc.SideEffect != SideEffectHumanAction && desc.SideEffect != SideEffectPaper {
+	if desc.SideEffect != SideEffectExternal && desc.SideEffect != SideEffectNone && desc.SideEffect != SideEffectData && desc.SideEffect != SideEffectNotification && desc.SideEffect != SideEffectHumanAction {
 		return fmt.Errorf("node %q has invalid side effect %q", desc.Type, desc.SideEffect)
 	}
 	if desc.State != StateStateless && desc.State != StatePersistent {
@@ -897,4 +790,11 @@ func cloneStringMap(values map[string]string) map[string]string {
 		result[key] = value
 	}
 	return result
+}
+
+func (r *Registry) NodePlugin(nodeType string) string {
+	if r == nil {
+		return ""
+	}
+	return r.nodes[nodeType].pluginID
 }

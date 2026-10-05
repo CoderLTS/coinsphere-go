@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"coinsphere/backend/plugin/sdk"
+	"coinsphere/backend/plugin/contracts/trading"
 	"github.com/shopspring/decimal"
 )
 
@@ -27,7 +27,7 @@ var defaultBinanceIndicatorConfig = binanceIndicatorConfig{
 	RSIPeriod: 14, KDJPeriod: 9, KDJKSmooth: 3, KDJDSmooth: 3, WRPeriod: 14,
 }
 
-func calculateBinanceIndicators(candles []sdk.Candle, config binanceIndicatorConfig) []map[string]any {
+func calculateBinanceIndicators(candles []trading.Candle, config binanceIndicatorConfig) []map[string]any {
 	closes := make([]decimal.Decimal, len(candles))
 	for i := range candles {
 		closes[i] = candles[i].Close
@@ -110,7 +110,7 @@ func alignedEMA(values []decimal.Decimal, period int) []*decimal.Decimal {
 	return result
 }
 
-func alignedBollinger(candles []sdk.Candle, period int, multiplier decimal.Decimal) ([]*decimal.Decimal, []*decimal.Decimal, []*decimal.Decimal) {
+func alignedBollinger(candles []trading.Candle, period int, multiplier decimal.Decimal) ([]*decimal.Decimal, []*decimal.Decimal, []*decimal.Decimal) {
 	middle, upper, lower := make([]*decimal.Decimal, len(candles)), make([]*decimal.Decimal, len(candles)), make([]*decimal.Decimal, len(candles))
 	for i := range candles {
 		if i < period-1 {
@@ -214,7 +214,7 @@ func rsiValue(gain, loss decimal.Decimal) *decimal.Decimal {
 	return &value
 }
 
-func alignedKDJ(candles []sdk.Candle, period, ksmooth, dsmooth int) ([]*decimal.Decimal, []*decimal.Decimal, []*decimal.Decimal) {
+func alignedKDJ(candles []trading.Candle, period, ksmooth, dsmooth int) ([]*decimal.Decimal, []*decimal.Decimal, []*decimal.Decimal) {
 	k, d, j := make([]*decimal.Decimal, len(candles)), make([]*decimal.Decimal, len(candles)), make([]*decimal.Decimal, len(candles))
 	currentK, currentD := decimal.NewFromInt(50), decimal.NewFromInt(50)
 	for i := period - 1; i < len(candles); i++ {
@@ -236,7 +236,7 @@ func alignedKDJ(candles []sdk.Candle, period, ksmooth, dsmooth int) ([]*decimal.
 	return k, d, j
 }
 
-func alignedOBV(candles []sdk.Candle) []*decimal.Decimal {
+func alignedOBV(candles []trading.Candle) []*decimal.Decimal {
 	result := make([]*decimal.Decimal, len(candles))
 	current := decimal.Zero
 	for i, candle := range candles {
@@ -253,7 +253,7 @@ func alignedOBV(candles []sdk.Candle) []*decimal.Decimal {
 	return result
 }
 
-func alignedWR(candles []sdk.Candle, period int) []*decimal.Decimal {
+func alignedWR(candles []trading.Candle, period int) []*decimal.Decimal {
 	result := make([]*decimal.Decimal, len(candles))
 	for i := period - 1; i < len(candles); i++ {
 		high, low := candles[i].High, candles[i].Low

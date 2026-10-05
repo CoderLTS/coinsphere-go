@@ -115,6 +115,8 @@ for root, suffix in ((windows_root, ".exe"), (linux_root, "")):
     )
     write(root / f"coinsphere-server{suffix}", server_content, executable=root == linux_root)
     write(root / f"coinsphere-migrate{suffix}", b"binary", executable=root == linux_root)
+    write(root / f"coinsphere{suffix}", b"binary", executable=root == linux_root)
+    write(root / f"workflow-migrate{suffix}", b"binary", executable=root == linux_root)
     write(root / "config.yml", 'auth:\n  secret_key: "coinsphere-dev-secret"\n')
     write(root / "nginx.conf", "server { listen 80; }\n")
     write(root / "README.md", "CoinSphere package\n")

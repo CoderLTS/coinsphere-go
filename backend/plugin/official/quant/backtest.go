@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"coinsphere/backend/plugin/contracts/trading"
 	"coinsphere/backend/plugin/sdk"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -50,7 +51,7 @@ func (a quantEvaluateAction) Execute(ctx context.Context, request sdk.ActionRequ
 	if len(candles) != lookback || !candles[len(candles)-1].CloseTime.Equal(eventTime) {
 		return sdk.ActionResult{}, errors.New("quant strategy has insufficient closed lookback")
 	}
-	target, err := strategy.Evaluate(ctx, sdk.EvaluateRequest{
+	target, err := strategy.Evaluate(ctx, trading.EvaluateRequest{
 		Market: config.Market, Instrument: config.Instrument, Interval: config.Interval,
 		Candles: quantSDKCandles(candles), Parameters: config.Parameters,
 		EvaluatedAt: candles[len(candles)-1].CloseTime.UTC(),
@@ -155,12 +156,12 @@ type quantBacktestPoint struct {
 	Equity            string `json:"equity"`
 }
 
-func simulateQuantBacktest(ctx context.Context, strategy sdk.Strategy, desc sdk.StrategyDescriptor, config quantBacktestConfig, candles []quantCandle, lookback int) (quantBacktestSimulation, error) {
+func simulateQuantBacktest(ctx context.Context, strategy trading.Strategy, desc trading.StrategyDescriptor, config quantBacktestConfig, candles []quantCandle, lookback int) (quantBacktestSimulation, error) {
 	if len(candles) < lookback+1 {
 		return quantBacktestSimulation{}, errors.New("quant backtest has insufficient lookback or no next candle open")
 	}
 	sdkCandles := quantSDKCandles(candles)
-	if err := validateStrategyCandles(sdk.EvaluateRequest{
+	if err := validateStrategyCandles(trading.EvaluateRequest{
 		Market: config.Market, Instrument: config.Instrument, Interval: config.Interval,
 		Candles: sdkCandles, EvaluatedAt: candles[len(candles)-1].CloseTime.UTC(),
 	}); err != nil {
@@ -175,7 +176,7 @@ func simulateQuantBacktest(ctx context.Context, strategy sdk.Strategy, desc sdk.
 			return quantBacktestSimulation{}, err
 		}
 		window := sdkCandles[index-lookback+1 : index+1]
-		target, err := strategy.Evaluate(ctx, sdk.EvaluateRequest{
+		target, err := strategy.Evaluate(ctx, trading.EvaluateRequest{
 			Market: config.Market, Instrument: config.Instrument, Interval: config.Interval,
 			Candles: window, Parameters: config.Parameters, EvaluatedAt: candles[index].CloseTime.UTC(),
 		})
@@ -236,7 +237,7 @@ func (q *quantRuntime) loadQuantCandles(ctx context.Context, config quantSeriesC
 	if !ok {
 		return nil, fmt.Errorf("quant market data provider %q is unavailable", config.Venue)
 	}
-	items, err := provider.Candles(ctx, sdk.CandleQuery{
+	items, err := provider.Candles(ctx, trading.CandleQuery{
 		Market: config.Market, Instrument: config.Instrument, Interval: config.Interval,
 		StartTime: start.UTC(), EndTime: end.UTC(), Limit: limit,
 	})
@@ -259,7 +260,7 @@ func (q *quantRuntime) loadQuantCandlesThroughClose(ctx context.Context, config 
 	return q.loadQuantCandles(ctx, config, time.Time{}, closeTime.UTC().Add(time.Nanosecond), limit)
 }
 
-func quantStrategyLookback(desc sdk.StrategyDescriptor, parameters json.RawMessage) (int, error) {
+func quantStrategyLookback(desc trading.StrategyDescriptor, parameters json.RawMessage) (int, error) {
 	if desc.ID == smaStrategyID {
 		var value struct {
 			SlowPeriod int `json:"slowPeriod"`
@@ -284,15 +285,15 @@ func parseQuantUTCTime(value string) (time.Time, error) {
 	return parsed.UTC(), nil
 }
 
-func quantSDKCandles(candles []quantCandle) []sdk.Candle {
-	converted := make([]sdk.Candle, len(candles))
+func quantSDKCandles(candles []quantCandle) []trading.Candle {
+	converted := make([]trading.Candle, len(candles))
 	for index, candle := range candles {
 		converted[index] = quantSDKCandle(candle)
 	}
 	return converted
 }
 
-func quantBacktestDetail(config quantBacktestConfig, desc sdk.StrategyDescriptor, candles []quantCandle, simulation quantBacktestSimulation) ([]byte, map[string]any, error) {
+func quantBacktestDetail(config quantBacktestConfig, desc trading.StrategyDescriptor, candles []quantCandle, simulation quantBacktestSimulation) ([]byte, map[string]any, error) {
 	data := make([]map[string]any, len(candles))
 	for index, candle := range candles {
 		data[index] = quantCandleData(candle)

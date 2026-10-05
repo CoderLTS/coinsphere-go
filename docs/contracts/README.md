@@ -1,166 +1,75 @@
-# CoinSphere 公共契约
+# 公共契约
 
-本文只冻结当前已实现的跨模块语义。系统结构见[当前架构](../architecture/overview.md)，插件包与示例见[插件开发指南](../plugin-development.md)；未注册路由不得视为可用接口。
+本契约对应 Core 4、SDK major 4、Graph schemaVersion 3 和 PostgreSQL 16。旧 API/图没有在线兼容层；离线转换见[迁移手册](../runbooks/database-migrations.md)。
 
-## 通用边界
+## HTTP 与身份
 
-- 领域时间统一使用 UTC。数据库使用 `TIMESTAMPTZ`，HTTP 和事件使用带时区的 RFC 3339。
-- 金融价格、数量、金额、费率和盈亏使用 Decimal；数据库使用 `NUMERIC(38,18)`，JSON 使用十进制字符串。
-- 外部枚举、时间、ID、Decimal、URL、文件和凭据在信任边界校验；模块不变量由拥有模块或数据库约束保证。
-- 错误响应使用 `application/problem+json`，包含 `type`、`title`、`status`、`detail` 和 `requestId`。
+成功响应为 `{code:200,msg:"",data:...}`，错误为 RFC 9457 Problem Details，包含 type/title/status/detail/requestId。ID 是真实数据库 ID；UTC 时间使用 RFC 3339，金融值使用十进制字符串。
 
-## 身份与 HTTP
+除登录、健康、静态资源与凭据验证的 Ingress 外，API 使用 Bearer access token。登出持久撤销当前 tokenId。有效能力来自已启用角色及独立 role_permissions；菜单布局不会改变能力。受保护操作在服务端事务内再次校验身份和授权。
 
-- 不提供公开注册。`POST /api/v1/auth/login` 是唯一匿名身份 API。
-- `POST /api/v1/auth/logout`、`POST /api/v1/auth/reauth` 和 `GET /api/v1/me` 要求有效 Access Token。
-- `POST /api/v1/auth/reauth` 返回绑定当前用户与当前会话、五分钟失效且只能使用一次的不透明 Token。
-- 当前业务 API 包含 `/api/v1/home/*`、`/api/v1/admin/users`、`/api/v1/system/*`、工作流路由、ResultView 路由和系统插件路由；除匿名 Webhook 和获授权 ResultView 外，工作流与系统插件路由只允许 `R_SUPER`。
-- `/health/live` 只报告进程存活；`/health/ready` 和 `/health` 在一秒预算内检查 PostgreSQL；`/metrics` 要求登录。
-- 旧行情、策略、回测、信号、全局通知渠道/规则和交易路由已移除，不提供别名或兼容响应。
+| 接口 | 语义 |
+| --- | --- |
+| POST /api/v1/workflows | graph/template、metadata、secretChanges 和运行配置原子创建；返回真实工作流与初始 draft 指针 |
+| GET /api/v1/workflows | 分页摘要，含最近 Run 状态和有效操作权限；不要求前端逐行取详情 |
+| POST /api/v1/workflows/{id}/revisions | expectedDraftRevisionId、graph、可选 metadata/secretChanges 原子保存；过期指针返回冲突 |
+| POST /api/v1/workflows/{id}/publish | revisionId、expectedPublishedRevisionId 显式发布；必要凭据与执行能力不满足时拒绝 |
+| POST /api/v1/workflows/{id}/lifecycle | activate/deactivate 等生命周期操作；自动触发绑定发布定义 |
+| POST /api/v1/workflows/{id}/runs | revisionId、entryPoint、input 创建固定快照运行；手工试运行不切换发布指针 |
+| GET/POST /api/v1/workflow-runs/{runId} | 查询真实 Run 与节点尝试；授权后的 cancel/retry/replay |
+| GET /api/v1/human-tasks、POST /api/v1/human-tasks/{taskId} | 授权范围内待办列表；一次性 approve/reject，已决定/过期返回冲突 |
+| GET/PUT /api/v1/workflows/{id}/grants | owner/user/role 资源授权；授予范围不得超过操作者 |
+| GET /api/v1/workbench | 当前用户工作流、待办与结果摘要 |
+| GET /api/v1/plugins/catalog | 已加载插件的结果页和运行面板目录；节点另由 /workflows/node-definitions 提供 |
+| /api/v1/result-views | 固定范围视图、用户/角色授权、开放/停用/撤销；revoked 不可重新开放 |
 
-## 平台智能助手
+没有工作流资源范围的请求不可读取 Run、日志、审批或制品。相同 SHA256 的制品仍须验证当前用户可访问的引用。系统观察要求 system.observe，助手与模型配置分别要求 assistant.use/config.ai.manage。
 
-- `/api/v1/config/ai-models` 提供全局模型 CRUD，`/{modelId}/validations` 执行连接检查；`PATCH` 只切换启用状态。模型字段固定为展示名、Base URL、模型名、可选 API Key、启用状态、优先级和超时，响应仅返回 Key 掩码。已被会话引用的模型删除返回 `409 Conflict`。
-- `GET /api/v1/assistant/models` 列出可用模型；`GET/POST /api/v1/assistant/sessions`、`GET/DELETE /api/v1/assistant/sessions/{sessionId}` 和 `GET /api/v1/assistant/sessions/{sessionId}/messages` 管理当前超级管理员的会话。
-- `POST /api/v1/assistant/sessions/{sessionId}/stream` 返回 SSE，事件名固定为 `user`、`tool`、`content`、`done`、`error`。`tool` 只包含工具名及 `running/completed/failed` 状态；助手调用 `create_workflow` 时，平台会先按实时节点目录完整校验，再在同一事务中创建 `inactive` 工作流、初始修订和运行时。
-- 工作流创建失败会把校验或事务错误返回给助手重试，不留下工作流、修订或运行时记录；创建成功后不自动激活或运行。
-- 上述模型和助手接口全部要求 `R_SUPER`。模型上下文、工具结果与日志不得暴露密钥、工具原始参数、个人数据或原始载荷。
+## Graph 3
 
-## 出站代理
+图由 schemaVersion、entryPoints、nodes、edges 组成。entryPoints 使用通用名字，main 是默认入口；每个入口指向有效节点，不要求 realtime/backtest 固定名称。节点保留 nodeInstanceId/nodeType/nodeVersion/config/inputBindings/position，版本精确校验。
 
-- `/api/v1/system/proxies` 提供 HTTP/SOCKS5 代理的列表、新增、更新、启停和删除，`/{proxyId}/validations` 通过 Binance Spot 公共 Ping 检查连通性。接口只允许拥有对应系统代理权限的管理员使用。
-- 代理密码使用服务端 SecretCipher 加密保存，列表和编辑响应只返回是否已配置；编辑时密码留空表示保留，显式清除后删除密文。已被任一工作流修订引用的代理删除返回 `409 Conflict`。
-- `official.binance` 行情节点的 `proxyId` 为 `0` 或缺省时直连；选择正数 ID 时，运行时必须解析到仍存在且已启用的代理，否则节点失败。代理只改变 Binance 公共 REST/WebSocket 的传输路径，不扩大固定主机和公共端点白名单。Quant 回测不读取代理配置，而是通过 `MarketDataRegistry` 使用 Provider。
-- `official.connector`、`official.ai`、通知、QQ、Paper 报价和其他 Quant 节点不读取系统代理池，也不继承上述节点的代理选择。
+| Binding.kind | 取值规则                                          |
+| ------------ | ------------------------------------------------- |
+| literal      | value 是完整 JSON 值，Decimal 必须为字符串        |
+| field        | nodeInstanceId 与 fieldPath 从指定节点输出取值    |
+| input        | fieldPath 从入口输入取值                          |
+| cel          | expression 显式访问 input、nodes、event、incoming |
 
-## 工作流
+CEL 示例：`nodes["check"].ready && input.amount == "1.25"`。输出按节点 ID 命名空间访问。incoming 只包含到达该节点的实际已选边及来源输出；边 condition、来源端口和声明 branch 共同决定可达性。未选分支跳过，汇合节点执行一次，不对 ready/triggered 做隐式判断。
 
-| 路由                                                        | 语义                                     |
-| ----------------------------------------------------------- | ---------------------------------------- |
-| `GET /api/v1/workflows/templates`                           | 列出当前可创建的批处理、事件和连续流模板 |
-| `POST /api/v1/events`                                       | 发布 CloudEvents 1.0 结构化 JSON         |
-| `POST /api/v1/webhooks/{workflowId}`                        | 通过工作流 Secret 发布 Webhook 事件      |
-| `GET /api/v1/human-tasks`                                   | 查询待处理人工任务                       |
-| `POST /api/v1/human-tasks/{taskId}`                         | 一次性批准或拒绝人工任务                 |
-| `GET /api/v1/workflows/node-definitions`                    | 列出核心与编译期插件节点 Schema、分类与检索元数据 |
-| `POST /api/v1/workflows/validate`                           | 只读校验完整工作流图                     |
-| `GET/POST /api/v1/workflow-groups`                          | 列出全局分组，或在末尾创建分组           |
-| `PATCH/DELETE /api/v1/workflow-groups/{groupId}`            | 重命名分组，或删除并解除工作流归属       |
-| `PUT /api/v1/workflow-groups/order`                         | 原子替换全部自定义分组顺序               |
-| `GET/POST /api/v1/workflows`                                | 列表，或从模板创建工作流及初始修订       |
-| `PATCH /api/v1/workflows/group-assignment`                  | 原子移动最多 1000 个工作流               |
-| `GET /api/v1/workflows/{workflowId}`                        | 读取元数据、活动修订和运行时容量         |
-| `PATCH /api/v1/workflows/{workflowId}`                      | 更新工作流名称和说明，不修改活动修订     |
-| `DELETE /api/v1/workflows/{workflowId}`                     | 删除工作流、全部修订、执行记录及关联结果 |
-| `GET/POST /api/v1/workflows/{workflowId}/revisions`         | 列表，或保存新不可变修订                 |
-| `GET/DELETE /api/v1/workflows/{workflowId}/revisions/{revisionId}` | 读取固定修订，或删除历史修订                    |
-| `POST /api/v1/workflows/{workflowId}/lifecycle`             | 执行 `activate` 或 `deactivate`          |
-| `GET/POST /api/v1/workflows/{workflowId}/runs`              | 搜索运行日志，或创建手工运行             |
-| `WS /api/v1/ws/workflows/{workflowId}/runs`                 | 超级管理员订阅轻量运行更新通知           |
-| `GET /api/v1/workflow-runs/{runId}`                         | 读取事件、节点尝试、日志和制品引用       |
-| `POST /api/v1/workflow-runs/{runId}`                        | 执行 `cancel`、`retry` 或 `replay`       |
-| `GET /api/v1/notification-deliveries`                       | 查询当前用户的站内通知与未读数           |
-| `POST /api/v1/notification-deliveries/{deliveryId}/read`    | 将当前用户的一条站内通知标为已读         |
-| `POST /api/v1/notification-deliveries/read-all`             | 将当前用户的全部站内通知标为已读         |
-| `WS /api/v1/ws/notifications`                               | 订阅当前用户的站内通知和未读数更新       |
-| `GET /api/v1/artifacts/{sha256}/manifest`                   | 读取并校验制品清单                       |
-| `GET /api/v1/artifacts/{sha256}/download`                   | 下载解压后的制品正文                     |
-| `GET/POST /api/v1/result-views`                             | 列出获授权视图，或由管理员创建固定视图   |
-| `GET /api/v1/result-views/{viewId}`                         | 读取授权视图的公开描述                   |
-| `PUT /api/v1/result-views/{viewId}/grants`                  | 管理员原子替换用户与角色授权             |
-| `POST /api/v1/result-views/{viewId}/revoke`                 | 管理员不可逆撤销共享视图                 |
-| `GET /api/v1/result-views/{viewId}/runs`                    | 读取固定工作流的脱敏运行摘要             |
-| `POST /api/v1/result-views/{viewId}/runs/{runId}/{action}`  | 按白名单重试或取消范围内运行             |
-| `POST /api/v1/result-views/{viewId}/workflow/pause`         | 按白名单暂停固定工作流                   |
+Config 只存静态配置；Secret 字段以 ConfigSchema 的 x-coinsphere-secret 声明，正文通过 secretChanges 独立提交，不进入图。修订查询只返回 secretFields 是否已配置。替换、保留或移除凭据随保存事务完成；发布和运行校验 required Secret。
 
-- 创建接受批处理、事件、Connector 和 Quant 模板。事件 Trigger 按类型及可选精确 source/subject 过滤；`core.schedule` 配置必须二选一：`everySeconds` 60 至 86400，或六段 `cronExpression` 加 IANA `timeZone`。图 `schemaVersion` 固定为 `1`，节点保存 `nodeInstanceId`、精确节点版本、普通配置、结构化输入映射和位置；边保存两端端口及可选 Boolean CEL 条件。
-- 工作流分组是超级管理员共享的单层分类，每个工作流最多归属一个分组；`groupId=null` 表示未分组，既有工作流升级后保持未分组。分组名去除首尾空白后为 1 至 80 个字符且大小写不敏感唯一；删除分组只把其工作流移至未分组，不删除、停用或修改修订。排序请求必须提交当前全部分组 ID 的完整排列，分组集合已并发变化时返回 `409 Conflict`；批量归属请求必须提交 1 至 1000 个唯一正工作流 ID，并在目标分组或任一工作流不存在时整体失败。
-- 输入映射只接受 `field`、`literal`、`cel`。字段来源使用上游 `nodeInstanceId` 和字段路径数组；保存校验端口、可达性、DAG、JSON Schema、字段类型和 CEL，并拒绝 Decimal CEL 算术。图级后向边始终拒绝；`core.loop` 只运行内嵌无环子图，并强制 1 至 100 次上限、绝对超时和 Boolean CEL 退出条件。每轮 RunNode、RunCheckpoint 与操作键都包含迭代号，人工等待节点不能嵌入 Loop。
-- 保存请求必须提供当前 `expectedActiveRevisionId`。服务锁定工作流，校验完整图，写入递增修订、修订级密钥绑定并原子切换活动指针；每个工作流只保留最新 10 个修订，第 11 个修订保存时在同一事务删除最旧修订及其密钥绑定。最旧修订仍被运行事实引用时返回 `409 Conflict` 并整体回滚。并发旧指针返回 `409 Conflict`，失败校验不创建修订。同一节点实例的类型和版本不变时保留持久状态；删除节点或修改类型/版本且已有状态时，工作流必须为 `inactive`，并由管理员通过 `resetStateNodeInstanceIds` 精确确认要重置的节点，状态删除与修订激活在同一事务提交。
-- `secretChanges` 只允许替换或移除节点 Config Schema 声明的顶层 `x-coinsphere-secret` 字段。密钥按修订、节点实例和字段独立加密；响应只返回 `secretFields[nodeInstanceId][field]=true`，图、修订响应和节点目录永不返回密钥值。
-- 修订保存后不可更新。具有 `scheduler.workflow_definitions.delete` 权限的管理员可以删除非活动历史修订；服务在同一事务删除该修订的执行记录、关联结果、节点状态迁移和修订级密钥，活动修订仍返回 `409 Conflict`。保留上限清理仍拒绝删除有 Run 引用的最旧修订。相同权限也可删除非激活工作流；仍有运行中 Run 时返回 `409 Conflict`，否则在同一事务删除全部运行明细、结果、修订、运行时和工作流。该操作不可恢复。工作流状态只有 `inactive / active / error`；Trigger 异常退出进入 `error`，管理员先 `deactivate` 恢复为 `inactive`，确认修复后再 `activate`。
-- `activate` 允许 Run 队列领取工作并启动连续流 Trigger；`deactivate` 停止领取新 Run、取消 Trigger，当前 Action 返回后保存检查点并重新排队。手工触发只适用于 `core.manual`；`core.schedule` 按固定间隔或带时区 Cron 去重入队，服务恢复后最多补一次漏跑。TriggerHandler 必须响应取消和 Emitter 背压；进程重启会从数据库扫描仍为 `active` 的连续流。
-- CloudEvent 要求 1.0、UTC 时间、对象 `data` 和 1 至 256 字节 `partitionkey`。`(source,id)` 全局唯一；相同内容重试返回原事件，不同内容返回 `409`。事件、投递和 Run 在同一事务提交，Outbox 持久重试内部失败事件。闭合 K 线的 OHLCV 正文只保存在 Quant 行情表和事件表，Run 只关联事件 ID。
-- Run 创建时固定事件与活动修订。单实例执行器使用 PostgreSQL 持久队列、每工作流并发/积压上限和有界 `stream`/`compute` 池；同工作流同分区按入队顺序领取，不同分区可并行，过期租约重启后重新排队。进入 `waiting` 的人工任务保存上下文并释放执行池和分区占用。
-- 每个成功节点原子提交终态 RunNode、输出 RunCheckpoint 和缓冲状态。失败只重试当前节点，默认最多三次并线性退避；操作键固定为 `sha256(runId + ":" + nodeInstanceId + ":" + loopIteration)`。取消通过 `context.Context` 协作传递，取消请求后不再调度下游节点。最终失败用 Outbox 发布 `io.coinsphere.workflow.run.failed`。
-- 核心执行 `core.manual`、`core.schedule`、`core.event`、`core.constant`、`core.human_approval`、`core.loop` 和 `core.end`，其他 Action/Trigger 从编译期插件注册表调用；执行前后分别校验输入/输出 Schema，修订密钥通过节点范围 `SecretReader` 解密。启动前必须已配置活动修订的全部必需密钥。
-- `core.human_approval` 默认产生 `pending` 任务；显式 `auto` 模式直接输出自动批准。相同工作流、节点和业务键的新任务会把旧任务置为 `superseded`。`approved`、`rejected`、`expired` 和 `superseded` 都只能提交一次并恢复原 Run，决定正文最多 64 KiB。
-- 终态 Run 可创建固定原事件与修订的诊断重放。`notification`、`human_action` 和 `paper` 副作用不再次执行，而是复用原 RunCheckpoint 和制品；缺少原检查点时重放失败。
-- Run 列表支持游标分页、UTC `from/to`、状态、触发类型和最多 200 字符的关键词搜索。详情按执行顺序返回全部 RunNode 尝试、节点多行日志、脱敏输入输出摘要、事件摘要、结果和制品引用。前端按每个 attempt 合成开始、业务和结束记录，开始展示输入摘要，结束展示状态、耗时、输出摘要或受控错误；历史页选择的 Run 固定展示，不跟随后续流式 Run。
-- 核心和插件通过节点范围 `slog.Logger` 写入 `workflow_node_logs`。消息最多 1000 字符，结构化字段最多 4 KiB，只保留受限标量；密钥、令牌、授权头、Cookie、DSN 和原始载荷统一丢弃或脱敏。不提供第二套 Activity API。运行详情 WebSocket 使用 `coinsphere.workflow-runs.v1` 子协议、同源 Origin 和超级管理员 Access Token，只发送轻量更新通知；客户端仍从 HTTP API 读取持久事实。
-- `ArtifactStore` 将最多 1 GiB 的正文用标准库 gzip 压缩并按未压缩正文 SHA-256 寻址。Checkpoint 原子引用清单；Manifest 在服务端重新计算大小和摘要，Web 下载后再次校验摘要。
-- 终态 Run、RunNode、节点日志、RunCheckpoint 和未被其他检查点引用的制品按工作流 `retentionDays` 清理，默认 30 天。制品数据库记录提交后再删除正文；失败最多留下无引用文件，不丢失仍被引用的正文。
+Loop config 包含 maxIterations、timeoutSeconds、exitCondition 和 body。循环体用 core.loop_item/core.loop_end，展开节点 ID 为父ID.子ID；退出表达式中的 input 是当前 iteration/value。循环体不能持久等待，父节点不占子节点槽，绝对期限沿用最早 attempt。
 
-## 插件清单
+## Run、错误与状态
 
-每个可信本地插件根目录包含唯一的 `coinsphere-plugin.json`：
+Run 状态原样返回 queued/running/waiting/retrying/succeeded/failed/cancelled；等待与重试有独立语义。RunNode 保留 attempt/loopIteration/invocationStarted 和受控摘要。修订与检查点不可变，被 Run 引用的旧修订不会阻断正常保存。
 
-- `schemaVersion` 当前固定为 `1`。
-- `id` 是稳定的小写点分名称；`version` 是严格 SemVer。
-- `sdkMajor` 必须等于当前 SDK major `3`，`requiresCore` 必须包含当前 Core `3.0.0`；`requiresPlugins` 按依赖拓扑排序并校验 SemVer。
-- Backend 入口必须是拥有匹配 module 名的 Go module；Frontend 和 migration 路径必须留在插件根目录内。可选 `menu` 支持 `own`、`existing` 和 `direct` 三种页面菜单定位方式。
-- `contributes` 只接受 `nodes`、`triggers`、`strategies`、`apiRoutes`、`pages`、`resultPages`、`assistantQueries` 和 `migrations`，声明的非 migration 贡献必须实际注册。
+租约 token、有效期限与授权保护开始调用、状态、检查点、日志及终态写入。永久错误不重试，transient 在节点声明安全重试时最多三次，unknown_result 阻断自动/人工直接重试。HTTP/AI 调用按外部副作用处理；对端 Idempotency-Key 本身不证明幂等。诊断复用原副作用检查点，缺证据失败。
 
-`plugin validate` 只读校验一个或多个目录。应用启动只执行生成的 Go 注册表，不扫描插件目录或动态加载共享库。
+审批创建与 waiting 同事务；决定、取消、过期和替代原子恢复 Run，不会产生已决定任务仍永久 waiting。持久状态按 workflow/revision/node 隔离，含状态图全工作流串行提交。
 
-## SDK
+## SDK 4 与贡献
 
-Action 描述符固定节点类型、SemVer、Config/UI/Input/Output Schema、可选固定 `Branches`、执行池、副作用等级和状态模式。需要校验的 Schema 必须声明 JSON Schema 2020-12。分支节点输出 `branch` 后，运行时先选择同名端口，再执行该边原有 Boolean CEL；端口允许零条或多条出边，图仍必须是 DAG，目标节点类型不受限制。
+ActionRequest 提供 Revision、NodeInstanceID、OperationKey、Input、Config、Secrets、State、Artifacts、Incoming、GraphSnapshot 与 Logger；ActionResult 提供 Output/Artifacts。TriggerRequest 与 Emitter 用于持久事件，Trigger 需响应取消。金融类型和逐帧执行不属于通用 SDK。
 
-`ActionRequest` 包含固定工作流/修订、节点实例 ID、稳定操作键、已解析输入和配置，以及 SecretReader、StateStore、ArtifactStore 和结构化 Logger。`ActionResult` 只返回 JSON 输出和制品引用。契约测试和工作流运行时使用同一 Registry 与 Handler 接口。
+PluginDescriptor 声明权限与 contributes，RouteDescriptor/PageDescriptor/ResultPageDescriptor/节点执行必须引用所属插件声明的权限。manifest 保持 schemaVersion 1，sdkMajor 为 4；官方版本与依赖来自 backend/version/builtin.json。
 
-插件作用域路由必须声明一种上下文：
+| Scope | 路由与约束 |
+| --- | --- |
+| SystemScope | /api/v1/plugins/{pluginId}/\*；需要声明能力，WorkflowIDs/AllWorkflows 由 Core 注入，查询用 sdk.ScopeWorkflows 过滤 |
+| WorkflowScope | /api/v1/workflows/{workflowId}/nodes/{nodeInstanceId}/plugins/{pluginId}/\*；锁定当前修订、节点归属与资源授权 |
+| ResultScope | /api/v1/result-views/{viewId}/plugins/{pluginId}/\*；锁定 Resources、Scope、Filters、AllowedActions、当前 UserID；动作还检查 ActionPermissions |
 
-路由 Handler 使用 `func(*gin.Context, RouteScope)`；相对 `Pattern` 的动态参数使用 Gin `:param` 语法，并通过 `c.Param` 读取。
+ResultScope.HumanTasks 捕获当前身份和视图范围。固定节点范围不能执行整 Run 的 retry/cancel 或工作流 pause。系统/结果路由处理器不得接受客户端 userId、scope、workflowIds 扩大范围。
 
-- `WorkflowScope`：SDK 已定义的工作流和节点范围；当前公共 HTTP 未挂载该作用域，插件不得假定存在可调用 URL。
-- `ResultScope`：固定视图、插件、页面、服务端 scope/filter、操作白名单和当前用户；普通响应不返回固定 scope/filter 或源 workflow ID。
-- `SystemScope`：插件安装状态和系统级健康范围。
+RunPanel 通过 panelKey/nodeTypes 注册，组件接收 `{result:{run,runNode}}`；resultPages 组件接收 view 与 PluginResultContext；resultConfigs 接收 scope/filters 双向模型及 Schema。nodeEditors 使用 config 与 update(key,value)，UI Schema 通用表单由 Core 提供。模块按显式 pluginId/贡献类型/key 加载，缺组件有可见错误。
 
-插件不得从查询参数扩大核心注入的范围。不存在、未授权或已撤销 ResultView 统一返回 `404`；操作先解析 active 视图，再检查白名单、RBAC 和领域状态。
+Cleanup 运行在 Core 提供的同一数据库事务；Ingress 验证领域协议后产出 CloudEvent；RewriteConfigNodeIDs 重写 Loop 配置内真实节点 ID。插件日志只在状态拥有层记录，不包含凭据、个人数据或原始载荷。
 
-`assistantQueries` 通过 `AssistantQueryDescriptor`、`AssistantQueryHandler` 和 `Registrar.AssistantQuery` 注册。工具名由插件 ID 与查询名组成稳定命名空间；输入必须匹配 JSON Schema 2020-12，Handler 只接收 Core 注入的 `SystemScope`，返回值必须是 64 KiB 内的合法 JSON。该扩展只允许查询拥有插件的数据，不授予写入、交易或扩大作用域的能力。
+## 生命周期与数据库
 
-页面描述符通过 `pages` 注册插件内唯一的 `pageKey`、标题、图标和缓存设置。菜单定位由插件 manifest 的 `menu` 选择：默认把全部页面放进插件自己的顶级菜单，也可以指定现有顶级菜单，或让页面各自直接作为顶级菜单；前端 `FrontendPluginModule.pages` 必须导出同名页面。`resultPages` 只渲染服务端固定 ResultView 范围，不生成菜单。
+安装、编译、加载三个事实分开，安装版本与编译版本不相等则不加载。必需依赖与重复贡献注册明确失败。现行 draft/published、在途 Run、未撤销视图维护活动引用；建立引用与升级/卸载锁同一安装行。升级只允许版本递增且旧 migration 字节不变，并要求先解除全部活动引用；跨 major 不提供兼容假象。
 
-内置 `official.connector` 提供 HTTP Action、Webhook Trigger、WebSocket Trigger 和运行诊断结果页；`official.ai` 提供 OpenAI-compatible 结构化模型调用和结果页。两者只访问 `workflow.http_allowed_hosts` 的精确公共域名，禁用环境代理，拨号前后解析并拒绝非公网 IP。Binance 只允许明确列出的公共 GET/公共 WebSocket，授权、私有或未知端点一律拒绝。AI 节点只接收/返回 JSON 对象，不能控制工作流生命周期或交易。
-
-`official.quant@3.0.0` 只提供通用指标、策略、回测、行情信号和 `OrderIntent`。它通过 `MarketDataRegistry` 按 `venue + market + instrument + interval` 读取行情，不包含交易所 URL、签名、行情表或执行账本。策略只接收升序、连续、UTC 闭合 K 线和已校验参数，返回 `-1` 至 `1` 的 Decimal 目标；实时与回测调用同一 `Evaluate`。
-
-`official.binance@3.0.0` 提供 Binance Spot/USD-M 公共行情、交易规则、`MarketDataProvider`、Paper 执行和受门禁保护的市价 `ExecutionProvider`。Binance 节点拥有行情、订单、成交、费用、持仓和账户快照数据；代理由该插件选择，私有请求只能通过 `SecretReader` 签名。未来交易所插件只需实现相同 Provider 契约，Core 与 Quant 不需要修改。
-
-Binance K 线查询支持 `startTime`、`endTime`、`before` 和 `limit`，响应包含 `items`、`nextBefore` 与 `hasMore`；`/candles/indicators` 返回按 `openTime` 对齐的 Decimal 字符串指标序列，并支持 MA、EMA、BOLL、MACD、RSI、KDJ、WR 参数。`/candles/stream` 是仅超级管理员可用的 WebSocket 公共行情桥接，使用 `coinsphere.plugin.official.binance.v1` 子协议和访问令牌，不允许浏览器直连交易所。
-
-六种 `1.0.0` 判断节点分别是 `official.quant.volume_spike_condition`、`official.quant.price_change_condition`、`official.quant.macd_condition`、`official.quant.kdj_condition`、`official.quant.rsi_condition` 和 `official.quant.bollinger_condition`。一个节点只保存一种指标规则及市场、交易对、检查周期、K 线周期和名称；每次在当前与上一个检查时点截取当时已闭合的 K 线，禁止未来数据。K 线断档、非法参数和数据库错误使节点失败，历史不足则 `ready=false` 并走 `false`。EMA、Wilder RSI、KDJ、布林标准差和有界平方根全部使用确定性 Decimal。
-
-`official.quant.market_signal@1.0.0` 只能接收一个指标判断节点的 `true` 分支，保存时由编辑器生成且由后端校验 `market`、`instrument`、`interval`、`formula -> name`、`indicator`、`candleCloseTime`、`summary` 和 `value -> values` 的直接字段绑定。每根命中的闭合 K 线写入一条 `plugin_quant.market_signals` 行；稳定 `operation_key` 使节点重试幂等。该表及查询接口只表示行情信号，不进入现有 `plugin_quant.signals`、审批或 Paper 交易链路。
-
-判断输出包含 `ready`、`matched`、`previousMatched`、`branch`、`entered`、`triggered`、市场、交易对、当前/上一值、UTC 时间、业务键和中文摘要。`true` 串联表达 AND，并行汇合表达 OR，`false` 可连接任意节点。`branch` 始终反映当前结果，连续命中仍执行下游；`entered` 沿判断连线传播路径重新进入状态，`triggered` 只在整条 true 路径重新进入时成立。编辑器连接判断节点到任一通知节点时自动附加 `input.triggered == true` 并聚合摘要，因此连续命中只通知一次，恢复后再次命中会重新通知。
-
-Paper 由 `official.binance` 执行 `OrderIntent`。默认 Paper；真实执行默认关闭，只有人工确认、全部风险上限和无提现权限 API Key 同时满足时才允许。订单必须携带幂等 `clientOrderId`，订单、成交、费用和账本事实使用 Decimal 与 UTC 保存。
-
-内置 `official.notification@3.0.0` 提供 `in_app`、`dingtalk` 和 `smtp` 三个 Action。三种节点统一接收 `subjectKey/message` 并按稳定操作键幂等；站内节点把用户和当前启用角色成员合并去重，旧配置没有目标时投递给工作流创建者。外部节点失败保存受控错误类别并交给当前节点最多三次重试，已成功操作直接复用。
-
-内置 `official.qq@1.0.0` 提供 `receive` Trigger 和 `send` Action。接收节点固定订阅 `GROUP_AND_C2C_EVENT`，仅把 `GROUP_AT_MESSAGE_CREATE` 与 `C2C_MESSAGE_CREATE` 归一化为 CloudEvent；事件以 QQ 消息 ID 和 `urn:coinsphere:qq:<appId>` 全局去重，按群或用户 OpenID 分区。相同 AppID 只允许运行一个接收节点；Gateway 会话支持心跳、Resume、重连和取消关闭，但不持久化会话状态。
-
-QQ 发送支持群聊和单聊文本、Markdown、富媒体 URL 上传、键盘模板及被动回复，按稳定操作键写入 Notification 投递事实。钉钉和 QQ 只访问固定官方域名，HTTP 使用 8 秒超时、禁止重定向和 64 KiB 响应上限；QQ Token 按凭据指纹缓存。SMTP 只接受解析到公网地址的域名和 TLS/STARTTLS，STARTTLS 不可用时失败而不降级。Access Token、Client Secret、SMTP 密码及钉钉签名 Secret 均为修订级 `x-coinsphere-secret`，不进入图、日志或投递表。
-
-站内通知按 `recipient_user_id` 隔离，查询和已读操作只影响当前用户。持久投递提交后才发布 `notice.created`；实时 WebSocket 使用 `coinsphere.notifications.v1` 子协议携带 Access Token，要求同源 Origin、有界发送队列和 Ping/Pong，断线或队列满不影响数据库事实。诊断重放复用原 Checkpoint，不再次产生 notification、human_action 或 paper 副作用。
-
-`official.quant` 的策略、回测、行情信号和信号查询，以及 `official.binance` 的行情、交易规则和订单查询均为 `SystemScope` 路由，只允许超级管理员。Paper 结果页使用 `official.binance` 的固定 `ResultScope`，信号范围仍由 Quant 节点 ID 固定。ResultView 插件路由只接受核心注入的固定范围，查询参数不能扩大范围。金融值均返回十进制字符串。
-
-匿名 Webhook 要求 `X-CoinSphere-Webhook-Secret`、`Idempotency-Key` 和 `X-CoinSphere-Partition-Key` 各出现一次，正文必须是不超过 1 MiB 的 JSON 对象。错误 Secret、非运行工作流和非 Webhook 主触发器统一返回不可发现响应。
-
-## 生命周期与数据
-
-- `plugin install` 校验源码、执行插件 migration、复制源码、生成 Go/Vue 注册表、更新 Go module 并构建包含前后端的应用镜像。
-- `plugin upgrade` 只接受版本递增的同 major 升级；既有 migration 文件必须字节不变，新 migration 版本只能追加。
-- 安装或升级失败恢复构建输入和操作前插件 migration 版本；构建命令不启动或切换运行容器。
-- `plugin uninstall` 有活动引用时拒绝；成功后移除静态源码和注册并保留插件 schema。
-- `plugin purge-data` 要求插件已卸载、无任何活动或历史引用，并精确提供 `PURGE <plugin-id>`；schema 和安装记录在同一事务删除。
-
-核心及随应用发布的内置 Quant/Binance/Notification migration 使用 `schema_migrations`；Quant 研究数据位于 `plugin_quant`，Binance 行情与交易数据位于 `plugin_binance`，通知数据位于 `plugin_notification`。通过 CLI 安装的插件使用独立 `plugin_<规范化 ID>` schema 和 `<schema>.schema_migrations`，卸载不执行 Down。正式 Paper 观察开始前必须记录 migration freeze 提交；冻结后已有 migration 字节不变，只能追加更高版本。
-
-## 尚未实现
-
-Testnet、插件市场、签名、沙箱、热加载和多实例集群不属于当前合同。Live 代码存在于 Binance 插件但默认关闭；代码合并、发布、部署或 Paper 观察不构成真实交易放行。
+卸载保留数据和历史引用；purge-data 要求已卸载、所有引用解除、匹配确认文本。失败安装/升级恢复源码、注册表、依赖文件和新增 migration，回滚本身失败需人工恢复点处理。插件是可信同进程代码，Scope 是契约边界，不是恶意代码隔离。

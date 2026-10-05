@@ -60,6 +60,12 @@ func (a *App) workflowHumanApproval(ctx context.Context, run db.WorkflowRun, nod
 	}
 	var task db.WorkflowHumanTask
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockHumanTaskWorkflow(tx, run.WorkflowID); err != nil {
+			return err
+		}
+		if err := a.lockExecutionLease(tx, run, nil); err != nil {
+			return err
+		}
 		businessKey := strings.TrimSpace(values.BusinessKey)
 		identity := fmt.Sprintf("%d:%d:%s:%d:%s", run.WorkflowID, len(node.NodeInstanceID), node.NodeInstanceID, len(businessKey), businessKey)
 		if err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtextextended(?, 0))`, identity).Error; err != nil {
@@ -72,6 +78,9 @@ func (a *App) workflowHumanApproval(ctx context.Context, run db.WorkflowRun, nod
 				if err := finishWorkflowHumanTask(tx, &task, "expired", nil, nil, now); err != nil {
 					return err
 				}
+			}
+			if task.Status == "pending" {
+				return setHumanTaskWaiting(tx, run, node.NodeInstanceID, now)
 			}
 			return nil
 		}
@@ -102,7 +111,7 @@ func (a *App) workflowHumanApproval(ctx context.Context, run db.WorkflowRun, nod
 		if err := tx.Create(&task).Error; err != nil {
 			return errors.New("create workflow human task failed")
 		}
-		return nil
+		return setHumanTaskWaiting(tx, run, node.NodeInstanceID, now)
 	})
 	if err != nil {
 		return sdk.ActionResult{}, err
@@ -124,7 +133,10 @@ func (a *App) ListWorkflowHumanTasks(ctx context.Context, status string) ([]Work
 	if status != "" && status != "pending" && status != "approved" && status != "rejected" && status != "expired" && status != "superseded" {
 		return nil, errors.New("invalid human task status")
 	}
-	query := a.DB.WithContext(ctx).Order("created_at DESC, id DESC").Limit(200)
+	if err := requireCapability(ctx, "human_tasks.read"); err != nil {
+		return nil, err
+	}
+	query := workflowScopeQuery(a.DB.WithContext(ctx).Model(&db.WorkflowHumanTask{}), ContextPrincipal(ctx), "human_tasks.read", "workflow_human_tasks.workflow_id").Order("created_at DESC, id DESC").Limit(200)
 	if status != "" {
 		query = query.Where("status = ?", status)
 	}
@@ -157,12 +169,30 @@ func (a *App) DecideWorkflowHumanTask(ctx context.Context, taskID int64, payload
 	now := time.Now().UTC()
 	var task db.WorkflowHumanTask
 	expired := false
+	if err := a.DB.WithContext(ctx).First(&task, taskID).Error; err != nil {
+		return WorkflowHumanTaskView{}, ErrNotFound
+	}
+	if err := a.AuthorizeWorkflow(ctx, task.WorkflowID, "human_tasks.decide"); err != nil {
+		return WorkflowHumanTaskView{}, err
+	}
 	err = a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		current, err := a.authorizeWorkflowCommandTx(tx, ctx, task.WorkflowID, "human_tasks.decide")
+		if err != nil {
+			return err
+		}
+		principal = current
+		if err := lockHumanTaskWorkflow(tx, task.WorkflowID); err != nil {
+			return err
+		}
+		var run db.WorkflowRun
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&run, task.RunID).Error; err != nil {
+			return err
+		}
+		if run.Status != RunStatusWaiting {
+			return ErrConflict
+		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, taskID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return fmt.Errorf("%w: workflow human task", ErrNotFound)
-			}
-			return errors.New("load workflow human task failed")
+			return err
 		}
 		if task.Status != "pending" {
 			return fmt.Errorf("%w: human task is already decided", ErrConflict)
@@ -198,36 +228,78 @@ func (a *App) DecideWorkflowHumanTask(ctx context.Context, taskID int64, payload
 }
 
 func (a *App) expireWorkflowHumanTasks(ctx context.Context, now time.Time) error {
-	return a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var tasks []db.WorkflowHumanTask
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
-			Where("status = 'pending' AND expires_at <= ?", now).Order("expires_at, id").Limit(100).Find(&tasks).Error; err != nil {
-			return errors.New("load expired workflow human tasks failed")
-		}
-		for index := range tasks {
-			if err := finishWorkflowHumanTask(tx, &tasks[index], "expired", nil, nil, now); err != nil {
+	var tasks []db.WorkflowHumanTask
+	if err := a.DB.WithContext(ctx).Where("status='pending' AND expires_at<=?", now).Order("workflow_id,run_id,id").Limit(100).Find(&tasks).Error; err != nil {
+		return err
+	}
+	for _, task := range tasks {
+		if err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := lockHumanTaskWorkflow(tx, task.WorkflowID); err != nil {
 				return err
 			}
-			if err := resumeWorkflowHumanTaskRun(tx, tasks[index].RunID, now); err != nil {
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&db.WorkflowRun{}, task.RunID).Error; err != nil {
 				return err
 			}
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, task.ID).Error; err != nil {
+				return err
+			}
+			if task.Status != "pending" || task.ExpiresAt.After(now) {
+				return nil
+			}
+			if err := finishWorkflowHumanTask(tx, &task, "expired", nil, nil, now); err != nil {
+				return err
+			}
+			return resumeWorkflowHumanTaskRun(tx, task.RunID, now)
+		}); err != nil {
+			return err
 		}
-		return nil
-	})
+	}
+	return nil
+}
+func lockHumanTaskWorkflow(tx *gorm.DB, workflowID int64) error {
+	return tx.Exec("SELECT pg_advisory_xact_lock(hashtextextended(?,0))", fmt.Sprintf("human-tasks:%d", workflowID)).Error
+}
+func setHumanTaskWaiting(tx *gorm.DB, run db.WorkflowRun, nodeID string, now time.Time) error {
+	r := runLeaseQuery(tx, run, false).Updates(map[string]any{"status": RunStatusWaiting, "lease_token": nil, "lease_expires_at": nil, "updated_at": now})
+	if r.Error != nil {
+		return r.Error
+	}
+	if r.RowsAffected != 1 {
+		return ErrConflict
+	}
+	r = tx.Model(&db.WorkflowRunNode{}).Where("run_id=? AND node_instance_id=? AND status=?", run.ID, nodeID, RunStatusRunning).Updates(map[string]any{"status": RunStatusWaiting, "completed_at": now, "duration_ms": gorm.Expr("GREATEST(0, EXTRACT(EPOCH FROM (? - started_at))*1000)::bigint", now)})
+	if r.Error != nil {
+		return r.Error
+	}
+	if r.RowsAffected != 1 {
+		return ErrConflict
+	}
+	return nil
 }
 
 func finishWorkflowHumanTask(tx *gorm.DB, task *db.WorkflowHumanTask, status string, decision []byte, actorID *int64, now time.Time) error {
 	if len(decision) == 0 {
 		decision = []byte(`{}`)
 	}
-	if err := tx.Model(task).Where("status = 'pending'").Updates(map[string]any{
+	result := tx.Model(task).Where("status = 'pending'").Updates(map[string]any{
 		"status": status, "decision_json": string(decision), "decided_by": actorID,
 		"decided_at": now, "updated_at": now,
-	}).Error; err != nil {
+	})
+	if result.Error != nil {
 		return errors.New("finish workflow human task failed")
+	}
+	if result.RowsAffected != 1 {
+		return ErrConflict
 	}
 	task.Status, task.DecisionJSON, task.DecidedBy, task.DecidedAt, task.UpdatedAt = status, string(decision), actorID, &now, now
 	return nil
+}
+
+func closeWorkflowRunResources(tx *gorm.DB, runID int64, now time.Time) error {
+	if err := tx.Model(&db.WorkflowHumanTask{}).Where("run_id=? AND status='pending'", runID).Updates(map[string]any{"status": "superseded", "decided_at": now, "updated_at": now}).Error; err != nil {
+		return err
+	}
+	return tx.Exec("UPDATE plugin_references SET active=FALSE WHERE reference_type='run' AND reference_id=?", fmt.Sprint(runID)).Error
 }
 
 func resumeWorkflowHumanTaskRun(tx *gorm.DB, runID int64, now time.Time) error {

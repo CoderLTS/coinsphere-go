@@ -80,7 +80,7 @@ func (s *Server) handleNotificationWebSocket(c *gin.Context) {
 	defer close(done)
 	go func() {
 		defer connection.Close()
-		ticker := time.NewTicker(54 * time.Second)
+		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		var sequence uint64
 		for {
@@ -89,6 +89,9 @@ func (s *Server) handleNotificationWebSocket(c *gin.Context) {
 				return
 			case event, open := <-events:
 				if !open {
+					return
+				}
+				if _, err := s.App.RevalidateSession(principal, ""); err != nil {
 					return
 				}
 				sequence++
@@ -100,6 +103,9 @@ func (s *Server) handleNotificationWebSocket(c *gin.Context) {
 					return
 				}
 			case <-ticker.C:
+				if _, err := s.App.RevalidateSession(principal, ""); err != nil {
+					return
+				}
 				if err := connection.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second)); err != nil {
 					return
 				}

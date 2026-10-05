@@ -1,5 +1,6 @@
-export const resultPages = {
-  quant: () => import('./ResultPage.vue')
+export const runPanels = {
+  quant: () => import('./ResultPage.vue'),
+  analysis: () => import('./BacktestAnalysis.vue')
 }
 
 const schemaEditor = () => import('./SchemaNodeEditor.vue')

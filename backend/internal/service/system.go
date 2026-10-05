@@ -1,6 +1,8 @@
 package service
 
 import (
+	"fmt"
+	"gorm.io/gorm/clause"
 	"strings"
 	"time"
 
@@ -146,7 +148,13 @@ func (a *App) ListRoles(query RoleListQuery) (M, error) {
 	}
 	records := make([]M, 0, len(roles))
 	for i := range roles {
-		records = append(records, serializeRole(&roles[i]))
+		item := serializeRole(&roles[i])
+		codes := []string{}
+		if err := a.DB.Model(&db.RolePermission{}).Where("role_id=?", roles[i].ID).Order("permission_code").Pluck("permission_code", &codes).Error; err != nil {
+			return nil, err
+		}
+		item["permissionCodes"] = codes
+		records = append(records, item)
 	}
 	lastKey := ""
 	if len(roles) > 0 {
@@ -174,16 +182,28 @@ func (a *App) GetMenuTree(principal *Principal) ([]M, error) {
 	if len(menus) == 0 {
 		return []M{}, nil
 	}
+	visibleMenus := menus[:0]
+	for _, menu := range menus {
+		if (menu.PermissionCode == nil || *menu.PermissionCode == "") || principal.HasPermission(*menu.PermissionCode) {
+			visibleMenus = append(visibleMenus, menu)
+		}
+	}
+	menus = visibleMenus
 	menuIDs := collectIDs(menus, func(m db.SystemMenu) int64 { return m.ID })
 	var buttons []db.SystemMenuButton
 	if err := a.DB.Distinct("menu_buttons.*").
-		Joins("JOIN role_menu_buttons ON role_menu_buttons.button_id = menu_buttons.id").
-		Where("role_menu_buttons.role_id IN ? AND menu_buttons.menu_id IN ?", principal.RoleIDs, menuIDs).
+		Where("menu_buttons.menu_id IN ?", menuIDs).
 		Order("menu_buttons.sort ASC, menu_buttons.id ASC").
 		Find(&buttons).Error; err != nil {
 		return nil, err
 	}
-	return a.buildMenuTreePayload(menus, buttons), nil
+	filteredButtons := buttons[:0]
+	for _, button := range buttons {
+		if principal.HasPermission(button.PermissionCode) {
+			filteredButtons = append(filteredButtons, button)
+		}
+	}
+	return a.buildMenuTreePayload(menus, filteredButtons), nil
 }
 
 // GetMenuManagementTree 返回管理端完整菜单树。
@@ -247,91 +267,110 @@ func (p *UserUpsertPayload) isActive() bool { return p.IsActive == nil || *p.IsA
 // 顺序:先做各种校验(非空、密码长度、用户名唯一)→ 解析要分配的角色 → 哈希密码并组装
 // SystemUser 结构体入库(Create = INSERT)→ 最后写入"用户-角色"关联表。
 func (a *App) CreateUser(payload UserUpsertPayload, principal *Principal) (M, error) {
-	if strings.TrimSpace(payload.Username) == "" || strings.TrimSpace(payload.Nickname) == "" {
-		return nil, bizErr("用户名和昵称不能为空")
+	if principal == nil || !principal.HasPermission("system.users.create") {
+		return nil, ErrPermission
 	}
-	if payload.Password == "" {
-		return nil, bizErr("创建用户时必须设置密码")
+	if strings.TrimSpace(payload.Username) == "" || strings.TrimSpace(payload.Nickname) == "" || len(payload.Password) < 6 {
+		return nil, bizErr("用户名、昵称和至少 6 位密码必填")
 	}
-	if len(payload.Password) < 6 {
-		return nil, bizErr("密码长度至少 6 位")
-	}
-	var count int64
-	a.DB.Model(&db.SystemUser{}).Where("username = ?", payload.Username).Count(&count)
-	if count > 0 {
-		return nil, bizErr("用户名已存在")
-	}
-	roles, err := a.resolveAssignableRoles(payload.RoleCodes)
+	var user db.SystemUser
+	var roles []db.SystemRole
+	err := a.DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockAuthorization(tx); err != nil {
+			return err
+		}
+		current, err := principalForTx(tx, principal)
+		if err != nil {
+			return err
+		}
+		principal = current
+		if !principal.HasPermission("system.users.create") {
+			return ErrPermission
+		}
+		if len(payload.RoleCodes) > 0 && !principal.HasPermission("system.users.assign_roles") {
+			return ErrPermission
+		}
+		roles, err = resolveAssignableRolesTx(tx, payload.RoleCodes)
+		if err != nil {
+			return err
+		}
+		if err := checkRoleGrantCeiling(tx, principal, roles); err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		fullName := payload.FullName
+		if fullName == "" {
+			fullName = payload.Nickname
+		}
+		user = db.SystemUser{Username: strings.TrimSpace(payload.Username), PasswordHash: a.Hasher.HashPassword(payload.Password), Nickname: strings.TrimSpace(payload.Nickname), FullName: fullName, Gender: normalizeGender(payload.Gender), Phone: strings.TrimSpace(payload.Phone), Email: strings.TrimSpace(payload.Email), Avatar: strings.TrimSpace(payload.Avatar), IsActive: payload.isActive(), TagsJSON: "[]", CreatedBy: principal.User.Username, UpdatedBy: principal.User.Username, CreatedAt: now, UpdatedAt: now}
+		if err := tx.Create(&user).Error; err != nil {
+			return err
+		}
+		if err := replaceUserRoles(tx, user.ID, roles); err != nil {
+			return err
+		}
+		return auditAuthorization(tx, principal, "user.create", fmt.Sprint(user.ID))
+	})
 	if err != nil {
-		return nil, err
-	}
-	now := time.Now()
-	fullName := payload.FullName
-	if fullName == "" {
-		fullName = payload.Nickname
-	}
-	// 结构体字面量:逐字段填好一个 SystemUser,再用 Create(&user) 入库(INSERT)。
-	// 密码永远存哈希值(HashPassword),绝不存明文。
-	user := db.SystemUser{
-		Username: payload.Username, PasswordHash: a.Hasher.HashPassword(payload.Password),
-		Nickname: payload.Nickname, FullName: fullName, Gender: normalizeGender(payload.Gender),
-		Phone: strings.TrimSpace(payload.Phone), Email: strings.TrimSpace(payload.Email),
-		Avatar: strings.TrimSpace(payload.Avatar), IsActive: payload.isActive(),
-		TagsJSON:  "[]",
-		CreatedBy: principal.User.Username, UpdatedBy: principal.User.Username,
-		CreatedAt: now, UpdatedAt: now,
-	}
-	if err := a.DB.Create(&user).Error; err != nil {
-		return nil, err
-	}
-	if err := a.replaceUserRoles(user.ID, roles); err != nil {
 		return nil, err
 	}
 	return serializeUser(&user, roleCodesOf(roles)), nil
 }
-
-// UpdateUser 更新用户。
-// 除了字段校验,还带业务规则:不能停用当前登录的账号。
-// Updates(fields) 只更新 map 里给出的那几列;密码留空则跳过、不改密码。
 func (a *App) UpdateUser(userID int64, payload UserUpsertPayload, principal *Principal) (M, error) {
+	if principal == nil || !principal.HasPermission("system.users.update") {
+		return nil, ErrPermission
+	}
+	if strings.TrimSpace(payload.Username) == "" || strings.TrimSpace(payload.Nickname) == "" || payload.Password != "" && len(payload.Password) < 6 {
+		return nil, bizErr("用户资料或密码不完整")
+	}
 	var user db.SystemUser
-	if err := a.DB.First(&user, userID).Error; err != nil {
-		return nil, bizErr("用户不存在")
-	}
-	if payload.Username != user.Username {
-		var count int64
-		a.DB.Model(&db.SystemUser{}).Where("username = ? AND id <> ?", payload.Username, userID).Count(&count)
-		if count > 0 {
-			return nil, bizErr("用户名已存在")
+	var roles []db.SystemRole
+	err := a.DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockAuthorization(tx); err != nil {
+			return err
 		}
-	}
-	if principal.User.ID == userID && !payload.isActive() {
-		return nil, bizErr("不能停用当前登录账号")
-	}
-	roles, err := a.resolveAssignableRoles(payload.RoleCodes)
+		current, err := principalForTx(tx, principal)
+		if err != nil {
+			return err
+		}
+		principal = current
+		if !principal.HasPermission("system.users.update") {
+			return ErrPermission
+		}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&user, userID).Error; err != nil {
+			return ErrNotFound
+		}
+		oldRoles, err := userRolesTx(tx, userID)
+		if err != nil {
+			return err
+		}
+		roles = oldRoles
+		if payload.RoleCodes != nil {
+			roles, err = resolveAssignableRolesTx(tx, payload.RoleCodes)
+			if err != nil {
+				return err
+			}
+		}
+		if err := checkUserMutation(tx, principal, user, oldRoles, roles, payload.isActive(), false); err != nil {
+			return err
+		}
+		fullName := payload.FullName
+		if fullName == "" {
+			fullName = payload.Nickname
+		}
+		fields := map[string]any{"username": strings.TrimSpace(payload.Username), "nickname": strings.TrimSpace(payload.Nickname), "full_name": fullName, "gender": normalizeGender(payload.Gender), "phone": strings.TrimSpace(payload.Phone), "email": strings.TrimSpace(payload.Email), "avatar": strings.TrimSpace(payload.Avatar), "is_active": payload.isActive(), "updated_by": principal.User.Username, "updated_at": time.Now().UTC()}
+		if payload.Password != "" {
+			fields["password_hash"] = a.Hasher.HashPassword(payload.Password)
+		}
+		if err := tx.Model(&user).Updates(fields).Error; err != nil {
+			return err
+		}
+		if err := replaceUserRoles(tx, userID, roles); err != nil {
+			return err
+		}
+		return auditAuthorization(tx, principal, "user.update", fmt.Sprint(userID))
+	})
 	if err != nil {
-		return nil, err
-	}
-	fullName := payload.FullName
-	if fullName == "" {
-		fullName = payload.Nickname
-	}
-	fields := map[string]any{
-		"username": payload.Username, "nickname": payload.Nickname, "full_name": fullName,
-		"gender": normalizeGender(payload.Gender), "phone": strings.TrimSpace(payload.Phone),
-		"email": strings.TrimSpace(payload.Email), "avatar": strings.TrimSpace(payload.Avatar),
-		"is_active": payload.isActive(), "updated_by": principal.User.Username, "updated_at": time.Now(),
-	}
-	if payload.Password != "" {
-		if len(payload.Password) < 6 {
-			return nil, bizErr("密码长度至少 6 位")
-		}
-		fields["password_hash"] = a.Hasher.HashPassword(payload.Password)
-	}
-	if err := a.DB.Model(&db.SystemUser{}).Where("id = ?", userID).Updates(fields).Error; err != nil {
-		return nil, err
-	}
-	if err := a.replaceUserRoles(userID, roles); err != nil {
 		return nil, err
 	}
 	if err := a.DB.First(&user, userID).Error; err != nil {
@@ -339,22 +378,38 @@ func (a *App) UpdateUser(userID int64, payload UserUpsertPayload, principal *Pri
 	}
 	return serializeUser(&user, roleCodesOf(roles)), nil
 }
-
-// DeleteUser 删除用户。
-// 业务规则:内置超管、当前登录账号都不允许删除。user_roles 关联由数据库外键级联删除,不必手动清。
 func (a *App) DeleteUser(userID int64, principal *Principal) error {
-	var user db.SystemUser
-	if err := a.DB.First(&user, userID).Error; err != nil {
-		return bizErr("用户不存在")
+	if principal == nil || !principal.HasPermission("system.users.delete") {
+		return ErrPermission
 	}
-	if user.Username == protectedSuperUsername {
-		return bizErr("内置超级管理员不能删除")
-	}
-	if principal.User.ID == userID {
-		return bizErr("不能删除当前登录账号")
-	}
-	// user_roles 由外键级联删除。
-	return a.DB.Delete(&user).Error
+	return a.DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockAuthorization(tx); err != nil {
+			return err
+		}
+		current, err := principalForTx(tx, principal)
+		if err != nil {
+			return err
+		}
+		principal = current
+		if !principal.HasPermission("system.users.delete") {
+			return ErrPermission
+		}
+		var user db.SystemUser
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&user, userID).Error; err != nil {
+			return ErrNotFound
+		}
+		roles, err := userRolesTx(tx, userID)
+		if err != nil {
+			return err
+		}
+		if err := checkUserMutation(tx, principal, user, roles, nil, false, true); err != nil {
+			return err
+		}
+		if err := tx.Delete(&user).Error; err != nil {
+			return err
+		}
+		return auditAuthorization(tx, principal, "user.delete", fmt.Sprint(userID))
+	})
 }
 
 // RoleUpsertPayload 角色载荷。
@@ -368,145 +423,186 @@ type RoleUpsertPayload struct {
 // isEnabled 同 isActive:可选布尔,没传默认 true。
 func (p *RoleUpsertPayload) isEnabled() bool { return p.IsEnabled == nil || *p.IsEnabled }
 
-// CreateRole 创建角色。
-// 名称、编码先去空格(编码还转大写),校验名称/编码都不重复后 Create 入库。
-func (a *App) CreateRole(payload RoleUpsertPayload) (M, error) {
-	roleName := strings.TrimSpace(payload.DisplayName)
-	roleCode := strings.ToUpper(strings.TrimSpace(payload.Code))
-	if roleName == "" || roleCode == "" {
-		return nil, bizErr("角色名称与编码不能为空")
+func (a *App) CreateRole(payload RoleUpsertPayload, principal *Principal) (M, error) {
+	return a.saveRole(0, payload, principal)
+}
+func (a *App) UpdateRole(id int64, payload RoleUpsertPayload, principal *Principal) (M, error) {
+	return a.saveRole(id, payload, principal)
+}
+func (a *App) saveRole(id int64, payload RoleUpsertPayload, principal *Principal) (M, error) {
+	capability := "system.roles.create"
+	if id > 0 {
+		capability = "system.roles.update"
 	}
-	var count int64
-	a.DB.Model(&db.SystemRole{}).Where("display_name = ?", roleName).Count(&count)
-	if count > 0 {
-		return nil, bizErr("角色名称已存在")
+	if principal == nil || !principal.HasPermission(capability) {
+		return nil, ErrPermission
 	}
-	a.DB.Model(&db.SystemRole{}).Where("code = ?", roleCode).Count(&count)
-	if count > 0 {
-		return nil, bizErr("角色编码已存在")
+	name, code := strings.TrimSpace(payload.DisplayName), strings.ToUpper(strings.TrimSpace(payload.Code))
+	if name == "" || len(name) > 100 || code == "" || len(code) > 50 || len(payload.Description) > 255 {
+		return nil, bizErr("角色名称、编码或说明不合法")
 	}
-	now := time.Now()
-	role := db.SystemRole{
-		DisplayName: roleName, Code: roleCode, Description: strings.TrimSpace(payload.Description),
-		IsEnabled: payload.isEnabled(), CreatedAt: now, UpdatedAt: now,
+	if protectedRoleCodes[code] {
+		return nil, ErrPermission
 	}
-	if err := a.DB.Create(&role).Error; err != nil {
+	var role db.SystemRole
+	err := a.DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockAuthorization(tx); err != nil {
+			return err
+		}
+		current, err := principalForTx(tx, principal)
+		if err != nil {
+			return err
+		}
+		principal = current
+		if !principal.HasPermission(capability) {
+			return ErrPermission
+		}
+		if id > 0 {
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&role, id).Error; err != nil {
+				return ErrNotFound
+			}
+			if role.IsSystem {
+				return ErrPermission
+			}
+			if err := checkRoleGrantCeiling(tx, principal, []db.SystemRole{role}); err != nil {
+				return err
+			}
+		}
+		role.DisplayName, role.Code, role.Description, role.IsEnabled = name, code, strings.TrimSpace(payload.Description), payload.isEnabled()
+		role.UpdatedAt = time.Now().UTC()
+		if id == 0 {
+			role.CreatedAt = role.UpdatedAt
+			if err := tx.Create(&role).Error; err != nil {
+				return err
+			}
+		} else {
+			if err := tx.Model(&role).Select("display_name", "code", "description", "is_enabled", "updated_at").Updates(&role).Error; err != nil {
+				return err
+			}
+		}
+		return auditAuthorization(tx, principal, "role.save", fmt.Sprint(role.ID))
+	})
+	if err != nil {
 		return nil, err
 	}
 	return serializeRole(&role), nil
 }
-
-// UpdateRole 更新角色。
-// requireMutableRole 先挡住系统内置角色(不可改),再校验名称/编码唯一后 Updates。
-func (a *App) UpdateRole(roleID int64, payload RoleUpsertPayload) (M, error) {
-	role, err := a.requireMutableRole(roleID)
-	if err != nil {
-		return nil, err
+func (a *App) DeleteRole(id int64, principal *Principal) error {
+	if principal == nil || !principal.HasPermission("system.roles.delete") {
+		return ErrPermission
 	}
-	roleName := strings.TrimSpace(payload.DisplayName)
-	roleCode := strings.ToUpper(strings.TrimSpace(payload.Code))
-	if roleName == "" || roleCode == "" {
-		return nil, bizErr("角色名称与编码不能为空")
-	}
-	var count int64
-	a.DB.Model(&db.SystemRole{}).Where("display_name = ? AND id <> ?", roleName, roleID).Count(&count)
-	if count > 0 {
-		return nil, bizErr("角色名称已存在")
-	}
-	a.DB.Model(&db.SystemRole{}).Where("code = ? AND id <> ?", roleCode, roleID).Count(&count)
-	if count > 0 {
-		return nil, bizErr("角色编码已存在")
-	}
-	updates := map[string]any{
-		"display_name": roleName, "code": roleCode,
-		"description": strings.TrimSpace(payload.Description),
-		"is_enabled":  payload.isEnabled(), "updated_at": time.Now(),
-	}
-	if err := a.DB.Model(role).Updates(updates).Error; err != nil {
-		return nil, err
-	}
-	if err := a.DB.First(role, roleID).Error; err != nil {
-		return nil, err
-	}
-	return serializeRole(role), nil
-}
-
-// DeleteRole 删除角色。
-// 系统内置角色不可删;已经分配给用户的角色要先解除关联(Count 一下 user_roles)再删。
-func (a *App) DeleteRole(roleID int64) error {
-	role, err := a.requireMutableRole(roleID)
-	if err != nil {
-		return err
-	}
-	var count int64
-	a.DB.Model(&db.SystemUserRole{}).Where("role_id = ?", roleID).Count(&count)
-	if count > 0 {
-		return bizErr("该角色已分配给用户,请先解除关联后再删除")
-	}
-	return a.DB.Delete(role).Error
+	return a.DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockAuthorization(tx); err != nil {
+			return err
+		}
+		current, err := principalForTx(tx, principal)
+		if err != nil {
+			return err
+		}
+		principal = current
+		if !principal.HasPermission("system.roles.delete") {
+			return ErrPermission
+		}
+		var role db.SystemRole
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&role, id).Error; err != nil {
+			return ErrNotFound
+		}
+		if role.IsSystem {
+			return ErrPermission
+		}
+		if err := checkRoleGrantCeiling(tx, principal, []db.SystemRole{role}); err != nil {
+			return err
+		}
+		var count int64
+		if err := tx.Model(&db.SystemUserRole{}).Where("role_id=?", id).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return bizErr("角色已分配给用户")
+		}
+		if err := tx.Delete(&role).Error; err != nil {
+			return err
+		}
+		return auditAuthorization(tx, principal, "role.delete", fmt.Sprint(id))
+	})
 }
 
 // RolePermissionPayload 角色权限载荷。
 type RolePermissionPayload struct {
-	MenuIDs   []int64 `json:"menuIds"`
-	ButtonIDs []int64 `json:"buttonIds"`
+	PermissionCodes []string `json:"permissionCodes"`
+	MenuIDs         []int64  `json:"menuIds"`
 }
 
 // SaveRolePermissions 保存角色的菜单与按钮权限。
 // 先校验菜单/按钮 ID 都合法、且按钮必须挂在被选中的菜单下,再在一个事务里"先删后插"整套关联。
-func (a *App) SaveRolePermissions(roleID int64, payload RolePermissionPayload) error {
-	if _, err := a.requireMutableRole(roleID); err != nil {
-		return err
+func (a *App) SaveRolePermissions(roleID int64, payload RolePermissionPayload, principal *Principal) error {
+	if principal == nil || !principal.HasPermission("system.roles.assign_permissions") {
+		return ErrPermission
 	}
-	menuIDs := dedupeInt64(payload.MenuIDs)
-	buttonIDs := dedupeInt64(payload.ButtonIDs)
-
-	var validMenus []db.SystemMenu
-	if len(menuIDs) > 0 {
-		a.DB.Select("id").Where("id IN ?", menuIDs).Find(&validMenus)
-	}
-	if len(validMenus) != len(menuIDs) {
-		return bizErr("存在无效的菜单")
-	}
-	validMenuSet := map[int64]bool{}
-	for _, menu := range validMenus {
-		validMenuSet[menu.ID] = true
-	}
-
-	var validButtons []db.SystemMenuButton
-	if len(buttonIDs) > 0 {
-		a.DB.Select("id, menu_id").Where("id IN ?", buttonIDs).Find(&validButtons)
-	}
-	if len(validButtons) != len(buttonIDs) {
-		return bizErr("存在无效的按钮权限")
-	}
-	for _, button := range validButtons {
-		if !validMenuSet[button.MenuID] {
-			return bizErr("按钮权限必须挂载在已选中的菜单下")
-		}
-	}
-
-	// Transaction 开一个数据库事务:传进去的这个函数里,所有操作要么全部成功一起提交,
-	// 要么一旦返回非 nil 的 error 就整体回滚(不会只删一半)。事务内必须用参数 tx(而不是 a.DB)
-	// 来执行,才算在同一个事务里。这里"先按 role_id 删干净、再逐条 Create"是典型的"整表重置关联"写法。
 	return a.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("role_id = ?", roleID).Delete(&db.SystemRoleMenu{}).Error; err != nil {
+		if err := lockAuthorization(tx); err != nil {
 			return err
 		}
-		for _, menuID := range menuIDs {
-			if err := tx.Create(&db.SystemRoleMenu{RoleID: roleID, MenuID: menuID, CreatedAt: time.Now()}).Error; err != nil {
+		current, err := principalForTx(tx, principal)
+		if err != nil {
+			return err
+		}
+		principal = current
+		if !principal.HasPermission("system.roles.assign_permissions") {
+			return ErrPermission
+		}
+		var role db.SystemRole
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&role, roleID).Error; err != nil {
+			return err
+		}
+		if protectedRoleCodes[role.Code] {
+			return ErrPermission
+		}
+		if err := checkRoleGrantCeiling(tx, principal, []db.SystemRole{role}); err != nil {
+			return err
+		}
+		codes := uniqueStrings(payload.PermissionCodes)
+		var permissions []db.Permission
+		if len(codes) > 0 {
+			if err := tx.Where("code IN ?", codes).Find(&permissions).Error; err != nil {
 				return err
 			}
 		}
-		if err := tx.Where("role_id = ?", roleID).Delete(&db.SystemRoleButton{}).Error; err != nil {
+		if len(codes) != len(permissions) {
+			return bizErr("存在未知能力")
+		}
+		for _, capability := range permissions {
+			if !principal.HasPermission(capability.Code) || capability.Protected && !principal.HasRole("R_SUPER") {
+				return ErrPermission
+			}
+		}
+		if err := tx.Where("role_id=?", roleID).Delete(&db.RolePermission{}).Error; err != nil {
 			return err
 		}
-		for _, buttonID := range buttonIDs {
-			if err := tx.Create(&db.SystemRoleButton{RoleID: roleID, ButtonID: buttonID, CreatedAt: time.Now()}).Error; err != nil {
+		for _, code := range codes {
+			if err := tx.Create(&db.RolePermission{RoleID: roleID, PermissionCode: code}).Error; err != nil {
 				return err
 			}
 		}
-		return nil
+		menuIDs := dedupeInt64(payload.MenuIDs)
+		var count int64
+		if len(menuIDs) > 0 {
+			if err := tx.Model(&db.SystemMenu{}).Where("id IN ?", menuIDs).Count(&count).Error; err != nil {
+				return err
+			}
+			if count != int64(len(menuIDs)) {
+				return bizErr("存在未知菜单")
+			}
+		}
+		if err := tx.Where("role_id=?", roleID).Delete(&db.SystemRoleMenu{}).Error; err != nil {
+			return err
+		}
+		for _, id := range menuIDs {
+			if err := tx.Create(&db.SystemRoleMenu{RoleID: roleID, MenuID: id, CreatedAt: time.Now().UTC()}).Error; err != nil {
+				return err
+			}
+		}
+		return auditAuthorization(tx, principal, "role.permissions", fmt.Sprint(roleID))
 	})
 }
 
@@ -892,12 +988,12 @@ func (a *App) upsertI18nPair(bizType string, bizID int64, i18nKey string, texts 
 
 // replaceUserRoles 重置用户的角色关联:先按 user_id 删掉旧关联,再逐条插入新的(整体替换)。
 // 下面的 replaceMenuRoles / replaceButtonRoles 是同一套路,只是换成了菜单/按钮的关联表。
-func (a *App) replaceUserRoles(userID int64, roles []db.SystemRole) error {
-	if err := a.DB.Where("user_id = ?", userID).Delete(&db.SystemUserRole{}).Error; err != nil {
+func replaceUserRoles(tx *gorm.DB, userID int64, roles []db.SystemRole) error {
+	if err := tx.Where("user_id = ?", userID).Delete(&db.SystemUserRole{}).Error; err != nil {
 		return err
 	}
 	for _, role := range roles {
-		if err := a.DB.Create(&db.SystemUserRole{UserID: userID, RoleID: role.ID, CreatedAt: time.Now()}).Error; err != nil {
+		if err := tx.Create(&db.SystemUserRole{UserID: userID, RoleID: role.ID, CreatedAt: time.Now()}).Error; err != nil {
 			return err
 		}
 	}

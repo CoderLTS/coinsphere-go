@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"coinsphere/backend/plugin/contracts/trading"
 	"coinsphere/backend/plugin/sdk"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -28,12 +29,12 @@ type executionProvider struct{ runtime *binanceRuntime }
 
 func (executionProvider) ID() string { return "binance" }
 
-func (p executionProvider) PlaceOrder(ctx context.Context, request sdk.OrderRequest) (sdk.OrderResult, error) {
+func (p executionProvider) PlaceOrder(ctx context.Context, request trading.OrderRequest) (trading.OrderResult, error) {
 	if err := validateOrderRequest(request); err != nil {
-		return sdk.OrderResult{}, err
+		return trading.OrderResult{}, err
 	}
 	if err := p.runtime.validateOrderRules(ctx, request); err != nil {
-		return sdk.OrderResult{}, err
+		return trading.OrderResult{}, err
 	}
 	responseType := "FULL"
 	if request.Market == "usdm" {
@@ -45,21 +46,21 @@ func (p executionProvider) PlaceOrder(ctx context.Context, request sdk.OrderRequ
 	} else if request.Market == "spot" {
 		values.Set("quoteOrderQty", request.QuoteAmount.String())
 	} else {
-		return sdk.OrderResult{}, errors.New("Binance USD-M market order requires quantity")
+		return trading.OrderResult{}, errors.New("Binance USD-M market order requires quantity")
 	}
 	if request.Market == "usdm" && request.PositionEffect == "reduce" {
 		values.Set("reduceOnly", "true")
 	}
 	var payload map[string]any
 	if err := p.runtime.privateJSON(ctx, request.Market, http.MethodPost, orderPath(request.Market), values, request.Secrets, request.ProxyID, &payload); err != nil {
-		return sdk.OrderResult{}, err
+		return trading.OrderResult{}, err
 	}
 	return parseOrderResult(request.Market, payload)
 }
 
-func (p executionProvider) GetOrder(ctx context.Context, request sdk.OrderQuery) (sdk.OrderResult, error) {
+func (p executionProvider) GetOrder(ctx context.Context, request trading.OrderQuery) (trading.OrderResult, error) {
 	if err := validateOrderQuery(request); err != nil {
-		return sdk.OrderResult{}, err
+		return trading.OrderResult{}, err
 	}
 	values := url.Values{"symbol": {strings.ToUpper(request.Instrument)}}
 	if request.OrderID != "" {
@@ -69,12 +70,12 @@ func (p executionProvider) GetOrder(ctx context.Context, request sdk.OrderQuery)
 	}
 	var payload map[string]any
 	if err := p.runtime.privateJSON(ctx, request.Market, http.MethodGet, orderPath(request.Market), values, request.Secrets, request.ProxyID, &payload); err != nil {
-		return sdk.OrderResult{}, err
+		return trading.OrderResult{}, err
 	}
 	return parseOrderResult(request.Market, payload)
 }
 
-func (p executionProvider) CancelOrder(ctx context.Context, request sdk.CancelOrderRequest) error {
+func (p executionProvider) CancelOrder(ctx context.Context, request trading.CancelOrderRequest) error {
 	if err := validateOrderQuery(request); err != nil {
 		return err
 	}
@@ -87,12 +88,12 @@ func (p executionProvider) CancelOrder(ctx context.Context, request sdk.CancelOr
 	return p.runtime.privateJSON(ctx, request.Market, http.MethodDelete, orderPath(request.Market), values, request.Secrets, request.ProxyID, &map[string]any{})
 }
 
-func registerExecution(registrar sdk.Registrar, runtime *binanceRuntime) error {
-	if err := registrar.ExecutionProvider(executionProvider{runtime: runtime}); err != nil {
+func registerExecution(registrar sdk.Registrar, runtime *binanceRuntime, financial *trading.Registry) error {
+	if err := financial.RegisterExecution(executionProvider{runtime: runtime}); err != nil {
 		return err
 	}
 	if err := registrar.Action(withNodeMeta(sdk.NodeDescriptor{
-		Type: "official.binance.live_execute", Version: "1.0.0", Kind: sdk.NodeKindAction,
+		ExecutionPermissions: []string{"plugins.official.binance.live_release"}, Type: "official.binance.live_execute", Version: "1.0.0", Kind: sdk.NodeKindAction,
 		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"liveTradingEnabled":{"type":"boolean","title":"启用实盘交易","default":false},"accountConfirmed":{"type":"boolean","title":"已人工确认账户","default":false},"proxyId":{"type":"integer","title":"代理","minimum":0,"default":0,"x-coinsphere-proxy":true},"maxOrderNotional":{"type":"string","title":"最大订单名义金额","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"maxInstrumentNotional":{"type":"string","title":"单交易对最大名义金额","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"maxDailyLoss":{"type":"string","title":"单日最大亏损","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"maxDailyOrders":{"type":"integer","title":"每日最大订单数","minimum":1,"maximum":10000},"maxSlippage":{"type":"string","title":"最大滑点","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"maxQuoteAgeSeconds":{"type":"integer","title":"行情最大延迟（秒）","minimum":1,"maximum":300},"apiKey":{"type":"string","title":"接口密钥","x-coinsphere-secret":true},"apiSecret":{"type":"string","title":"接口密钥","x-coinsphere-secret":true}},"required":["liveTradingEnabled","accountConfirmed","maxOrderNotional","maxInstrumentNotional","maxDailyLoss","maxDailyOrders","maxSlippage","maxQuoteAgeSeconds","apiKey","apiSecret"],"additionalProperties":false}`),
 		UISchema:     json.RawMessage(`{"ui:order":["liveTradingEnabled","accountConfirmed","proxyId","maxOrderNotional","maxInstrumentNotional","maxDailyLoss","maxDailyOrders","maxSlippage","maxQuoteAgeSeconds","apiKey","apiSecret"]}`),
 		InputSchema:  orderIntentSchema(), OutputSchema: orderResultSchema(), Pool: sdk.PoolStream, SideEffect: sdk.SideEffectData, State: sdk.StateStateless,
@@ -135,7 +136,7 @@ func (a liveExecuteAction) Execute(ctx context.Context, request sdk.ActionReques
 	intent.Instrument = strings.ToUpper(strings.TrimSpace(intent.Instrument))
 	intent.Side = strings.ToLower(strings.TrimSpace(intent.Side))
 	intent.PositionEffect = strings.ToLower(strings.TrimSpace(intent.PositionEffect))
-	if validateOrderRequest(sdk.OrderRequest{
+	if validateOrderRequest(trading.OrderRequest{
 		Account: intent.Account, Market: intent.Market, Instrument: intent.Instrument, Side: intent.Side,
 		Quantity: quantity, QuoteAmount: quoteAmount, PositionEffect: intent.PositionEffect, ClientOrderID: intent.ClientOrderID,
 	}) != nil {
@@ -158,7 +159,7 @@ func (a liveExecuteAction) Execute(ctx context.Context, request sdk.ActionReques
 			return sdk.ActionResult{}, errors.New("Binance clientOrderId belongs to a different order intent")
 		}
 		if existing.Status == "reconciling" {
-			result, queryErr := (executionProvider{runtime: a.runtime}).GetOrder(ctx, sdk.OrderQuery{Account: intent.Account, Market: intent.Market, Instrument: intent.Instrument, ClientOrderID: intent.ClientOrderID, Secrets: request.Secrets, ProxyID: config.ProxyID})
+			result, queryErr := (executionProvider{runtime: a.runtime}).GetOrder(ctx, trading.OrderQuery{Account: intent.Account, Market: intent.Market, Instrument: intent.Instrument, ClientOrderID: intent.ClientOrderID, Secrets: request.Secrets, ProxyID: config.ProxyID})
 			if queryErr == nil {
 				_ = a.runtime.updateReconciledOrder(ctx, existing, result)
 				existing, _, _ = a.runtime.orderByClientID(ctx, intent.ClientOrderID)
@@ -166,7 +167,7 @@ func (a liveExecuteAction) Execute(ctx context.Context, request sdk.ActionReques
 		}
 		return sdk.ActionResult{Output: marshalOrder(existing)}, nil
 	}
-	quote, err := (marketDataProvider{runtime: a.runtime}).Quote(ctx, sdk.QuoteQuery{Market: intent.Market, Instrument: intent.Instrument, ProxyID: config.ProxyID})
+	quote, err := (marketDataProvider{runtime: a.runtime}).Quote(ctx, trading.QuoteQuery{Market: intent.Market, Instrument: intent.Instrument, ProxyID: config.ProxyID})
 	if err != nil {
 		return sdk.ActionResult{}, err
 	}
@@ -206,7 +207,7 @@ func (a liveExecuteAction) Execute(ctx context.Context, request sdk.ActionReques
 		}
 		return sdk.ActionResult{Output: marshalOrder(existing)}, nil
 	}
-	result, err := (executionProvider{runtime: a.runtime}).PlaceOrder(ctx, sdk.OrderRequest{Account: intent.Account, Market: intent.Market, Instrument: intent.Instrument, Side: intent.Side, Quantity: quantity, QuoteAmount: quoteAmount, PositionEffect: intent.PositionEffect, ClientOrderID: intent.ClientOrderID, Secrets: request.Secrets, ProxyID: config.ProxyID})
+	result, err := (executionProvider{runtime: a.runtime}).PlaceOrder(ctx, trading.OrderRequest{Account: intent.Account, Market: intent.Market, Instrument: intent.Instrument, Side: intent.Side, Quantity: quantity, QuoteAmount: quoteAmount, PositionEffect: intent.PositionEffect, ClientOrderID: intent.ClientOrderID, Secrets: request.Secrets, ProxyID: config.ProxyID})
 	if err != nil {
 		return sdk.ActionResult{}, err
 	}
@@ -240,7 +241,7 @@ func parseRiskLimits(order, instrument, loss, slippage string, dailyOrders, quot
 	return riskLimits{a, b, c, d, dailyOrders, quoteAge}, nil
 }
 
-func (q *binanceRuntime) checkLiveRisk(ctx context.Context, account, market, instrument, side, positionEffect string, quantity, quoteAmount, reference decimal.Decimal, quotedAt time.Time, quote sdk.Quote, limits riskLimits) error {
+func (q *binanceRuntime) checkLiveRisk(ctx context.Context, account, market, instrument, side, positionEffect string, quantity, quoteAmount, reference decimal.Decimal, quotedAt time.Time, quote trading.Quote, limits riskLimits) error {
 	now := time.Now().UTC()
 	if account == "" || quotedAt.After(now) || quote.QuotedAt.After(now) || now.Sub(quotedAt) > time.Duration(limits.quoteAge)*time.Second || now.Sub(quote.QuotedAt) > time.Duration(limits.quoteAge)*time.Second {
 		return errors.New("Binance quote is stale")
@@ -332,7 +333,7 @@ func (q *binanceRuntime) verifyOneWayMode(ctx context.Context, secrets sdk.Secre
 	return nil
 }
 
-func (q *binanceRuntime) validateOrderRules(ctx context.Context, request sdk.OrderRequest) error {
+func (q *binanceRuntime) validateOrderRules(ctx context.Context, request trading.OrderRequest) error {
 	if request.Quantity.Sign() <= 0 {
 		return nil
 	}
@@ -407,7 +408,7 @@ func (q *binanceRuntime) privateJSON(ctx context.Context, market, method, path s
 	return nil
 }
 
-func validateOrderRequest(r sdk.OrderRequest) error {
+func validateOrderRequest(r trading.OrderRequest) error {
 	if !accountIDPattern.MatchString(r.Account) || (r.Market != "spot" && r.Market != "usdm") ||
 		!instrumentPattern.MatchString(strings.ToUpper(r.Instrument)) || (r.Side != "buy" && r.Side != "sell") ||
 		!clientOrderIDPattern.MatchString(r.ClientOrderID) || (r.Quantity.Sign() <= 0 && r.QuoteAmount.Sign() <= 0) ||
@@ -418,7 +419,7 @@ func validateOrderRequest(r sdk.OrderRequest) error {
 	return nil
 }
 
-func validateOrderQuery(r sdk.OrderQuery) error {
+func validateOrderQuery(r trading.OrderQuery) error {
 	if !accountIDPattern.MatchString(r.Account) || (r.Market != "spot" && r.Market != "usdm") ||
 		!instrumentPattern.MatchString(strings.ToUpper(r.Instrument)) ||
 		(r.OrderID == "" && r.ClientOrderID == "") || (r.OrderID != "" && r.ClientOrderID != "") {
@@ -432,7 +433,7 @@ func orderPath(market string) string {
 	}
 	return "/api/v3/order"
 }
-func parseOrderResult(market string, payload map[string]any) (sdk.OrderResult, error) {
+func parseOrderResult(market string, payload map[string]any) (trading.OrderResult, error) {
 	text := func(key string) string {
 		value := payload[key]
 		if value == nil {
@@ -446,18 +447,18 @@ func parseOrderResult(market string, payload map[string]any) (sdk.OrderResult, e
 	if average.Sign() == 0 {
 		quote, quoteErr := decimal.NewFromString(zeroIfEmpty(text("cummulativeQuoteQty")))
 		if quoteErr != nil {
-			return sdk.OrderResult{}, errors.New("Binance order response is invalid")
+			return trading.OrderResult{}, errors.New("Binance order response is invalid")
 		}
 		if executed.Sign() > 0 {
 			average = quote.Div(executed)
 		}
 	}
-	result := sdk.OrderResult{ProviderOrderID: text("orderId"), ClientOrderID: text("clientOrderId"), Status: strings.ToLower(text("status")), Market: market, Instrument: strings.ToUpper(text("symbol")), Side: strings.ToLower(text("side")), Quantity: quantity, Executed: executed, AveragePrice: average, UpdatedAt: time.Now().UTC()}
+	result := trading.OrderResult{ProviderOrderID: text("orderId"), ClientOrderID: text("clientOrderId"), Status: strings.ToLower(text("status")), Market: market, Instrument: strings.ToUpper(text("symbol")), Side: strings.ToLower(text("side")), Quantity: quantity, Executed: executed, AveragePrice: average, UpdatedAt: time.Now().UTC()}
 	if quantityErr != nil || executedErr != nil || averageErr != nil || result.ProviderOrderID == "" ||
 		!clientOrderIDPattern.MatchString(result.ClientOrderID) || !instrumentPattern.MatchString(result.Instrument) ||
 		(result.Side != "buy" && result.Side != "sell") || !validOrderStatus(result.Status) || quantity.Sign() < 0 ||
 		executed.Sign() < 0 || average.Sign() < 0 || quantity.Sign() > 0 && executed.GreaterThan(quantity) {
-		return sdk.OrderResult{}, errors.New("Binance order response is invalid")
+		return trading.OrderResult{}, errors.New("Binance order response is invalid")
 	}
 	return result, nil
 }
@@ -488,7 +489,7 @@ func matchesOrderIntent(row tradingOrder, mode, account, market, instrument, sid
 		row.RequestQuantity.Equal(quantity) && row.RequestQuoteAmount.Equal(quoteAmount)
 }
 func marshalOrder(row tradingOrder) json.RawMessage {
-	raw, _ := json.Marshal(map[string]any{"orderId": row.ID, "providerOrderId": row.ProviderOrderID, "clientOrderId": row.ClientOrderID, "status": row.Status, "market": row.Market, "instrument": row.Instrument, "side": row.Side, "quantity": row.Quantity.String(), "executed": row.Executed.String(), "averagePrice": row.AveragePrice.String(), "updatedAt": row.UpdatedAt.UTC().Format(time.RFC3339Nano)})
+	raw, _ := json.Marshal(map[string]any{"orderId": row.ID, "providerOrderId": row.ProviderOrderID, "clientOrderId": row.ClientOrderID, "status": row.Status, "market": row.Market, "instrument": row.Instrument, "side": row.Side, "quantity": row.Quantity.String(), "executed": row.Executed.String(), "averagePrice": row.AveragePrice.String(), "updatedAt": row.UpdatedAt.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano)})
 	return raw
 }
 func zeroIfEmpty(value string) string {
@@ -504,5 +505,5 @@ func orderResultSchema() json.RawMessage {
 	return json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"orderId":{"type":"integer"},"providerOrderId":{"type":"string"},"clientOrderId":{"type":"string"},"status":{"type":"string"},"market":{"type":"string"},"instrument":{"type":"string"},"side":{"type":"string"},"quantity":{"type":"string","x-coinsphere-decimal":true},"executed":{"type":"string","x-coinsphere-decimal":true},"averagePrice":{"type":"string","x-coinsphere-decimal":true},"updatedAt":{"type":"string","format":"date-time"}},"required":["orderId","providerOrderId","clientOrderId","status","market","instrument","side","quantity","executed","averagePrice","updatedAt"],"additionalProperties":false}`)
 }
 
-var _ sdk.ExecutionProvider = executionProvider{}
+var _ trading.ExecutionProvider = executionProvider{}
 var _ sdk.ActionHandler = liveExecuteAction{}

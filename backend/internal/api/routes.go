@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -23,7 +22,7 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 		writeJSON(c, http.StatusOK, M{"status": "alive"})
 	})
 	get(router, "/health/ready", s.handleReady)
-	get(router, "/metrics", s.requireAuth(), s.handleMetrics)
+	get(router, "/metrics", s.requireAuth(), s.requirePermission("system.observe"), s.handleMetrics)
 
 	_ = os.MkdirAll(s.StaticDir, 0o755)
 	_ = os.MkdirAll(filepath.Join(s.UploadsDir, "avatars"), 0o755)
@@ -33,6 +32,8 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 	api := router.Group("/api/v1")
 	authenticated := api.Group("", s.requireAuth())
 	super := authenticated.Group("", s.requireRole("R_SUPER"))
+	assistant := authenticated.Group("", s.requirePermission("assistant.use"))
+	aiConfig := authenticated.Group("", s.requirePermission("config.ai.manage"))
 	auth := api.Group("/auth")
 	auth.POST("/login", s.rateLimit(), s.handleLogin)
 	auth.POST("/logout", s.requireAuth(), s.handleLogout)
@@ -42,7 +43,7 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 	get(authenticated, "/home/meta", func(c *gin.Context) {
 		ok(c, s.App.GetHomeMeta())
 	})
-	get(authenticated, "/home/overview", func(c *gin.Context) {
+	get(authenticated, "/home/overview", s.requirePermission("system.observe"), func(c *gin.Context) {
 		data, err := s.App.GetHomeOverview(c.Request.Context())
 		if err == nil {
 			for key, value := range s.metrics.snapshot() {
@@ -52,63 +53,71 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 		respond(c, data, err, "")
 	})
 
-	get(super, "/config/ai-models", s.handleListAIModels)
-	super.POST("/config/ai-models", s.handleCreateAIModel)
-	super.PUT("/config/ai-models/:modelId", s.handleUpdateAIModel)
-	super.PATCH("/config/ai-models/:modelId", s.handlePatchAIModel)
-	super.DELETE("/config/ai-models/:modelId", s.handleDeleteAIModel)
-	super.POST("/config/ai-models/:modelId/validations", s.handleValidateAIModel)
-	get(super, "/assistant/models", s.handleListAssistantModels)
-	get(super, "/assistant/sessions", s.handleListAssistantSessions)
-	super.POST("/assistant/sessions", s.handleCreateAssistantSession)
-	get(super, "/assistant/sessions/:sessionId", s.handleGetAssistantSession)
-	super.DELETE("/assistant/sessions/:sessionId", s.handleDeleteAssistantSession)
-	get(super, "/assistant/sessions/:sessionId/messages", s.handleListAssistantMessages)
-	super.POST("/assistant/sessions/:sessionId/stream", s.handleStreamAssistantSession)
+	get(aiConfig, "/config/ai-models", s.handleListAIModels)
+	aiConfig.POST("/config/ai-models", s.handleCreateAIModel)
+	aiConfig.PUT("/config/ai-models/:modelId", s.handleUpdateAIModel)
+	aiConfig.PATCH("/config/ai-models/:modelId", s.handlePatchAIModel)
+	aiConfig.DELETE("/config/ai-models/:modelId", s.handleDeleteAIModel)
+	aiConfig.POST("/config/ai-models/:modelId/validations", s.handleValidateAIModel)
+	get(assistant, "/assistant/models", s.handleListAssistantModels)
+	get(assistant, "/assistant/sessions", s.handleListAssistantSessions)
+	assistant.POST("/assistant/sessions", s.handleCreateAssistantSession)
+	get(assistant, "/assistant/sessions/:sessionId", s.handleGetAssistantSession)
+	assistant.DELETE("/assistant/sessions/:sessionId", s.handleDeleteAssistantSession)
+	get(assistant, "/assistant/sessions/:sessionId/messages", s.handleListAssistantMessages)
+	assistant.POST("/assistant/sessions/:sessionId/stream", s.handleStreamAssistantSession)
 
 	api.POST("/webhooks/:workflowId", s.handlePublishWorkflowWebhook)
-	get(super, "/workflows/templates", s.handleListWorkflowTemplates)
+	get(authenticated, "/workflows/templates", s.requirePermission("workflows.read"), s.handleListWorkflowTemplates)
 	super.POST("/events", s.handlePublishWorkflowEvent)
-	get(super, "/human-tasks", s.handleListWorkflowHumanTasks)
-	super.POST("/human-tasks/:taskId", s.handleDecideWorkflowHumanTask)
-	get(super, "/workflows/node-definitions", s.handleListWorkflowNodeDefinitions)
-	super.POST("/workflows/validate", s.handleValidateWorkflowGraph)
-	get(super, "/workflow-groups", s.handleListWorkflowGroups)
-	super.POST("/workflow-groups", s.handleCreateWorkflowGroup)
-	super.PUT("/workflow-groups/order", s.handleUpdateWorkflowGroupOrder)
-	super.PATCH("/workflow-groups/:groupId", s.handleUpdateWorkflowGroup)
-	super.DELETE("/workflow-groups/:groupId", s.handleDeleteWorkflowGroup)
-	get(super, "/workflows", s.handleListWorkflows)
-	super.POST("/workflows", s.handleCreateWorkflow)
-	super.PATCH("/workflows/group-assignment", s.handleAssignWorkflowGroup)
-	get(super, "/workflows/:workflowId", s.handleGetWorkflow)
-	super.PATCH("/workflows/:workflowId", s.handleUpdateWorkflow)
-	super.DELETE("/workflows/:workflowId", s.requirePermission(perm.SchedulerWorkflowDefinitionsDelete), s.handleDeleteWorkflow)
-	get(super, "/workflows/:workflowId/revisions", s.handleListWorkflowRevisions)
-	super.POST("/workflows/:workflowId/revisions", s.handleSaveWorkflowRevision)
-	get(super, "/workflows/:workflowId/revisions/:revisionId", s.handleGetWorkflowRevision)
-	super.DELETE("/workflows/:workflowId/revisions/:revisionId", s.requirePermission(perm.SchedulerWorkflowDefinitionsDelete), s.handleDeleteWorkflowRevision)
-	super.POST("/workflows/:workflowId/lifecycle", s.handleWorkflowLifecycle)
-	get(super, "/workflows/:workflowId/runs", s.handleListWorkflowRuns)
-	super.POST("/workflows/:workflowId/runs", s.handleCreateWorkflowRun)
+	get(authenticated, "/human-tasks", s.handleListWorkflowHumanTasks)
+	authenticated.POST("/human-tasks/:taskId", s.handleDecideWorkflowHumanTask)
+	get(authenticated, "/workflows/node-definitions", s.requirePermission("workflows.read"), s.handleListWorkflowNodeDefinitions)
+	authenticated.POST("/workflows/validate", s.requirePermission("workflows.update"), s.handleValidateWorkflowGraph)
+	get(authenticated, "/workflow-groups", s.handleListWorkflowGroups)
+	authenticated.POST("/workflow-groups", s.handleCreateWorkflowGroup)
+	authenticated.PUT("/workflow-groups/order", s.handleUpdateWorkflowGroupOrder)
+	authenticated.PATCH("/workflow-groups/:groupId", s.handleUpdateWorkflowGroup)
+	authenticated.DELETE("/workflow-groups/:groupId", s.handleDeleteWorkflowGroup)
+	get(authenticated, "/workflows", s.handleListWorkflows)
+	authenticated.POST("/workflows", s.handleCreateWorkflow)
+	authenticated.PATCH("/workflows/group-assignment", s.handleAssignWorkflowGroup)
+	get(authenticated, "/workflows/:workflowId", s.handleGetWorkflow)
+	authenticated.PATCH("/workflows/:workflowId", s.handleUpdateWorkflow)
+	authenticated.DELETE("/workflows/:workflowId", s.handleDeleteWorkflow)
+	get(authenticated, "/workflows/:workflowId/revisions", s.handleListWorkflowRevisions)
+	authenticated.POST("/workflows/:workflowId/revisions", s.handleSaveWorkflowRevision)
+	get(authenticated, "/workflows/:workflowId/revisions/:revisionId", s.handleGetWorkflowRevision)
+	authenticated.DELETE("/workflows/:workflowId/revisions/:revisionId", s.handleDeleteWorkflowRevision)
+	authenticated.POST("/workflows/:workflowId/lifecycle", s.handleWorkflowLifecycle)
+	get(authenticated, "/workflows/:workflowId/runs", s.handleListWorkflowRuns)
+	authenticated.POST("/workflows/:workflowId/runs", s.handleCreateWorkflowRun)
 	get(api, "/ws/workflows/:workflowId/runs", s.handleWorkflowRunsWebSocket)
 	get(authenticated, "/notification-deliveries", s.handleListInAppNotifications)
 	authenticated.POST("/notification-deliveries/:deliveryId/read", s.handleReadInAppNotification)
 	authenticated.POST("/notification-deliveries/read-all", s.handleReadAllInAppNotifications)
 	get(api, "/ws/notifications", s.handleNotificationWebSocket)
-	get(super, "/workflow-runs/:runId", s.handleGetWorkflowRun)
-	super.POST("/workflow-runs/:runId", s.handleWorkflowRunAction)
-	get(super, "/artifacts/:sha256/manifest", s.handleGetWorkflowArtifactManifest)
-	get(super, "/artifacts/:sha256/download", s.handleDownloadWorkflowArtifact)
+	get(authenticated, "/workflow-runs/:runId", s.handleGetWorkflowRun)
+	authenticated.POST("/workflow-runs/:runId", s.handleWorkflowRunAction)
+	get(authenticated, "/artifacts/:sha256/manifest", s.handleGetWorkflowArtifactManifest)
+	get(authenticated, "/artifacts/:sha256/download", s.handleDownloadWorkflowArtifact)
 	get(authenticated, "/result-views", s.requirePermission(perm.ResultViewsAccess), s.handleListResultViews)
-	super.POST("/result-views", s.handleCreateResultView)
+	authenticated.POST("/result-views", s.handleCreateResultView)
 	get(authenticated, "/result-views/:viewId", s.requirePermission(perm.ResultViewsAccess), s.handleGetResultView)
-	super.PUT("/result-views/:viewId/grants", s.handleReplaceResultViewGrants)
-	super.POST("/result-views/:viewId/revoke", s.handleRevokeResultView)
+	authenticated.PUT("/result-views/:viewId/grants", s.handleReplaceResultViewGrants)
+	authenticated.POST("/result-views/:viewId/revoke", s.handleRevokeResultView)
+	authenticated.POST("/result-views/:viewId/status", s.handleSetResultViewStatus)
 	get(authenticated, "/result-views/:viewId/runs", s.handleListResultViewRuns)
 	authenticated.POST("/result-views/:viewId/runs/:runId/:action", s.handleResultViewRunAction)
 	authenticated.POST("/result-views/:viewId/workflow/pause", s.handleResultViewWorkflowPause)
 	s.registerSystemPluginRoutes(authenticated, api)
+	s.registerWorkflowPluginRoutes(authenticated)
+	get(authenticated, "/system/permissions", s.requirePermission(perm.SystemRolesView), s.handleListCapabilities)
+	get(authenticated, "/workbench", s.handleWorkbench)
+	authenticated.POST("/workflows/:workflowId/publish", s.handlePublishWorkflowRevision)
+	authenticated.PUT("/workflows/:workflowId/grants", s.handleReplaceWorkflowGrants)
+	get(authenticated, "/workflows/:workflowId/grants", s.handleGetWorkflowGrants)
+	get(authenticated, "/plugins/catalog", s.handlePluginCatalog)
 	s.registerResultPluginRoutes(authenticated)
 
 	get(authenticated, "/admin/users", s.requirePermission(perm.SystemUsersView), s.handleListUsers)
@@ -131,7 +140,8 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 	authenticated.PUT("/system/menu-buttons/:buttonId", s.requirePermission(perm.SystemMenusUpdate), s.handleUpdateMenuButton)
 	authenticated.DELETE("/system/menu-buttons/:buttonId", s.requirePermission(perm.SystemMenusDelete), s.handleDeleteMenuButton)
 	get(authenticated, "/system/plugins", s.requirePermission(perm.SystemPluginsView), func(c *gin.Context) {
-		ok(c, s.App.ListInstalledPlugins())
+		items, err := s.App.ListInstalledPlugins()
+		respond(c, items, err, "")
 	})
 	get(authenticated, "/system/proxies", s.requirePermission(perm.SystemProxiesView), s.handleListOutboundProxies)
 	authenticated.POST("/system/proxies", s.requirePermission(perm.SystemProxiesCreate), s.handleCreateOutboundProxy)
@@ -178,30 +188,13 @@ func (s *Server) registerResultPluginRoutes(routes gin.IRoutes) {
 				respond(c, nil, fmt.Errorf("%w: result view", service.ErrNotFound), "")
 				return
 			}
-			if !authorizeResultAction(c, principal, registered.Descriptor.Action) {
+			if !principal.HasPermission(registered.Descriptor.PermissionCode) {
+				writeProblem(c, http.StatusForbidden, service.ErrPermission.Error())
 				return
 			}
 			registered.Handler(c, scope)
 		})
 	}
-}
-
-var resultActionPermissions = map[string]string{
-	"approve": perm.ResultViewsApprove, "reject": perm.ResultViewsReject,
-	"retry": perm.ResultViewsRetry, "cancel": perm.ResultViewsCancel,
-	"pause": perm.ResultViewsPause, "export": perm.ResultViewsExport,
-}
-
-func authorizeResultAction(c *gin.Context, principal *service.Principal, action string) bool {
-	if action == "" {
-		return true
-	}
-	permission, known := resultActionPermissions[action]
-	if known && (principal.HasRole("R_SUPER") || principal.HasPermission(permission)) {
-		return true
-	}
-	writeProblem(c, http.StatusForbidden, service.ErrPermission.Error())
-	return false
 }
 
 func (s *Server) registerSystemPluginRoutes(routes, publicRoutes gin.IRoutes) {
@@ -213,29 +206,55 @@ func (s *Server) registerSystemPluginRoutes(routes, publicRoutes gin.IRoutes) {
 			continue
 		}
 		registered := route
-		pattern := "/plugins/" + registered.PluginID + registered.Descriptor.Pattern
-		if registered.Descriptor.WebSocket {
+		pattern := "/plugins/" + route.PluginID + route.Descriptor.Pattern
+		if route.Descriptor.WebSocket {
 			publicRoutes.GET(pattern, func(c *gin.Context) {
 				protocol := "coinsphere.plugin." + registered.PluginID + ".v1"
 				token, ok := pluginWebSocketToken(c.Request, protocol)
 				principal, err := s.App.AuthenticateAccessToken(token)
-				if !ok || err != nil || principal == nil || !principal.HasRole("R_SUPER") {
+				if !ok || err != nil || principal == nil {
 					writeProblem(c, http.StatusUnauthorized, "invalid websocket authentication")
 					return
 				}
-				registered.Handler(c, sdk.SystemScope{
-					PluginID: registered.PluginID, UserID: principal.User.ID,
-					RoleCodes: slices.Clone(principal.RoleCodes),
-				})
+				c.Request = c.Request.WithContext(service.WithPrincipal(c.Request.Context(), principal))
+				scope, err := s.App.ResolveSystemScope(c.Request.Context(), registered.PluginID, registered.Descriptor.PermissionCode)
+				if err != nil {
+					respond(c, nil, err, "")
+					return
+				}
+				registered.Handler(c, scope)
 			})
 			continue
 		}
-		registerPluginRoute(routes, registered.Descriptor.Method, pattern, s.requireRole("R_SUPER"), func(c *gin.Context) {
-			principal := currentPrincipal(c)
-			registered.Handler(c, sdk.SystemScope{
-				PluginID: registered.PluginID, UserID: principal.User.ID,
-				RoleCodes: slices.Clone(principal.RoleCodes),
-			})
+		registerPluginRoute(routes, registered.Descriptor.Method, pattern, s.requirePermission(registered.Descriptor.PermissionCode), func(c *gin.Context) {
+			scope, err := s.App.ResolveSystemScope(c.Request.Context(), registered.PluginID, registered.Descriptor.PermissionCode)
+			if err != nil {
+				respond(c, nil, err, "")
+				return
+			}
+			registered.Handler(c, scope)
+		})
+	}
+}
+func (s *Server) registerWorkflowPluginRoutes(routes gin.IRoutes) {
+	for _, route := range s.App.Plugins.Routes() {
+		if route.Descriptor.Scope != sdk.ScopeWorkflow {
+			continue
+		}
+		registered := route
+		pattern := "/workflows/:workflowId/nodes/:nodeInstanceId/plugins/" + route.PluginID + route.Descriptor.Pattern
+		registerPluginRoute(routes, route.Descriptor.Method, pattern, s.requirePermission(route.Descriptor.PermissionCode), func(c *gin.Context) {
+			id, err := pathInt64(c, "workflowId")
+			if err != nil {
+				respond(c, nil, err, "")
+				return
+			}
+			scope, err := s.App.ResolveWorkflowScope(c.Request.Context(), registered.PluginID, id, c.Param("nodeInstanceId"), registered.Descriptor.PermissionCode)
+			if err != nil {
+				respond(c, nil, err, "")
+				return
+			}
+			registered.Handler(c, scope)
 		})
 	}
 }

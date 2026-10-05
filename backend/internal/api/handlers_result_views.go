@@ -60,6 +60,23 @@ func (s *Server) handleRevokeResultView(c *gin.Context) {
 	respond(c, view, err, "")
 }
 
+func (s *Server) handleSetResultViewStatus(c *gin.Context) {
+	id, err := pathInt64(c, "viewId")
+	if err != nil {
+		respond(c, nil, err, "")
+		return
+	}
+	payload, err := decodeBody[struct {
+		Status string `json:"status"`
+	}](c)
+	if err != nil {
+		writeProblem(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	view, err := s.App.SetResultViewStatus(c.Request.Context(), id, payload.Status)
+	respond(c, view, err, "")
+}
+
 func (s *Server) handleListResultViewRuns(c *gin.Context) {
 	viewID, err := pathInt64(c, "viewId")
 	if err != nil {
@@ -89,9 +106,6 @@ func (s *Server) handleResultViewRunAction(c *gin.Context) {
 		respond(c, nil, fmt.Errorf("%w: result view", service.ErrNotFound), "")
 		return
 	}
-	if !authorizeResultAction(c, principal, action) {
-		return
-	}
 	run, err := s.App.ApplyResultScopeRunAction(c.Request.Context(), scope, runID, action)
 	respond(c, run, err, "")
 }
@@ -108,9 +122,6 @@ func (s *Server) handleResultViewWorkflowPause(c *gin.Context) {
 		respond(c, nil, fmt.Errorf("%w: result view", service.ErrNotFound), "")
 		return
 	}
-	if !authorizeResultAction(c, principal, "pause") {
-		return
-	}
 	workflow, err := s.App.PauseResultScopeWorkflow(c.Request.Context(), scope)
-	respond(c, workflow, err, "")
+	respond(c, M{"status": workflow.Status}, err, "")
 }

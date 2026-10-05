@@ -4,14 +4,14 @@ package perm
 const (
 	HomeView = "home.view"
 
-	SchedulerWorkflowDefinitionsView   = "scheduler.workflow_definitions.view"
-	SchedulerWorkflowDefinitionsCreate = "scheduler.workflow_definitions.create"
-	SchedulerWorkflowDefinitionsUpdate = "scheduler.workflow_definitions.update"
-	SchedulerWorkflowDefinitionsDelete = "scheduler.workflow_definitions.delete"
-	SchedulerWorkflowDefinitionsRun    = "scheduler.workflow_definitions.run"
-	SchedulerWorkflowRuntimeView       = "scheduler.workflow_runtime.view"
-	SchedulerWorkflowRuntimeActivate   = "scheduler.workflow_runtime.activate"
-	SchedulerWorkflowRuntimeUpdate     = "scheduler.workflow_runtime.update"
+	SchedulerWorkflowDefinitionsView   = "workflows.read"
+	SchedulerWorkflowDefinitionsCreate = "workflows.create"
+	SchedulerWorkflowDefinitionsUpdate = "workflows.update"
+	SchedulerWorkflowDefinitionsDelete = "workflows.delete"
+	SchedulerWorkflowDefinitionsRun    = "workflows.run"
+	SchedulerWorkflowRuntimeView       = "workflows.read"
+	SchedulerWorkflowRuntimeActivate   = "workflows.activate"
+	SchedulerWorkflowRuntimeUpdate     = "workflows.update"
 
 	SystemUsersView              = "system.users.view"
 	SystemUsersCreate            = "system.users.create"
@@ -34,17 +34,17 @@ const (
 	SystemProxiesValidate        = "system.proxies.validate"
 	SystemLogsView               = "system.logs.view"
 	SystemLogsConfigure          = "system.logs.configure"
-	ResultViewsAccess            = "result.views.access"
-	ResultViewsApprove           = "result.views.approve"
-	ResultViewsReject            = "result.views.reject"
-	ResultViewsRetry             = "result.views.retry"
-	ResultViewsCancel            = "result.views.cancel"
-	ResultViewsPause             = "result.views.pause"
-	ResultViewsExport            = "result.views.export"
+	ResultViewsAccess            = "result_views.read"
+	ResultViewsApprove           = "result_views.approve"
+	ResultViewsReject            = "result_views.reject"
+	ResultViewsRetry             = "result_views.retry"
+	ResultViewsCancel            = "result_views.cancel"
+	ResultViewsPause             = "result_views.pause"
+	ResultViewsExport            = "result_views.export"
 )
 
 var MenuPermissionCodes = map[string]string{
-	"Home": HomeView, "SchedulerCenter": "",
+	"Home": HomeView, "SystemOverview": "system.observe", "AiModelConfig": "config.ai.manage", "SchedulerCenter": "",
 	"WorkflowDefinitions": SchedulerWorkflowDefinitionsView,
 	"System":              "", "User": SystemUsersView, "Role": SystemRolesView,
 	"Menus": SystemMenusView, "Plugins": SystemPluginsView, "OutboundProxies": SystemProxiesView, "UserCenter": "",

@@ -324,11 +324,7 @@ func (a *App) createAssistantWorkflow(ctx context.Context, name, description str
 	if err != nil {
 		return nil, err
 	}
-	var workflow db.Workflow
-	err = a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		workflow, err = createWorkflowRecord(tx, summary.Name, summary.Description, nil, summary.graph, principal.User.ID, time.Now().UTC())
-		return err
-	})
+	workflow, err := a.CreateWorkflow(WithPrincipal(ctx, principal), WorkflowCreatePayload{Name: summary.Name, Description: summary.Description, Graph: json.RawMessage(summary.graph.graphJSON)}, principal)
 	if err != nil {
 		return nil, err
 	}

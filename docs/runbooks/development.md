@@ -1,93 +1,31 @@
-# 本地开发与诊断
+# 开发与诊断
 
-## 全量验证
+默认验证来自远端 CI，不运行本地测试、构建、应用、迁移演练或浏览器。静态审查、编辑、格式化无需启动系统；已通过且未受新改动影响的门禁不重复手工执行。用户当前任务明确要求本地验证时，才使用现有 scripts/verify.ps1 或 scripts/verify.sh，并只连接隔离环境。
 
-Windows 使用 PowerShell：
+## 插件工具
 
-```powershell
-.\scripts\verify.ps1
-```
-
-Linux 使用：
+源码工具需要 Go 1.26.6、Node 24/pnpm 10.33、Docker Compose v2 与 PostgreSQL 16。安装前停止目标应用并保存一致恢复点；真实配置只在目标服务器，不进入命令输出或 AI 上下文。
 
 ```bash
-./scripts/verify.sh
+coinsphere plugin validate /reviewed/business
+coinsphere plugin install --config /server/target.yml --backend-root /checkout/backend /reviewed/business
+coinsphere plugin upgrade --config /server/target.yml --backend-root /checkout/backend /reviewed/business
+coinsphere plugin uninstall --config /server/target.yml --backend-root /checkout/backend example.business
+coinsphere plugin purge-data --config /server/target.yml --backend-root /checkout/backend --confirm 'PURGE example.business' example.business
 ```
 
-脚本会验证 Go 与 Vue，并在本机存在 Docker 时检查 Compose 配置。缺少 PostgreSQL 16、Docker 或浏览器依赖时，按[质量门禁](../quality/quality-gates.md)把对应检查交给 CI。
+validate 只读解析 manifest/目录/版本/依赖/迁移；安装/升级复制源码、迁移、生成静态表、更新 Go 依赖并构建应用镜像。命令不启动镜像、不重启应用。升级版本必须递增，旧 SQL 不变，当前定义/Run/视图活动引用全部解除；跨 major 没有旧图兼容层。失败恢复源码与新增 migration，恢复失败使用配对恢复点。
 
-## 定向命令
+卸载保留领域 schema；purge-data 还要求已卸载、全部历史引用解除与匹配确认文本。不要用删除业务事实或改版本表绕过条件。完整扩展契约和可编译示例见[插件开发指南](../plugin-development.md)。
 
-开发中先运行受影响模块的最小检查：
+## 诊断
 
-```powershell
-Push-Location .\backend
-go vet ./...
-go build ./...
-Pop-Location
+健康检查 /health/live 证明进程响应，/health/ready 与 /health 验证数据库可达；/metrics 与首页系统观察要求 system.observe。应用启动会拒绝旧 generation、错误数据库版本和落后/超前 migration。
 
-Push-Location .\frontend
-pnpm lint
-pnpm build
-pnpm exec playwright test --project=chromium
-Pop-Location
+工作流列表显示真实 ID/状态，Run 详情、待办与制品均按当前资源授权读取。插件管理的安装/编译/加载原因可以定位未编译或版本不匹配；unknown_result 需业务对账，不能直接重试。
 
-```
+长连接定期验证会话与能力；连接关闭后 UI 从 HTTP 刷新持久事实。日志只包含 requestId 和受控分类，不复制原始载荷、Cookie、Authorization、DSN、个人数据或密钥。
 
-迁移和恢复验证只使用隔离环境；不要连接生产数据库或固定外部表。迁移命令和回滚见[数据库迁移手册](./database-migrations.md)。
+远端 CI 失败时先读取对应结果和产物，按实际失败范围修复。浏览器证据使用隔离 Web 产物与传输替身；不在生产或本地启动验证来绕过默认规则。
 
-## 插件清单校验
-
-可以只读检查一个或多个本地插件源码目录：
-
-```powershell
-Push-Location .\backend
-go run ./cmd/coinsphere plugin validate D:\plugins\connector D:\plugins\quant
-Pop-Location
-```
-
-命令严格解析每个 `coinsphere-plugin.json`，校验 Core/SDK 版本、插件目录边界、后端 `go.mod` 模块名、migration 版本和重复插件 ID，以及 Go/Vue 静态注册表能否确定性生成。它不会复制源码、执行 migration、更新依赖、写入注册表或重建 Compose。
-
-插件最小目录、manifest、SDK、Vue 页面、migration 和契约测试见[插件开发指南](../plugin-development.md)。
-
-## 插件安装与生命周期
-
-插件是会参与主进程编译的完全可信本地源码。变更前停止应用并备份目标数据库；在 `backend` 目录执行：
-
-```powershell
-go run ./cmd/coinsphere plugin install --config ./config.yml --backend-root . D:\plugins\connector
-go run ./cmd/coinsphere plugin upgrade --config ./config.yml --backend-root . D:\plugins\connector
-go run ./cmd/coinsphere plugin uninstall --config ./config.yml --backend-root . official.connector
-go run ./cmd/coinsphere plugin purge-data --config ./config.yml --backend-root . --confirm "PURGE official.connector" official.connector
-```
-
-`install` 和兼容 `upgrade` 复制源码、执行插件独立 migration、生成注册表、更新 Go 依赖并构建包含前后端的 Compose 应用镜像；构建失败会恢复源码输入和插件 migration。major 升级默认拒绝。`uninstall` 有活动引用时拒绝，成功后重建镜像但保留插件 schema；只有无任何活动或历史引用、已卸载且确认文本完全匹配时，`purge-data` 才在一个事务中删除 schema 和安装记录。命令不启动新镜像、不重启服务，也不接触不可信或远程插件。
-
-## 运行时诊断
-
-启动 Backend 后检查：
-
-```powershell
-Invoke-WebRequest http://127.0.0.1:6987/health/live
-Invoke-WebRequest http://127.0.0.1:6987/health/ready
-Invoke-WebRequest http://127.0.0.1:6987/metrics -Headers @{ Authorization = 'Bearer <access-token>' }
-```
-
-`/health/live` 只表示进程能响应；`/health/ready` 和兼容 `/health` 在一秒预算内 Ping PostgreSQL。`/metrics` 要求有效登录 Token，只包含固定的无标签进程指标。日志写标准输出，以 `request_id` 关联请求；不得把 DSN、原始载荷、令牌或凭据拼入命令和日志。
-
-浏览器测试使用本地 Web Server 和后端路由 Mock，不访问公网、真实凭据或生产服务：
-
-```powershell
-Push-Location .\frontend
-pnpm install --frozen-lockfile
-pnpm exec playwright install chromium firefox webkit
-pnpm exec playwright test --project=chromium
-pnpm exec playwright show-trace .\test-results\<失败用例>\trace.zip
-Pop-Location
-```
-
-## 安全
-
-- 本地只使用虚假或公开测试数据。
-- 不把交易所密钥写入 `.env`、脚本、终端截图、测试输出或 AI 上下文。
-- 真实账户验证和生产发布由用户在目标主机手工执行；发布边界见[发布手册](./release.md)。
+一次性工作流转换和恢复见[数据库迁移手册](database-migrations.md)，发布见[发布手册](release.md)。

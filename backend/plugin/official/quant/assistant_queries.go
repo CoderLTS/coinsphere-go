@@ -41,7 +41,7 @@ func (q *quantRuntime) assistantQuery(ctx context.Context, input json.RawMessage
 		if request.Status != "" {
 			return nil, errors.New("status is not supported for Quant backtests")
 		}
-		query := q.db.WithContext(ctx).Model(&quantBacktest{}).Limit(request.Limit)
+		query := sdk.ScopeWorkflows(q.db.WithContext(ctx), scope, "workflow_id").Model(&quantBacktest{}).Limit(request.Limit)
 		if request.Market != "" {
 			query = query.Where("market = ?", request.Market)
 		}
@@ -60,7 +60,7 @@ func (q *quantRuntime) assistantQuery(ctx context.Context, input json.RawMessage
 			ID, WorkflowID                                 int64
 			StrategyID, Market, Instrument, Target, Status string
 		}
-		query := q.db.WithContext(ctx).Model(&quantSignal{}).Limit(request.Limit)
+		query := sdk.ScopeWorkflows(q.db.WithContext(ctx), scope, "workflow_id").Model(&quantSignal{}).Limit(request.Limit)
 		if request.Market != "" {
 			query = query.Where("market = ?", request.Market)
 		}

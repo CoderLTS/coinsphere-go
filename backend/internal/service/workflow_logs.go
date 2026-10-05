@@ -26,6 +26,7 @@ type workflowNodeLogHandler struct {
 	next       slog.Handler
 	workflowID int64
 	runID      int64
+	run        db.WorkflowRun
 	runNodeID  int64
 	attrs      []slog.Attr
 	groups     []string
@@ -42,7 +43,7 @@ func (h *workflowNodeLogHandler) Handle(ctx context.Context, record slog.Record)
 		addWorkflowLogAttr(fields, strings.Join(h.groups, "."), attr)
 		return true
 	})
-	logErr := appendWorkflowNodeLog(h.app.DB.WithContext(context.WithoutCancel(ctx)), db.WorkflowNodeLog{
+	logErr := h.app.appendExecutionLog(ctx, h.run, db.WorkflowNodeLog{
 		WorkflowID: h.workflowID,
 		RunID:      h.runID,
 		RunNodeID:  h.runNodeID,
@@ -80,14 +81,18 @@ func (h *workflowNodeLogHandler) WithGroup(name string) slog.Handler {
 	return &clone
 }
 
-func (a *App) workflowNodeLogger(workflowID, runID, runNodeID int64, nodeType string) *slog.Logger {
+func (a *App) workflowNodeLogger(run db.WorkflowRun, runNodeID int64, nodeType string) *slog.Logger {
 	return slog.New(&workflowNodeLogHandler{
-		app: a, next: slog.Default().Handler(), workflowID: workflowID, runID: runID, runNodeID: runNodeID,
+		app: a, run: run, workflowID: run.WorkflowID, runID: run.ID, runNodeID: runNodeID,
 	}).With("event_category", "workflow_node", "node_type", nodeType)
 }
 
 func (a *App) appendWorkflowNodeLog(ctx context.Context, workflowID, runID, runNodeID int64, level slog.Level, message string, fields map[string]any) {
-	if err := appendWorkflowNodeLog(a.DB.WithContext(context.WithoutCancel(ctx)), db.WorkflowNodeLog{
+	run, valid := ctx.Value(executionLeaseKey{}).(db.WorkflowRun)
+	if !valid || run.ID != runID || run.WorkflowID != workflowID {
+		return
+	}
+	if err := a.appendExecutionLog(ctx, run, db.WorkflowNodeLog{
 		WorkflowID: workflowID, RunID: runID, RunNodeID: runNodeID, LoggedAt: time.Now().UTC(),
 		Level: workflowLogLevel(level), Message: workflowLogMessage(message), FieldsJSON: workflowLogFields(fields),
 	}); err == nil {
@@ -265,4 +270,17 @@ func truncateWorkflowText(value string, limit int) string {
 	}
 	runes := []rune(value)
 	return string(runes[:limit])
+}
+
+func (a *App) appendExecutionLog(ctx context.Context, run db.WorkflowRun, entry db.WorkflowNodeLog) error {
+	return a.DB.WithContext(context.WithoutCancel(ctx)).Transaction(func(tx *gorm.DB) error {
+		if err := lockRunLease(tx, run, true, nil); err != nil {
+			return err
+		}
+		var node db.WorkflowRunNode
+		if err := tx.Where("id=? AND run_id=?", entry.RunNodeID, run.ID).First(&node).Error; err != nil {
+			return err
+		}
+		return appendWorkflowNodeLog(tx, entry)
+	})
 }

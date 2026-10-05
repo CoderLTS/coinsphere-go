@@ -142,19 +142,9 @@ func (a *App) CloseNotificationEvents() {
 }
 
 func notificationRecord(delivery db.NotificationDelivery) M {
-	return M{
-		"id": delivery.ID, "workflowExecutionId": nil, "workflowExecutionNodeId": nil,
-		"workflowDefinitionId": delivery.WorkflowID, "workflowDefinitionCode": "", "workflowDefinitionName": "",
-		"strategySignalId": nil, "strategySignalMode": "", "strategySignalStatus": "", "strategySignalExpiresAt": "",
-		"targetType": "user", "targetId": delivery.RecipientUserID, "targetLabel": "",
-		"recipientId": delivery.RecipientUserID, "recipientLabel": "",
-		"channelType": delivery.Channel, "channelTypeLabel": "站内通知", "channelDisplayName": "站内通知",
-		"deliveryStatus": delivery.Status, "deliveryStatusLabel": "已送达",
-		"messageTitle": delivery.Title, "messageContent": delivery.Message,
-		"providerResponseText": "", "errorMessage": "", "isRead": delivery.IsRead,
-		"readAt": fmtTime(delivery.ReadAt), "sentAt": fmtTime(delivery.DeliveredAt),
-		"createdAt": delivery.CreatedAt.UTC().Format(time.RFC3339Nano),
-	}
+	return M{"id": delivery.ID, "workflowId": delivery.WorkflowID, "nodeInstanceId": delivery.NodeInstanceID,
+		"title": delivery.Title, "message": delivery.Message, "isRead": delivery.IsRead,
+		"readAt": fmtTime(delivery.ReadAt), "deliveredAt": fmtTime(delivery.DeliveredAt), "createdAt": delivery.CreatedAt.UTC().Format(time.RFC3339Nano)}
 }
 
 func fmtTime(value *time.Time) string {

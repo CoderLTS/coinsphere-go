@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,6 +17,8 @@ import (
 	"coinsphere/backend/internal/config"
 	"coinsphere/backend/internal/db"
 	"coinsphere/backend/internal/migration"
+	officialmigrations "coinsphere/backend/plugin/official/migrations"
+	"coinsphere/backend/version"
 )
 
 type options struct {
@@ -63,7 +66,13 @@ func run(parent context.Context, args []string, stdout, stderr io.Writer) error 
 	if err != nil {
 		return err
 	}
-	return execute(ctx, runner, opts, stdout)
+	if err := execute(ctx, runner, opts, stdout); err != nil {
+		return err
+	}
+	if opts.direction == "up" {
+		return applyOfficial(ctx, sqlDB, stdout)
+	}
+	return nil
 }
 
 func parseOptions(args []string, output io.Writer) (options, error) {
@@ -161,4 +170,36 @@ func execute(ctx context.Context, runner *migration.Runner, opts options, output
 	default:
 		return fmt.Errorf("unsupported direction %q", opts.direction)
 	}
+}
+
+func applyOfficial(ctx context.Context, database *sql.DB, output io.Writer) error {
+	schemas := map[string]string{}
+	for _, bundle := range officialmigrations.Bundles() {
+		if _, err := database.ExecContext(ctx, "CREATE SCHEMA IF NOT EXISTS "+bundle.Schema); err != nil {
+			return err
+		}
+		runner, err := migration.NewPluginBaseline(database, bundle.Files, bundle.Schema)
+		if err != nil {
+			return err
+		}
+		if _, err := runner.Up(ctx, 0); err != nil {
+			return err
+		}
+		schemas[bundle.ID] = bundle.Schema
+	}
+	for _, p := range version.BuiltinCatalog {
+		schema := schemas[p.ID]
+		if schema == "" {
+			var err error
+			schema, err = migration.PluginSchemaName(p.ID)
+			if err != nil {
+				return err
+			}
+		}
+		if _, err := database.ExecContext(ctx, "INSERT INTO plugin_installations(plugin_id,version,schema_name,source_path,status) VALUES($1,$2,$3,'builtin','installed') ON CONFLICT(plugin_id) DO NOTHING", p.ID, p.Version, schema); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintln(output, "official plugin baselines are current")
+	return err
 }
