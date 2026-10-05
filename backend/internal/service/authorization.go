@@ -47,11 +47,15 @@ func (a *App) AuthorizeWorkflow(ctx context.Context, id int64, permission string
 		}
 		return a.validateResultExecutionGrant(a.DB.WithContext(ctx), ctx, p, grant)
 	}
-	if err := requireCapability(ctx, permission); err != nil {
+	p, err := principalForTx(a.DB.WithContext(ctx), ContextPrincipal(ctx))
+	if err != nil {
 		return err
 	}
+	if !p.HasPermission(permission) {
+		return ErrPermission
+	}
 	var count int64
-	q := workflowScopeQuery(a.DB.WithContext(ctx).Model(&db.Workflow{}), ContextPrincipal(ctx), permission, "workflows.id")
+	q := workflowScopeQuery(a.DB.WithContext(ctx).Model(&db.Workflow{}), p, permission, "workflows.id")
 	if err := q.Where("workflows.id=?", id).Count(&count).Error; err != nil {
 		return err
 	}
