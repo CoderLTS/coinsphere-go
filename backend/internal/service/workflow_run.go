@@ -8,15 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"reflect"
-	"sort"
 	"strings"
 	"time"
 
-	"cel.dev/cel-go/common/types/ref"
 	"coinsphere/backend/internal/db"
 	"coinsphere/backend/internal/security"
 	"coinsphere/backend/plugin/sdk"
+	workflowgraph "coinsphere/backend/workflow/graph"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -84,6 +82,9 @@ type bufferedNodeState struct {
 }
 
 func (a *App) CreateWorkflowRun(ctx context.Context, workflowID int64, payload WorkflowRunCreatePayload, principal *Principal) (WorkflowRunView, error) {
+	if err := a.AuthorizeWorkflow(ctx, workflowID, "workflows.run"); err != nil {
+		return WorkflowRunView{}, err
+	}
 	if principal == nil || principal.User == nil || principal.User.ID <= 0 {
 		return WorkflowRunView{}, ErrPermission
 	}
@@ -99,19 +100,17 @@ func (a *App) CreateWorkflowRun(ctx context.Context, workflowID int64, payload W
 		}
 		entryPoint := strings.TrimSpace(payload.EntryPoint)
 		if entryPoint == "" {
-			entryPoint = "realtime"
+			entryPoint = "main"
 		}
-		if entryPoint != "realtime" && entryPoint != "backtest" {
-			return errors.New("工作流运行入口无效")
-		}
-		if entryPoint == "realtime" && (workflow.Status != WorkflowStatusActive || workflow.ActiveRevisionID == nil) {
-			return fmt.Errorf("%w: 当前工作流未激活，无法运行", ErrConflict)
+		if !workflowNodeIDPattern.MatchString(entryPoint) || len(entryPoint) > 32 {
+			return errors.New("invalid workflow entryPoint")
 		}
 		revisionID := payload.RevisionID
-		if entryPoint == "realtime" {
-			revisionID = *workflow.ActiveRevisionID
-		} else if revisionID <= 0 {
-			return errors.New("请选择要回测的工作流版本")
+		if revisionID <= 0 {
+			revisionID = revisionPointerValue(workflow.PublishedRevisionID)
+		}
+		if revisionID <= 0 {
+			return fmt.Errorf("%w: select a saved revision", ErrConflict)
 		}
 		var revision db.WorkflowRevision
 		if err := tx.Where("workflow_id = ? AND id = ?", workflowID, revisionID).First(&revision).Error; err != nil {
@@ -121,7 +120,17 @@ func (a *App) CreateWorkflowRun(ctx context.Context, workflowID int64, payload W
 		if err != nil {
 			return fmt.Errorf("%w: 所选工作流版本的配置无效，无法从该入口运行", ErrConflict)
 		}
-		if entryPoint == "realtime" && graph.nodes[graph.order[0]].NodeType != "core.manual" {
+		validated, err := a.validateWorkflowGraph(json.RawMessage(revision.GraphJSON))
+		if err != nil {
+			return err
+		}
+		if err := a.authorizeExecution(principal.User.ID, validated); err != nil {
+			return err
+		}
+		if err := ensureWorkflowRevisionSecrets(tx, workflowID, revision.ID, validated); err != nil {
+			return err
+		}
+		if graph.descriptors[graph.order[0]].Kind == sdk.NodeKindTrigger && graph.nodes[graph.order[0]].NodeType != "core.manual" {
 			return fmt.Errorf("%w: 工作流未使用手动触发节点", ErrConflict)
 		}
 		if err := enforceWorkflowBacklog(tx, workflowID); err != nil {
@@ -136,18 +145,18 @@ func (a *App) CreateWorkflowRun(ctx context.Context, workflowID int64, payload W
 		if json.Unmarshal(input, &inputObject) != nil || inputObject == nil {
 			return errors.New("工作流运行参数必须是 JSON 对象")
 		}
-		if entryPoint == "backtest" && validateWorkflowSchemaValue(graph.descriptors[graph.order[0]].InputSchema, inputObject) != nil {
-			return errors.New("回测参数不符合所选工作流版本的要求")
+		if validateWorkflowSchemaValue(graph.descriptors[graph.order[0]].InputSchema, inputObject) != nil {
+			return errors.New("入口参数不符合所选工作流版本的要求")
 		}
 		run = db.WorkflowRun{
 			WorkflowID: workflowID, RevisionID: revision.ID, EntryPoint: entryPoint, InputJSON: string(input), TriggerType: "manual",
 			TriggerKey: security.RandomToken(), Status: RunStatusQueued, NotBefore: now,
-			TriggeredAt: now, CreatedBy: &ownerID, ResultSummary: `{}`, CreatedAt: now, UpdatedAt: now,
+			TriggeredAt: now, ExecutionUserID: ownerID, RequiresSerial: graphHasPersistentState(validated), CreatedBy: &ownerID, ResultSummary: `{}`, CreatedAt: now, UpdatedAt: now,
 		}
 		if err := tx.Create(&run).Error; err != nil {
 			return errors.New("创建工作流运行记录失败")
 		}
-		return nil
+		return a.syncRunPluginReferences(tx, run, validated)
 	})
 	if err != nil {
 		return WorkflowRunView{}, err
@@ -166,6 +175,9 @@ type WorkflowRunListQuery struct {
 }
 
 func (a *App) PageWorkflowRuns(ctx context.Context, workflowID int64, query WorkflowRunListQuery) (M, error) {
+	if err := a.AuthorizeWorkflow(ctx, workflowID, "workflows.read"); err != nil {
+		return nil, err
+	}
 	var exists int64
 	if err := a.DB.WithContext(ctx).Model(&db.Workflow{}).Where("id = ?", workflowID).Count(&exists).Error; err != nil {
 		return nil, errors.New("load workflow failed")
@@ -224,6 +236,9 @@ func (a *App) PageWorkflowRuns(ctx context.Context, workflowID int64, query Work
 }
 
 func (a *App) ListRecentWorkflowRuns(ctx context.Context, workflowID int64) ([]WorkflowRunView, error) {
+	if err := a.AuthorizeWorkflow(ctx, workflowID, "workflows.read"); err != nil {
+		return nil, err
+	}
 	var runs []db.WorkflowRun
 	if err := a.DB.WithContext(ctx).Where("workflow_id = ?", workflowID).Order("id DESC").Limit(100).Find(&runs).Error; err != nil {
 		return nil, errors.New("list workflow runs failed")
@@ -236,6 +251,9 @@ func (a *App) ListRecentWorkflowRuns(ctx context.Context, workflowID int64) ([]W
 }
 
 func (a *App) GetWorkflowRun(ctx context.Context, runID int64) (WorkflowRunView, error) {
+	if err := a.authorizeRun(ctx, runID, "workflows.read"); err != nil {
+		return WorkflowRunView{}, err
+	}
 	var run db.WorkflowRun
 	if err := a.DB.WithContext(ctx).First(&run, runID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -248,6 +266,13 @@ func (a *App) GetWorkflowRun(ctx context.Context, runID int64) (WorkflowRunView,
 
 func (a *App) ApplyWorkflowRunAction(ctx context.Context, runID int64, payload WorkflowRunActionPayload) (WorkflowRunView, error) {
 	action := strings.ToLower(strings.TrimSpace(payload.Action))
+	permission := "workflows." + action
+	if action == "replay" {
+		permission = "workflows.run"
+	}
+	if err := a.authorizeRun(ctx, runID, permission); err != nil {
+		return WorkflowRunView{}, err
+	}
 	if action == "replay" {
 		return a.createDiagnosticReplay(ctx, runID)
 	}
@@ -277,6 +302,9 @@ func (a *App) ApplyWorkflowRunAction(ctx context.Context, runID int64, payload W
 				return errors.New("request workflow run cancellation failed")
 			}
 		case "retry":
+			if run.ErrorCategory != nil && *run.ErrorCategory == string(sdk.ErrorUnknownResult) {
+				return fmt.Errorf("%w: external result requires reconciliation", ErrConflict)
+			}
 			if run.Status != RunStatusFailed {
 				return fmt.Errorf("%w: only a failed run can be retried", ErrConflict)
 			}
@@ -317,6 +345,7 @@ func (a *App) RunWorkflowEngine(ctx context.Context) error {
 	if err := a.cleanupWorkflowHistory(ctx, time.Now().UTC()); err != nil {
 		slog.Error("workflow history cleanup failed", "component", "workflow.runtime", "error_category", "history_retention")
 	}
+	nextRecovery := time.Now().UTC().Add(5 * time.Second)
 	nextCleanup := time.Now().UTC().Add(24 * time.Hour)
 	ticker := time.NewTicker(runPollInterval)
 	defer ticker.Stop()
@@ -325,6 +354,12 @@ func (a *App) RunWorkflowEngine(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case now := <-ticker.C:
+			if !now.Before(nextRecovery) {
+				if err := a.recoverExpiredRuns(ctx); err != nil {
+					slog.Error("workflow lease recovery failed", "error_category", "lease_recovery")
+				}
+				nextRecovery = now.UTC().Add(5 * time.Second)
+			}
 			if !now.Before(nextCleanup) {
 				if err := a.cleanupWorkflowHistory(ctx, now.UTC()); err != nil {
 					slog.Error("workflow history cleanup failed", "component", "workflow.runtime", "error_category", "history_retention")
@@ -344,20 +379,29 @@ func (a *App) RunWorkflowEngine(ctx context.Context) error {
 				slog.Error("workflow trigger scan failed", "component", "workflow.runtime", "error_category", "trigger_scan")
 			}
 			for {
+				select {
+				case a.runSlots <- struct{}{}:
+				default:
+					goto claimsDone
+				}
 				run, ok, err := a.claimWorkflowRun(ctx, now.UTC())
 				if err != nil {
+					<-a.runSlots
 					slog.Error("workflow run claim failed", "component", "workflow.runtime", "error_category", "run_queue")
 					break
 				}
 				if !ok {
+					<-a.runSlots
 					break
 				}
 				a.runWG.Add(1)
 				go func() {
 					defer a.runWG.Done()
+					defer func() { <-a.runSlots }()
 					a.executeWorkflowRun(ctx, run)
 				}()
 			}
+		claimsDone:
 		}
 	}
 }
@@ -379,41 +423,70 @@ func (a *App) WaitForWorkflowRuns(ctx context.Context) error {
 
 func (a *App) recoverExpiredRuns(ctx context.Context) error {
 	now := time.Now().UTC()
-	var recovered int64
-	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec(`
-INSERT INTO workflow_node_logs (workflow_id, run_id, run_node_id, logged_at, level, message, fields_json)
-SELECT r.workflow_id, r.id, n.id, ?, 'error', '节点租约已过期，运行将恢复排队', '{"error_category":"lease_expired"}'::jsonb
-FROM workflow_run_nodes n
-JOIN workflow_runs r ON r.id = n.run_id
-WHERE n.status = 'running' AND r.status = 'running' AND r.lease_expires_at < ?`, now, now).Error; err != nil {
+	return a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var expired []db.WorkflowRun
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).Where("status='running' AND lease_expires_at < clock_timestamp()").Order("id").Limit(100).Find(&expired).Error; err != nil {
 			return err
 		}
-		if err := tx.Exec(`
-UPDATE workflow_run_nodes nr
-SET status = 'failed', error_category = 'lease_expired', error_message = '节点租约已过期', completed_at = ?,
-    duration_ms = GREATEST(EXTRACT(EPOCH FROM (? - nr.started_at)) * 1000, 0)::BIGINT
-FROM workflow_runs eb
-WHERE nr.run_id = eb.id AND nr.status = 'running'
-  AND eb.status = 'running' AND eb.lease_expires_at < ?`, now, now, now).Error; err != nil {
-			return err
+		for _, r := range expired {
+			var active []db.WorkflowRunNode
+			if err := tx.Where("run_id=? AND status='running'", r.ID).Find(&active).Error; err != nil {
+				return err
+			}
+			var revision db.WorkflowRevision
+			if err := tx.First(&revision, r.RevisionID).Error; err != nil {
+				return err
+			}
+			g, err := a.validateWorkflowGraph(json.RawMessage(revision.GraphJSON))
+			if err != nil {
+				return err
+			}
+			unknown := false
+			for _, rn := range active {
+				node, ok := g.nodes[rn.NodeInstanceID]
+				if !ok { // Expanded Loop children keep the same descriptor and configured policy.
+					for _, parent := range g.nodes {
+						if parent.NodeType == "core.loop" {
+							body, _, _, _, e := a.buildWorkflowLoopGraph(parent)
+							if e == nil {
+								node, ok = body.nodes[rn.NodeInstanceID]
+								if ok {
+									break
+								}
+							}
+						}
+					}
+				}
+				desc, found := a.workflowNodeDescriptors()[rn.NodeType]
+				category := "lease_expired"
+				if rn.InvocationStarted && (!found || !ok || (!r.Diagnostic && !a.workflowNodeRetrySafe(desc, node.Config))) {
+					unknown = true
+					category = string(sdk.ErrorUnknownResult)
+				}
+				if err := tx.Model(&rn).Updates(map[string]any{"status": RunStatusFailed, "error_category": category, "error_message": "执行租约已失效，结果须确认", "completed_at": now, "duration_ms": max(now.Sub(rn.StartedAt).Milliseconds(), 0)}).Error; err != nil {
+					return err
+				}
+			}
+			updates := map[string]any{"status": RunStatusQueued, "lease_token": nil, "lease_expires_at": nil, "not_before": now, "updated_at": now}
+			if unknown {
+				updates["status"] = RunStatusFailed
+				updates["error_category"] = string(sdk.ErrorUnknownResult)
+				updates["completed_at"] = now
+			} else if r.CancelRequestedAt != nil {
+				updates["status"] = RunStatusCancelled
+				updates["completed_at"] = now
+			}
+			if err := tx.Model(&r).Updates(updates).Error; err != nil {
+				return err
+			}
+			if updates["status"] != RunStatusQueued {
+				if err := tx.Exec("UPDATE plugin_references SET active=FALSE WHERE reference_type='run' AND reference_id=?", fmt.Sprint(r.ID)).Error; err != nil {
+					return err
+				}
+			}
 		}
-		result := tx.Model(&db.WorkflowRun{}).
-			Where("status = ? AND lease_expires_at < ?", RunStatusRunning, now).
-			Updates(map[string]any{
-				"status": RunStatusQueued, "lease_token": nil, "lease_expires_at": nil,
-				"not_before": now, "updated_at": now,
-			})
-		recovered = result.RowsAffected
-		return result.Error
+		return nil
 	})
-	if err != nil {
-		return errors.New("recover expired workflow runs failed")
-	}
-	if recovered > 0 {
-		slog.Info("workflow runs recovered", "component", "workflow.runtime", "count", recovered)
-	}
-	return nil
 }
 
 func (a *App) claimWorkflowRun(ctx context.Context, now time.Time) (db.WorkflowRun, bool, error) {
@@ -430,14 +503,16 @@ WITH candidate AS (
     JOIN workflow_runtimes wr ON wr.workflow_id = eb.workflow_id
     WHERE eb.status IN ('queued', 'retrying')
       AND eb.not_before <= ?
-      AND (w.status = 'active' OR eb.entry_point = 'backtest')
+      AND (w.status = 'active' OR eb.created_by IS NOT NULL)
       AND (SELECT COUNT(*) FROM workflow_runs active
-           WHERE active.workflow_id = eb.workflow_id AND active.status = 'running') < wr.max_concurrent_runs
+           WHERE active.workflow_id = eb.workflow_id AND active.status IN ('running','waiting')) < wr.max_concurrent_runs
+      AND (NOT eb.requires_serial OR NOT EXISTS (SELECT 1 FROM workflow_runs active WHERE active.workflow_id=eb.workflow_id AND active.status IN ('running','waiting')))
+      AND NOT EXISTS (SELECT 1 FROM workflow_runs active WHERE active.workflow_id=eb.workflow_id AND active.requires_serial AND active.status IN ('running','waiting'))
       AND (eb.partition_key = '' OR NOT EXISTS (
           SELECT 1 FROM workflow_runs prior
           WHERE prior.workflow_id = eb.workflow_id
             AND prior.partition_key = eb.partition_key
-            AND prior.status IN ('queued', 'running', 'retrying')
+            AND prior.status IN ('queued', 'running', 'retrying','waiting')
             AND (prior.created_at, prior.id) < (eb.created_at, eb.id)
       ))
     ORDER BY eb.not_before, eb.created_at, eb.id
@@ -451,6 +526,14 @@ FROM candidate
 WHERE eb.id = candidate.id
 RETURNING eb.*`
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// ponytail: 单个队列领取锁适用于当前单体；只有实测领取吞吐成为瓶颈才按工作流分锁。
+		var locked bool
+		if err := tx.Raw("SELECT pg_try_advisory_xact_lock(hashtextextended('coinsphere.run-claim',0))").Scan(&locked).Error; err != nil {
+			return err
+		}
+		if !locked {
+			return nil
+		}
 		return tx.Raw(query, now, token, leaseExpiry, now, now).Scan(&run).Error
 	})
 	if err != nil {
@@ -463,7 +546,7 @@ RETURNING eb.*`
 }
 
 func (a *App) executeWorkflowRun(parent context.Context, run db.WorkflowRun) {
-	ctx, cancel := context.WithCancel(parent)
+	ctx, cancel := context.WithCancel(context.WithValue(parent, executionLeaseKey{}, run))
 	a.runCancelMu.Lock()
 	a.runCancels[run.ID] = cancel
 	a.runCancelMu.Unlock()
@@ -475,29 +558,38 @@ func (a *App) executeWorkflowRun(parent context.Context, run db.WorkflowRun) {
 	}()
 
 	leaseDone := make(chan struct{})
-	go a.renewRunLease(ctx, run.ID, *run.LeaseToken, leaseDone)
+	go a.renewRunLease(ctx, run, leaseDone, cancel)
 	defer close(leaseDone)
 
 	var revision db.WorkflowRevision
 	if err := a.DB.WithContext(ctx).First(&revision, run.RevisionID).Error; err != nil {
-		a.failWorkflowRun(run.ID, "revision")
+		a.failWorkflowRun(run, "revision")
 		return
 	}
 	graph, err := a.buildWorkflowRunGraphAt(revision.GraphJSON, run.EntryPoint)
 	if err != nil {
-		a.failWorkflowRun(run.ID, "graph")
+		a.failWorkflowRun(run, "graph")
+		return
+	}
+	validated, err := a.validateWorkflowGraph(json.RawMessage(revision.GraphJSON))
+	if err != nil || a.authorizeExecution(run.ExecutionUserID, validated) != nil {
+		a.failWorkflowRun(run, "authorization")
+		return
+	}
+	if err := a.AuthorizeWorkflow(WithPrincipal(ctx, mustPrincipal(a, run.ExecutionUserID)), run.WorkflowID, "workflows.run"); err != nil {
+		a.failWorkflowRun(run, "authorization")
 		return
 	}
 	outputs, err := a.loadWorkflowRunCheckpoints(ctx, run.ID)
 	if err != nil {
-		a.failWorkflowRun(run.ID, "checkpoint")
+		a.failWorkflowRun(run, "checkpoint")
 		return
 	}
 	event := map[string]string{"type": run.TriggerType, "triggeredAt": formatWorkflowTime(run.TriggeredAt)}
 	if run.EventRecordID != nil {
 		cloudEvent, eventData, err := a.workflowRunEvent(ctx, run)
 		if err != nil {
-			a.failWorkflowRun(run.ID, "event")
+			a.failWorkflowRun(run, "event")
 			return
 		}
 		event = workflowEventContext(cloudEvent)
@@ -505,64 +597,77 @@ func (a *App) executeWorkflowRun(parent context.Context, run db.WorkflowRun) {
 			outputs[revision.MainTriggerNodeID] = eventData
 		}
 	}
+	var entryInput map[string]any
+	if json.Unmarshal([]byte(run.InputJSON), &entryInput) != nil {
+		a.failWorkflowRun(run, "input")
+		return
+	}
 	for _, nodeID := range graph.order {
 		if _, completed := outputs[nodeID]; completed {
 			continue
 		}
 		if cancelled, paused := a.runShouldStop(ctx, run.ID, run.WorkflowID); cancelled || paused {
 			if cancelled {
-				a.cancelWorkflowRun(run.ID)
+				a.cancelWorkflowRun(run)
 			} else {
-				a.requeueWorkflowRun(run.ID)
+				a.requeueWorkflowRun(run)
 			}
 			return
 		}
 		node := graph.nodes[nodeID]
 		if nodeID != graph.order[0] {
-			reachable, err := workflowNodeReachable(graph.incoming[nodeID], outputs, event)
+			reachable, err := workflowNodeReachable(graph.incoming[nodeID], outputs, event, entryInput)
 			if err != nil {
-				a.failWorkflowRun(run.ID, "condition")
+				a.failWorkflowRun(run, "condition")
 				return
 			}
 			if !reachable {
+				if err := a.recordSkippedNode(ctx, run, nodeID, graph.nodes[nodeID], 0); err != nil {
+					a.failWorkflowRun(run, "lease")
+					return
+				}
 				continue
 			}
 		}
-		input, err := resolveWorkflowNodeInput(node, graph.incoming[nodeID], outputs, event)
+		input, err := resolveWorkflowNodeInput(node, graph.incoming[nodeID], outputs, event, entryInput)
 		if err != nil {
-			a.failWorkflowRun(run.ID, "input")
+			a.failWorkflowRun(run, "input")
 			return
 		}
-		if nodeID == graph.order[0] && run.EntryPoint == "backtest" {
+		if nodeID == graph.order[0] {
 			if json.Unmarshal([]byte(run.InputJSON), &input) != nil || input == nil {
-				a.failWorkflowRun(run.ID, "input")
+				a.failWorkflowRun(run, "input")
 				return
 			}
 		}
-		outcome := a.executeWorkflowNode(ctx, run, revision, graph, node, input, outputs, event, 0)
+		outcome := a.executeWorkflowNode(ctx, run, revision, graph, node, input, outputs, event, entryInput, 0)
 		if outcome.waiting {
 			return
 		}
 		if outcome.err != nil {
+			if outcome.category == string(sdk.ErrorUnknownResult) {
+				a.failWorkflowRun(run, outcome.category)
+				return
+			}
 			if errors.Is(outcome.err, context.Canceled) || ctx.Err() != nil {
 				cancelled, _ := a.runShouldStop(ctx, run.ID, run.WorkflowID)
 				if cancelled {
-					a.cancelWorkflowRun(run.ID)
+					a.cancelWorkflowRun(run)
 				} else {
-					a.requeueWorkflowRun(run.ID)
+					a.requeueWorkflowRun(run)
 				}
 				return
 			}
-			if outcome.attempt < runMaxAttempts {
-				a.retryWorkflowRun(run.ID, outcome.attempt)
+			if outcome.attempt < runMaxAttempts && sdk.ClassifyError(outcome.err) == sdk.ErrorTransient {
+				a.retryWorkflowRun(run, outcome.attempt)
 			} else {
-				a.failWorkflowRun(run.ID, outcome.category)
+				a.failWorkflowRun(run, outcome.category)
 			}
 			return
 		}
 		outputs[nodeID] = outcome.output
 	}
-	a.completeWorkflowRun(run.ID)
+	a.completeWorkflowRun(run)
 }
 
 type workflowNodeOutcome struct {
@@ -573,7 +678,7 @@ type workflowNodeOutcome struct {
 	err      error
 }
 
-func (a *App) executeWorkflowNode(ctx context.Context, run db.WorkflowRun, revision db.WorkflowRevision, graph workflowRunGraph, node workflowGraphNode, input map[string]any, outputs map[string]map[string]any, event map[string]string, iteration int) workflowNodeOutcome {
+func (a *App) executeWorkflowNode(ctx context.Context, run db.WorkflowRun, revision db.WorkflowRevision, graph workflowRunGraph, node workflowGraphNode, input map[string]any, outputs map[string]map[string]any, event map[string]string, entryInput map[string]any, iteration int) workflowNodeOutcome {
 	desc := graph.descriptors[node.NodeInstanceID]
 	attempt, err := a.nextWorkflowNodeAttempt(ctx, run.ID, node.NodeInstanceID, iteration)
 	if err != nil {
@@ -587,7 +692,12 @@ func (a *App) executeWorkflowNode(ctx context.Context, run db.WorkflowRun, revis
 		OperationKey: operationKey, Status: RunStatusRunning, InputSummary: workflowValueSummary(input),
 		OutputSummary: `{}`, StartedAt: startedAt,
 	}
-	if err := a.DB.WithContext(ctx).Create(&runNode).Error; err != nil {
+	if err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := a.lockExecutionLease(tx, run, nil); err != nil {
+			return err
+		}
+		return tx.Create(&runNode).Error
+	}); err != nil {
 		return workflowNodeOutcome{attempt: attempt, category: "node_run", err: err}
 	}
 	a.PublishWorkflowRunUpdated(run.WorkflowID, run.ID)
@@ -597,64 +707,67 @@ func (a *App) executeWorkflowNode(ctx context.Context, run db.WorkflowRun, revis
 		})
 	}
 	if validateWorkflowSchemaValue(desc.InputSchema, input) != nil {
-		a.finishWorkflowRunNode(run.WorkflowID, runNode, RunStatusFailed, "input", "节点输入不符合 JSON Schema", startedAt)
+		a.finishWorkflowRunNode(run, runNode, RunStatusFailed, "input", "节点输入不符合 JSON Schema", startedAt)
 		return workflowNodeOutcome{attempt: attempt, category: "input", err: errors.New("node input does not match its JSON Schema")}
 	}
 	if run.Diagnostic && desc.SideEffect != sdk.SideEffectNone {
 		output, artifacts, err := a.replayWorkflowSideEffect(ctx, run, node.NodeInstanceID, iteration)
 		if err != nil || validateWorkflowSchemaValue(desc.OutputSchema, output) != nil {
-			a.finishWorkflowRunNode(run.WorkflowID, runNode, RunStatusFailed, "diagnostic", "诊断重放缺少可用检查点", startedAt)
+			a.finishWorkflowRunNode(run, runNode, RunStatusFailed, "diagnostic", "诊断重放缺少可用检查点", startedAt)
 			return workflowNodeOutcome{attempt: attempt, category: "diagnostic", err: errors.New("diagnostic side effect checkpoint is unavailable")}
 		}
 		raw := mustJSON(output)
 		if err := a.commitWorkflowNodeSuccess(ctx, runNode, run, revision, node, operationKey, iteration, raw, nil, artifacts, startedAt); err != nil {
-			a.finishWorkflowRunNode(run.WorkflowID, runNode, RunStatusFailed, "checkpoint", "保存节点检查点失败", startedAt)
+			a.finishWorkflowRunNode(run, runNode, RunStatusFailed, "checkpoint", "保存节点检查点失败", startedAt)
 			return workflowNodeOutcome{attempt: attempt, category: "checkpoint", err: err}
 		}
 		return workflowNodeOutcome{attempt: attempt, output: output}
 	}
-	if err := a.DB.WithContext(ctx).Model(&db.WorkflowRun{}).Where("id = ?", run.ID).
-		Updates(map[string]any{"current_node_instance_id": node.NodeInstanceID, "updated_at": startedAt}).Error; err == nil {
-		a.PublishWorkflowRunUpdated(run.WorkflowID, run.ID)
-	}
-
 	slot := a.streamSlots
 	if desc.Pool == sdk.PoolCompute {
 		slot = a.computeSlots
 	}
-	select {
-	case slot <- struct{}{}:
-		defer func() { <-slot }()
-	case <-ctx.Done():
-		a.finishWorkflowRunNode(run.WorkflowID, runNode, RunStatusCancelled, "cancelled", "节点执行已取消", startedAt)
-		return workflowNodeOutcome{attempt: attempt, category: "cancelled", err: ctx.Err()}
+	if node.NodeType != "core.loop" && node.NodeType != "core.human_approval" {
+		select {
+		case slot <- struct{}{}:
+			defer func() { <-slot }()
+		case <-ctx.Done():
+			a.finishWorkflowRunNode(run, runNode, RunStatusCancelled, "cancelled", "节点执行已取消", startedAt)
+			return workflowNodeOutcome{attempt: attempt, category: "cancelled", err: ctx.Err()}
+		}
+
 	}
 
+	// A queued node may have waited for capacity while its lease or grants expired.
+	if err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := a.lockExecutionLease(tx, run, nil); err != nil {
+			return err
+		}
+		r := runLeaseQuery(tx, run, false).Updates(map[string]any{"current_node_instance_id": node.NodeInstanceID, "updated_at": startedAt})
+		if r.Error != nil {
+			return r.Error
+		}
+		if r.RowsAffected != 1 {
+			return ErrConflict
+		}
+		return tx.Model(&db.WorkflowRunNode{}).Where("id=? AND status=?", runNode.ID, RunStatusRunning).Update("invocation_started", true).Error
+	}); err != nil {
+		return workflowNodeOutcome{attempt: attempt, category: "authorization", err: err}
+	}
 	state := &bufferedNodeState{app: a, workflowID: run.WorkflowID, revisionID: revision.ID, node: node, stateMode: desc.State}
 	request := sdk.ActionRequest{
 		Revision:       sdk.RevisionRef{WorkflowID: fmt.Sprint(run.WorkflowID), RevisionID: fmt.Sprint(revision.ID)},
 		NodeInstanceID: node.NodeInstanceID, OperationKey: operationKey,
 		Input: mustJSON(input), Config: append(json.RawMessage(nil), node.Config...),
 		Secrets: workflowSecretReader{app: a, revisionID: revision.ID, nodeInstanceID: node.NodeInstanceID},
-		State:   state, Artifacts: workflowArtifactStore{app: a}, ExecutionMode: sdk.ExecutionModeWorkflow,
-		Incoming: workflowIncomingOutputs(graph.incoming[node.NodeInstanceID], outputs, event),
-		Logger:   a.workflowNodeLogger(run.WorkflowID, run.ID, runNode.ID, node.NodeType),
+		State:   state, Artifacts: workflowArtifactStore{app: a}, GraphSnapshot: json.RawMessage(revision.GraphJSON),
+		Incoming: workflowIncomingOutputs(graph.incoming[node.NodeInstanceID], outputs, event, entryInput),
+		Logger:   a.workflowNodeLogger(run, runNode.ID, node.NodeType),
 	}
-	if desc.Capabilities.FrameDriver {
-		for nodeID, descriptor := range graph.descriptors {
-			if descriptor.Capabilities.FrameResult {
-				request.FrameResultNodeIDs = append(request.FrameResultNodeIDs, nodeID)
-			}
-		}
-		sort.Strings(request.FrameResultNodeIDs)
-		request.Frames = workflowFrameExecutor{
-			app: a, run: run, revision: revision, graph: graph, sourceNodeID: node.NodeInstanceID,
-		}
-	}
+
 	result, category, executeErr := a.callWorkflowNode(ctx, run, revision, node, request, event)
 	if errors.Is(executeErr, errWorkflowWaiting) {
-		a.finishWorkflowRunNode(run.WorkflowID, runNode, RunStatusWaiting, "", "节点等待人工决定", startedAt)
-		a.waitWorkflowRun(run.ID)
+		a.PublishWorkflowRunUpdated(run.WorkflowID, run.ID)
 		return workflowNodeOutcome{attempt: attempt, waiting: true}
 	}
 	var output map[string]any
@@ -669,16 +782,26 @@ func (a *App) executeWorkflowNode(ctx context.Context, run db.WorkflowRun, revis
 		}
 	}
 	if executeErr != nil {
+		if sdk.ClassifyError(executeErr) == sdk.ErrorUnknownResult {
+			category = string(sdk.ErrorUnknownResult)
+		}
 		status := RunStatusFailed
-		if errors.Is(executeErr, context.Canceled) || ctx.Err() != nil {
+		if (errors.Is(executeErr, context.Canceled) || ctx.Err() != nil) && desc.SideEffect != sdk.SideEffectNone && !a.workflowNodeRetrySafe(desc, node.Config) {
+			category = string(sdk.ErrorUnknownResult)
+			executeErr = &sdk.ExecutionError{Class: sdk.ErrorUnknownResult, Err: executeErr}
+		} else if errors.Is(executeErr, context.Canceled) || ctx.Err() != nil {
 			status, category = RunStatusCancelled, "cancelled"
 		}
-		a.finishWorkflowRunNode(run.WorkflowID, runNode, status, category, workflowErrorMessage(executeErr), startedAt)
+		a.finishWorkflowRunNode(run, runNode, status, category, workflowErrorMessage(executeErr), startedAt)
 		return workflowNodeOutcome{attempt: attempt, category: category, err: executeErr}
 	}
 	if err := a.commitWorkflowNodeSuccess(ctx, runNode, run, revision, node, operationKey, iteration, result.Output, state.pending, result.Artifacts, startedAt); err != nil {
-		a.finishWorkflowRunNode(run.WorkflowID, runNode, RunStatusFailed, "checkpoint", "保存节点检查点失败", startedAt)
-		return workflowNodeOutcome{attempt: attempt, category: "checkpoint", err: err}
+		a.finishWorkflowRunNode(run, runNode, RunStatusFailed, "checkpoint", "保存节点检查点失败", startedAt)
+		category := "checkpoint"
+		if desc.SideEffect != sdk.SideEffectNone && !a.workflowNodeRetrySafe(desc, node.Config) {
+			category = string(sdk.ErrorUnknownResult)
+		}
+		return workflowNodeOutcome{attempt: attempt, category: category, err: err}
 	}
 	return workflowNodeOutcome{attempt: attempt, output: output}
 }
@@ -728,11 +851,11 @@ func (a *App) callWorkflowNode(ctx context.Context, run db.WorkflowRun, revision
 		}
 		_, handler, ok := a.Plugins.Action(node.NodeType)
 		if !ok {
-			return sdk.ActionResult{}, "handler", errors.New("node action handler is unavailable")
+			return sdk.ActionResult{}, string(sdk.ErrorPermanent), errors.New("node action handler is unavailable")
 		}
 		result, err := handler.Execute(ctx, request)
 		if err != nil {
-			return sdk.ActionResult{}, "handler", err
+			return sdk.ActionResult{}, string(sdk.ClassifyError(err)), err
 		}
 		return result, "", nil
 	}
@@ -740,6 +863,9 @@ func (a *App) callWorkflowNode(ctx context.Context, run db.WorkflowRun, revision
 
 func (a *App) commitWorkflowNodeSuccess(ctx context.Context, runNode db.WorkflowRunNode, run db.WorkflowRun, revision db.WorkflowRevision, node workflowGraphNode, operationKey string, iteration int, output, state json.RawMessage, artifacts []sdk.Artifact, startedAt time.Time) error {
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := a.lockExecutionLease(tx, run, nil); err != nil {
+			return err
+		}
 		now := time.Now().UTC()
 		duration := max(now.Sub(startedAt).Milliseconds(), 0)
 		manifests, err := loadWorkflowArtifactManifests(tx, artifacts)
@@ -785,7 +911,7 @@ func (a *App) commitWorkflowNodeSuccess(ctx context.Context, runNode db.Workflow
 				RevisionID: revision.ID, StateJSON: string(state), UpdatedAt: now,
 			}
 			if err := tx.Clauses(clause.OnConflict{
-				Columns: []clause.Column{{Name: "workflow_id"}, {Name: "node_instance_id"}},
+				Columns: []clause.Column{{Name: "workflow_id"}, {Name: "revision_id"}, {Name: "node_instance_id"}},
 				DoUpdates: clause.Assignments(map[string]any{
 					"node_type": node.NodeType, "revision_id": revision.ID, "state_json": string(state), "updated_at": now,
 				}),
@@ -812,7 +938,7 @@ func (a *App) workflowEventTriggerNode(nodeType string) bool {
 func mustJSONString(value any) string { return string(mustJSON(value)) }
 
 func (a *App) buildWorkflowRunGraph(raw string) (workflowRunGraph, error) {
-	return a.buildWorkflowRunGraphAt(raw, "realtime")
+	return a.buildWorkflowRunGraphAt(raw, "main")
 }
 
 func (a *App) buildWorkflowRunGraphAt(raw, entryPoint string) (workflowRunGraph, error) {
@@ -832,46 +958,7 @@ func (a *App) buildWorkflowRunGraphAt(raw, entryPoint string) (workflowRunGraph,
 }
 
 func buildWorkflowRunGraph(graph workflowGraph, nodes map[string]workflowGraphNode, descriptors map[string]sdk.NodeDescriptor, startID string) workflowRunGraph {
-	incoming := make(map[string][]workflowGraphEdge, len(graph.Nodes))
-	adjacency := make(map[string][]string, len(graph.Nodes))
-	degrees := make(map[string]int, len(graph.Nodes))
-	for _, node := range graph.Nodes {
-		incoming[node.NodeInstanceID] = nil
-		adjacency[node.NodeInstanceID] = nil
-	}
-	for _, edge := range graph.Edges {
-		incoming[edge.TargetNodeInstanceID] = append(incoming[edge.TargetNodeInstanceID], edge)
-		adjacency[edge.SourceNodeInstanceID] = append(adjacency[edge.SourceNodeInstanceID], edge.TargetNodeInstanceID)
-	}
-	reachable := map[string]bool{}
-	queue := []string{startID}
-	for len(queue) > 0 {
-		id := queue[0]
-		queue = queue[1:]
-		if reachable[id] {
-			continue
-		}
-		reachable[id] = true
-		queue = append(queue, adjacency[id]...)
-	}
-	for _, edge := range graph.Edges {
-		if reachable[edge.SourceNodeInstanceID] && reachable[edge.TargetNodeInstanceID] {
-			degrees[edge.TargetNodeInstanceID]++
-		}
-	}
-	queue = []string{startID}
-	order := make([]string, 0, len(graph.Nodes))
-	for len(queue) > 0 {
-		id := queue[0]
-		queue = queue[1:]
-		order = append(order, id)
-		for _, target := range adjacency[id] {
-			degrees[target]--
-			if degrees[target] == 0 {
-				queue = append(queue, target)
-			}
-		}
-	}
+	order, incoming, _ := workflowgraph.Order(graph, startID)
 	return workflowRunGraph{graph: graph, nodes: nodes, descriptors: descriptors, order: order, incoming: incoming}
 }
 
@@ -887,7 +974,7 @@ func (a *App) buildWorkflowLoopGraph(node workflowGraphNode) (workflowRunGraph, 
 			return workflowRunGraph{}, workflowLoopConfig{}, "", "", err
 		}
 	}
-	graph := workflowGraph{SchemaVersion: 1, Nodes: make([]workflowGraphNode, 0, len(loop.config.Body.Nodes)), Edges: make([]workflowGraphEdge, 0, len(loop.config.Body.Edges))}
+	graph := workflowGraph{SchemaVersion: 3, Nodes: make([]workflowGraphNode, 0, len(loop.config.Body.Nodes)), Edges: make([]workflowGraphEdge, 0, len(loop.config.Body.Edges))}
 	nodes := make(map[string]workflowGraphNode, len(loop.nodes))
 	descriptors := make(map[string]sdk.NodeDescriptor, len(loop.descriptors))
 	for _, bodyNode := range loop.config.Body.Nodes {
@@ -898,9 +985,13 @@ func (a *App) buildWorkflowLoopGraph(node workflowGraphNode) (workflowRunGraph, 
 			if binding.NodeInstanceID != "" {
 				binding.NodeInstanceID = mapping[binding.NodeInstanceID]
 			}
-			for index := range binding.Sources {
-				binding.Sources[index].NodeInstanceID = mapping[binding.Sources[index].NodeInstanceID]
+			if binding.Kind == "cel" {
+				binding.Expression, err = workflowgraph.RewriteNodeReferences(binding.Expression, mapping)
+				if err != nil {
+					return workflowRunGraph{}, workflowLoopConfig{}, "", "", err
+				}
 			}
+
 			runtimeNode.InputBindings[field] = binding
 		}
 		graph.Nodes = append(graph.Nodes, runtimeNode)
@@ -911,7 +1002,19 @@ func (a *App) buildWorkflowLoopGraph(node workflowGraphNode) (workflowRunGraph, 
 		runtimeEdge := bodyEdge
 		runtimeEdge.SourceNodeInstanceID = mapping[bodyEdge.SourceNodeInstanceID]
 		runtimeEdge.TargetNodeInstanceID = mapping[bodyEdge.TargetNodeInstanceID]
+		if runtimeEdge.Condition != "" {
+			runtimeEdge.Condition, err = workflowgraph.RewriteNodeReferences(runtimeEdge.Condition, mapping)
+			if err != nil {
+				return workflowRunGraph{}, workflowLoopConfig{}, "", "", err
+			}
+		}
 		graph.Edges = append(graph.Edges, runtimeEdge)
+	}
+	if loop.config.ExitCondition != "" {
+		loop.config.ExitCondition, err = workflowgraph.RewriteNodeReferences(loop.config.ExitCondition, mapping)
+		if err != nil {
+			return workflowRunGraph{}, workflowLoopConfig{}, "", "", err
+		}
 	}
 	itemID, endID := mapping[loop.itemID], mapping[loop.endID]
 	return buildWorkflowRunGraph(graph, nodes, descriptors, itemID), loop.config, itemID, endID, nil
@@ -956,7 +1059,7 @@ func (a *App) executeWorkflowLoop(ctx context.Context, run db.WorkflowRun, revis
 			}
 			bodyNode := graph.nodes[nodeID]
 			if nodeID != itemID {
-				reachable, err := workflowNodeReachable(graph.incoming[nodeID], outputs, event)
+				reachable, err := workflowNodeReachable(graph.incoming[nodeID], outputs, event, map[string]any{"iteration": iteration, "value": carried})
 				if err != nil {
 					return sdk.ActionResult{}, err
 				}
@@ -966,12 +1069,12 @@ func (a *App) executeWorkflowLoop(ctx context.Context, run db.WorkflowRun, revis
 			}
 			bodyInput := map[string]any{"iteration": iteration, "value": carried}
 			if nodeID != itemID {
-				bodyInput, err = resolveWorkflowNodeInput(bodyNode, graph.incoming[nodeID], outputs, event)
+				bodyInput, err = resolveWorkflowNodeInput(bodyNode, graph.incoming[nodeID], outputs, event, map[string]any{"iteration": iteration, "value": carried})
 				if err != nil {
 					return sdk.ActionResult{}, err
 				}
 			}
-			outcome := a.executeWorkflowNode(loopCtx, run, revision, graph, bodyNode, bodyInput, outputs, event, iteration)
+			outcome := a.executeWorkflowNode(loopCtx, run, revision, graph, bodyNode, bodyInput, outputs, event, map[string]any{"iteration": iteration, "value": carried}, iteration)
 			if outcome.waiting {
 				return sdk.ActionResult{}, errors.New("loop body cannot enter a durable wait")
 			}
@@ -991,10 +1094,10 @@ func (a *App) executeWorkflowLoop(ctx context.Context, run db.WorkflowRun, revis
 		if carried == nil {
 			carried = map[string]any{}
 		}
-		conditionInput := flattenWorkflowOutputs(outputs)
+		conditionInput := map[string]any{}
 		conditionInput["iteration"] = iteration
 		conditionInput["value"] = carried
-		value, err := evaluateWorkflowCEL(config.ExitCondition, event, conditionInput)
+		value, err := workflowgraph.Evaluate(config.ExitCondition, workflowgraph.Context{Event: event, Input: conditionInput, Nodes: outputs})
 		if err != nil {
 			return sdk.ActionResult{}, err
 		}
@@ -1032,204 +1135,28 @@ func workflowLoopContextError(parent, loop context.Context) error {
 	return loop.Err()
 }
 
-func workflowNodeReachable(edges []workflowGraphEdge, outputs map[string]map[string]any, event map[string]string) (bool, error) {
-	for _, edge := range edges {
-		reached, err := workflowEdgeReached(edge, outputs, event)
-		if err != nil {
-			return false, err
-		}
-		if reached {
-			return true, nil
-		}
+func workflowContext(event map[string]string, outputs map[string]map[string]any, inputs ...map[string]any) workflowgraph.Context {
+	ctx := workflowgraph.Context{Event: event, Nodes: outputs}
+	if len(inputs) > 0 {
+		ctx.Input = inputs[0]
 	}
-	return false, nil
+	return ctx
 }
-
-func workflowEdgeReached(edge workflowGraphEdge, outputs map[string]map[string]any, event map[string]string) (bool, error) {
-	output, completed := outputs[edge.SourceNodeInstanceID]
-	if !completed {
-		return false, nil
-	}
-	if ready, declared := output["ready"].(bool); declared && !ready {
-		return false, nil
-	}
-	if edge.SourcePort != "out" {
-		branch, _ := output["branch"].(string)
-		if branch != edge.SourcePort {
-			return false, nil
-		}
-	}
-	if strings.TrimSpace(edge.Condition) == "" {
-		return true, nil
-	}
-	value, err := evaluateWorkflowCEL(edge.Condition, event, output)
-	if err != nil {
-		return false, err
-	}
-	condition, _ := value.(bool)
-	return condition, nil
+func workflowNodeReachable(edges []workflowGraphEdge, outputs map[string]map[string]any, event map[string]string, inputs ...map[string]any) (bool, error) {
+	reached, err := workflowgraph.Reached(edges, workflowContext(event, outputs, inputs...))
+	return len(reached) > 0, err
 }
-
-func resolveWorkflowNodeInput(node workflowGraphNode, incoming []workflowGraphEdge, outputs map[string]map[string]any, event map[string]string) (map[string]any, error) {
-	input := make(map[string]any, len(node.InputBindings))
-	celInput := flattenWorkflowOutputs(outputs)
-	for field, binding := range node.InputBindings {
-		switch binding.Kind {
-		case "field":
-			value, ok := workflowFieldValue(outputs[binding.NodeInstanceID], binding.FieldPath)
-			if !ok {
-				return nil, fmt.Errorf("input field %q is unavailable", field)
-			}
-			input[field] = value
-		case "literal":
-			var value any
-			if json.Unmarshal(binding.Value, &value) != nil {
-				return nil, fmt.Errorf("input literal %q is invalid", field)
-			}
-			input[field] = value
-		case "cel":
-			value, err := evaluateWorkflowCEL(binding.Expression, event, celInput)
-			if err != nil {
-				return nil, fmt.Errorf("input CEL %q failed", field)
-			}
-			input[field] = value
-		case "condition_entry":
-			value, err := workflowConditionPathEntered(binding.Sources, incoming, outputs, event)
-			if err != nil {
-				return nil, fmt.Errorf("input condition path %q failed", field)
-			}
-			input[field] = value
-		case "condition_subject", "condition_message":
-			value, err := workflowConditionNotificationValue(binding.Kind, binding.Sources, incoming, outputs, event)
-			if err != nil {
-				return nil, fmt.Errorf("input condition notification %q failed", field)
-			}
-			input[field] = value
-		}
-	}
-	return input, nil
+func workflowEdgeReached(edge workflowGraphEdge, outputs map[string]map[string]any, event map[string]string, inputs ...map[string]any) (bool, error) {
+	return workflowgraph.EdgeReached(edge, workflowContext(event, outputs, inputs...))
 }
-
-func workflowConditionPathEntered(sources []workflowInputBindingSource, incoming []workflowGraphEdge, outputs map[string]map[string]any, event map[string]string) (bool, error) {
-	for _, source := range sources {
-		output := outputs[source.NodeInstanceID]
-		entered, _ := output["entered"].(bool)
-		if !entered {
-			continue
-		}
-		for _, edge := range incoming {
-			if edge.SourceNodeInstanceID != source.NodeInstanceID || edge.SourcePort != source.Branch {
-				continue
-			}
-			reached, err := workflowEdgeReached(edge, outputs, event)
-			if err != nil {
-				return false, err
-			}
-			if reached {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
+func resolveWorkflowNodeInput(node workflowGraphNode, incoming []workflowGraphEdge, outputs map[string]map[string]any, event map[string]string, inputs ...map[string]any) (map[string]any, error) {
+	return workflowgraph.Resolve(node, incoming, workflowContext(event, outputs, inputs...))
 }
-
-func workflowConditionNotificationValue(kind string, sources []workflowInputBindingSource, incoming []workflowGraphEdge, outputs map[string]map[string]any, event map[string]string) (string, error) {
-	values := make([]string, 0, len(sources))
-	for _, source := range sources {
-		output := outputs[source.NodeInstanceID]
-		triggered, _ := output["triggered"].(bool)
-		if !triggered {
-			continue
-		}
-		reached := false
-		for _, edge := range incoming {
-			if edge.SourceNodeInstanceID != source.NodeInstanceID || edge.SourcePort != source.Branch {
-				continue
-			}
-			var err error
-			reached, err = workflowEdgeReached(edge, outputs, event)
-			if err != nil {
-				return "", err
-			}
-			if reached {
-				break
-			}
-		}
-		if !reached {
-			continue
-		}
-		field := "summary"
-		if kind == "condition_subject" {
-			field = "businessKey"
-		}
-		if value, _ := output[field].(string); value != "" {
-			values = append(values, value)
-		}
-	}
-	if kind == "condition_subject" {
-		digest := sha256.Sum256([]byte(strings.Join(values, "\x00")))
-		return "condition-subject:" + hex.EncodeToString(digest[:16]), nil
-	}
-	return truncateWorkflowText(strings.Join(values, "\n"), 2000), nil
-}
-
-func flattenWorkflowOutputs(outputs map[string]map[string]any) map[string]any {
-	flattened := make(map[string]any)
-	nodeIDs := make([]string, 0, len(outputs))
-	for nodeID := range outputs {
-		nodeIDs = append(nodeIDs, nodeID)
-	}
-	sort.Strings(nodeIDs)
-	for _, nodeID := range nodeIDs {
-		output := outputs[nodeID]
-		for key, value := range output {
-			flattened[key] = value
-		}
-	}
-	return flattened
-}
-
 func workflowFieldValue(root map[string]any, path []string) (any, bool) {
-	var current any = root
-	for _, segment := range path {
-		object, ok := current.(map[string]any)
-		if !ok {
-			return nil, false
-		}
-		current, ok = object[segment]
-		if !ok {
-			return nil, false
-		}
-	}
-	return current, true
+	return workflowgraph.Field(root, path)
 }
-
 func evaluateWorkflowCEL(expression string, event map[string]string, input map[string]any) (any, error) {
-	ast, err := compileWorkflowCEL(expression)
-	if err != nil {
-		return nil, err
-	}
-	env, err := workflowCELEnvironment()
-	if err != nil {
-		return nil, err
-	}
-	program, err := env.Program(ast)
-	if err != nil {
-		return nil, err
-	}
-	value, _, err := program.Eval(map[string]any{"event": event, "input": input})
-	if err != nil {
-		return nil, err
-	}
-	return workflowCELNative(value)
-}
-
-func workflowCELNative(value ref.Val) (any, error) {
-	native, err := value.ConvertToNative(reflect.TypeOf((*any)(nil)).Elem())
-	if err != nil {
-		return nil, err
-	}
-	return native, nil
+	return workflowgraph.Evaluate(expression, workflowgraph.Context{Event: event, Input: input})
 }
 
 func (a *App) loadWorkflowRunCheckpoints(ctx context.Context, runID int64) (map[string]map[string]any, error) {
@@ -1270,7 +1197,7 @@ func (a *App) nextWorkflowNodeAttempt(ctx context.Context, runID int64, nodeID s
 	return latest + 1, err
 }
 
-func (a *App) finishWorkflowRunNode(workflowID int64, runNode db.WorkflowRunNode, status, category, message string, startedAt time.Time) {
+func (a *App) finishWorkflowRunNode(run db.WorkflowRun, runNode db.WorkflowRunNode, status, category, message string, startedAt time.Time) {
 	now := time.Now().UTC()
 	duration := max(now.Sub(startedAt).Milliseconds(), 0)
 	updates := map[string]any{"status": status, "completed_at": now, "duration_ms": duration}
@@ -1284,48 +1211,49 @@ func (a *App) finishWorkflowRunNode(workflowID int64, runNode db.WorkflowRunNode
 	} else {
 		updates["error_message"] = workflowLogMessage(message)
 	}
-	if err := a.DB.Model(&db.WorkflowRunNode{}).Where("id = ? AND status = ?", runNode.ID, RunStatusRunning).Updates(updates).Error; err != nil {
+	if err := a.DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockRunLease(tx, run, status == RunStatusCancelled, nil); err != nil {
+			return err
+		}
+		return tx.Model(&db.WorkflowRunNode{}).Where("id=? AND status=?", runNode.ID, RunStatusRunning).Updates(updates).Error
+	}); err != nil {
 		return
 	}
-	a.PublishWorkflowRunUpdated(workflowID, runNode.RunID)
+	a.PublishWorkflowRunUpdated(run.WorkflowID, runNode.RunID)
 	level := slog.LevelInfo
 	if status == RunStatusFailed {
 		level = slog.LevelError
 	} else if status == RunStatusCancelled {
 		level = slog.LevelWarn
 	}
-	a.appendWorkflowNodeLog(context.Background(), workflowID, runNode.RunID, runNode.ID, level, message, map[string]any{
+	a.appendWorkflowNodeLog(context.WithValue(context.Background(), executionLeaseKey{}, run), run.WorkflowID, runNode.RunID, runNode.ID, level, message, map[string]any{
 		"status": status, "error_category": category, "duration_ms": duration,
 	})
 }
 
-func (a *App) retryWorkflowRun(runID int64, attempt int) {
+func (a *App) retryWorkflowRun(run db.WorkflowRun, attempt int) {
 	now := time.Now().UTC()
-	var run db.WorkflowRun
-	if a.DB.Model(&db.WorkflowRun{}).Select("workflow_id").First(&run, runID).Error != nil {
-		return
-	}
-	if a.DB.Model(&db.WorkflowRun{}).Where("id = ?", runID).Updates(map[string]any{
+	if runLeaseQuery(a.DB, run, false).Updates(map[string]any{
 		"status": RunStatusRetrying, "not_before": now.Add(time.Duration(attempt) * time.Second),
 		"lease_token": nil, "lease_expires_at": nil, "error_category": nil, "error_message": nil, "updated_at": now,
 	}).Error == nil {
-		a.PublishWorkflowRunUpdated(run.WorkflowID, runID)
+		a.PublishWorkflowRunUpdated(run.WorkflowID, run.ID)
 	}
 }
 
-func (a *App) failWorkflowRun(runID int64, category string) {
-	a.finishWorkflowRun(runID, RunStatusFailed, category)
+func (a *App) failWorkflowRun(run db.WorkflowRun, category string) {
+	a.finishWorkflowRun(run, RunStatusFailed, category)
 }
 
-func (a *App) cancelWorkflowRun(runID int64) {
-	a.finishWorkflowRun(runID, RunStatusCancelled, "cancelled")
+func (a *App) cancelWorkflowRun(run db.WorkflowRun) {
+	a.finishWorkflowRun(run, RunStatusCancelled, "cancelled")
 }
 
-func (a *App) completeWorkflowRun(runID int64) {
-	a.finishWorkflowRun(runID, RunStatusSucceeded, "")
+func (a *App) completeWorkflowRun(run db.WorkflowRun) {
+	a.finishWorkflowRun(run, RunStatusSucceeded, "")
 }
 
-func (a *App) finishWorkflowRun(runID int64, status, category string) {
+func (a *App) finishWorkflowRun(expected db.WorkflowRun, status, category string) {
 	now := time.Now().UTC()
 	var workflowID int64
 	updates := map[string]any{
@@ -1339,11 +1267,15 @@ func (a *App) finishWorkflowRun(runID int64, status, category string) {
 	}
 	err := a.DB.Transaction(func(tx *gorm.DB) error {
 		var run db.WorkflowRun
-		if err := tx.First(&run, runID).Error; err != nil {
+		if err := lockRunLease(tx, expected, status == RunStatusCancelled, &run); err != nil {
 			return err
 		}
 		workflowID = run.WorkflowID
-		updates["result_summary"] = workflowRunResultSummary(tx, runID)
+		summary, err := workflowRunResultSummary(tx, expected.ID)
+		if err != nil {
+			return err
+		}
+		updates["result_summary"] = summary
 		if category == "" {
 			updates["error_message"] = nil
 		} else {
@@ -1352,25 +1284,34 @@ func (a *App) finishWorkflowRun(runID int64, status, category string) {
 		if err := tx.Model(&run).Updates(updates).Error; err != nil {
 			return err
 		}
+		if err := tx.Exec("UPDATE plugin_references SET active=FALSE WHERE reference_type='run' AND reference_id=?", fmt.Sprint(run.ID)).Error; err != nil {
+			return err
+		}
 		if status == RunStatusFailed && run.TriggerType != "failure" {
 			return a.enqueueWorkflowEvent(tx, newWorkflowFailureEvent(run, category, now))
 		}
 		return nil
 	})
 	if err != nil {
-		slog.Error("finish workflow run failed", "component", "workflow.runtime", "run_id", runID, "error_category", "run_finish")
+		slog.Error("finish workflow run failed", "component", "workflow.runtime", "run_id", expected.ID, "error_category", "run_finish")
 		return
 	}
-	a.PublishWorkflowRunUpdated(workflowID, runID)
+	a.PublishWorkflowRunUpdated(workflowID, expected.ID)
 }
 
-func workflowRunResultSummary(tx *gorm.DB, runID int64) string {
+func workflowRunResultSummary(tx *gorm.DB, runID int64) (string, error) {
 	var attempts int64
-	_ = tx.Model(&db.WorkflowRunNode{}).Where("run_id = ?", runID).Count(&attempts).Error
+	if err := tx.Model(&db.WorkflowRunNode{}).Where("run_id = ?", runID).Count(&attempts).Error; err != nil {
+		return "", err
+	}
 	summary := map[string]any{"nodeAttempts": attempts}
 	var last db.WorkflowRunNode
 	query := tx.Where("run_id = ? AND status = ? AND output_summary <> '{}'", runID, RunStatusSucceeded)
-	if err := query.Order("id DESC").First(&last).Error; err == nil {
+	err := query.Order("id DESC").First(&last).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", err
+	}
+	if err == nil {
 		summary["lastNodeInstanceId"] = last.NodeInstanceID
 		summary["lastNodeStatus"] = last.Status
 		var output map[string]any
@@ -1378,50 +1319,31 @@ func workflowRunResultSummary(tx *gorm.DB, runID int64) string {
 			summary["output"] = output
 		}
 	}
-	return mustJSONString(summary)
+	return mustJSONString(summary), nil
 }
 
-func (a *App) requeueWorkflowRun(runID int64) {
+func (a *App) requeueWorkflowRun(run db.WorkflowRun) {
 	now := time.Now().UTC()
-	var run db.WorkflowRun
-	if a.DB.Model(&db.WorkflowRun{}).Select("workflow_id").First(&run, runID).Error != nil {
-		return
-	}
-	if a.DB.Model(&db.WorkflowRun{}).Where("id = ?", runID).Updates(map[string]any{
-		"status": RunStatusQueued, "not_before": now, "lease_token": nil,
-		"lease_expires_at": nil, "updated_at": now,
-	}).Error == nil {
-		a.PublishWorkflowRunUpdated(run.WorkflowID, runID)
-	}
-}
-
-func (a *App) waitWorkflowRun(runID int64) {
-	now := time.Now().UTC()
-	var run db.WorkflowRun
-	if a.DB.Model(&db.WorkflowRun{}).Select("workflow_id").First(&run, runID).Error != nil {
-		return
-	}
-	if a.DB.Model(&db.WorkflowRun{}).Where("id = ? AND status = ?", runID, RunStatusRunning).Updates(map[string]any{
-		"status": RunStatusWaiting, "lease_token": nil, "lease_expires_at": nil, "updated_at": now,
-	}).Error == nil {
-		a.PublishWorkflowRunUpdated(run.WorkflowID, runID)
+	result := runLeaseQuery(a.DB, run, false).Updates(map[string]any{"status": RunStatusQueued, "not_before": now, "lease_token": nil, "lease_expires_at": nil, "updated_at": now})
+	if result.Error == nil && result.RowsAffected == 1 {
+		a.PublishWorkflowRunUpdated(run.WorkflowID, run.ID)
 	}
 }
 
 func (a *App) runShouldStop(ctx context.Context, runID, workflowID int64) (cancelled, paused bool) {
 	var row struct {
 		Status            string
-		EntryPoint        string
+		CreatedBy         *int64
 		CancelRequestedAt *time.Time
 	}
-	if err := a.DB.Raw(`SELECT w.status, r.entry_point, r.cancel_requested_at FROM workflows w JOIN workflow_runs r ON r.workflow_id = w.id WHERE r.id = ? AND w.id = ?`, runID, workflowID).Scan(&row).Error; err != nil {
+	if err := a.DB.Raw(`SELECT w.status, r.created_by, r.cancel_requested_at FROM workflows w JOIN workflow_runs r ON r.workflow_id = w.id WHERE r.id = ? AND w.id = ?`, runID, workflowID).Scan(&row).Error; err != nil {
 		return false, true
 	}
 	cancelled = row.CancelRequestedAt != nil
-	return cancelled, !cancelled && (ctx.Err() != nil || row.Status != WorkflowStatusActive && row.EntryPoint != "backtest")
+	return cancelled, !cancelled && (ctx.Err() != nil || row.Status != WorkflowStatusActive && row.CreatedBy == nil)
 }
 
-func (a *App) renewRunLease(ctx context.Context, runID int64, token string, done <-chan struct{}) {
+func (a *App) renewRunLease(ctx context.Context, run db.WorkflowRun, done <-chan struct{}, cancel context.CancelFunc) {
 	ticker := time.NewTicker(runLeaseDuration / 3)
 	defer ticker.Stop()
 	for {
@@ -1431,9 +1353,23 @@ func (a *App) renewRunLease(ctx context.Context, runID int64, token string, done
 		case <-done:
 			return
 		case now := <-ticker.C:
-			_ = a.DB.WithContext(ctx).Model(&db.WorkflowRun{}).
-				Where("id = ? AND status = ? AND lease_token = ?", runID, RunStatusRunning, token).
-				Updates(map[string]any{"lease_expires_at": now.UTC().Add(runLeaseDuration), "updated_at": now.UTC()}).Error
+			err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+				if err := a.lockExecutionLease(tx, run, nil); err != nil {
+					return err
+				}
+				r := runLeaseQuery(tx, run, false).Updates(map[string]any{"lease_expires_at": gorm.Expr("clock_timestamp() + interval '30 seconds'"), "updated_at": now.UTC()})
+				if r.Error != nil {
+					return r.Error
+				}
+				if r.RowsAffected != 1 {
+					return ErrConflict
+				}
+				return nil
+			})
+			if err != nil {
+				cancel()
+				return
+			}
 		}
 	}
 }
@@ -1448,7 +1384,7 @@ func (a *App) enqueueScheduledRuns(ctx context.Context, now time.Time) error {
 	if err := a.DB.WithContext(ctx).Raw(`
 SELECT w.id AS workflow_id, wr.id AS revision_id, wr.graph_json, rt.next_scheduled_at AS due_at
 FROM workflows w
-JOIN workflow_revisions wr ON wr.id = w.active_revision_id
+JOIN workflow_revisions wr ON wr.id = w.published_revision_id
 JOIN workflow_runtimes rt ON rt.workflow_id = w.id
 WHERE w.status = 'active' AND rt.next_scheduled_at IS NOT NULL AND rt.next_scheduled_at <= ?
 ORDER BY w.id`, now).Scan(&due).Error; err != nil {
@@ -1469,23 +1405,49 @@ ORDER BY w.id`, now).Scan(&due).Error; err != nil {
 		}
 		var createdRun db.WorkflowRun
 		if err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			var workflow db.Workflow
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&workflow, item.WorkflowID).Error; err != nil {
+				return err
+			}
+			if workflow.Status != WorkflowStatusActive || revisionPointerValue(workflow.PublishedRevisionID) != item.RevisionID {
+				return nil
+			}
+			validated, err := a.validateWorkflowGraph(json.RawMessage(item.GraphJSON))
+			if err != nil {
+				return err
+			}
+			actor, err := principalForTx(tx, &Principal{User: &db.SystemUser{ID: workflow.OwnerUserID}})
+			if err != nil {
+				return err
+			}
+			if err := authorizeWorkflowTx(tx, actor, workflow.ID, "workflows.run"); err != nil {
+				return err
+			}
+			if err := authorizePluginExecution(actor, validated); err != nil {
+				return err
+			}
 			var runtime db.WorkflowRuntime
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&runtime, item.WorkflowID).Error; err != nil {
 				return err
 			}
-			if runtime.NextScheduledAt != nil && runtime.NextScheduledAt.After(now) {
+			if runtime.NextScheduledAt == nil || runtime.NextScheduledAt.After(now) {
 				return nil
 			}
 			if err := enforceWorkflowBacklog(tx, item.WorkflowID); err != nil {
 				return nil
 			}
 			run := db.WorkflowRun{
-				WorkflowID: item.WorkflowID, RevisionID: item.RevisionID, EntryPoint: "realtime", InputJSON: `{}`, TriggerType: "schedule",
+				ExecutionUserID: workflow.OwnerUserID, RequiresSerial: graphHasPersistentState(validated), WorkflowID: item.WorkflowID, RevisionID: item.RevisionID, EntryPoint: "main", InputJSON: `{}`, TriggerType: "schedule",
 				TriggerKey: dueAt.Format(time.RFC3339Nano), Status: RunStatusQueued,
 				NotBefore: now, TriggeredAt: dueAt, ResultSummary: `{}`, CreatedAt: now, UpdatedAt: now,
 			}
 			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&run).Error; err != nil {
 				return err
+			}
+			if run.ID > 0 {
+				if err := a.syncRunPluginReferences(tx, run, validated); err != nil {
+					return err
+				}
 			}
 			createdRun = run
 			next, err := nextWorkflowScheduledAt(trigger.Config, dueAt)
@@ -1589,12 +1551,23 @@ func (a *App) createDiagnosticReplay(ctx context.Context, runID int64) (Workflow
 			TriggerKey: "replay:" + security.RandomToken(), EventRecordID: original.EventRecordID,
 			PartitionKey: original.PartitionKey, Diagnostic: true, OriginalRunID: &original.ID,
 			Status: RunStatusQueued, NotBefore: now, TriggeredAt: original.TriggeredAt, ResultSummary: `{}`,
-			CreatedBy: original.CreatedBy, CreatedAt: now, UpdatedAt: now,
+			RequiresSerial: original.RequiresSerial, ExecutionUserID: ContextPrincipal(ctx).User.ID, CreatedBy: &ContextPrincipal(ctx).User.ID, CreatedAt: now, UpdatedAt: now,
 		}
 		if err := tx.Create(&replay).Error; err != nil {
 			return errors.New("create diagnostic replay failed")
 		}
-		return nil
+		var revision db.WorkflowRevision
+		if err := tx.First(&revision, replay.RevisionID).Error; err != nil {
+			return err
+		}
+		g, err := a.validateWorkflowGraph(json.RawMessage(revision.GraphJSON))
+		if err != nil {
+			return err
+		}
+		if err := a.authorizeExecution(replay.ExecutionUserID, g); err != nil {
+			return err
+		}
+		return a.syncRunPluginReferences(tx, replay, g)
 	})
 	if err != nil {
 		return WorkflowRunView{}, err
@@ -1633,7 +1606,7 @@ func mustJSON(value any) json.RawMessage {
 
 func (s *bufferedNodeState) Load(ctx context.Context) (json.RawMessage, error) {
 	var state db.WorkflowNodeState
-	if err := s.app.DB.WithContext(ctx).Where("workflow_id = ? AND node_instance_id = ?", s.workflowID, s.node.NodeInstanceID).First(&state).Error; err != nil {
+	if err := s.app.DB.WithContext(ctx).Where("workflow_id = ? AND revision_id = ? AND node_instance_id = ?", s.workflowID, s.revisionID, s.node.NodeInstanceID).First(&state).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return json.RawMessage(`{}`), nil
 		}
@@ -1654,6 +1627,7 @@ func (s *bufferedNodeState) Save(_ context.Context, state json.RawMessage) error
 }
 
 type workflowSecretReader struct {
+	database       *gorm.DB
 	app            *App
 	revisionID     int64
 	nodeInstanceID string
@@ -1664,7 +1638,11 @@ func (r workflowSecretReader) Read(ctx context.Context, field string) ([]byte, e
 		return nil, errors.New("secret field is required")
 	}
 	var binding db.WorkflowSecretBinding
-	if err := r.app.DB.WithContext(ctx).Where("revision_id = ? AND node_instance_id = ? AND field_name = ?", r.revisionID, r.nodeInstanceID, field).First(&binding).Error; err != nil {
+	database := r.database
+	if database == nil {
+		database = r.app.DB
+	}
+	if err := database.WithContext(ctx).Where("revision_id = ? AND node_instance_id = ? AND field_name = ?", r.revisionID, r.nodeInstanceID, field).First(&binding).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%w: workflow secret", ErrNotFound)
 		}

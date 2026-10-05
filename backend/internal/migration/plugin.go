@@ -80,7 +80,7 @@ func WithPluginMigrations(ctx context.Context, db *sql.DB, pluginID, migrationDi
 		return fmt.Errorf("set plugin search path: %w", err)
 	}
 	defer func() { _, _ = db.ExecContext(context.Background(), "RESET search_path") }()
-	runner, err := newWithFSAndTable(db, os.DirFS(migrationDir), schema+`.schema_migrations`)
+	runner, err := newWithFSAndTable(db, os.DirFS(migrationDir), schema+`.schema_migrations_g4`)
 	if err != nil {
 		return err
 	}

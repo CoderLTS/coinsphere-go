@@ -8,7 +8,7 @@
 </template>
 
 <script setup lang="ts">
-  import WorkflowSchemaFields from '@/views/scheduler/workflow/editor/components/WorkflowSchemaFields.vue'
+  import WorkflowSchemaFields from '@/components/workflow/WorkflowSchemaFields.vue'
 
   defineProps<{
     schema: Record<string, any>

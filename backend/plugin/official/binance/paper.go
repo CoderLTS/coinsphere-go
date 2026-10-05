@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"coinsphere/backend/plugin/contracts/trading"
 	"coinsphere/backend/plugin/sdk"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -18,10 +19,10 @@ import (
 
 func registerPaper(registrar sdk.Registrar, runtime *binanceRuntime) error {
 	return registrar.Action(withNodeMeta(sdk.NodeDescriptor{
-		Type: "official.binance.paper_execute", Version: "1.0.0", Kind: sdk.NodeKindAction,
+		ExecutionPermissions: []string{"plugins.official.binance.execute"}, Type: "official.binance.paper_execute", Version: "1.0.0", Kind: sdk.NodeKindAction,
 		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"initialBalance":{"type":"string","title":"初始余额","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"feeRate":{"type":"string","title":"手续费率","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"maxOrderNotional":{"type":"string","title":"最大订单名义金额","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"maxInstrumentNotional":{"type":"string","title":"单交易对最大名义金额","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true}},"required":["initialBalance","feeRate","maxOrderNotional","maxInstrumentNotional"],"additionalProperties":false}`),
 		UISchema:     json.RawMessage(`{"ui:order":["initialBalance","feeRate","maxOrderNotional","maxInstrumentNotional"]}`),
-		InputSchema:  orderIntentSchema(), OutputSchema: orderResultSchema(), Pool: sdk.PoolStream, SideEffect: sdk.SideEffectPaper, State: sdk.StatePersistent,
+		InputSchema:  orderIntentSchema(), OutputSchema: orderResultSchema(), Pool: sdk.PoolStream, SideEffect: sdk.SideEffectData, State: sdk.StatePersistent,
 	}, "Paper 执行", "使用 Binance 最新 Quote 模拟成交并记录订单、成交和持仓。", "strategy", "#2563eb", "flask-conical"), paperExecuteAction{runtime: runtime})
 }
 
@@ -66,7 +67,7 @@ func (a paperExecuteAction) Execute(ctx context.Context, request sdk.ActionReque
 		return sdk.ActionResult{}, errors.New("Binance Paper workflow identity is invalid")
 	}
 	requestedQuantity, requestedQuoteAmount := quantity, quoteAmount
-	quote, err := (marketDataProvider{runtime: a.runtime}).Quote(ctx, sdk.QuoteQuery{Market: intent.Market, Instrument: intent.Instrument})
+	quote, err := (marketDataProvider{runtime: a.runtime}).Quote(ctx, trading.QuoteQuery{Market: intent.Market, Instrument: intent.Instrument})
 	if err != nil || quote.Price.Sign() <= 0 {
 		return sdk.ActionResult{}, errors.New("Binance Paper quote is unavailable")
 	}
@@ -74,7 +75,7 @@ func (a paperExecuteAction) Execute(ctx context.Context, request sdk.ActionReque
 		quantity = quoteAmount.Div(quote.Price)
 	}
 	if quoteAmount.Sign() == 0 {
-		if err := a.runtime.validateOrderRules(ctx, sdk.OrderRequest{Market: intent.Market, Instrument: intent.Instrument, Quantity: quantity}); err != nil {
+		if err := a.runtime.validateOrderRules(ctx, trading.OrderRequest{Market: intent.Market, Instrument: intent.Instrument, Quantity: quantity}); err != nil {
 			return sdk.ActionResult{}, err
 		}
 	}

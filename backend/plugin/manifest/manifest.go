@@ -27,9 +27,9 @@ var pluginIDPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-
 var windowsAbsolutePathPattern = regexp.MustCompile(`^[A-Za-z]:/`)
 
 var contributionTypes = map[string]bool{
-	"nodes": true, "triggers": true, "strategies": true, "apiRoutes": true, "pages": true,
+	"nodes": true, "triggers": true, "apiRoutes": true, "pages": true,
 	"resultPages": true, "assistantQueries": true, "migrations": true,
-	"marketDataProviders": true, "executionProviders": true, "workflowValidators": true, "templates": true,
+	"runPanels": true, "cleanup": true, "ingress": true, "workflowValidators": true, "templates": true,
 }
 
 type Manifest struct {
@@ -45,6 +45,13 @@ type Manifest struct {
 	Frontend        Frontend          `json:"frontend"`
 	Migrations      Migrations        `json:"migrations"`
 	Contributes     []string          `json:"contributes"`
+	Permissions     []Permission      `json:"permissions"`
+}
+
+type Permission struct {
+	Code      string `json:"code"`
+	Title     string `json:"title"`
+	Protected bool   `json:"protected,omitempty"`
 }
 
 type Menu struct {

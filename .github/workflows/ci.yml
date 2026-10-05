@@ -16,6 +16,20 @@ jobs:
     name: Go backend
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: coinsphere_test
+          POSTGRES_PASSWORD: ci-only-synthetic
+          POSTGRES_DB: coinsphere_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U coinsphere_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      COINSPHERE_TEST_DSN: postgres://coinsphere_test:ci-only-synthetic@localhost:5432/coinsphere_test?sslmode=disable
     defaults:
       run:
         working-directory: backend
@@ -36,6 +50,8 @@ jobs:
           test -z "$unformatted" || { printf '%s\n' "$unformatted"; exit 1; }
       - name: Vet
         run: go vet ./...
+      - name: Behavior and race checks
+        run: go test -race ./...
       - name: Build
         run: go build ./...
 

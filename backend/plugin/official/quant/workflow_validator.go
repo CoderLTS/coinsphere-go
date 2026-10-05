@@ -56,45 +56,7 @@ func validateQuantWorkflow(input sdk.WorkflowValidationContext) error {
 	if quantNodes == 0 {
 		return nil
 	}
-	if graph.SchemaVersion == 2 {
-		entryID := graph.EntryPoints["backtest"]
-		entry, exists := nodes[entryID]
-		desc, descriptorExists := input.Nodes[entry.Type]
-		if !exists || !descriptorExists || !desc.Capabilities.FrameDriver {
-			return errors.New("Quant backtest entryPoint must reference its frame driver")
-		}
-		queue := make([]string, 0)
-		for _, edge := range graph.RawEdges {
-			if edge.Source == graph.EntryPoints["backtest"] && edge.Port == "each" {
-				queue = append(queue, edge.Target)
-			}
-		}
-		seen, resultFound := map[string]bool{}, false
-		for len(queue) > 0 {
-			id := queue[0]
-			queue = queue[1:]
-			if seen[id] {
-				continue
-			}
-			seen[id] = true
-			desc, ok := input.Nodes[nodes[id].Type]
-			if !ok || !desc.Capabilities.FrameSafe || !desc.Capabilities.Deterministic || !desc.Capabilities.Stateless {
-				return fmt.Errorf("Quant backtest node %q must be frame-safe", id)
-			}
-			if desc.Capabilities.FrameResult {
-				resultFound = true
-				continue
-			}
-			for _, edge := range graph.RawEdges {
-				if edge.Source == id {
-					queue = append(queue, edge.Target)
-				}
-			}
-		}
-		if !resultFound {
-			return errors.New("Quant backtest frame must reach a result node")
-		}
-	}
+
 	if err := validateQuantBindings(graph, nodes); err != nil {
 		return err
 	}

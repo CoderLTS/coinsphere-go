@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"coinsphere/backend/internal/db"
+	"coinsphere/backend/plugin/sdk"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -32,7 +33,8 @@ const (
 )
 
 const blankWorkflowGraph = `{
-  "schemaVersion": 1,
+  "schemaVersion": 3,
+ "entryPoints":{"main":"manual-trigger"},
   "nodes": [
     {"nodeInstanceId":"manual-trigger","nodeType":"core.manual","nodeVersion":"1.0.0","config":{},"position":{"x":160,"y":220}},
     {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":520,"y":220}}
@@ -43,7 +45,8 @@ const blankWorkflowGraph = `{
 }`
 
 const scheduledWorkflowGraph = `{
-  "schemaVersion": 1,
+  "schemaVersion": 3,
+ "entryPoints":{"main":"schedule-trigger"},
   "nodes": [
     {"nodeInstanceId":"schedule-trigger","nodeType":"core.schedule","nodeVersion":"1.0.0","config":{"everySeconds":3600},"position":{"x":160,"y":220}},
     {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":520,"y":220}}
@@ -54,7 +57,8 @@ const scheduledWorkflowGraph = `{
 }`
 
 const eventWorkflowGraph = `{
-  "schemaVersion": 1,
+  "schemaVersion": 3,
+ "entryPoints":{"main":"event-trigger"},
   "nodes": [
     {"nodeInstanceId":"event-trigger","nodeType":"core.event","nodeVersion":"1.0.0","config":{"types":["example.event"]},"position":{"x":160,"y":220}},
     {"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":520,"y":220}}
@@ -72,10 +76,14 @@ type WorkflowTemplate struct {
 }
 
 type WorkflowCreatePayload struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	TemplateKey string `json:"templateKey"`
-	GroupID     *int64 `json:"groupId"`
+	Graph             json.RawMessage        `json:"graph,omitempty"`
+	SecretChanges     []WorkflowSecretChange `json:"secretChanges,omitempty"`
+	MaxConcurrentRuns int                    `json:"maxConcurrentRuns,omitempty"`
+	BacklogLimit      int                    `json:"backlogLimit,omitempty"`
+	Name              string                 `json:"name"`
+	Description       string                 `json:"description"`
+	TemplateKey       string                 `json:"templateKey"`
+	GroupID           *int64                 `json:"groupId"`
 }
 
 type WorkflowUpdatePayload struct {
@@ -84,10 +92,10 @@ type WorkflowUpdatePayload struct {
 }
 
 type WorkflowRevisionSavePayload struct {
-	ExpectedActiveRevisionID  int64                  `json:"expectedActiveRevisionId"`
-	Graph                     json.RawMessage        `json:"graph"`
-	SecretChanges             []WorkflowSecretChange `json:"secretChanges,omitempty"`
-	ResetStateNodeInstanceIDs []string               `json:"resetStateNodeInstanceIds,omitempty"`
+	Metadata                *WorkflowUpdatePayload `json:"metadata,omitempty"`
+	ExpectedDraftRevisionID int64                  `json:"expectedDraftRevisionId"`
+	Graph                   json.RawMessage        `json:"graph"`
+	SecretChanges           []WorkflowSecretChange `json:"secretChanges,omitempty"`
 }
 
 type WorkflowLifecyclePayload struct {
@@ -95,18 +103,20 @@ type WorkflowLifecyclePayload struct {
 }
 
 type WorkflowView struct {
-	ID                int64  `json:"id"`
-	Name              string `json:"name"`
-	Description       string `json:"description"`
-	GroupID           *int64 `json:"groupId"`
-	Mode              string `json:"mode"`
-	Status            string `json:"status"`
-	ActiveRevisionID  int64  `json:"activeRevisionId"`
-	MainTriggerNodeID string `json:"mainTriggerNodeId"`
-	RetentionDays     int    `json:"retentionDays"`
-	CreatedBy         int64  `json:"createdBy"`
-	CreatedAt         string `json:"createdAt"`
-	UpdatedAt         string `json:"updatedAt"`
+	OwnerUserID         int64  `json:"ownerUserId"`
+	DraftRevisionID     int64  `json:"draftRevisionId"`
+	ID                  int64  `json:"id"`
+	Name                string `json:"name"`
+	Description         string `json:"description"`
+	GroupID             *int64 `json:"groupId"`
+	Mode                string `json:"mode"`
+	Status              string `json:"status"`
+	PublishedRevisionID int64  `json:"publishedRevisionId"`
+	MainTriggerNodeID   string `json:"mainTriggerNodeId"`
+	RetentionDays       int    `json:"retentionDays"`
+	CreatedBy           int64  `json:"createdBy"`
+	CreatedAt           string `json:"createdAt"`
+	UpdatedAt           string `json:"updatedAt"`
 }
 
 type WorkflowRuntimeView struct {
@@ -118,6 +128,7 @@ type WorkflowRuntimeView struct {
 }
 
 type WorkflowDetail struct {
+	Permissions []string `json:"permissions"`
 	WorkflowView
 	Runtime              WorkflowRuntimeView `json:"runtime"`
 	StateNodeInstanceIDs []string            `json:"stateNodeInstanceIds"`
@@ -165,6 +176,9 @@ func (a *App) workflowTemplate(key string) (json.RawMessage, bool) {
 }
 
 func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload, principal *Principal) (WorkflowDetail, error) {
+	if err := requireCapability(ctx, "workflows.create"); err != nil {
+		return WorkflowDetail{}, err
+	}
 	name := strings.TrimSpace(payload.Name)
 	description := strings.TrimSpace(payload.Description)
 	templateKey := strings.TrimSpace(payload.TemplateKey)
@@ -178,6 +192,10 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 		return WorkflowDetail{}, errors.New("workflow description must not exceed 500 characters")
 	}
 	templateGraph, ok := a.workflowTemplate(templateKey)
+	if len(payload.Graph) > 0 {
+		templateGraph = payload.Graph
+		ok = true
+	}
 	if !ok {
 		return WorkflowDetail{}, fmt.Errorf("unknown workflow template %q", templateKey)
 	}
@@ -191,7 +209,7 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 
 	now := time.Now().UTC()
 	workflow := db.Workflow{
-		Name: name, Description: description, Mode: workflowModeForTrigger(graph.nodes[graph.mainTriggerID].NodeType), Status: WorkflowStatusInactive,
+		Name: name, Description: description, Mode: a.workflowModeForTrigger(graph.nodes[graph.mainTriggerID].NodeType), Status: WorkflowStatusInactive,
 		MainTriggerNodeID: graph.mainTriggerID, RetentionDays: 30, CreatedBy: principal.User.ID,
 		CreatedAt: now, UpdatedAt: now,
 	}
@@ -200,8 +218,35 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 			return err
 		}
 		var createErr error
-		workflow, createErr = createWorkflowRecord(tx, name, description, payload.GroupID, graph, principal.User.ID, now)
-		return createErr
+		workflow, createErr = a.createWorkflowRecord(tx, name, description, payload.GroupID, graph, principal.User.ID, now)
+		if createErr != nil {
+			return createErr
+		}
+		changes, err := validateWorkflowSecretChanges(graph, payload.SecretChanges)
+		if err != nil {
+			return err
+		}
+		rev := db.WorkflowRevision{ID: *workflow.DraftRevisionID}
+		if err := a.syncRevisionPluginReferences(tx, rev, graph); err != nil {
+			return err
+		}
+		if err := a.persistWorkflowSecrets(tx, workflow.ID, 0, rev, validatedWorkflowGraph{}, graph, changes, now); err != nil {
+			return err
+		}
+		concurrency, backlog := payload.MaxConcurrentRuns, payload.BacklogLimit
+		if concurrency == 0 {
+			concurrency = 2
+		}
+		if backlog == 0 {
+			backlog = 100
+		}
+		if concurrency < 1 || concurrency > 32 || backlog < 1 || backlog > 10000 {
+			return errors.New("invalid workflow capacity")
+		}
+		if graphHasPersistentState(graph) {
+			concurrency = 1
+		}
+		return tx.Model(&db.WorkflowRuntime{}).Where("workflow_id = ?", workflow.ID).Updates(map[string]any{"max_concurrent_runs": concurrency, "backlog_limit": backlog}).Error
 	})
 	if err != nil {
 		return WorkflowDetail{}, err
@@ -209,10 +254,10 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 	return a.GetWorkflow(ctx, workflow.ID)
 }
 
-func createWorkflowRecord(tx *gorm.DB, name, description string, groupID *int64, graph validatedWorkflowGraph, userID int64, now time.Time) (db.Workflow, error) {
+func (a *App) createWorkflowRecord(tx *gorm.DB, name, description string, groupID *int64, graph validatedWorkflowGraph, userID int64, now time.Time) (db.Workflow, error) {
 	workflow := db.Workflow{
-		Name: name, Description: description, GroupID: groupID, Mode: workflowModeForTrigger(graph.nodes[graph.mainTriggerID].NodeType), Status: WorkflowStatusInactive,
-		MainTriggerNodeID: graph.mainTriggerID, RetentionDays: 30, CreatedBy: userID, CreatedAt: now, UpdatedAt: now,
+		Name: name, Description: description, GroupID: groupID, Mode: a.workflowModeForTrigger(graph.nodes[graph.mainTriggerID].NodeType), Status: WorkflowStatusInactive,
+		MainTriggerNodeID: graph.mainTriggerID, RetentionDays: 30, OwnerUserID: userID, CreatedBy: userID, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := tx.Create(&workflow).Error; err != nil {
 		return db.Workflow{}, errors.New("create workflow failed")
@@ -224,8 +269,8 @@ func createWorkflowRecord(tx *gorm.DB, name, description string, groupID *int64,
 	if err := tx.Create(&revision).Error; err != nil {
 		return db.Workflow{}, errors.New("create initial workflow revision failed")
 	}
-	workflow.ActiveRevisionID = &revision.ID
-	if err := tx.Model(&db.Workflow{}).Where("id = ?", workflow.ID).Update("active_revision_id", revision.ID).Error; err != nil {
+	workflow.DraftRevisionID = &revision.ID
+	if err := tx.Model(&db.Workflow{}).Where("id = ?", workflow.ID).Update("draft_revision_id", revision.ID).Error; err != nil {
 		return db.Workflow{}, errors.New("activate initial workflow revision failed")
 	}
 	if err := tx.Create(&db.WorkflowRuntime{
@@ -241,7 +286,10 @@ func (a *App) ListWorkflows(ctx context.Context, status string) ([]WorkflowView,
 	if status != "" && !validWorkflowStatus(status) {
 		return nil, errors.New("invalid workflow status")
 	}
-	query := a.DB.WithContext(ctx).Order("updated_at DESC, id DESC")
+	if err := requireCapability(ctx, "workflows.read"); err != nil {
+		return nil, err
+	}
+	query := workflowScopeQuery(a.DB.WithContext(ctx).Model(&db.Workflow{}), ContextPrincipal(ctx), "workflows.read", "workflows.id").Order("updated_at DESC, id DESC").Limit(200)
 	if status != "" {
 		query = query.Where("status = ?", status)
 	}
@@ -257,6 +305,9 @@ func (a *App) ListWorkflows(ctx context.Context, status string) ([]WorkflowView,
 }
 
 func (a *App) GetWorkflow(ctx context.Context, workflowID int64) (WorkflowDetail, error) {
+	if err := a.AuthorizeWorkflow(ctx, workflowID, "workflows.read"); err != nil {
+		return WorkflowDetail{}, err
+	}
 	var workflow db.Workflow
 	if err := a.DB.WithContext(ctx).First(&workflow, workflowID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -283,7 +334,11 @@ func (a *App) GetWorkflow(ctx context.Context, workflowID int64) (WorkflowDetail
 	if runtime.LastScheduledAt != nil {
 		runtimeView.LastScheduledAt = formatWorkflowTime(*runtime.LastScheduledAt)
 	}
-	return WorkflowDetail{
+	permissions, err := a.workflowPermissions(ctx, workflow)
+	if err != nil {
+		return WorkflowDetail{}, err
+	}
+	return WorkflowDetail{Permissions: permissions,
 		WorkflowView:         workflowView(workflow),
 		Runtime:              runtimeView,
 		StateNodeInstanceIDs: stateNodeInstanceIDs,
@@ -291,6 +346,9 @@ func (a *App) GetWorkflow(ctx context.Context, workflowID int64) (WorkflowDetail
 }
 
 func (a *App) UpdateWorkflow(ctx context.Context, workflowID int64, payload WorkflowUpdatePayload) (WorkflowDetail, error) {
+	if err := a.AuthorizeWorkflow(ctx, workflowID, "workflows.update"); err != nil {
+		return WorkflowDetail{}, err
+	}
 	name := strings.TrimSpace(payload.Name)
 	description := strings.TrimSpace(payload.Description)
 	if name == "" || utf8.RuneCountInString(name) > 120 {
@@ -321,8 +379,11 @@ func (a *App) UpdateWorkflow(ctx context.Context, workflowID int64, payload Work
 }
 
 func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payload WorkflowRevisionSavePayload, principal *Principal) (WorkflowRevisionView, error) {
-	if payload.ExpectedActiveRevisionID <= 0 {
-		return WorkflowRevisionView{}, errors.New("expectedActiveRevisionId must be positive")
+	if err := a.AuthorizeWorkflow(ctx, workflowID, "workflows.update"); err != nil {
+		return WorkflowRevisionView{}, err
+	}
+	if payload.ExpectedDraftRevisionID <= 0 {
+		return WorkflowRevisionView{}, errors.New("expectedDraftRevisionId must be positive")
 	}
 	if principal == nil || principal.User == nil || principal.User.ID <= 0 {
 		return WorkflowRevisionView{}, ErrPermission
@@ -335,17 +396,6 @@ func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payloa
 	if err != nil {
 		return WorkflowRevisionView{}, err
 	}
-	resetStateNodeIDs := make(map[string]bool, len(payload.ResetStateNodeInstanceIDs))
-	for _, rawNodeID := range payload.ResetStateNodeInstanceIDs {
-		nodeID := strings.TrimSpace(rawNodeID)
-		if !workflowNodeIDPattern.MatchString(nodeID) {
-			return WorkflowRevisionView{}, errors.New("resetStateNodeInstanceIds contains an invalid nodeInstanceId")
-		}
-		if resetStateNodeIDs[nodeID] {
-			return WorkflowRevisionView{}, fmt.Errorf("duplicate state reset for node %q", nodeID)
-		}
-		resetStateNodeIDs[nodeID] = true
-	}
 
 	var revision db.WorkflowRevision
 	err = a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -356,49 +406,16 @@ func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payloa
 			}
 			return errors.New("lock workflow failed")
 		}
-		if workflow.ActiveRevisionID == nil || *workflow.ActiveRevisionID != payload.ExpectedActiveRevisionID {
+		if workflow.DraftRevisionID == nil || *workflow.DraftRevisionID != payload.ExpectedDraftRevisionID {
 			return fmt.Errorf("%w: active workflow revision changed", ErrConflict)
 		}
 		var activeRevision db.WorkflowRevision
-		if err := tx.Where("workflow_id = ? AND id = ?", workflowID, *workflow.ActiveRevisionID).First(&activeRevision).Error; err != nil {
+		if err := tx.Where("workflow_id = ? AND id = ?", workflowID, *workflow.DraftRevisionID).First(&activeRevision).Error; err != nil {
 			return errors.New("load active workflow revision failed")
 		}
 		activeGraph, err := a.validateWorkflowGraph(json.RawMessage(activeRevision.GraphJSON))
 		if err != nil {
 			return errors.New("active workflow revision graph is invalid")
-		}
-		var states []db.WorkflowNodeState
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("workflow_id = ?", workflowID).Find(&states).Error; err != nil {
-			return errors.New("load workflow node states failed")
-		}
-		requiredStateResets := make(map[string]bool)
-		for _, state := range states {
-			previous, existed := activeGraph.nodeVersions[state.NodeInstanceID]
-			next, remains := graph.nodeVersions[state.NodeInstanceID]
-			if !existed || !remains || previous != next {
-				requiredStateResets[state.NodeInstanceID] = true
-			}
-		}
-		if len(resetStateNodeIDs) != len(requiredStateResets) {
-			return workflowStateResetConflict(requiredStateResets)
-		}
-		for nodeID := range resetStateNodeIDs {
-			if !requiredStateResets[nodeID] {
-				return workflowStateResetConflict(requiredStateResets)
-			}
-		}
-		if len(requiredStateResets) > 0 && workflow.Status != WorkflowStatusInactive {
-			return fmt.Errorf("%w: workflow must be inactive before resetting node state", ErrConflict)
-		}
-		if len(requiredStateResets) > 0 {
-			nodeIDs := make([]string, 0, len(requiredStateResets))
-			for nodeID := range requiredStateResets {
-				nodeIDs = append(nodeIDs, nodeID)
-			}
-			if err := tx.Where("workflow_id = ? AND node_instance_id IN ?", workflowID, nodeIDs).
-				Delete(&db.WorkflowNodeState{}).Error; err != nil {
-				return errors.New("reset workflow node states failed")
-			}
 		}
 		var latest int64
 		if err := tx.Model(&db.WorkflowRevision{}).Where("workflow_id = ?", workflowID).
@@ -414,32 +431,28 @@ func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payloa
 		if err := tx.Create(&revision).Error; err != nil {
 			return errors.New("create workflow revision failed")
 		}
-		if err := a.persistWorkflowSecrets(tx, workflowID, *workflow.ActiveRevisionID, revision, activeGraph, graph, secretChanges, now); err != nil {
+		if err := a.persistWorkflowSecrets(tx, workflowID, *workflow.DraftRevisionID, revision, activeGraph, graph, secretChanges, now); err != nil {
 			return err
 		}
 		if err := tx.Model(&db.Workflow{}).Where("id = ?", workflowID).Updates(map[string]any{
-			"active_revision_id": revision.ID, "main_trigger_node_id": graph.mainTriggerID,
-			"mode": workflowModeForTrigger(graph.nodes[graph.mainTriggerID].NodeType), "updated_at": now,
+			"draft_revision_id": revision.ID,
+			"updated_at":        now,
 		}).Error; err != nil {
 			return errors.New("activate workflow revision failed")
 		}
-		if workflow.Status == WorkflowStatusActive {
-			nextScheduledAt := any(nil)
-			trigger := graph.nodes[graph.mainTriggerID]
-			if trigger.NodeType == "core.schedule" {
-				next, err := nextWorkflowScheduledAt(trigger.Config, now)
-				if err != nil {
-					return errors.New("schedule config is invalid")
-				}
-				nextScheduledAt = next
+		if payload.Metadata != nil {
+			name, description := strings.TrimSpace(payload.Metadata.Name), strings.TrimSpace(payload.Metadata.Description)
+			if name == "" || utf8.RuneCountInString(name) > 120 || utf8.RuneCountInString(description) > 500 {
+				return errors.New("invalid workflow metadata")
 			}
-			if err := tx.Model(&db.WorkflowRuntime{}).Where("workflow_id = ?", workflowID).Updates(map[string]any{
-				"next_scheduled_at": nextScheduledAt, "updated_at": now,
-			}).Error; err != nil {
-				return errors.New("update workflow runtime schedule failed")
+			if err := tx.Model(&workflow).Updates(map[string]any{"name": name, "description": description}).Error; err != nil {
+				return err
 			}
 		}
-		if err := pruneWorkflowRevisions(tx, workflowID, revision.ID); err != nil {
+		if err := a.syncRevisionPluginReferences(tx, revision, graph); err != nil {
+			return err
+		}
+		if err := a.pruneWorkflowRevisions(tx, workflowID, revision.ID); err != nil {
 			return err
 		}
 		return nil
@@ -454,21 +467,29 @@ func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payloa
 	return views[0], nil
 }
 
-func pruneWorkflowRevisions(tx *gorm.DB, workflowID, retainedRevisionID int64) error {
+func (a *App) pruneWorkflowRevisions(tx *gorm.DB, workflowID, retainedRevisionID int64) error {
 	var revisionIDs []int64
 	if err := tx.Model(&db.WorkflowRevision{}).Where("workflow_id = ?", workflowID).
 		Order("revision_number DESC").Pluck("id", &revisionIDs).Error; err != nil {
 		return errors.New("list workflow revisions for pruning failed")
 	}
-	for index := len(revisionIDs) - 1; index >= maxWorkflowRevisions; index-- {
-		if err := deleteWorkflowRevisionRecord(tx, workflowID, revisionIDs[index], retainedRevisionID, false, false); err != nil {
+	for index := maxWorkflowRevisions; index < len(revisionIDs); index++ {
+		id := revisionIDs[index]
+		var refs int64
+		if err := tx.Raw(`SELECT (SELECT COUNT(*) FROM workflow_runs WHERE revision_id=?) + (SELECT COUNT(*) FROM workflows WHERE draft_revision_id=? OR published_revision_id=?)`, id, id, id).Scan(&refs).Error; err != nil {
+			return err
+		}
+		if refs > 0 {
+			continue
+		}
+		if err := a.deleteWorkflowRevisionRecord(tx, workflowID, id, retainedRevisionID, false, true); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func deleteWorkflowRevisionRecord(tx *gorm.DB, workflowID, revisionID, retainedRevisionID int64, removeRuns, removeOutputs bool) error {
+func (a *App) deleteWorkflowRevisionRecord(tx *gorm.DB, workflowID, revisionID, retainedRevisionID int64, removeRuns, removeOutputs bool) error {
 	if removeRuns {
 		if _, err := deleteWorkflowRunTree(tx, "workflow_id = ? AND revision_id = ?", workflowID, revisionID); err != nil {
 			return err
@@ -483,14 +504,17 @@ func deleteWorkflowRevisionRecord(tx *gorm.DB, workflowID, revisionID, retainedR
 		}
 	}
 	if removeOutputs {
-		if err := deleteWorkflowRevisionOutputs(tx, workflowID, revisionID); err != nil {
+		if err := a.Plugins.Cleanup(tx.Statement.Context, tx, sdk.CleanupRequest{WorkflowID: workflowID, RevisionID: &revisionID}); err != nil {
 			return err
 		}
 	}
-	if err := tx.Model(&db.WorkflowNodeState{}).Where("workflow_id = ? AND revision_id = ?", workflowID, revisionID).
-		Update("revision_id", retainedRevisionID).Error; err != nil {
-		return errors.New("carry workflow node states forward failed")
+	if err := tx.Where("workflow_id = ? AND revision_id = ?", workflowID, revisionID).Delete(&db.WorkflowNodeState{}).Error; err != nil {
+		return err
 	}
+	if err := tx.Exec("DELETE FROM plugin_references WHERE reference_type = 'revision' AND reference_id = ?", fmt.Sprint(revisionID)).Error; err != nil {
+		return err
+	}
+
 	if err := tx.Where("workflow_id = ? AND revision_id = ?", workflowID, revisionID).
 		Delete(&db.WorkflowSecretBinding{}).Error; err != nil {
 		return errors.New("delete workflow revision secrets failed")
@@ -502,19 +526,10 @@ func deleteWorkflowRevisionRecord(tx *gorm.DB, workflowID, revisionID, retainedR
 	return nil
 }
 
-func workflowStateResetConflict(required map[string]bool) error {
-	nodeIDs := make([]string, 0, len(required))
-	for nodeID := range required {
-		nodeIDs = append(nodeIDs, nodeID)
-	}
-	sort.Strings(nodeIDs)
-	if len(nodeIDs) == 0 {
-		return errors.New("resetStateNodeInstanceIds does not match a destructive state change")
-	}
-	return fmt.Errorf("%w: destructive edits require resetStateNodeInstanceIds for %s", ErrConflict, strings.Join(nodeIDs, ", "))
-}
-
 func (a *App) ListWorkflowRevisions(ctx context.Context, workflowID int64) ([]WorkflowRevisionView, error) {
+	if err := a.AuthorizeWorkflow(ctx, workflowID, "workflows.read"); err != nil {
+		return nil, err
+	}
 	var count int64
 	if err := a.DB.WithContext(ctx).Model(&db.Workflow{}).Where("id = ?", workflowID).Count(&count).Error; err != nil {
 		return nil, errors.New("load workflow failed")
@@ -538,6 +553,9 @@ func (a *App) ListWorkflowRevisions(ctx context.Context, workflowID int64) ([]Wo
 }
 
 func (a *App) GetWorkflowRevision(ctx context.Context, workflowID, revisionID int64) (WorkflowRevisionView, error) {
+	if err := a.AuthorizeWorkflow(ctx, workflowID, "workflows.read"); err != nil {
+		return WorkflowRevisionView{}, err
+	}
 	var revision db.WorkflowRevision
 	if err := a.DB.WithContext(ctx).Where("workflow_id = ? AND id = ?", workflowID, revisionID).First(&revision).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -553,14 +571,17 @@ func (a *App) GetWorkflowRevision(ctx context.Context, workflowID, revisionID in
 }
 
 func (a *App) DeleteWorkflowRevision(ctx context.Context, workflowID, revisionID int64) error {
+	if err := a.AuthorizeWorkflow(ctx, workflowID, "workflows.delete"); err != nil {
+		return err
+	}
 	var workflow db.Workflow
-	if err := a.DB.WithContext(ctx).Select("id", "active_revision_id").First(&workflow, workflowID).Error; err != nil {
+	if err := a.DB.WithContext(ctx).Select("id", "draft_revision_id", "published_revision_id").First(&workflow, workflowID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("%w: workflow", ErrNotFound)
 		}
 		return errors.New("load workflow failed")
 	}
-	if workflow.ActiveRevisionID == nil || *workflow.ActiveRevisionID == revisionID {
+	if workflow.DraftRevisionID != nil && *workflow.DraftRevisionID == revisionID || workflow.PublishedRevisionID != nil && *workflow.PublishedRevisionID == revisionID {
 		return fmt.Errorf("%w: active workflow revision cannot be deleted", ErrConflict)
 	}
 	if err := a.cancelWorkflowRuns(ctx, workflowID, &revisionID); err != nil {
@@ -585,7 +606,7 @@ func (a *App) DeleteWorkflowRevision(ctx context.Context, workflowID, revisionID
 			}
 			return errors.New("load workflow revision failed")
 		}
-		if workflow.ActiveRevisionID == nil || *workflow.ActiveRevisionID == revisionID {
+		if workflow.DraftRevisionID != nil && *workflow.DraftRevisionID == revisionID || workflow.PublishedRevisionID != nil && *workflow.PublishedRevisionID == revisionID {
 			return fmt.Errorf("%w: active workflow revision cannot be deleted", ErrConflict)
 		}
 		if err := tx.Exec("SET LOCAL coinsphere.workflow_delete = 'on'").Error; err != nil {
@@ -596,7 +617,7 @@ func (a *App) DeleteWorkflowRevision(ctx context.Context, workflowID, revisionID
 		if err != nil {
 			return err
 		}
-		return deleteWorkflowRevisionRecord(tx, workflowID, revisionID, *workflow.ActiveRevisionID, false, true)
+		return a.deleteWorkflowRevisionRecord(tx, workflowID, revisionID, *workflow.DraftRevisionID, false, true)
 	})
 	if err != nil {
 		return err
@@ -606,6 +627,9 @@ func (a *App) DeleteWorkflowRevision(ctx context.Context, workflowID, revisionID
 
 // DeleteWorkflow removes the workflow definition and every execution record owned by it.
 func (a *App) DeleteWorkflow(ctx context.Context, workflowID int64) error {
+	if err := a.AuthorizeWorkflow(ctx, workflowID, "workflows.delete"); err != nil {
+		return err
+	}
 	if workflowID <= 0 {
 		return fmt.Errorf("%w: workflow", ErrNotFound)
 	}
@@ -636,7 +660,7 @@ func (a *App) DeleteWorkflow(ctx context.Context, workflowID int64) error {
 		if err != nil {
 			return err
 		}
-		if err := deleteWorkflowOutputs(tx, workflowID); err != nil {
+		if err := a.Plugins.Cleanup(ctx, tx, sdk.CleanupRequest{WorkflowID: workflowID}); err != nil {
 			return err
 		}
 		if err := tx.Where("workflow_id = ?", workflowID).Delete(&db.WorkflowNodeState{}).Error; err != nil {
@@ -646,7 +670,7 @@ func (a *App) DeleteWorkflow(ctx context.Context, workflowID int64) error {
 			return errors.New("delete workflow secrets failed")
 		}
 		if err := tx.Model(&workflow).Updates(map[string]any{
-			"active_revision_id": nil, "updated_at": time.Now().UTC(),
+			"published_revision_id": nil, "draft_revision_id": nil, "updated_at": time.Now().UTC(),
 		}).Error; err != nil {
 			return errors.New("clear workflow active revision failed")
 		}
@@ -818,52 +842,10 @@ func (a *App) waitWorkflowRuns(ctx context.Context, workflowID int64, revisionID
 	}
 }
 
-func deleteWorkflowRevisionOutputs(tx *gorm.DB, workflowID, revisionID int64) error {
-	statements := []string{
-		`DELETE FROM plugin_notification.deliveries WHERE workflow_id = ? AND revision_id = ?`,
-		`DELETE FROM plugin_quant.backtests WHERE workflow_id = ? AND revision_id = ?`,
-		`DELETE FROM plugin_quant.market_signals WHERE workflow_id = ? AND revision_id = ?`,
-		`UPDATE plugin_quant.signals SET superseded_by = NULL WHERE superseded_by IN (SELECT id FROM plugin_quant.signals WHERE workflow_id = ? AND revision_id = ?)`,
-		`DELETE FROM plugin_quant.paper_fees WHERE fill_id IN (SELECT fill.id FROM plugin_quant.paper_fills fill JOIN plugin_quant.paper_orders order_row ON order_row.id = fill.order_id JOIN plugin_quant.signals signal ON signal.id = order_row.signal_id WHERE signal.workflow_id = ? AND signal.revision_id = ?)`,
-		`DELETE FROM plugin_quant.paper_fills WHERE order_id IN (SELECT order_row.id FROM plugin_quant.paper_orders order_row JOIN plugin_quant.signals signal ON signal.id = order_row.signal_id WHERE signal.workflow_id = ? AND signal.revision_id = ?)`,
-		`DELETE FROM plugin_quant.paper_orders WHERE signal_id IN (SELECT id FROM plugin_quant.signals WHERE workflow_id = ? AND revision_id = ?)`,
-		`DELETE FROM plugin_quant.signals WHERE workflow_id = ? AND revision_id = ?`,
-	}
-	for _, statement := range statements {
-		if err := tx.Exec(statement, workflowID, revisionID).Error; err != nil {
-			return errors.New("delete workflow revision outputs failed")
-		}
-	}
-	return nil
-}
-
-func deleteWorkflowOutputs(tx *gorm.DB, workflowID int64) error {
-	statements := []string{
-		`DELETE FROM plugin_notification.deliveries WHERE workflow_id = ?`,
-		`DELETE FROM plugin_quant.backtests WHERE workflow_id = ?`,
-		`DELETE FROM plugin_quant.market_signals WHERE workflow_id = ?`,
-		`UPDATE plugin_quant.signals SET superseded_by = NULL WHERE superseded_by IN (SELECT id FROM plugin_quant.signals WHERE workflow_id = ?)`,
-		`DELETE FROM plugin_quant.paper_fees WHERE fill_id IN (SELECT fill.id FROM plugin_quant.paper_fills fill JOIN plugin_quant.paper_orders order_row ON order_row.id = fill.order_id JOIN plugin_quant.signals signal ON signal.id = order_row.signal_id WHERE signal.workflow_id = ?)`,
-		`DELETE FROM plugin_quant.paper_fills WHERE order_id IN (SELECT order_row.id FROM plugin_quant.paper_orders order_row JOIN plugin_quant.signals signal ON signal.id = order_row.signal_id WHERE signal.workflow_id = ?)`,
-		`DELETE FROM plugin_quant.paper_orders WHERE account_id IN (SELECT id FROM plugin_quant.paper_accounts WHERE workflow_id = ?)`,
-		`DELETE FROM plugin_quant.paper_positions WHERE account_id IN (SELECT id FROM plugin_quant.paper_accounts WHERE workflow_id = ?)`,
-		`DELETE FROM plugin_quant.paper_ledger_entries WHERE account_id IN (SELECT id FROM plugin_quant.paper_accounts WHERE workflow_id = ?)`,
-		`DELETE FROM plugin_quant.paper_accounts WHERE workflow_id = ?`,
-		`DELETE FROM plugin_quant.paper_orders WHERE signal_id IN (SELECT id FROM plugin_quant.signals WHERE workflow_id = ?)`,
-		`DELETE FROM plugin_quant.signals WHERE workflow_id = ?`,
-		`DELETE FROM plugin_binance.fees WHERE fill_id IN (SELECT fill.id FROM plugin_binance.fills fill JOIN plugin_binance.orders order_row ON order_row.id = fill.order_id WHERE order_row.workflow_id = ?)`,
-		`DELETE FROM plugin_binance.fills WHERE order_id IN (SELECT id FROM plugin_binance.orders WHERE workflow_id = ?)`,
-		`DELETE FROM plugin_binance.orders WHERE workflow_id = ?`,
-	}
-	for _, statement := range statements {
-		if err := tx.Exec(statement, workflowID).Error; err != nil {
-			return errors.New("delete workflow outputs failed")
-		}
-	}
-	return nil
-}
-
 func (a *App) ApplyWorkflowLifecycle(ctx context.Context, workflowID int64, payload WorkflowLifecyclePayload) (WorkflowDetail, error) {
+	if err := a.AuthorizeWorkflow(ctx, workflowID, "workflows.activate"); err != nil {
+		return WorkflowDetail{}, err
+	}
 	action := strings.ToLower(strings.TrimSpace(payload.Action))
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var workflow db.Workflow
@@ -877,7 +859,7 @@ func (a *App) ApplyWorkflowLifecycle(ctx context.Context, workflowID int64, payl
 		if err != nil {
 			return err
 		}
-		if action == "activate" && workflow.ActiveRevisionID == nil {
+		if action == "activate" && workflow.PublishedRevisionID == nil {
 			return fmt.Errorf("%w: workflow is not startable", ErrConflict)
 		}
 		now := time.Now().UTC()
@@ -885,12 +867,15 @@ func (a *App) ApplyWorkflowLifecycle(ctx context.Context, workflowID int64, payl
 		var runtimeUpdates map[string]any
 		if action == "activate" {
 			var revision db.WorkflowRevision
-			if err := tx.First(&revision, *workflow.ActiveRevisionID).Error; err != nil {
+			if err := tx.First(&revision, *workflow.PublishedRevisionID).Error; err != nil {
 				return errors.New("load active workflow revision failed")
 			}
 			validated, err := a.validateWorkflowGraph(json.RawMessage(revision.GraphJSON))
 			if err != nil {
 				return fmt.Errorf("%w: active workflow revision is invalid", ErrConflict)
+			}
+			if err := a.authorizeExecution(workflow.OwnerUserID, validated); err != nil {
+				return err
 			}
 			if err := ensureWorkflowRevisionSecrets(tx, workflow.ID, revision.ID, validated); err != nil {
 				return err
@@ -944,12 +929,12 @@ func nextWorkflowStatus(current, action string) (string, error) {
 
 func workflowView(workflow db.Workflow) WorkflowView {
 	activeRevisionID := int64(0)
-	if workflow.ActiveRevisionID != nil {
-		activeRevisionID = *workflow.ActiveRevisionID
+	if workflow.PublishedRevisionID != nil {
+		activeRevisionID = *workflow.PublishedRevisionID
 	}
 	view := WorkflowView{
-		ID: workflow.ID, Name: workflow.Name, Description: workflow.Description, GroupID: workflow.GroupID, Mode: workflow.Mode,
-		Status: workflow.Status, ActiveRevisionID: activeRevisionID,
+		ID: workflow.ID, OwnerUserID: workflow.OwnerUserID, DraftRevisionID: revisionPointerValue(workflow.DraftRevisionID), Name: workflow.Name, Description: workflow.Description, GroupID: workflow.GroupID, Mode: workflow.Mode,
+		Status: workflow.Status, PublishedRevisionID: activeRevisionID,
 		MainTriggerNodeID: workflow.MainTriggerNodeID, RetentionDays: workflow.RetentionDays,
 		CreatedBy: workflow.CreatedBy, CreatedAt: formatWorkflowTime(workflow.CreatedAt),
 		UpdatedAt: formatWorkflowTime(workflow.UpdatedAt),
@@ -972,13 +957,16 @@ func validWorkflowStatus(status string) bool {
 	return status == WorkflowStatusInactive || status == WorkflowStatusActive || status == WorkflowStatusError
 }
 
-func workflowModeForTrigger(nodeType string) string {
+func (a *App) workflowModeForTrigger(nodeType string) string {
 	switch nodeType {
-	case "core.manual", "core.schedule", "official.connector.webhook":
+	case "core.manual", "core.schedule":
 		return WorkflowModeBatch
 	case "core.event":
 		return WorkflowModeEvent
 	default:
+		if _, ok := a.Plugins.Ingress(nodeType); ok {
+			return WorkflowModeEvent
+		}
 		return WorkflowModeStream
 	}
 }

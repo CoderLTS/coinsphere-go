@@ -41,7 +41,7 @@ type quantMarketSignalAction struct{ runtime *quantRuntime }
 
 func (q *quantRuntime) registerMarketSignals(registrar sdk.Registrar) error {
 	return registrar.Action(quantNodeMeta(sdk.NodeDescriptor{
-		Type: "official.quant.market_signal", Version: "1.0.0", Kind: sdk.NodeKindAction,
+		ExecutionPermissions: []string{"plugins.official.quant.execute"}, Type: "official.quant.market_signal", Version: "1.0.0", Kind: sdk.NodeKindAction,
 		ConfigSchema: emptyObjectSchema, UISchema: json.RawMessage(`{"ui:order":[]}`),
 		InputSchema: quantMarketSignalInputSchema, OutputSchema: quantMarketSignalOutputSchema,
 		Pool: sdk.PoolStream, SideEffect: sdk.SideEffectData, State: sdk.StateStateless,
@@ -141,7 +141,7 @@ func (q *quantRuntime) handleQuantMarketSignals(c *gin.Context, scope sdk.RouteS
 		writeQuantProblem(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	query := q.db.WithContext(c.Request.Context()).Where(
+	query := sdk.ScopeWorkflows(q.db.WithContext(c.Request.Context()), scope, "workflow_id").Where(
 		"venue = ? AND market = ? AND instrument = ? AND interval = ?", series.Venue, series.Market, series.Instrument, series.Interval,
 	)
 	start, startSet, err := quantMarketSignalQueryTime(c.Request, "startTime")

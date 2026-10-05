@@ -68,37 +68,37 @@ func (q *quantRuntime) registerWorkflowStrategyNodes(registrar sdk.Registrar) er
 		icon        string
 	}{
 		{sdk.NodeDescriptor{
-			Type: "official.quant.backtest_start", Version: "1.0.0", Kind: sdk.NodeKindAction,
+			ExecutionPermissions: []string{"plugins.official.quant.execute"}, Type: "official.quant.backtest_start", Version: "1.0.0", Kind: sdk.NodeKindAction,
 			Branches: []string{"each", "completed"}, ConfigSchema: quantBacktestStartConfigSchema,
 			UISchema:    json.RawMessage(`{"ui:order":["venue","market","instrument","interval"]}`),
 			InputSchema: quantBacktestStartInputSchema, OutputSchema: quantBacktestStartOutputSchema,
 			Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
-			Capabilities: sdk.NodeCapabilities{FrameDriver: true},
+			Capabilities: sdk.NodeCapabilities{Deterministic: true, Stateless: true},
 		}, quantWorkflowBacktestAction{runtime: q}, "回测开始", "逐帧执行通用量化工作流并汇总回测结果。", "start", "#7c3aed", "history"},
 		{sdk.NodeDescriptor{
-			Type: "official.quant.code_strategy", Version: "1.0.0", Kind: sdk.NodeKindAction,
+			ExecutionPermissions: []string{"plugins.official.quant.execute"}, Type: "official.quant.code_strategy", Version: "1.0.0", Kind: sdk.NodeKindAction,
 			Branches: []string{"true", "false"}, ConfigSchema: quantCodeStrategyConfigSchema,
 			UISchema:     json.RawMessage(`{"ui:order":["series","parameters","source","booleanOutputs","decimalOutputs","branchField"],"source":{"ui:widget":"code","ui:language":"cel"}}`),
 			InputSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"eventTime":{"type":"string","format":"date-time"},"pathEntered":{"type":"boolean"}},"required":["eventTime"],"additionalProperties":false}`),
 			OutputSchema: quantCodeStrategyOutputSchema, Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
-			Capabilities:   sdk.NodeCapabilities{FrameSafe: true},
+			Capabilities:   sdk.NodeCapabilities{Deterministic: true, Stateless: true},
 			ValidateConfig: validateQuantCodeStrategyConfig,
 		}, &quantCodeStrategyAction{runtime: q}, "代码策略", "使用受限 CEL 对多行情序列执行确定性策略判断。", "strategy", "#2563eb", "code-xml"},
 		{sdk.NodeDescriptor{
-			Type: "official.quant.position", Version: "1.0.0", Kind: sdk.NodeKindAction,
+			ExecutionPermissions: []string{"plugins.official.quant.execute"}, Type: "official.quant.position", Version: "1.0.0", Kind: sdk.NodeKindAction,
 			ConfigSchema: quantPositionConfigSchema, UISchema: json.RawMessage(`{"ui:order":["market","targetMode","fixedTarget"]}`),
 			InputSchema: quantPositionInputSchema, OutputSchema: quantPositionOutputSchema,
 			Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
-			Capabilities:   sdk.NodeCapabilities{FrameSafe: true},
+			Capabilities:   sdk.NodeCapabilities{Deterministic: true, Stateless: true},
 			ValidateConfig: validateQuantPositionConfig,
 		}, quantPositionAction{}, "仓位计算", "将策略输出转换为通用目标仓位。", "strategy", "#2563eb", "percent"},
 		{sdk.NodeDescriptor{
-			Type: "official.quant.output_signal", Version: "1.0.0", Kind: sdk.NodeKindAction,
+			ExecutionPermissions: []string{"plugins.official.quant.execute"}, Type: "official.quant.output_signal", Version: "1.0.0", Kind: sdk.NodeKindAction,
 			Branches: []string{"realtime", "unchanged"}, ConfigSchema: quantSeriesConfigSchema,
 			UISchema:    json.RawMessage(`{"ui:order":["venue","market","instrument","interval"]}`),
 			InputSchema: quantOutputSignalInputSchema, OutputSchema: quantOutputSignalOutputSchema,
 			Pool: sdk.PoolStream, SideEffect: sdk.SideEffectData, State: sdk.StateStateless,
-			Capabilities: sdk.NodeCapabilities{Deterministic: true, FrameSafe: true, FrameResult: true},
+			Capabilities: sdk.NodeCapabilities{Deterministic: true, Stateless: true},
 		}, quantOutputSignalAction{runtime: q}, "输出策略信号", "汇总目标仓位并持久化通用量化 Signal。", "strategy", "#0f766e", "radio"},
 	}
 	for _, node := range nodes {
@@ -160,11 +160,11 @@ func (a quantOutputSignalAction) Execute(ctx context.Context, request sdk.Action
 			input.Candidates = append(input.Candidates, candidate)
 		}
 	}
-	if len(request.FrameContext) > 0 {
+	if len(quantFrameData(ctx)) > 0 {
 		var frame struct {
 			PreviousTargetPosition string `json:"previousTargetPosition"`
 		}
-		if json.Unmarshal(request.FrameContext, &frame) != nil {
+		if json.Unmarshal(quantFrameData(ctx), &frame) != nil {
 			return sdk.ActionResult{}, errors.New("quant output signal frame context is invalid")
 		}
 		input.PreviousTargetPosition = frame.PreviousTargetPosition
@@ -198,7 +198,7 @@ func (a quantOutputSignalAction) Execute(ctx context.Context, request sdk.Action
 	}
 	businessKey := fmt.Sprintf("quant:%s:%s:%s", config.Market, config.Instrument, request.NodeInstanceID)
 	previous := decimal.Zero
-	if request.ExecutionMode == sdk.ExecutionModeBacktestFrame {
+	if isQuantFrame(ctx) {
 		if input.PreviousTargetPosition != "" {
 			previous, err = decimal.NewFromString(input.PreviousTargetPosition)
 		}
@@ -217,7 +217,7 @@ func (a quantOutputSignalAction) Execute(ctx context.Context, request sdk.Action
 	signalID := int64(0)
 	if !target.Equal(previous) {
 		branch = "realtime"
-		if request.ExecutionMode != sdk.ExecutionModeBacktestFrame {
+		if !isQuantFrame(ctx) {
 			result, err := (quantSignalAction{runtime: a.runtime}).Execute(ctx, sdk.ActionRequest{
 				Revision: request.Revision, NodeInstanceID: request.NodeInstanceID, OperationKey: request.OperationKey,
 				Config: request.Config, ExecutionMode: request.ExecutionMode,

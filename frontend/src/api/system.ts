@@ -223,3 +223,13 @@ export function fetchValidateOutboundProxy(proxyId: number) {
     showSuccessMessage: false
   })
 }
+
+export interface Capability {
+  code: string
+  title: string
+  pluginId?: string
+  protected: boolean
+  grantable: boolean
+}
+export const fetchCapabilities = () =>
+  request.get<{ items: Capability[] }>({ url: '/api/v1/system/permissions' })

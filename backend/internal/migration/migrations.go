@@ -14,9 +14,10 @@ import (
 	"github.com/pressly/goose/v3/lock"
 )
 
-const versionTable = "schema_migrations"
+const versionTable = "schema_migrations_g4"
+const Generation = 4
 
-//go:embed sql/*.sql
+//go:embed generation4/*.sql
 var embeddedSQL embed.FS
 
 // Runner applies the immutable SQL migrations bundled into the backend binary.
@@ -42,7 +43,14 @@ type Status struct {
 
 // New creates a runner for the bundled production migrations.
 func New(db *sql.DB) (*Runner, error) {
-	f, err := fs.Sub(embeddedSQL, "sql")
+	var legacy bool
+	if err := db.QueryRow("SELECT to_regclass('public.schema_migrations') IS NOT NULL").Scan(&legacy); err != nil {
+		return nil, err
+	}
+	if legacy {
+		return nil, errors.New("legacy database detected; use a separate generation 4 database")
+	}
+	f, err := fs.Sub(embeddedSQL, "generation4")
 	if err != nil {
 		return nil, fmt.Errorf("open embedded migrations: %w", err)
 	}
@@ -156,6 +164,9 @@ func (r *Runner) Versions(ctx context.Context) (current int64, latest int64, err
 
 // ValidateCurrent 只读校验数据库最后一条 migration 记录，服务启动不会创建版本表或执行 DDL。
 func (r *Runner) ValidateCurrent(ctx context.Context) error {
+	if err := ValidateGeneration(ctx, r.db); err != nil {
+		return err
+	}
 	var version int64
 	var applied bool
 	query := fmt.Sprintf("SELECT version_id, is_applied FROM %s ORDER BY id DESC LIMIT 1", versionTable)

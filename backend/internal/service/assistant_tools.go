@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"strings"
 	"time"
 
@@ -20,13 +19,24 @@ var assistantEmptyInputSchema = json.RawMessage(`{"type":"object","additionalPro
 func (a *App) assistantToolCatalog(principal *Principal) ([]assistantToolDefinition, map[string]assistantToolExecution) {
 	definitions := make([]assistantToolDefinition, 0, 16)
 	executions := map[string]assistantToolExecution{}
+	required := map[string]string{"platform_overview": "system.observe", "list_plugins": "system.plugins.view", "list_workflows": "workflows.read", "list_workflow_revisions": "workflows.read", "list_workflow_runs": "workflows.read", "list_human_tasks": "human_tasks.read", "search_system_logs": "system.logs.view", "notification_summary": "notifications.read", "list_node_capabilities": "workflows.read", "create_workflow": "workflows.create"}
 	add := func(name, description string, schema json.RawMessage, execute assistantToolExecution) {
+		permission := required[name]
+		if permission == "" || !principal.HasPermission(permission) {
+			return
+		}
 		definitions = append(definitions, assistantToolDefinition{
 			Type: "function", Function: assistantToolDefinitionFunction{
 				Name: name, Description: description, Parameters: schema,
 			},
 		})
-		executions[name] = execute
+		executions[name] = func(ctx context.Context, input json.RawMessage) (json.RawMessage, *assistantWorkflowCreateSummary, error) {
+			current, err := a.RevalidateSession(principal, permission)
+			if err != nil {
+				return nil, nil, err
+			}
+			return execute(WithPrincipal(ctx, current), input)
+		}
 	}
 
 	add("platform_overview", "获取平台、数据库和主要业务对象数量的系统概览。", assistantEmptyInputSchema,
@@ -36,7 +46,8 @@ func (a *App) assistantToolCatalog(principal *Principal) ([]assistantToolDefinit
 		})
 	add("list_plugins", "列出当前已编译加载的平台插件及贡献类型。", assistantEmptyInputSchema,
 		func(context.Context, json.RawMessage) (json.RawMessage, *assistantWorkflowCreateSummary, error) {
-			return assistantToolJSON(map[string]any{"items": a.ListInstalledPlugins()}, nil)
+			items, err := a.ListInstalledPlugins()
+			return assistantToolJSON(map[string]any{"items": items}, err)
 		})
 	add("list_workflows", "按状态查询最近的平台工作流。", json.RawMessage(`{"type":"object","properties":{"status":{"type":"string","enum":["inactive","active","error"]},"limit":{"type":"integer","minimum":1,"maximum":100,"default":20}},"additionalProperties":false}`),
 		func(ctx context.Context, raw json.RawMessage) (json.RawMessage, *assistantWorkflowCreateSummary, error) {
@@ -77,6 +88,9 @@ func (a *App) assistantToolCatalog(principal *Principal) ([]assistantToolDefinit
 			if input.Limit < 1 || input.Limit > 50 {
 				return nil, nil, errors.New("limit must be between 1 and 50")
 			}
+			if err := a.AuthorizeWorkflow(ctx, input.WorkflowID, "workflows.read"); err != nil {
+				return nil, nil, err
+			}
 			var rows []struct {
 				ID                int64     `json:"id"`
 				RevisionNumber    int64     `json:"revisionNumber"`
@@ -105,6 +119,9 @@ func (a *App) assistantToolCatalog(principal *Principal) ([]assistantToolDefinit
 			}
 			if input.Limit < 1 || input.Limit > 50 {
 				return nil, nil, errors.New("limit must be between 1 and 50")
+			}
+			if err := a.AuthorizeWorkflow(ctx, input.WorkflowID, "workflows.read"); err != nil {
+				return nil, nil, err
 			}
 			query := a.DB.WithContext(ctx).Model(&db.WorkflowRun{}).Where("workflow_id = ?", input.WorkflowID)
 			if input.Status != "" {
@@ -189,7 +206,7 @@ func (a *App) assistantToolCatalog(principal *Principal) ([]assistantToolDefinit
 				Status  string `json:"status"`
 				Count   int64  `json:"count"`
 			}
-			err := a.DB.WithContext(ctx).Model(&db.NotificationDelivery{}).
+			err := a.DB.WithContext(ctx).Model(&db.NotificationDelivery{}).Where("recipient_user_id=?", ContextPrincipal(ctx).User.ID).
 				Select("channel, status, COUNT(*) AS count").Group("channel, status").Order("channel, status").Scan(&rows).Error
 			return assistantToolJSON(map[string]any{"items": rows}, err)
 		})
@@ -255,11 +272,14 @@ func (a *App) assistantToolCatalog(principal *Principal) ([]assistantToolDefinit
 	if a.Plugins != nil {
 		for _, registered := range a.Plugins.AssistantQueries() {
 			query := registered
+			required[query.ToolName] = "plugins." + query.PluginID + ".read"
 			add(query.ToolName, query.Descriptor.Description, query.Descriptor.InputSchema,
 				func(ctx context.Context, input json.RawMessage) (json.RawMessage, *assistantWorkflowCreateSummary, error) {
-					result, err := a.Plugins.RunAssistantQuery(ctx, query.ToolName, input, sdk.SystemScope{
-						UserID: principal.User.ID, RoleCodes: slices.Clone(principal.RoleCodes),
-					})
+					scope, err := a.ResolveSystemScope(ctx, query.PluginID, required[query.ToolName])
+					if err != nil {
+						return nil, nil, err
+					}
+					result, err := a.Plugins.RunAssistantQuery(ctx, query.ToolName, input, scope)
 					return result, nil, err
 				})
 		}
@@ -288,25 +308,20 @@ func (a *App) assistantSystemPrompt(tools []assistantToolDefinition) string {
 			OutputPorts: item.OutputPorts, SecretFields: item.SecretFields, Available: item.Available,
 		})
 	}
-	var menus []struct {
-		Title string `json:"title"`
-		Path  string `json:"path"`
-	}
-	_ = a.DB.Model(&db.SystemMenu{}).Select("title, path").Where("is_active = ? AND is_hidden = ?", true, false).Order("sort, id").Find(&menus).Error
 	toolDirectory := make([]map[string]string, 0, len(tools))
 	for _, tool := range tools {
 		toolDirectory = append(toolDirectory, map[string]string{"name": tool.Function.Name, "description": tool.Function.Description})
 	}
 	contextData, _ := json.Marshal(map[string]any{
-		"menus": menus, "plugins": a.ListInstalledPlugins(), "nodes": nodes, "tools": toolDirectory,
+		"plugins": a.Plugins.Plugins(), "nodes": nodes, "tools": toolDirectory,
 	})
-	return `你是 CoinSphere 平台内置智能助手，只服务超级管理员。你的职责是解释平台、通过工具查询平台数据，并根据用户描述生成工作流。
+	return `你是 CoinSphere 平台内置智能助手，按当前用户的权限和工作流范围服务用户。你的职责是解释平台、通过工具查询平台数据，并根据用户描述生成工作流。
 
 平台知识：CoinSphere 是基于 Go、PostgreSQL 16 和 Vue 的模块化单体工作流平台。工作流负责粗粒度编排，状态默认为 inactive；只有用户明确操作才可激活或运行。时间统一使用 UTC，金融数值使用十进制字符串。插件在编译期通过 SDK 注册节点、页面、路由和只读助手查询。AI、工作流和通用 HTTP 节点不得调用交易所私有接口或绕过风控。
 
 回答规则：平台事实优先使用下面的实时目录和只读工具；不知道时明确说明，不编造数据。工具参数和结果不得复述为原始载荷，也不要展示个人数据。不要输出思维链。
 
-工作流规则：仅当用户明确要求创建工作流时才创建。必须使用实时节点版本、端口和 JSON Schema。图必须是 schemaVersion=1，包含且仅包含一个主触发器；每个节点必须有 nodeInstanceId、nodeType、nodeVersion、config、position；每条边必须有 edgeId、sourceNodeInstanceId、sourcePort、targetNodeInstanceId、targetPort。密钥字段绝不能写入 graph.config。完成图后必须调用 create_workflow；该工具会先由平台校验，校验失败时根据错误修正后重试。工具成功即表示工作流已经创建，必须向用户说明 workflowId、inactive 状态、编辑地址和待补密钥，不要要求确认、不要生成方案卡、不要重复创建，也绝不自动激活或运行。
+工作流规则：仅当用户明确要求创建工作流时才创建。必须使用实时节点版本、端口和 JSON Schema。图必须是 schemaVersion=3，entryPoints.main 指向主触发器；输入使用 input，节点输出使用 nodes["节点ID"]，包含且仅包含一个主触发器；每个节点必须有 nodeInstanceId、nodeType、nodeVersion、config、position；每条边必须有 edgeId、sourceNodeInstanceId、sourcePort、targetNodeInstanceId、targetPort。密钥字段绝不能写入 graph.config。完成图后必须调用 create_workflow；该工具会先由平台校验，校验失败时根据错误修正后重试。工具成功即表示工作流已经创建，必须向用户说明 workflowId、inactive 状态、编辑地址和待补密钥，不要要求确认、不要生成方案卡、不要重复创建，也绝不自动激活或运行。
 
 实时平台目录：` + string(contextData)
 }

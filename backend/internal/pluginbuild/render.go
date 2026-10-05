@@ -31,12 +31,20 @@ func RenderBackendWithDependencies(plugins []manifest.Package, available map[str
 	for index, plugin := range plugins {
 		fmt.Fprintf(&source, "import plugin%d %s\n", index, strconv.Quote(plugin.Manifest.Backend.Module))
 	}
-	source.WriteString("\nfunc RegisterAll(registry *sdk.Registry, host sdk.Host) error {\n")
-	for index, plugin := range plugins {
+	source.WriteString("\nvar CompiledPlugins = []sdk.PluginDescriptor{\n")
+	for _, plugin := range plugins {
 		contributes := append([]string(nil), plugin.Manifest.Contributes...)
 		sort.Strings(contributes)
-		fmt.Fprintf(&source, "if err := registry.RegisterPlugin(sdk.PluginDescriptor{ID: %s, Name: %s, Menu: sdk.PluginMenuDescriptor{Mode: %s, Title: %s, Icon: %s, Parent: %s}, Version: %s, Contributes: %#v, RequiresPlugins: %#v}, host, plugin%d.Register); err != nil { return err }\n",
-			strconv.Quote(plugin.Manifest.ID), strconv.Quote(plugin.Manifest.Name), strconv.Quote(plugin.Manifest.Menu.Mode), strconv.Quote(plugin.Manifest.Menu.Title), strconv.Quote(plugin.Manifest.Menu.Icon), strconv.Quote(plugin.Manifest.Menu.Parent), strconv.Quote(plugin.Manifest.Version), contributes, plugin.Manifest.RequiresPlugins, index)
+		fmt.Fprintf(&source, "{ID: %s, Name: %s, Menu: sdk.PluginMenuDescriptor{Mode: %s, Title: %s, Icon: %s, Parent: %s}, Version: %s, Contributes: %#v, RequiresPlugins: %#v, Permissions: []sdk.PermissionDescriptor{",
+			strconv.Quote(plugin.Manifest.ID), strconv.Quote(plugin.Manifest.Name), strconv.Quote(plugin.Manifest.Menu.Mode), strconv.Quote(plugin.Manifest.Menu.Title), strconv.Quote(plugin.Manifest.Menu.Icon), strconv.Quote(plugin.Manifest.Menu.Parent), strconv.Quote(plugin.Manifest.Version), contributes, plugin.Manifest.RequiresPlugins)
+		for _, p := range plugin.Manifest.Permissions {
+			fmt.Fprintf(&source, "{Code:%s,Title:%s,Protected:%t},", strconv.Quote(p.Code), strconv.Quote(p.Title), p.Protected)
+		}
+		source.WriteString("}},\n")
+	}
+	source.WriteString("}\n\nfunc RegisterAll(registry *sdk.Registry, host sdk.Host, enabled map[string]bool) error {\n")
+	for index := range plugins {
+		fmt.Fprintf(&source, "if enabled[CompiledPlugins[%d].ID] { if err := registry.RegisterPlugin(CompiledPlugins[%d],host,plugin%d.Register); err != nil { return err } }\n", index, index, index)
 	}
 	source.WriteString("return nil\n}\n")
 	formatted, err := format.Source([]byte(source.String()))

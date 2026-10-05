@@ -29,20 +29,17 @@ func Register(registrar sdk.Registrar, host sdk.Host) error {
 		return err
 	}
 	if err := registrar.Action(sdk.NodeDescriptor{
-		Type: "official.ai.model_call", Version: "1.0.0", Kind: sdk.NodeKindAction,
+		ExecutionPermissions: []string{"plugins.official.ai.execute"}, Type: "official.ai.model_call", Version: "1.0.0", Kind: sdk.NodeKindAction,
 		Title: "AI 模型调用", Description: "调用已配置的 AI 模型", Category: "agent", Aliases: []string{"AI", "大模型", "模型调用"}, Tags: []string{"智能体", "推理", "模型"}, SortOrder: 10, Color: "#0ea5e9", Icon: "bot", Width: 220, Height: 72,
 		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"endpoint":{"type":"string","title":"OpenAI 兼容接口地址","format":"uri","maxLength":2048},"model":{"type":"string","title":"模型","minLength":1,"maxLength":200},"timeoutSeconds":{"type":"integer","title":"超时时间（秒）","minimum":1,"maximum":120,"default":30},"apiKey":{"type":"string","title":"接口密钥","x-coinsphere-secret":true}},"required":["endpoint","model","timeoutSeconds","apiKey"],"additionalProperties":false}`),
 		UISchema:     json.RawMessage(`{"ui:order":["endpoint","model","timeoutSeconds","apiKey"]}`),
 		InputSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"prompt":{"type":"string","title":"提示内容","minLength":1,"maxLength":32768,"x-coinsphere-field-source":true},"data":{"type":"object","title":"结构化数据","x-coinsphere-field-source":true}},"required":["prompt","data"],"additionalProperties":false}`),
 		OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"model":{"type":"string"},"data":{"type":"object"},"usage":{"type":"object"}},"required":["model","data","usage"],"additionalProperties":false}`),
-		Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
+		Pool:         sdk.PoolStream, SideEffect: sdk.SideEffectExternal, State: sdk.StateStateless,
 	}, aiModelCallAction{client: client}); err != nil {
 		return err
 	}
-	return registrar.ResultPage(sdk.ResultPageDescriptor{
-		PageKey: "calls", Title: "AI 调用",
-		ComponentEntry: "./official/ai/ResultPage.vue", ScopeSchema: emptyObjectSchema, Mobile: true,
-	})
+	return registrar.RunPanel(sdk.RunPanelDescriptor{PanelKey: "calls", Title: "AI 调用", ComponentEntry: "./official/ai/ResultPage.vue", NodeTypes: []string{"official.ai.model_call"}})
 }
 
 type aiModelCallAction struct{ client sdk.NetworkClient }

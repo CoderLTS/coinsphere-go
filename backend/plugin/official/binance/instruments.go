@@ -18,7 +18,7 @@ const binanceInstrumentSyncLock int64 = 0x435351494e535452
 
 func registerInstrumentSync(registrar sdk.Registrar, runtime *binanceRuntime) error {
 	return registrar.Action(withNodeMeta(sdk.NodeDescriptor{
-		Type: "official.binance.sync_instruments", Version: "1.0.0", Kind: sdk.NodeKindAction,
+		ExecutionPermissions: []string{"plugins.official.binance.execute"}, Type: "official.binance.sync_instruments", Version: "1.0.0", Kind: sdk.NodeKindAction,
 		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"markets":{"type":"array","title":"市场类型","items":{"type":"string","enum":["spot","usdm"]},"minItems":1,"maxItems":2,"uniqueItems":true,"default":["spot","usdm"]},"proxyId":{"type":"integer","title":"代理","minimum":0,"default":0,"x-coinsphere-proxy":true},"quoteAssets":{"type":"array","title":"报价资产","items":{"type":"string"},"minItems":1,"maxItems":100,"default":["USDT","USDC"]},"baseAssetAllowlist":{"type":"array","title":"基础资产白名单","items":{"type":"string"},"maxItems":1000,"default":[]},"baseAssetDenylist":{"type":"array","title":"基础资产黑名单","items":{"type":"string"},"maxItems":1000,"default":[]},"symbolAllowlist":{"type":"array","title":"交易对白名单","items":{"type":"string"},"maxItems":1000,"default":[]},"symbolDenylist":{"type":"array","title":"交易对黑名单","items":{"type":"string"},"maxItems":1000,"default":[]}},"required":["markets","quoteAssets","baseAssetAllowlist","baseAssetDenylist","symbolAllowlist","symbolDenylist"],"additionalProperties":false}`),
 		UISchema:     json.RawMessage(`{"ui:order":["markets","proxyId","quoteAssets","baseAssetAllowlist","baseAssetDenylist","symbolAllowlist","symbolDenylist"]}`),
 		InputSchema:  emptyObjectSchema,

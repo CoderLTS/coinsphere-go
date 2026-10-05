@@ -41,7 +41,7 @@ type menuItem struct {
 // 内置菜单清单(前端导航默认就有这些)。每项仍用“位置写法”,值的顺序必须和上面 menuItem
 // 的字段顺序完全一致。Parent 为空字符串 "" 表示顶级菜单,否则填父菜单的 Name。
 var coreMenuItems = []menuItem{
-	{"Home", "首页", "/home", "/home/index", "ri:home-5-line", "", true, true, false},
+	{"Home", "工作台", "/home", "/workbench/index", "ri:home-5-line", "", true, true, false},
 	{"SchedulerCenter", "工作流", "/scheduler", "/index/index", "ri:time-line", "", false, false, false},
 	{"WorkflowDefinitions", "工作流定义", "definition", "/scheduler/workflow", "ri:node-tree", "SchedulerCenter", true, false, false},
 	{"ConfigCenter", "配置管理", "/config", "/index/index", "ri:tools-line", "", false, false, false},
@@ -49,6 +49,7 @@ var coreMenuItems = []menuItem{
 	{"AiModelConfig", "模型配置", "ai-models", "/config/ai-model", "ri:brain-line", "ConfigCenter", true, false, false},
 	{"Plugins", "插件管理", "plugins", "/system/plugins", "ri:puzzle-2-line", "ConfigCenter", true, false, false},
 	{"System", "系统管理", "/system", "/index/index", "ri:settings-3-line", "", false, false, false},
+	{"SystemOverview", "系统观测", "overview", "/home/index", "ri:radar-line", "System", false, false, false},
 	{"User", "用户管理", "user", "/system/user", "ri:user-3-line", "System", true, false, false},
 	{"Role", "角色管理", "role", "/system/role", "ri:team-line", "System", true, false, false},
 	{"Menus", "菜单管理", "menu", "/system/menu", "ri:menu-line", "System", true, false, false},
@@ -58,7 +59,8 @@ var coreMenuItems = []menuItem{
 // map(字典/映射)= 一堆“键 → 值”的对应,写成 map[键类型]值类型。这里键是菜单 Name,
 // 值是 [2]string(定长为 2 的数组):第 0 个存中文、第 1 个存英文,即菜单的多语言文案。
 var menuI18n = map[string][2]string{
-	"Home":                {"首页", "Home"},
+	"Home":                {"工作台", "Workbench"},
+	"SystemOverview":      {"系统观测", "System Overview"},
 	"SchedulerCenter":     {"工作流", "Workflow"},
 	"WorkflowDefinitions": {"工作流定义", "Workflow Definitions"},
 	"System":              {"系统管理", "System Management"},

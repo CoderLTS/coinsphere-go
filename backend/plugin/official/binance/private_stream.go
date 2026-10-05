@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"coinsphere/backend/plugin/contracts/trading"
 	"coinsphere/backend/plugin/sdk"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/gorilla/websocket"
@@ -42,7 +43,7 @@ type privateAccountStream struct{ runtime *binanceRuntime }
 
 func registerPrivateAccountStream(registrar sdk.Registrar, runtime *binanceRuntime) error {
 	return registrar.Trigger(withNodeMeta(sdk.NodeDescriptor{
-		Type: "official.binance.account_stream", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
+		ExecutionPermissions: []string{"plugins.official.binance.live_release"}, Type: "official.binance.account_stream", Version: "1.0.0", Kind: sdk.NodeKindTrigger,
 		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"account":{"type":"string","title":"账户","pattern":"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},"market":{"type":"string","title":"市场类型","enum":["spot","usdm"],"default":"spot"},"proxyId":{"type":"integer","title":"代理","minimum":0,"default":0,"x-coinsphere-proxy":true},"reconciliationSeconds":{"type":"integer","title":"REST 对账周期","minimum":30,"maximum":3600,"default":60},"apiKey":{"type":"string","title":"接口密钥","x-coinsphere-secret":true},"apiSecret":{"type":"string","title":"接口密钥","x-coinsphere-secret":true}},"required":["account","market","reconciliationSeconds","apiKey","apiSecret"],"additionalProperties":false}`),
 		UISchema:     json.RawMessage(`{"ui:order":["account","market","proxyId","reconciliationSeconds","apiKey","apiSecret"]}`),
 		InputSchema:  emptyObjectSchema,
@@ -444,7 +445,7 @@ func (q *binanceRuntime) reconcilePrivateAccount(ctx context.Context, config pri
 	}
 	provider := executionProvider{runtime: q}
 	for _, order := range orders {
-		result, err := provider.GetOrder(ctx, sdk.OrderQuery{Account: config.Account, Market: config.Market, Instrument: order.Instrument, ClientOrderID: order.ClientOrderID, Secrets: secrets, ProxyID: config.ProxyID})
+		result, err := provider.GetOrder(ctx, trading.OrderQuery{Account: config.Account, Market: config.Market, Instrument: order.Instrument, ClientOrderID: order.ClientOrderID, Secrets: secrets, ProxyID: config.ProxyID})
 		if err != nil {
 			continue
 		}
@@ -459,7 +460,7 @@ func (q *binanceRuntime) reconcilePrivateAccount(ctx context.Context, config pri
 	return q.reconcileAccountState(ctx, config, secrets, "")
 }
 
-func (q *binanceRuntime) updateReconciledOrder(ctx context.Context, order tradingOrder, result sdk.OrderResult) error {
+func (q *binanceRuntime) updateReconciledOrder(ctx context.Context, order tradingOrder, result trading.OrderResult) error {
 	if result.ClientOrderID != order.ClientOrderID || result.Market != order.Market || result.Instrument != order.Instrument ||
 		result.Side != order.Side || result.ProviderOrderID == "" || order.ProviderOrderID != "" && result.ProviderOrderID != order.ProviderOrderID ||
 		!validOrderStatus(result.Status) || result.Quantity.Sign() < 0 || result.Executed.Sign() < 0 || result.AveragePrice.Sign() < 0 ||
@@ -613,7 +614,7 @@ func (q *binanceRuntime) reconcileAccountState(ctx context.Context, config priva
 		if err := q.upsertLivePosition(ctx, position); err != nil {
 			return err
 		}
-		quote, err := (marketDataProvider{runtime: q}).Quote(ctx, sdk.QuoteQuery{Market: "spot", Instrument: position.Instrument, ProxyID: config.ProxyID})
+		quote, err := (marketDataProvider{runtime: q}).Quote(ctx, trading.QuoteQuery{Market: "spot", Instrument: position.Instrument, ProxyID: config.ProxyID})
 		if err != nil || quote.Price.Sign() <= 0 {
 			return errors.New("load Binance Spot position quote failed")
 		}

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"coinsphere/backend/plugin/contracts/trading"
 	"coinsphere/backend/plugin/sdk"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/gorilla/websocket"
@@ -614,8 +615,8 @@ func binanceCandleData(candle binanceCandle) map[string]any {
 	}
 }
 
-func binanceSDKCandle(candle binanceCandle) sdk.Candle {
-	return sdk.Candle{
+func binanceSDKCandle(candle binanceCandle) trading.Candle {
+	return trading.Candle{
 		OpenTime: candle.OpenTime.UTC(), CloseTime: candle.CloseTime.UTC(),
 		Open: candle.Open, High: candle.High, Low: candle.Low, Close: candle.Close, Volume: candle.Volume,
 	}

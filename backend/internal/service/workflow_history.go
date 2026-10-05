@@ -159,6 +159,9 @@ ORDER BY n.id, r.ordinal`, runID).Scan(&artifacts).Error; err != nil {
 }
 
 func (a *App) GetWorkflowArtifactManifest(ctx context.Context, digest string, verify bool) (WorkflowArtifactView, error) {
+	if err := a.authorizeArtifact(ctx, digest); err != nil {
+		return WorkflowArtifactView{}, err
+	}
 	artifact, err := a.loadWorkflowArtifact(ctx, digest)
 	if err != nil {
 		return WorkflowArtifactView{}, err
@@ -185,6 +188,9 @@ func (a *App) GetWorkflowArtifactManifest(ctx context.Context, digest string, ve
 }
 
 func (a *App) OpenWorkflowArtifact(ctx context.Context, digest string) (io.ReadCloser, WorkflowArtifactView, error) {
+	if err := a.authorizeArtifact(ctx, digest); err != nil {
+		return nil, WorkflowArtifactView{}, err
+	}
 	artifact, err := a.loadWorkflowArtifact(ctx, digest)
 	if err != nil {
 		return nil, WorkflowArtifactView{}, err
@@ -350,7 +356,16 @@ func (s workflowArtifactStore) Put(ctx context.Context, mediaType string, source
 		SHA256: digest, MediaType: mediaType, Encoding: "gzip", SizeBytes: size,
 		StoredSizeBytes: storedSize, StorageKey: key, CreatedAt: now,
 	}
-	if err := s.app.DB.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&artifact).Error; err != nil {
+	run, ok := ctx.Value(executionLeaseKey{}).(db.WorkflowRun)
+	if !ok {
+		return sdk.Artifact{}, ErrPermission
+	}
+	if err := s.app.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.app.lockExecutionLease(tx, run, nil); err != nil {
+			return err
+		}
+		return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&artifact).Error
+	}); err != nil {
 		return sdk.Artifact{}, errors.New("record workflow artifact failed")
 	}
 	var stored db.WorkflowArtifact
@@ -364,6 +379,29 @@ func (s workflowArtifactStore) Put(ctx context.Context, mediaType string, source
 }
 
 func (s workflowArtifactStore) Open(ctx context.Context, digest string) (io.ReadCloser, error) {
+	run, ok := ctx.Value(executionLeaseKey{}).(db.WorkflowRun)
+	if !ok {
+		return nil, ErrPermission
+	}
+	if err := s.app.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.app.lockExecutionLease(tx, run, nil); err != nil {
+			return err
+		}
+		ids := []int64{run.ID}
+		if run.Diagnostic && run.OriginalRunID != nil {
+			ids = append(ids, *run.OriginalRunID)
+		}
+		var count int64
+		if err := tx.Table("workflow_artifact_refs refs").Joins("JOIN workflow_run_nodes n ON n.id=refs.run_node_id").Where("n.run_id IN ? AND refs.artifact_sha256=?", ids, digest).Count(&count).Error; err != nil {
+			return err
+		}
+		if count == 0 {
+			return ErrPermission
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
 	artifact, err := s.app.loadWorkflowArtifact(ctx, digest)
 	if err != nil {
 		return nil, err

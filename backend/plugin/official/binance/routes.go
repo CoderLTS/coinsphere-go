@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"coinsphere/backend/plugin/contracts/trading"
 	"coinsphere/backend/plugin/sdk"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -25,15 +26,15 @@ func registerRoutes(registrar sdk.Registrar, runtime *binanceRuntime) error {
 		desc    sdk.RouteDescriptor
 		handler sdk.ScopedRouteHandler
 	}{
-		{sdk.RouteDescriptor{Method: "GET", Pattern: "/instruments", Scope: sdk.ScopeSystem}, runtime.handleInstruments},
-		{sdk.RouteDescriptor{Method: "GET", Pattern: "/candles", Scope: sdk.ScopeSystem}, runtime.handleCandles},
-		{sdk.RouteDescriptor{Method: "GET", Pattern: "/candles/indicators", Scope: sdk.ScopeSystem}, runtime.handleIndicators},
-		{sdk.RouteDescriptor{Method: "GET", Pattern: "/candles/stream", Scope: sdk.ScopeSystem, WebSocket: true}, runtime.handleCandleStream},
-		{sdk.RouteDescriptor{Method: "GET", Pattern: "/orders", Scope: sdk.ScopeSystem}, runtime.handleOrders},
-		{sdk.RouteDescriptor{Method: "GET", Pattern: "/live-accounts", Scope: sdk.ScopeSystem}, runtime.handleLiveAccounts},
-		{sdk.RouteDescriptor{Method: "PUT", Pattern: "/live-accounts/:account", Scope: sdk.ScopeSystem}, runtime.handleLiveAccountRelease},
-		{sdk.RouteDescriptor{Method: "GET", Pattern: "/paper", Scope: sdk.ScopeResult}, runtime.handlePaperResult},
-		{sdk.RouteDescriptor{Method: "GET", Pattern: "/paper/export", Scope: sdk.ScopeResult, Action: "export"}, runtime.handlePaperExport},
+		{sdk.RouteDescriptor{PermissionCode: "plugins.official.binance.read", Method: "GET", Pattern: "/instruments", Scope: sdk.ScopeSystem}, runtime.handleInstruments},
+		{sdk.RouteDescriptor{PermissionCode: "plugins.official.binance.read", Method: "GET", Pattern: "/candles", Scope: sdk.ScopeSystem}, runtime.handleCandles},
+		{sdk.RouteDescriptor{PermissionCode: "plugins.official.binance.read", Method: "GET", Pattern: "/candles/indicators", Scope: sdk.ScopeSystem}, runtime.handleIndicators},
+		{sdk.RouteDescriptor{PermissionCode: "plugins.official.binance.read", Method: "GET", Pattern: "/candles/stream", Scope: sdk.ScopeSystem, WebSocket: true}, runtime.handleCandleStream},
+		{sdk.RouteDescriptor{PermissionCode: "plugins.official.binance.read", Method: "GET", Pattern: "/orders", Scope: sdk.ScopeSystem}, runtime.handleOrders},
+		{sdk.RouteDescriptor{PermissionCode: "plugins.official.binance.live_release", Method: "GET", Pattern: "/live-accounts", Scope: sdk.ScopeSystem}, runtime.handleLiveAccounts},
+		{sdk.RouteDescriptor{PermissionCode: "plugins.official.binance.live_release", Method: "PUT", Pattern: "/live-accounts/:account", Scope: sdk.ScopeSystem}, runtime.handleLiveAccountRelease},
+		{sdk.RouteDescriptor{PermissionCode: "result_views.read", Method: "GET", Pattern: "/paper", Scope: sdk.ScopeResult}, runtime.handlePaperResult},
+		{sdk.RouteDescriptor{PermissionCode: "result_views.export", Method: "GET", Pattern: "/paper/export", Scope: sdk.ScopeResult, Action: "export"}, runtime.handlePaperExport},
 	} {
 		if err := registrar.Route(route.desc, route.handler); err != nil {
 			return err
@@ -124,7 +125,7 @@ func (q *binanceRuntime) handleInstruments(c *gin.Context, scope sdk.RouteScope)
 		return
 	}
 	limit := queryLimit(c, 500, 10000)
-	items, err := (marketDataProvider{runtime: q}).Instruments(c.Request.Context(), sdk.InstrumentQuery{Markets: queryValues(c, "market"), Limit: limit})
+	items, err := (marketDataProvider{runtime: q}).Instruments(c.Request.Context(), trading.InstrumentQuery{Markets: queryValues(c, "market"), Limit: limit})
 	if err != nil {
 		writeProblem(c, http.StatusInternalServerError, err.Error())
 		return
@@ -160,7 +161,7 @@ func (q *binanceRuntime) handleCandles(c *gin.Context, scope sdk.RouteScope) {
 		endTime = before
 	}
 	limit := queryLimit(c, 500, 5000)
-	query := sdk.CandleQuery{Market: c.Query("market"), Instrument: c.Query("instrument"), Interval: c.Query("interval"), StartTime: startTime, EndTime: endTime, Limit: limit + 1}
+	query := trading.CandleQuery{Market: c.Query("market"), Instrument: c.Query("instrument"), Interval: c.Query("interval"), StartTime: startTime, EndTime: endTime, Limit: limit + 1}
 	provider := marketDataProvider{runtime: q}
 	items, err := provider.Candles(c.Request.Context(), query)
 	if err != nil {
@@ -257,7 +258,7 @@ func (q *binanceRuntime) handleIndicators(c *gin.Context, scope sdk.RouteScope) 
 		writeProblem(c, http.StatusBadRequest, "endTime must use RFC3339 UTC")
 		return
 	}
-	items, err := (marketDataProvider{runtime: q}).Candles(c.Request.Context(), sdk.CandleQuery{Market: c.Query("market"), Instrument: c.Query("instrument"), Interval: c.Query("interval"), StartTime: startTime, EndTime: endTime, Limit: queryLimit(c, 500, 1_000_001)})
+	items, err := (marketDataProvider{runtime: q}).Candles(c.Request.Context(), trading.CandleQuery{Market: c.Query("market"), Instrument: c.Query("instrument"), Interval: c.Query("interval"), StartTime: startTime, EndTime: endTime, Limit: queryLimit(c, 500, 1_000_001)})
 	if err != nil {
 		writeProblem(c, http.StatusBadRequest, err.Error())
 		return
@@ -419,7 +420,7 @@ func (q *binanceRuntime) handleCandleStream(c *gin.Context, scope sdk.RouteScope
 	}, 8)
 	config := binanceCandleStreamConfig{Market: market, Instrument: instrument, Intervals: []string{interval}}
 	historyRows, _ := q.fetchBinanceKlinePage(ctx, binanceSeriesConfig{Market: market, Instrument: instrument, Interval: interval}, time.Now().UTC(), 240)
-	history := make([]sdk.Candle, len(historyRows))
+	history := make([]trading.Candle, len(historyRows))
 	for index := range historyRows {
 		history[index] = binanceSDKCandle(historyRows[index])
 	}
@@ -435,7 +436,7 @@ func (q *binanceRuntime) handleCandleStream(c *gin.Context, scope sdk.RouteScope
 			}
 		})
 	}()
-	pingTicker := time.NewTicker(54 * time.Second)
+	pingTicker := time.NewTicker(5 * time.Second)
 	defer pingTicker.Stop()
 	for {
 		select {
@@ -444,6 +445,9 @@ func (q *binanceRuntime) handleCandleStream(c *gin.Context, scope sdk.RouteScope
 		case <-ctx.Done():
 			return
 		case <-pingTicker.C:
+			if check := scope.(sdk.SystemScope).SessionValid; check == nil || check(ctx) != nil {
+				return
+			}
 			if err := connection.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second)); err != nil {
 				return
 			}
@@ -456,7 +460,7 @@ func (q *binanceRuntime) handleCandleStream(c *gin.Context, scope sdk.RouteScope
 			if index < len(history) && history[index].OpenTime.Equal(sdkCandle.OpenTime) {
 				history[index] = sdkCandle
 			} else {
-				history = append(history, sdk.Candle{})
+				history = append(history, trading.Candle{})
 				copy(history[index+1:], history[index:])
 				history[index] = sdkCandle
 			}

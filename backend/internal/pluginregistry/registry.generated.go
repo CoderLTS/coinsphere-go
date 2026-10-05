@@ -3,4 +3,6 @@ package pluginregistry
 
 import "coinsphere/backend/plugin/sdk"
 
-func RegisterAll(*sdk.Registry, sdk.Host) error { return nil }
+var CompiledPlugins = []sdk.PluginDescriptor{}
+
+func RegisterAll(*sdk.Registry, sdk.Host, map[string]bool) error { return nil }

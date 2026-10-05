@@ -7,6 +7,7 @@ import (
 
 	"coinsphere/backend/internal/db"
 	"coinsphere/backend/internal/security"
+	"gorm.io/gorm/clause"
 )
 
 // Principal 当前请求主体(登录用户或游客)。
@@ -28,7 +29,9 @@ type Principal struct {
 // (p *Principal) 叫"接收者":它把这个函数挂成 Principal 的方法,函数内用 p 指代当前对象
 // (相当于别的语言的 this / self),调用时写 principal.HasPermission("x")。见 GO入门笔记『方法与接收者』。
 // 查 map 里不存在的 key 会返回该类型的零值(bool 的零值是 false),所以这里天然表示"没有该权限"。
-func (p *Principal) HasPermission(code string) bool { return p.PermissionCodes[code] }
+func (p *Principal) HasPermission(code string) bool {
+	return p != nil && (p.HasRole("R_SUPER") || p.PermissionCodes[code])
+}
 
 // HasRole 判断是否拥有角色编码。
 func (p *Principal) HasRole(code string) bool {
@@ -115,9 +118,13 @@ func (a *App) buildPrincipal(userID int64) (*Principal, error) {
 	}
 	// 用结构体字面量组装并返回指针 &Principal{...};User 存的是 &user(用户的地址)。
 	// PermissionCodes 交给下面的方法按这些角色查出"权限码集合"。
+	permissions, err := a.listPermissionCodesForRoleIDs(roleIDs)
+	if err != nil {
+		return nil, err
+	}
 	return &Principal{
 		User: &user, RoleIDs: roleIDs, RoleCodes: roleCodes,
-		PermissionCodes: a.listPermissionCodesForRoleIDs(roleIDs),
+		PermissionCodes: permissions,
 		AccessMode:      "authenticated",
 	}, nil
 }
@@ -199,27 +206,21 @@ func (a *App) ConsumeReauthToken(raw string, principal *Principal) bool {
 	return true
 }
 
-// LogoutAccessToken revokes the current signed token until its natural expiry.
-// ponytail: process-local revocation is sufficient for the current single-app topology; use a shared store only with multiple API instances.
-func (a *App) LogoutAccessToken(principal *Principal) {
-	if principal == nil || principal.AccessTokenID == "" || principal.AccessTokenExp.IsZero() {
-		return
+func (a *App) LogoutAccessToken(principal *Principal) error {
+	if principal == nil || principal.AccessTokenID == "" {
+		return security.ErrInvalidToken
 	}
-	a.authStateMu.Lock()
-	a.pruneAuthStateLocked(time.Now())
-	a.revokedAccessTokens[principal.AccessTokenID] = principal.AccessTokenExp
-	a.authStateMu.Unlock()
+	return a.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&db.RevokedSession{TokenID: principal.AccessTokenID, ExpiresAt: principal.AccessTokenExp}).Error
 }
-
 func (a *App) isAccessTokenRevoked(tokenID string) bool {
 	if tokenID == "" {
 		return true
 	}
-	a.authStateMu.Lock()
-	defer a.authStateMu.Unlock()
-	a.pruneAuthStateLocked(time.Now())
-	_, revoked := a.revokedAccessTokens[tokenID]
-	return revoked
+	var count int64
+	if err := a.DB.Model(&db.RevokedSession{}).Where("token_id=? AND expires_at>CURRENT_TIMESTAMP", tokenID).Count(&count).Error; err != nil {
+		return true
+	}
+	return count > 0
 }
 
 func (a *App) pruneAuthStateLocked(now time.Time) {
@@ -228,11 +229,7 @@ func (a *App) pruneAuthStateLocked(now time.Time) {
 			delete(a.reauthTokens, hash)
 		}
 	}
-	for tokenID, expiresAt := range a.revokedAccessTokens {
-		if !expiresAt.After(now) {
-			delete(a.revokedAccessTokens, tokenID)
-		}
-	}
+
 }
 
 // listRolesForUser 查某用户的所有"启用中"角色。GORM 的链式调用等价于这段 SQL:
@@ -252,33 +249,18 @@ func (a *App) listRolesForUser(userID int64) ([]db.SystemRole, error) {
 	return roles, err
 }
 
-// listPermissionCodesForRoleIDs 把这些角色能碰到的"菜单权限码 + 按钮权限码"汇总成一个集合。
-// GORM 要点:Where("... IN ?", roleIDs) 传一个切片,会展开成 SQL 的 IN (...);Distinct 去重;
-// Pluck("列名", &切片) 只取某一列的值填进切片。最后用 map[string]bool 去重合并成权限集合返回。
-func (a *App) listPermissionCodesForRoleIDs(roleIDs []int64) map[string]bool {
+func (a *App) listPermissionCodesForRoleIDs(roleIDs []int64) (map[string]bool, error) {
 	result := map[string]bool{}
 	if len(roleIDs) == 0 {
-		return result
+		return result, nil
 	}
-	var menuCodes []string
-	a.DB.Model(&db.SystemMenu{}).Distinct("menus.permission_code").
-		Joins("JOIN role_menus ON role_menus.menu_id = menus.id").
-		Where("role_menus.role_id IN ? AND menus.permission_code IS NOT NULL AND menus.permission_code <> ''", roleIDs).
-		Pluck("menus.permission_code", &menuCodes)
-	var buttonCodes []string
-	a.DB.Model(&db.SystemMenuButton{}).Distinct("menu_buttons.permission_code").
-		Joins("JOIN role_menu_buttons ON role_menu_buttons.button_id = menu_buttons.id").
-		Where("role_menu_buttons.role_id IN ?", roleIDs).
-		Pluck("menu_buttons.permission_code", &buttonCodes)
-	for _, code := range menuCodes {
-		if code != "" {
-			result[code] = true
-		}
+	var codes []string
+	err := a.DB.Model(&db.RolePermission{}).Where("role_id IN ?", roleIDs).Distinct().Pluck("permission_code", &codes).Error
+	if err != nil {
+		return nil, err
 	}
-	for _, code := range buttonCodes {
-		if code != "" {
-			result[code] = true
-		}
+	for _, code := range codes {
+		result[code] = true
 	}
-	return result
+	return result, nil
 }

@@ -343,6 +343,7 @@ func (s *Server) requireAuth() gin.HandlerFunc {
 			return
 		}
 		c.Set(principalContextKey, principal)
+		c.Request = c.Request.WithContext(service.WithPrincipal(c.Request.Context(), principal))
 		setAuditActor(c, principal.User.ID)
 		c.Next()
 	}

@@ -24,6 +24,7 @@ import (
 	"coinsphere/backend/internal/pluginregistry"
 	"coinsphere/backend/internal/service"
 	"coinsphere/backend/plugin/official"
+	officialmigrations "coinsphere/backend/plugin/official/migrations"
 	"coinsphere/backend/plugin/sdk"
 )
 
@@ -100,28 +101,43 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 	plugins := sdk.NewRegistry()
 	app := service.NewApp(gdb, cfg, plugins)
 	host := sdk.Host{
+		Inbox:  app,
 		Stores: sdk.GormPluginStores{Database: gdb}, Network: official.NetworkClientFactory{},
-		OutboundProxy: app, Realtime: app, Events: app, MarketData: plugins, Execution: plugins, Strategies: plugins,
+		OutboundProxy: app, Realtime: app, Events: app,
 		AllowedHTTPHosts: cfg.Workflow.HTTPAllowedHosts,
 	}
 	var enabledOfficialIDs []string
-	if err := gdb.WithContext(ctx).Table("plugin_installations").Where("source_path = ? AND status = ?", "builtin", "installed").Order("plugin_id").Pluck("plugin_id", &enabledOfficialIDs).Error; err != nil {
+	if err := gdb.WithContext(ctx).Table("plugin_installations").Where("status = ?", "installed").Order("plugin_id").Pluck("plugin_id", &enabledOfficialIDs).Error; err != nil {
 		return fmt.Errorf("load enabled official plugins: %w", err)
 	}
 	enabledOfficial := make(map[string]bool, len(enabledOfficialIDs))
 	for _, pluginID := range enabledOfficialIDs {
 		enabledOfficial[pluginID] = true
 	}
+	for _, bundle := range officialmigrations.Bundles() {
+		if enabledOfficial[bundle.ID] {
+			r, err := migration.NewPluginBaseline(sqlDB, bundle.Files, bundle.Schema)
+			if err != nil {
+				return err
+			}
+			if err := r.ValidateCurrent(ctx); err != nil {
+				return err
+			}
+		}
+	}
 	if err := official.RegisterAll(plugins, host, enabledOfficial); err != nil {
 		slog.Error("official plugin registration failed", "component", "plugin_registry", "error", err.Error())
 		return fmt.Errorf("register official plugins: %w", err)
 	}
-	if err := pluginregistry.RegisterAll(plugins, host); err != nil {
+	if err := pluginregistry.RegisterAll(plugins, host, enabledOfficial); err != nil {
 		return fmt.Errorf("register plugins: %w", err)
 	}
 	executable, _ := os.Executable()
 	baseDir := filepath.Dir(executable)
 	app.ArtifactRoot = filepath.Join(baseDir, "volumes", "artifacts")
+	if err := app.SyncCapabilities(ctx); err != nil {
+		return err
+	}
 	if err := db.Seed(ctx, gdb, app.Hasher, cfg.Auth.BootstrapAdminPassword, plugins.Pages()); err != nil {
 		return fmt.Errorf("seed database: %w", err)
 	}

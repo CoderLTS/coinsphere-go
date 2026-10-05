@@ -3,6 +3,10 @@ package quant
 import "coinsphere/backend/plugin/sdk"
 
 func quantNodeMeta(desc sdk.NodeDescriptor, title, description, category, color, icon string) sdk.NodeDescriptor {
+	if len(desc.ExecutionPermissions) == 0 {
+		desc.ExecutionPermissions = []string{"plugins.official.quant.execute"}
+	}
+	desc.EditorKey = desc.Type
 	desc.Title, desc.Description, desc.Category, desc.Color, desc.Icon = title, description, category, color, icon
 	desc.Aliases = append([]string{title}, quantNodeAliases[desc.Type]...)
 	desc.Tags = append([]string{category}, quantNodeTags[desc.Type]...)

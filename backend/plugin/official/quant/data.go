@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"coinsphere/backend/plugin/contracts/trading"
 	"coinsphere/backend/plugin/sdk"
 )
 
@@ -25,6 +26,6 @@ func quantCandleData(candle quantCandle) map[string]any {
 	}
 }
 
-func quantSDKCandle(candle quantCandle) sdk.Candle {
-	return sdk.Candle{OpenTime: candle.OpenTime.UTC(), CloseTime: candle.CloseTime.UTC(), Open: candle.Open, High: candle.High, Low: candle.Low, Close: candle.Close, Volume: candle.Volume}
+func quantSDKCandle(candle quantCandle) trading.Candle {
+	return trading.Candle{OpenTime: candle.OpenTime.UTC(), CloseTime: candle.CloseTime.UTC(), Open: candle.Open, High: candle.High, Low: candle.Low, Close: candle.Close, Volume: candle.Volume}
 }

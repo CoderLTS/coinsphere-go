@@ -4,13 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
-	"coinsphere/backend/internal/db"
 	"coinsphere/backend/plugin/sdk"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -22,9 +20,9 @@ const (
 )
 
 type notificationRuntime struct {
-	db       *gorm.DB
-	realtime sdk.RealtimePublisher
-	http     sdk.NetworkClient
+	db    *gorm.DB
+	inbox sdk.InboxService
+	http  sdk.NetworkClient
 }
 
 type notificationAction struct {
@@ -37,10 +35,7 @@ type ExternalDeliveryInput struct {
 	Message    string `json:"message"`
 }
 
-type notificationTarget struct {
-	TargetType string `json:"targetType"`
-	TargetID   int64  `json:"targetId"`
-}
+type notificationTarget = sdk.RecipientTarget
 
 func Register(registrar sdk.Registrar, host sdk.Host) error {
 	client, err := host.Network.New([]string{"oapi.dingtalk.com"})
@@ -49,26 +44,29 @@ func Register(registrar sdk.Registrar, host sdk.Host) error {
 	}
 	client.SetTimeout(notificationTimeout)
 	client.DisableRedirects()
-	runtime := &notificationRuntime{db: host.Store.DB(), realtime: host.Realtime, http: client}
+	runtime := &notificationRuntime{db: host.Store.DB(), inbox: host.Inbox, http: client}
 	return runtime.register(registrar)
 }
 
 func (n *notificationRuntime) register(registrar sdk.Registrar) error {
+	if err := registrar.Cleanup(cleanupWorkflow); err != nil {
+		return err
+	}
 	descriptors := []sdk.NodeDescriptor{
 		{
-			Type: "official.notification.in_app", Version: "1.0.0", Kind: sdk.NodeKindAction,
+			ExecutionPermissions: []string{"plugins.official.notification.execute"}, Type: "official.notification.in_app", Version: "1.0.0", Kind: sdk.NodeKindAction,
 			Title: "站内通知", Description: "向用户或角色发送站内通知", Category: "notification", Aliases: []string{"站内消息", "通知提醒"}, Tags: []string{"通知", "用户", "角色"}, SortOrder: 10, Color: "#7c3aed", Icon: "bell", Width: 220, Height: 72,
 			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"title":{"type":"string","title":"通知标题","minLength":1,"maxLength":160},"targets":{"type":"array","title":"通知目标","maxItems":100,"items":{"type":"object","properties":{"targetType":{"type":"string","title":"目标类型","enum":["user","role"],"enumLabels":["用户","角色"]},"targetId":{"type":"integer","title":"目标 ID","minimum":1}},"required":["targetType","targetId"],"additionalProperties":false}}},"required":["title"],"additionalProperties":false}`),
 			UISchema:     json.RawMessage(`{"ui:order":["title","targets"]}`),
 		},
 		{
-			Type: "official.notification.dingtalk", Version: "1.0.0", Kind: sdk.NodeKindAction,
+			ExecutionPermissions: []string{"plugins.official.notification.execute"}, Type: "official.notification.dingtalk", Version: "1.0.0", Kind: sdk.NodeKindAction,
 			Title: "钉钉通知", Description: "通过钉钉机器人发送通知", Category: "notification", Aliases: []string{"钉钉消息", "DingTalk"}, Tags: []string{"通知", "钉钉", "机器人"}, SortOrder: 20, Color: "#2563eb", Icon: "message-circle", Width: 220, Height: 72,
 			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"title":{"type":"string","title":"通知标题","minLength":1,"maxLength":160},"format":{"type":"string","title":"消息格式","enum":["text","markdown"],"enumLabels":["纯文本","Markdown 文本"],"default":"markdown"},"signed":{"type":"boolean","title":"启用加签","default":false},"accessToken":{"type":"string","title":"访问令牌","x-coinsphere-secret":true},"signingSecret":{"type":"string","title":"签名密钥","x-coinsphere-secret":true}},"required":["title","format","signed","accessToken"],"additionalProperties":false}`),
 			UISchema:     json.RawMessage(`{"ui:order":["title","format","signed","accessToken","signingSecret"]}`),
 		},
 		{
-			Type: "official.notification.smtp", Version: "1.0.0", Kind: sdk.NodeKindAction,
+			ExecutionPermissions: []string{"plugins.official.notification.execute"}, Type: "official.notification.smtp", Version: "1.0.0", Kind: sdk.NodeKindAction,
 			Title: "邮件通知", Description: "通过 TLS SMTP 发送邮件通知", Category: "notification", Aliases: []string{"邮件", "SMTP"}, Tags: []string{"通知", "邮件", "SMTP"}, SortOrder: 30, Color: "#15803d", Icon: "mail", Width: 220, Height: 72,
 			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"title":{"type":"string","title":"邮件主题","minLength":1,"maxLength":160},"host":{"type":"string","title":"SMTP 公网域名","minLength":1,"maxLength":253},"port":{"type":"integer","title":"端口","minimum":1,"maximum":65535,"default":465},"security":{"type":"string","title":"连接安全","enum":["implicit_tls","starttls"],"enumLabels":["TLS","STARTTLS"],"default":"implicit_tls"},"username":{"type":"string","title":"用户名","minLength":1,"maxLength":320},"fromEmail":{"type":"string","title":"发件邮箱","format":"email","maxLength":320},"fromName":{"type":"string","title":"发件名称","maxLength":160},"recipients":{"type":"array","title":"收件人","minItems":1,"maxItems":100,"uniqueItems":true,"items":{"type":"string","format":"email","maxLength":320}},"password":{"type":"string","title":"密码","x-coinsphere-secret":true}},"required":["title","host","port","security","username","fromEmail","recipients","password"],"additionalProperties":false}`),
 			UISchema:     json.RawMessage(`{"ui:order":["title","host","port","security","username","fromEmail","fromName","recipients","password"]}`),
@@ -141,39 +139,11 @@ func (a notificationAction) executeInApp(ctx context.Context, request sdk.Action
 	if json.Unmarshal(request.Config, &config) != nil || !validNotificationTitle(config.Title) {
 		return sdk.ActionResult{}, errors.New("in-app notification configuration is invalid")
 	}
-	recipients, err := a.runtime.resolveRecipients(ctx, workflowID, config.Targets)
-	if err != nil {
-		return sdk.ActionResult{}, err
+	if a.runtime.inbox == nil {
+		return sdk.ActionResult{}, errors.New("inbox service unavailable")
 	}
-	now := time.Now().UTC()
-	if err := a.runtime.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		for _, userID := range recipients {
-			delivery := db.NotificationDelivery{
-				OperationKey: request.OperationKey, WorkflowID: workflowID, RevisionID: revisionID,
-				NodeInstanceID: request.NodeInstanceID, Channel: "in_app", RecipientUserID: &userID,
-				SubjectKey: input.SubjectKey, Title: strings.TrimSpace(config.Title), Message: input.Message,
-				Status: "delivered", AttemptCount: 1, DeliveredAt: &now, CreatedAt: now, UpdatedAt: now,
-			}
-			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&delivery).Error; err != nil {
-				return errors.New("persist in-app notification failed")
-			}
-		}
-		return nil
-	}); err != nil {
-		return sdk.ActionResult{}, err
-	}
-	var deliveries []db.NotificationDelivery
-	if err := a.runtime.db.WithContext(ctx).
-		Where("operation_key = ? AND recipient_user_id IN ?", request.OperationKey, recipients).
-		Order("id").Find(&deliveries).Error; err != nil || len(deliveries) != len(recipients) {
-		return sdk.ActionResult{}, errors.New("load in-app notification deliveries failed")
-	}
-	for _, delivery := range deliveries {
-		if a.runtime.realtime != nil && delivery.RecipientUserID != nil {
-			a.runtime.realtime.PublishInAppNotification(ctx, *delivery.RecipientUserID, delivery.ID)
-		}
-	}
-	return notificationResult(deliveries, len(deliveries)), nil
+	raw, err := a.runtime.inbox.DeliverInbox(ctx, sdk.InboxRequest{Revision: request.Revision, OperationKey: request.OperationKey, NodeInstanceID: request.NodeInstanceID, Title: config.Title, SubjectKey: input.SubjectKey, Message: input.Message, Targets: config.Targets})
+	return sdk.ActionResult{Output: raw}, err
 }
 
 func (a notificationAction) executeExternal(ctx context.Context, request sdk.ActionRequest, workflowID, revisionID int64, input ExternalDeliveryInput) (sdk.ActionResult, error) {
@@ -186,14 +156,14 @@ func (a notificationAction) executeExternal(ctx context.Context, request sdk.Act
 		return sdk.ActionResult{}, err
 	}
 	if delivery.Status == "delivered" {
-		return notificationResult([]db.NotificationDelivery{delivery}, externalRecipientCount(a.channel, request.Config)), nil
+		return notificationResult([]Delivery{delivery}, externalRecipientCount(a.channel, request.Config)), nil
 	}
 	category, sendErr := a.runtime.sendExternal(ctx, a.channel, request, title, input.Message)
 	if sendErr != nil {
 		if updateErr := FinishExternalDelivery(ctx, a.runtime.db, delivery.ID, "failed", category); updateErr != nil {
 			return sdk.ActionResult{}, updateErr
 		}
-		return sdk.ActionResult{}, errors.New("notification provider delivery failed: " + category)
+		return sdk.ActionResult{}, &sdk.ExecutionError{Class: sdk.ErrorUnknownResult, Err: errors.New("notification provider result requires reconciliation")}
 	}
 	if err := FinishExternalDelivery(ctx, a.runtime.db, delivery.ID, "delivered", ""); err != nil {
 		return sdk.ActionResult{}, err
@@ -201,73 +171,12 @@ func (a notificationAction) executeExternal(ctx context.Context, request sdk.Act
 	if err := a.runtime.db.WithContext(ctx).First(&delivery, delivery.ID).Error; err != nil {
 		return sdk.ActionResult{}, errors.New("load notification delivery failed")
 	}
-	return notificationResult([]db.NotificationDelivery{delivery}, externalRecipientCount(a.channel, request.Config)), nil
+	return notificationResult([]Delivery{delivery}, externalRecipientCount(a.channel, request.Config)), nil
 }
 
-func (n *notificationRuntime) resolveRecipients(ctx context.Context, workflowID int64, targets []notificationTarget) ([]int64, error) {
-	if len(targets) == 0 {
-		var workflow struct{ CreatedBy int64 }
-		if err := n.db.WithContext(ctx).Table("workflows").Select("created_by").Where("id = ?", workflowID).Take(&workflow).Error; err != nil {
-			return nil, errors.New("load workflow notification owner failed")
-		}
-		targets = []notificationTarget{{TargetType: "user", TargetID: workflow.CreatedBy}}
-	}
-	userSet, roleSet := map[int64]struct{}{}, map[int64]struct{}{}
-	for _, target := range targets {
-		if target.TargetID <= 0 || target.TargetType != "user" && target.TargetType != "role" {
-			return nil, errors.New("in-app notification target is invalid")
-		}
-		if target.TargetType == "user" {
-			userSet[target.TargetID] = struct{}{}
-		} else {
-			roleSet[target.TargetID] = struct{}{}
-		}
-	}
-	directUsers, roleIDs := int64SetValues(userSet), int64SetValues(roleSet)
-	if len(directUsers) > 0 {
-		var active []int64
-		if err := n.db.WithContext(ctx).Model(&db.SystemUser{}).Where("id IN ? AND is_active = ?", directUsers, true).Pluck("id", &active).Error; err != nil || len(active) != len(directUsers) {
-			return nil, errors.New("in-app notification user target is unavailable")
-		}
-		userSet = make(map[int64]struct{}, len(active))
-		for _, userID := range active {
-			userSet[userID] = struct{}{}
-		}
-	}
-	if len(roleIDs) > 0 {
-		var enabledRoles []int64
-		if err := n.db.WithContext(ctx).Model(&db.SystemRole{}).Where("id IN ? AND is_enabled = ?", roleIDs, true).Pluck("id", &enabledRoles).Error; err != nil || len(enabledRoles) != len(roleIDs) {
-			return nil, errors.New("in-app notification role target is unavailable")
-		}
-		var roleUsers []int64
-		if err := n.db.WithContext(ctx).Table("user_roles").
-			Select("DISTINCT user_roles.user_id").Joins("JOIN users ON users.id = user_roles.user_id").
-			Where("user_roles.role_id IN ? AND users.is_active = ?", roleIDs, true).Pluck("user_roles.user_id", &roleUsers).Error; err != nil {
-			return nil, errors.New("resolve in-app notification role users failed")
-		}
-		for _, userID := range roleUsers {
-			userSet[userID] = struct{}{}
-		}
-	}
-	result := int64SetValues(userSet)
-	if len(result) == 0 {
-		return nil, errors.New("in-app notification has no active recipients")
-	}
-	return result, nil
-}
-
-func int64SetValues(values map[int64]struct{}) []int64 {
-	result := make([]int64, 0, len(values))
-	for value := range values {
-		result = append(result, value)
-	}
-	sort.Slice(result, func(i, j int) bool { return result[i] < result[j] })
-	return result
-}
-
-func BeginExternalDelivery(ctx context.Context, database *gorm.DB, request sdk.ActionRequest, workflowID, revisionID int64, channel, title string, input ExternalDeliveryInput) (db.NotificationDelivery, error) {
+func BeginExternalDelivery(ctx context.Context, database *gorm.DB, request sdk.ActionRequest, workflowID, revisionID int64, channel, title string, input ExternalDeliveryInput) (Delivery, error) {
 	now := time.Now().UTC()
-	delivery := db.NotificationDelivery{
+	delivery := Delivery{
 		OperationKey: request.OperationKey, WorkflowID: workflowID, RevisionID: revisionID,
 		NodeInstanceID: request.NodeInstanceID, Channel: channel, SubjectKey: input.SubjectKey,
 		Title: title, Message: input.Message, Status: "pending", AttemptCount: 1, CreatedAt: now, UpdatedAt: now,
@@ -278,24 +187,16 @@ func BeginExternalDelivery(ctx context.Context, database *gorm.DB, request sdk.A
 			return errors.New("persist notification delivery failed")
 		}
 		if result.RowsAffected == 0 {
-			if err := tx.Where("operation_key = ? AND recipient_user_id IS NULL", request.OperationKey).Take(&delivery).Error; err != nil {
+			if err := tx.Where("operation_key = ?", request.OperationKey).Take(&delivery).Error; err != nil {
 				return errors.New("load notification delivery failed")
 			}
 			if delivery.Status != "delivered" {
-				delivery.AttemptCount++
-				if err := tx.Model(&delivery).Updates(map[string]any{
-					"status": "pending", "attempt_count": delivery.AttemptCount,
-					"delivered_at": nil, "last_error_category": nil, "updated_at": now,
-				}).Error; err != nil {
-					return errors.New("update notification delivery attempt failed")
-				}
-				delivery.Status = "pending"
-				delivery.DeliveredAt = nil
+				return &sdk.ExecutionError{Class: sdk.ErrorUnknownResult, Err: errors.New("delivery result requires reconciliation")}
 			}
 		}
 		return nil
 	}); err != nil {
-		return db.NotificationDelivery{}, err
+		return Delivery{}, err
 	}
 	return delivery, nil
 }
@@ -310,7 +211,7 @@ func FinishExternalDelivery(ctx context.Context, database *gorm.DB, deliveryID i
 		updates["delivered_at"] = nil
 		updates["last_error_category"] = category
 	}
-	if err := database.WithContext(ctx).Model(&db.NotificationDelivery{}).Where("id = ?", deliveryID).Updates(updates).Error; err != nil {
+	if err := database.WithContext(ctx).Model(&Delivery{}).Where("id = ?", deliveryID).Updates(updates).Error; err != nil {
 		return errors.New("finish notification delivery failed")
 	}
 	return nil
@@ -366,7 +267,7 @@ func externalRecipientCount(channel string, raw json.RawMessage) int {
 	return len(recipients)
 }
 
-func notificationResult(deliveries []db.NotificationDelivery, recipientCount int) sdk.ActionResult {
+func notificationResult(deliveries []Delivery, recipientCount int) sdk.ActionResult {
 	ids := make([]int64, len(deliveries))
 	deliveredAt := deliveries[0].CreatedAt
 	for index := range deliveries {

@@ -38,7 +38,7 @@
 
 <script setup lang="ts">
   import { fetchBinanceInstruments, type BinanceInstrument } from './api'
-  import WorkflowSchemaFields from '@/views/scheduler/workflow/editor/components/WorkflowSchemaFields.vue'
+  import WorkflowSchemaFields from '@/components/workflow/WorkflowSchemaFields.vue'
 
   const props = defineProps<{
     schema: Record<string, any>

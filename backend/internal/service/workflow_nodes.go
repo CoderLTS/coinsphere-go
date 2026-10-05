@@ -18,6 +18,8 @@ type WorkflowSecretFieldView struct {
 }
 
 type WorkflowNodeDefinitionView struct {
+	EditorKey    string                    `json:"editorKey,omitempty"`
+	PluginID     string                    `json:"pluginId,omitempty"`
 	Type         string                    `json:"type"`
 	Version      string                    `json:"version"`
 	Title        string                    `json:"title"`
@@ -50,7 +52,7 @@ func (a *App) ListWorkflowNodeDefinitions() []WorkflowNodeDefinitionView {
 		inputPorts, outputPorts := workflowPorts(desc)
 		available := desc.Type != "core.loop_item" && desc.Type != "core.loop_end"
 		items = append(items, WorkflowNodeDefinitionView{
-			Type: desc.Type, Version: desc.Version, Title: desc.Title,
+			EditorKey: desc.EditorKey, PluginID: a.Plugins.NodePlugin(desc.Type), Type: desc.Type, Version: desc.Version, Title: desc.Title,
 			Description: desc.Description, Kind: desc.Kind, Category: desc.Category,
 			Aliases: append([]string(nil), desc.Aliases...), Tags: append([]string(nil), desc.Tags...), SortOrder: desc.SortOrder,
 			Color: desc.Color, Icon: desc.Icon, Width: desc.Width, Height: desc.Height,
@@ -146,7 +148,7 @@ func coreWorkflowNodeDescriptors() []sdk.NodeDescriptor {
 		},
 		{
 			Type: "core.loop", Version: "1.0.0", Kind: sdk.NodeKindAction,
-			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"maxIterations":{"type":"integer","title":"最大循环次数","minimum":1,"maximum":100,"default":10},"timeoutSeconds":{"type":"integer","title":"总超时时间（秒）","minimum":1,"maximum":86400,"default":60},"exitCondition":{"type":"string","title":"布尔退出条件","minLength":1,"maxLength":4096,"default":"input.iteration >= 1"},"body":{"type":"object","title":"内嵌流程","default":{"schemaVersion":1,"nodes":[{"nodeInstanceId":"item","nodeType":"core.loop_item","nodeVersion":"1.0.0","config":{},"position":{"x":80,"y":80}},{"nodeInstanceId":"done","nodeType":"core.loop_end","nodeVersion":"1.0.0","config":{},"position":{"x":360,"y":80}}],"edges":[{"edgeId":"item-done","sourceNodeInstanceId":"item","sourcePort":"out","targetNodeInstanceId":"done","targetPort":"in"}]}}},"required":["maxIterations","timeoutSeconds","exitCondition","body"],"additionalProperties":false}`),
+			ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"maxIterations":{"type":"integer","title":"最大循环次数","minimum":1,"maximum":100,"default":10},"timeoutSeconds":{"type":"integer","title":"总超时时间（秒）","minimum":1,"maximum":86400,"default":60},"exitCondition":{"type":"string","title":"布尔退出条件","minLength":1,"maxLength":4096,"default":"input.iteration >= 1"},"body":{"type":"object","title":"内嵌流程","default":{"schemaVersion":3,"entryPoints":{"main":"item"},"nodes":[{"nodeInstanceId":"item","nodeType":"core.loop_item","nodeVersion":"1.0.0","config":{},"position":{"x":80,"y":80}},{"nodeInstanceId":"done","nodeType":"core.loop_end","nodeVersion":"1.0.0","config":{},"position":{"x":360,"y":80}}],"edges":[{"edgeId":"item-done","sourceNodeInstanceId":"item","sourcePort":"out","targetNodeInstanceId":"done","targetPort":"in"}]}}},"required":["maxIterations","timeoutSeconds","exitCondition","body"],"additionalProperties":false}`),
 			UISchema:     json.RawMessage(`{"ui:order":["maxIterations","timeoutSeconds","exitCondition","body"],"exitCondition":{"ui:widget":"textarea"}}`),
 			InputSchema:  valueInput,
 			OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"iterations":{"type":"integer"},"exited":{"type":"boolean"},"value":{"type":"object"}},"required":["iterations","exited","value"],"additionalProperties":false}`),

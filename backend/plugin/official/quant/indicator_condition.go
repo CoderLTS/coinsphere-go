@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"coinsphere/backend/plugin/contracts/trading"
 	"coinsphere/backend/plugin/sdk"
 	"github.com/shopspring/decimal"
 )
@@ -145,7 +146,7 @@ func (a quantIndicatorAction) Execute(ctx context.Context, request sdk.ActionReq
 		return sdk.ActionResult{}, err
 	}
 	if len(candles) > 0 {
-		if err := validateStrategyCandles(sdk.EvaluateRequest{
+		if err := validateStrategyCandles(trading.EvaluateRequest{
 			Market: config.Market, Instrument: config.Instrument, Interval: leaf.Interval,
 			Candles: quantSDKCandles(candles), EvaluatedAt: evaluatedAt,
 		}); err != nil {

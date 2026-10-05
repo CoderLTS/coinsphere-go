@@ -4,17 +4,18 @@ package sdk
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
+	"strconv"
 	"time"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/gin-gonic/gin"
-	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
 
@@ -26,9 +27,6 @@ type StateMode string
 type NodeCapabilities struct {
 	Deterministic bool `json:"deterministic"`
 	Stateless     bool `json:"stateless"`
-	FrameSafe     bool `json:"frameSafe"`
-	FrameDriver   bool `json:"frameDriver"`
-	FrameResult   bool `json:"frameResult"`
 }
 
 const (
@@ -38,17 +36,20 @@ const (
 	PoolStream  ExecutionPool = "stream"
 	PoolCompute ExecutionPool = "compute"
 
+	SideEffectExternal     SideEffectClass = "external"
 	SideEffectNone         SideEffectClass = "none"
 	SideEffectData         SideEffectClass = "data"
 	SideEffectNotification SideEffectClass = "notification"
 	SideEffectHumanAction  SideEffectClass = "human_action"
-	SideEffectPaper        SideEffectClass = "paper"
 
 	StateStateless  StateMode = "stateless"
 	StatePersistent StateMode = "persistent"
 )
 
 type NodeDescriptor struct {
+	EditorKey            string
+	ExecutionPermissions []string
+
 	Type           string
 	Version        string
 	Kind           NodeKind
@@ -70,6 +71,7 @@ type NodeDescriptor struct {
 	OutputSchema   json.RawMessage
 	Pool           ExecutionPool
 	SideEffect     SideEffectClass
+	RetrySafe      bool
 	State          StateMode
 	ValidateConfig func(json.RawMessage) error
 }
@@ -95,42 +97,18 @@ type RevisionRef struct {
 }
 
 type ActionRequest struct {
-	Revision           RevisionRef
-	NodeInstanceID     string
-	OperationKey       string
-	Input              json.RawMessage
-	Config             json.RawMessage
-	Secrets            SecretReader
-	State              StateStore
-	Artifacts          ArtifactStore
-	Frames             FrameExecutor
-	Incoming           []NodeOutput
-	FrameContext       json.RawMessage
-	FrameResultNodeIDs []string
-	ExecutionMode      string
-	Logger             *slog.Logger
-}
+	GraphSnapshot json.RawMessage
 
-const (
-	ExecutionModeWorkflow      = "workflow"
-	ExecutionModeBacktestFrame = "backtest_frame"
-)
-
-type FrameRequest struct {
-	SourcePort    string
-	SourceOutput  json.RawMessage
-	Event         map[string]string
-	Context       json.RawMessage
-	ResultNodeIDs []string
-}
-
-type FrameResult struct {
-	NodeOutputs map[string]json.RawMessage
-	Results     []json.RawMessage
-}
-
-type FrameExecutor interface {
-	ExecuteFrame(context.Context, FrameRequest) (FrameResult, error)
+	Revision       RevisionRef
+	NodeInstanceID string
+	OperationKey   string
+	Input          json.RawMessage
+	Config         json.RawMessage
+	Secrets        SecretReader
+	State          StateStore
+	Artifacts      ArtifactStore
+	Incoming       []NodeOutput
+	Logger         *slog.Logger
 }
 
 type NodeOutput struct {
@@ -184,7 +162,45 @@ type ArtifactStore interface {
 	Open(context.Context, string) (io.ReadCloser, error)
 }
 
+type PermissionDescriptor struct {
+	Code      string `json:"code"`
+	Title     string `json:"title"`
+	Protected bool   `json:"protected"`
+}
+type CleanupRequest struct {
+	WorkflowID int64
+	RevisionID *int64
+}
+type CleanupHandler func(context.Context, *gorm.DB, CleanupRequest) error
+type IngressRequest struct {
+	Revision       RevisionRef
+	NodeInstanceID string
+	Config         json.RawMessage
+	Secrets        SecretReader
+	Request        *http.Request
+	Data           json.RawMessage
+	EventTime      time.Time
+}
+type IngressHandler func(context.Context, IngressRequest) (cloudevents.Event, error)
+type RunPanelDescriptor struct {
+	PanelKey       string
+	Title          string
+	NodeTypes      []string
+	ComponentEntry string
+}
+
+type WorkflowResource struct {
+	WorkflowID     int64
+	NodeInstanceID string
+}
+
 type ResultPageDescriptor struct {
+	Resources            func(json.RawMessage) ([]WorkflowResource, error)
+	PermissionCode       string
+	ActionPermissions    map[string]string
+	ConfigComponentEntry string
+	ValidateScope        func(context.Context, *gorm.DB, json.RawMessage) error
+
 	PageKey        string
 	Title          string
 	ComponentEntry string
@@ -195,6 +211,8 @@ type ResultPageDescriptor struct {
 }
 
 type PageDescriptor struct {
+	PermissionCode string
+
 	PageKey   string
 	Title     string
 	Icon      string
@@ -218,6 +236,9 @@ const (
 type RouteScope interface{ routeScope() }
 
 type WorkflowScope struct {
+	RevisionID string
+	UserID     int64
+
 	PluginID       string
 	WorkflowID     string
 	NodeInstanceID string
@@ -226,6 +247,7 @@ type WorkflowScope struct {
 func (WorkflowScope) routeScope() {}
 
 type ResultScope struct {
+	Resources      []WorkflowResource
 	ViewID         string
 	PluginID       string
 	PageKey        string
@@ -240,10 +262,14 @@ type ResultScope struct {
 func (ResultScope) routeScope() {}
 
 type HumanTaskService interface {
-	Decide(context.Context, int64, string, int64) error
+	Decide(context.Context, int64, string) error
 }
 
 type SystemScope struct {
+	WorkflowIDs  []int64
+	AllWorkflows bool
+	SessionValid func(context.Context) error
+
 	PluginID  string
 	UserID    int64
 	RoleCodes []string
@@ -276,6 +302,8 @@ type RegisteredAssistantQuery struct {
 type ScopedRouteHandler func(*gin.Context, RouteScope)
 
 type RouteDescriptor struct {
+	PermissionCode string
+
 	Method    string
 	Pattern   string
 	Scope     ScopeKind
@@ -287,121 +315,6 @@ type RegisteredRoute struct {
 	PluginID   string
 	Descriptor RouteDescriptor
 	Handler    ScopedRouteHandler
-}
-
-type Candle struct {
-	OpenTime  time.Time
-	CloseTime time.Time
-	Open      decimal.Decimal
-	High      decimal.Decimal
-	Low       decimal.Decimal
-	Close     decimal.Decimal
-	Volume    decimal.Decimal
-}
-
-type Instrument struct {
-	Market       string
-	Symbol       string
-	BaseAsset    string
-	QuoteAsset   string
-	Status       string
-	PriceTick    decimal.Decimal
-	QuantityStep decimal.Decimal
-	MinQuantity  decimal.Decimal
-	UpdatedAt    time.Time
-}
-
-type InstrumentQuery struct {
-	Markets     []string
-	Instruments []string
-	Limit       int
-	ProxyID     int64
-}
-
-type CandleQuery struct {
-	Market     string
-	Instrument string
-	Interval   string
-	StartTime  time.Time
-	EndTime    time.Time
-	Limit      int
-	ProxyID    int64
-}
-
-type QuoteQuery struct {
-	Market     string
-	Instrument string
-	ProxyID    int64
-}
-
-type Quote struct {
-	Price    decimal.Decimal
-	QuotedAt time.Time
-}
-
-type MarketDataProvider interface {
-	ID() string
-	Instruments(context.Context, InstrumentQuery) ([]Instrument, error)
-	Candles(context.Context, CandleQuery) ([]Candle, error)
-	Quote(context.Context, QuoteQuery) (Quote, error)
-}
-
-type MarketDataRegistry interface {
-	MarketDataProvider(string) (MarketDataProvider, bool)
-}
-
-type OrderRequest struct {
-	Account        string
-	Market         string
-	Instrument     string
-	Side           string
-	Quantity       decimal.Decimal
-	QuoteAmount    decimal.Decimal
-	PositionEffect string
-	ClientOrderID  string
-	Secrets        SecretReader
-	ProxyID        int64
-}
-
-type OrderQuery struct {
-	Account       string
-	Market        string
-	Instrument    string
-	OrderID       string
-	ClientOrderID string
-	Secrets       SecretReader
-	ProxyID       int64
-}
-
-type CancelOrderRequest = OrderQuery
-
-type OrderResult struct {
-	ProviderOrderID string
-	ClientOrderID   string
-	Status          string
-	Market          string
-	Instrument      string
-	Side            string
-	Quantity        decimal.Decimal
-	Executed        decimal.Decimal
-	AveragePrice    decimal.Decimal
-	UpdatedAt       time.Time
-}
-
-type ExecutionProvider interface {
-	ID() string
-	PlaceOrder(context.Context, OrderRequest) (OrderResult, error)
-	GetOrder(context.Context, OrderQuery) (OrderResult, error)
-	CancelOrder(context.Context, CancelOrderRequest) error
-}
-
-type ExecutionRegistry interface {
-	ExecutionProvider(string) (ExecutionProvider, bool)
-}
-
-type StrategyRegistry interface {
-	Strategy(string) (StrategyDescriptor, Strategy, bool)
-	Strategies() []StrategyDescriptor
 }
 
 type PluginStore interface {
@@ -440,37 +353,36 @@ type RealtimePublisher interface {
 	PublishInAppNotification(context.Context, int64, int64)
 }
 
+type RecipientTarget struct {
+	TargetType string `json:"targetType"`
+	TargetID   int64  `json:"targetId"`
+}
+type InboxRequest struct {
+	Revision                                                 RevisionRef
+	OperationKey, NodeInstanceID, SubjectKey, Title, Message string
+	Targets                                                  []RecipientTarget
+}
+type InboxService interface {
+	DeliverInbox(context.Context, InboxRequest) (json.RawMessage, error)
+}
+
+func (r RevisionRef) IDs() (int64, int64, error) {
+	w, e := strconv.ParseInt(r.WorkflowID, 10, 64)
+	v, f := strconv.ParseInt(r.RevisionID, 10, 64)
+	if e != nil || f != nil || w <= 0 || v <= 0 {
+		return 0, 0, errors.New("invalid revision reference")
+	}
+	return w, v, nil
+}
+
 type Host struct {
-	Store            PluginStore
-	Stores           PluginStoreProvider
-	Network          NetworkClientFactory
-	OutboundProxy    OutboundProxyResolver
-	Realtime         RealtimePublisher
-	Events           Emitter
-	MarketData       MarketDataRegistry
-	Execution        ExecutionRegistry
-	Strategies       StrategyRegistry
+	Inbox         InboxService
+	Store         PluginStore
+	Stores        PluginStoreProvider
+	Network       NetworkClientFactory
+	OutboundProxy OutboundProxyResolver
+	Realtime      RealtimePublisher
+	Events        Emitter
+
 	AllowedHTTPHosts []string
-}
-
-type EvaluateRequest struct {
-	Market      string
-	Instrument  string
-	Interval    string
-	Candles     []Candle
-	Parameters  json.RawMessage
-	EvaluatedAt time.Time
-}
-
-type StrategyDescriptor struct {
-	ID              string
-	Version         string
-	Name            string
-	ParameterSchema json.RawMessage
-	MinimumLookback int
-}
-
-type Strategy interface {
-	Descriptor() StrategyDescriptor
-	Evaluate(context.Context, EvaluateRequest) (decimal.Decimal, error)
 }

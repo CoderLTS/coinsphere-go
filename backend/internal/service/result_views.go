@@ -59,7 +59,7 @@ type ResultViewRun struct {
 }
 
 func (a *App) CreateResultView(ctx context.Context, payload ResultViewCreatePayload, principal *Principal) (ResultViewView, error) {
-	if principal == nil || principal.User == nil || !principal.HasRole("R_SUPER") {
+	if principal == nil || principal.User == nil || !principal.HasPermission("result_views.manage") {
 		return ResultViewView{}, ErrPermission
 	}
 	payload.Name = strings.TrimSpace(payload.Name)
@@ -84,6 +84,23 @@ func (a *App) CreateResultView(ctx context.Context, payload ResultViewCreatePayl
 	if err != nil {
 		return ResultViewView{}, err
 	}
+	resources, err := page.Resources(payload.Scope)
+	if err != nil || len(resources) == 0 {
+		return ResultViewView{}, errors.New("result scope must name fixed resources")
+	}
+	for _, ref := range resources {
+		if err := a.AuthorizeWorkflow(ctx, ref.WorkflowID, "workflows.share"); err != nil {
+			return ResultViewView{}, err
+		}
+		if err := a.AuthorizeWorkflow(ctx, ref.WorkflowID, "workflows.read"); err != nil {
+			return ResultViewView{}, err
+		}
+	}
+	for _, action := range actions {
+		if !principal.HasPermission(page.ActionPermissions[action]) {
+			return ResultViewView{}, ErrPermission
+		}
+	}
 	scopeJSON, _ := json.Marshal(scope)
 	filtersJSON, _ := json.Marshal(filters)
 	actionsJSON, _ := json.Marshal(actions)
@@ -94,8 +111,14 @@ func (a *App) CreateResultView(ctx context.Context, payload ResultViewCreatePayl
 		Status: "active", CreatedBy: principal.User.ID, CreatedAt: now,
 	}
 	err = a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := page.ValidateScope(ctx, tx, scopeJSON); err != nil {
+			return err
+		}
 		if err := tx.Create(&view).Error; err != nil {
 			return errors.New("create result view failed")
+		}
+		if err := addPluginReference(tx, view.PluginID, "result_view", fmt.Sprint(view.ID)); err != nil {
+			return err
 		}
 		return replaceResultViewGrants(tx, view.ID, payload.UserIDs, payload.RoleCodes, now)
 	})
@@ -106,17 +129,13 @@ func (a *App) CreateResultView(ctx context.Context, payload ResultViewCreatePayl
 }
 
 func (a *App) ListResultViews(ctx context.Context, principal *Principal) ([]ResultViewView, error) {
-	if principal == nil || principal.User == nil {
+	if principal == nil || principal.User == nil || !principal.HasPermission("result_views.read") {
 		return nil, ErrPermission
 	}
 	query := a.DB.WithContext(ctx).Model(&db.ResultView{}).Order("created_at DESC, id DESC").Limit(200)
-	admin := principal.HasRole("R_SUPER")
-	if !admin {
-		query = query.Where(`status = 'active' AND (EXISTS (
-			SELECT 1 FROM result_view_user_grants g WHERE g.view_id = result_views.id AND g.user_id = ?
-		) OR EXISTS (
-			SELECT 1 FROM result_view_role_grants g WHERE g.view_id = result_views.id AND g.role_id IN ?
-		))`, principal.User.ID, principal.RoleIDs)
+	admin := principal.HasRole("R_SUPER") || principal.HasPermission("result_views.manage")
+	if !principal.HasRole("R_SUPER") {
+		query = query.Where(`(created_by=? AND ?) OR (status='active' AND (EXISTS(SELECT 1 FROM result_view_user_grants g WHERE g.view_id=result_views.id AND g.user_id=?) OR EXISTS(SELECT 1 FROM result_view_role_grants g WHERE g.view_id=result_views.id AND g.role_id IN ?)))`, principal.User.ID, admin, principal.User.ID, principal.RoleIDs)
 	}
 	var views []db.ResultView
 	if err := query.Find(&views).Error; err != nil {
@@ -124,7 +143,7 @@ func (a *App) ListResultViews(ctx context.Context, principal *Principal) ([]Resu
 	}
 	items := make([]ResultViewView, len(views))
 	for index := range views {
-		items[index] = a.resultViewView(ctx, views[index], admin)
+		items[index] = a.resultViewView(ctx, views[index], admin && (principal.HasRole("R_SUPER") || views[index].CreatedBy == principal.User.ID))
 	}
 	return items, nil
 }
@@ -138,7 +157,10 @@ func (a *App) GetResultView(ctx context.Context, viewID int64, principal *Princi
 }
 
 func (a *App) ReplaceResultViewGrants(ctx context.Context, viewID int64, payload ResultViewGrantPayload, principal *Principal) (ResultViewView, error) {
-	if principal == nil || principal.User == nil || !principal.HasRole("R_SUPER") {
+	if principal == nil || principal.User == nil || !principal.HasPermission("result_views.manage") {
+		return ResultViewView{}, ErrPermission
+	}
+	if _, admin, err := a.authorizedResultView(ctx, viewID, principal, false); err != nil || !admin {
 		return ResultViewView{}, ErrPermission
 	}
 	now := time.Now().UTC()
@@ -156,17 +178,32 @@ func (a *App) ReplaceResultViewGrants(ctx context.Context, viewID int64, payload
 }
 
 func (a *App) RevokeResultView(ctx context.Context, viewID int64, principal *Principal) (ResultViewView, error) {
-	if principal == nil || principal.User == nil || !principal.HasRole("R_SUPER") {
+	if principal == nil || !principal.HasPermission("result_views.manage") {
 		return ResultViewView{}, ErrPermission
 	}
-	now := time.Now().UTC()
-	result := a.DB.WithContext(ctx).Model(&db.ResultView{}).Where("id = ? AND status = 'active'", viewID).
-		Updates(map[string]any{"status": "revoked", "revoked_at": now})
-	if result.Error != nil {
-		return ResultViewView{}, errors.New("revoke result view failed")
+	view, admin, err := a.authorizedResultView(ctx, viewID, principal, false)
+	if err != nil || !admin {
+		return ResultViewView{}, ErrPermission
 	}
-	if result.RowsAffected != 1 {
-		return ResultViewView{}, fmt.Errorf("%w: result view", ErrNotFound)
+	err = a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var installation string
+		if err := tx.Raw("SELECT status FROM plugin_installations WHERE plugin_id=? FOR UPDATE", view.PluginID).Scan(&installation).Error; err != nil {
+			return err
+		}
+		result := tx.Model(&db.ResultView{}).Where("id=? AND status='active'", viewID).Updates(map[string]any{"status": "revoked", "revoked_at": time.Now().UTC()})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrConflict
+		}
+		if err := tx.Exec("UPDATE plugin_references SET active=FALSE WHERE plugin_id=? AND reference_type='result_view' AND reference_id=?", view.PluginID, fmt.Sprint(viewID)).Error; err != nil {
+			return err
+		}
+		return auditAuthorization(tx, principal, "result_view.revoke", fmt.Sprint(viewID))
+	})
+	if err != nil {
+		return ResultViewView{}, err
 	}
 	return a.GetResultView(ctx, viewID, principal)
 }
@@ -180,15 +217,26 @@ func (a *App) ResolveResultScope(ctx context.Context, viewID int64, action strin
 	if json.Unmarshal([]byte(view.AllowedActions), &actions) != nil {
 		return sdk.ResultScope{}, errors.New("result view actions are invalid")
 	}
+	page, ok := a.Plugins.ResultPage(view.PluginID, view.PageKey)
+	if !ok {
+		return sdk.ResultScope{}, ErrNotFound
+	}
+	resources, err := page.Resources(json.RawMessage(view.ScopeJSON))
+	if err != nil {
+		return sdk.ResultScope{}, err
+	}
+	if !principal.HasPermission(page.PermissionCode) {
+		return sdk.ResultScope{}, ErrPermission
+	}
 	action = strings.TrimSpace(action)
-	if action != "" && !containsString(actions, action) {
+	if action != "" && (!containsString(actions, action) || !principal.HasPermission(page.ActionPermissions[action])) {
 		return sdk.ResultScope{}, ErrPermission
 	}
 	return sdk.ResultScope{
-		ViewID: fmt.Sprint(view.ID), PluginID: view.PluginID, PageKey: view.PageKey,
+		Resources: resources, ViewID: fmt.Sprint(view.ID), PluginID: view.PluginID, PageKey: view.PageKey,
 		Scope: json.RawMessage(view.ScopeJSON), Filters: json.RawMessage(view.FiltersJSON), AllowedActions: actions,
 		UserID: principal.User.ID, RoleCodes: append([]string(nil), principal.RoleCodes...),
-		HumanTasks: resultHumanTasks{app: a},
+		HumanTasks: resultHumanTasks{app: a, viewID: view.ID, principal: principal},
 	}, nil
 }
 
@@ -201,6 +249,10 @@ func (a *App) ApplyResultScopeRunAction(ctx context.Context, scope sdk.ResultSco
 	if err := a.DB.WithContext(ctx).Select("id", "workflow_id").First(&run, runID).Error; err != nil || run.WorkflowID != workflowID {
 		return WorkflowRunView{}, fmt.Errorf("%w: result run", ErrNotFound)
 	}
+	ctx, err = a.resultWorkflowActionContext(ctx, scope, workflowID, "workflows."+action)
+	if err != nil {
+		return WorkflowRunView{}, err
+	}
 	return a.ApplyWorkflowRunAction(ctx, runID, WorkflowRunActionPayload{Action: action})
 }
 
@@ -209,7 +261,12 @@ func (a *App) ListResultScopeRuns(ctx context.Context, scope sdk.ResultScope) ([
 	if err != nil {
 		return nil, fmt.Errorf("%w: result workflow", ErrNotFound)
 	}
-	runs, err := a.ListRecentWorkflowRuns(ctx, workflowID)
+	var records []db.WorkflowRun
+	err = a.DB.WithContext(ctx).Select("id,status,trigger_type,current_node_instance_id,triggered_at,started_at,completed_at,error_category").Where("workflow_id=?", workflowID).Order("id DESC").Limit(100).Find(&records).Error
+	runs := make([]WorkflowRunView, len(records))
+	for i, r := range records {
+		runs[i] = workflowRunView(r)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -230,6 +287,10 @@ func (a *App) PauseResultScopeWorkflow(ctx context.Context, scope sdk.ResultScop
 	if err != nil {
 		return WorkflowDetail{}, fmt.Errorf("%w: result workflow", ErrNotFound)
 	}
+	ctx, err = a.resultWorkflowActionContext(ctx, scope, workflowID, "workflows.activate")
+	if err != nil {
+		return WorkflowDetail{}, err
+	}
 	return a.ApplyWorkflowLifecycle(ctx, workflowID, WorkflowLifecyclePayload{Action: "deactivate"})
 }
 
@@ -243,26 +304,49 @@ func resultScopeWorkflowID(scope sdk.ResultScope) (int64, error) {
 	return fixed.WorkflowID, nil
 }
 
-type resultHumanTasks struct{ app *App }
+type resultHumanTasks struct {
+	app       *App
+	viewID    int64
+	principal *Principal
+}
 
-func (s resultHumanTasks) Decide(ctx context.Context, taskID int64, action string, userID int64) error {
-	principal, err := s.app.buildPrincipal(userID)
+func (s resultHumanTasks) Decide(ctx context.Context, taskID int64, action string) error {
+	p, err := s.app.RevalidateSession(s.principal, "result_views.read")
 	if err != nil {
 		return ErrPermission
 	}
-	_, err = s.app.DecideWorkflowHumanTask(ctx, taskID, WorkflowHumanTaskDecision{Action: action}, principal)
+	ctx = WithPrincipal(ctx, p)
+	scope, err := s.app.ResolveResultScope(ctx, s.viewID, action, p)
+	if err != nil {
+		return err
+	}
+	var task db.WorkflowHumanTask
+	if err := s.app.DB.WithContext(ctx).First(&task, taskID).Error; err != nil {
+		return ErrNotFound
+	}
+	matched := false
+	for _, resource := range scope.Resources {
+		if resource.WorkflowID == task.WorkflowID && (resource.NodeInstanceID == "" || resource.NodeInstanceID == task.NodeInstanceID) {
+			matched = true
+		}
+	}
+	if !matched {
+		return ErrNotFound
+	}
+	ctx = context.WithValue(ctx, resultGrantKey{}, resultExecutionGrant{workflowID: task.WorkflowID, permissions: map[string]bool{"human_tasks.decide": true}})
+	_, err = s.app.DecideWorkflowHumanTask(ctx, taskID, WorkflowHumanTaskDecision{Action: action}, p)
 	return err
 }
 
 func (a *App) authorizedResultView(ctx context.Context, viewID int64, principal *Principal, activeOnly bool) (db.ResultView, bool, error) {
-	if principal == nil || principal.User == nil || viewID <= 0 {
+	if principal == nil || principal.User == nil || !principal.HasPermission("result_views.read") || viewID <= 0 {
 		return db.ResultView{}, false, fmt.Errorf("%w: result view", ErrNotFound)
 	}
 	var view db.ResultView
 	if err := a.DB.WithContext(ctx).First(&view, viewID).Error; err != nil {
 		return db.ResultView{}, false, fmt.Errorf("%w: result view", ErrNotFound)
 	}
-	admin := principal.HasRole("R_SUPER")
+	admin := principal.HasRole("R_SUPER") || principal.HasPermission("result_views.manage") && view.CreatedBy == principal.User.ID
 	if activeOnly && view.Status != "active" {
 		return db.ResultView{}, false, fmt.Errorf("%w: result view", ErrNotFound)
 	}
@@ -390,4 +474,19 @@ func uniquePositiveInt64s(values []int64) []int64 {
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i] < result[j] })
 	return result
+}
+
+type resultGrantKey struct{}
+type resultExecutionGrant struct {
+	workflowID  int64
+	permissions map[string]bool
+}
+
+func (a *App) resultWorkflowActionContext(ctx context.Context, scope sdk.ResultScope, id int64, permission string) (context.Context, error) {
+	for _, ref := range scope.Resources {
+		if ref.WorkflowID == id && ref.NodeInstanceID == "" {
+			return context.WithValue(ctx, resultGrantKey{}, resultExecutionGrant{workflowID: id, permissions: map[string]bool{permission: true, "workflows.read": true}}), nil
+		}
+	}
+	return ctx, ErrPermission
 }

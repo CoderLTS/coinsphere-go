@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"coinsphere/backend/plugin/contracts/trading"
 	"coinsphere/backend/plugin/sdk"
 	"github.com/shopspring/decimal"
 )
@@ -18,7 +19,7 @@ type marketDataProvider struct{ runtime *binanceRuntime }
 
 func (marketDataProvider) ID() string { return "binance" }
 
-func (p marketDataProvider) Instruments(ctx context.Context, query sdk.InstrumentQuery) ([]sdk.Instrument, error) {
+func (p marketDataProvider) Instruments(ctx context.Context, query trading.InstrumentQuery) ([]trading.Instrument, error) {
 	db := p.runtime.db.WithContext(ctx).Order("market, symbol")
 	if len(query.Markets) > 0 {
 		db = db.Where("market IN ?", query.Markets)
@@ -34,15 +35,15 @@ func (p marketDataProvider) Instruments(ctx context.Context, query sdk.Instrumen
 	if err := db.Limit(limit).Find(&rows).Error; err != nil {
 		return nil, errors.New("list Binance instruments failed")
 	}
-	result := make([]sdk.Instrument, len(rows))
+	result := make([]trading.Instrument, len(rows))
 	for i, row := range rows {
-		result[i] = sdk.Instrument{Market: row.Market, Symbol: row.Symbol, BaseAsset: row.BaseAsset, QuoteAsset: row.QuoteAsset,
+		result[i] = trading.Instrument{Market: row.Market, Symbol: row.Symbol, BaseAsset: row.BaseAsset, QuoteAsset: row.QuoteAsset,
 			Status: row.Status, PriceTick: row.PriceTick, QuantityStep: row.QuantityStep, MinQuantity: row.MinQuantity, UpdatedAt: row.UpdatedAt.UTC()}
 	}
 	return result, nil
 }
 
-func (p marketDataProvider) Candles(ctx context.Context, query sdk.CandleQuery) ([]sdk.Candle, error) {
+func (p marketDataProvider) Candles(ctx context.Context, query trading.CandleQuery) ([]trading.Candle, error) {
 	config, err := parseBinanceSeriesConfig(mustMarshal(binanceSeriesConfig{Market: query.Market, Instrument: query.Instrument, Interval: query.Interval, ProxyID: query.ProxyID}))
 	if err != nil {
 		return nil, err
@@ -63,17 +64,17 @@ func (p marketDataProvider) Candles(ctx context.Context, query sdk.CandleQuery) 
 		return nil, errors.New("load Binance candles failed")
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].OpenTime.Before(rows[j].OpenTime) })
-	result := make([]sdk.Candle, len(rows))
+	result := make([]trading.Candle, len(rows))
 	for i, row := range rows {
 		result[i] = binanceSDKCandle(row)
 	}
 	return result, nil
 }
 
-func (p marketDataProvider) Quote(ctx context.Context, query sdk.QuoteQuery) (sdk.Quote, error) {
+func (p marketDataProvider) Quote(ctx context.Context, query trading.QuoteQuery) (trading.Quote, error) {
 	config, err := parseBinanceSeriesConfig(mustMarshal(binanceSeriesConfig{Market: query.Market, Instrument: query.Instrument, ProxyID: query.ProxyID}))
 	if err != nil {
-		return sdk.Quote{}, err
+		return trading.Quote{}, err
 	}
 	base, path := "https://data-api.binance.vision", "/api/v3/ticker/price"
 	if config.Market == "usdm" {
@@ -85,10 +86,10 @@ func (p marketDataProvider) Quote(ctx context.Context, query sdk.QuoteQuery) (sd
 		Time   int64           `json:"time"`
 	}
 	if err := p.runtime.getBinanceJSON(ctx, base+path+"?"+url.Values{"symbol": {config.Instrument}}.Encode(), config.ProxyID, &payload); err != nil {
-		return sdk.Quote{}, err
+		return trading.Quote{}, err
 	}
 	if strings.ToUpper(payload.Symbol) != config.Instrument {
-		return sdk.Quote{}, errors.New("Binance quote instrument mismatch")
+		return trading.Quote{}, errors.New("Binance quote instrument mismatch")
 	}
 	var text string
 	if json.Unmarshal(payload.Price, &text) != nil {
@@ -96,13 +97,13 @@ func (p marketDataProvider) Quote(ctx context.Context, query sdk.QuoteQuery) (sd
 	}
 	price, err := decimal.NewFromString(text)
 	if err != nil || price.Sign() <= 0 {
-		return sdk.Quote{}, fmt.Errorf("Binance quote price is invalid")
+		return trading.Quote{}, fmt.Errorf("Binance quote price is invalid")
 	}
 	quotedAt := time.Now().UTC()
 	if payload.Time > 0 {
 		quotedAt = time.UnixMilli(payload.Time).UTC()
 	}
-	return sdk.Quote{Price: price, QuotedAt: quotedAt}, nil
+	return trading.Quote{Price: price, QuotedAt: quotedAt}, nil
 }
 
-var _ sdk.MarketDataProvider = marketDataProvider{}
+var _ trading.MarketDataProvider = marketDataProvider{}
