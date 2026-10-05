@@ -467,6 +467,9 @@ func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payloa
 		if err := a.syncRevisionPluginReferences(tx, revision, graph); err != nil {
 			return err
 		}
+		if err := syncCurrentRevisionReferences(tx, workflowID); err != nil {
+			return err
+		}
 		if err := a.pruneWorkflowRevisions(tx, workflowID, revision.ID); err != nil {
 			return err
 		}

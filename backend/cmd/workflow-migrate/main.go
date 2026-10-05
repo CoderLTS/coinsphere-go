@@ -120,13 +120,9 @@ func run(parent context.Context) error {
 	}
 	registry := sdk.NewRegistry()
 	app := service.NewApp(gdb, cfg, registry)
-	enabled := map[string]bool{}
-	var installations []struct{ PluginID, Status string }
-	if err := gdb.Table("plugin_installations").Find(&installations).Error; err != nil {
-		return errors.New("cannot read target installations")
-	}
-	for _, installation := range installations {
-		enabled[installation.PluginID] = installation.Status == "installed"
+	enabled, err := app.EnabledCompiledPlugins(ctx)
+	if err != nil {
+		return errors.New("cannot read target installation versions")
 	}
 	host := sdk.Host{Inbox: app, Stores: sdk.GormPluginStores{Database: gdb}, Network: official.NetworkClientFactory{}, OutboundProxy: app, Realtime: app, Events: app, AllowedHTTPHosts: cfg.Workflow.HTTPAllowedHosts}
 	if err := official.RegisterAll(registry, host, enabled); err != nil {

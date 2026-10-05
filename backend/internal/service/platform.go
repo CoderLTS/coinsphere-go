@@ -277,7 +277,7 @@ func (a *App) syncRunPluginReferences(tx *gorm.DB, run db.WorkflowRun, g validat
 	}
 	sort.Strings(sorted)
 	for _, id := range sorted {
-		if err := addPluginReference(tx, id, "run", fmt.Sprint(run.ID)); err != nil {
+		if err := a.addPluginReference(tx, id, "run", fmt.Sprint(run.ID)); err != nil {
 			return err
 		}
 	}

@@ -106,13 +106,9 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 		OutboundProxy: app, Realtime: app, Events: app,
 		AllowedHTTPHosts: cfg.Workflow.HTTPAllowedHosts,
 	}
-	var enabledOfficialIDs []string
-	if err := gdb.WithContext(ctx).Table("plugin_installations").Where("status = ?", "installed").Order("plugin_id").Pluck("plugin_id", &enabledOfficialIDs).Error; err != nil {
-		return fmt.Errorf("load enabled official plugins: %w", err)
-	}
-	enabledOfficial := make(map[string]bool, len(enabledOfficialIDs))
-	for _, pluginID := range enabledOfficialIDs {
-		enabledOfficial[pluginID] = true
+	enabledOfficial, err := app.EnabledCompiledPlugins(ctx)
+	if err != nil {
+		return fmt.Errorf("load plugin installation versions: %w", err)
 	}
 	for _, bundle := range officialmigrations.Bundles() {
 		if enabledOfficial[bundle.ID] {

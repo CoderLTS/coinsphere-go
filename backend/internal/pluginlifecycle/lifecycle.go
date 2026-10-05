@@ -157,11 +157,30 @@ func (i Installer) Install(ctx context.Context, source string, upgrade bool) (re
 		if !newVersion.GreaterThan(oldVersion) {
 			return manifest.Package{}, fmt.Errorf("upgrade %q must increase version from %s", candidate.Manifest.ID, previous.Manifest.Version)
 		}
-		if newVersion.Major() != oldVersion.Major() {
-			return manifest.Package{}, fmt.Errorf("major upgrade %q from %s to %s requires a future force-upgrade workflow", candidate.Manifest.ID, previous.Manifest.Version, candidate.Manifest.Version)
-		}
 		if err := validateMigrationUpgrade(previous.MigrationsPath, candidate.MigrationsPath); err != nil {
 			return manifest.Package{}, err
+		}
+	}
+	var maintenance *sql.Tx
+	if previous != nil && i.options.DB != nil {
+		maintenance, err = i.options.DB.BeginTx(ctx, nil)
+		if err != nil {
+			return manifest.Package{}, err
+		}
+		defer maintenance.Rollback()
+		var currentVersion, status string
+		if err := maintenance.QueryRowContext(ctx, "SELECT version,status FROM plugin_installations WHERE plugin_id=$1 FOR UPDATE", candidate.Manifest.ID).Scan(&currentVersion, &status); err != nil {
+			return manifest.Package{}, err
+		}
+		if status != "installed" || currentVersion != previous.Manifest.Version {
+			return manifest.Package{}, errors.New("plugin installation changed before upgrade")
+		}
+		refs, err := pluginReferences(ctx, maintenance, candidate.Manifest.ID, true)
+		if err != nil {
+			return manifest.Package{}, err
+		}
+		if len(refs) > 0 {
+			return manifest.Package{}, errors.New("plugin upgrade requires migrating or removing all current definition, run and result references")
 		}
 	}
 	expected := make([]manifest.Package, 0, len(installed)+1)
@@ -246,8 +265,17 @@ func (i Installer) Install(ctx context.Context, source string, upgrade bool) (re
 		}
 	}
 	if i.options.DB != nil {
-		if err := recordInstallation(ctx, i.options.DB, stagedPkg); err != nil {
+		writer := installationWriter(i.options.DB)
+		if maintenance != nil {
+			writer = maintenance
+		}
+		if err := recordInstallation(ctx, writer, stagedPkg); err != nil {
 			return manifest.Package{}, err
+		}
+		if maintenance != nil {
+			if err := maintenance.Commit(); err != nil {
+				return manifest.Package{}, err
+			}
 		}
 	}
 	_ = os.RemoveAll(oldBackend)
@@ -393,7 +421,7 @@ func (i Installer) PurgeData(ctx context.Context, pluginID, confirmation string)
 	if status, err := i.builtinStatus(ctx, pluginID); err != nil {
 		return err
 	} else if status != "" {
-		return errors.New("built-in plugin data is owned by core migrations and cannot be purged")
+		return errors.New("built-in plugin data belongs to its plugin baseline; automatic purge is unavailable")
 	}
 	if _, err := os.Stat(filepath.Join(i.options.Layout.backendInstalledRoot(), installedDir(pluginID))); err == nil {
 		return errors.New("uninstall the plugin before purge-data")
@@ -776,7 +804,11 @@ func installedDir(pluginID string) string {
 	return strings.NewReplacer(".", "_", "-", "_").Replace(pluginID)
 }
 
-func recordInstallation(ctx context.Context, db *sql.DB, pkg manifest.Package) error {
+type installationWriter interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func recordInstallation(ctx context.Context, db installationWriter, pkg manifest.Package) error {
 	schema, err := migration.PluginSchemaName(pkg.Manifest.ID)
 	if err != nil {
 		return err

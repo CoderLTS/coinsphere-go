@@ -81,3 +81,9 @@ jobs:
         run: pnpm lint
       - name: Type check and build
         run: pnpm build
+      - name: Workflow model behavior
+        run: pnpm test:model
+      - name: Browser dependencies
+        run: pnpm exec playwright install --with-deps chromium firefox webkit
+      - name: Critical user journeys
+        run: pnpm test:e2e

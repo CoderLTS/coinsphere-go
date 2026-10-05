@@ -29,7 +29,7 @@
     </div>
 
     <div v-if="selectedPlugin" class="plugin-workspace">
-      <nav class="plugin-list" aria-label="已加载插件">
+      <nav class="plugin-list" aria-label="插件目录">
         <button
           v-for="plugin in filteredPlugins"
           :key="plugin.id"
@@ -54,7 +54,12 @@
           <div class="plugin-detail__title">
             <h2>{{ pluginLabel(selectedPlugin) }}</h2>
             <span class="plugin-version">第 {{ selectedPlugin.version }} 版</span>
-            <ElTag type="success" effect="plain" size="small">运行中</ElTag>
+            <ElTag
+              :type="selectedPlugin.loaded ? 'success' : 'warning'"
+              effect="plain"
+              size="small"
+              >{{ selectedPlugin.loaded ? '已加载' : '不可用' }}</ElTag
+            >
           </div>
           <div class="plugin-capabilities" aria-label="扩展能力">
             <span v-for="item in selectedPlugin.contributes" :key="item">
@@ -63,6 +68,17 @@
             </span>
           </div>
         </header>
+        <p class="plugin-installation-facts"
+          >{{ selectedPlugin.installed ? '已安装' : '未安装或已停用' }} ·
+          {{ selectedPlugin.compiled ? `已编译 v${selectedPlugin.compiledVersion}` : '未编译' }} ·
+          {{ selectedPlugin.loaded ? '已加载' : '未加载' }}</p
+        >
+        <ElAlert
+          v-if="selectedPlugin.reason"
+          :title="unavailableReasons[selectedPlugin.reason] || '插件尚未就绪'"
+          type="warning"
+          :closable="false"
+        />
 
         <ElTabs v-model="detailTab" class="plugin-detail__tabs">
           <ElTabPane name="nodes">
@@ -211,6 +227,12 @@
   defineOptions({ name: 'Plugins' })
 
   type InstalledPlugin = Api.System.InstalledPlugin
+  const unavailableReasons: Record<string, string> = {
+    not_installed: '插件未安装或已停用，请由管理员维护安装状态。',
+    not_compiled: '当前应用未包含此插件，请使用包含该插件的版本。',
+    not_loaded: '当前应用未加载此插件，请检查依赖与安装版本。',
+    version_mismatch: '安装版本与当前应用不一致，请切换匹配版本。'
+  }
   type PluginNode = InstalledPlugin['nodes'][number]
   type ConfigSchema = Record<string, any>
 

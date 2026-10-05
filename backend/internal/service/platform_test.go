@@ -141,7 +141,7 @@ func createTestWorkflow(t *testing.T, a *App, ctx context.Context, p *Principal,
 }
 func queueTestRun(t *testing.T, a *App, ctx context.Context, p *Principal, w WorkflowDetail) WorkflowRunView {
 	t.Helper()
-	r, err := a.CreateWorkflowRun(ctx, w.ID, WorkflowRunCreatePayload{RevisionID: *w.DraftRevisionID}, p)
+	r, err := a.CreateWorkflowRun(ctx, w.ID, WorkflowRunCreatePayload{RevisionID: w.DraftRevisionID}, p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,27 +168,27 @@ func TestDraftPublicationAndAtomicConflicts(t *testing.T) {
 	a, ctx, p := platformFixture(t, nil)
 	g := testGraph("")
 	w := createTestWorkflow(t, a, ctx, p, g)
-	first := *w.DraftRevisionID
+	first := w.DraftRevisionID
 	if _, err := a.PublishWorkflowRevision(ctx, w.ID, WorkflowPublishPayload{RevisionID: first}, p); err != nil {
 		t.Fatal(err)
 	}
 	queueTestRun(t, a, ctx, p, w)
 	for i := 0; i < 12; i++ {
-		r, err := a.SaveWorkflowRevision(ctx, w.ID, WorkflowRevisionSavePayload{ExpectedDraftRevisionID: *w.DraftRevisionID, Graph: mustJSON(g)}, p)
+		r, err := a.SaveWorkflowRevision(ctx, w.ID, WorkflowRevisionSavePayload{ExpectedDraftRevisionID: w.DraftRevisionID, Graph: mustJSON(g)}, p)
 		if err != nil {
 			t.Fatal(err)
 		}
-		w.DraftRevisionID = &r.ID
+		w.DraftRevisionID = r.ID
 	}
 	latest, err := a.GetWorkflow(ctx, w.ID)
-	if err != nil || *latest.PublishedRevisionID != first {
+	if err != nil || latest.PublishedRevisionID != first {
 		t.Fatal("saving changed publication", err)
 	}
 	if countTestRows(t, a, "workflow_revisions", "id=?", first) != 1 {
 		t.Fatal("referenced oldest revision was pruned")
 	}
 	before := countTestRows(t, a, "workflow_revisions", "workflow_id=?", w.ID)
-	_, err = a.SaveWorkflowRevision(ctx, w.ID, WorkflowRevisionSavePayload{ExpectedDraftRevisionID: *w.DraftRevisionID, Graph: mustJSON(g), Metadata: &WorkflowUpdatePayload{Name: ""}}, p)
+	_, err = a.SaveWorkflowRevision(ctx, w.ID, WorkflowRevisionSavePayload{ExpectedDraftRevisionID: w.DraftRevisionID, Graph: mustJSON(g), Metadata: &WorkflowUpdatePayload{Name: ""}}, p)
 	if err == nil || countTestRows(t, a, "workflow_revisions", "workflow_id=?", w.ID) != before {
 		t.Fatal("invalid atomic metadata left a revision")
 	}
@@ -197,7 +197,7 @@ func TestDraftPublicationAndAtomicConflicts(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		go func() {
 			<-start
-			_, err := a.SaveWorkflowRevision(ctx, w.ID, WorkflowRevisionSavePayload{ExpectedDraftRevisionID: *w.DraftRevisionID, Graph: mustJSON(g)}, p)
+			_, err := a.SaveWorkflowRevision(ctx, w.ID, WorkflowRevisionSavePayload{ExpectedDraftRevisionID: w.DraftRevisionID, Graph: mustJSON(g)}, p)
 			outcomes <- err
 		}()
 	}
@@ -311,11 +311,11 @@ func TestStateIsSerialAcrossPartitionsAndIsolatedByRevision(t *testing.T) {
 			t.Fatal("state was not carried", old.StateJSON)
 		}
 	}
-	r, err := a.SaveWorkflowRevision(ctx, w.ID, WorkflowRevisionSavePayload{ExpectedDraftRevisionID: *w.DraftRevisionID, Graph: mustJSON(g)}, p)
+	r, err := a.SaveWorkflowRevision(ctx, w.ID, WorkflowRevisionSavePayload{ExpectedDraftRevisionID: w.DraftRevisionID, Graph: mustJSON(g)}, p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.DraftRevisionID = &r.ID
+	w.DraftRevisionID = r.ID
 	queueTestRun(t, a, ctx, p, w)
 	a.executeWorkflowRun(ctx, claimTestRun(t, a))
 	var state db.WorkflowNodeState

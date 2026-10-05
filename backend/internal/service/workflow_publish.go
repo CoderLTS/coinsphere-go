@@ -79,6 +79,9 @@ func (a *App) PublishWorkflowRevision(ctx context.Context, workflowID int64, pay
 		if err := tx.Model(&workflow).Updates(map[string]any{"published_revision_id": revision.ID, "main_trigger_node_id": g.mainTriggerID, "mode": a.workflowModeForTrigger(g.nodes[g.mainTriggerID].NodeType), "updated_at": now}).Error; err != nil {
 			return err
 		}
+		if err := syncCurrentRevisionReferences(tx, workflowID); err != nil {
+			return err
+		}
 		updates := map[string]any{"next_scheduled_at": nil, "trigger_lease_token": nil, "trigger_lease_expires_at": nil, "updated_at": now}
 		if graphHasPersistentState(g) {
 			updates["max_concurrent_runs"] = 1
@@ -111,19 +114,30 @@ func (a *App) syncRevisionPluginReferences(tx *gorm.DB, revision db.WorkflowRevi
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
-		if err := addPluginReference(tx, id, "revision", fmt.Sprint(revision.ID)); err != nil {
+		if err := a.addPluginReference(tx, id, "revision", fmt.Sprint(revision.ID)); err != nil {
 			return err
 		}
 	}
 	return nil
 }
-func addPluginReference(tx *gorm.DB, pluginID, kind, id string) error {
-	var status string
-	if err := tx.Raw("SELECT status FROM plugin_installations WHERE plugin_id=? FOR UPDATE", pluginID).Scan(&status).Error; err != nil {
+func (a *App) addPluginReference(tx *gorm.DB, pluginID, kind, id string) error {
+	var installation struct{ Status, Version string }
+	if err := tx.Raw("SELECT status,version FROM plugin_installations WHERE plugin_id=? FOR UPDATE", pluginID).Scan(&installation).Error; err != nil {
 		return err
 	}
-	if status != "installed" {
+	expected := ""
+	for _, plugin := range a.Plugins.Plugins() {
+		if plugin.ID == pluginID {
+			expected = plugin.Version
+			break
+		}
+	}
+	if installation.Status != "installed" || expected == "" || installation.Version != expected {
 		return fmt.Errorf("%w: plugin %s is unavailable", ErrConflict, pluginID)
 	}
 	return tx.Exec(`INSERT INTO plugin_references(plugin_id,reference_type,reference_id,active) VALUES (?,?,?,TRUE) ON CONFLICT(plugin_id,reference_type,reference_id) DO UPDATE SET active=TRUE`, pluginID, kind, id).Error
+}
+
+func syncCurrentRevisionReferences(tx *gorm.DB, workflowID int64) error {
+	return tx.Exec(`UPDATE plugin_references ref SET active=EXISTS(SELECT 1 FROM workflows w WHERE w.id=? AND (w.draft_revision_id::text=ref.reference_id OR w.published_revision_id::text=ref.reference_id)) WHERE ref.reference_type='revision' AND ref.reference_id IN (SELECT id::text FROM workflow_revisions WHERE workflow_id=?)`, workflowID, workflowID).Error
 }

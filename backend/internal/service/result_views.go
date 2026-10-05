@@ -126,7 +126,7 @@ func (a *App) CreateResultView(ctx context.Context, payload ResultViewCreatePayl
 		if err := tx.Create(&view).Error; err != nil {
 			return errors.New("create result view failed")
 		}
-		if err := addPluginReference(tx, view.PluginID, "result_view", fmt.Sprint(view.ID)); err != nil {
+		if err := a.addPluginReference(tx, view.PluginID, "result_view", fmt.Sprint(view.ID)); err != nil {
 			return err
 		}
 		if err := replaceResultViewGrants(tx, view.ID, payload.UserIDs, payload.RoleCodes, now); err != nil {
@@ -618,7 +618,7 @@ func (a *App) SetResultViewStatus(ctx context.Context, id int64, status string) 
 		if err := a.validateResultViewAuthority(tx, p, view); err != nil {
 			return err
 		}
-		if err := addPluginReference(tx, view.PluginID, "result_view", fmt.Sprint(id)); err != nil {
+		if err := a.addPluginReference(tx, view.PluginID, "result_view", fmt.Sprint(id)); err != nil {
 			return err
 		}
 		if err := tx.Model(&view).Update("status", status).Error; err != nil {

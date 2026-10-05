@@ -244,7 +244,12 @@ declare namespace Api {
       name: string
       version: string
       contributes: string[]
-      status: 'loaded'
+      status: 'loaded' | 'unavailable'
+      installed: boolean
+      compiled: boolean
+      compiledVersion: string
+      loaded: boolean
+      reason: string
       nodes: Array<{
         type: string
         title: string
