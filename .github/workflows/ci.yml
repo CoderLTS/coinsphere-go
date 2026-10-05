@@ -30,7 +30,6 @@ jobs:
 
     env:
       COINSPHERE_TEST_DSN: postgres://coinsphere_test:ci-only-synthetic@localhost:5432/coinsphere_test?sslmode=disable
-      COINSPHERE_TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
     defaults:
       run:
         working-directory: backend
@@ -52,6 +51,8 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Behavior and race checks
+        env:
+          COINSPHERE_TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
         run: go test -race ./...
       - name: Build
         run: go build ./...
