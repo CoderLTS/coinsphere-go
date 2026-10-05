@@ -24,6 +24,7 @@ var embeddedSQL embed.FS
 type Runner struct {
 	provider *goose.Provider
 	db       *sql.DB
+	table    string
 }
 
 // Result describes one migration applied by an up or down operation.
@@ -73,7 +74,7 @@ func newWithFS(db *sql.DB, migrations fs.FS) (*Runner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create migration provider: %w", err)
 	}
-	return &Runner{provider: provider, db: db}, nil
+	return &Runner{provider: provider, db: db, table: versionTable}, nil
 }
 
 // Up applies all pending migrations, or stops at target when target is greater than zero.
@@ -167,20 +168,25 @@ func (r *Runner) ValidateCurrent(ctx context.Context) error {
 	if err := ValidateGeneration(ctx, r.db); err != nil {
 		return err
 	}
-	var version int64
-	var applied bool
-	query := fmt.Sprintf("SELECT version_id, is_applied FROM %s ORDER BY id DESC LIMIT 1", versionTable)
-	if err := r.db.QueryRowContext(ctx, query).Scan(&version, &applied); err != nil {
-		return fmt.Errorf("read application migration version: %w", err)
-	}
 	sources := r.provider.ListSources()
 	if len(sources) == 0 {
 		return errors.New("migration bundle is empty")
 	}
 	latest := sources[len(sources)-1].Version
+	return validateLatestVersion(ctx, r.db, r.table, latest)
+}
+
+func validateLatestVersion(ctx context.Context, database *sql.DB, table string, latest int64) error {
+	var version int64
+	var applied bool
+	query := fmt.Sprintf("SELECT version_id, is_applied FROM %s ORDER BY id DESC LIMIT 1", table)
+	if err := database.QueryRowContext(ctx, query).Scan(&version, &applied); err != nil {
+		return fmt.Errorf("read migration version for %s: %w", table, err)
+	}
 	if !applied || version != latest {
 		return fmt.Errorf(
-			"database migration is not current: latest record version=%d applied=%t, binary latest=%d; run coinsphere-migrate -direction up",
+			"database migration %s is not current: latest record version=%d applied=%t, binary latest=%d; apply the matching migrations before startup",
+			table,
 			version,
 			applied,
 			latest,

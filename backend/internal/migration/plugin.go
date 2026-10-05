@@ -105,7 +105,22 @@ func newWithFSAndTable(db *sql.DB, migrations fs.FS, table string, extra ...goos
 	if err != nil {
 		return nil, fmt.Errorf("create plugin migration provider: %w", err)
 	}
-	return &Runner{provider: provider, db: db}, nil
+	return &Runner{provider: provider, db: db, table: table}, nil
+}
+
+// ValidatePluginCurrent 使用生成目录中的版本，只读校验外部插件自己的账本。
+func ValidatePluginCurrent(ctx context.Context, database *sql.DB, pluginID string, latest int64) error {
+	schema, err := PluginSchemaName(pluginID)
+	if err != nil {
+		return err
+	}
+	if latest <= 0 {
+		return errors.New("compiled plugin migration version is missing")
+	}
+	if err := ValidateGeneration(ctx, database); err != nil {
+		return err
+	}
+	return validateLatestVersion(ctx, database, quoteIdentifier(schema)+".schema_migrations_g4", latest)
 }
 
 type pluginMigrationSession struct{ schema string }
@@ -121,8 +136,8 @@ func (s pluginMigrationSession) SessionLock(ctx context.Context, conn *sql.Conn)
 	}
 	return nil
 }
-func (s pluginMigrationSession) SessionUnlock(ctx context.Context, conn *sql.Conn) error {
-	cleanup, cancel := context.WithTimeout(ctx, 5*time.Second)
+func (s pluginMigrationSession) SessionUnlock(_ context.Context, conn *sql.Conn) error {
+	cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, resetErr := conn.ExecContext(cleanup, "RESET search_path")
 	_, unlockErr := conn.ExecContext(cleanup, "SELECT pg_advisory_unlock(hashtextextended($1,0))", "coinsphere.migration."+s.schema)

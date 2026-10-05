@@ -1,21 +1,21 @@
 # CoinSphere
 
-CoinSphere 是以可视化工作流为核心、由编译期可信插件提供业务能力的个人自托管量化平台。当前系统采用 Vue 3、单实例 Go 模块化单体和 PostgreSQL 16；超级管理员可以运行批次、事件与连续流工作流，普通用户通过固定范围的共享结果完成观察与授权操作。
+CoinSphere 是以工作流为核心、以编译期可信插件扩展业务的通用自托管系统。采用 Vue 3、Go 模块化单体和 PostgreSQL 16；Core 4 / SDK 4 / Graph 3 统一定义、执行、权限和页面，用户按独立能力与资源范围创建、发布、运行、审批和共享结果。
 
 ## 当前能力
 
-| 能力                                 | 当前入口        | 状态                                              |
-| ------------------------------------ | --------------- | ------------------------------------------------- |
-| 登录、用户、角色、菜单               | Web             | 可用，不开放公开注册                              |
-| 系统监控                             | Web + `/api/v1` | 可用，展示 Go、HTTP、PostgreSQL 和 migration 状态 |
-| 本地插件校验、安装、升级和卸载       | CLI             | 可用，编译期静态注册                              |
-| 工作流、修订、事件、批次和活动 API   | `/api/v1`       | 超级管理员可用；Webhook 使用独立 Secret           |
-| Schema 工作台、人工任务和历史制品    | Web             | 可用；移动端提供只读活动视图                      |
-| Connector、AI 与连续流               | 工作流节点      | 默认外部域名白名单为空，不含交易私有接口          |
-| Quant 指标、策略、信号与通用回测     | 工作流 + 结果页 | 通过 `venue` 使用任意行情 Provider                |
-| Binance 行情、Paper 与真实交易       | 工作流 + 插件页 | Spot/USD-M；真实交易完整实现但默认关闭            |
-| Notification 与共享结果              | 工作流 + 结果页 | 站内幂等投递、固定范围授权与移动端审批            |
-| 旧工作流、新闻、策略、交易和通知接口 | -               | 已从公开运行面移除                                |
+| 能力 | 当前入口 | 状态 |
+| --- | --- | --- |
+| 登录、用户、角色、菜单 | Web | 可用，不开放公开注册 |
+| 系统监控 | Web + `/api/v1` | 可用，展示 Go、HTTP、PostgreSQL 和 migration 状态 |
+| 本地插件校验、安装、升级和卸载 | CLI | 可用，编译期静态注册 |
+| 工作流、草稿/发布、事件、批次和运行 API | `/api/v1` | 能力加 owner/grants 授权；Webhook 使用独立 Secret |
+| Schema 编辑器、工作台、待办和制品 | Web | 原生模型、固定运行与授权操作 |
+| Connector、AI 与连续流 | 工作流节点 | 默认外部域名白名单为空，不含交易私有接口 |
+| Quant 指标、策略、信号与通用回测 | 工作流 + 结果页 | 通过 `venue` 使用任意行情 Provider |
+| Binance 行情、Paper 与真实交易 | 工作流 + 插件页 | Spot/USD-M；真实交易完整实现但默认关闭 |
+| Notification 与共享结果 | 工作流 + 结果页 | 站内幂等投递、固定范围授权与移动端审批 |
+| 一次性工作流迁移 | workflow-migrate | inspect/plan/apply/verify，导入独立目标并保持 inactive |
 
 详细操作见[使用手册](docs/user-guide.md)，接口语义见[公共契约](docs/contracts/README.md)。
 
@@ -74,15 +74,7 @@ scripts/             验证、发布和部署脚本
 
 ## 开发
 
-本地工具链为 Go 1.26.6、Node.js 24、pnpm 10.33 和 PostgreSQL 16。全量验证：
-
-```powershell
-.\scripts\verify.ps1
-```
-
-```bash
-./scripts/verify.sh
-```
+工具链为 Go 1.26.6、Node.js 24、pnpm 10.33 和 PostgreSQL 16。默认验证交远端 CI：Go 行为/竞争、隔离 PostgreSQL、前端模型及三浏览器关键路径。仅当前任务明确要求时运行本地验证。
 
 按模块启动与诊断见[本地开发手册](docs/runbooks/development.md)，数据库变更见[迁移手册](docs/runbooks/database-migrations.md)。
 

@@ -4,5 +4,6 @@ package pluginregistry
 import "coinsphere/backend/plugin/sdk"
 
 var CompiledPlugins = []sdk.PluginDescriptor{}
+var CompiledMigrationVersions = map[string]int64{}
 
 func RegisterAll(*sdk.Registry, sdk.Host, map[string]bool) error { return nil }

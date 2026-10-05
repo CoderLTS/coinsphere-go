@@ -1,20 +1,25 @@
 # CoinSphere 质量门禁
 
-CI 只保留提交所需的基础语法与编译检查，避免为同一交付重复维护多套门禁。更完整的本地验证仍可按 `scripts/verify.sh` 或 `scripts/verify.ps1` 执行；领域验收和晋级证据放在对应测试与 GitHub Issue，不在本文件复制。
+默认不执行本地测试、构建、应用、数据库演练或浏览器验证；当前任务明确要求本地验证时才执行。日常实现使用静态阅读与格式化，验收结果交远端 CI。动态证据保存在 GitHub PR，未执行的现场步骤不能标为通过。
 
 ## Pull Request
 
-- Ready PR 的 base 必须是 `main`；依赖未合并代码的 stacked PR 保持 Draft。
-- `.github/workflows/ci.yml` 在 PR 或手工触发时并行运行两个基础检查：Backend 执行 `go mod tidy -diff`、`gofmt`、`go vet` 和构建；Frontend 执行锁定依赖安装、ESLint、类型检查和构建。
-- 当前 GitHub CI 不运行 Secret、漏洞、浏览器或容器扫描；涉及金融、凭据、迁移、并发、恢复或外部协议的变更，仍须按对应 Runbook 额外验证并在 PR 记录命令和结果。
-- 纯文档/治理变更只做相对链接、YAML 解析、`git diff --check` 和只读引用复审；这些检查目前由本地或审查执行，不宣称由 CI 自动完成。
+Ready PR 以 main 为 base，全部授权范围完成且 CI 通过后由主 Agent 最终只读复审。一个 PR 可以包含该纵向能力必需的模型、schema、迁移工具、页面、契约和恢复流程；不为内部步骤拆分产品交付。
 
-## `main` 与容器
+| 门禁 | 实际覆盖 |
+| --- | --- |
+| Go backend | go mod tidy -diff、gofmt、go vet、go test -race ./...、go build ./...；使用隔离 PostgreSQL 16，合成账号/行情和网络替身 |
+| 运行行为 | 草稿发布/冲突、租约过期与续租取消、有界 Run、Loop 父子容量和绝对超时、审批事务屏障/并发决定、状态串行隔离、分类重试/诊断 |
+| 授权与插件 | 授予上限/原子回滚、工作流/结果 Scope、撤销、自定义动作、官方注册模板、活动引用阻断、失败升级 schema 恢复；实际普通业务 Go 插件生成/编译/注册 |
+| 迁移 | 旧 v1/v2/CEL/通知/Loop 定义转换、必要秘密和结果主体/节点阻断、隔离旧库到新库导入、失败回滚、幂等与指纹保护；PG 16 pg_dump/pg_restore 隔离恢复点核对；安装/编译版本不符阻断 |
+| Vue frontend | 锁定依赖、ESLint、类型检查与构建；tsx/Node 模型测试；Playwright chromium/firefox/webkit |
+| 页面行为 | 创建/保存/发布/运行、审批移除、固定结果、无权直达、列表摘要请求、waiting/retrying、缺插件反馈、键盘窄屏与 CSP；真实示例插件结果动作与运行面板加载 |
+| 发布包 | 既有构建代理与最终归档扫描用例；Windows/Linux 包必须包含服务、基线迁移、插件管理和工作流迁移四个可执行文件 |
 
-CI 不在合并后的 `main` push 上重复运行；合并前的 PR 检查是基础门禁。生产发布仍只通过手工触发的部署工作流执行。
+普通业务示例只在 CI 编入生成表，生产默认目录不启用示例。测试使用生产校验/授权/执行器，HTTP 替身只替换传输，不建立第二套业务运行时。真实交易密钥不进入 CI；任何测试不得对交易所私有接口发请求。
 
-## 发布
+## 证据边界
 
-Release and deploy 默认不触发；用户在当前任务明确授权后，Codex 可从最新 `main` 触发既有手工工作流并监控验证。当前工作流构建并部署固定 digest 的应用镜像，不创建 GitHub Release 或额外扫描制品。生产流程不得接触真实交易所密钥、自动下单、启用真实策略或解除急停。
+CI 的合成迁移用例不代表已经迁移生产工作流；浏览器路由替身不替代 API 权限测试；竞态检查不证明多实例调度支持。真实源库盘点、外部插件转换、服务器秘密重绑、维护窗口和配对镜像/数据库恢复演练按[迁移手册](../runbooks/database-migrations.md)记录。
 
-Migration 的冻结点、Up/Down 安全和备份恢复见[数据库迁移手册](../runbooks/database-migrations.md)；发布故障处理见[发布手册](../runbooks/release.md)。
+镜像发布保留既有扫描与固定 digest 流程，当前 PR CI 不自动发布/部署。合并、Release/Deploy、生产迁移、Paper 观察和 Live 放行分别需要当前任务授权；代码交付不会自动执行这些操作。

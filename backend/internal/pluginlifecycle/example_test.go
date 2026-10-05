@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"coinsphere/backend/internal/migration"
 	"coinsphere/backend/internal/testdb"
 )
 
@@ -33,6 +34,25 @@ func TestInstalledBusinessPluginCompilesAndRegistersAllContributions(t *testing.
 	if _, err := installer.Install(ctx, source, false); err != nil {
 		t.Fatal(err)
 	}
+	if err := migration.ValidatePluginCurrent(ctx, database, "example.business", 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("UPDATE plugin_example_business.schema_migrations_g4 SET version_id=2 WHERE version_id=1"); err != nil {
+		t.Fatal(err)
+	}
+	pluginRunner, err := migration.NewPluginBaseline(database, os.DirFS(filepath.Join(source, "migrations")), "plugin_example_business")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pluginRunner.ValidateCurrent(ctx); err == nil {
+		t.Fatal("plugin runner checked the Core ledger instead of its own")
+	}
+	if err := migration.ValidatePluginCurrent(ctx, database, "example.business", 1); err == nil {
+		t.Fatal("startup accepted a mismatched external plugin migration ledger")
+	}
+	if _, err := database.Exec("UPDATE plugin_example_business.schema_migrations_g4 SET version_id=1 WHERE version_id=2"); err != nil {
+		t.Fatal(err)
+	}
 	// Compile the package and generated registry exactly as the application
 	// does. No production plugin registration is added for this test fixture.
 	check := `package pluginregistry
@@ -46,6 +66,7 @@ import (
  "github.com/gin-gonic/gin"
 )
 func TestBusiness(t *testing.T) {
+ if CompiledMigrationVersions["example.business"]!=1 {t.Fatal("compiled migration version missing")}
  r:=sdk.NewRegistry()
  if err:=RegisterAll(r,sdk.Host{},map[string]bool{"example.business":true});err!=nil{t.Fatal(err)}
  _,action,ok:=r.Action("example.business.task")

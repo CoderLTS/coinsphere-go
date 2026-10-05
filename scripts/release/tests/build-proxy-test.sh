@@ -72,7 +72,9 @@ if [[ ${1:-} == buildx && ${2:-} == build ]]; then
       binaries)
         touch \
           "$destination/coinsphere-server" \
-          "$destination/coinsphere-migrate"
+          "$destination/coinsphere-migrate" \
+          "$destination/coinsphere" \
+          "$destination/workflow-migrate"
         ;;
       web-assets)
         touch \

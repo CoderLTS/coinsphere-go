@@ -270,6 +270,8 @@ def check_archive_inventory(kind, files, directories, version):
         f"{root}/README.md",
         f"{root}/coinsphere-migrate{executable_suffix}",
         f"{root}/coinsphere-server{executable_suffix}",
+        f"{root}/coinsphere{executable_suffix}",
+        f"{root}/workflow-migrate{executable_suffix}",
         f"{root}/config.yml",
         f"{root}/nginx.conf",
     }
@@ -441,7 +443,7 @@ def scan_zip(path, kind, version):
             if (
                 kind == "linux-amd64"
                 and normalized.endswith(
-                    ("/coinsphere-server", "/coinsphere-migrate")
+                    ("/coinsphere-server", "/coinsphere-migrate", "/coinsphere", "/workflow-migrate")
                 )
                 and not mode & 0o111
             ):
@@ -629,7 +631,7 @@ def scan_tar(path, kind, version):
                 if (
                     kind == "linux-amd64"
                     and normalized.endswith(
-                        ("/coinsphere-server", "/coinsphere-migrate")
+                        ("/coinsphere-server", "/coinsphere-migrate", "/coinsphere", "/workflow-migrate")
                     )
                     and not member.mode & 0o111
                 ):

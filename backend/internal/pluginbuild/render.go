@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"go/format"
+	"os"
 	"path"
 	"sort"
 	"strconv"
 	"strings"
 
 	"coinsphere/backend/plugin/manifest"
+	"github.com/pressly/goose/v3"
 )
 
 func RenderBackend(plugins []manifest.Package) ([]byte, error) {
@@ -47,6 +49,29 @@ func RenderBackendWithDependencies(plugins []manifest.Package, available map[str
 		fmt.Fprintf(&source, "if enabled[CompiledPlugins[%d].ID] { if err := registry.RegisterPlugin(CompiledPlugins[%d],host,plugin%d.Register); err != nil { return err } }\n", index, index, index)
 	}
 	source.WriteString("return nil\n}\n")
+	source.WriteString("\nvar CompiledMigrationVersions = map[string]int64{\n")
+	for _, plugin := range plugins {
+		entries, err := os.ReadDir(plugin.MigrationsPath)
+		if err != nil {
+			return nil, fmt.Errorf("read migrations for %s: %w", plugin.Manifest.ID, err)
+		}
+		var latest int64
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+				continue
+			}
+			version, err := goose.NumericComponent(entry.Name())
+			if err != nil {
+				return nil, err
+			}
+			latest = max(latest, version)
+		}
+		if latest == 0 {
+			return nil, fmt.Errorf("migration bundle for %s is empty", plugin.Manifest.ID)
+		}
+		fmt.Fprintf(&source, "%s: %d,\n", strconv.Quote(plugin.Manifest.ID), latest)
+	}
+	source.WriteString("}\n")
 	formatted, err := format.Source([]byte(source.String()))
 	if err != nil {
 		return nil, fmt.Errorf("format backend registry: %w", err)

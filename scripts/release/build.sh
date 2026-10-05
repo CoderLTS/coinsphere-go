@@ -158,8 +158,12 @@ mkdir -p "$work_dir/packages/$windows_name/web" "$work_dir/packages/$linux_name/
 
 install -m 0755 "$work_dir/windows/coinsphere-server" "$work_dir/packages/$windows_name/coinsphere-server.exe"
 install -m 0755 "$work_dir/windows/coinsphere-migrate" "$work_dir/packages/$windows_name/coinsphere-migrate.exe"
+install -m 0755 "$work_dir/windows/coinsphere" "$work_dir/packages/$windows_name/coinsphere.exe"
+install -m 0755 "$work_dir/windows/workflow-migrate" "$work_dir/packages/$windows_name/workflow-migrate.exe"
 install -m 0755 "$work_dir/linux/coinsphere-server" "$work_dir/packages/$linux_name/coinsphere-server"
 install -m 0755 "$work_dir/linux/coinsphere-migrate" "$work_dir/packages/$linux_name/coinsphere-migrate"
+install -m 0755 "$work_dir/linux/coinsphere" "$work_dir/packages/$linux_name/coinsphere"
+install -m 0755 "$work_dir/linux/workflow-migrate" "$work_dir/packages/$linux_name/workflow-migrate"
 for package_name in "$windows_name" "$linux_name"; do
   install -m 0644 "$ROOT_DIR/backend/config.yml" "$work_dir/packages/$package_name/config.yml"
   install -m 0644 "$ROOT_DIR/frontend/nginx.conf" "$work_dir/packages/$package_name/nginx.conf"

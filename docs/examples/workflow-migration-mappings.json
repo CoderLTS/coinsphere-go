@@ -1,0 +1,23 @@
+{
+  "nodeVersions": {
+    "example.flow.action@1.0.0": { "nodeType": "example.business.task", "nodeVersion": "1.0.0" }
+  },
+  "expressions": {
+    "7/end/binding/value": {
+      "sources": {
+        "value": { "kind": "field", "nodeInstanceId": "source-b", "fieldPath": ["value"] }
+      }
+    },
+    "7/notify/binding/active": { "expression": "nodes[\"condition\"].entered" }
+  },
+  "owners": { "7": 1 },
+  "results": {
+    "41": {
+      "pluginId": "example.business",
+      "pageKey": "tasks",
+      "scope": { "workflowId": 7 },
+      "filters": {},
+      "allowedActions": ["ack"]
+    }
+  }
+}

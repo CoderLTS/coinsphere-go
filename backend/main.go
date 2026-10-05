@@ -121,6 +121,13 @@ func run(parentCtx context.Context, configPath string) (runErr error) {
 			}
 		}
 	}
+	for pluginID, latest := range pluginregistry.CompiledMigrationVersions {
+		if enabledOfficial[pluginID] {
+			if err := migration.ValidatePluginCurrent(ctx, sqlDB, pluginID, latest); err != nil {
+				return fmt.Errorf("validate compiled plugin schema: %w", err)
+			}
+		}
+	}
 	if err := official.RegisterAll(plugins, host, enabledOfficial); err != nil {
 		slog.Error("official plugin registration failed", "component", "plugin_registry", "error", err.Error())
 		return fmt.Errorf("register official plugins: %w", err)

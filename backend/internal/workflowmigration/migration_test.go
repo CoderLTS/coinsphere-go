@@ -2,9 +2,12 @@ package workflowmigration
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -196,6 +199,42 @@ func TestPostgresImportIsAtomicAndIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	target, gdb := testdb.Open(t, true)
+	t.Run("isolated legacy recovery point", func(t *testing.T) {
+		containerID := os.Getenv("COINSPHERE_TEST_POSTGRES_CONTAINER")
+		if containerID == "" {
+			t.Skip("PostgreSQL 16 recovery tools are not configured")
+		}
+		restored, _ := testdb.Open(t, false)
+		var sourceName, restoredName string
+		if err := sourceDB.QueryRowContext(ctx, "SELECT current_database()").Scan(&sourceName); err != nil {
+			t.Fatal(err)
+		}
+		if err := restored.QueryRowContext(ctx, "SELECT current_database()").Scan(&restoredName); err != nil {
+			t.Fatal(err)
+		}
+		backup, err := os.Create(filepath.Join(t.TempDir(), "synthetic-legacy.dump"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer backup.Close()
+		dump := exec.CommandContext(ctx, "docker", "exec", containerID, "pg_dump", "-U", "coinsphere_test", "-d", sourceName, "-Fc")
+		dump.Stdout = backup
+		if err := dump.Run(); err != nil {
+			t.Fatalf("isolated PostgreSQL 16 backup failed: %v", err)
+		}
+		if _, err := backup.Seek(0, 0); err != nil {
+			t.Fatal(err)
+		}
+		restore := exec.CommandContext(ctx, "docker", "exec", "-i", containerID, "pg_restore", "-U", "coinsphere_test", "-d", restoredName, "--exit-on-error", "--no-owner")
+		restore.Stdin = backup
+		if err := restore.Run(); err != nil {
+			t.Fatalf("isolated PostgreSQL 16 restore failed: %v", err)
+		}
+		recovered, err := ReadSource(ctx, restored, "synthetic-source")
+		if err != nil || recovered.Version != snapshot.Version || Digest(recovered.tables) != Digest(snapshot.tables) {
+			t.Fatal("legacy recovery point lost schema or workflow/configuration facts", err)
+		}
+	})
 	app := service.NewApp(gdb, &config.AppConfig{Auth: config.AuthConfig{SecretKey: "synthetic-target-key", PasswordIterations: 1}}, sdk.NewRegistry())
 	catalog := Catalog{Converter: Converter{Catalog: app.WorkflowNodeCatalog(), NodePlugins: map[string]string{}, Validate: app.ValidateWorkflowGraph}, Permissions: map[string]sdk.PermissionDescriptor{}}
 	identity, err := TargetIdentity(ctx, target)
@@ -226,6 +265,10 @@ func TestPostgresImportIsAtomicAndIdempotent(t *testing.T) {
 	if _, err := Verify(ctx, target, plan); err != nil {
 		t.Fatal(err)
 	}
+	unchanged, err := ReadSource(ctx, sourceDB, "synthetic-source")
+	if err != nil || unchanged.Fingerprint != snapshot.Fingerprint {
+		t.Fatal("import changed the independently recoverable source", err)
+	}
 	var status string
 	var graphJSON string
 	if err := target.QueryRow("SELECT w.status,r.graph_json::text FROM workflows w JOIN workflow_revisions r ON r.id=w.draft_revision_id WHERE w.id=7").Scan(&status, &graphJSON); err != nil || status != "inactive" || !strings.Contains(graphJSON, `"schemaVersion": 3`) {
@@ -245,5 +288,30 @@ func TestPostgresImportIsAtomicAndIdempotent(t *testing.T) {
 	raw, _ := json.Marshal(plan)
 	if strings.Contains(string(raw), "opaque-synthetic") || strings.Contains(string(raw), "synthetic-owner") {
 		t.Fatal("plan exposed secret or identity data")
+	}
+}
+
+func TestImportPluginVersionMustMatchCompiledCatalog(t *testing.T) {
+	ctx := context.Background()
+	database, _ := testdb.Open(t, true)
+	catalog := Catalog{Plugins: []sdk.PluginDescriptor{{ID: "example.business", Version: "1.0.0"}}}
+	if _, err := database.Exec("INSERT INTO plugin_installations(plugin_id,version,schema_name,source_path,status) VALUES('example.business','1.1.0','plugin_example_business','synthetic','installed')"); err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []string{"1.1.0", "1.0.0"} {
+		if _, err := database.Exec("UPDATE plugin_installations SET version=$1 WHERE plugin_id='example.business'", version); err != nil {
+			t.Fatal(err)
+		}
+		tx, err := database.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = insertReference(ctx, tx, catalog, "example.business", "workflow", "7")
+		if rollbackErr := tx.Rollback(); rollbackErr != nil {
+			t.Fatal(rollbackErr)
+		}
+		if (version == "1.0.0") != (err == nil) {
+			t.Fatal("import ignored exact installed/compiled plugin version", version, err)
+		}
 	}
 }

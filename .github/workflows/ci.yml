@@ -26,10 +26,11 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U coinsphere_test"
-          --health-interval 5s --health-timeout 5s --health-retries 10
+          --health-cmd "pg_isready -U coinsphere_test" --health-interval 5s --health-timeout 5s --health-retries 10
+
     env:
       COINSPHERE_TEST_DSN: postgres://coinsphere_test:ci-only-synthetic@localhost:5432/coinsphere_test?sslmode=disable
+      COINSPHERE_TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
     defaults:
       run:
         working-directory: backend
@@ -54,6 +55,11 @@ jobs:
         run: go test -race ./...
       - name: Build
         run: go build ./...
+      - name: Release package behavior
+        working-directory: .
+        run: |
+          bash scripts/release/tests/build-proxy-test.sh
+          bash scripts/release/tests/artifact-scan-test.sh
 
   frontend:
     name: Vue frontend

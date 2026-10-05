@@ -1,0 +1,36 @@
+{
+  "note": "Synthetic report shape only; hashes are placeholders and cannot be applied.",
+  "inspection": {
+    "sourceIdentity": "<sha256>",
+    "sourceFingerprint": "<sha256>",
+    "sourceVersion": 23,
+    "counts": { "workflows": 2, "workflow_revisions": 4, "result_views": 1 },
+    "workflows": [
+      { "workflowId": 7, "revisionId": 11, "graphHash": "<sha256>", "hasDefinition": true }
+    ]
+  },
+  "planning": {
+    "planHash": "<sha256>",
+    "workflows": 2,
+    "issues": [
+      {
+        "workflowId": 8,
+        "code": "graph_mapping",
+        "detail": "expression at 8/end/binding/value requires an explicit source or expression mapping"
+      }
+    ],
+    "dependencies": [
+      {
+        "workflowId": 7,
+        "code": "required_secret",
+        "detail": "node request requires credential field token before publishing or enabling"
+      }
+    ]
+  },
+  "appliedAfterResolvingIssues": {
+    "planHash": "<sha256>",
+    "workflows": 2,
+    "alreadyApplied": false,
+    "verified": true
+  }
+}
