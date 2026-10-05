@@ -36,7 +36,5 @@ export const loadPluginNodeEditor = (type: string, pluginID: string) =>
   loadPluginComponent(pluginID, 'nodeEditors', type)
 export const loadPluginNodeRenderer = (type: string, pluginID: string) =>
   loadPluginComponent(pluginID, 'nodeRenderers', type)
-export const loadProviderConfigComponent = (
-  providerID: string,
-  pluginID = `official.${providerID}`
-) => loadPluginComponent(pluginID, 'providerConfigComponents', providerID)
+export const loadProviderConfigComponent = (providerID: string, pluginID: string) =>
+  loadPluginComponent(pluginID, 'providerConfigComponents', providerID)

@@ -6,6 +6,7 @@
         v-for="definition in materials"
         :key="definition.type"
         class="material"
+        :disabled="readOnly"
         @click="commit(addNode(graph, definition))"
       >
         <strong>{{ definition.title }}</strong
@@ -14,19 +15,26 @@
       <ElDivider>入口</ElDivider>
       <div v-for="(id, name) in graph.entryPoints" :key="name" class="entry-row">
         <span>{{ name }}</span
-        ><ElSelect :model-value="id" @update:model-value="setEntry(String(name), $event)"
+        ><ElSelect
+          :disabled="readOnly"
+          :model-value="id"
+          @update:model-value="setEntry(String(name), $event)"
           ><ElOption
             v-for="node in graph.nodes"
             :key="node.nodeInstanceId"
             :value="node.nodeInstanceId"
             :label="node.nodeInstanceId"
         /></ElSelect>
-        <ElButton link type="danger" @click="removeEntry(String(name))">删除</ElButton>
+        <ElButton link type="danger" :disabled="readOnly" @click="removeEntry(String(name))"
+          >删除</ElButton
+        >
       </div>
-      <ElInput v-model="entryName" placeholder="新入口名称" aria-label="新入口名称" /><ElButton
-        @click="addEntry"
-        >添加入口</ElButton
-      >
+      <ElInput
+        :disabled="readOnly"
+        v-model="entryName"
+        placeholder="新入口名称"
+        aria-label="新入口名称"
+      /><ElButton :disabled="readOnly" @click="addEntry">添加入口</ElButton>
       <ElDivider>节点与连线</ElDivider>
       <ElButton
         v-for="node in graph.nodes"
@@ -60,7 +68,7 @@
         <ElTabs v-model="tab">
           <ElTabPane label="配置" name="config">
             <ElAlert v-if="componentError" :title="componentError" type="error" :closable="false" />
-            <ElForm label-position="top"
+            <ElForm :disabled="readOnly" label-position="top"
               ><component
                 :is="nodeEditor || WorkflowSchemaFields"
                 :schema="configSchema"
@@ -73,7 +81,7 @@
             >
           </ElTabPane>
           <ElTabPane label="输入绑定" name="bindings">
-            <ElForm label-position="top">
+            <ElForm :disabled="readOnly" label-position="top">
               <ElFormItem
                 v-for="field in inputFields"
                 :key="field"
@@ -136,14 +144,15 @@
                 </div>
               </ElFormItem>
             </ElForm>
-            <ElInput v-model="bindingName" placeholder="其他输入字段" /><ElButton
-              @click="addBinding"
-              >添加绑定</ElButton
-            >
+            <ElInput
+              :disabled="readOnly"
+              v-model="bindingName"
+              placeholder="其他输入字段"
+            /><ElButton :disabled="readOnly" @click="addBinding">添加绑定</ElButton>
           </ElTabPane>
           <ElTabPane label="凭据" name="secrets">
             <ElEmpty v-if="!definition?.secretFields.length" description="此节点不需要凭据" />
-            <ElForm label-position="top"
+            <ElForm :disabled="readOnly" label-position="top"
               ><ElFormItem
                 v-for="field in definition?.secretFields"
                 :key="field.name"
@@ -160,11 +169,11 @@
                   type="password"
                   autocomplete="new-password"
                   placeholder="输入新值以替换；留空保持原值"
-                  :disabled="!canManageSecrets"
+                  :disabled="readOnly || !canManageSecrets"
                   @update:model-value="setSecret(field.name, $event)"
                 />
                 <ElButton
-                  :disabled="!canManageSecrets"
+                  :disabled="readOnly || !canManageSecrets"
                   link
                   type="danger"
                   @click="setSecret(field.name, '', true)"
@@ -178,7 +187,7 @@
           >删除节点</ElButton
         >
       </template>
-      <ElForm v-else-if="selectedEdge" label-position="top"
+      <ElForm v-else-if="selectedEdge" :disabled="readOnly" label-position="top"
         ><ElFormItem label="来源端口"
           ><ElInput
             :model-value="selectedEdge.sourcePort"

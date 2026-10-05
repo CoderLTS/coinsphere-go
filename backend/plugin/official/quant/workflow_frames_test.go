@@ -19,9 +19,10 @@ func TestFrameAndRealtimeUseSameDecimalAndUTCSemantics(t *testing.T) {
 	runtime.frameActions["official.quant.output_signal"] = quantOutputSignalAction{runtime}
 	series := json.RawMessage(`{"venue":"binance","market":"spot","instrument":"BTCUSDT","interval":"1h"}`)
 	target := "0.123456789012345678"
+	targetJSON, _ := json.Marshal(target)
 	definition := graph.Graph{SchemaVersion: 3, Nodes: []graph.Node{
 		{NodeInstanceID: "history", NodeType: "official.quant.backtest_start", NodeVersion: "1.0.0", Config: series},
-		{NodeInstanceID: "position", NodeType: "official.quant.position", NodeVersion: "1.0.0", Config: json.RawMessage(`{"market":"spot","targetMode":"input","fixedTarget":"0","decimalField":"target"}`), InputBindings: map[string]graph.Binding{"target": {Kind: "literal", Value: target}, "evaluatedAt": {Kind: "field", NodeInstanceID: "history", FieldPath: []string{"evaluatedAt"}}}},
+		{NodeInstanceID: "position", NodeType: "official.quant.position", NodeVersion: "1.0.0", Config: json.RawMessage(`{"market":"spot","targetMode":"input","fixedTarget":"0","decimalField":"target"}`), InputBindings: map[string]graph.Binding{"target": {Kind: "literal", Value: targetJSON}, "evaluatedAt": {Kind: "field", NodeInstanceID: "history", FieldPath: []string{"evaluatedAt"}}}},
 		{NodeInstanceID: "out", NodeType: "official.quant.output_signal", NodeVersion: "1.0.0", Config: series},
 	}, Edges: []graph.Edge{{EdgeID: "each", SourceNodeInstanceID: "history", SourcePort: "each", TargetNodeInstanceID: "position", TargetPort: "in"}, {EdgeID: "result", SourceNodeInstanceID: "position", SourcePort: "out", TargetNodeInstanceID: "out", TargetPort: "in"}}}
 	raw, _ := json.Marshal(definition)

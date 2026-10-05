@@ -29,7 +29,8 @@ RUN --mount=type=cache,id=coinsphere-go-mod,target=/go/pkg/mod \
     --mount=type=cache,id=coinsphere-go-build,target=/root/.cache/go-build \
     GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -p 1 -trimpath -ldflags="-s -w" -o /out/coinsphere-server . \
     && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -p 1 -trimpath -ldflags="-s -w" -o /out/coinsphere-migrate ./cmd/migrate \
-    && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -p 1 -trimpath -ldflags="-s -w" -o /out/coinsphere ./cmd/coinsphere
+    && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -p 1 -trimpath -ldflags="-s -w" -o /out/coinsphere ./cmd/coinsphere \
+    && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -p 1 -trimpath -ldflags="-s -w" -o /out/workflow-migrate ./cmd/workflow-migrate
 
 FROM scratch AS binaries
 COPY --from=build /out/ /
@@ -41,6 +42,7 @@ WORKDIR /app
 COPY --from=build /out/coinsphere-server /app/coinsphere-server
 COPY --from=build /out/coinsphere-migrate /app/coinsphere-migrate
 COPY --from=build /out/coinsphere /app/coinsphere
+COPY --from=build /out/workflow-migrate /app/workflow-migrate
 COPY --from=web-build /web/dist /app/web
 COPY backend/config.yml /app/config.yml
 RUN mkdir -p /app/volumes/static /app/volumes/uploads /app/volumes/artifacts /app/web \

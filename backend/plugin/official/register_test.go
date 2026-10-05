@@ -43,7 +43,7 @@ func TestOfficialTemplatesAndGeneralSystemWithoutTradingPlugins(t *testing.T) {
 	}
 	registry := sdk.NewRegistry()
 	host := sdk.Host{Stores: sdk.GormPluginStores{Database: database}, Network: official.NetworkClientFactory{}}
-	if err := official.RegisterAll(registry, host, map[string]bool{"official.binance": true}); err == nil {
+	if err := official.RegisterAll(registry, host, map[string]bool{"official.qq": true}); err == nil {
 		t.Fatal("missing required plugin was hidden")
 	}
 }

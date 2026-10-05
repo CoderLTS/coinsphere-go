@@ -92,9 +92,16 @@
     }
   }
   const decide = async (id: number, action: 'approve' | 'reject') => {
-    await ElMessageBox.confirm(`${action === 'approve' ? '通过' : '拒绝'}此待办？`, '处理待办')
-    await decideWorkflowHumanTask(id, action)
-    await load()
+    try {
+      await ElMessageBox.confirm(`${action === 'approve' ? '通过' : '拒绝'}此待办？`, '处理待办', {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消'
+      })
+      await decideWorkflowHumanTask(id, action)
+      await load()
+    } catch (cause: any) {
+      if (cause !== 'cancel' && cause !== 'close') error.value = cause.message
+    }
   }
   onMounted(load)
 </script>

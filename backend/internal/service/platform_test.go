@@ -331,7 +331,7 @@ func TestStateIsSerialAcrossPartitionsAndIsolatedByRevision(t *testing.T) {
 func TestApprovalDecisionSupersessionExpiryAndCancel(t *testing.T) {
 	a, ctx, p := platformFixture(t, nil)
 	g := testGraph("")
-	approval := workflowGraphNode{NodeInstanceID: "approval", NodeType: "core.human_approval", NodeVersion: "1.0.0", Config: json.RawMessage(`{"decisionMode":"human","taskType":"review","prompt":"Synthetic","expiresSeconds":60}`), Position: &workflowgraph.Position{X: 260}, InputBindings: map[string]workflowInputBinding{"businessKey": {Kind: "literal", Value: "synthetic-key"}}}
+	approval := workflowGraphNode{NodeInstanceID: "approval", NodeType: "core.human_approval", NodeVersion: "1.0.0", Config: json.RawMessage(`{"decisionMode":"human","taskType":"review","prompt":"Synthetic","expiresSeconds":60}`), Position: &workflowgraph.Position{X: 260}, InputBindings: map[string]workflowInputBinding{"businessKey": {Kind: "literal", Value: mustJSON("synthetic-key")}}}
 	g.Nodes = append(g.Nodes[:1], approval, g.Nodes[1])
 	g.Edges = []workflowGraphEdge{{EdgeID: "ma", SourceNodeInstanceID: "manual", SourcePort: "out", TargetNodeInstanceID: "approval", TargetPort: "in"}, {EdgeID: "ae", SourceNodeInstanceID: "approval", SourcePort: "out", TargetNodeInstanceID: "end", TargetPort: "in"}}
 	w := createTestWorkflow(t, a, ctx, p, g)

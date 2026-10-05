@@ -94,8 +94,18 @@ const menu = (id: number, path: string, component: string, title: string) => ({
 async function fulfillApi(route: Route, data: unknown, status = 200, msg = '') {
   await route.fulfill({
     status,
-    contentType: 'application/json',
-    body: JSON.stringify({ code: status, msg, data })
+    contentType: status >= 400 ? 'application/problem+json' : 'application/json',
+    body: JSON.stringify(
+      status >= 400
+        ? {
+            type: 'about:blank',
+            title: 'Request rejected',
+            status,
+            detail: msg,
+            requestId: 'synthetic'
+          }
+        : { code: status, msg, data }
+    )
   })
 }
 
