@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -469,10 +470,7 @@ func TestLoopParentsDoNotExhaustChildPool(t *testing.T) {
 			return sdk.ActionResult{}, ctx.Err()
 		}
 	})
-	body := workflowGraph{SchemaVersion: 3, Nodes: []workflowGraphNode{{NodeInstanceID: "item", NodeType: "core.loop_item", NodeVersion: "1.0.0", Config: json.RawMessage(`{}`), Position: &workflowgraph.Position{}}, {NodeInstanceID: "work", NodeType: "test.business.task", NodeVersion: "1.0.0", Config: json.RawMessage(`{}`), Position: &workflowgraph.Position{X: 260}}, {NodeInstanceID: "done", NodeType: "core.loop_end", NodeVersion: "1.0.0", Config: json.RawMessage(`{}`), Position: &workflowgraph.Position{X: 520}, InputBindings: map[string]workflowInputBinding{"value": {Kind: "field", NodeInstanceID: "item", FieldPath: []string{"value"}}}}}, Edges: []workflowGraphEdge{{EdgeID: "iw", SourceNodeInstanceID: "item", SourcePort: "out", TargetNodeInstanceID: "work", TargetPort: "in"}, {EdgeID: "we", SourceNodeInstanceID: "work", SourcePort: "out", TargetNodeInstanceID: "done", TargetPort: "in"}}}
-	g := testGraph("task")
-	g.Nodes[1].NodeType = "core.loop"
-	g.Nodes[1].Config = mustJSON(workflowLoopConfig{MaxIterations: 1, TimeoutSeconds: 20, ExitCondition: "input.iteration >= 1", Body: body})
+	g := testLoopGraph(20)
 	runs := []db.WorkflowRun{}
 	for i := 0; i < 4; i++ {
 		w := createTestWorkflow(t, a, ctx, p, g)
@@ -611,8 +609,25 @@ func TestLeaseRenewalFailureRejectsExecutorAndRunBudgetIsBounded(t *testing.T) {
 	w := createTestWorkflow(t, a, ctx, p, testGraph("task"))
 	queueTestRun(t, a, ctx, p, w)
 	stale := claimTestRun(t, a)
+	executorCtx, stopExecutor := context.WithTimeout(ctx, 15*time.Second)
+	defer stopExecutor()
+	executorDone := make(chan struct{})
+	go func() { a.executeWorkflowRun(executorCtx, stale); close(executorDone) }()
+	select {
+	case <-entered:
+	case <-executorCtx.Done():
+		t.Fatal("executor did not enter the blocking action")
+	}
 	if err := a.DB.Model(&db.WorkflowRun{}).Where("id=?", stale.ID).Update("lease_token", "replacement").Error; err != nil {
 		t.Fatal(err)
+	}
+	select {
+	case <-executorDone:
+	case <-executorCtx.Done():
+		t.Fatal("failed periodic renewal did not terminate the executor")
+	}
+	if countTestRows(t, a, "workflow_run_checkpoints", "run_id=? AND node_instance_id='task'", stale.ID) != 0 || len(a.streamSlots) != 0 {
+		t.Fatal("lost executor committed output or retained a slot")
 	}
 	if a.renewWorkflowRunLease(ctx, stale) == nil {
 		t.Fatal("zero-row renewal was accepted")
@@ -661,5 +676,172 @@ func TestLeaseRenewalFailureRejectsExecutorAndRunBudgetIsBounded(t *testing.T) {
 	}
 	if len(a.runSlots) != 0 || len(a.streamSlots) != 0 {
 		t.Fatal("cancelled engine retained execution slots")
+	}
+}
+
+func testLoopGraph(timeout int) workflowGraph {
+	body := workflowGraph{SchemaVersion: 3, Nodes: []workflowGraphNode{
+		{NodeInstanceID: "item", NodeType: "core.loop_item", NodeVersion: "1.0.0", Config: json.RawMessage(`{}`), Position: &workflowgraph.Position{}},
+		{NodeInstanceID: "work", NodeType: "test.business.task", NodeVersion: "1.0.0", Config: json.RawMessage(`{}`), Position: &workflowgraph.Position{X: 260}},
+		{NodeInstanceID: "done", NodeType: "core.loop_end", NodeVersion: "1.0.0", Config: json.RawMessage(`{}`), Position: &workflowgraph.Position{X: 520}, InputBindings: map[string]workflowInputBinding{"value": {Kind: "field", NodeInstanceID: "item", FieldPath: []string{"value"}}}},
+	}, Edges: []workflowGraphEdge{
+		{EdgeID: "iw", SourceNodeInstanceID: "item", SourcePort: "out", TargetNodeInstanceID: "work", TargetPort: "in"},
+		{EdgeID: "we", SourceNodeInstanceID: "work", SourcePort: "out", TargetNodeInstanceID: "done", TargetPort: "in"},
+	}}
+	g := testGraph("task")
+	g.Nodes[1].NodeType = "core.loop"
+	g.Nodes[1].Config = mustJSON(workflowLoopConfig{MaxIterations: 1, TimeoutSeconds: timeout, ExitCondition: "input.iteration >= 1", Body: body})
+	return g
+}
+
+func TestApprovalVisibilityAndConcurrentDecisions(t *testing.T) {
+	a, ctx, p := platformFixture(t, nil)
+	g := testGraph("task")
+	g.Nodes[1] = workflowGraphNode{NodeInstanceID: "task", NodeType: "core.human_approval", NodeVersion: "1.0.0", Config: json.RawMessage(`{"decisionMode":"human","taskType":"review","prompt":"Synthetic","expiresSeconds":60}`), Position: &workflowgraph.Position{X: 260}, InputBindings: map[string]workflowInputBinding{"businessKey": {Kind: "literal", Value: mustJSON("barrier-case")}}}
+	w := createTestWorkflow(t, a, ctx, p, g)
+	queueTestRun(t, a, ctx, p, w)
+	run := claimTestRun(t, a)
+	inserted := make(chan int64, 1)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
+	executorCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	// Pause after INSERT, while the task and durable waiting state still share
+	// the production transaction. Another connection must see neither yet.
+	if err := a.DB.Callback().Create().After("gorm:create").Register("test:approval_barrier", func(tx *gorm.DB) {
+		if tx.Statement.Table != "workflow_human_tasks" {
+			return
+		}
+		task, ok := tx.Statement.Dest.(*db.WorkflowHumanTask)
+		if !ok {
+			return
+		}
+		inserted <- task.ID
+		select {
+		case <-release:
+		case <-executorCtx.Done():
+			tx.AddError(executorCtx.Err())
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer a.DB.Callback().Create().Remove("test:approval_barrier")
+	done := make(chan struct{})
+	go func() { a.executeWorkflowRun(executorCtx, run); close(done) }()
+	var taskID int64
+	select {
+	case taskID = <-inserted:
+	case <-executorCtx.Done():
+		t.Fatal("approval did not reach the transaction barrier")
+	}
+	if tasks, err := a.ListWorkflowHumanTasks(ctx, "pending"); err != nil || len(tasks) != 0 {
+		t.Fatal("uncommitted task became visible", err)
+	}
+	if _, err := a.DecideWorkflowHumanTask(ctx, taskID, WorkflowHumanTaskDecision{Action: "approve"}, p); !errors.Is(err, ErrNotFound) {
+		t.Fatal("decision saw a task before durable wait", err)
+	}
+	releaseOnce.Do(func() { close(release) })
+	select {
+	case <-done:
+	case <-executorCtx.Done():
+		t.Fatal("approval failed to enter durable wait")
+	}
+	start := make(chan struct{})
+	decisions := make(chan error, 2)
+	for _, action := range []string{"approve", "reject"} {
+		go func(action string) {
+			<-start
+			_, err := a.DecideWorkflowHumanTask(ctx, taskID, WorkflowHumanTaskDecision{Action: action}, p)
+			decisions <- err
+		}(action)
+	}
+	close(start)
+	successes, conflicts := 0, 0
+	for i := 0; i < 2; i++ {
+		select {
+		case err := <-decisions:
+			if err == nil {
+				successes++
+			} else if errors.Is(err, ErrConflict) {
+				conflicts++
+			} else {
+				t.Fatal(err)
+			}
+		case <-executorCtx.Done():
+			t.Fatal("concurrent decisions deadlocked")
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatal("decisions were not exactly once")
+	}
+	a.executeWorkflowRun(ctx, claimTestRun(t, a))
+	var stored db.WorkflowRun
+	if err := a.DB.First(&stored, run.ID).Error; err != nil || stored.Status != RunStatusSucceeded {
+		t.Fatal("decided task left a waiting run", err)
+	}
+}
+
+func TestLoopAbsoluteDeadlineAndCancellationReleaseSlots(t *testing.T) {
+	for _, mode := range []string{"absolute", "timeout", "cancel"} {
+		t.Run(mode, func(t *testing.T) {
+			entered := make(chan struct{}, 1)
+			a, ctx, p := platformFixture(t, func(ctx context.Context, _ sdk.ActionRequest) (sdk.ActionResult, error) {
+				entered <- struct{}{}
+				<-ctx.Done()
+				return sdk.ActionResult{}, ctx.Err()
+			})
+			g := testLoopGraph(1)
+			w := createTestWorkflow(t, a, ctx, p, g)
+			queueTestRun(t, a, ctx, p, w)
+			run := claimTestRun(t, a)
+			if mode == "absolute" {
+				var revision db.WorkflowRevision
+				if err := a.DB.First(&revision, run.RevisionID).Error; err != nil {
+					t.Fatal(err)
+				}
+				for i, started := range []time.Time{time.Now().UTC().Add(-2 * time.Second), time.Now().UTC()} {
+					node := db.WorkflowRunNode{RunID: run.ID, NodeInstanceID: "task", NodeType: "core.loop", NodeVersion: "1.0.0", Status: RunStatusRunning, ExecutionPool: "stream", Attempt: i + 1, OperationKey: workflowOperationKey(run.ID, "task", 0), InputSummary: "{}", OutputSummary: "{}", StartedAt: started}
+					if err := a.DB.Create(&node).Error; err != nil {
+						t.Fatal(err)
+					}
+				}
+				_, err := a.executeWorkflowLoop(ctx, run, revision, g.Nodes[1], json.RawMessage(`{}`), nil)
+				if err == nil || !strings.Contains(err.Error(), "absolute timeout") || len(entered) != 0 {
+					t.Fatal("retry reset the absolute Loop deadline", err)
+				}
+				return
+			}
+			executorCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			done := make(chan struct{})
+			go func() { a.executeWorkflowRun(executorCtx, run); close(done) }()
+			select {
+			case <-entered:
+			case <-executorCtx.Done():
+				t.Fatal("loop child did not enter")
+			}
+			if mode == "cancel" {
+				if _, err := a.ApplyWorkflowRunAction(ctx, run.ID, WorkflowRunActionPayload{Action: "cancel"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			select {
+			case <-done:
+			case <-executorCtx.Done():
+				t.Fatal("loop failed to terminate")
+			}
+			var stored db.WorkflowRun
+			if err := a.DB.First(&stored, run.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			want := RunStatusFailed
+			if mode == "cancel" {
+				want = RunStatusCancelled
+			}
+			if stored.Status != want || len(a.streamSlots) != 0 || len(a.computeSlots) != 0 {
+				t.Fatal("loop retained resources or wrong terminal state", stored.Status)
+			}
+		})
 	}
 }

@@ -102,7 +102,7 @@ func TestPluginReferencesUpgradeAndFailedBuildRollback(t *testing.T) {
 	if err := database.QueryRowContext(ctx, "SELECT source_path FROM plugin_installations WHERE plugin_id='example.business'").Scan(&sourcePath); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(sourcePath); err != nil {
+	if _, err := os.Stat(filepath.Join(layout.BackendRoot, "plugin", sourcePath)); err != nil {
 		t.Fatal("installation recorded a removed staging path", err)
 	}
 	if err := installer.Uninstall(ctx, "example.business"); err != nil {

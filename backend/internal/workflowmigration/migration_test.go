@@ -73,9 +73,89 @@ func TestNotificationAndLoopSecretMapping(t *testing.T) {
 	if !strings.Contains(got.Graph.Edges[1].Condition, `nodes["condition"].ready`) {
 		t.Fatal("old ready gate was lost")
 	}
+	var old legacyGraph
+	if err := json.Unmarshal(raw, &old); err != nil {
+		t.Fatal(err)
+	}
+	old.Nodes[2].InputBindings["active"] = legacyBinding{Binding: graph.Binding{Kind: "condition_entry"}, Sources: []legacySource{{NodeInstanceID: "condition", Branch: "true"}}}
+	withIncoming, _ := json.Marshal(old)
+	if _, err := c.Convert(7, withIncoming); err == nil {
+		t.Fatal("composition silently changed incoming semantics")
+	}
+	c.Mappings.Expressions = map[string]ExpressionMapping{"7/notify/binding/active": {Expression: `nodes["condition"].entered`}}
+	explicit, err := c.Convert(7, withIncoming)
+	if err != nil || explicit.Graph.Nodes[2].InputBindings["active"].Expression != `nodes["condition"].entered` {
+		t.Fatal("explicit expression did not resolve composition dependency", err)
+	}
 	c.Mappings.NodeVersions = nil
 	if _, err := c.Convert(7, raw); err == nil {
 		t.Fatal("external node versions must be mapped explicitly")
+	}
+}
+
+func migrationRow(t *testing.T, value map[string]any) row {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r row
+	if err := json.Unmarshal(raw, &r); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+func TestPlanCredentialAndResultOwnershipBoundaries(t *testing.T) {
+	c := converter()
+	desc := c.Catalog["example.flow.action"]
+	desc.ConfigSchema = json.RawMessage(`{"type":"object","properties":{"token":{"type":"string","x-coinsphere-secret":true}},"required":["token"]}`)
+	c.Catalog[desc.Type] = desc
+	g := json.RawMessage(`{"schemaVersion":2,"entryPoints":{"realtime":"manual"},"nodes":[{"nodeInstanceId":"manual","nodeType":"core.manual","nodeVersion":"1.0.0","config":{},"position":{"x":0,"y":0}},{"nodeInstanceId":"task","nodeType":"example.flow.action","nodeVersion":"1.0.0","config":{},"position":{"x":100,"y":0}},{"nodeInstanceId":"end","nodeType":"core.end","nodeVersion":"1.0.0","config":{},"position":{"x":200,"y":0}}],"edges":[{"edgeId":"mt","sourceNodeInstanceId":"manual","sourcePort":"out","targetNodeInstanceId":"task","targetPort":"in"},{"edgeId":"te","sourceNodeInstanceId":"task","sourcePort":"out","targetNodeInstanceId":"end","targetPort":"in"}]}`)
+	source := Snapshot{Identity: "synthetic-source", Fingerprint: "synthetic-fingerprint", tables: map[string][]row{
+		"users":              {migrationRow(t, map[string]any{"id": 1, "is_active": true})},
+		"roles":              {migrationRow(t, map[string]any{"id": 1})},
+		"workflows":          {migrationRow(t, map[string]any{"id": 7, "active_revision_id": 11, "created_by": 1})},
+		"workflow_revisions": {migrationRow(t, map[string]any{"id": 11, "workflow_id": 7, "graph_json": g})},
+		"result_views":       {migrationRow(t, map[string]any{"id": 41, "plugin_id": "example.flow", "page_key": "tasks", "status": "active", "created_by": 1, "scope_json": map[string]any{"workflowId": 7, "nodeId": "task"}, "filters_json": map[string]any{}, "allowed_actions": []string{"ack"}})},
+	}}
+	page := sdk.ResultPageDescriptor{PageKey: "tasks", PermissionCode: "plugins.example.flow.read", ScopeSchema: json.RawMessage(`{"type":"object","properties":{"workflowId":{"type":"integer"},"nodeId":{"type":"string"}},"required":["workflowId","nodeId"]}`), FilterSchema: json.RawMessage(`{"type":"object"}`), Actions: []string{"ack"}, ActionPermissions: map[string]string{"ack": "plugins.example.flow.ack"}, Resources: func(raw json.RawMessage) ([]sdk.WorkflowResource, error) {
+		var r struct {
+			WorkflowID int64  `json:"workflowId"`
+			NodeID     string `json:"nodeId"`
+		}
+		if err := json.Unmarshal(raw, &r); err != nil {
+			return nil, err
+		}
+		return []sdk.WorkflowResource{{WorkflowID: r.WorkflowID, NodeInstanceID: r.NodeID}}, nil
+	}}
+	catalog := Catalog{Converter: c, Pages: map[string]sdk.ResultPageDescriptor{"example.flow/tasks": page}}
+	plan := BuildPlan(source, "synthetic-target", catalog, c.Mappings)
+	if err := plan.Validate(); err != nil {
+		t.Fatal(plan.Issues, err)
+	}
+	if len(plan.Dependencies) != 1 || plan.Dependencies[0].Code != "required_secret" {
+		t.Fatal("missing credential was not reported", plan.Dependencies)
+	}
+	view := source.tables["result_views"][0]
+	for _, id := range []string{"manual", "missing"} {
+		put(view, "scope_json", map[string]any{"workflowId": 7, "nodeId": id})
+		if err := BuildPlan(source, "synthetic-target", catalog, c.Mappings).Validate(); err == nil {
+			t.Fatal("view accepted foreign or absent node", id)
+		}
+	}
+	put(view, "scope_json", map[string]any{"workflowId": 7, "nodeId": "task"})
+	for _, kind := range []string{"user", "role"} {
+		table := "result_view_" + kind + "_grants"
+		source.tables[table] = []row{migrationRow(t, map[string]any{"view_id": 41, kind + "_id": 99})}
+		if err := BuildPlan(source, "synthetic-target", catalog, c.Mappings).Validate(); err == nil {
+			t.Fatal("missing grant principal was accepted", kind)
+		}
+		delete(source.tables, table)
+	}
+	put(view, "created_by", 99)
+	if err := BuildPlan(source, "synthetic-target", catalog, c.Mappings).Validate(); err == nil {
+		t.Fatal("missing view creator was accepted")
 	}
 }
 

@@ -3,42 +3,28 @@
     "id": "official.ai",
     "name": "人工智能",
     "version": "4.0.0",
-    "contributes": [
-      "nodes",
-      "runPanels"
-    ],
+    "contributes": ["nodes", "runPanels"],
     "requiresPlugins": {}
   },
   {
     "id": "official.connector",
     "name": "连接器",
     "version": "4.0.0",
-    "contributes": [
-      "nodes",
-      "triggers",
-      "runPanels",
-      "ingress"
-    ],
+    "contributes": ["nodes", "triggers", "runPanels", "ingress"],
     "requiresPlugins": {}
   },
   {
     "id": "official.notification",
     "name": "通知",
     "version": "4.0.0",
-    "contributes": [
-      "nodes",
-      "cleanup"
-    ],
+    "contributes": ["nodes", "cleanup", "workflowValidators"],
     "requiresPlugins": {}
   },
   {
     "id": "official.qq",
     "name": "QQ机器人",
     "version": "4.0.0",
-    "contributes": [
-      "nodes",
-      "triggers"
-    ],
+    "contributes": ["nodes", "triggers"],
     "requiresPlugins": {
       "official.notification": "^4.0.0"
     }
