@@ -276,7 +276,8 @@ func (c Converter) convert(location string, raw json.RawMessage, body bool, pref
 		}
 		// Old Core gated every outgoing edge on an optional ready Boolean.
 		if hasOutputField(c.Catalog[nodeType(result.Graph.Nodes, edge.SourceNodeInstanceID)], "ready") {
-			ready := "nodes[" + quoted(edge.SourceNodeInstanceID) + "].ready"
+			node := "nodes[" + quoted(edge.SourceNodeInstanceID) + "]"
+			ready := "(!has(" + node + ".ready) || type(" + node + ".ready) != bool || " + node + ".ready)"
 			if edge.Condition == "" {
 				edge.Condition = ready
 			} else {

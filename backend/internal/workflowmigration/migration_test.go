@@ -76,6 +76,15 @@ func TestNotificationAndLoopSecretMapping(t *testing.T) {
 	if !strings.Contains(got.Graph.Edges[1].Condition, `nodes["condition"].ready`) {
 		t.Fatal("old ready gate was lost")
 	}
+	for _, sample := range []struct {
+		output map[string]any
+		allow  bool
+	}{{map[string]any{}, true}, {map[string]any{"ready": true}, true}, {map[string]any{"ready": false}, false}, {map[string]any{"ready": "optional-non-boolean"}, true}} {
+		value, err := graph.Evaluate(got.Graph.Edges[1].Condition, graph.Context{Nodes: map[string]map[string]any{"condition": sample.output}})
+		if err != nil || value != sample.allow {
+			t.Fatal("migration changed optional legacy ready semantics", sample.output, value, err)
+		}
+	}
 	var old legacyGraph
 	if err := json.Unmarshal(raw, &old); err != nil {
 		t.Fatal(err)

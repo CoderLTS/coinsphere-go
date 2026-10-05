@@ -21,7 +21,7 @@ import (
 
 func TestHTTPResourceAuthorizationAndLongConnectionRevocation(t *testing.T) {
 	_, database := testdb.Open(t, true)
-	app := service.NewApp(database, &config.AppConfig{Auth: config.AuthConfig{SecretKey: "synthetic-api-key", PasswordIterations: 1}}, sdk.NewRegistry())
+	app := service.NewApp(database, &config.AppConfig{Auth: config.AuthConfig{SecretKey: "synthetic-api-key", PasswordIterations: 1, AccessTokenTTLMinutes: 60}}, sdk.NewRegistry())
 	for _, statement := range []string{
 		`INSERT INTO roles(id,code) VALUES(1,'R_SUPER'),(2,'R_USER')`,
 		`INSERT INTO users(id,username) VALUES(1,'synthetic-owner'),(2,'synthetic-reader')`,

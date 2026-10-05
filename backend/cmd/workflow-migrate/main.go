@@ -23,6 +23,7 @@ import (
 	"coinsphere/backend/internal/service"
 	"coinsphere/backend/internal/workflowmigration"
 	"coinsphere/backend/plugin/official"
+	officialmigrations "coinsphere/backend/plugin/official/migrations"
 	"coinsphere/backend/plugin/sdk"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -111,18 +112,36 @@ func run(parent context.Context) error {
 	if err != nil {
 		return err
 	}
+	registry := sdk.NewRegistry()
+	app := service.NewApp(gdb, cfg, registry)
+	enabled, err := app.EnabledCompiledPlugins(ctx)
+	if err != nil {
+		return errors.New("cannot read target installation versions")
+	}
+	for _, bundle := range officialmigrations.Bundles() {
+		if enabled[bundle.ID] {
+			runner, err := migration.NewPluginBaseline(target, bundle.Files, bundle.Schema)
+			if err != nil {
+				return err
+			}
+			if err := runner.ValidateCurrent(ctx); err != nil {
+				return err
+			}
+		}
+	}
+	for pluginID, latest := range pluginregistry.CompiledMigrationVersions {
+		if enabled[pluginID] {
+			if err := migration.ValidatePluginCurrent(ctx, target, pluginID, latest); err != nil {
+				return err
+			}
+		}
+	}
 	if *command == "verify" {
 		result, err := workflowmigration.Verify(ctx, target, plan)
 		if err != nil {
 			return err
 		}
 		return writeReport(*reportFile, result)
-	}
-	registry := sdk.NewRegistry()
-	app := service.NewApp(gdb, cfg, registry)
-	enabled, err := app.EnabledCompiledPlugins(ctx)
-	if err != nil {
-		return errors.New("cannot read target installation versions")
 	}
 	host := sdk.Host{Inbox: app, Stores: sdk.GormPluginStores{Database: gdb}, Network: official.NetworkClientFactory{}, OutboundProxy: app, Realtime: app, Events: app, AllowedHTTPHosts: cfg.Workflow.HTTPAllowedHosts}
 	if err := official.RegisterAll(registry, host, enabled); err != nil {
