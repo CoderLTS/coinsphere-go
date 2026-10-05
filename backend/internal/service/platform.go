@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -208,7 +209,25 @@ func (a *App) ResolveSystemScope(ctx context.Context, pluginID, permission strin
 			return sdk.SystemScope{}, err
 		}
 	}
-	scope.SessionValid = func(context.Context) error { _, err := a.RevalidateSession(p, permission); return err }
+	scope.SessionValid = func(checkCtx context.Context) error {
+		current, err := a.RevalidateSession(p, permission)
+		if err != nil {
+			return err
+		}
+		if current.HasRole("R_SUPER") != scope.AllWorkflows {
+			return ErrPermission
+		}
+		if !scope.AllWorkflows {
+			var ids []int64
+			if err := workflowScopeQuery(a.DB.WithContext(checkCtx).Model(&db.Workflow{}), current, "workflows.read", "workflows.id").Order("id").Pluck("id", &ids).Error; err != nil {
+				return err
+			}
+			if !slices.Equal(ids, scope.WorkflowIDs) {
+				return ErrPermission
+			}
+		}
+		return nil
+	}
 	return scope, nil
 }
 func (a *App) ResolveWorkflowScope(ctx context.Context, pluginID string, id int64, nodeID, permission string) (sdk.WorkflowScope, error) {

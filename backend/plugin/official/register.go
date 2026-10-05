@@ -29,7 +29,7 @@ func RegisterAll(registry *sdk.Registry, host sdk.Host, enabled map[string]bool)
 		plugins = append(plugins, struct {
 			descriptor sdk.PluginDescriptor
 			register   sdk.RegisterFunc
-		}{sdk.PluginDescriptor{ID: item.ID, Name: item.Name, Version: item.Version, Contributes: item.Contributes, RequiresPlugins: item.RequiresPlugins, Menu: sdk.PluginMenuDescriptor{Mode: item.Menu.Mode, Title: item.Menu.Title, Icon: item.Menu.Icon}}, handlers[item.ID]})
+		}{sdk.PluginDescriptor{ID: item.ID, Name: item.Name, Version: item.Version, Contributes: item.Contributes, RequiresPlugins: item.RequiresPlugins, Menu: sdk.PluginMenuDescriptor{Mode: sdk.PluginMenuMode(item.Menu.Mode), Title: item.Menu.Title, Icon: item.Menu.Icon}}, handlers[item.ID]})
 	}
 	registered := make(map[string]bool, len(plugins))
 	for pending := append([]struct {

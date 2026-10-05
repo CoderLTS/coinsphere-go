@@ -91,6 +91,11 @@ func (a *App) CreateWorkflowRun(ctx context.Context, workflowID int64, payload W
 	now := time.Now().UTC()
 	run := db.WorkflowRun{}
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		current, err := a.authorizeWorkflowCommandTx(tx, ctx, workflowID, "workflows.run")
+		if err != nil {
+			return err
+		}
+		principal = current
 		var workflow db.Workflow
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&workflow, workflowID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -124,7 +129,7 @@ func (a *App) CreateWorkflowRun(ctx context.Context, workflowID int64, payload W
 		if err != nil {
 			return err
 		}
-		if err := a.authorizeExecution(principal.User.ID, validated); err != nil {
+		if err := authorizePluginExecution(principal, validated); err != nil {
 			return err
 		}
 		if err := ensureWorkflowRevisionSecrets(tx, workflowID, revision.ID, validated); err != nil {
@@ -279,6 +284,16 @@ func (a *App) ApplyWorkflowRunAction(ctx context.Context, runID int64, payload W
 	now := time.Now().UTC()
 	var workflowID int64
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var original db.WorkflowRun
+		if err := tx.First(&original, runID).Error; err != nil {
+			return ErrNotFound
+		}
+		if _, err := a.authorizeWorkflowCommandTx(tx, ctx, original.WorkflowID, permission); err != nil {
+			return err
+		}
+		if err := lockHumanTaskWorkflow(tx, original.WorkflowID); err != nil {
+			return err
+		}
 		var run db.WorkflowRun
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&run, runID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -290,10 +305,13 @@ func (a *App) ApplyWorkflowRunAction(ctx context.Context, runID int64, payload W
 		switch action {
 		case "cancel":
 			if run.Status == RunStatusQueued || run.Status == RunStatusWaiting || run.Status == RunStatusRetrying {
-				return tx.Model(&run).Updates(map[string]any{
+				if err := tx.Model(&run).Updates(map[string]any{
 					"status": RunStatusCancelled, "cancel_requested_at": now, "completed_at": now,
 					"lease_token": nil, "lease_expires_at": nil, "updated_at": now,
-				}).Error
+				}).Error; err != nil {
+					return err
+				}
+				return closeWorkflowRunResources(tx, run.ID, now)
 			}
 			if run.Status != RunStatusRunning {
 				return fmt.Errorf("%w: run is already terminal", ErrConflict)
@@ -307,6 +325,33 @@ func (a *App) ApplyWorkflowRunAction(ctx context.Context, runID int64, payload W
 			}
 			if run.Status != RunStatusFailed {
 				return fmt.Errorf("%w: only a failed run can be retried", ErrConflict)
+			}
+			var revision db.WorkflowRevision
+			if err := tx.First(&revision, run.RevisionID).Error; err != nil {
+				return err
+			}
+			g, err := a.validateWorkflowGraph(json.RawMessage(revision.GraphJSON))
+			if err != nil {
+				return err
+			}
+			executor, err := principalForTx(tx, &Principal{User: &db.SystemUser{ID: run.ExecutionUserID}})
+			if err != nil {
+				return err
+			}
+			if err := authorizeWorkflowTx(tx, executor, run.WorkflowID, "workflows.run"); err != nil {
+				return err
+			}
+			if err := authorizePluginExecution(executor, g); err != nil {
+				return err
+			}
+			if err := ensureWorkflowRevisionSecrets(tx, run.WorkflowID, revision.ID, g); err != nil {
+				return err
+			}
+			if err := enforceWorkflowBacklog(tx, run.WorkflowID); err != nil {
+				return err
+			}
+			if err := a.syncRunPluginReferences(tx, run, g); err != nil {
+				return err
 			}
 			if err := tx.Model(&run).Updates(map[string]any{
 				"status": RunStatusRetrying, "not_before": now, "completed_at": nil,
@@ -1237,10 +1282,11 @@ func (a *App) finishWorkflowRunNode(run db.WorkflowRun, runNode db.WorkflowRunNo
 
 func (a *App) retryWorkflowRun(run db.WorkflowRun, attempt int) {
 	now := time.Now().UTC()
-	if runLeaseQuery(a.DB, run, false).Updates(map[string]any{
+	result := runLeaseQuery(a.DB, run, false).Updates(map[string]any{
 		"status": RunStatusRetrying, "not_before": now.Add(time.Duration(attempt) * time.Second),
 		"lease_token": nil, "lease_expires_at": nil, "error_category": nil, "error_message": nil, "updated_at": now,
-	}).Error == nil {
+	})
+	if result.Error == nil && result.RowsAffected == 1 {
 		a.PublishWorkflowRunUpdated(run.WorkflowID, run.ID)
 	}
 }
@@ -1288,7 +1334,7 @@ func (a *App) finishWorkflowRun(expected db.WorkflowRun, status, category string
 		if err := tx.Model(&run).Updates(updates).Error; err != nil {
 			return err
 		}
-		if err := tx.Exec("UPDATE plugin_references SET active=FALSE WHERE reference_type='run' AND reference_id=?", fmt.Sprint(run.ID)).Error; err != nil {
+		if err := closeWorkflowRunResources(tx, run.ID, now); err != nil {
 			return err
 		}
 		if status == RunStatusFailed && run.TriggerType != "failure" {
@@ -1537,6 +1583,14 @@ func (a *App) createDiagnosticReplay(ctx context.Context, runID int64) (Workflow
 	now := time.Now().UTC()
 	var replay db.WorkflowRun
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var source db.WorkflowRun
+		if err := tx.First(&source, runID).Error; err != nil {
+			return ErrNotFound
+		}
+		p, err := a.authorizeWorkflowCommandTx(tx, ctx, source.WorkflowID, "workflows.run")
+		if err != nil {
+			return err
+		}
 		var original db.WorkflowRun
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&original, runID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -1555,7 +1609,7 @@ func (a *App) createDiagnosticReplay(ctx context.Context, runID int64) (Workflow
 			TriggerKey: "replay:" + security.RandomToken(), EventRecordID: original.EventRecordID,
 			PartitionKey: original.PartitionKey, Diagnostic: true, OriginalRunID: &original.ID,
 			Status: RunStatusQueued, NotBefore: now, TriggeredAt: original.TriggeredAt, ResultSummary: `{}`,
-			RequiresSerial: original.RequiresSerial, ExecutionUserID: ContextPrincipal(ctx).User.ID, CreatedBy: &ContextPrincipal(ctx).User.ID, CreatedAt: now, UpdatedAt: now,
+			RequiresSerial: original.RequiresSerial, ExecutionUserID: p.User.ID, CreatedBy: &p.User.ID, CreatedAt: now, UpdatedAt: now,
 		}
 		if err := tx.Create(&replay).Error; err != nil {
 			return errors.New("create diagnostic replay failed")
@@ -1568,7 +1622,7 @@ func (a *App) createDiagnosticReplay(ctx context.Context, runID int64) (Workflow
 		if err != nil {
 			return err
 		}
-		if err := a.authorizeExecution(replay.ExecutionUserID, g); err != nil {
+		if err := authorizePluginExecution(p, g); err != nil {
 			return err
 		}
 		return a.syncRunPluginReferences(tx, replay, g)

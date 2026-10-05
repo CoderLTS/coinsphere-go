@@ -18,20 +18,23 @@
           :class="{ selected: selected?.id === view.id }"
           @click="select(view)"
           ><strong>{{ view.name }}</strong
-          ><span>{{ view.status === 'active' ? pageTitle(view) : '已撤销' }}</span></button
+          ><span>{{
+            view.status === 'active'
+              ? pageTitle(view)
+              : view.status === 'inactive'
+                ? '未开放'
+                : '已撤销'
+          }}</span></button
         ><ElEmpty v-if="!views.length" description="暂无获授权的结果视图" /></aside
       ><section
         ><div v-if="selected" class="view-toolbar"
           ><h2>{{ selected.name }}</h2
-          ><ElSpace v-if="hasAuth('result_views.manage')"
+          ><ElSpace v-if="selected.canManage && selected.status !== 'revoked'"
             ><ElButton @click="openGrants(selected)">管理授权</ElButton
-            ><ElButton
-              v-if="selected.status === 'active'"
-              type="danger"
-              plain
-              @click="revoke(selected)"
-              >撤销视图</ElButton
-            ></ElSpace
+            ><ElButton @click="changeStatus(selected)">{{
+              selected.status === 'active' ? '暂停开放' : '开放视图'
+            }}</ElButton
+            ><ElButton type="danger" plain @click="revoke(selected)">撤销视图</ElButton></ElSpace
           ></div
         ><component
           :is="resultComponent"
@@ -128,6 +131,7 @@
     createResultView,
     replaceResultViewGrants,
     revokeResultView,
+    setResultViewStatus,
     type ResultView,
     type ResultViewCreatePayload
   } from '@/api/resultViews'
@@ -275,6 +279,10 @@
   const revoke = async (view: ResultView) => {
     await ElMessageBox.confirm('撤销后所有获授权用户立即失去此视图的访问权', '撤销结果视图')
     await revokeResultView(view.id)
+    await load()
+  }
+  const changeStatus = async (view: ResultView) => {
+    await setResultViewStatus(view.id, view.status === 'active' ? 'inactive' : 'active')
     await load()
   }
   onMounted(load)

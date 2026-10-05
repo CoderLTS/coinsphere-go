@@ -106,6 +106,7 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 	get(authenticated, "/result-views/:viewId", s.requirePermission(perm.ResultViewsAccess), s.handleGetResultView)
 	authenticated.PUT("/result-views/:viewId/grants", s.handleReplaceResultViewGrants)
 	authenticated.POST("/result-views/:viewId/revoke", s.handleRevokeResultView)
+	authenticated.POST("/result-views/:viewId/status", s.handleSetResultViewStatus)
 	get(authenticated, "/result-views/:viewId/runs", s.handleListResultViewRuns)
 	authenticated.POST("/result-views/:viewId/runs/:runId/:action", s.handleResultViewRunAction)
 	authenticated.POST("/result-views/:viewId/workflow/pause", s.handleResultViewWorkflowPause)

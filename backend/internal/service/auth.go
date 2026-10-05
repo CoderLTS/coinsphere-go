@@ -7,6 +7,7 @@ import (
 
 	"coinsphere/backend/internal/db"
 	"coinsphere/backend/internal/security"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -210,7 +211,12 @@ func (a *App) LogoutAccessToken(principal *Principal) error {
 	if principal == nil || principal.AccessTokenID == "" {
 		return security.ErrInvalidToken
 	}
-	return a.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&db.RevokedSession{TokenID: principal.AccessTokenID, ExpiresAt: principal.AccessTokenExp}).Error
+	return a.DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockAuthorization(tx); err != nil {
+			return err
+		}
+		return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&db.RevokedSession{TokenID: principal.AccessTokenID, ExpiresAt: principal.AccessTokenExp}).Error
+	})
 }
 func (a *App) isAccessTokenRevoked(tokenID string) bool {
 	if tokenID == "" {

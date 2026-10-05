@@ -176,11 +176,20 @@ func (a *App) DecideWorkflowHumanTask(ctx context.Context, taskID int64, payload
 		return WorkflowHumanTaskView{}, err
 	}
 	err = a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		current, err := a.authorizeWorkflowCommandTx(tx, ctx, task.WorkflowID, "human_tasks.decide")
+		if err != nil {
+			return err
+		}
+		principal = current
 		if err := lockHumanTaskWorkflow(tx, task.WorkflowID); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&db.WorkflowRun{}, task.RunID).Error; err != nil {
+		var run db.WorkflowRun
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&run, task.RunID).Error; err != nil {
 			return err
+		}
+		if run.Status != RunStatusWaiting {
+			return ErrConflict
 		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, taskID).Error; err != nil {
 			return err
@@ -272,14 +281,25 @@ func finishWorkflowHumanTask(tx *gorm.DB, task *db.WorkflowHumanTask, status str
 	if len(decision) == 0 {
 		decision = []byte(`{}`)
 	}
-	if err := tx.Model(task).Where("status = 'pending'").Updates(map[string]any{
+	result := tx.Model(task).Where("status = 'pending'").Updates(map[string]any{
 		"status": status, "decision_json": string(decision), "decided_by": actorID,
 		"decided_at": now, "updated_at": now,
-	}).Error; err != nil {
+	})
+	if result.Error != nil {
 		return errors.New("finish workflow human task failed")
+	}
+	if result.RowsAffected != 1 {
+		return ErrConflict
 	}
 	task.Status, task.DecisionJSON, task.DecidedBy, task.DecidedAt, task.UpdatedAt = status, string(decision), actorID, &now, now
 	return nil
+}
+
+func closeWorkflowRunResources(tx *gorm.DB, runID int64, now time.Time) error {
+	if err := tx.Model(&db.WorkflowHumanTask{}).Where("run_id=? AND status='pending'", runID).Updates(map[string]any{"status": "superseded", "decided_at": now, "updated_at": now}).Error; err != nil {
+		return err
+	}
+	return tx.Exec("UPDATE plugin_references SET active=FALSE WHERE reference_type='run' AND reference_id=?", fmt.Sprint(runID)).Error
 }
 
 func resumeWorkflowHumanTaskRun(tx *gorm.DB, runID int64, now time.Time) error {

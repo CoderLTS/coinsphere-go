@@ -213,6 +213,14 @@ func (a *App) CreateWorkflow(ctx context.Context, payload WorkflowCreatePayload,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	err = a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		current, err := commandPrincipalTx(tx, ctx, "workflows.create")
+		if err != nil {
+			return err
+		}
+		principal = current
+		if len(payload.SecretChanges) > 0 && !principal.HasPermission("workflows.secrets.manage") {
+			return ErrPermission
+		}
 		if err := validateWorkflowGroupID(tx, payload.GroupID); err != nil {
 			return err
 		}
@@ -356,23 +364,21 @@ func (a *App) UpdateWorkflow(ctx context.Context, workflowID int64, payload Work
 	if utf8.RuneCountInString(description) > 500 {
 		return WorkflowDetail{}, errors.New("workflow description must not exceed 500 characters")
 	}
-	database := a.DB.WithContext(ctx)
-	result := database.Model(&db.Workflow{}).Where("id = ?", workflowID).
-		Updates(map[string]any{
-			"name": name, "description": description, "updated_at": time.Now().UTC(),
-		})
-	if result.Error != nil {
-		return WorkflowDetail{}, errors.New("update workflow failed")
-	}
-	if result.RowsAffected == 0 {
-		var workflow db.Workflow
-		if err := database.Select("id").First(&workflow, workflowID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return WorkflowDetail{}, fmt.Errorf("%w: workflow", ErrNotFound)
-			}
-			return WorkflowDetail{}, errors.New("load workflow failed")
+	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := a.authorizeWorkflowCommandTx(tx, ctx, workflowID, "workflows.update"); err != nil {
+			return err
 		}
-		return WorkflowDetail{}, errors.New("update workflow failed")
+		result := tx.Model(&db.Workflow{}).Where("id=?", workflowID).Updates(map[string]any{"name": name, "description": description, "updated_at": time.Now().UTC()})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrConflict
+		}
+		return nil
+	})
+	if err != nil {
+		return WorkflowDetail{}, err
 	}
 	return a.GetWorkflow(ctx, workflowID)
 }
@@ -398,6 +404,16 @@ func (a *App) SaveWorkflowRevision(ctx context.Context, workflowID int64, payloa
 
 	var revision db.WorkflowRevision
 	err = a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		current, err := a.authorizeWorkflowCommandTx(tx, ctx, workflowID, "workflows.update")
+		if err != nil {
+			return err
+		}
+		principal = current
+		if len(secretChanges) > 0 {
+			if err := authorizeWorkflowTx(tx, principal, workflowID, "workflows.secrets.manage"); err != nil {
+				return err
+			}
+		}
 		var workflow db.Workflow
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&workflow, workflowID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -591,6 +607,9 @@ func (a *App) DeleteWorkflowRevision(ctx context.Context, workflowID, revisionID
 	}
 	var storageKeys []string
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := a.authorizeWorkflowCommandTx(tx, ctx, workflowID, "workflows.delete"); err != nil {
+			return err
+		}
 		var workflow db.Workflow
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&workflow, workflowID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -634,6 +653,9 @@ func (a *App) DeleteWorkflow(ctx context.Context, workflowID int64) error {
 	}
 	var storageKeys []string
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := a.authorizeWorkflowCommandTx(tx, ctx, workflowID, "workflows.delete"); err != nil {
+			return err
+		}
 		var workflow db.Workflow
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&workflow, workflowID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -772,6 +794,12 @@ WHERE id = (
 func (a *App) cancelWorkflowRuns(ctx context.Context, workflowID int64, revisionID *int64) error {
 	var runIDs []int64
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := a.authorizeWorkflowCommandTx(tx, ctx, workflowID, "workflows.delete"); err != nil {
+			return err
+		}
+		if err := lockHumanTaskWorkflow(tx, workflowID); err != nil {
+			return err
+		}
 		var workflow db.Workflow
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&workflow, workflowID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -802,6 +830,17 @@ func (a *App) cancelWorkflowRuns(ctx context.Context, workflowID int64, revision
 		if err := runQuery.
 			Updates(map[string]any{"cancel_requested_at": now, "updated_at": now}).Error; err != nil {
 			return errors.New("request running workflow cancellation failed")
+		}
+		for _, id := range runIDs {
+			var run db.WorkflowRun
+			if err := tx.Select("status").First(&run, id).Error; err != nil {
+				return err
+			}
+			if run.Status == RunStatusCancelled {
+				if err := closeWorkflowRunResources(tx, id, now); err != nil {
+					return err
+				}
+			}
 		}
 		return nil
 	})
@@ -847,6 +886,9 @@ func (a *App) ApplyWorkflowLifecycle(ctx context.Context, workflowID int64, payl
 	}
 	action := strings.ToLower(strings.TrimSpace(payload.Action))
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := a.authorizeWorkflowCommandTx(tx, ctx, workflowID, "workflows.activate"); err != nil {
+			return err
+		}
 		var workflow db.Workflow
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&workflow, workflowID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -873,13 +915,20 @@ func (a *App) ApplyWorkflowLifecycle(ctx context.Context, workflowID int64, payl
 			if err != nil {
 				return fmt.Errorf("%w: active workflow revision is invalid", ErrConflict)
 			}
-			if err := a.authorizeExecution(workflow.OwnerUserID, validated); err != nil {
+			owner, err := principalForTx(tx, &Principal{User: &db.SystemUser{ID: workflow.OwnerUserID}})
+			if err != nil {
+				return err
+			}
+			if err := authorizeWorkflowTx(tx, owner, workflowID, "workflows.run"); err != nil {
+				return err
+			}
+			if err := authorizePluginExecution(owner, validated); err != nil {
 				return err
 			}
 			if err := ensureWorkflowRevisionSecrets(tx, workflow.ID, revision.ID, validated); err != nil {
 				return err
 			}
-			runtimeUpdates = map[string]any{"updated_at": now, "next_scheduled_at": nil}
+			runtimeUpdates = map[string]any{"updated_at": now, "next_scheduled_at": nil, "trigger_lease_token": nil, "trigger_lease_expires_at": nil}
 			trigger := validated.nodes[validated.mainTriggerID]
 			if trigger.NodeType == "core.schedule" {
 				next, err := nextWorkflowScheduledAt(trigger.Config, now)
@@ -889,7 +938,7 @@ func (a *App) ApplyWorkflowLifecycle(ctx context.Context, workflowID int64, payl
 				runtimeUpdates["next_scheduled_at"] = next
 			}
 		} else if action == "deactivate" {
-			runtimeUpdates = map[string]any{"updated_at": now, "next_scheduled_at": nil}
+			runtimeUpdates = map[string]any{"updated_at": now, "next_scheduled_at": nil, "trigger_lease_token": nil, "trigger_lease_expires_at": nil}
 		}
 		if err := tx.Model(&db.Workflow{}).Where("id = ?", workflowID).Updates(updates).Error; err != nil {
 			return errors.New("update workflow lifecycle failed")

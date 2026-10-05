@@ -144,8 +144,10 @@
         ><ElSelect
           :model-value="grant.userId ? 'user' : 'role'"
           @update:model-value="
-            grant.userId = $event === 'user' ? 1 : undefined
-            grant.roleId = $event === 'role' ? 1 : undefined
+            Object.assign(grant, {
+              userId: $event === 'user' ? 1 : undefined,
+              roleId: $event === 'role' ? 1 : undefined
+            })
           "
           ><ElOption label="用户 ID" value="user" /><ElOption
             label="角色 ID"

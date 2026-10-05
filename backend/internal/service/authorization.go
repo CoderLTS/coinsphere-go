@@ -41,7 +41,11 @@ func workflowScopeQuery(query *gorm.DB, p *Principal, permission, column string)
 }
 func (a *App) AuthorizeWorkflow(ctx context.Context, id int64, permission string) error {
 	if grant, ok := ctx.Value(resultGrantKey{}).(resultExecutionGrant); ok && grant.workflowID == id && grant.permissions[permission] {
-		return nil
+		p, err := principalForTx(a.DB.WithContext(ctx), ContextPrincipal(ctx))
+		if err != nil {
+			return err
+		}
+		return a.validateResultExecutionGrant(a.DB.WithContext(ctx), ctx, p, grant)
 	}
 	if err := requireCapability(ctx, permission); err != nil {
 		return err
@@ -171,6 +175,18 @@ func principalForTx(tx *gorm.DB, p *Principal) (*Principal, error) {
 	if p == nil || p.User == nil {
 		return nil, ErrPermission
 	}
+	if p.AccessTokenID != "" {
+		var revoked int64
+		if !p.AccessTokenExp.After(time.Now().UTC()) {
+			return nil, ErrPermission
+		}
+		if err := tx.Model(&db.RevokedSession{}).Where("token_id=?", p.AccessTokenID).Count(&revoked).Error; err != nil {
+			return nil, err
+		}
+		if revoked != 0 {
+			return nil, ErrPermission
+		}
+	}
 	var user db.SystemUser
 	if err := tx.Where("id=? AND is_active", p.User.ID).First(&user).Error; err != nil {
 		return nil, ErrPermission
@@ -200,6 +216,32 @@ func principalForTx(tx *gorm.DB, p *Principal) (*Principal, error) {
 		next.PermissionCodes[code] = true
 	}
 	return &next, nil
+}
+
+// ponytail: 命令与授权变更共用事务锁；高并发写入时再拆为主体和资源锁。
+// 必须先调用，再取得工作流、运行、任务等行锁，避免撤销和提交相互越过。
+func commandPrincipalTx(tx *gorm.DB, ctx context.Context, permission string) (*Principal, error) {
+	if err := lockAuthorization(tx); err != nil {
+		return nil, err
+	}
+	p, err := principalForTx(tx, ContextPrincipal(ctx))
+	if err != nil {
+		return nil, err
+	}
+	if permission != "" && !p.HasPermission(permission) {
+		return nil, ErrPermission
+	}
+	return p, nil
+}
+func (a *App) authorizeWorkflowCommandTx(tx *gorm.DB, ctx context.Context, id int64, permission string) (*Principal, error) {
+	p, err := commandPrincipalTx(tx, ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	if grant, ok := ctx.Value(resultGrantKey{}).(resultExecutionGrant); ok && grant.workflowID == id && grant.permissions[permission] {
+		return p, a.validateResultExecutionGrant(tx, ctx, p, grant)
+	}
+	return p, authorizeWorkflowTx(tx, p, id, permission)
 }
 func authorizeWorkflowTx(tx *gorm.DB, p *Principal, id int64, permission string) error {
 	var count int64

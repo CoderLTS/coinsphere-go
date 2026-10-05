@@ -41,6 +41,9 @@ func (a *App) PublishWorkflowRevision(ctx context.Context, workflowID int64, pay
 		return WorkflowDetail{}, errors.New("invalid publish precondition")
 	}
 	err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := a.authorizeWorkflowCommandTx(tx, ctx, workflowID, "workflows.publish"); err != nil {
+			return err
+		}
 		var workflow db.Workflow
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&workflow, workflowID).Error; err != nil {
 			return err
@@ -59,7 +62,14 @@ func (a *App) PublishWorkflowRevision(ctx context.Context, workflowID int64, pay
 		if err := ensureWorkflowRevisionSecrets(tx, workflowID, revision.ID, g); err != nil {
 			return err
 		}
-		if err := a.authorizeExecution(workflow.OwnerUserID, g); err != nil {
+		owner, err := principalForTx(tx, &Principal{User: &db.SystemUser{ID: workflow.OwnerUserID}})
+		if err != nil {
+			return err
+		}
+		if err := authorizeWorkflowTx(tx, owner, workflowID, "workflows.run"); err != nil {
+			return err
+		}
+		if err := authorizePluginExecution(owner, g); err != nil {
 			return err
 		}
 		if err := a.syncRevisionPluginReferences(tx, revision, g); err != nil {
