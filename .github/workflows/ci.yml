@@ -77,6 +77,11 @@ jobs:
           cache-dependency-path: frontend/pnpm-lock.yaml
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Compile ordinary business plugin through the frontend registry
+        run: |
+          mkdir -p src/plugins/installed/example_business/frontend
+          cp ../examples/plugins/business/frontend/* src/plugins/installed/example_business/frontend/
+          cp ../examples/plugins/business/registry.fixture.ts src/plugins/registry.generated.ts
       - name: Lint
         run: pnpm lint
       - name: Type check and build

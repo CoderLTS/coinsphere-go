@@ -117,6 +117,7 @@ async function backendFixture(
     anonymous?: boolean
     count?: number
     denyWorkflow?: boolean
+    business?: boolean
     missingComponent?: boolean
   } = {}
 ) {
@@ -187,11 +188,15 @@ async function backendFixture(
   const view = {
     id: 41,
     name: '固定授权结果',
-    pluginId: options.missingComponent ? 'test.uncompiled' : 'official.binance',
-    pageKey: 'paper',
+    pluginId: options.missingComponent
+      ? 'test.uncompiled'
+      : options.business
+        ? 'example.business'
+        : 'official.binance',
+    pageKey: options.business ? 'tasks' : 'paper',
     status: 'active',
     canManage: false,
-    allowedActions: [],
+    allowedActions: options.business ? ['ack'] : [],
     createdAt
   }
   const catalog = [
@@ -200,7 +205,7 @@ async function backendFixture(
       version: '1.0.0',
       resultPages: [
         {
-          pageKey: 'paper',
+          pageKey: view.pageKey,
           title: '模拟结果',
           componentEntry: 'PaperResultPage',
           scopeSchema: {},
@@ -210,7 +215,16 @@ async function backendFixture(
           permissionCode: 'plugin.official.binance.paper.read'
         }
       ],
-      runPanels: []
+      runPanels: options.business
+        ? [
+            {
+              panelKey: 'task',
+              title: '业务事项',
+              nodeTypes: ['example.business.task'],
+              componentEntry: 'TaskPanel.vue'
+            }
+          ]
+        : []
     }
   ]
   if (!options.anonymous)
@@ -319,6 +333,14 @@ async function backendFixture(
       })
       return
     }
+    if (path === '/api/v1/result-views/41/plugins/example.business/tasks') {
+      await reply({ viewId: '41', message: '业务事项可读取' })
+      return
+    }
+    if (method === 'POST' && path === '/api/v1/result-views/41/plugins/example.business/ack') {
+      await reply({ viewId: '41', message: '事项已确认' })
+      return
+    }
     if (path === '/api/v1/workflows/node-definitions') {
       await reply({ items: nodeDefinitions })
       return
@@ -394,7 +416,29 @@ async function backendFixture(
       return
     }
     if (method === 'GET' && path === '/api/v1/workflow-runs/21') {
-      await reply(run)
+      await reply(
+        options.business
+          ? {
+              ...run,
+              status: 'succeeded',
+              runNodes: [
+                {
+                  id: 51,
+                  nodeInstanceId: 'task',
+                  nodeType: 'example.business.task',
+                  nodeVersion: '1.0.0',
+                  status: 'succeeded',
+                  executionPool: 'compute',
+                  attempt: 1,
+                  loopIteration: 0,
+                  operationKey: 'synthetic-business',
+                  inputSummary: {},
+                  outputSummary: { message: '业务事项可读取' }
+                }
+              ]
+            }
+          : run
+      )
       return
     }
     if (method === 'POST' && path === '/api/v1/human-tasks/31') {
@@ -495,6 +539,21 @@ test('列表读取不随工作流数量增加，并展示真实等待和重试�
   ).toBeVisible()
   expect(backend.calls.filter((call) => call === 'GET /api/v1/workflows')).toHaveLength(1)
   expect(backend.calls.filter((call) => /^GET \/api\/v1\/workflows\/\d+/.test(call))).toEqual([])
+  expect(backend.unexpected).toEqual([])
+})
+
+test('普通业务插件通过同一结果中心和运行面板加载', async ({ page }) => {
+  const backend = await backendFixture(page, { business: true })
+  await page.goto('/results')
+  await expect(page.getByLabel('业务事项结果')).toContainText('业务事项可读取')
+  await page.getByRole('button', { name: '确认事项', exact: true }).click()
+  await expect(page.getByLabel('业务事项结果')).toContainText('事项已确认')
+  expect(backend.calls).toContain('POST /api/v1/result-views/41/plugins/example.business/ack')
+  await page.goto('/scheduler/execution/21/detail')
+  await page.getByRole('tab', { name: '节点记录', exact: true }).click()
+  await page.getByRole('cell', { name: 'task', exact: true }).click()
+  await page.getByRole('tab', { name: '业务事项', exact: true }).click()
+  await expect(page.getByLabel('业务节点结果')).toContainText('业务事项可读取')
   expect(backend.unexpected).toEqual([])
 })
 
