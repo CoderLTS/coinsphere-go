@@ -72,23 +72,11 @@ func (a *App) lockExecutionLease(tx *gorm.DB, expected db.WorkflowRun, result *d
 	if err := tx.First(&revision, expected.RevisionID).Error; err != nil {
 		return err
 	}
-	var graph workflowGraph
-	if err := json.Unmarshal([]byte(revision.GraphJSON), &graph); err != nil {
+	graph, err := a.validateWorkflowGraph(json.RawMessage(revision.GraphJSON))
+	if err != nil {
 		return err
 	}
-	catalog := a.workflowNodeDescriptors()
-	for _, n := range graph.Nodes {
-		d, ok := catalog[n.NodeType]
-		if !ok || d.Version != n.NodeVersion {
-			return ErrConflict
-		}
-		for _, code := range d.ExecutionPermissions {
-			if !p.HasPermission(code) {
-				return ErrPermission
-			}
-		}
-	}
-	return nil
+	return authorizePluginExecution(p, graph)
 }
 
 func (a *App) workflowNodeRetrySafe(desc sdk.NodeDescriptor, config json.RawMessage) bool {

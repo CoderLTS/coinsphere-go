@@ -782,6 +782,9 @@ func (a *App) executeWorkflowNode(ctx context.Context, run db.WorkflowRun, revis
 		}
 	}
 	if executeErr != nil {
+		if sdk.ClassifyError(executeErr) == sdk.ErrorTransient && !a.workflowNodeRetrySafe(desc, node.Config) {
+			executeErr = &sdk.ExecutionError{Class: sdk.ErrorUnknownResult, Err: executeErr}
+		}
 		if sdk.ClassifyError(executeErr) == sdk.ErrorUnknownResult {
 			category = string(sdk.ErrorUnknownResult)
 		}
@@ -882,8 +885,9 @@ func (a *App) commitWorkflowNodeSuccess(ctx context.Context, runNode db.Workflow
 			checkpointOutput = json.RawMessage(`{}`)
 			outputSummary = mustJSONString(map[string]any{"eventRecordId": *run.EventRecordID})
 		}
-		if err := tx.Model(&db.WorkflowRunNode{}).Where("id = ? AND status = ?", runNode.ID, RunStatusRunning).
-			Updates(map[string]any{"status": RunStatusSucceeded, "output_summary": outputSummary, "completed_at": now, "duration_ms": duration}).Error; err != nil {
+		result := tx.Model(&db.WorkflowRunNode{}).Where("id = ? AND status = ?", runNode.ID, RunStatusRunning).
+			Updates(map[string]any{"status": RunStatusSucceeded, "output_summary": outputSummary, "completed_at": now, "duration_ms": duration})
+		if result.Error != nil || result.RowsAffected != 1 {
 			return errors.New("finish workflow node run failed")
 		}
 		checkpoint := db.WorkflowRunCheckpoint{
@@ -1637,12 +1641,40 @@ func (r workflowSecretReader) Read(ctx context.Context, field string) ([]byte, e
 	if strings.TrimSpace(field) == "" {
 		return nil, errors.New("secret field is required")
 	}
-	var binding db.WorkflowSecretBinding
-	database := r.database
-	if database == nil {
-		database = r.app.DB
+	if r.app.Cipher == nil {
+		return nil, errors.New("workflow secret cipher is unavailable")
 	}
-	if err := database.WithContext(ctx).Where("revision_id = ? AND node_instance_id = ? AND field_name = ?", r.revisionID, r.nodeInstanceID, field).First(&binding).Error; err != nil {
+	var binding db.WorkflowSecretBinding
+	read := func(tx *gorm.DB) error {
+		return tx.Where("revision_id = ? AND node_instance_id = ? AND field_name = ?", r.revisionID, r.nodeInstanceID, field).First(&binding).Error
+	}
+	var err error
+	if r.database != nil {
+		// Ingress owns and has already locked the published revision transaction.
+		err = read(r.database.WithContext(ctx))
+	} else {
+		err = r.app.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if run, ok := ctx.Value(executionLeaseKey{}).(db.WorkflowRun); ok {
+				if run.RevisionID != r.revisionID {
+					return ErrPermission
+				}
+				if err := r.app.lockExecutionLease(tx, run, nil); err != nil {
+					return err
+				}
+			} else if lease, ok := ctx.Value(triggerLeaseKey{}).(triggerLease); ok {
+				if lease.revisionID != r.revisionID {
+					return ErrPermission
+				}
+				if err := r.app.lockTriggerLease(tx, lease); err != nil {
+					return err
+				}
+			} else {
+				return ErrPermission
+			}
+			return read(tx)
+		})
+	}
+	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%w: workflow secret", ErrNotFound)
 		}

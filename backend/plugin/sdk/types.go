@@ -113,6 +113,7 @@ type ActionRequest struct {
 
 type NodeOutput struct {
 	NodeInstanceID string
+	SourcePort     string
 	Output         json.RawMessage
 }
 

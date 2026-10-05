@@ -91,15 +91,15 @@ func (a aiModelCallAction) Execute(ctx context.Context, request sdk.ActionReques
 	httpRequest.Header.Set("Idempotency-Key", request.OperationKey)
 	response, err := a.client.Do(httpRequest)
 	if err != nil {
-		return sdk.ActionResult{}, err
+		return sdk.ActionResult{}, &sdk.ExecutionError{Class: sdk.ErrorUnknownResult, Err: errors.New("AI request result is unknown")}
 	}
 	defer response.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(response.Body, maxAIResponseBytes+1))
 	if err != nil || len(raw) > maxAIResponseBytes {
-		return sdk.ActionResult{}, errors.New("AI model response exceeds the 1 MiB limit")
+		return sdk.ActionResult{}, &sdk.ExecutionError{Class: sdk.ErrorUnknownResult, Err: errors.New("AI model response exceeds the 1 MiB limit")}
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return sdk.ActionResult{}, fmt.Errorf("AI model response status %d", response.StatusCode)
+		return sdk.ActionResult{}, &sdk.ExecutionError{Class: sdk.ErrorUnknownResult, Err: fmt.Errorf("AI model response status %d", response.StatusCode)}
 	}
 	var modelResponse struct {
 		Model   string `json:"model"`
@@ -111,11 +111,11 @@ func (a aiModelCallAction) Execute(ctx context.Context, request sdk.ActionReques
 		Usage map[string]any `json:"usage"`
 	}
 	if json.Unmarshal(raw, &modelResponse) != nil || len(modelResponse.Choices) != 1 || modelResponse.Usage == nil {
-		return sdk.ActionResult{}, errors.New("AI model response is invalid")
+		return sdk.ActionResult{}, &sdk.ExecutionError{Class: sdk.ErrorUnknownResult, Err: errors.New("AI model response is invalid")}
 	}
 	var data map[string]any
 	if json.Unmarshal([]byte(modelResponse.Choices[0].Message.Content), &data) != nil || data == nil {
-		return sdk.ActionResult{}, errors.New("AI model response content must be a JSON object")
+		return sdk.ActionResult{}, &sdk.ExecutionError{Class: sdk.ErrorUnknownResult, Err: errors.New("AI model response content must be a JSON object")}
 	}
 	if modelResponse.Model == "" {
 		modelResponse.Model = config.Model

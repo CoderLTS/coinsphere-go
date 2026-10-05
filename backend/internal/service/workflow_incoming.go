@@ -13,7 +13,7 @@ func workflowIncomingOutputs(incoming []workflowGraphEdge, outputs map[string]ma
 		}
 		reached, err := workflowEdgeReached(edge, outputs, event, input)
 		if err == nil && reached {
-			result = append(result, sdk.NodeOutput{NodeInstanceID: edge.SourceNodeInstanceID, Output: mustJSON(output)})
+			result = append(result, sdk.NodeOutput{NodeInstanceID: edge.SourceNodeInstanceID, SourcePort: edge.SourcePort, Output: mustJSON(output)})
 		}
 	}
 	return result

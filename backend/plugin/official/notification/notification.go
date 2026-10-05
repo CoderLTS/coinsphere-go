@@ -49,6 +49,9 @@ func Register(registrar sdk.Registrar, host sdk.Host) error {
 }
 
 func (n *notificationRuntime) register(registrar sdk.Registrar) error {
+	if err := registerCompose(registrar); err != nil {
+		return err
+	}
 	if err := registrar.Cleanup(cleanupWorkflow); err != nil {
 		return err
 	}
@@ -78,6 +81,7 @@ func (n *notificationRuntime) register(registrar sdk.Registrar) error {
 		descriptors[index].Pool = sdk.PoolStream
 		descriptors[index].SideEffect = sdk.SideEffectNotification
 		descriptors[index].State = sdk.StateStateless
+		descriptors[index].RetrySafe = descriptors[index].Type == "official.notification.in_app"
 		if err := registrar.Action(descriptors[index], notificationAction{
 			runtime: n, channel: strings.TrimPrefix(descriptors[index].Type, "official.notification."),
 		}); err != nil {

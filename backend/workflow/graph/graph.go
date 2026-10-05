@@ -62,42 +62,51 @@ var environment, environmentError = cel.NewEnv(
 	cel.Variable("incoming", cel.ListType(cel.DynType)),
 )
 var programMu sync.Mutex
-var programs = map[string]cel.Program{}
+
+type compiledExpression struct {
+	ast     *cel.Ast
+	program cel.Program
+}
+
+var programs = map[string]compiledExpression{}
 
 func Environment() (*cel.Env, error) { return environment, environmentError }
 func Compile(expression string) (*cel.Ast, error) {
+	compiled, err := compile(expression)
+	return compiled.ast, err
+}
+func compile(expression string) (compiledExpression, error) {
 	if environmentError != nil {
-		return nil, environmentError
+		return compiledExpression{}, environmentError
 	}
 	if len(strings.TrimSpace(expression)) == 0 || len(expression) > 4096 {
-		return nil, errors.New("CEL expression must contain 1 to 4096 bytes")
+		return compiledExpression{}, errors.New("CEL expression must contain 1 to 4096 bytes")
+	}
+	programMu.Lock()
+	defer programMu.Unlock()
+	if result, ok := programs[expression]; ok {
+		return result, nil
 	}
 	ast, issues := environment.Compile(expression)
 	if issues != nil && issues.Err() != nil {
-		return nil, issues.Err()
+		return compiledExpression{}, issues.Err()
 	}
-	return ast, nil
+	program, err := environment.Program(ast)
+	if err != nil {
+		return compiledExpression{}, err
+	}
+	// ponytail: clear at 4096 expressions; use LRU only if real workloads churn.
+	if len(programs) >= 4096 {
+		programs = map[string]compiledExpression{}
+	}
+	result := compiledExpression{ast, program}
+	programs[expression] = result
+	return result, nil
 }
 func Evaluate(expression string, ctx Context) (any, error) {
-	programMu.Lock()
-	program := programs[expression]
-	programMu.Unlock()
-	if program == nil {
-		ast, err := Compile(expression)
-		if err != nil {
-			return nil, err
-		}
-		program, err = environment.Program(ast)
-		if err != nil {
-			return nil, err
-		}
-		programMu.Lock()
-		// ponytail: 4096 个表达式后清空缓存；只有实际出现抖动时才引入 LRU。
-		if len(programs) >= 4096 {
-			programs = map[string]cel.Program{}
-		}
-		programs[expression] = program
-		programMu.Unlock()
+	compiled, err := compile(expression)
+	if err != nil {
+		return nil, err
 	}
 	if ctx.Event == nil {
 		ctx.Event = map[string]string{}
@@ -111,7 +120,7 @@ func Evaluate(expression string, ctx Context) (any, error) {
 	if ctx.Incoming == nil {
 		ctx.Incoming = []map[string]any{}
 	}
-	value, _, err := program.Eval(map[string]any{"event": ctx.Event, "input": ctx.Input, "nodes": ctx.Nodes, "incoming": ctx.Incoming})
+	value, _, err := compiled.program.Eval(map[string]any{"event": ctx.Event, "input": ctx.Input, "nodes": ctx.Nodes, "incoming": ctx.Incoming})
 	if err != nil {
 		return nil, err
 	}

@@ -100,6 +100,7 @@
     createdAt: '',
     updatedAt: '',
     isSystem: false,
+    permissionCodes: [],
     isEnabled: true
   })
 

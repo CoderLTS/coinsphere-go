@@ -38,9 +38,18 @@ func Walk(e *exprpb.Expr, visit func(*exprpb.Expr) error) error {
 	if e == nil {
 		return nil
 	}
+	children := expressionChildren(e)
 	if err := visit(e); err != nil {
 		return err
 	}
+	for _, child := range children {
+		if err := Walk(child, visit); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func expressionChildren(e *exprpb.Expr) []*exprpb.Expr {
 	children := []*exprpb.Expr{}
 	if s := e.GetSelectExpr(); s != nil {
 		children = append(children, s.Operand)
@@ -60,56 +69,65 @@ func Walk(e *exprpb.Expr, visit func(*exprpb.Expr) error) error {
 	if c := e.GetComprehensionExpr(); c != nil {
 		children = append(children, c.IterRange, c.AccuInit, c.LoopCondition, c.LoopStep, c.Result)
 	}
-	for _, child := range children {
-		if err := Walk(child, visit); err != nil {
-			return err
-		}
-	}
-	return nil
+	return children
 }
+
 func ValidateNodeReferences(expression string, allowed map[string]bool) error {
 	ast, err := Compile(expression)
 	if err != nil {
 		return err
 	}
+	covered := map[*exprpb.Expr]bool{}
 	return Walk(ast.Expr(), func(e *exprpb.Expr) error {
-		root, path, static := AccessPath(e)
-		if root == "nodes" && (e.GetSelectExpr() != nil || e.GetCallExpr() != nil) {
-			if !static || len(path) == 0 {
+		operand, id, fixed := directReference(e, "nodes")
+		if operand != nil {
+			covered[operand] = true
+			if !fixed {
 				return errors.New("CEL node references must use a fixed node ID")
 			}
-			if !allowed[path[0]] {
-				return fmt.Errorf("CEL references unavailable node %q", path[0])
+			if !allowed[id] {
+				return fmt.Errorf("CEL references unavailable node %q", id)
 			}
+		}
+		if ident := e.GetIdentExpr(); ident != nil && ident.Name == "nodes" && !covered[e] {
+			return errors.New("CEL must reference individual upstream nodes")
 		}
 		return nil
 	})
 }
-func RewriteNodeReferences(expression string, mapping map[string]string) (string, error) {
-	return rewriteExpression(expression, func(e *exprpb.Expr) error {
-		if call := e.GetCallExpr(); call != nil && call.Function == operators.Index && len(call.Args) == 2 {
-			root, path, static := AccessPath(e)
-			if root == "nodes" {
-				if !static {
-					return errors.New("dynamic node reference cannot be remapped")
-				}
-				if len(path) == 1 {
-					id, ok := mapping[path[0]]
-					if !ok {
-						return fmt.Errorf("unknown node reference %s", path[0])
-					}
-					call.Args[1] = stringExpression(id)
-				}
-			}
+
+// Only the namespace's first index is an identity. Array and dynamic field access
+// inside a known node remain ordinary CEL and must survive Loop ID expansion.
+func directReference(e *exprpb.Expr, namespace string) (*exprpb.Expr, string, bool) {
+	if sel := e.GetSelectExpr(); sel != nil {
+		if ident := sel.Operand.GetIdentExpr(); ident != nil && ident.Name == namespace {
+			return sel.Operand, sel.Field, true
 		}
-		if sel := e.GetSelectExpr(); sel != nil {
-			if id := sel.Operand.GetIdentExpr(); id != nil && id.Name == "nodes" {
-				mapped, ok := mapping[sel.Field]
-				if !ok {
-					return fmt.Errorf("unknown node reference %s", sel.Field)
+	}
+	if call := e.GetCallExpr(); call != nil && call.Function == operators.Index && len(call.Args) == 2 {
+		if ident := call.Args[0].GetIdentExpr(); ident != nil && ident.Name == namespace {
+			key := call.Args[1].GetConstExpr()
+			if key != nil {
+				if value, ok := key.ConstantKind.(*exprpb.Constant_StringValue); ok {
+					return call.Args[0], value.StringValue, true
 				}
-				e.ExprKind = nodePath(mapped, nil).ExprKind
 			}
+			return call.Args[0], "", false
+		}
+	}
+	return nil, "", false
+}
+func RewriteNodeReferences(expression string, mapping map[string]string) (string, error) {
+	allowed := map[string]bool{}
+	for id := range mapping {
+		allowed[id] = true
+	}
+	if err := ValidateNodeReferences(expression, allowed); err != nil {
+		return "", err
+	}
+	return rewriteExpression(expression, func(e *exprpb.Expr) error {
+		if operand, id, fixed := directReference(e, "nodes"); operand != nil && fixed {
+			e.ExprKind = nodePath(mapping[id], nil).ExprKind
 		}
 		return nil
 	})
@@ -117,22 +135,35 @@ func RewriteNodeReferences(expression string, mapping map[string]string) (string
 
 // RewriteLegacyInput 接受按旧字段明确解析后的来源；冲突留给迁移计划阻断。
 func RewriteLegacyInput(expression string, sources map[string]Binding) (string, error) {
+	covered := map[*exprpb.Expr]bool{}
 	return rewriteExpression(expression, func(e *exprpb.Expr) error {
-		root, path, static := AccessPath(e)
-		if root != "input" || len(path) == 0 && static {
+		operand, field, fixed := directReference(e, "input")
+		if operand == nil {
+			if id := e.GetIdentExpr(); id != nil && id.Name == "input" && !covered[e] {
+				return errors.New("whole legacy input requires an explicit expression mapping")
+			}
 			return nil
 		}
-		if !static {
+		covered[operand] = true
+		if !fixed {
 			return errors.New("dynamic legacy input requires an explicit expression mapping")
 		}
-		binding, ok := sources[path[0]]
+		binding, ok := sources[field]
 		if !ok {
-			return fmt.Errorf("ambiguous legacy input field %q", path[0])
+			return fmt.Errorf("ambiguous legacy input field %q", field)
 		}
-		if binding.Kind != "field" {
-			return errors.New("legacy CEL source must name a node field")
+		var replacement *exprpb.Expr
+		switch binding.Kind {
+		case "field":
+			replacement = nodePath(binding.NodeInstanceID, binding.FieldPath)
+		case "input":
+			replacement = &exprpb.Expr{ExprKind: &exprpb.Expr_IdentExpr{IdentExpr: &exprpb.Expr_Ident{Name: "input"}}}
+			for _, key := range binding.FieldPath {
+				replacement = &exprpb.Expr{ExprKind: &exprpb.Expr_CallExpr{CallExpr: &exprpb.Expr_Call{Function: operators.Index, Args: []*exprpb.Expr{replacement, stringExpression(key)}}}}
+			}
+		default:
+			return errors.New("legacy CEL source must name a node or entry field")
 		}
-		replacement := nodePath(binding.NodeInstanceID, append(append([]string(nil), binding.FieldPath...), path[1:]...))
 		e.ExprKind = replacement.ExprKind
 		return nil
 	})

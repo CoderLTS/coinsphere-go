@@ -39,7 +39,7 @@
       grid: true,
       panning: true,
       mousewheel: { enabled: true, modifiers: ['ctrl', 'meta'] },
-      interacting: !props.readonly,
+      interacting: () => !props.readonly,
       connecting: {
         allowBlank: false,
         allowLoop: false,

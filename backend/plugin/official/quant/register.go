@@ -16,11 +16,12 @@ var quantStrategyConfigSchema = json.RawMessage(`{"$schema":"https://json-schema
 var quantBacktestConfigSchema = json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"venue":{"type":"string","title":"交易所","pattern":"^[a-z][a-z0-9_-]{1,31}$","default":"binance"},"strategyId":{"type":"string","title":"策略标识","const":"official.quant.sma-crossover"},"market":{"type":"string","title":"市场类型","minLength":1,"maxLength":32},"instrument":{"type":"string","title":"交易对","pattern":"^[A-Z0-9]{2,32}$"},"interval":{"type":"string","title":"K 线周期","enum":["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w"]},"startTime":{"type":"string","title":"开始时间（UTC）","format":"date-time"},"endTime":{"type":"string","title":"结束时间（UTC）","format":"date-time"},"initialCapital":{"type":"string","title":"初始资金","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"feeRate":{"type":"string","title":"手续费率","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"slippageRate":{"type":"string","title":"滑点率","pattern":"^[0-9]+(?:\\.[0-9]+)?$","x-coinsphere-decimal":true},"parameters":{"type":"object","title":"参数"}},"required":["venue","strategyId","market","instrument","interval","startTime","endTime","initialCapital","feeRate","slippageRate","parameters"],"additionalProperties":false}`)
 
 type quantRuntime struct {
-	financial    *trading.Registry
-	frameActions map[string]sdk.ActionHandler
-	db           *gorm.DB
-	registry     trading.StrategyRegistry
-	marketData   trading.MarketDataRegistry
+	financial        *trading.Registry
+	frameActions     map[string]sdk.ActionHandler
+	frameDescriptors map[string]sdk.NodeDescriptor
+	db               *gorm.DB
+	registry         trading.StrategyRegistry
+	marketData       trading.MarketDataRegistry
 }
 
 func Register(registrar sdk.Registrar, host sdk.Host, financial *trading.Registry) error {

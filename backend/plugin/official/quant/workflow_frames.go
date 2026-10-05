@@ -18,9 +18,11 @@ type quantRegistrar struct {
 func (r quantRegistrar) Action(desc sdk.NodeDescriptor, handler sdk.ActionHandler) error {
 	if r.runtime.frameActions == nil {
 		r.runtime.frameActions = map[string]sdk.ActionHandler{}
+		r.runtime.frameDescriptors = map[string]sdk.NodeDescriptor{}
 	}
 	if desc.SideEffect == sdk.SideEffectNone || desc.Type == "official.quant.output_signal" {
 		r.runtime.frameActions[desc.Type] = handler
+		r.runtime.frameDescriptors[desc.Type] = desc
 	}
 	return r.Registrar.Action(desc, handler)
 }
@@ -145,6 +147,10 @@ func (f *quantWorkflowFrames) ExecuteFrame(ctx context.Context, request quantFra
 			return result, err
 		}
 		action := f.request
+		desc := f.runtime.frameDescriptors[node.NodeType]
+		if desc.Version != node.NodeVersion || workflowgraph.ValidateValue(desc.InputSchema, input) != nil {
+			return result, errors.New("Quant frame input does not match its fixed node schema")
+		}
 		action.NodeInstanceID = id
 		action.Input = mustMarshal(input)
 		action.Config = node.Config
@@ -153,15 +159,18 @@ func (f *quantWorkflowFrames) ExecuteFrame(ctx context.Context, request quantFra
 		action.State = nil
 		action.Incoming = nil
 		for _, edge := range reached {
-			action.Incoming = append(action.Incoming, sdk.NodeOutput{NodeInstanceID: edge["nodeInstanceId"].(string), Output: mustMarshal(edge["output"])})
+			action.Incoming = append(action.Incoming, sdk.NodeOutput{NodeInstanceID: edge["nodeInstanceId"].(string), SourcePort: edge["sourcePort"].(string), Output: mustMarshal(edge["output"])})
 		}
 		out, err := f.runtime.frameActions[node.NodeType].Execute(ctx, action)
 		if err != nil {
 			return result, err
 		}
 		var output map[string]any
-		if json.Unmarshal(out.Output, &output) != nil || output == nil {
+		if json.Unmarshal(out.Output, &output) != nil || output == nil || workflowgraph.ValidateValue(desc.OutputSchema, output) != nil {
 			return result, errors.New("invalid Quant frame output")
+		}
+		if len(desc.Branches) > 0 && !containsQuantString(desc.Branches, fmt.Sprint(output["branch"])) {
+			return result, errors.New("Quant frame returned an undeclared branch")
 		}
 		outputs[id] = output
 		result.NodeOutputs[id] = out.Output

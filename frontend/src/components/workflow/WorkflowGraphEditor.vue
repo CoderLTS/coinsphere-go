@@ -98,8 +98,8 @@
                     "
                   >
                     <ElSelect
-                      v-if="selectedNode.inputBindings[field].kind === 'field'"
-                      :model-value="selectedNode.inputBindings[field].nodeInstanceId"
+                      v-if="selectedNode.inputBindings?.[field]?.kind === 'field'"
+                      :model-value="selectedNode.inputBindings?.[field]?.nodeInstanceId"
                       placeholder="来源节点"
                       @update:model-value="patchBinding(field, { nodeInstanceId: $event })"
                       ><ElOption
@@ -111,7 +111,7 @@
                         :value="node.nodeInstanceId"
                     /></ElSelect>
                     <ElInput
-                      :model-value="selectedNode.inputBindings[field].fieldPath?.join('.')"
+                      :model-value="selectedNode.inputBindings?.[field]?.fieldPath?.join('.')"
                       placeholder="输出字段路径"
                       @change="
                         patchBinding(field, {
@@ -122,14 +122,14 @@
                   </template>
                   <ElInput
                     v-if="selectedNode.inputBindings?.[field]?.kind === 'cel'"
-                    :model-value="selectedNode.inputBindings[field].expression"
+                    :model-value="selectedNode.inputBindings?.[field]?.expression"
                     type="textarea"
                     placeholder="nodes['节点ID'].字段 / input.字段"
                     @update:model-value="patchBinding(field, { expression: $event })"
                   />
                   <ElInput
                     v-if="selectedNode.inputBindings?.[field]?.kind === 'literal'"
-                    :model-value="JSON.stringify(selectedNode.inputBindings[field].value)"
+                    :model-value="JSON.stringify(selectedNode.inputBindings?.[field]?.value)"
                     placeholder="JSON 值；文本使用双引号"
                     @change="setLiteral(field, $event)"
                   />
