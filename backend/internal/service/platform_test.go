@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -453,6 +454,74 @@ func TestNonFinancialPluginScopesAndRevocation(t *testing.T) {
 	}
 	if _, err := a.SetResultViewStatus(ctx, view.ID, "active"); !errors.Is(err, ErrConflict) {
 		t.Fatal("revoked view was reopened", err)
+	}
+}
+
+func TestResourcePermissionsArtifactAndSessionRevalidation(t *testing.T) {
+	a, ctx, owner := platformFixture(t, func(ctx context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
+		artifact, err := request.Artifacts.Put(ctx, "text/plain", strings.NewReader("synthetic business artifact"))
+		return sdk.ActionResult{Output: json.RawMessage(`{}`), Artifacts: []sdk.Artifact{artifact}}, err
+	})
+	w := createTestWorkflow(t, a, ctx, owner, testGraph("task"))
+	run := queueTestRun(t, a, ctx, owner, w)
+	a.executeWorkflowRun(ctx, claimTestRun(t, a))
+	detail, err := a.GetWorkflowRunDetail(ctx, run.ID)
+	if err != nil || detail.Status != RunStatusSucceeded || len(detail.Artifacts) != 1 {
+		t.Fatal("synthetic artifact execution failed", err)
+	}
+	for _, permission := range []string{"workflows.read", "workflows.run", "workflows.cancel", "workflows.update", "plugins.test.business.read"} {
+		if err := a.DB.Create(&db.RolePermission{RoleID: 2, PermissionCode: permission}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	reader, err := a.buildPrincipal(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader.AccessTokenID, reader.AccessTokenExp = "synthetic-session", time.Now().UTC().Add(time.Hour)
+	readCtx := WithPrincipal(context.Background(), reader)
+	if _, err := a.GetWorkflowArtifactManifest(readCtx, detail.Artifacts[0].SHA256, false); err == nil {
+		t.Fatal("knowing an artifact digest bypassed workflow authorization")
+	}
+	if err := a.ReplaceWorkflowGrants(ctx, w.ID, []WorkflowGrant{{UserID: 2, Permissions: []string{"workflows.read"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.GetWorkflowArtifactManifest(readCtx, detail.Artifacts[0].SHA256, true); err != nil {
+		t.Fatal("authorized reader could not verify its artifact", err)
+	}
+	readerDetail, err := a.GetWorkflowRunDetail(readCtx, run.ID)
+	if err != nil || !slices.Equal(readerDetail.Permissions, []string{"workflows.read"}) {
+		t.Fatal("run actions ignored resource grants", err)
+	}
+	page, _ := ParseCursorPage("", 10, "permissions")
+	result, err := a.PageWorkflows(readCtx, page, "", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := result["records"].([]M)
+	if len(items) != 1 || !slices.Equal(items[0]["permissions"].([]string), []string{"workflows.read"}) {
+		t.Fatal("list actions ignored resource grants")
+	}
+	scope, err := a.ResolveSystemScope(readCtx, "test.business", "plugins.test.business.read")
+	if err != nil || len(scope.WorkflowIDs) != 1 {
+		t.Fatal("system scope lost its authorized workflow", err)
+	}
+	if err := a.ReplaceWorkflowGrants(ctx, w.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := scope.SessionValid(context.Background()); err == nil {
+		t.Fatal("long-lived scope survived a resource revocation")
+	}
+	expired := *reader
+	expired.AccessTokenExp = time.Now().UTC().Add(-time.Second)
+	if _, err := a.RevalidateSession(&expired, "workflows.read"); err == nil {
+		t.Fatal("expired session remained valid")
+	}
+	if err := a.DB.Where("role_id=2 AND permission_code='workflows.read'").Delete(&db.RolePermission{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.RevalidateSession(reader, "workflows.read"); err == nil {
+		t.Fatal("long-lived session survived capability removal")
 	}
 }
 

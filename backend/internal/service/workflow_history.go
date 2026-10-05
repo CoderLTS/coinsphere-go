@@ -77,10 +77,11 @@ type WorkflowArtifactView struct {
 
 type WorkflowRunDetail struct {
 	WorkflowRunView
-	Event     *WorkflowRunEventView  `json:"event,omitempty"`
-	RunNodes  []WorkflowRunNodeView  `json:"runNodes"`
-	Logs      []WorkflowNodeLogView  `json:"logs"`
-	Artifacts []WorkflowArtifactView `json:"artifacts"`
+	Permissions []string               `json:"permissions"`
+	Event       *WorkflowRunEventView  `json:"event,omitempty"`
+	RunNodes    []WorkflowRunNodeView  `json:"runNodes"`
+	Logs        []WorkflowNodeLogView  `json:"logs"`
+	Artifacts   []WorkflowArtifactView `json:"artifacts"`
 }
 
 type workflowArtifactManifest struct {
@@ -145,6 +146,14 @@ ORDER BY n.id, r.ordinal`, runID).Scan(&artifacts).Error; err != nil {
 		}
 	}
 	detail := WorkflowRunDetail{WorkflowRunView: run, RunNodes: runNodes, Logs: logs, Artifacts: artifactViews}
+	var workflow db.Workflow
+	if err := a.DB.WithContext(ctx).First(&workflow, run.WorkflowID).Error; err != nil {
+		return WorkflowRunDetail{}, err
+	}
+	detail.Permissions, err = a.workflowPermissions(ctx, workflow)
+	if err != nil {
+		return WorkflowRunDetail{}, err
+	}
 	if run.EventRecordID > 0 {
 		var event db.WorkflowEventRecord
 		if err := a.DB.WithContext(ctx).First(&event, run.EventRecordID).Error; err != nil {

@@ -17,10 +17,10 @@
 | POST /api/v1/workflows/{id}/lifecycle | activate/deactivate 等生命周期操作；自动触发绑定发布定义 |
 | POST /api/v1/workflows/{id}/runs | revisionId、entryPoint、input 创建固定快照运行；手工试运行不切换发布指针 |
 | GET/POST /api/v1/workflow-runs/{runId} | 查询真实 Run 与节点尝试；授权后的 cancel/retry/replay |
-| GET/POST /api/v1/human-tasks/{taskId} | GET 列表位于 /human-tasks；POST 一次性 approve/reject，已决定/过期返回冲突 |
+| GET /api/v1/human-tasks、POST /api/v1/human-tasks/{taskId} | 授权范围内待办列表；一次性 approve/reject，已决定/过期返回冲突 |
 | GET/PUT /api/v1/workflows/{id}/grants | owner/user/role 资源授权；授予范围不得超过操作者 |
 | GET /api/v1/workbench | 当前用户工作流、待办与结果摘要 |
-| GET /api/v1/plugins/catalog | 已加载插件的节点、页面、结果页和运行面板贡献 |
+| GET /api/v1/plugins/catalog | 已加载插件的结果页和运行面板目录；节点另由 /workflows/node-definitions 提供 |
 | /api/v1/result-views | 固定范围视图、用户/角色授权、开放/停用/撤销；revoked 不可重新开放 |
 
 没有工作流资源范围的请求不可读取 Run、日志、审批或制品。相同 SHA256 的制品仍须验证当前用户可访问的引用。系统观察要求 system.observe，助手与模型配置分别要求 assistant.use/config.ai.manage。

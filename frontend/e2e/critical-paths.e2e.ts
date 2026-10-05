@@ -114,6 +114,7 @@ async function backendFixture(
   page: Page,
   options: {
     permissions?: string[]
+    workflowPermissions?: string[]
     anonymous?: boolean
     count?: number
     denyWorkflow?: boolean
@@ -140,7 +141,7 @@ async function backendFixture(
     createdBy: 1,
     createdAt,
     updatedAt: createdAt,
-    permissions,
+    permissions: options.workflowPermissions ?? permissions,
     stateNodeInstanceIds: [],
     runtime: { maxConcurrentRuns: 1, backlogLimit: 20, updatedAt: createdAt }
   }
@@ -157,6 +158,7 @@ async function backendFixture(
   }
   const revisions = [revision]
   const run = {
+    permissions: options.workflowPermissions ?? permissions,
     id: 21,
     workflowId: 7,
     revisionId: 11,
@@ -516,6 +518,23 @@ test('结果用户只通过固定视图读取结果', async ({ page }) => {
   await page.goto('/scheduler/workflow/7/edit')
   await expect(page).toHaveURL(/\/403$/)
   expect(backend.calls).not.toContain('GET /api/v1/workflows/7')
+  expect(backend.unexpected).toEqual([])
+})
+
+test('角色有操作能力但资源只读时所有页面只显示读取操作', async ({ page }) => {
+  const backend = await backendFixture(page, { workflowPermissions: ['workflows.read'] })
+  await page.goto('/scheduler/definition')
+  for (const name of ['授权', '删除', '启用'])
+    await expect(
+      page.locator('.workflow-library .el-table').getByRole('button', { name, exact: true })
+    ).toHaveCount(0)
+  await page.goto('/scheduler/workflow/7/edit')
+  await expect(page.locator('.workflow-page input').first()).toBeDisabled()
+  for (const name of ['保存草稿', '发布草稿', '运行'])
+    await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0)
+  await page.goto('/scheduler/execution/21/detail')
+  await expect(page.locator('.run-header')).toContainText('等待处理')
+  await expect(page.getByRole('button', { name: '取消运行', exact: true })).toHaveCount(0)
   expect(backend.unexpected).toEqual([])
 })
 

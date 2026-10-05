@@ -222,6 +222,7 @@ export interface WorkflowRunEvent {
 }
 
 export interface WorkflowRunDetail extends WorkflowRun {
+  permissions: string[]
   event?: WorkflowRunEvent
   runNodes: WorkflowRunNode[]
   logs: WorkflowNodeLog[]
@@ -257,6 +258,7 @@ export interface WorkflowRunQuery {
 }
 
 export interface WorkflowSummary extends WorkflowItem {
+  permissions: string[]
   latestRunId?: number
   latestRunStatus?: WorkflowRun['status']
   maxConcurrentRuns: number

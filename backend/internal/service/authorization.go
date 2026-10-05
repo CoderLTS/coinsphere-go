@@ -263,16 +263,22 @@ func (a *App) workflowPermissions(ctx context.Context, w db.Workflow) ([]string,
 	if p == nil {
 		return nil, ErrPermission
 	}
+	var rows []string
+	if !p.HasRole("R_SUPER") && p.User.ID != w.OwnerUserID {
+		if err := a.DB.WithContext(ctx).Raw("SELECT permissions FROM workflow_user_grants WHERE workflow_id=? AND user_id=? UNION ALL SELECT permissions FROM workflow_role_grants WHERE workflow_id=? AND role_id IN ?", w.ID, p.User.ID, w.ID, p.RoleIDs).Scan(&rows).Error; err != nil {
+			return nil, err
+		}
+	}
+	return workflowPermissionCodes(p, w, rows)
+}
+
+func workflowPermissionCodes(p *Principal, w db.Workflow, rows []string) ([]string, error) {
 	allowed := map[string]bool{}
 	if p.HasRole("R_SUPER") || p.User.ID == w.OwnerUserID {
 		for code := range workflowGrantPermissions {
 			allowed[code] = true
 		}
 	} else {
-		var rows []string
-		if err := a.DB.WithContext(ctx).Raw("SELECT permissions FROM workflow_user_grants WHERE workflow_id=? AND user_id=? UNION ALL SELECT permissions FROM workflow_role_grants WHERE workflow_id=? AND role_id IN ?", w.ID, p.User.ID, w.ID, p.RoleIDs).Scan(&rows).Error; err != nil {
-			return nil, err
-		}
 		for _, raw := range rows {
 			var codes []string
 			if json.Unmarshal([]byte(raw), &codes) != nil {

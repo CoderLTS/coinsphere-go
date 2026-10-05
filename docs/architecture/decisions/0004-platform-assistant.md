@@ -3,6 +3,7 @@
 - 状态：已接受（Accepted）
 - 日期：2026-08-30
 - 决策所有者：CoinSphere
+- 助手仅限超级管理员的约束已由 [ADR 0006](0006-general-workflow-platform.md) 替代，历史决策正文保留。
 
 ## 背景
 

@@ -153,11 +153,34 @@ func (a *App) PageWorkflows(ctx context.Context, page CursorPage, status, keywor
 	if more {
 		rows = rows[:page.Limit]
 	}
+	p := ContextPrincipal(ctx)
+	grants := map[int64][]string{}
+	if len(rows) > 0 && !p.HasRole("R_SUPER") {
+		ids := make([]int64, len(rows))
+		for i, row := range rows {
+			ids[i] = row.ID
+		}
+		var subjects []struct {
+			WorkflowID  int64
+			Permissions string
+		}
+		if err := a.DB.WithContext(ctx).Raw("SELECT workflow_id,permissions FROM workflow_user_grants WHERE workflow_id IN ? AND user_id=? UNION ALL SELECT workflow_id,permissions FROM workflow_role_grants WHERE workflow_id IN ? AND role_id IN ?", ids, p.User.ID, ids, p.RoleIDs).Scan(&subjects).Error; err != nil {
+			return nil, err
+		}
+		for _, subject := range subjects {
+			grants[subject.WorkflowID] = append(grants[subject.WorkflowID], subject.Permissions)
+		}
+	}
 	items := []M{}
 	for _, r := range rows {
 		raw, _ := json.Marshal(workflowView(r.Workflow))
 		item := M{}
 		_ = json.Unmarshal(raw, &item)
+		permissions, err := workflowPermissionCodes(p, r.Workflow, grants[r.ID])
+		if err != nil {
+			return nil, err
+		}
+		item["permissions"] = permissions
 		item["maxConcurrentRuns"], item["backlogLimit"] = r.MaxConcurrentRuns, r.BacklogLimit
 		item["latestRunId"], item["latestRunStatus"] = r.LatestRunID, r.LatestRunStatus
 		items = append(items, item)

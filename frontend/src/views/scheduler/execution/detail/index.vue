@@ -19,20 +19,20 @@
         ><ElButton
           v-if="
             run &&
-            hasAuth('workflows.cancel') &&
+            run.permissions.includes('workflows.cancel') &&
             ['queued', 'running', 'waiting', 'retrying'].includes(run.status)
           "
           @click="action('cancel')"
           >取消运行</ElButton
         ><ElButton
-          v-if="run && hasAuth('workflows.retry') && run.status === 'failed'"
+          v-if="run && run.permissions.includes('workflows.retry') && run.status === 'failed'"
           :disabled="run.errorCategory === 'unknown_result'"
           @click="action('retry')"
           >重试</ElButton
         ><ElButton
           v-if="
             run &&
-            hasAuth('workflows.run') &&
+            run.permissions.includes('workflows.run') &&
             ['succeeded', 'failed', 'cancelled'].includes(run.status)
           "
           @click="action('replay')"
@@ -117,7 +117,6 @@
 </template>
 <script setup lang="ts">
   import type { Component } from 'vue'
-  import { useAuth } from '@/hooks/core/useAuth'
   import {
     fetchWorkflowRun,
     fetchWorkflowRevision,
@@ -135,8 +134,7 @@
   import { runStatusLabel } from '@/components/workflow/status'
   import WorkflowGraphCanvas from '@/components/workflow/WorkflowGraphCanvas.vue'
   const route = useRoute(),
-    router = useRouter(),
-    { hasAuth } = useAuth()
+    router = useRouter()
   const run = ref<WorkflowRunDetail>(),
     revision = ref<WorkflowRevision>(),
     definitions = ref<WorkflowNodeDefinition[]>([]),

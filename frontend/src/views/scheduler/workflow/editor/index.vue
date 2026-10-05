@@ -12,16 +12,20 @@
       <ElSpace wrap
         ><ElButton :disabled="!history.length" @click="undo">撤销</ElButton
         ><ElButton :disabled="!future.length" @click="redo">重做</ElButton
-        ><ElButton :loading="validating" @click="validate">检查定义</ElButton
+        ><ElButton
+          v-if="canEdit && hasAuth('workflows.update')"
+          :loading="validating"
+          @click="validate"
+          >检查定义</ElButton
         ><ElButton v-if="canEdit" type="primary" :loading="saving" @click="save">保存草稿</ElButton
         ><ElButton
-          v-if="workflow && hasAuth('workflows.publish')"
+          v-if="workflow?.permissions.includes('workflows.publish')"
           :disabled="dirty || selectedRevisionID !== workflow.draftRevisionId"
           :loading="publishing"
           @click="publish"
           >发布草稿</ElButton
         ><ElButton
-          v-if="workflow && hasAuth('workflows.run')"
+          v-if="workflow?.permissions.includes('workflows.run')"
           :disabled="!workflow.publishedRevisionId"
           @click="openRun"
           >运行</ElButton
@@ -48,7 +52,7 @@
       :read-only="!canEdit"
       :secret-fields="revision?.secretFields"
       :secret-changes="secretChanges"
-      :can-manage-secrets="hasAuth('workflows.secrets.manage')"
+      :can-manage-secrets="canManageSecrets"
       @update:graph="commit"
       @update:secret-changes="secretChanges = $event"
     />
@@ -169,6 +173,11 @@
     workflow.value
       ? workflow.value.permissions.includes('workflows.update')
       : hasAuth('workflows.create')
+  )
+  const canManageSecrets = computed(() =>
+    workflow.value
+      ? workflow.value.permissions.includes('workflows.secrets.manage')
+      : hasAuth('workflows.secrets.manage')
   )
   const commit = (next: WorkflowGraph) => {
     if (!canEdit.value) return

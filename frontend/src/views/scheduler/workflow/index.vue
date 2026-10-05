@@ -72,7 +72,7 @@
       <ElTableColumn label="分组" min-width="140"
         ><template #default="{ row }"
           ><ElSelect
-            v-if="hasAuth('workflows.update')"
+            v-if="row.permissions.includes('workflows.update')"
             :model-value="row.groupId || 0"
             @update:model-value="move(row, $event)"
             ><ElOption label="未分组" :value="0" /><ElOption
@@ -89,7 +89,7 @@
         ><template #default="{ row }"
           ><ElSpace wrap
             ><ElButton
-              v-if="hasAuth('workflows.activate')"
+              v-if="row.permissions.includes('workflows.activate')"
               link
               :disabled="!row.publishedRevisionId"
               @click="lifecycle(row)"
@@ -98,9 +98,16 @@
               link
               @click="router.push({ path: '/scheduler/execution', query: { workflowId: row.id } })"
               >历史运行</ElButton
-            ><ElButton v-if="hasAuth('workflows.share')" link @click="openGrants(row)"
+            ><ElButton
+              v-if="row.permissions.includes('workflows.share')"
+              link
+              @click="openGrants(row)"
               >授权</ElButton
-            ><ElButton v-if="hasAuth('workflows.delete')" link type="danger" @click="remove(row)"
+            ><ElButton
+              v-if="row.permissions.includes('workflows.delete')"
+              link
+              type="danger"
+              @click="remove(row)"
               >删除</ElButton
             ></ElSpace
           ></template
@@ -162,7 +169,7 @@
             :key="permission.code"
             :label="permission.title"
             :value="permission.code"
-            :disabled="!hasAuth(permission.code)" /></ElSelect
+            :disabled="!grantWorkflow?.permissions.includes(permission.code)" /></ElSelect
         ><ElButton type="danger" link @click="grants.splice(index, 1)">删除</ElButton></div
       ><ElButton @click="grants.push({ userId: 1, permissions: ['workflows.read'] })"
         >添加授权</ElButton
