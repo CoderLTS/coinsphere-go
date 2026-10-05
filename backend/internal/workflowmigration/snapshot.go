@@ -62,8 +62,8 @@ func ReadSource(ctx context.Context, database *sql.DB, sourceLabel string) (Snap
 	var secretRaw []byte
 	err = tx.QueryRowContext(ctx, `SELECT coalesce(jsonb_agg(jsonb_build_object(
  'revision_id',b.revision_id,'workflow_id',b.workflow_id,'node_instance_id',b.node_instance_id,'field_name',b.field_name,
- 'encrypted_value',CASE WHEN coalesce(r.node_versions->b.node_instance_id->>'nodeType','') LIKE 'official.binance.%' THEN '' ELSE b.encrypted_value END,
- 'manual_rebind',coalesce(r.node_versions->b.node_instance_id->>'nodeType','') LIKE 'official.binance.%'
+ 'encrypted_value',CASE WHEN coalesce(r.node_versions->b.node_instance_id->>'nodeType','') ~ '^official[.](ai|connector|notification|qq)[.]' THEN b.encrypted_value ELSE '' END,
+ 'manual_rebind',NOT (coalesce(r.node_versions->b.node_instance_id->>'nodeType','') ~ '^official[.](ai|connector|notification|qq)[.]')
  ) ORDER BY b.revision_id,b.node_instance_id,b.field_name),'[]'::jsonb)
  FROM workflow_secret_bindings b JOIN workflow_revisions r ON r.id=b.revision_id`).Scan(&secretRaw)
 	if err != nil {

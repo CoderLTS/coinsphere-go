@@ -89,6 +89,11 @@ func TestPostgresImportIsAtomicAndIdempotent(t *testing.T) {
 	if _, err := legacy.Up(ctx); err != nil {
 		t.Fatal(err)
 	}
+	sourceTx, err := sourceDB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sourceTx.Rollback()
 	for _, q := range []string{
 		`INSERT INTO roles(id,code) VALUES(1,'R_SUPER')`,
 		`INSERT INTO users(id,username) VALUES(1,'synthetic-owner')`,
@@ -99,9 +104,12 @@ func TestPostgresImportIsAtomicAndIdempotent(t *testing.T) {
 		`INSERT INTO workflow_runtimes(workflow_id) VALUES(7)`,
 		`INSERT INTO ai_model_configs(id,display_name,base_url,model_name,api_key_ciphertext,created_by,updated_by) VALUES(5,'Synthetic model','https://example.invalid','synthetic','opaque-synthetic',1,1)`,
 	} {
-		if _, err := sourceDB.Exec(q); err != nil {
+		if _, err := sourceTx.Exec(q); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := sourceTx.Commit(); err != nil {
+		t.Fatal(err)
 	}
 	snapshot, err := ReadSource(ctx, sourceDB, "synthetic-source")
 	if err != nil {

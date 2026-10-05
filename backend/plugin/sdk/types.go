@@ -74,6 +74,8 @@ type NodeDescriptor struct {
 	RetrySafe      bool
 	State          StateMode
 	ValidateConfig func(json.RawMessage) error
+	// RewriteConfigNodeIDs updates plugin-owned node references when a Loop body is expanded.
+	RewriteConfigNodeIDs func(json.RawMessage, map[string]string) (json.RawMessage, error)
 }
 
 type PluginMenuMode string

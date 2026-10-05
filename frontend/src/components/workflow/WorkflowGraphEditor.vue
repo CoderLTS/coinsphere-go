@@ -174,13 +174,7 @@
             >
           </ElTabPane>
         </ElTabs>
-        <ElButton
-          type="danger"
-          plain
-          @click="
-            commit(removeNode(graph, selectedNode.nodeInstanceId))
-            drawer = false
-          "
+        <ElButton type="danger" plain :disabled="readOnly" @click="removeSelectedNode"
           >删除节点</ElButton
         >
       </template>
@@ -303,6 +297,11 @@
   ])
   const commit = (graph: WorkflowGraph) => {
     if (!props.readOnly) emit('update:graph', graph)
+  }
+  const removeSelectedNode = () => {
+    if (!selectedNode.value || props.readOnly) return
+    commit(removeNode(props.graph, selectedNode.value.nodeInstanceId))
+    drawer.value = false
   }
   const updateNode = (update: (node: WorkflowGraphNode) => void) => {
     const graph = cloneGraph(props.graph)

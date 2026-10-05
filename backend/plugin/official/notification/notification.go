@@ -38,6 +38,9 @@ type ExternalDeliveryInput struct {
 type notificationTarget = sdk.RecipientTarget
 
 func Register(registrar sdk.Registrar, host sdk.Host) error {
+	if err := registrar.WorkflowValidator(sdk.WorkflowValidatorFunc(validateComposeGraph)); err != nil {
+		return err
+	}
 	client, err := host.Network.New([]string{"oapi.dingtalk.com"})
 	if err != nil {
 		return err

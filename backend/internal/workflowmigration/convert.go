@@ -88,7 +88,10 @@ func decode(raw []byte, value any) error {
 	return nil
 }
 func Digest(value any) string {
-	raw, _ := json.Marshal(value)
+	raw, err := json.Marshal(value)
+	if err != nil {
+		panic("migration facts must be valid JSON before hashing")
+	}
 	hash := sha256.Sum256(raw)
 	return hex.EncodeToString(hash[:])
 }
@@ -314,6 +317,11 @@ func (c Converter) convert(location string, raw json.RawMessage, body bool, pref
 		if !special {
 			continue
 		}
+		for _, binding := range oldNode.InputBindings {
+			if binding.Kind == "condition_entry" || binding.Kind == "cel" && strings.Contains(binding.Expression, "incoming") {
+				return result, errors.New("message composition with incoming-dependent bindings requires an explicit graph redesign")
+			}
+		}
 		desc, ok := c.Catalog["official.notification.compose"]
 		if !ok {
 			return result, errors.New("message composition requires the notification plugin")
@@ -373,6 +381,7 @@ func (c Converter) expression(location, expression string, sources map[string]gr
 func (c Converter) legacySources(nodes []graph.Node, source string, allowed func(string) bool) map[string]graph.Binding {
 	result := map[string]graph.Binding{}
 	counts := map[string]int{}
+	open := []map[string]any{}
 	for _, node := range nodes {
 		if source != "" && node.NodeInstanceID != source {
 			continue
@@ -382,6 +391,9 @@ func (c Converter) legacySources(nodes []graph.Node, source string, allowed func
 			AdditionalProperties any            `json:"additionalProperties"`
 		}
 		_ = json.Unmarshal(c.Catalog[node.NodeType].OutputSchema, &schema)
+		if schema.AdditionalProperties != false {
+			open = append(open, schema.Properties)
+		}
 		for field := range schema.Properties {
 			counts[field]++
 			if allowed == nil || allowed(node.NodeInstanceID) {
@@ -390,6 +402,11 @@ func (c Converter) legacySources(nodes []graph.Node, source string, allowed func
 		}
 	}
 	for field, count := range counts {
+		for _, properties := range open {
+			if _, declared := properties[field]; !declared {
+				count++
+			}
+		}
 		if count != 1 {
 			delete(result, field)
 		}

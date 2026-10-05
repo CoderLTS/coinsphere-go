@@ -44,7 +44,7 @@ func (q *quantRuntime) registerMarketSignals(registrar sdk.Registrar) error {
 		ExecutionPermissions: []string{"plugins.official.quant.execute"}, Type: "official.quant.market_signal", Version: "1.0.0", Kind: sdk.NodeKindAction,
 		ConfigSchema: emptyObjectSchema, UISchema: json.RawMessage(`{"ui:order":[]}`),
 		InputSchema: quantMarketSignalInputSchema, OutputSchema: quantMarketSignalOutputSchema,
-		Pool: sdk.PoolStream, SideEffect: sdk.SideEffectData, State: sdk.StateStateless,
+		Pool: sdk.PoolStream, SideEffect: sdk.SideEffectData, RetrySafe: true, State: sdk.StateStateless,
 	}, "输出信号", "持久化通用指标判断产生的行情 Signal。", "market", "#0f766e", "radio-tower"), quantMarketSignalAction{runtime: q})
 }
 

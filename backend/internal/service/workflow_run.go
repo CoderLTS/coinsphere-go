@@ -805,7 +805,7 @@ func (a *App) executeWorkflowNode(ctx context.Context, run db.WorkflowRun, revis
 		NodeInstanceID: node.NodeInstanceID, OperationKey: operationKey,
 		Input: mustJSON(input), Config: append(json.RawMessage(nil), node.Config...),
 		Secrets: workflowSecretReader{app: a, revisionID: revision.ID, nodeInstanceID: node.NodeInstanceID},
-		State:   state, Artifacts: workflowArtifactStore{app: a}, GraphSnapshot: json.RawMessage(revision.GraphJSON),
+		State:   state, Artifacts: workflowArtifactStore{app: a}, GraphSnapshot: mustJSON(graph.graph),
 		Incoming: workflowIncomingOutputs(graph.incoming[node.NodeInstanceID], outputs, event, entryInput),
 		Logger:   a.workflowNodeLogger(run, runNode.ID, node.NodeType),
 	}
@@ -1029,6 +1029,12 @@ func (a *App) buildWorkflowLoopGraph(node workflowGraphNode) (workflowRunGraph, 
 	for _, bodyNode := range loop.config.Body.Nodes {
 		runtimeNode := bodyNode
 		runtimeNode.NodeInstanceID = mapping[bodyNode.NodeInstanceID]
+		if rewrite := loop.descriptors[bodyNode.NodeInstanceID].RewriteConfigNodeIDs; rewrite != nil {
+			runtimeNode.Config, err = rewrite(bodyNode.Config, mapping)
+			if err != nil {
+				return workflowRunGraph{}, workflowLoopConfig{}, "", "", err
+			}
+		}
 		runtimeNode.InputBindings = make(map[string]workflowInputBinding, len(bodyNode.InputBindings))
 		for field, binding := range bodyNode.InputBindings {
 			if binding.NodeInstanceID != "" {

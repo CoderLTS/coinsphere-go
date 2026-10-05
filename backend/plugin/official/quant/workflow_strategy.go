@@ -72,8 +72,8 @@ func (q *quantRuntime) registerWorkflowStrategyNodes(registrar sdk.Registrar) er
 			Branches: []string{"each", "completed"}, ConfigSchema: quantBacktestStartConfigSchema,
 			UISchema:    json.RawMessage(`{"ui:order":["venue","market","instrument","interval"]}`),
 			InputSchema: quantBacktestStartInputSchema, OutputSchema: quantBacktestStartOutputSchema,
-			Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
-			Capabilities: sdk.NodeCapabilities{Deterministic: true, Stateless: true},
+			Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectData, RetrySafe: true, State: sdk.StateStateless,
+			Capabilities: sdk.NodeCapabilities{Deterministic: false, Stateless: true},
 		}, quantWorkflowBacktestAction{runtime: q}, "回测开始", "逐帧执行通用量化工作流并汇总回测结果。", "start", "#7c3aed", "history"},
 		{sdk.NodeDescriptor{
 			ExecutionPermissions: []string{"plugins.official.quant.execute"}, Type: "official.quant.code_strategy", Version: "1.0.0", Kind: sdk.NodeKindAction,

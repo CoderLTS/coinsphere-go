@@ -6,9 +6,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"coinsphere/backend/plugin/sdk"
+	"coinsphere/backend/workflow/graph"
 )
 
 type composeSource struct {
@@ -27,10 +29,57 @@ func registerCompose(registrar sdk.Registrar) error {
 		Title: "通知内容组合", Description: "按配置顺序组合实际触发的条件来源", Category: "notification", Color: "#7c3aed", Icon: "combine", Width: 220, Height: 72,
 		ExecutionPermissions: []string{"plugins.official.notification.execute"}, Capabilities: sdk.NodeCapabilities{Deterministic: true, Stateless: true},
 		Pool: sdk.PoolCompute, SideEffect: sdk.SideEffectNone, State: sdk.StateStateless,
-		ConfigSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"subjectSources":{"type":"array","maxItems":256,"items":{"$ref":"#/$defs/source"}},"messageSources":{"type":"array","maxItems":256,"items":{"$ref":"#/$defs/source"}}},"required":["subjectSources","messageSources"],"additionalProperties":false,"$defs":{"source":{"type":"object","properties":{"nodeInstanceId":{"type":"string","minLength":1,"maxLength":128},"branch":{"type":"string","minLength":1,"maxLength":32}},"required":["nodeInstanceId","branch"],"additionalProperties":false}}}`),
-		InputSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false}`),
-		OutputSchema: notificationInputSchema(),
+		RewriteConfigNodeIDs: rewriteComposeSources,
+		ConfigSchema:         json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"subjectSources":{"type":"array","maxItems":256,"items":{"$ref":"#/$defs/source"}},"messageSources":{"type":"array","maxItems":256,"items":{"$ref":"#/$defs/source"}}},"required":["subjectSources","messageSources"],"additionalProperties":false,"$defs":{"source":{"type":"object","properties":{"nodeInstanceId":{"type":"string","minLength":1,"maxLength":128},"branch":{"type":"string","minLength":1,"maxLength":32}},"required":["nodeInstanceId","branch"],"additionalProperties":false}}}`),
+		InputSchema:          json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false}`),
+		OutputSchema:         notificationInputSchema(),
 	}, composeAction{})
+}
+func rewriteComposeSources(raw json.RawMessage, ids map[string]string) (json.RawMessage, error) {
+	var config composeConfig
+	if err := json.Unmarshal(raw, &config); err != nil {
+		return nil, err
+	}
+	for _, sources := range [][]composeSource{config.SubjectSources, config.MessageSources} {
+		for i := range sources {
+			id, ok := ids[sources[i].NodeInstanceID]
+			if !ok {
+				return nil, errors.New("message composition references an unknown node")
+			}
+			sources[i].NodeInstanceID = id
+		}
+	}
+	return json.Marshal(config)
+}
+func validateComposeGraph(input sdk.WorkflowValidationContext) error {
+	var definition graph.Graph
+	if err := json.Unmarshal(input.Graph, &definition); err != nil {
+		return err
+	}
+	for _, node := range definition.Nodes {
+		if node.NodeType != "official.notification.compose" {
+			continue
+		}
+		var config composeConfig
+		if err := json.Unmarshal(node.Config, &config); err != nil {
+			return err
+		}
+		for _, sources := range [][]composeSource{config.SubjectSources, config.MessageSources} {
+			for _, source := range sources {
+				found := false
+				for _, edge := range definition.Edges {
+					if edge.TargetNodeInstanceID == node.NodeInstanceID && edge.SourceNodeInstanceID == source.NodeInstanceID && edge.SourcePort == source.Branch {
+						found = true
+						break
+					}
+				}
+				if !found {
+					return fmt.Errorf("node %q message source must name an incoming edge", node.NodeInstanceID)
+				}
+			}
+		}
+	}
+	return nil
 }
 func (composeAction) Execute(_ context.Context, request sdk.ActionRequest) (sdk.ActionResult, error) {
 	var config composeConfig

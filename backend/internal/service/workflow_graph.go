@@ -232,9 +232,25 @@ func (a *App) validateWorkflowGraph(raw json.RawMessage) (validatedWorkflowGraph
 		return validatedWorkflowGraph{}, errors.New("encode workflow node versions failed")
 	}
 	if a.Plugins != nil {
+		definitions := []json.RawMessage{canonical}
+		for _, node := range graph.Nodes {
+			if node.NodeType == "core.loop" {
+				var config workflowLoopConfig
+				if err := json.Unmarshal(node.Config, &config); err != nil {
+					return validatedWorkflowGraph{}, err
+				}
+				raw, err := json.Marshal(config.Body)
+				if err != nil {
+					return validatedWorkflowGraph{}, err
+				}
+				definitions = append(definitions, raw)
+			}
+		}
 		for _, validator := range a.Plugins.WorkflowValidators() {
-			if err := validator.ValidateWorkflow(sdk.WorkflowValidationContext{Graph: canonical, Nodes: descriptorCatalog}); err != nil {
-				return validatedWorkflowGraph{}, err
+			for _, definition := range definitions {
+				if err := validator.ValidateWorkflow(sdk.WorkflowValidationContext{Graph: definition, Nodes: descriptorCatalog}); err != nil {
+					return validatedWorkflowGraph{}, err
+				}
 			}
 		}
 	}

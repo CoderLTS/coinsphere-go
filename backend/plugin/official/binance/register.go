@@ -40,7 +40,7 @@ func Register(registrar sdk.Registrar, host sdk.Host, financial *trading.Registr
 	if err := registrar.Action(withNodeMeta(sdk.NodeDescriptor{
 		ExecutionPermissions: []string{"plugins.official.binance.execute"}, Type: "official.binance.backfill_candles", Version: "1.0.0", Kind: sdk.NodeKindAction,
 		ConfigSchema: candleBackfillSchema, UISchema: json.RawMessage(`{"ui:order":["market","proxyId","instrument","intervals","candleCount","endTime"]}`),
-		InputSchema: emptyObjectSchema, OutputSchema: candleBackfillOutput, Pool: sdk.PoolStream, SideEffect: sdk.SideEffectData, State: sdk.StateStateless,
+		InputSchema: emptyObjectSchema, OutputSchema: candleBackfillOutput, Pool: sdk.PoolStream, SideEffect: sdk.SideEffectData, RetrySafe: true, State: sdk.StateStateless,
 	}, "Binance K 线补数", "补齐 Binance 历史闭合 K 线。", "market", "#0f766e", "database"), binanceCandleBackfillAction{runtime: runtime}); err != nil {
 		return err
 	}

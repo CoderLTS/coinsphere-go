@@ -82,7 +82,7 @@ func (q *quantRuntime) register(registrar sdk.Registrar) error {
 		UISchema:     json.RawMessage(`{"ui:order":["venue","strategyId","market","instrument","interval","startTime","endTime","initialCapital","feeRate","slippageRate","parameters"]}`),
 		InputSchema:  emptyObjectSchema,
 		OutputSchema: json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"backtestId":{"type":"integer"},"venue":{"type":"string"},"strategyId":{"type":"string"},"strategyVersion":{"type":"string"},"finalEquity":{"type":"string","x-coinsphere-decimal":true},"totalReturn":{"type":"string","x-coinsphere-decimal":true},"maxDrawdown":{"type":"string","x-coinsphere-decimal":true},"totalFees":{"type":"string","x-coinsphere-decimal":true},"tradeCount":{"type":"integer"},"candleCount":{"type":"integer"}},"required":["backtestId","venue","strategyId","strategyVersion","finalEquity","totalReturn","maxDrawdown","totalFees","tradeCount","candleCount"],"additionalProperties":false}`),
-		Pool:         sdk.PoolCompute, SideEffect: sdk.SideEffectData, State: sdk.StateStateless,
+		Pool:         sdk.PoolCompute, SideEffect: sdk.SideEffectData, RetrySafe: true, State: sdk.StateStateless,
 	}, "量化策略回测", "通过任意行情 Provider 执行确定性回测。", "strategy", "#7c3aed", "history"), quantBacktestAction{runtime: q}); err != nil {
 		return err
 	}
