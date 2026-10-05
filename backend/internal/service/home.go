@@ -102,7 +102,7 @@ func (a *App) ListInstalledPlugins() ([]M, error) {
 				pages = append(pages, M{"pageKey": page.PageKey, "title": page.Title, "kind": "page"})
 			}
 		}
-		for _, page := range a.Plugins.ResultPages(id) {
+		for _, page := range a.Plugins.PluginResultPages(id) {
 			pages = append(pages, M{"pageKey": page.PageKey, "title": page.Title, "kind": "resultPage"})
 		}
 		name := metadata[id].Name

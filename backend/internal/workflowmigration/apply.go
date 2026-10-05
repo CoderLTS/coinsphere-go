@@ -236,7 +236,7 @@ func Apply(ctx context.Context, target *sql.DB, source Snapshot, plan Plan, cata
 			}
 		}
 		for _, pluginID := range item.Dependencies {
-			if err := insertReference(ctx, tx, pluginID, "revision", fmt.Sprint(item.TargetRevisionID)); err != nil {
+			if err := insertReference(ctx, tx, catalog, pluginID, "revision", fmt.Sprint(item.TargetRevisionID)); err != nil {
 				return result, err
 			}
 		}
@@ -262,7 +262,7 @@ func Apply(ctx context.Context, target *sql.DB, source Snapshot, plan Plan, cata
 		if err := insertRow(ctx, tx, "result_views", view); err != nil {
 			return result, err
 		}
-		if err := insertReference(ctx, tx, textField(view, "plugin_id"), "result_view", fmt.Sprint(id)); err != nil {
+		if err := insertReference(ctx, tx, catalog, textField(view, "plugin_id"), "result_view", fmt.Sprint(id)); err != nil {
 			return result, err
 		}
 	}
@@ -342,9 +342,15 @@ func permissionPlugin(c Catalog, code string) string {
 	}
 	return ""
 }
-func insertReference(ctx context.Context, tx *sql.Tx, pluginID, kind, id string) error {
-	var status string
-	if err := tx.QueryRowContext(ctx, "SELECT status FROM plugin_installations WHERE plugin_id=$1 FOR UPDATE", pluginID).Scan(&status); err != nil || status != "installed" {
+func insertReference(ctx context.Context, tx *sql.Tx, catalog Catalog, pluginID, kind, id string) error {
+	expected := ""
+	for _, plugin := range catalog.Plugins {
+		if plugin.ID == pluginID {
+			expected = plugin.Version
+		}
+	}
+	var status, version string
+	if err := tx.QueryRowContext(ctx, "SELECT status,version FROM plugin_installations WHERE plugin_id=$1 FOR UPDATE", pluginID).Scan(&status, &version); err != nil || status != "installed" || expected == "" || version != expected {
 		return errors.New("a required plugin is not installed in the target")
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO plugin_references(plugin_id,reference_type,reference_id,active) VALUES($1,$2,$3,true) ON CONFLICT(plugin_id,reference_type,reference_id) DO NOTHING", pluginID, kind, id); err != nil {

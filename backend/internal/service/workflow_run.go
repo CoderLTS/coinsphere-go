@@ -1408,26 +1408,31 @@ func (a *App) renewRunLease(ctx context.Context, run db.WorkflowRun, done <-chan
 			return
 		case <-done:
 			return
-		case now := <-ticker.C:
-			err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-				if err := a.lockExecutionLease(tx, run, nil); err != nil {
-					return err
-				}
-				r := runLeaseQuery(tx, run, false).Updates(map[string]any{"lease_expires_at": gorm.Expr("clock_timestamp() + interval '30 seconds'"), "updated_at": now.UTC()})
-				if r.Error != nil {
-					return r.Error
-				}
-				if r.RowsAffected != 1 {
-					return ErrConflict
-				}
-				return nil
-			})
+		case <-ticker.C:
+			err := a.renewWorkflowRunLease(ctx, run)
+
 			if err != nil {
 				cancel()
 				return
 			}
 		}
 	}
+}
+
+func (a *App) renewWorkflowRunLease(ctx context.Context, run db.WorkflowRun) error {
+	return a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := a.lockExecutionLease(tx, run, nil); err != nil {
+			return err
+		}
+		result := runLeaseQuery(tx, run, false).Updates(map[string]any{"lease_expires_at": gorm.Expr("clock_timestamp() + interval '30 seconds'"), "updated_at": time.Now().UTC()})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrConflict
+		}
+		return nil
+	})
 }
 
 func (a *App) enqueueScheduledRuns(ctx context.Context, now time.Time) error {

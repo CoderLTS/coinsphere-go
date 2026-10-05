@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"coinsphere/backend/plugin/sdk"
 	"coinsphere/backend/workflow/graph"
@@ -71,6 +72,8 @@ func BuildPlan(source Snapshot, targetID string, catalog Catalog, mappings Mappi
 	catalog.Converter.Mappings = mappings
 	revisions := rowsByID(source.tables["workflow_revisions"])
 	users := rowsByID(source.tables["users"])
+	roles := rowsByID(source.tables["roles"])
+	convertedGraphs := map[int64]Converted{}
 	for _, w := range source.tables["workflows"] {
 		id := intField(w, "id")
 		revisionID := intField(w, "active_revision_id")
@@ -92,6 +95,8 @@ func BuildPlan(source Snapshot, targetID string, catalog Catalog, mappings Mappi
 			p.Issues = append(p.Issues, Issue{WorkflowID: id, Code: "graph_mapping", Detail: err.Error()})
 			continue
 		}
+		convertedGraphs[id] = converted
+		configured := map[RequiredSecret]bool{}
 		p.Workflows = append(p.Workflows, PlannedWorkflow{WorkflowID: id, SourceRevisionID: revisionID, TargetRevisionID: revisionID, OwnerUserID: owner, GraphHash: Digest(converted.Graph), NodeIDs: converted.NodeIDs, SecretFields: converted.SecretFields, Dependencies: converted.Dependencies})
 		for _, secret := range source.tables["workflow_secret_bindings"] {
 			if intField(secret, "revision_id") != revisionID {
@@ -103,7 +108,14 @@ func BuildPlan(source Snapshot, targetID string, catalog Catalog, mappings Mappi
 				p.Issues = append(p.Issues, Issue{WorkflowID: id, Code: "secret_field_mapping", Detail: "source secret field has no declared target mapping"})
 			}
 			if boolField(secret, "manual_rebind") {
-				p.Dependencies = append(p.Dependencies, Issue{WorkflowID: id, Code: "manual_trading_rebind", Detail: "trading credentials and release state must be rebound manually on the server"})
+				p.Dependencies = append(p.Dependencies, Issue{WorkflowID: id, Code: "manual_secret_rebind", Detail: "a trading or unclassified credential must be rebound manually on the server"})
+			} else if textField(secret, "encrypted_value") != "" {
+				configured[RequiredSecret{converted.NodeIDs[node], converted.SecretFields[node][field]}] = true
+			}
+		}
+		for _, required := range converted.RequiredSecrets {
+			if !configured[required] {
+				p.Dependencies = append(p.Dependencies, Issue{WorkflowID: id, Code: "required_secret", Detail: fmt.Sprintf("node %s requires credential field %s before publishing or enabling", required.NodeID, required.Field)})
 			}
 		}
 		if !boolField(users[owner], "is_active") {
@@ -140,8 +152,35 @@ func BuildPlan(source Snapshot, targetID string, catalog Catalog, mappings Mappi
 			continue
 		}
 		for _, ref := range refs {
-			if !workflows[ref.WorkflowID] {
+			converted, ok := convertedGraphs[ref.WorkflowID]
+			if !workflows[ref.WorkflowID] || !ok {
 				issue("result_workflow_mapping")
+				continue
+			}
+			if ref.NodeInstanceID != "" {
+				mapped := converted.NodeIDs[ref.NodeInstanceID]
+				found := false
+				for source, target := range converted.NodeIDs {
+					if target == ref.NodeInstanceID && nodePluginAt(converted.Graph, source, catalog.Converter.NodePlugins) == textField(view, "plugin_id") {
+						found = true
+					}
+				}
+				if mapped == "" || !found {
+					issue("result_node_mapping")
+				}
+			}
+		}
+		if users[intField(view, "created_by")] == nil {
+			issue("result_creator_mapping")
+		}
+		for _, grant := range source.tables["result_view_user_grants"] {
+			if intField(grant, "view_id") == id && users[intField(grant, "user_id")] == nil {
+				issue("result_user_grant")
+			}
+		}
+		for _, grant := range source.tables["result_view_role_grants"] {
+			if intField(grant, "view_id") == id && roles[intField(grant, "role_id")] == nil {
+				issue("result_role_grant")
 			}
 		}
 		var actions []string
@@ -159,6 +198,24 @@ func BuildPlan(source Snapshot, targetID string, catalog Catalog, mappings Mappi
 	p.Hash = p.computeHash()
 	return p
 }
+func nodePluginAt(definition graph.Graph, id string, plugins map[string]string) string {
+	for _, node := range definition.Nodes {
+		if node.NodeInstanceID == id {
+			return plugins[node.NodeType]
+		}
+		prefix := node.NodeInstanceID + "."
+		if node.NodeType == "core.loop" && strings.HasPrefix(id, prefix) {
+			var config struct {
+				Body graph.Graph `json:"body"`
+			}
+			if json.Unmarshal(node.Config, &config) == nil {
+				return nodePluginAt(config.Body, strings.TrimPrefix(id, prefix), plugins)
+			}
+		}
+	}
+	return ""
+}
+
 func mappedResult(original row, mappings Mappings) row {
 	result := cloneRow(original)
 	if mapping, ok := mappings.Results[intField(original, "id")]; ok {

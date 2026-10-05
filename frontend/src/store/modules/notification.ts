@@ -142,12 +142,6 @@ export const useNotificationStore = defineStore('notificationStore', () => {
     unreadCount.value = 0
   }
 
-  const applySignalDecision = (signalId: string, status: string) => {
-    records.value = records.value.map((item) =>
-      item.strategySignalId === signalId ? { ...item, strategySignalStatus: status } : item
-    )
-  }
-
   const handleWsMessage = (envelope: NotificationWsEnvelope) => {
     if (envelope.type === 'notice.unread') {
       const nextUnreadCount = envelope.data.unreadCount
@@ -300,7 +294,6 @@ export const useNotificationStore = defineStore('notificationStore', () => {
     loadNotices,
     markRead,
     markAllRead,
-    applySignalDecision,
     connect,
     disconnect,
     resetState
@@ -310,35 +303,15 @@ export const useNotificationStore = defineStore('notificationStore', () => {
 function normalizeNoticeRecord(
   raw: Api.Notifications.InAppNoticeItem | Record<string, any>
 ): Api.Notifications.InAppNoticeItem {
-  const record = raw as Record<string, any>
   return {
-    id: Number(record.id || 0),
-    workflowExecutionId: record.workflowExecutionId ?? null,
-    workflowExecutionNodeId: record.workflowExecutionNodeId ?? null,
-    workflowDefinitionId: record.workflowDefinitionId ?? null,
-    workflowDefinitionCode: String(record.workflowDefinitionCode || ''),
-    workflowDefinitionName: String(record.workflowDefinitionName || ''),
-    strategySignalId: record.strategySignalId ? String(record.strategySignalId) : null,
-    strategySignalMode: String(record.strategySignalMode || ''),
-    strategySignalStatus: String(record.strategySignalStatus || ''),
-    strategySignalExpiresAt: String(record.strategySignalExpiresAt || ''),
-    targetType: String(record.targetType || ''),
-    targetId: record.targetId ?? null,
-    targetLabel: String(record.targetLabel || ''),
-    recipientId: record.recipientId ?? null,
-    recipientLabel: String(record.recipientLabel || ''),
-    channelType: String(record.channelType || 'in_app'),
-    channelTypeLabel: String(record.channelTypeLabel || ''),
-    channelDisplayName: String(record.channelDisplayName || ''),
-    deliveryStatus: String(record.deliveryStatus || record.status || ''),
-    deliveryStatusLabel: String(record.deliveryStatusLabel || ''),
-    messageTitle: String(record.messageTitle || record.title || ''),
-    messageContent: String(record.messageContent || record.content || ''),
-    providerResponseText: String(record.providerResponseText || ''),
-    errorMessage: String(record.errorMessage || ''),
-    isRead: Boolean(record.isRead),
-    readAt: String(record.readAt || ''),
-    sentAt: String(record.sentAt || ''),
-    createdAt: String(record.createdAt || '')
+    id: Number(raw.id),
+    workflowId: Number(raw.workflowId),
+    nodeInstanceId: String(raw.nodeInstanceId || ''),
+    title: String(raw.title || ''),
+    message: String(raw.message || ''),
+    isRead: Boolean(raw.isRead),
+    readAt: String(raw.readAt || ''),
+    deliveredAt: String(raw.deliveredAt || ''),
+    createdAt: String(raw.createdAt || '')
   }
 }

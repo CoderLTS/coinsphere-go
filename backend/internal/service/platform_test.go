@@ -594,3 +594,71 @@ func TestErrorClassesAndDiagnosticReplaySuppressEffects(t *testing.T) {
 		})
 	}
 }
+
+func TestLeaseRenewalFailureRejectsExecutorAndRunBudgetIsBounded(t *testing.T) {
+	entered := make(chan struct{}, 4)
+	barrier := make(chan struct{})
+	a, ctx, p := platformFixture(t, func(ctx context.Context, _ sdk.ActionRequest) (sdk.ActionResult, error) {
+		entered <- struct{}{}
+		select {
+		case <-barrier:
+			return sdk.ActionResult{Output: json.RawMessage(`{}`)}, nil
+		case <-ctx.Done():
+			return sdk.ActionResult{}, ctx.Err()
+		}
+	})
+	w := createTestWorkflow(t, a, ctx, p, testGraph("task"))
+	queueTestRun(t, a, ctx, p, w)
+	stale := claimTestRun(t, a)
+	if err := a.DB.Model(&db.WorkflowRun{}).Where("id=?", stale.ID).Update("lease_token", "replacement").Error; err != nil {
+		t.Fatal(err)
+	}
+	if a.renewWorkflowRunLease(ctx, stale) == nil {
+		t.Fatal("zero-row renewal was accepted")
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if a.renewWorkflowRunLease(cancelled, stale) == nil {
+		t.Fatal("renewal database failure was accepted")
+	}
+	if err := a.recoverExpiredRuns(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.DB.Model(&db.WorkflowRun{}).Where("id=?", stale.ID).Updates(map[string]any{"status": RunStatusCancelled, "lease_token": nil, "lease_expires_at": nil}).Error; err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 4; i++ {
+		queueTestRun(t, a, ctx, p, w)
+	}
+	a.runSlots = make(chan struct{}, 2)
+	engineCtx, stop := context.WithTimeout(ctx, 10*time.Second)
+	defer stop()
+	done := make(chan error, 1)
+	go func() { done <- a.RunWorkflowEngine(engineCtx) }()
+	for i := 0; i < 2; i++ {
+		select {
+		case <-entered:
+		case <-engineCtx.Done():
+			t.Fatal("engine did not fill its bounded budget")
+		}
+	}
+	if countTestRows(t, a, "workflow_runs", "status=?", RunStatusRunning) != 2 || countTestRows(t, a, "workflow_runs", "status=?", RunStatusQueued) != 2 {
+		t.Fatal("engine claimed beyond the Run budget")
+	}
+	close(barrier)
+	stop()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("engine failed to stop")
+	}
+	if err := a.WaitForWorkflowRuns(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.runSlots) != 0 || len(a.streamSlots) != 0 {
+		t.Fatal("cancelled engine retained execution slots")
+	}
+}

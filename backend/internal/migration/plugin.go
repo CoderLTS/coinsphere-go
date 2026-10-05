@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/pressly/goose/v3"
 )
@@ -60,7 +62,8 @@ func ValidatePluginDirectory(directory string) error {
 	return nil
 }
 
-// WithPluginMigrations 把短生命周期连接池固定为单连接，使插件 DDL 始终落入独立 schema。
+// WithPluginMigrations binds schema and maintenance locking to Goose's actual
+// migration connection; the shared pool stays available for installation row locks.
 func WithPluginMigrations(ctx context.Context, db *sql.DB, pluginID, migrationDir string, fn func(*Runner) error) error {
 	schema, err := PluginSchemaName(pluginID)
 	if err != nil {
@@ -72,15 +75,10 @@ func WithPluginMigrations(ctx context.Context, db *sql.DB, pluginID, migrationDi
 	if _, err := os.Stat(migrationDir); err != nil {
 		return fmt.Errorf("plugin migration directory: %w", err)
 	}
-	db.SetMaxOpenConns(1)
 	if _, err := db.ExecContext(ctx, `CREATE SCHEMA IF NOT EXISTS `+quoteIdentifier(schema)); err != nil {
 		return fmt.Errorf("create plugin schema: %w", err)
 	}
-	if _, err := db.ExecContext(ctx, `SET search_path TO `+quoteIdentifier(schema)+`, public`); err != nil {
-		return fmt.Errorf("set plugin search path: %w", err)
-	}
-	defer func() { _, _ = db.ExecContext(context.Background(), "RESET search_path") }()
-	runner, err := newWithFSAndTable(db, os.DirFS(migrationDir), schema+`.schema_migrations_g4`)
+	runner, err := newWithFSAndTable(db, os.DirFS(migrationDir), schema+`.schema_migrations_g4`, goose.WithSessionLocker(pluginMigrationSession{schema}))
 	if err != nil {
 		return err
 	}
@@ -97,17 +95,42 @@ func (r *Runner) DownTo(ctx context.Context, target int64) ([]Result, error) {
 	return results, nil
 }
 
-func newWithFSAndTable(db *sql.DB, migrations fs.FS, table string) (*Runner, error) {
+func newWithFSAndTable(db *sql.DB, migrations fs.FS, table string, extra ...goose.ProviderOption) (*Runner, error) {
 	options := []goose.ProviderOption{
 		goose.WithTableName(table),
 		goose.WithDisableGlobalRegistry(true),
 		goose.WithLogger(goose.NopLogger()),
 	}
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations, options...)
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations, append(options, extra...)...)
 	if err != nil {
 		return nil, fmt.Errorf("create plugin migration provider: %w", err)
 	}
 	return &Runner{provider: provider, db: db}, nil
+}
+
+type pluginMigrationSession struct{ schema string }
+
+func (s pluginMigrationSession) SessionLock(ctx context.Context, conn *sql.Conn) error {
+	if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_lock(hashtextextended($1,0))", "coinsphere.migration."+s.schema); err != nil {
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, "SET search_path TO "+quoteIdentifier(s.schema)+", public"); err != nil {
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return errors.Join(err, s.SessionUnlock(cleanup, conn))
+	}
+	return nil
+}
+func (s pluginMigrationSession) SessionUnlock(ctx context.Context, conn *sql.Conn) error {
+	cleanup, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_, resetErr := conn.ExecContext(cleanup, "RESET search_path")
+	_, unlockErr := conn.ExecContext(cleanup, "SELECT pg_advisory_unlock(hashtextextended($1,0))", "coinsphere.migration."+s.schema)
+	err := errors.Join(resetErr, unlockErr)
+	if err != nil {
+		_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+	}
+	return err
 }
 
 func quoteIdentifier(value string) string {

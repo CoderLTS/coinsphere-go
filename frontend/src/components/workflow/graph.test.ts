@@ -76,8 +76,8 @@ test('editing and JSON roundtrip preserve the complete native definition', () =>
   const saved = JSON.parse(JSON.stringify(edited)) as WorkflowGraph
   assert.deepEqual(saved.entryPoints, fixture.entryPoints)
   assert.deepEqual(
-    saved.nodes.map(({ position: _position, ...node }) => node),
-    fixture.nodes.map(({ position: _position, ...node }) => node)
+    saved.nodes.map((node) => ({ ...node, position: undefined })),
+    fixture.nodes.map((node) => ({ ...node, position: undefined }))
   )
   assert.deepEqual(saved.edges, fixture.edges)
   assert.equal(fixture.nodes[1].position?.x, 333)

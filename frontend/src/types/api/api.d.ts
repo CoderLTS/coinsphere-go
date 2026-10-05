@@ -368,32 +368,13 @@ declare namespace Api {
   namespace Notifications {
     interface InAppNoticeItem {
       id: number
-      workflowExecutionId?: number | null
-      workflowExecutionNodeId?: number | null
-      workflowDefinitionId?: number | null
-      workflowDefinitionCode: string
-      workflowDefinitionName: string
-      strategySignalId?: string | null
-      strategySignalMode: string
-      strategySignalStatus: string
-      strategySignalExpiresAt: string
-      targetType: string
-      targetId?: number | null
-      targetLabel: string
-      recipientId?: number | null
-      recipientLabel: string
-      channelType: string
-      channelTypeLabel: string
-      channelDisplayName: string
-      deliveryStatus: string
-      deliveryStatusLabel: string
-      messageTitle: string
-      messageContent: string
-      providerResponseText: string
-      errorMessage: string
+      workflowId: number
+      nodeInstanceId: string
+      title: string
+      message: string
       isRead: boolean
       readAt: string
-      sentAt: string
+      deliveredAt: string
       createdAt: string
     }
 
@@ -403,15 +384,6 @@ declare namespace Api {
       total: number
       hasMore: boolean
       unreadCount: number
-    }
-
-    interface StrategySignalDecision {
-      id: string
-      mode: string
-      environment: string
-      status: string
-      expiresAt?: string
-      decidedAt?: string
     }
   }
 

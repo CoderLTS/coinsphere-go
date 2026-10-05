@@ -60,11 +60,14 @@ type legacyGraph struct {
 	Nodes         []legacyNode      `json:"nodes"`
 	Edges         []graph.Edge      `json:"edges"`
 }
+type RequiredSecret struct{ NodeID, Field string }
+
 type Converted struct {
-	Graph        graph.Graph
-	NodeIDs      map[string]string
-	SecretFields map[string]map[string]string
-	Dependencies []string
+	RequiredSecrets []RequiredSecret
+	Graph           graph.Graph
+	NodeIDs         map[string]string
+	SecretFields    map[string]map[string]string
+	Dependencies    []string
 }
 type Converter struct {
 	Catalog     map[string]sdk.NodeDescriptor
@@ -173,6 +176,7 @@ func (c Converter) convert(location string, raw json.RawMessage, body bool, pref
 		}
 		var schema struct {
 			Properties map[string]map[string]any `json:"properties"`
+			Required   []string                  `json:"required"`
 		}
 		_ = json.Unmarshal(desc.ConfigSchema, &schema)
 		fields := map[string]string{}
@@ -182,6 +186,11 @@ func (c Converter) convert(location string, raw json.RawMessage, body bool, pref
 					return result, errors.New("inline credentials require server-side extraction before planning")
 				}
 				fields[field] = field
+				for _, required := range schema.Required {
+					if required == field {
+						result.RequiredSecrets = append(result.RequiredSecrets, RequiredSecret{prefix + node.NodeInstanceID, field})
+					}
+				}
 			}
 		}
 		if mapped {
@@ -213,6 +222,7 @@ func (c Converter) convert(location string, raw json.RawMessage, body bool, pref
 				result.NodeIDs[from] = to
 				result.SecretFields[from] = child.SecretFields[from]
 			}
+			result.RequiredSecrets = append(result.RequiredSecrets, child.RequiredSecrets...)
 			for _, id := range child.Dependencies {
 				deps[id] = true
 			}
@@ -295,6 +305,13 @@ func (c Converter) convert(location string, raw json.RawMessage, body bool, pref
 				if len(parts) > 0 {
 					expression = "(" + strings.Join(parts, ") || (") + ")"
 				}
+				if mapped := c.Mappings.Expressions[location+"/"+node.NodeInstanceID+"/binding/"+field].Expression; mapped != "" {
+					var err error
+					expression, err = c.expression(location+"/"+node.NodeInstanceID+"/binding/"+field, expression, nil)
+					if err != nil {
+						return result, err
+					}
+				}
 				node.InputBindings[field] = graph.Binding{Kind: "cel", Expression: expression}
 			}
 		}
@@ -317,9 +334,12 @@ func (c Converter) convert(location string, raw json.RawMessage, body bool, pref
 		if !special {
 			continue
 		}
-		for _, binding := range oldNode.InputBindings {
+		for field, binding := range oldNode.InputBindings {
 			if binding.Kind == "condition_entry" || binding.Kind == "cel" && strings.Contains(binding.Expression, "incoming") {
-				return result, errors.New("message composition with incoming-dependent bindings requires an explicit graph redesign")
+				mapped := c.Mappings.Expressions[location+"/"+oldNode.NodeInstanceID+"/binding/"+field].Expression
+				if mapped == "" || strings.Contains(mapped, "incoming") {
+					return result, fmt.Errorf("message composition binding at %s/%s/binding/%s requires an explicit expression mapping independent of incoming", location, oldNode.NodeInstanceID, field)
+				}
 			}
 		}
 		desc, ok := c.Catalog["official.notification.compose"]

@@ -163,6 +163,9 @@ func (i Installer) Install(ctx context.Context, source string, upgrade bool) (re
 	}
 	var maintenance *sql.Tx
 	if previous != nil && i.options.DB != nil {
+		if i.options.DB.Stats().MaxOpenConnections == 1 {
+			return manifest.Package{}, errors.New("upgrade maintenance requires at least two database connections")
+		}
 		maintenance, err = i.options.DB.BeginTx(ctx, nil)
 		if err != nil {
 			return manifest.Package{}, err

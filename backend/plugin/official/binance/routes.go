@@ -100,7 +100,7 @@ func (q *binanceRuntime) handleOrders(c *gin.Context, scope sdk.RouteScope) {
 		writeProblem(c, http.StatusForbidden, "invalid Binance scope")
 		return
 	}
-	query := q.db.WithContext(c.Request.Context()).Order("created_at DESC, id DESC").Limit(queryLimit(c, 100, 500))
+	query := sdk.ScopeWorkflows(q.db.WithContext(c.Request.Context()), scope, "workflow_id").Order("created_at DESC, id DESC").Limit(queryLimit(c, 100, 500))
 	if account := strings.TrimSpace(c.Query("account")); account != "" {
 		query = query.Where("account = ?", account)
 	}
