@@ -213,6 +213,11 @@ func (i Installer) Install(ctx context.Context, source string, upgrade bool) (re
 	if err != nil {
 		return manifest.Package{}, fmt.Errorf("validate staged plugin: %w", err)
 	}
+	// Keep rollback SQL outside the directories moved into the installed tree.
+	rollbackDirectory := filepath.Join(filepath.Dir(staged.backend), "rollback-migrations")
+	if err := os.CopyFS(rollbackDirectory, os.DirFS(stagedPkg.MigrationsPath)); err != nil {
+		return manifest.Package{}, fmt.Errorf("preserve rollback migrations: %w", err)
+	}
 
 	before, err := i.applyMigrations(ctx, stagedPkg)
 	if err != nil {
@@ -224,7 +229,7 @@ func (i Installer) Install(ctx context.Context, source string, upgrade bool) (re
 		}
 		rollbackCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		return migration.WithPluginMigrations(rollbackCtx, i.options.DB, stagedPkg.Manifest.ID, stagedPkg.MigrationsPath, func(runner *migration.Runner) error {
+		return migration.WithPluginMigrations(rollbackCtx, i.options.DB, stagedPkg.Manifest.ID, rollbackDirectory, func(runner *migration.Runner) error {
 			_, err := runner.DownTo(rollbackCtx, before)
 			return err
 		})
@@ -257,6 +262,12 @@ func (i Installer) Install(ctx context.Context, source string, upgrade bool) (re
 	current, err := i.Installed()
 	if err != nil {
 		return manifest.Package{}, err
+	}
+	for _, pkg := range current {
+		if pkg.Manifest.ID == stagedPkg.Manifest.ID {
+			stagedPkg = pkg
+			break
+		}
 	}
 	known := append(append([]manifest.Package(nil), current...), installed...)
 	if err := i.writeBuildInputs(current, known, available); err != nil {

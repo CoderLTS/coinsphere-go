@@ -489,7 +489,7 @@ func matchesOrderIntent(row tradingOrder, mode, account, market, instrument, sid
 		row.RequestQuantity.Equal(quantity) && row.RequestQuoteAmount.Equal(quoteAmount)
 }
 func marshalOrder(row tradingOrder) json.RawMessage {
-	raw, _ := json.Marshal(map[string]any{"orderId": row.ID, "providerOrderId": row.ProviderOrderID, "clientOrderId": row.ClientOrderID, "status": row.Status, "market": row.Market, "instrument": row.Instrument, "side": row.Side, "quantity": row.Quantity.String(), "executed": row.Executed.String(), "averagePrice": row.AveragePrice.String(), "updatedAt": row.UpdatedAt.UTC().Format(time.RFC3339Nano)})
+	raw, _ := json.Marshal(map[string]any{"orderId": row.ID, "providerOrderId": row.ProviderOrderID, "clientOrderId": row.ClientOrderID, "status": row.Status, "market": row.Market, "instrument": row.Instrument, "side": row.Side, "quantity": row.Quantity.String(), "executed": row.Executed.String(), "averagePrice": row.AveragePrice.String(), "updatedAt": row.UpdatedAt.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano)})
 	return raw
 }
 func zeroIfEmpty(value string) string {

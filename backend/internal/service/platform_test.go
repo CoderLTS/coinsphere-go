@@ -366,6 +366,7 @@ func TestApprovalDecisionSupersessionExpiryAndCancel(t *testing.T) {
 	if _, err := a.ApplyWorkflowRunAction(ctx, three.RunID, WorkflowRunActionPayload{Action: "cancel"}); err != nil {
 		t.Fatal(err)
 	}
+	old = db.WorkflowHumanTask{}
 	if err := a.DB.First(&old, three.ID).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -624,7 +625,7 @@ func TestLeaseRenewalFailureRejectsExecutorAndRunBudgetIsBounded(t *testing.T) {
 	if err := a.recoverExpiredRuns(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.DB.Model(&db.WorkflowRun{}).Where("id=?", stale.ID).Updates(map[string]any{"status": RunStatusCancelled, "lease_token": nil, "lease_expires_at": nil}).Error; err != nil {
+	if err := a.DB.Model(&db.WorkflowRun{}).Where("id=?", stale.ID).Updates(map[string]any{"status": RunStatusCancelled, "lease_token": nil, "lease_expires_at": nil, "completed_at": time.Now().UTC()}).Error; err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 4; i++ {

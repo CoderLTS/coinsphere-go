@@ -33,6 +33,7 @@ func registerCompose(registrar sdk.Registrar) error {
 		ConfigSchema:         json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"subjectSources":{"type":"array","maxItems":256,"items":{"$ref":"#/$defs/source"}},"messageSources":{"type":"array","maxItems":256,"items":{"$ref":"#/$defs/source"}}},"required":["subjectSources","messageSources"],"additionalProperties":false,"$defs":{"source":{"type":"object","properties":{"nodeInstanceId":{"type":"string","minLength":1,"maxLength":128},"branch":{"type":"string","minLength":1,"maxLength":32}},"required":["nodeInstanceId","branch"],"additionalProperties":false}}}`),
 		InputSchema:          json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false}`),
 		OutputSchema:         notificationInputSchema(),
+		UISchema:             json.RawMessage(`{"ui:order":["subjectSources","messageSources"]}`),
 	}, composeAction{})
 }
 func rewriteComposeSources(raw json.RawMessage, ids map[string]string) (json.RawMessage, error) {
