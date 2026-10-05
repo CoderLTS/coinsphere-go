@@ -91,10 +91,16 @@ func TestHTTPResourceAuthorizationAndLongConnectionRevocation(t *testing.T) {
 		if err := connection.SetReadDeadline(time.Now().Add(8 * time.Second)); err != nil {
 			t.Fatal(err)
 		}
-		_, _, err := connection.ReadMessage()
-		var networkError net.Error
-		if err == nil || errors.As(err, &networkError) && networkError.Timeout() {
-			t.Fatal("long connection did not close after authorization changed", err)
+		for {
+			_, _, err := connection.ReadMessage()
+			if err == nil {
+				continue // 撤销前已发送的通知快照可以仍在客户端接收缓冲中。
+			}
+			var networkError net.Error
+			if errors.As(err, &networkError) && networkError.Timeout() {
+				t.Fatal("long connection did not close after authorization changed", err)
+			}
+			return
 		}
 	}
 	if err := database.Exec(`DELETE FROM role_permissions WHERE role_id=2 AND permission_code='workflows.read'`).Error; err != nil {
