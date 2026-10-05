@@ -9,6 +9,7 @@ import (
 
 	"coinsphere/backend/plugin/sdk"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 const read = "plugins.example.business.read"
@@ -44,6 +45,20 @@ func Register(r sdk.Registrar, _ sdk.Host) error {
 		PageKey: "tasks", Title: "业务事项", ComponentEntry: "TaskResults.vue", PermissionCode: read,
 		ScopeSchema:  json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"workflowId":{"type":"integer","minimum":1}},"required":["workflowId"],"additionalProperties":false}`),
 		FilterSchema: empty, Actions: []string{"ack"}, ActionPermissions: map[string]string{"ack": execute}, Resources: resources,
+		ValidateScope: func(ctx context.Context, tx *gorm.DB, raw json.RawMessage) error {
+			refs, err := resources(raw)
+			if err != nil {
+				return err
+			}
+			var count int64
+			if err := tx.WithContext(ctx).Table("workflows").Where("id=?", refs[0].WorkflowID).Count(&count).Error; err != nil {
+				return err
+			}
+			if count != 1 {
+				return errors.New("business workflow does not exist")
+			}
+			return nil
+		},
 	}); err != nil {
 		return err
 	}

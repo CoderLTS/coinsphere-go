@@ -78,6 +78,7 @@ func RenderFrontendWithDependencies(plugins []manifest.Package, available map[st
 		}
 		directories[directory] = plugin.Manifest.ID
 		entry := "./installed/" + directory + "/" + strings.TrimPrefix(path.Clean(plugin.Manifest.Frontend.Entry), "./")
+		entry = strings.TrimSuffix(entry, ".ts")
 		id, _ := json.Marshal(plugin.Manifest.ID)
 		version, _ := json.Marshal(plugin.Manifest.Version)
 		importPath, _ := json.Marshal(entry)
